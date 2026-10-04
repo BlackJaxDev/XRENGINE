@@ -157,18 +157,36 @@ public static partial class BrowserContentPackageBuilder
             foreach (JsonElement variant in variantValues.EnumerateArray())
             {
                 Members(variant, "semantic", "semanticVersion", "target", "pass", "vertexProfile", "outputProfile", "descriptorIdentity");
-                string semantic = Choice(variant, "semantic", "StandardLitColor", "StandardLitTexture", "AuthoredLitTextureAlpha", "AuthoredLitTextured", "OctahedralImpostor", "OpaqueShadowDepth",
+                string semantic = Choice(variant, "semantic", "StandardLitColor", "StandardLitTexture", "AuthoredLitTextureAlpha", "AuthoredLitTextured", "Unlit", "OctahedralImpostor", "OpaqueShadowDepth",
                     "DebugPoint", "DebugLine", "DebugTriangle", "UIQuadBatched", "UIQuadBatchedTexture", "UITextBatchedBitmap", "UICanvasSurface", "UberOutline", "OpaquePointShadowDepth", "OpaqueSpotShadowDepth",
                     "SkyboxGradient", "SkyboxEquirectangular", "SkyboxOctahedral", "SkyboxCubemap", "SkyboxDynamicProcedural");
-                int maximumSemanticVersion = semantic is "StandardLitColor" or "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap" ? 2 : 1;
+                int maximumSemanticVersion = semantic switch
+                {
+                    "Unlit" => 5,
+                    "StandardLitColor" or "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap" => 2,
+                    _ => 1,
+                };
                 int semanticVersion = Integer(variant.GetProperty("semanticVersion"), 1, maximumSemanticVersion);
                 string target = Choice(variant, "target", "WebGPUWgsl");
                 string pass = MaterialVariantSelector(variant.GetProperty("pass"));
                 string vertexProfile = MaterialVariantSelector(variant.GetProperty("vertexProfile"));
                 string outputProfile = MaterialVariantSelector(variant.GetProperty("outputProfile"));
                 if (vertexProfile == "static-position-normal-order-gate-v1")
-                    Require(semantic == "StandardLitColor" && semanticVersion == 2,
-                        "Authored order gates require the versioned lit-color coverage semantic.");
+                    Require(semantic == "StandardLitColor" && semanticVersion == 2 || semantic == "Unlit" && semanticVersion == 1,
+                        "Color authored order gates require the versioned lit-color coverage or unlit-color semantic.");
+                if (semantic == "Unlit")
+                {
+                    string vertex = semanticVersion == 1 ? "static-position-normal-v1" : "position-normal-uv-v1";
+                    string orderVertex = semanticVersion == 1 ? "static-position-normal-order-gate-v1" : "position-normal-uv-order-gate-v1";
+                    Require(pass == "forward-unlit" && outputProfile == "linear-hdr-rgba-v1" &&
+                            (vertexProfile == vertex || semanticVersion != 3 && vertexProfile == orderVertex) ||
+                        pass == "depth-normal" && vertexProfile == vertex && outputProfile == "normal-rgba16f-v1" ||
+                        semanticVersion == 4 && vertexProfile == vertex &&
+                        (pass == "depth" && outputProfile == "depth-normal-v1" ||
+                         pass == "point-shadow-depth" && outputProfile == "radial-r16f-v1" ||
+                         pass == "spot-shadow-depth" && outputProfile == "projected-r16f-v1"),
+                        "Unlit selectors require their exact versioned forward, normal, alpha-caster, or authored-order profile.");
+                }
                 if (semantic == "OctahedralImpostor")
                     Require(pass == "forward-impostor" && vertexProfile is "position-uv4-billboard-v1" or "position-uv4-billboard-order-gate-v1" &&
                         outputProfile == "linear-hdr-rgba-v1",

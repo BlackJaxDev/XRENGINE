@@ -166,6 +166,8 @@ browser representations under one verified managed-admission identity.
 
 [Browser engine resource acceptance](work/progress/rendering/browser-engine-resource-acceptance-2026-10-03.md) records retained physical-resource requests and transfers, one acceptance import for complete or pending scenes, cached queue completion, lifetime witnesses and remaining browser acceptance.
 
+[Browser canonical shader staging](work/investigations/rendering/browser-canonical-shader-staging-2026-10-04.md) tracks full-inventory source closure, portable provenance and manifest-capacity integration checks.
+
 [Caller-thread physics-chain scheduling](work/progress/platform/browser-physics-chain-scheduling-2026-10-03.md) records inline CPU range execution, preserved solver selection, deterministic world cleanup and zero-allocation transform notification evidence on native .NET and the Node-hosted browser-wasm interpreter. Whole-browser allocation and lifetime acceptance remain separate.
 
 [Caller-thread blocking-site inventory](work/progress/platform/browser-caller-blocking-inventory-2026-10-03.md) records queued mesh/BVH work, immediate transform publication, deferred shader-version readiness, browser event behavior and the remaining shared-code scheduling boundaries.

@@ -148,7 +148,8 @@ internal static partial class Program
             if (pipelineArtifacts.Count > 0) manifestDocument["pipelineArtifacts"] = pipelineArtifacts;
             if (computeArtifacts.Count > 0) manifestDocument["computeArtifacts"] = computeArtifacts;
             byte[] manifest = Canonical(manifestDocument);
-            Require(manifest.Length <= MaxJsonBytes, "Manifest exceeds the JSON byte limit.");
+            Require(manifest.Length <= (schema == 3 ? ShaderProgramArtifactCatalog.MaximumManifestBytes : MaxJsonBytes),
+                "Manifest exceeds the JSON byte limit.");
             cancellation.Token.ThrowIfCancellationRequested();
             WriteAtomic(Path.Combine(output, "manifest.json"), manifest, false);
             Console.WriteLine($"Packaged {prepared.Count} shader artifact(s).");
@@ -724,7 +725,8 @@ internal static partial class Program
             Require(Hash(ReadBounded(ResolveInput(root, source.Path), MaxSourceBytes)) == source.Sha256,
                 $"{context}: canonical unlit WebGPU source '{source.Path}' is missing or modified.");
         foreach (EngineLitMaterialShaderSource source in EngineUnlitMaterialShaderGenerator.RequiredDesktopSources(semantic))
-            Require(Hash(ReadBounded(ResolveInput(dependencyRoot, source.Path), MaxSourceBytes)) == source.Sha256,
+            Require(EngineTexturedAlphaShaderGenerator.NormalizedHash(
+                    StrictUtf8.GetString(ReadBounded(ResolveInput(dependencyRoot, source.Path), MaxSourceBytes))) == source.Sha256,
                 $"{context}: canonical unlit authored source '{source.Path}' is missing or modified.");
     }
 
@@ -737,7 +739,8 @@ internal static partial class Program
             Require(Hash(ReadBounded(ResolveInput(root, source.Path), MaxSourceBytes)) == source.Sha256,
                 $"{context}: canonical unlit companion '{source.Path}' is missing or modified.");
         foreach (EngineLitMaterialShaderSource source in EngineUnlitMaterialShaderGenerator.RequiredDesktopSources(semantic))
-            Require(Hash(ReadBounded(ResolveInput(dependencyRoot, source.Path), MaxSourceBytes)) == source.Sha256,
+            Require(EngineTexturedAlphaShaderGenerator.NormalizedHash(
+                    StrictUtf8.GetString(ReadBounded(ResolveInput(dependencyRoot, source.Path), MaxSourceBytes))) == source.Sha256,
                 $"{context}: canonical unlit authored source '{source.Path}' is missing or modified.");
     }
 

@@ -102,18 +102,33 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         const validProfile = value => typeof value === 'string' && profile.test(value);
         for (const variant of value.materialVariants) {
             if (!variant || Object.keys(variant).length !== 7
-                || !['StandardLitColor', 'StandardLitTexture', 'AuthoredLitTextureAlpha', 'AuthoredLitTextured', 'OctahedralImpostor', 'OpaqueShadowDepth', 'OpaquePointShadowDepth', 'OpaqueSpotShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle',
+                || !['StandardLitColor', 'StandardLitTexture', 'AuthoredLitTextureAlpha', 'AuthoredLitTextured', 'Unlit', 'OctahedralImpostor', 'OpaqueShadowDepth', 'OpaquePointShadowDepth', 'OpaqueSpotShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle',
                     'UIQuadBatched', 'UIQuadBatchedTexture', 'UITextBatchedBitmap', 'UICanvasSurface', 'UberOutline', 'SkyboxGradient', 'SkyboxEquirectangular', 'SkyboxOctahedral',
                     'SkyboxCubemap', 'SkyboxDynamicProcedural'].includes(variant.semantic)
                 || !(variant.semanticVersion === 1 || variant.semanticVersion === 2
-                    && ['StandardLitColor', 'UIQuadBatched', 'UIQuadBatchedTexture', 'UITextBatchedBitmap'].includes(variant.semantic))
+                    && ['StandardLitColor', 'UIQuadBatched', 'UIQuadBatchedTexture', 'UITextBatchedBitmap'].includes(variant.semantic)
+                    || variant.semantic === 'Unlit' && Number.isInteger(variant.semanticVersion)
+                    && variant.semanticVersion >= 1 && variant.semanticVersion <= 5)
                 || variant.target !== 'WebGPUWgsl' || !validProfile(variant.pass)
                 || !validProfile(variant.vertexProfile) || !validProfile(variant.outputProfile)
                 || !shaderIdentities.has(variant.descriptorIdentity))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             if (variant.vertexProfile === 'static-position-normal-order-gate-v1'
-                && !(variant.semantic === 'StandardLitColor' && variant.semanticVersion === 2))
+                && !(variant.semantic === 'StandardLitColor' && variant.semanticVersion === 2
+                    || variant.semantic === 'Unlit' && variant.semanticVersion === 1))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (variant.semantic === 'Unlit') {
+                const vertex = variant.semanticVersion === 1 ? 'static-position-normal-v1' : 'position-normal-uv-v1';
+                const orderVertex = variant.semanticVersion === 1 ? 'static-position-normal-order-gate-v1' : 'position-normal-uv-order-gate-v1';
+                if (!(variant.pass === 'forward-unlit' && variant.outputProfile === 'linear-hdr-rgba-v1'
+                        && (variant.vertexProfile === vertex || variant.semanticVersion !== 3 && variant.vertexProfile === orderVertex)
+                    || variant.pass === 'depth-normal' && variant.vertexProfile === vertex && variant.outputProfile === 'normal-rgba16f-v1'
+                    || variant.semanticVersion === 4 && variant.vertexProfile === vertex
+                        && (variant.pass === 'depth' && variant.outputProfile === 'depth-normal-v1'
+                            || variant.pass === 'point-shadow-depth' && variant.outputProfile === 'radial-r16f-v1'
+                            || variant.pass === 'spot-shadow-depth' && variant.outputProfile === 'projected-r16f-v1')))
+                    throw new Error('AssetSource.MaterialVariantInvalid.');
+            }
             if (variant.semantic === 'StandardLitColor' && variant.semanticVersion === 2
                 && !(variant.pass === 'forward-coverage'
                     && ['static-position-normal-v1', 'static-position-normal-order-gate-v1'].includes(variant.vertexProfile)

@@ -8,7 +8,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$canonicalRoot = Join-Path $repositoryRoot 'Build/CommonAssets/Shaders/WebGPU'
+$shaderRoot = Join-Path $repositoryRoot 'Build/CommonAssets/Shaders'
+$canonicalRoot = Join-Path $shaderRoot 'WebGPU'
 $output = [System.IO.Path]::GetFullPath($OutputDirectory, $repositoryRoot)
 $cooker = Join-Path $repositoryRoot 'Tools/ShaderCooker/ShaderCooker.csproj'
 # The production recipe directory is the shared inventory. Probe recipes belong
@@ -29,6 +30,12 @@ try {
     # WebGPU directory name preserves relative dependency identities in recipes.
     New-Item -ItemType Directory -Path $scratchRoot | Out-Null
     Copy-Item -LiteralPath $canonicalRoot -Destination $sourceRoot -Recurse
+    # Impostor and unlit provenance resolves the authored GLSL and snippet
+    # closure relative to WebGPU's parent, just as in the canonical source tree.
+    foreach ($directory in @('Common', 'Scene3D', 'Snippets')) {
+        Copy-Item -LiteralPath (Join-Path $shaderRoot $directory) `
+            -Destination (Join-Path $scratchRoot $directory) -Recurse
+    }
     $computeDirectory = Join-Path $sourceRoot 'Assets'
     New-Item -ItemType Directory -Path $computeDirectory | Out-Null
     foreach ($kernel in @('gpu-skinning.wgsl', 'gpu-luminance.wgsl',

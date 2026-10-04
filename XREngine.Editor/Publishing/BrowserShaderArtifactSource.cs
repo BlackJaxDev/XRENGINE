@@ -33,7 +33,7 @@ internal sealed class BrowserShaderArtifactSource : IShaderProgramArtifactResolv
         if (relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             throw new InvalidDataException("Browser shader manifest escapes the authored project.");
         _directory = Path.GetDirectoryName(manifest)!;
-        using JsonDocument document = JsonDocument.Parse(ReadBounded(manifest, 1024 * 1024));
+        using JsonDocument document = JsonDocument.Parse(ReadBounded(manifest, ShaderProgramArtifactCatalog.MaximumManifestBytes));
         JsonElement root = document.RootElement;
         if (root.GetProperty("schemaVersion").GetInt32() != 3 || root.GetProperty("backend").GetString() != "WebGPU")
             throw new InvalidDataException("Browser shader publish requires the engine schema-three WebGPU cooker manifest.");

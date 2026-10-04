@@ -16,6 +16,10 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Other open investigations
 
+- [Browser Canonical Shader Staging](browser-canonical-shader-staging-2026-10-04.md):
+  canonical source closure, portable provenance and manifest-capacity corrections
+  for the complete browser shader inventory; fresh Windows publication remains
+  the integration acceptance check.
 - [Vulkan DLSS, Engine AA, And Frame Generation](2026-09-24-vulkan-dlss-aa-frame-generation.md):
   Default/Advanced AA selection, TSR with frame generation, and native DLSS
   dispatch/presentation revalidation.
