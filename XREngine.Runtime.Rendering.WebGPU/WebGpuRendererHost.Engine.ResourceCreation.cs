@@ -55,7 +55,7 @@ public sealed partial class WebGpuRendererHost
             throw new InvalidOperationException($"WebGPU.Resource.CreationFailed: {request.Failure}");
         if (request.State == WebGpuResourceRequestState.Cancelled || request.OwnerGeneration != BackendGeneration)
             throw new InvalidOperationException("WebGPU.Resource.RequestCancelled: the descriptor owner retired before publication.");
-        throw new WebGpuResourcePreparationPendingException("WebGPU.Resource.CreationPending: physical storage is awaiting the engine acceptance receipt.");
+        throw new WebGpuResourcePreparationPendingException("WebGPU.Resource.CreationPending: physical storage is awaiting the engine acceptance receipt.", request);
     }
 
     internal void ClaimEngineResource(WebGpuResourceRequest request)

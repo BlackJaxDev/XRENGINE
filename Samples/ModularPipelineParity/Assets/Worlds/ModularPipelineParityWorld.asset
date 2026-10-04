@@ -1,0 +1,108 @@
+__assetType: XREngine.Scene.XRWorld
+Scenes:
+- __assetType: XREngine.Scene.XRScene
+  IsVisible: true
+  RootNodes:
+  - Transform:
+      ID: 006107ed-79b8-49fc-a084-bb5ebbd34224
+    ID: 5f6d9b89-87d7-4b97-8bdf-fc56b563a9ec
+    Name: Modular Pipeline Inspection
+    ChildNodes:
+    - Components:
+      - &clearCameraA
+        __type: XREngine.Components.CameraComponent
+        RenderPipelineSource: &sharedClearSource
+          __type: ModularPipelineParity.ModularClearRenderPipeline
+          __assetType: ModularPipelineParity.ModularClearRenderPipeline
+          OutputClearColor: 0.04 0.32 0.68 1
+          ID: a09559ee-79e9-4bcc-9adf-43cf250bc1db
+          Name: Shared Blue Clear Pipeline
+        AntiAliasingModeOverride: None
+        CameraParameters:
+          __type: XREngine.Rendering.XRPerspectiveCameraParameters
+          VerticalFieldOfView: 48
+          HorizontalFieldOfView: 48
+          AspectRatio: 1
+          InheritAspectRatio: true
+          NearZ: 0.1
+          FarZ: 100
+        ID: fa8f9d62-314f-4d1d-ad7c-1f2a8627dd86
+      - __type: ModularPipelineParity.ModularPipelineParityPawnComponent
+        ProfileKey: clear-a
+        CameraComponent: *clearCameraA
+        ID: 70de6916-3c77-4920-8716-8fc3deaa96eb
+      Transform:
+        ID: 4e3ca582-8dbc-47a7-a45e-cf784d7c6d70
+        Translation: 0 0 6
+      ID: a2e576b6-3495-4f9f-b8fa-9f01cd79e244
+      Name: Shared Clear Camera A
+    - Components:
+      - &clearCameraB
+        __type: XREngine.Components.CameraComponent
+        RenderPipelineSource: *sharedClearSource
+        AntiAliasingModeOverride: None
+        CameraParameters:
+          __type: XREngine.Rendering.XRPerspectiveCameraParameters
+          VerticalFieldOfView: 53
+          HorizontalFieldOfView: 53
+          AspectRatio: 1
+          InheritAspectRatio: true
+          NearZ: 0.1
+          FarZ: 100
+        ID: 1d2a7ef6-7624-4568-9640-13a49f08a6c1
+      - __type: ModularPipelineParity.ModularPipelineParityPawnComponent
+        ProfileKey: clear-b
+        CameraComponent: *clearCameraB
+        ID: 895d7195-4e9d-4759-8758-25becaab6725
+      Transform:
+        ID: 73a80287-81b7-445f-a9a7-32060678e988
+        Translation: 1 0 6
+      ID: 3ef250c0-76e1-49f1-9429-276b84a802ad
+      Name: Shared Clear Camera B
+    - Components:
+      - &quadCamera
+        __type: XREngine.Components.CameraComponent
+        RenderPipelineSource:
+          __type: ModularPipelineParity.ModularQuadRenderPipeline
+          __assetType: ModularPipelineParity.ModularQuadRenderPipeline
+          OutputClearColor: 0.07 0.08 0.14 1
+          DeclaredRequirements:
+            Backend: webgpu
+            Programs:
+              "custom::custom-pass":
+          ID: 8c583188-43ac-4cd4-8b54-9673cb216585
+          Name: Authored Gradient Quad Pipeline
+        AntiAliasingModeOverride: None
+        CameraParameters:
+          __type: XREngine.Rendering.XRPerspectiveCameraParameters
+          VerticalFieldOfView: 48
+          HorizontalFieldOfView: 48
+          AspectRatio: 1
+          InheritAspectRatio: true
+          NearZ: 0.1
+          FarZ: 100
+        ID: 7218183a-6078-4cc0-a8bc-24dc878f9e51
+      - __type: ModularPipelineParity.ModularPipelineParityPawnComponent
+        ProfileKey: quad
+        CameraComponent: *quadCamera
+        ID: 1a20bdd8-4dfa-42c8-a7ce-3445c01ab90b
+      Transform:
+        ID: 7d4e2795-565c-4b39-8a6b-cbd81b1423b7
+        Translation: 0 1 6
+      ID: 2382f7b2-4497-4dde-b23b-5be20c47d43d
+      Name: Authored Gradient Quad Camera
+  ID: 82fd77ee-d938-4cc1-8292-2392c0fa4532
+  Name: Modular Pipeline Inspection Scene
+DefaultGameMode:
+  __type: ModularPipelineParity.ModularPipelineParityGameMode
+  __assetType: ModularPipelineParity.ModularPipelineParityGameMode
+  FixtureMarker: modular-clear-quad-v1
+  ID: b052fc47-9b49-43a8-a5dc-59ff4e1e6f25
+  Name: Modular Pipeline Inspection Mode
+Settings:
+  __assetType: XREngine.Scene.WorldSettings
+  RenderSkybox: false
+  ClearColor: 0.01 0.01 0.01 1
+  ID: 10bf24d5-12ba-4e02-b6f3-0d94060e8478
+ID: 0d3659e4-10e8-43e2-b554-88e9170895d6
+Name: Modular Pipeline Parity World

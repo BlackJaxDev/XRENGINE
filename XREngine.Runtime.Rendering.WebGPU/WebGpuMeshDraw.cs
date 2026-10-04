@@ -114,7 +114,7 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
         StageGeometryUploads();
         if (bindings.IsDisposed)
         {
-            _renderer.MarkEngineDrawPending();
+            _renderer.MarkEngineDrawPending("BindingsDisposed", this);
             return;
         }
         ValidateInstanceRange(instances);

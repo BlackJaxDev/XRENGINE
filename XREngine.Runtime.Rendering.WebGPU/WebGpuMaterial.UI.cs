@@ -49,6 +49,7 @@ public sealed partial class WebGpuMaterial
 
         WebGpuTexture2D image = (WebGpuTexture2D)Renderer.GetOrCreateAPIRenderObject(texture, generateNow: true)!;
         if (!image.IsCurrentGpuAllocationForCopy || !image.WasProducedInFrame(Renderer.EngineFrameSequence))
-            Renderer.MarkEngineDrawPending();
+            Renderer.MarkEngineDrawPending(image.IsCurrentGpuAllocationForCopy
+                ? "CanvasTextureProducerPending" : "CanvasTextureAllocationPending", image);
     }
 }

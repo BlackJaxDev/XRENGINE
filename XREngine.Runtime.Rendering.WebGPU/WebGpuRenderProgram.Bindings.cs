@@ -366,7 +366,7 @@ public sealed partial class WebGpuRenderProgram
             requests[group] = Renderer.RequestEngineResource(this, 6, DescribeGroup(Artifact, group, layout: false));
             pending |= requests[group].State is WebGpuResourceRequestState.Queued or WebGpuResourceRequestState.Submitted;
         }
-        if (pending) throw new WebGpuResourcePreparationPendingException("WebGPU.Bindings.Pending: retained binding groups await physical creation.");
+        if (pending) throw new WebGpuResourcePreparationPendingException("WebGPU.Bindings.Pending: retained binding groups await physical creation.", this);
         int[] groups = new int[_layouts.Length];
         try
         {

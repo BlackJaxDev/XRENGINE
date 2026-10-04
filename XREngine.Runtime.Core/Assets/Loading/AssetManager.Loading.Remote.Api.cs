@@ -6,30 +6,6 @@ namespace XREngine;
 
 public partial class AssetManager
 {
-    public T LoadEngineAssetRemote<
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
-        RemoteAssetLoadMode mode = RemoteAssetLoadMode.RequestFromRemote,
-        JobPriority priority = JobPriority.Normal,
-        IReadOnlyDictionary<string, string>? metadata = null,
-        params string[] relativePathFolders)
-        where T : XRAsset, new()
-    {
-        EnsureSynchronousRemoteAssetLoadSupported();
-        return LoadEngineAssetRemoteAsync<T>(mode, priority, metadata, relativePathFolders).GetAwaiter().GetResult();
-    }
-
-    public T? LoadGameAssetRemote<
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
-        RemoteAssetLoadMode mode = RemoteAssetLoadMode.RequestFromRemote,
-        JobPriority priority = JobPriority.Normal,
-        IReadOnlyDictionary<string, string>? metadata = null,
-        params string[] relativePathFolders)
-        where T : XRAsset, new()
-    {
-        EnsureSynchronousRemoteAssetLoadSupported();
-        return LoadGameAssetRemoteAsync<T>(mode, priority, metadata, relativePathFolders).GetAwaiter().GetResult();
-    }
-
     public async Task<T> LoadEngineAssetRemoteAsync<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
         RemoteAssetLoadMode mode = RemoteAssetLoadMode.RequestFromRemote,
@@ -56,28 +32,6 @@ public partial class AssetManager
             priority,
             CancellationToken.None,
             metadata);
-
-    public T? LoadByIdRemote<
-        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(
-        Guid assetId,
-        RemoteAssetLoadMode mode = RemoteAssetLoadMode.RequestFromRemote,
-        JobPriority priority = JobPriority.Normal,
-        IReadOnlyDictionary<string, string>? metadata = null)
-        where T : XRAsset, new()
-    {
-        if (assetId == Guid.Empty)
-            return null;
-        if (TryGetAssetByID(assetId, out XRAsset? existing) && existing is T typed)
-            return typed;
-        EnsureSynchronousRemoteAssetLoadSupported();
-        return LoadByIdRemoteAsync<T>(assetId, mode, priority, metadata, CancellationToken.None).GetAwaiter().GetResult();
-    }
-
-    private void EnsureSynchronousRemoteAssetLoadSupported()
-    {
-        if (!SupportsSynchronousAssetWork || _jobManagerProvider().IsCallerThreadExecutor)
-            throw new NotSupportedException("AssetSource.AsyncReadRequired: synchronous remote asset loading is unavailable on this host; load packaged assets asynchronously by catalog path.");
-    }
 
     public async Task<T?> LoadByIdRemoteAsync<
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(

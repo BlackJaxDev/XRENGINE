@@ -91,9 +91,10 @@ public sealed partial class WebGpuRendererHost
                         submissionBytes = GC.GetAllocatedBytesForCurrentThread() - submissionStart;
                 }
             }
-            catch (RenderResourcePreparationPendingException)
+            catch (RenderResourcePreparationPendingException error)
             {
-                MarkEngineDrawPending();
+                WebGpuResourcePreparationPendingException? pending = error as WebGpuResourcePreparationPendingException;
+                MarkEngineDrawPending(error.Message, pending?.Owner, pending?.Origin ?? nameof(RenderFrameCallback));
                 outcome = "Incomplete";
             }
             finally

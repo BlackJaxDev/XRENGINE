@@ -196,7 +196,7 @@ public sealed partial class WebGpuRenderProgram : WebGpuObject<XRRenderProgram>,
     {
         Generate();
         if (!IsGenerated && Renderer.IsRecordingEngineFrame)
-            Renderer.MarkEngineDrawPending();
+            Renderer.MarkEngineDrawPending("ProgramPending", this);
     }
 
     public void SetMatrix(string name, Matrix4x4 value)

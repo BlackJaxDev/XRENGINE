@@ -320,7 +320,29 @@ boxing the scope. `BindEngineViewport` only stores a viewport and cannot supply
 that ambient renderer context. Both missing-owner guards remain active, and the
 authored submission strategy and original Unlit raster sources are unchanged.
 
-Validation remains pending on the next exact-commit CI run. Source inspection and
-`git diff --check` pass; no local .NET build or browser execution was available,
-and no tests, shader sources or workflows were changed. The retained failed run
-is under `Build/_AgentValidation/20261001-225000-lit-surface/reports/ci-f628183b-linux/`.
+Exact Linux job `111516599587` in run `37229683052`, at commit
+`051c32f8a0df3dd65bd2738d4125c6219fd9a36e`, compiles these ownership fixes and
+reaches real `GpuIndirectZeroReadback` selection without either exception. The
+fixture collects ten meshes and creates its HDR target, but still submits no
+frames: it waits on `WebGPU.AuthoredIndexed.PublicationPending` because the
+resident closure and rendered world have different frame identities. A tonemap
+command is prepared, but the one recorded draw does not establish scene raster
+or a submitted frame. CPU x1/x4/AO, effects, shadow and physics checks continue
+to pass.
+
+The remaining mismatch came from the fixture's parameterless world swap.
+`EngineTimer.StepFrame` reserves the upcoming render identity before collection,
+exposes it through `RuntimeRenderingHostServices.FrameTiming.CollectFrameId`,
+then advances the ambient render clock after swapping. Production
+`RuntimeWorldHost` already supplies that reserved identity to the explicit
+`GlobalSwapBuffers(frameId)` overload. The fixture now uses the same overload
+and reserved identity, aligning the resident closure with the collected package,
+source ordering and subsequent rendered world. It does not derive an identity
+from a raw collect/swap counter or weaken the backend's frame-equality guard.
+
+Source inspection and `git diff --check` pass. Live validation of this frame
+identity correction remains pending on the next exact-commit CI run; no local
+.NET build or browser execution was available, and no tests, shader sources or
+workflows were changed for this correction. The retained failed runs are under
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/ci-f628183b-linux/`
+and `reports/ci-051c32f8-linux/` in the same validation run.

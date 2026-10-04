@@ -122,6 +122,7 @@ internal sealed partial class BrowserEngineSession(PhysicsBackendCatalog physics
             $"resource profile={(pipeline?.PendingGeneration ?? pipeline?.ActiveGeneration)?.Key.ToString() ?? "absent"}; " +
             $"draws={_renderer?.LastEngineMeshDrawCount ?? 0}; " +
             $"commands={_renderer?.LastEngineCommandCount ?? 0}; pending draw={_renderer?.HasPendingEngineDraw ?? false}; " +
+            $"draw preparation={_renderer?.GetPendingEngineDrawStatus() ?? "none"}; " +
             $"pipeline decline={pipeline?.LastRenderDeclineReason ?? "none"}; " +
             $"resource failure={pipeline?.LastResourceGenerationFailure ?? "none"}; " +
             $"advanced stages={advancedStages}; " +
