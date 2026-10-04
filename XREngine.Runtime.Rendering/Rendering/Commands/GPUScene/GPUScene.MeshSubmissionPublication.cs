@@ -323,13 +323,10 @@ public partial class GPUScene
                 continue;
             if (!_commandIndexLookup.TryGetValue(index, out var source))
                 throw new InvalidOperationException("GPUScene.MeshSubmission.SourceMissing: a resident row lost its command owner before publication.");
-            IRenderCommandMesh command = source.command;
-            GpuSceneMeshCommandSnapshot snapshot = command is RenderCommandMesh3D command3D
-                ? command3D.CaptureGpuSceneSnapshot()
-                : new(command.Mesh, command.WorldMatrix, command.WorldMatrixIsModelMatrix,
-                    command.MaterialOverride, command.Instances, command.RenderPass,
-                    command.ForceCpuRendering, command.EditorHighlightBits, command.StableQueryKey,
-                    default, command.RenderOptionsOverride);
+            // Registration can precede publication demand and the command's first
+            // render-buffer swap. Use the accepted row image, never live selectors
+            // or a render-buffer image that has not produced this resident row.
+            GpuSceneMeshCommandSnapshot snapshot = source.snapshot;
             DrawMetadata metadata = DrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(index);
             if (!_idToMesh.TryGetValue(metadata.MeshID, out XRMesh? mesh)
                 || !_idToMaterial.TryGetValue(metadata.MaterialID, out XRMaterial? material))
