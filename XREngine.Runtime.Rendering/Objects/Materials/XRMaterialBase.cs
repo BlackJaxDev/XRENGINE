@@ -50,6 +50,19 @@ namespace XREngine.Rendering
         protected bool HasOnlySettingUniformsHandler(Action<XRMaterialBase, XRRenderProgram>? handler)
             => SettingUniforms == handler;
 
+        /// <summary>Checks a cold cook's explicitly recognized publishers without admitting arbitrary callbacks.</summary>
+        protected bool HasOnlySettingUniformsHandlers(IReadOnlySet<Action<XRMaterialBase, XRRenderProgram>> handlers,
+            Action<XRMaterialBase, XRRenderProgram>? additionalHandler = null)
+        {
+            if (SettingUniforms is null)
+                return true;
+            foreach (Delegate handler in SettingUniforms.GetInvocationList())
+                if (handler is not Action<XRMaterialBase, XRRenderProgram> typed ||
+                    typed != additionalHandler && !handlers.Contains(typed))
+                    return false;
+            return true;
+        }
+
         /// <summary>
         /// Typed, generation-owned numeric binding publishers eligible for
         /// immutable backend capture and frequency-scoped reuse.

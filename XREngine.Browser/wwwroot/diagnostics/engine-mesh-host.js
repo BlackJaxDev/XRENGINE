@@ -146,11 +146,14 @@ export class EngineMeshDiagnosticHost {
         try {
             this.stage = 'engine-frame';
             const submissionsBefore = ['shadow', 'debug'].includes(this.kind) ? this.statistics()?.frameSubmitCalls ?? 0 : 0;
-            const ready = this.exports.Frame(this.session);
+            const ready = this.renderer.canBeginEngineFrame() && this.exports.Frame(this.session);
             if (['shadow', 'debug'].includes(this.kind) && !ready && (this.statistics()?.frameSubmitCalls ?? 0) > submissionsBefore)
                 this.partialSubmissions++;
             this.stage = 'waiting-for-next-frame';
             if (ready) {
+                // A later capacity stall gets the same bounded preparation window;
+                // time spent producing successful frames is not preparation time.
+                this.startedAt = performance.now();
                 if (this.settleFrames > 0) this.settleFrames--;
                 else {
                     this.readyFrames++;

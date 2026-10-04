@@ -324,6 +324,19 @@ This initial sample selects CPU-direct submission; it does not qualify meshlet,
 deformation, MSAA, desktop comparison or performance by association. The wrappers
 add diagnostic allocations, so this run is not steady-state allocation evidence.
 
+The `ui-parity` kind consumes the Editor-published
+`Samples/BrowserUiParity` world through the shipping player. It checks the
+shared control callbacks through their readonly status label, authored
+screen/offscreen color and glyph witnesses, clipping and native focus/text
+semantics. Mouse and touch hit the actual canvas; transparent accessibility
+proxies are used for semantics and keyboard focus. A temporary observational
+input wrapper reads existing exported state, preserving and restoring the
+original method. Synthetic composition checks event routing only. Two contexts
+and resize exercise this bounded fixture; physical IME, assistive technology,
+Move/Rotate actions and full GPU retirement remain separate acceptance.
+Normal publication uses the existing Roboto font cook and includes its license.
+Adding the fixture and harness does not establish a successful cook or browser run.
+
 After a failed Advanced application check and successful closure of its browser,
 the harness starts a separate Chromium process with the same launch options.
 It verifies the published native shader against the recorded module hash and

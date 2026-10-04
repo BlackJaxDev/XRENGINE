@@ -10,6 +10,7 @@ import { captureGpuProcessState, initializeGpuCanary } from './gpu-diagnostics.m
 import { runOfflineAudioProbe } from './audio-diagnostics.mjs';
 import { rollingBallGameCheck } from './rollingball-game.mjs';
 import { renderingParityGameCheck } from './rendering-parity-game.mjs';
+import { uiParityGameCheck } from './ui-parity-game.mjs';
 import { advancedRenderingGameCheck } from './advanced-rendering-game.mjs';
 import { runNativeCompileIsolation } from './native-compile-isolation.mjs';
 import { unlitMaterialsCheck } from './unlit-materials.mjs';
@@ -1180,12 +1181,22 @@ async function publishedGameCheck(browser, origin, report, config) {
     const manifest = JSON.parse(await fs.readFile(path.join(config.gamePublish, 'content', 'manifest.json'), 'utf8'));
     const parity = config.gameKind === 'rendering-parity';
     const advanced = config.gameKind === 'advanced-rendering-parity';
-    const worldPath = advanced ? '/game/Worlds/AdvancedRenderingParityWorld.asset'
+    const ui = config.gameKind === 'ui-parity';
+    const worldPath = ui ? '/game/Worlds/BrowserUiParityWorld.asset'
+        : advanced ? '/game/Worlds/AdvancedRenderingParityWorld.asset'
         : parity ? '/game/Worlds/RenderingParityWorld.asset' : '/game/Worlds/RollingBallWorld.asset';
     assert(descriptor.schema === 2 && descriptor.format === 'xrengine-engine-launch' &&
         descriptor.manifest === './content/manifest.json' && manifest.startupWorld === worldPath,
         'BrowserSmoke.GameBundle: expected the Editor-activated canonical game publish.');
-    if (advanced) {
+    if (ui) {
+        for (const [semantic, semanticVersion] of [['UIQuadBatched', 2], ['UIQuadBatchedTexture', 2],
+            ['UITextBatchedBitmap', 2], ['UICanvasSurface', 1]])
+            assert(manifest.materialVariants?.some(entry => entry.semantic === semantic &&
+                entry.semanticVersion === semanticVersion), `BrowserSmoke.UiArtifactMissing: ${semantic} v${semanticVersion}.`);
+        assert(manifest.assets?.some(entry => entry.path === '/engine/Fonts/Roboto/Roboto-Regular.cooked.asset'),
+            'BrowserSmoke.UiFontMissing: the authored bitmap UI font must be published.');
+        await uiParityGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
+    } else if (advanced) {
         for (const pass of ['visibility-pull', 'depth-pyramid', 'gtao', 'shade-classify', 'shade-native', 'present'])
             assert(manifest.pipelineArtifacts?.some(entry => entry.scope === 'advanced' && entry.pass === pass),
                 `BrowserSmoke.AdvancedArtifactMissing: advanced::${pass}.`);

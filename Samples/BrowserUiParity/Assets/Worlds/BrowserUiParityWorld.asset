@@ -1,0 +1,1086 @@
+__assetType: "XREngine.Scene.XRWorld"
+Name: "Browser UI Parity World"
+ID: "654a6c0b-8eb1-c227-a303-9446a17070dc"
+Scenes:
+  - __assetType: "XREngine.Scene.XRScene"
+    Name: "Shared UI and owned offscreen composition"
+    ID: "f351a23b-095c-b910-3e3c-e76c040000ef"
+    IsVisible: true
+    RootNodes:
+      - Name: "Browser UI Fixture"
+        ID: "3c9095d6-a251-1f4c-c812-2d0ab4b5c132"
+        Transform:
+          ID: "c81f54f3-dcba-79a1-7c34-4c594416e19a"
+        ChildNodes:
+          - Name: "Inspection Camera"
+            ID: "fb736070-bb80-72af-76b5-57900ea52471"
+            Transform:
+              ID: "2d313626-ced3-c00f-246a-1c1cf51a30a0"
+              Translation: "0 0 1000"
+            Components:
+              - &camera
+                __type: "XREngine.Components.CameraComponent"
+                ID: "e9baff65-3fe6-c8ae-2074-fab223db2082"
+                RenderPipelineSource:
+                  __type: "XREngine.Rendering.DefaultRenderPipeline"
+                  __assetType: "XREngine.Rendering.DefaultRenderPipeline"
+                  ID: "468d52ff-504f-05f8-26fc-fd34fcdee678"
+                PostProcessStates:
+                  Pipelines:
+                    468d52ff-504f-05f8-26fc-fd34fcdee678:
+                      __type: "XREngine.Rendering.PostProcessing.PipelinePostProcessState"
+                      PipelineId: "468d52ff-504f-05f8-26fc-fd34fcdee678"
+                      PipelineName: "DefaultRenderPipeline"
+                      Stages:
+                        tonemapping:
+                          __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                          StageKey: "tonemapping"
+                          Values:
+                            Tonemapping: "Mobius"
+                            MobiusTransition: 0.6
+                        colorGrading:
+                          __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                          StageKey: "colorGrading"
+                          Values:
+                            Tint: "1 1 1"
+                            ExposureMode: "Artist"
+                            AutoExposure: false
+                            Exposure: 1
+                            Contrast: 1
+                            Gamma: 1
+                            Hue: 1
+                            Saturation: 1
+                            Brightness: 1
+                        bloom:
+                          __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                          StageKey: "bloom"
+                          Values:
+                            Enabled: false
+                        vignette:
+                          __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                          StageKey: "vignette"
+                          Values:
+                            Enabled: false
+                        ambientOcclusion:
+                          __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                          StageKey: "ambientOcclusion"
+                          Values:
+                            Enabled: false
+                        depthOfField:
+                          __type: "XREngine.Rendering.PostProcessing.PostProcessStageState"
+                          StageKey: "depthOfField"
+                          Values:
+                            Enabled: false
+                CameraParameters:
+                  __type: "XREngine.Rendering.XROrthographicCameraParameters"
+                  InheritAspectRatio: false
+                  Width: 1280
+                  Height: 720
+                  NearZ: 0.1
+                  FarZ: 2000
+                InternalResolutionScale: 1
+                CullWithFrustum: true
+                AntiAliasingModeOverride: "None"
+                OutputHDROverride: false
+              - &pawn
+                __type: "BrowserUiParity.BrowserUiParityPawnComponent"
+                ID: "6ebd1c9d-4d07-79b2-2cdd-95eb4810507e"
+                CameraComponent: *camera
+          - Name: "Screen Canvas"
+            ID: "0e027118-8f81-d3e1-d4db-2d03272ccb2c"
+            Transform:
+              $type: "XREngine.Rendering.UI.UICanvasTransform"
+              $value:
+                ID: "97e5a7d0-fb8e-e852-6c39-8272818748c9"
+                DrawSpace: "Screen"
+                MinAnchor: "0 0"
+                MaxAnchor: "0 0"
+                NormalizedPivot: "0 0"
+                Translation: "0 0"
+                Width: 1280
+                Height: 720
+            Components:
+              - __type: "XREngine.Rendering.UI.UICanvasComponent"
+                ID: "c8ff385f-5967-823b-0dee-a7b9811bc0db"
+                PreferOffscreenRenderingForNonScreenSpaces: true
+                AutoDisableOffscreenForBackdropBlur: false
+                StrictOneByOneRenderCalls: false
+              - __type: "XREngine.Components.UICanvasInputComponent"
+                ID: "5cd829b6-469a-fc4a-11b4-a9d55feb86ee"
+                OwningPawn: *pawn
+            ChildNodes:
+              - Name: "Screen Backdrop"
+                ID: "31429756-f976-a229-5971-385688d99db1"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "24ebd37b-12eb-9b04-1030-b7e48d9d696e"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "16 16"
+                    Width: 608
+                    Height: 688
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "3304c398-4c5e-5ee2-31b3-98a58544c86b"
+                    ClipToBounds: false
+              - Name: "Heading"
+                ID: "7de6b8c6-c0cf-dee1-163c-ae2fa5a582f0"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "59e313a1-c4a4-201f-8469-de76a64d5904"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "32 652"
+                    Width: 552
+                    Height: 40
+                Components:
+                  - __type: "XREngine.Rendering.UI.UITextComponent"
+                    ID: "fc6c0f90-1d8f-91a2-06e4-f7a58b2d4bb8"
+                    Text: "Shared engine UI"
+                    FontSize: 28
+                    Color: "1 1 1 1"
+                    HorizontalAlignment: "Left"
+                    VerticalAlignment: "Center"
+                    ClipToBounds: true
+              - Name: "Action Status"
+                ID: "adcd3a8f-ee25-9a1c-2d86-f2055b497c9c"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "7e283b7a-7cd2-f8c5-1a0a-9508449435cf"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "32 610"
+                    Width: 552
+                    Height: 30
+                Components:
+                  - __type: "XREngine.Rendering.UI.UITextComponent"
+                    ID: "10b0fa1a-a3a2-a130-75b4-ff02bc5e5f10"
+                    Text: "Actions: 0; Submits: 0; Cancels: 0"
+                    FontSize: 20
+                    Color: "1 1 1 1"
+                    HorizontalAlignment: "Left"
+                    VerticalAlignment: "Center"
+                    ClipToBounds: true
+                  - __type: "XREngine.Rendering.UI.UITextInputComponent"
+                    ID: "2d63cb28-12f0-51ab-c04c-4a54e876acb6"
+                    AccessibilityLabel: "Action Status"
+                    Text: "Actions: 0; Submits: 0; Cancels: 0"
+                    RegisterInputsOnFocus: false
+                    SingleLineMode: true
+                    MaxInputLength: 128
+              - Name: "Count Action"
+                ID: "c68e9d93-d56c-b03a-24ed-9388471a1427"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "7862df02-74ca-ed62-3a84-bc386855f4c1"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "32 548"
+                    Width: 240
+                    Height: 40
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "b908b65b-b2e2-8eb8-ebea-591aeae969cc"
+                  - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                    ID: "f0af8bbd-b309-c4b6-22e7-628c06f7f6a9"
+                    AccessibilityLabel: "Count Action"
+                    DefaultBackgroundColor: "0.1 0.3 0.65 1"
+                    HighlightBackgroundColor: "0.1 0.3 0.65 1"
+                    DefaultTextColor: "1 1 1 1"
+                    HighlightTextColor: "1 1 1 1"
+                ChildNodes:
+                  - Name: "Count Action Label"
+                    ID: "b7cbffd9-6011-fefd-dacc-d69ce1c06040"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "7a2861bf-adcb-1834-82e3-4ff86b60d55f"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "8 0"
+                        Width: 224
+                        Height: 40
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UITextComponent"
+                        ID: "a578fcb6-ca29-57a7-fc38-1675962033af"
+                        Text: "Count action"
+                        FontSize: 18
+                        Color: "1 1 1 1"
+                        HorizontalAlignment: "Left"
+                        VerticalAlignment: "Center"
+                        ClipToBounds: true
+              - Name: "Clip Toggle"
+                ID: "59843be2-e9a3-d548-9a35-5da2a38513cb"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "fa5e903a-0ca8-8325-ca1f-8a43da4f5b1b"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "304 548"
+                    Width: 280
+                    Height: 40
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "b0d7cdf9-7d0f-dc09-3ec3-c24efa60a6df"
+                  - __type: "XREngine.Rendering.UI.UIToggleComponent"
+                    ID: "c24b2453-d1ef-4431-e892-f2bc851880e7"
+                    AccessibilityLabel: "Clip enabled"
+                ChildNodes:
+                  - Name: "Clip Toggle Label"
+                    ID: "c0f31654-1394-ccf2-c5ad-467ede2fa530"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "1d363d13-3b6a-72c3-75d2-bcabfad2b4b2"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "12 0"
+                        Width: 252
+                        Height: 40
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UITextComponent"
+                        ID: "eef22827-30bf-62b9-36eb-9021048a4689"
+                        Text: "Clip enabled"
+                        FontSize: 18
+                        Color: "1 1 1 1"
+                        HorizontalAlignment: "Left"
+                        VerticalAlignment: "Center"
+                        ClipToBounds: true
+              - Name: "Single Line"
+                ID: "cd78cc7e-4bb1-8a5b-e6dd-1877b9dc875e"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "df47390e-c53e-396f-e83e-315288dfa34b"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "32 484"
+                    Width: 552
+                    Height: 40
+                Components:
+                  - __type: "XREngine.Rendering.UI.UITextComponent"
+                    ID: "0b7c20c0-2030-8965-82a3-023bf5357fa0"
+                    Text: "single seed"
+                    FontSize: 20
+                    Color: "1 1 1 1"
+                    HorizontalAlignment: "Left"
+                    VerticalAlignment: "Center"
+                    ClipToBounds: true
+                  - __type: "XREngine.Rendering.UI.UITextInputComponent"
+                    ID: "61efe5f3-a8d6-33e4-6f1d-a1e7b4cd3d73"
+                    AccessibilityLabel: "Single Line"
+                    Text: "single seed"
+                    RegisterInputsOnFocus: true
+                    SingleLineMode: true
+                    MaxInputLength: 128
+              - Name: "Multiline"
+                ID: "d2ca26d0-9b74-2bec-fdfa-cba86049198d"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "73c6dace-2751-0661-88fb-fdb6b76b86d7"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "32 400"
+                    Width: 552
+                    Height: 64
+                Components:
+                  - __type: "XREngine.Rendering.UI.UITextComponent"
+                    ID: "c57c5ebd-969a-0ea9-aa6b-20b95406a341"
+                    Text: "first line\nsecond line"
+                    FontSize: 20
+                    Color: "1 1 1 1"
+                    HorizontalAlignment: "Left"
+                    VerticalAlignment: "Top"
+                    ClipToBounds: true
+                  - __type: "XREngine.Rendering.UI.UITextInputComponent"
+                    ID: "da718c6c-3099-4013-9026-69f00715901c"
+                    AccessibilityLabel: "Multiline"
+                    Text: "first line\nsecond line"
+                    RegisterInputsOnFocus: true
+                    SingleLineMode: false
+                    MaxInputLength: 128
+              - Name: "Read Only"
+                ID: "e51cfdf2-816e-3330-df4b-8eb4f2d88f0e"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "35b54054-ced2-c7e7-d82d-82f123f29519"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "32 348"
+                    Width: 552
+                    Height: 36
+                Components:
+                  - __type: "XREngine.Rendering.UI.UITextComponent"
+                    ID: "a3f8883a-ce8c-58e1-d641-9388737f0ada"
+                    Text: "readonly seed"
+                    FontSize: 20
+                    Color: "1 1 1 1"
+                    HorizontalAlignment: "Left"
+                    VerticalAlignment: "Center"
+                    ClipToBounds: true
+                  - __type: "XREngine.Rendering.UI.UITextInputComponent"
+                    ID: "c4918109-63ee-8e86-3f8c-a0166b39a664"
+                    AccessibilityLabel: "Read Only"
+                    Text: "readonly seed"
+                    RegisterInputsOnFocus: false
+                    SingleLineMode: true
+                    MaxInputLength: 128
+              - Name: "Rename Target"
+                ID: "d911243d-1598-534b-a3d1-3521ed6976c0"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "d8cd32e5-82c9-5c09-2039-d4fbf6d69c16"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "32 292"
+                    Width: 168
+                    Height: 36
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "624306e7-22d3-d044-d118-dc1c07fc2378"
+                  - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                    ID: "bb2ed62b-c4ff-0e8f-19f1-ca5b027675d7"
+                    AccessibilityLabel: "Rename Target"
+                    DefaultBackgroundColor: "0.1 0.3 0.65 1"
+                    HighlightBackgroundColor: "0.1 0.3 0.65 1"
+                    DefaultTextColor: "1 1 1 1"
+                    HighlightTextColor: "1 1 1 1"
+                ChildNodes:
+                  - Name: "Rename Target Label"
+                    ID: "f2cbfa2a-40f6-110a-c1f2-59fa935afbfb"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "ca2e9278-3e21-fd2d-802f-b23de46d4e21"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "8 0"
+                        Width: 152
+                        Height: 36
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UITextComponent"
+                        ID: "502afe9c-4a76-75bb-7c14-b90e3d9b44e9"
+                        Text: "Rename"
+                        FontSize: 18
+                        Color: "1 1 1 1"
+                        HorizontalAlignment: "Left"
+                        VerticalAlignment: "Center"
+                        ClipToBounds: true
+              - Name: "Hide Target"
+                ID: "5959729a-50a1-c944-e6d6-13901d39f5b4"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "f32d7408-9829-5644-00d8-ca2773823125"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "216 292"
+                    Width: 168
+                    Height: 36
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "b4dc17cd-9aff-200f-d1bb-bd4f8f1cf740"
+                  - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                    ID: "333eac0b-ec70-c4b0-eebb-3be71dfb9d60"
+                    AccessibilityLabel: "Hide Target"
+                    DefaultBackgroundColor: "0.1 0.3 0.65 1"
+                    HighlightBackgroundColor: "0.1 0.3 0.65 1"
+                    DefaultTextColor: "1 1 1 1"
+                    HighlightTextColor: "1 1 1 1"
+                ChildNodes:
+                  - Name: "Hide Target Label"
+                    ID: "187d70b1-2fc4-bc5b-2975-0b5312497c9f"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "9f0dca62-f47d-88d7-8245-0336ba5384f6"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "8 0"
+                        Width: 152
+                        Height: 36
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UITextComponent"
+                        ID: "8e861f0d-e8f6-be1d-f4a3-80a56920475f"
+                        Text: "Hide / show"
+                        FontSize: 18
+                        Color: "1 1 1 1"
+                        HorizontalAlignment: "Left"
+                        VerticalAlignment: "Center"
+                        ClipToBounds: true
+              - Name: "Deactivate Target"
+                ID: "ac8c628c-7eaf-d481-3ac3-9ce4ea129935"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "a93bb51e-e384-19a7-67ff-5b42c9d91004"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "400 292"
+                    Width: 184
+                    Height: 36
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "79ae5c78-485e-2500-31ff-2ddd40037b56"
+                  - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                    ID: "b118d4a1-768e-987d-98f5-faa518376be0"
+                    AccessibilityLabel: "Deactivate Target"
+                    DefaultBackgroundColor: "0.1 0.3 0.65 1"
+                    HighlightBackgroundColor: "0.1 0.3 0.65 1"
+                    DefaultTextColor: "1 1 1 1"
+                    HighlightTextColor: "1 1 1 1"
+                ChildNodes:
+                  - Name: "Deactivate Target Label"
+                    ID: "e1af0990-ce31-27ae-bfb2-d18feca734c5"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "f543b44c-6e09-9747-c3c5-4dd902e19661"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "8 0"
+                        Width: 168
+                        Height: 36
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UITextComponent"
+                        ID: "079eded7-5328-edb5-b1ab-fe10fdf0143c"
+                        Text: "Active / inactive"
+                        FontSize: 18
+                        Color: "1 1 1 1"
+                        HorizontalAlignment: "Left"
+                        VerticalAlignment: "Center"
+                        ClipToBounds: true
+              - Name: "Reparent Target"
+                ID: "cb217c9e-2d05-1218-95ad-83be6fc9ee99"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "54ade990-2fea-c958-911d-8ee9d270dc3e"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "32 244"
+                    Width: 168
+                    Height: 36
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "af4e77b5-9fec-47d3-ed65-ccbbf0ca2423"
+                  - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                    ID: "5c996358-edb5-aa36-7054-ded5390c54db"
+                    AccessibilityLabel: "Reparent Target"
+                    DefaultBackgroundColor: "0.1 0.3 0.65 1"
+                    HighlightBackgroundColor: "0.1 0.3 0.65 1"
+                    DefaultTextColor: "1 1 1 1"
+                    HighlightTextColor: "1 1 1 1"
+                ChildNodes:
+                  - Name: "Reparent Target Label"
+                    ID: "52ea9035-653e-ea88-f5f5-29389b5de721"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "dff3dff4-24ec-2f7e-c9d3-4f04ca0be838"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "8 0"
+                        Width: 152
+                        Height: 36
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UITextComponent"
+                        ID: "7fcf617e-3657-db9a-a9fd-9e5c95ea25a3"
+                        Text: "Reparent"
+                        FontSize: 18
+                        Color: "1 1 1 1"
+                        HorizontalAlignment: "Left"
+                        VerticalAlignment: "Center"
+                        ClipToBounds: true
+              - Name: "Remove Target"
+                ID: "741fcd06-59a4-85f7-8c49-dd86e182fa24"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "ea659cfd-22cc-c136-52b3-a51b7201dcd3"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "216 244"
+                    Width: 168
+                    Height: 36
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "3f9c65ac-8fe5-eff5-3aea-863ce9d5e483"
+                  - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                    ID: "e72cb8a5-7433-00bc-336a-1453ac75f7ad"
+                    AccessibilityLabel: "Remove Target"
+                    DefaultBackgroundColor: "0.1 0.3 0.65 1"
+                    HighlightBackgroundColor: "0.1 0.3 0.65 1"
+                    DefaultTextColor: "1 1 1 1"
+                    HighlightTextColor: "1 1 1 1"
+                ChildNodes:
+                  - Name: "Remove Target Label"
+                    ID: "b4a49b2c-14fd-f7a8-4a77-3608629d4afa"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "393db438-7824-953d-2785-c204ea0ce959"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "8 0"
+                        Width: 152
+                        Height: 36
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UITextComponent"
+                        ID: "b10dc5fe-9f92-a7d3-79d8-296c86cdfa9f"
+                        Text: "Remove"
+                        FontSize: 18
+                        Color: "1 1 1 1"
+                        HorizontalAlignment: "Left"
+                        VerticalAlignment: "Center"
+                        ClipToBounds: true
+              - Name: "Restore Target"
+                ID: "7c62f0dc-37f1-8ba0-5a5c-d45627cb41cf"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "ef8e8042-7adf-34af-23a1-35fef9c29854"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "400 244"
+                    Width: 184
+                    Height: 36
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "e7fb7b5c-525b-34e5-8e05-673c414acf4b"
+                  - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                    ID: "2646eb36-c828-7c9f-078b-45a220bee953"
+                    AccessibilityLabel: "Restore Target"
+                    DefaultBackgroundColor: "0.1 0.3 0.65 1"
+                    HighlightBackgroundColor: "0.1 0.3 0.65 1"
+                    DefaultTextColor: "1 1 1 1"
+                    HighlightTextColor: "1 1 1 1"
+                ChildNodes:
+                  - Name: "Restore Target Label"
+                    ID: "26f0e935-ca11-d1f4-b0c4-0c97f80f76b5"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "520dc657-bdba-bbf6-48ea-620ad9ece28a"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "8 0"
+                        Width: 168
+                        Height: 36
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UITextComponent"
+                        ID: "68a327a2-43ac-7ab9-a54b-c9f0ebcca541"
+                        Text: "Restore"
+                        FontSize: 18
+                        Color: "1 1 1 1"
+                        HorizontalAlignment: "Left"
+                        VerticalAlignment: "Center"
+                        ClipToBounds: true
+              - Name: "Clip Parent"
+                ID: "bf7f8af5-a408-bba9-dd39-185f8233530b"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "8badeb29-5b07-0d4b-b39a-05aeacbce5b5"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "32 124"
+                    Width: 200
+                    Height: 100
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "e078cdc9-75b2-7aad-7d09-dea9397ca16c"
+                    ClipToBounds: true
+                ChildNodes:
+                  - Name: "Clipped Action"
+                    ID: "5156c116-2b30-ac94-84c1-70759cc4f00b"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "62f25da5-4d29-1b95-2148-bad6a08fd7e5"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "120 20"
+                        Width: 160
+                        Height: 60
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                        ID: "10d15239-4969-58ed-1367-bf25a098c2fa"
+                      - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                        ID: "61bca2a7-b079-7e15-4311-4353c8038802"
+                        AccessibilityLabel: "Clipped Action"
+                        DefaultBackgroundColor: "0.8 0.08 0.08 1"
+                        HighlightBackgroundColor: "0.8 0.08 0.08 1"
+                        DefaultTextColor: "1 1 1 1"
+                        HighlightTextColor: "1 1 1 1"
+              - Name: "Target Home"
+                ID: "a66a2117-8928-cdca-d086-a2c591336307"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "b8a30dff-4391-2f23-4d5e-12b891242e74"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "320 160"
+                    Width: 264
+                    Height: 64
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "6ec7e807-cc1d-8014-f446-21debfdfe899"
+                    ClipToBounds: false
+                ChildNodes:
+                  - Name: "Mutation Target"
+                    ID: "36d0da08-dff7-3a47-5636-9e8cb07c87de"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "1f0872ce-6166-e3f2-a53e-60bafb40d88f"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "8 8"
+                        Width: 248
+                        Height: 48
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                        ID: "9a618478-8c76-a4f8-3975-928adc08f666"
+                      - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                        ID: "b34371dc-e6cf-cb34-317a-8c1d47d94687"
+                        AccessibilityLabel: "Mutation Target"
+                        DefaultBackgroundColor: "0.25 0.35 0.6 1"
+                        HighlightBackgroundColor: "0.25 0.35 0.6 1"
+                        DefaultTextColor: "1 1 1 1"
+                        HighlightTextColor: "1 1 1 1"
+                    ChildNodes:
+                      - Name: "Mutation Target Label"
+                        ID: "8e8cb8c0-1ead-57a1-0dab-185fe1439db5"
+                        Transform:
+                          $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                          $value:
+                            ID: "4a09b739-8fef-6576-93fa-a290456e96ee"
+                            MinAnchor: "0 0"
+                            MaxAnchor: "0 0"
+                            NormalizedPivot: "0 0"
+                            Translation: "8 0"
+                            Width: 232
+                            Height: 48
+                        Components:
+                          - __type: "XREngine.Rendering.UI.UITextComponent"
+                            ID: "40c41899-370d-d7c9-750c-77c0b12097e0"
+                            Text: "Mutation Target"
+                            FontSize: 18
+                            Color: "1 1 1 1"
+                            HorizontalAlignment: "Left"
+                            VerticalAlignment: "Center"
+                            ClipToBounds: true
+              - Name: "Move Clip"
+                ID: "9883fd8b-2dd7-823e-7b47-356c29817ee5"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "9980e24f-1519-1faf-5137-0a6c99fe9018"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "32 72"
+                    Width: 128
+                    Height: 36
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "9b538a1d-845b-48a2-e732-c2af01379e0a"
+                  - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                    ID: "99bec110-a50b-dcac-ff5c-0bc8400f803a"
+                    AccessibilityLabel: "Move Clip"
+                    DefaultBackgroundColor: "0.1 0.3 0.65 1"
+                    HighlightBackgroundColor: "0.1 0.3 0.65 1"
+                    DefaultTextColor: "1 1 1 1"
+                    HighlightTextColor: "1 1 1 1"
+                ChildNodes:
+                  - Name: "Move Clip Label"
+                    ID: "ae9521f7-4091-7e85-b001-82d3a6f1371e"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "befe34c4-b2a7-005a-9018-b6a9a2551dd5"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "8 0"
+                        Width: 112
+                        Height: 36
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UITextComponent"
+                        ID: "d4303898-0837-81a3-84d8-08ea239ccfbf"
+                        Text: "Move clip"
+                        FontSize: 18
+                        Color: "1 1 1 1"
+                        HorizontalAlignment: "Left"
+                        VerticalAlignment: "Center"
+                        ClipToBounds: true
+              - Name: "Rotate Clip"
+                ID: "b4f25535-1c23-9229-5b77-0eccb01e0984"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "d0df3670-7311-c183-6da0-0712f6d8f303"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "176 72"
+                    Width: 128
+                    Height: 36
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "33cf0e98-e767-fcf3-c183-352a4aa06e17"
+                  - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                    ID: "6ff45086-950b-899c-0b9f-dc24752d82eb"
+                    AccessibilityLabel: "Rotate Clip"
+                    DefaultBackgroundColor: "0.1 0.3 0.65 1"
+                    HighlightBackgroundColor: "0.1 0.3 0.65 1"
+                    DefaultTextColor: "1 1 1 1"
+                    HighlightTextColor: "1 1 1 1"
+                ChildNodes:
+                  - Name: "Rotate Clip Label"
+                    ID: "b85bf932-8e4c-1e45-96d7-f6971ceb4ab7"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "61fba174-0e36-7a9f-ab1f-73f5fb553cd6"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "8 0"
+                        Width: 112
+                        Height: 36
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UITextComponent"
+                        ID: "e00d389b-b449-d967-a4b3-afb72f8926fb"
+                        Text: "Rotate clip"
+                        FontSize: 18
+                        Color: "1 1 1 1"
+                        HorizontalAlignment: "Left"
+                        VerticalAlignment: "Center"
+                        ClipToBounds: true
+              - Name: "Target Alternate"
+                ID: "be027287-fc16-5f5a-8998-05cac37faa53"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "2c4efd12-bc34-4810-aedd-2a84f9a2853b"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "320 72"
+                    Width: 264
+                    Height: 64
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "c0984a47-3523-4572-d6dd-9292136ef10b"
+                    ClipToBounds: false
+              - Name: "Screen Image"
+                ID: "98fa9426-1924-7c9d-d95b-5e9b31059222"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "9ca8a8f3-15cd-1c9a-00b8-2a2e9c1d5561"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "32 24"
+                    Width: 96
+                    Height: 40
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "3b1919a3-14b4-82e4-51f8-63d6e44b08da"
+                  - __type: "BrowserUiParity.BrowserUiParityImageComponent"
+                    ID: "d51bc1e2-f836-621e-7869-86b51c541013"
+              - Name: "Screen Footer"
+                ID: "97b3af93-29b2-82ff-eb85-916655966a79"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "84469001-aa57-3ceb-ceee-a5091f059c4a"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "144 24"
+                    Width: 440
+                    Height: 32
+                Components:
+                  - __type: "XREngine.Rendering.UI.UITextComponent"
+                    ID: "f829f3dd-5b2e-06e5-02d0-35e22f89159a"
+                    Text: "RGBA + bitmap glyphs"
+                    FontSize: 18
+                    Color: "1 1 1 1"
+                    HorizontalAlignment: "Left"
+                    VerticalAlignment: "Center"
+                    ClipToBounds: true
+          - Name: "Offscreen Canvas"
+            ID: "03888246-9129-6795-e76f-2e1bbefa1d35"
+            Transform:
+              $type: "XREngine.Rendering.UI.UICanvasTransform"
+              $value:
+                ID: "82bc2ed8-3653-589d-4da9-b7934a66edd2"
+                DrawSpace: "World"
+                MinAnchor: "0 0"
+                MaxAnchor: "0 0"
+                NormalizedPivot: "0 0"
+                Translation: "672 96"
+                Width: 512
+                Height: 512
+            Components:
+              - __type: "XREngine.Rendering.UI.UICanvasComponent"
+                ID: "0ab11600-6127-7116-5464-de7766d8c95f"
+                PreferOffscreenRenderingForNonScreenSpaces: true
+                AutoDisableOffscreenForBackdropBlur: false
+                StrictOneByOneRenderCalls: false
+              - __type: "XREngine.Components.UICanvasInputComponent"
+                ID: "3c2d1727-33be-3c03-ec8b-55af6e016002"
+                OwningPawn: *pawn
+            ChildNodes:
+              - Name: "World Bottom Left"
+                ID: "687a05a6-7b41-3adc-5915-f1902653809b"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "6f5fb0c8-f382-13e5-dad2-ecfe4a2fa9a6"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "0 0"
+                    Width: 64
+                    Height: 64
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "46e9f4d5-138b-f4e5-98b6-5c36b6f25524"
+                    ClipToBounds: false
+              - Name: "World Bottom Right"
+                ID: "30486367-0c3f-ec36-8331-3fda250abae9"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "707db493-9d8c-8a4c-79a1-ad8e784d5a9b"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "448 0"
+                    Width: 64
+                    Height: 64
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "73edf95d-50bd-ab23-3fa2-e54f32e27d59"
+                    ClipToBounds: false
+              - Name: "World Top Left"
+                ID: "95087842-a5d3-68e5-20bc-82c02c3254eb"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "d3e2fc37-1615-7c4d-39d0-586242673e35"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "0 448"
+                    Width: 64
+                    Height: 64
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "a4718351-bfae-389a-12c1-80f1713ef89e"
+                    ClipToBounds: false
+              - Name: "World Top Right"
+                ID: "ff5ee754-624d-8600-11b7-2e75a2f51377"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "a0a989d1-2c4a-b27c-0213-3bce34c23592"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "448 448"
+                    Width: 64
+                    Height: 64
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "8aeb8352-dcf4-4c1c-cfb9-d15715298ec1"
+                    ClipToBounds: false
+              - Name: "Offscreen Heading"
+                ID: "c1dbec4f-a6ba-d5f4-b00a-950ad31902c9"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "4706ff44-7364-3781-b2f5-e70205a3529b"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "80 452"
+                    Width: 352
+                    Height: 40
+                Components:
+                  - __type: "XREngine.Rendering.UI.UITextComponent"
+                    ID: "93843bf2-a4f8-736e-3c79-5678e3acff59"
+                    Text: "Owned world canvas"
+                    FontSize: 24
+                    Color: "1 1 1 1"
+                    HorizontalAlignment: "Left"
+                    VerticalAlignment: "Center"
+                    ClipToBounds: true
+              - Name: "World Half Red"
+                ID: "8bd72064-a2f3-895d-fd54-f2796d555611"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "9720bcd8-ba6e-2652-591a-d9895ae881e5"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "96 256"
+                    Width: 192
+                    Height: 128
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "1b03bbf6-3039-df6a-7896-b4fc5315d98b"
+                    ClipToBounds: false
+              - Name: "World Half Blue"
+                ID: "affeaaac-0b26-ddf5-58c8-da094f7d725d"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "9e229bf3-13bb-501e-4acb-9d91ab0189b7"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "192 256"
+                    Width: 192
+                    Height: 128
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "b5b75af4-4708-b8bd-65cd-8b729a2ec2f1"
+                    ClipToBounds: false
+              - Name: "World Image"
+                ID: "764ff791-33f0-93f0-1bc7-0a0fa21afdce"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "cb052e87-3d83-627d-4521-64f3bc0d1bc8"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "64 96"
+                    Width: 128
+                    Height: 128
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "14fb9783-a9dd-2bfc-ca80-91356ad742ea"
+                  - __type: "BrowserUiParity.BrowserUiParityImageComponent"
+                    ID: "af28897c-5586-0ee0-ebfb-db149fa8b7ea"
+              - Name: "Offscreen Action"
+                ID: "0a2adef8-0277-0cf8-4e8f-2ff0ea16ffb6"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "61c340c9-d392-c16e-e6bc-033c14b53ed3"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "224 120"
+                    Width: 240
+                    Height: 64
+                Components:
+                  - __type: "XREngine.Rendering.UI.UIMaterialComponent"
+                    ID: "650b001d-2191-a3c4-d546-bc62e7d9f0d5"
+                  - __type: "XREngine.Rendering.UI.UIButtonComponent"
+                    ID: "fb045667-79ff-c76a-5463-18aae5e6d04b"
+                    AccessibilityLabel: "Offscreen Action"
+                    DefaultBackgroundColor: "0.1 0.55 0.25 1"
+                    HighlightBackgroundColor: "0.1 0.55 0.25 1"
+                    DefaultTextColor: "1 1 1 1"
+                    HighlightTextColor: "1 1 1 1"
+                ChildNodes:
+                  - Name: "Offscreen Action Label"
+                    ID: "8dcd6231-e9c4-4775-799a-9357e8d54c5a"
+                    Transform:
+                      $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                      $value:
+                        ID: "35238b1a-3e77-53b6-b8d2-d774a9a51a30"
+                        MinAnchor: "0 0"
+                        MaxAnchor: "0 0"
+                        NormalizedPivot: "0 0"
+                        Translation: "8 0"
+                        Width: 224
+                        Height: 64
+                    Components:
+                      - __type: "XREngine.Rendering.UI.UITextComponent"
+                        ID: "3c03a028-3f8d-dc3e-e49f-e8bf844877ed"
+                        Text: "Offscreen action"
+                        FontSize: 18
+                        Color: "1 1 1 1"
+                        HorizontalAlignment: "Left"
+                        VerticalAlignment: "Center"
+                        ClipToBounds: true
+              - Name: "Offscreen Footer"
+                ID: "52ef3af4-2460-2ca3-2920-da49e9c1ce60"
+                Transform:
+                  $type: "XREngine.Rendering.UI.UIBoundableTransform"
+                  $value:
+                    ID: "c768a1ec-3303-023a-f6ae-5889f1610075"
+                    MinAnchor: "0 0"
+                    MaxAnchor: "0 0"
+                    NormalizedPivot: "0 0"
+                    Translation: "64 32"
+                    Width: 384
+                    Height: 32
+                Components:
+                  - __type: "XREngine.Rendering.UI.UITextComponent"
+                    ID: "c57b1d0f-2c96-14fd-4613-b76bd080e900"
+                    Text: "Transparent gaps show the world"
+                    FontSize: 18
+                    Color: "1 1 1 1"
+                    HorizontalAlignment: "Left"
+                    VerticalAlignment: "Center"
+                    ClipToBounds: true
+DefaultGameMode:
+  __type: "BrowserUiParity.BrowserUiParityGameMode"
+  __assetType: "BrowserUiParity.BrowserUiParityGameMode"
+  FixtureMarker: "shared-ui-offscreen-input-v1"
+  ClippingEnabled: true
+  ID: "6a38a062-f89f-833d-3e62-bcd244d6f591"
+  Name: "Authored Shared UI Game Mode"
+Settings:
+  __assetType: "XREngine.Scene.WorldSettings"
+  ID: "62eb5b7c-d04c-d1a1-fa00-d4fe0dea136d"
+  RenderSkybox: false
+  ClearColor: "0.125 0.25 0.375 1"
+  AutoCaptureLightProbes: false
+  PreviewWorldBounds: false

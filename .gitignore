@@ -506,3 +506,13 @@ Samples/AdvancedRenderingParity/Assets/*
 !Samples/AdvancedRenderingParity/Assets/Textures/
 !Samples/AdvancedRenderingParity/Assets/Textures/**
 !Samples/AdvancedRenderingParity/Assets/startup.asset
+
+# Authored browser UI parity sample; retain only its source inputs.
+Samples/BrowserUiParity/Build/
+!Samples/BrowserUiParity/Assets/
+Samples/BrowserUiParity/Assets/*
+!Samples/BrowserUiParity/Assets/Scripts/
+!Samples/BrowserUiParity/Assets/Scripts/**
+!Samples/BrowserUiParity/Assets/Worlds/
+!Samples/BrowserUiParity/Assets/Worlds/**
+!Samples/BrowserUiParity/Assets/startup.asset

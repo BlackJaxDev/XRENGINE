@@ -19,7 +19,13 @@ export async function rollingBallGameCheck(browser, origin, report, config, inst
     for (let iteration = 0; iteration < 2; iteration++) {
         const { page, context, events } = await instrumentedPage(browser, origin, report,
             `rollingball-game-${iteration}`, config);
+        let phase = 'startup', failed = false;
         try {
+            await page.addInitScript(() => {
+                document.addEventListener('xrengine-canvas-failed', event => {
+                    globalThis.rollingBallCanvasFailure = event.detail;
+                });
+            });
             await page.goto(`${origin}/__game/index.html`, { waitUntil: 'domcontentloaded' });
             assert(await page.locator('#manifest-url').count() === 0 &&
                 await page.locator('#world-form').count() === 0,
@@ -29,6 +35,8 @@ export async function rollingBallGameCheck(browser, origin, report, config, inst
                 pixels => pixels.colorful > 200 && pixels.green > 100,
                 'BrowserSmoke.RollingBallClearOnly: the published game canvas contains no substantial authored color.');
             const result = { iteration, detail, playing: baseline.pixels };
+            report.rollingBallIterations.push(result);
+            phase = 'input';
 
             const canvas = page.locator('#input-surface');
             await canvas.focus();
@@ -65,6 +73,7 @@ export async function rollingBallGameCheck(browser, origin, report, config, inst
             }
 
             const originalSize = await canvas.evaluate(element => [element.width, element.height]);
+            phase = 'resize';
             await page.setViewportSize({ width: 860 + iteration * 80, height: 780 });
             await page.waitForFunction(([width, height]) => {
                 const canvas = document.querySelector('#input-surface');
@@ -77,14 +86,21 @@ export async function rollingBallGameCheck(browser, origin, report, config, inst
             result.resized = resized.pixels;
             result.canvasSizes = { before: originalSize,
                 after: await canvas.evaluate(element => [element.width, element.height]) };
-            report.rollingBallIterations.push(result);
+            phase = 'complete';
             assertNoBrowserErrors(events);
         } catch (error) {
+            failed = true;
+            const detail = await page.evaluate(() => globalThis.rollingBallCanvasFailure ?? null).catch(() => null);
+            (report.rollingBallFailures ??= []).push({ iteration, phase, canvasFailure: detail });
             await page.screenshot({ path: path.join(config.output, `rollingball-${iteration}-failure.png`),
                 fullPage: true }).catch(() => {});
             throw error;
         } finally {
-            await context.close();
+            try { await context.close(); }
+            catch (error) {
+                (report.rollingBallCleanupFailures ??= []).push({ iteration, error: String(error) });
+                if (!failed) throw error;
+            }
         }
     }
 }

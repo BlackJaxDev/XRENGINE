@@ -138,6 +138,54 @@ namespace XREngine.Rendering.UI
                 string.Equals(shader.Source.Text, canonical, StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// Validates the ordinary solid quad's source data before an offline target projection.
+        /// Shader provenance is checked by the publisher; only the listed engine bounds callbacks may be omitted.
+        /// </summary>
+        public static bool TryGetWebGpuSolidCookProfile(XRMaterial material,
+            IReadOnlyCollection<UIMaterialComponent> consumers, out string? reason)
+        {
+            reason = "solid UI requires the exact ordinary material, one finite MatColor, and the shared UI raster profile";
+            if (material.GetType() != typeof(XRMaterial) || material.HasEngineSemantic ||
+                material.Parameters.Length != 1 || material.Parameters[0] is not ShaderVector4 { Name: "MatColor" } color ||
+                !float.IsFinite(color.Value.X) || !float.IsFinite(color.Value.Y) ||
+                !float.IsFinite(color.Value.Z) || !float.IsFinite(color.Value.W) ||
+                material.Textures.Count != 0 || material.SurfaceTextureBindings.Length != 0 ||
+                !UIBatchCollector.HasWebGpuRasterProfile(material.RenderOptions))
+                return false;
+            reason = "solid UI cannot discard authored material features, pass overrides, or binding publishers";
+            if (material.BillboardMode != EMeshBillboardMode.None || material.HasSettingVertexUniformHandlers ||
+                material.HasSettingShadowUniformHandlers || material.BindingPublishers.Count != 0 ||
+                material.PassSet.Passes.Length != 0 || material.PassSet.DisabledSourcePasses.Length != 0 ||
+                material.PassSet.SourceRenderQueue != -1 || material.PassSet.QueuePriority != 0 ||
+                material.PassSet.ForwardAddRenderOptions is not null ||
+                material.PassSet.ForwardAddPolicy != EMaterialForwardAddPolicy.FoldedIntoForwardPlusBase ||
+                material.UberAuthoredState.Features.Length != 0 || material.UberAuthoredState.Properties.Length != 0 ||
+                !material.RequestedUberVariant.IsEmpty || material.TransparentTechniqueOverride is not null ||
+                material.TransparencyMode != ETransparencyMode.Opaque ||
+                material.EmissiveColor.HasValue || material.EmissionStrength.HasValue || material.Transmission != 0 ||
+                material.TransmissionColor != Vector3.One || material.NormalScale != 1)
+                return false;
+
+            HashSet<Action<XRMaterialBase, XRRenderProgram>> handlers = [];
+            reason = "solid UI lowering requires ordinary UIMaterialComponent consumers with only their engine bounds callbacks";
+            if (consumers.Count == 0)
+                return false;
+            foreach (UIMaterialComponent consumer in consumers)
+            {
+                // Exact components cannot override OnMaterialSettingUniforms or batch behavior.
+                if (consumer.GetType() != typeof(UIMaterialComponent) || !ReferenceEquals(consumer.Material, material))
+                    return false;
+                handlers.Add(consumer.OnMaterialSettingUniforms);
+            }
+            // Empty surface metadata can install this engine publisher during YAML reload.
+            // The feature guard above proves it has no authored emission to preserve.
+            if (!material.HasOnlyStandardSurfaceAndUniformHandlers(handlers))
+                return false;
+            reason = null;
+            return true;
+        }
+
         /// <summary>Checks the authored image and sampler against the sampled WebGPU UI binding.</summary>
         public static bool TryGetWebGpuImageProfile(XRTexture2D texture, out string? reason)
         {

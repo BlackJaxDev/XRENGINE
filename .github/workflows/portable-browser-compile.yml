@@ -403,6 +403,57 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Stage authored shared UI project
+        shell: pwsh
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'ui-parity-cli/project'
+          if (Test-Path -LiteralPath $project) { throw 'The UI CLI project must start empty.' }
+          New-Item -ItemType Directory -Path $project -Force | Out-Null
+          foreach ($name in @('BrowserUiParity.xrproj', 'Assets')) {
+            Copy-Item -LiteralPath (Join-Path 'Samples/BrowserUiParity' $name) -Destination $project -Recurse
+          }
+          New-Item -ItemType Directory -Path (Join-Path $project 'Config') | Out-Null
+          $shaders = Join-Path $project 'Assets/Shaders'
+          New-Item -ItemType Directory -Path $shaders -Force | Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU') -Destination $shaders -Recurse
+
+      - name: Publish shared UI through the Editor CLI
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'ui-parity-cli/project/BrowserUiParity.xrproj'
+          $log = Join-Path $env:VALIDATION_ROOT 'ui-parity-cli/editor-cli.log'
+          dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+            --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+            --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { throw "The shared UI Editor CLI publisher failed; inspect $log." }
+          $site = Join-Path $env:VALIDATION_ROOT 'ui-parity-cli/project/Build/browser-game'
+          $manifest = Get-Content -LiteralPath (Join-Path $site 'content/manifest.json') -Raw | ConvertFrom-Json
+          if (!(Test-Path -LiteralPath (Join-Path $site 'index.html')) -or
+              $manifest.startupWorld -ne '/game/Worlds/BrowserUiParityWorld.asset' -or
+              !($manifest.assets | Where-Object path -eq '/engine/Fonts/Roboto/Roboto-Regular.cooked.asset') -or
+              !(Test-Path -LiteralPath (Join-Path $site 'licenses/Roboto-LICENSE.txt'))) {
+            throw 'The Editor did not activate the saved shared UI world and its cooked font/license.'
+          }
+          foreach ($semantic in @('UIQuadBatched', 'UIQuadBatchedTexture', 'UITextBatchedBitmap', 'UICanvasSurface')) {
+            $version = if ($semantic -eq 'UICanvasSurface') { 1 } else { 2 }
+            if (!($manifest.materialVariants | Where-Object { $_.semantic -eq $semantic -and $_.semanticVersion -eq $version })) {
+              throw "Missing published shared UI variant: $semantic v$version"
+            }
+          }
+          git diff --exit-code -- Samples/BrowserUiParity
+          if ($LASTEXITCODE -ne 0) { throw 'Authored shared UI inputs changed during CLI publishing.' }
+
+      - name: Preserve exact Editor-published shared UI bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-ui-parity-bundle
+          path: ${{ env.VALIDATION_ROOT }}/ui-parity-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Preserve Windows Editor CLI evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -412,6 +463,9 @@ jobs:
             ${{ env.VALIDATION_ROOT }}/rollingball-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/rendering-parity-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/advanced-rendering-parity-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/ui-parity-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/ui-parity-cli/project/Build/browser-game/browser-publish.json
+            ${{ env.VALIDATION_ROOT }}/ui-parity-cli/project/Build/browser-game/content/manifest.json
             ${{ env.VALIDATION_ROOT }}/advanced-rendering-parity-cli/project/Build/browser-game/content/manifest.json
             ${{ env.VALIDATION_ROOT }}/rendering-parity-cli/project/Build/browser-game/browser-publish.json
             ${{ env.VALIDATION_ROOT }}/rendering-parity-cli/project/Build/browser-game/content/manifest.json
@@ -429,7 +483,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kind: [rollingball, rendering-parity, advanced-rendering-parity]
+        kind: [rollingball, rendering-parity, advanced-rendering-parity, ui-parity]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

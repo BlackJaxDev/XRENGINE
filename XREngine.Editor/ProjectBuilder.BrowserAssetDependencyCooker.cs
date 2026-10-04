@@ -68,6 +68,7 @@ internal static partial class ProjectBuilder
                 .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
             if (!declared.SequenceEqual(existing.Dependencies, StringComparer.Ordinal))
                 throw new InvalidDataException($"BrowserCook.StreamedSceneDependencyChanged: '{catalogPath}'.");
+            _materialProjection.PrepareMaterialConsumers(scene, catalogPath, cancellationToken);
             WriteCookedAsset(scene, Path.Combine(sourceDirectory, existing.Source), callbacks: CookCallbacks);
             return existing.Source;
         }
@@ -111,6 +112,7 @@ internal static partial class ProjectBuilder
 
             try
             {
+                _materialProjection.PrepareMaterialConsumers(asset, catalogPath, cancellationToken);
                 IReadOnlyList<PublishedCookedAssetDependency> declared = DescribeDependencies(asset, catalogPath);
                 if (declared.Count > 4096)
                     throw new InvalidDataException($"Browser asset '{catalogPath}' declares more than 4096 reference occurrences.");

@@ -127,3 +127,11 @@ new browser workflow step now selects the three relevant behavioral ownership
 fixtures rather than the entire desktop Vulkan source-contract class. Those
 existing Vulkan tests are retained. The corrected framebuffer test and the
 focused selection await their next exact-commit execution.
+
+Run [37214531333](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37214531333)
+on `930d1be4` passes all eight focused behavioral cases with no skips, along
+with all three Windows Editor publications. The separate 34 desktop source-text
+failures remain outside that result. RenderingParity passes its browser run.
+RollingBall renders both sessions, but its second resize exposes an independent
+pending-receipt capacity failure; it is not evidence of a framebuffer-stack
+regression.

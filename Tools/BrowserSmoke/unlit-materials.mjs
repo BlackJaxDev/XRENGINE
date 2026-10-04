@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { canvasGeometry } from './canvas-capture.mjs';
 
 const bytes = [64, 128, 192, 96];
 const masked = [200, 40, 80];
@@ -108,6 +109,7 @@ async function sampleBoard(page, output, label, width, height, capturePixels, bo
         x: Math.floor(width * coordinates[index % 3]),
         y: Math.floor(height * coordinates[Math.floor(index / 3)]),
         expected: display(expected.hdr) }));
+    board.canvasGeometry = await canvasGeometry(page);
     const png = await page.locator('canvas').screenshot({ path: path.join(output, `engine-unlit-${label}.png`) });
     board.pixels = await capturePixels(page, png, samples);
     for (let index = 0; index < cases.length; index++) {
