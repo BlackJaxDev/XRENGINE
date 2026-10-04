@@ -14,6 +14,7 @@ export class EngineMeshDiagnosticHost {
         this.pendingStop = Promise.resolve();
         this.request = 0;
         this.effectsPause = null;
+        this.unlitPauseRequest = null;
         this.nextEffectsPauseId = 0;
         this.stage = 'idle';
         this.failure = null;
@@ -144,6 +145,11 @@ export class EngineMeshDiagnosticHost {
 
     frame() {
         this.request = 0;
+        const pendingPause = this.unlitPauseRequest;
+        if (pendingPause && (pendingPause.epoch !== this.epoch || pendingPause.session !== this.session ||
+            pendingPause.renderer !== this.renderer || pendingPause.generation !== this.renderer?._generation ||
+            this.renderer?._owner !== pendingPause.session))
+            this.settleUnlitPause(new Error('The engine Unlit pause owner or generation changed before sampling.'));
         if (!this.session || this.effectsPause) return;
         try {
             this.stage = 'engine-frame';
@@ -166,6 +172,10 @@ export class EngineMeshDiagnosticHost {
             else if (performance.now() - this.startedAt > 45000)
                 throw new Error(`Engine mesh ${this.kind} diagnostic did not submit its expected engine draws within 45 seconds. ${this.exports.GetFrameStatus(this.session)}`);
             this.request = requestAnimationFrame(this.frame);
+            // Managed counters describe the attempt that just returned. Stop in
+            // this synchronous task so a later preparation cannot replace them.
+            if (ready && this.unlitPauseRequest && this.statistics()?.resources?.retiring === 0)
+                this.settleUnlitPause();
         } catch (error) { this.fail(error); }
     }
 
@@ -177,9 +187,34 @@ export class EngineMeshDiagnosticHost {
         return this.pauseDiagnosticFrames();
     }
 
+    /** Resolves only after a new successful managed frame, with its exact submitted packet still current. */
     pauseUnlitFrames() {
-        if (this.kind !== 'unlit') throw new Error('An active engine Unlit diagnostic is required.');
-        return this.pauseDiagnosticFrames();
+        if (!this.session || this.kind !== 'unlit' || !this.renderer || this.failure || this.effectsPause ||
+            this.unlitPauseRequest || this.readyFrames < 2 || this.lastReadySession !== this.session || !this.request)
+            throw new Error('An active settled engine Unlit diagnostic is required before requesting sampling.');
+        return new Promise((resolve, reject) => {
+            const pending = { epoch: this.epoch, session: this.session, renderer: this.renderer,
+                generation: this.renderer._generation, resolve, reject, deadline: null };
+            this.unlitPauseRequest = pending;
+            pending.deadline = setTimeout(() => {
+                if (this.unlitPauseRequest === pending)
+                    this.settleUnlitPause(new Error('Engine Unlit sampling did not reach a settled submitted frame within 45 seconds.'));
+            }, 45000);
+        });
+    }
+
+    settleUnlitPause(error = null) {
+        const pending = this.unlitPauseRequest;
+        if (!pending) return;
+        this.unlitPauseRequest = null;
+        clearTimeout(pending.deadline);
+        if (error) { pending.reject(error); return; }
+        try {
+            if (pending.epoch !== this.epoch || pending.session !== this.session || pending.renderer !== this.renderer ||
+                pending.generation !== this.renderer?._generation || this.renderer?._owner !== pending.session)
+                throw new Error('The engine Unlit pause owner or generation changed before sampling.');
+            pending.resolve(this.pauseDiagnosticFrames());
+        } catch (failure) { pending.reject(failure); }
     }
 
     pauseDiagnosticFrames() {
@@ -419,6 +454,7 @@ export class EngineMeshDiagnosticHost {
         const minimum = this.kind === 'effects' ? 1 : 64;
         if (![width, height].every(value => Number.isInteger(value) && value >= minimum && value <= 1024))
             throw new Error(`Diagnostic resize dimensions must be integers from ${minimum} through 1024.`);
+        this.settleUnlitPause(new Error('The engine Unlit output was resized before sampling.'));
         this.canvas.style.width = `${width}px`;
         this.canvas.style.height = `${height}px`;
         this.unlitFrameEvidence?.invalidate();
@@ -550,6 +586,7 @@ export class EngineMeshDiagnosticHost {
         // Capture before Stop removes the renderer and managed fixture; cleanup and
         // delayed device-loss callbacks must not replace the original failure.
         if (this.failure) return;
+        this.settleUnlitPause(error);
         let frameStatus = null;
         if (this.session) {
             try { frameStatus = String(this.exports.GetFrameStatus(this.session)).slice(0, 2048); }
@@ -576,6 +613,7 @@ export class EngineMeshDiagnosticHost {
     }
 
     stop(supersede = true, publishState = true) {
+        this.settleUnlitPause(new Error('The engine Unlit diagnostic stopped before sampling.'));
         if (supersede) this.epoch++;
         const stopEpoch = this.epoch;
         this.effectsPause = null;

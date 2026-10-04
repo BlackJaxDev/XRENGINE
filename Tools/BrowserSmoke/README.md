@@ -400,6 +400,20 @@ capture inspection. There is no verified span around `vkCreateComputePipelines`;
 residual native initialization time cannot be attributed to SwiftShader alone.
 Trace success never changes rendering acceptance.
 
+The same opt-in makes two direct `SystemInfo.getProcessInfo` reads through the
+existing CDP session: near the compile callback and at 44 seconds of the unchanged
+45-second watchdog. Each read has a 500-ms bound and neither blocks the callback
+or watchdog. A delayed second read is skipped if less than its query budget
+remains; deadline, early completion and cleanup cancel future reads. Pending
+reads settle within the existing trace cleanup budget. `nativeTrace.processCpu`
+retains only the unique GPU PID and cumulative CPU seconds, request/response
+timestamps, read failures, PID replacement, decreasing counters and Node cleanup
+overlap. A delta requires two valid reads of the same PID; its elapsed interval
+is bounded by their request/response times. The counter covers every thread in
+the GPU process. It cannot identify worker CPU, compiler stages, or the cause of
+low activity. Page disposal can precede the Node cleanup marker, so page cleanup
+overlap cannot be excluded. This observation does not activate CPU sampling.
+
 The diagnostic's static Core scene host creates no production `RuntimeWorld`,
 never begins play, and requests no physics backend. It validates engine rendering
 and shader interpretation only. Full `DefaultRenderPipeline`, textures, shadows,

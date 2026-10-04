@@ -466,3 +466,62 @@ nested package, an accepted first frame, and the original UI pixel/input checks.
 Independent source review approved this two-file correction and the lifecycle
 sequences above. Scoped whitespace validation passes. Actual C# reproduction,
 compilation and browser acceptance remain unexecuted for this correction.
+
+On `996101db`,
+[run 37241689117, UI job 111556548582](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37241689117/job/111556548582)
+gets beyond the missing canvas publication and reports the real authored
+`BrowserUiParityWorld` running. That establishes an admitted queue submission
+with the matching output identity; it does not establish completed GPU work or
+correct UI pixels. The next failure is the harness's input-observer wait. It
+installed its hook after running, then removed it after five seconds while
+waiting six seconds for another natural `syncTextFocus` call. That call follows
+an admitted engine Step, so observation unnecessarily depended on another
+admitted frame. Source inspection confirms the player and observer import the
+same input module and the method is not rebound on the instance.
+
+Failure capture then spent 180 seconds waiting for a stable element during
+`scrollIntoViewIfNeeded`. The inspected full-page image is blank and reports
+device acquisition after a later device-loss warning. Neither that later image
+nor the aborted payload requests prove the earlier observer timeout's cause.
+Independent source tracing found no proven shipping admission or resize defect:
+64 pending receipts can defer later frames, but their state was not captured;
+equal backing extents leave the surface generation unchanged.
+
+The UI harness now holds only the original player entry-script request until
+the canvas exists and read-only prototype observers are installed. The entry
+is a deferred module, so HTML parsing can create the canvas while the request
+is held; the observer imports have no dependency on that entry module. Setup
+has a five-second bound and then continues the original script request and
+bytes, or aborts that request on failure. The input hook survives startup and
+restores after its first natural invocation or cleanup. The existing running,
+17-control, pixel and delivered-input assertions remain required.
+
+Explicit snapshots now include managed rendering status, receipt/error-scope
+statistics, the host's last frame timestamp, admission wait, visibility, canvas
+bounds/backing size and surface generation. Polling control predicates do not
+request those heavier diagnostics. Before startup, bounded observations retain
+32 status changes, 32 lifecycle/resize records and four existing
+`xrengine-canvas-failed` details; failure events are also delivered directly to
+the report so a later page-evaluation failure cannot erase them. Failure-only
+state and full-page capture run concurrently with five-second limits and do
+not scroll or await stable bounds or another animation frame. These changes
+repair observation ordering and failure evidence; they do not claim that the
+unexplained post-startup delay or device loss is fixed.
+
+Local checks execute the production harness orchestration with mocked page
+operations for setup failure/owned-request abort and post-startup observation
+failure/original-request continuation. They verify concurrent bounded failure
+capture and cleanup, but do not execute browser layout, WebGPU or the managed
+engine. JavaScript syntax and whitespace checks pass. Actual pixel, input,
+resize and restart qualification still require the next genuine browser run.
+Independent source review approved the final harness ordering, bounded evidence,
+cleanup and preservation of the player's return/error behavior.
+
+A separate source-reviewed context-menu correction tracks ownership of its
+one-shot post-update arming subscription. Previously, hide/reopen before the
+next post-update could queue a second removal that deleted the new callback,
+leaving outside-left-click dismissal unarmed. Explicit ownership queues one
+removal and preserves deferred arming. No local C# execution was performed;
+the authored BrowserUiParity world contains no context menu. Reentrant IsOpen
+observers and additional same-post-update edge cases have no new runtime
+qualification from this correction.

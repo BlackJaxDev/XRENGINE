@@ -69,12 +69,18 @@ function pixelWitnesses(clipping = true) {
 async function installObservation(page) {
     await page.evaluate(async () => {
         const { BrowserEngineInput } = await import('./engine-input.js');
+        const { EngineCanvasHost } = await import('./engine-canvas-host.js');
         const prototype = BrowserEngineInput.prototype;
         const original = prototype.syncTextFocus;
-        const canvas = document.querySelector('#input-surface');
+        const originalStart = EngineCanvasHost.prototype.start;
         const controller = new AbortController();
         const trace = [];
-        let omitted = 0, timer;
+        let omitted = 0;
+        const observation = { installed: true, inputObserved: false, failure: null };
+        globalThis.uiParityObservation = observation;
+        const lifecycle = [], states = [], failures = [];
+        let omittedEvidence = 0;
+        const canvas = document.querySelector('#input-surface');
         const nodeIds = new WeakMap();
         let nextNodeId = 0;
         const nodeId = element => {
@@ -86,6 +92,34 @@ async function installObservation(page) {
             const value = element.getBoundingClientRect();
             return { x: value.x, y: value.y, width: value.width, height: value.height };
         };
+        const recordLifecycle = type => {
+            if (lifecycle.length === 32) { omittedEvidence++; return; }
+            lifecycle.push({ time: Date.now(), type, hidden: document.hidden, focused: document.hasFocus(),
+                attached: canvas.isConnected, bounds: rect(canvas), width: canvas.width, height: canvas.height });
+        };
+        document.addEventListener('xrengine-canvas-failed', event => {
+            if (failures.length === 4) { omittedEvidence++; return; }
+            failures.push({ time: Date.now(), detail: event.detail });
+            // Deliver terminal evidence independently of a later page evaluation.
+            void globalThis.uiParityFailureObserved?.(event.detail).catch(() => {});
+        }, { capture: true, signal: controller.signal });
+        for (const type of ['visibilitychange', 'freeze', 'resume'])
+            document.addEventListener(type, () => recordLifecycle(type), { signal: controller.signal });
+        for (const type of ['pagehide', 'pageshow', 'resize'])
+            window.addEventListener(type, () => recordLifecycle(type), { signal: controller.signal });
+        const sizeObserver = new ResizeObserver(() => recordLifecycle('canvas-resize'));
+        sizeObserver.observe(canvas);
+        const status = document.querySelector('#status');
+        const recordState = () => {
+            const state = status.dataset.state, message = status.textContent.slice(0, 4096);
+            if (states.at(-1)?.state === state && states.at(-1)?.message === message) return;
+            if (states.length === 32) { omittedEvidence++; return; }
+            states.push({ time: Date.now(), state, message });
+        };
+        const statusObserver = new MutationObserver(recordState);
+        statusObserver.observe(status, { attributes: true, attributeFilter: ['data-state'], childList: true });
+        recordState();
+        globalThis.uiParityEvidence = () => ({ observation, lifecycle, states, failures, omittedEvidence });
         const dom = element => {
             if (!element) return null;
             const native = element.querySelector('input,textarea') ?? element;
@@ -110,7 +144,26 @@ async function installObservation(page) {
         }
         function restore() {
             if (prototype.syncTextFocus === wrapper) prototype.syncTextFocus = original;
-            clearTimeout(timer);
+            if (EngineCanvasHost.prototype.start === observeStart) EngineCanvasHost.prototype.start = originalStart;
+        }
+        function observeStart(...args) {
+            EngineCanvasHost.prototype.start = originalStart;
+            const host = this;
+            globalThis.uiParityRendering = () => {
+                let managed;
+                try { managed = host.engine.GetCanvasRenderingStatus(); }
+                catch (error) { managed = String(error); }
+                return { time: Date.now(), frameTimestamp: host.previousFrame, now: performance.now(),
+                    managed, hidden: document.hidden, focused: document.hasFocus(),
+                    attached: host.canvas.isConnected, canvas: rect(host.canvas),
+                    bitmapWidth: host.canvas.width, bitmapHeight: host.canvas.height,
+                    drawable: host.drawable, presented: host.presented, surfaceGeneration: host.surfaceGeneration,
+                    rendererReady: host.rendererReady, recovering: host.recovering, failed: host.failed,
+                    firstFrameSeconds: host.firstFrameSeconds, admissionWaitSeconds: host.admissionWaitSeconds,
+                    deferredFrameSeconds: host.deferredFrameSeconds,
+                    renderer: host.renderer?.getStatistics(), failure: host.renderer?.getFailureDiagnostics() };
+            };
+            return originalStart.apply(this, args);
         }
         function wrapper(...args) {
             try { return original.apply(this, args); }
@@ -118,8 +171,11 @@ async function installObservation(page) {
                 // Observation must preserve the player's result, including a thrown error.
                 try {
                     restore();
-                    const input = this, engine = this.engine;
-                    globalThis.uiParityRead = () => ({
+                    const input = this, engine = this.engine, canvas = this.canvas;
+                    observation.inputObserved = true;
+                    globalThis.uiParityRead = (includeRendering = false) => ({
+                        observation, rendering: includeRendering ? globalThis.uiParityRendering?.() : undefined,
+                        evidence: includeRendering ? globalThis.uiParityEvidence() : undefined,
                         revision: input.controlRevision,
                         status: document.querySelector('#status')?.textContent,
                         state: document.querySelector('#status')?.dataset.state,
@@ -139,23 +195,35 @@ async function installObservation(page) {
                             singleLine: engine.GetTextInputSingleLine(), composing: input.textComposing, pending: input.textCommitPending },
                         active: dom(document.activeElement), events: trace.splice(0), omittedEvents: omitted,
                     });
-                } catch { /* A failed observer must not replace a player exception. */ }
+                } catch (error) { observation.failure = String(error); }
             }
         }
         prototype.syncTextFocus = wrapper;
-        timer = setTimeout(restore, 5000);
+        EngineCanvasHost.prototype.start = observeStart;
         globalThis.uiParityCleanup = () => {
-            restore(); controller.abort(); delete globalThis.uiParityRead; delete globalThis.uiParityCleanup;
+            sizeObserver.disconnect(); statusObserver.disconnect();
+            restore(); controller.abort(); delete globalThis.uiParityRead; delete globalThis.uiParityRendering;
+            delete globalThis.uiParityObservation; delete globalThis.uiParityEvidence; delete globalThis.uiParityCleanup;
         };
     });
-    await page.waitForFunction(() => typeof globalThis.uiParityRead === 'function', null, { timeout: 6000 });
 }
 
 async function read(page) {
-    return page.evaluate(() => typeof globalThis.uiParityRead === 'function' ? globalThis.uiParityRead() : {
-        observationUnavailable: true, state: document.querySelector('#status')?.dataset.state,
+    return page.evaluate(() => typeof globalThis.uiParityRead === 'function' ? globalThis.uiParityRead(true) : {
+        observationUnavailable: true, observation: globalThis.uiParityObservation,
+        evidence: globalThis.uiParityEvidence?.(),
+        rendering: globalThis.uiParityRendering?.(), state: document.querySelector('#status')?.dataset.state,
         status: document.querySelector('#status')?.textContent, controls: [], proxies: [],
     });
+}
+
+async function boundedObservation(operation, milliseconds) {
+    let timer;
+    try {
+        return await Promise.race([operation, new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`UI observation exceeded ${milliseconds} ms.`)), milliseconds);
+        })]);
+    } finally { clearTimeout(timer); }
 }
 function control(state, name) { return state.controls.find(item => item.name === name); }
 function counts(state) {
@@ -284,7 +352,7 @@ async function waitRunning(page) {
 export async function uiParityGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors) {
     report.uiParityIterations = [];
     report.uiParityQualification = {
-        instrumentation: 'One-frame input sync observer, restored immediately; existing getter exports and native DOM only. No managed action/input export is invoked by this harness.',
+        instrumentation: 'Read-only input-sync and host-start observers installed before the unchanged player entry script and restored on first invocation or cleanup. Existing getters, renderer statistics and native DOM only; no managed action/input export is invoked.',
         input: 'Browser-delivered mouse/keyboard and Chromium touch protocol events target the actual canvas or native keyboard proxy.',
         composition: 'Synthetic DOM composition routing only; physical OS IME acceptance remains pending.',
         lifecycle: 'Two independent fresh browser contexts. Resource retirement and physical desktop/device captures require separate live evidence.',
@@ -355,17 +423,42 @@ export async function uiParityGameCheck(browser, origin, report, config, instrum
         };
         try {
             await page.setViewportSize({ width: 1376, height: 1080 });
+            await page.exposeFunction('uiParityFailureObserved', detail => {
+                if ((result.canvasFailures ??= []).length < 4)
+                    result.canvasFailures.push({ time: Date.now(), detail });
+            });
+            // Hold the unchanged entry script until its exact imported prototypes are
+            // observed. DOMContentLoaded and a running status can both be too late.
+            await page.route(`${origin}/__game/engine-player.js`, async route => {
+                try {
+                    await boundedObservation((async () => {
+                        await page.locator(surface).waitFor({ state: 'attached', timeout: 5000 });
+                        await installObservation(page);
+                    })(), 5000);
+                    result.observationInstalled = true;
+                    await route.continue();
+                } catch (error) {
+                    result.observationInstallError = String(error);
+                    await route.abort('failed');
+                }
+            }, { times: 1 });
             await page.goto(`${origin}/__game/index.html`, { waitUntil: 'domcontentloaded' });
+            assert(result.observationInstalled && !result.observationInstallError,
+                `Observer installation before the player entry failed: ${result.observationInstallError ?? 'entry script was not observed'}.`);
             // Only layout size is changed; the normal host owns backing allocation and resize delivery.
             await page.locator(surface).evaluate(canvas => { canvas.style.width = '1280px'; canvas.style.height = '720px'; });
             await waitRunning(page);
             result.startup = await page.locator('#status').evaluate(element => ({ state: element.dataset.state, detail: element.textContent }));
             if (result.startup.state !== 'running') {
                 result.startup.capture = `ui-parity-${iteration}-startup-failure.png`;
-                await page.locator(surface).screenshot({ path: path.join(config.output, result.startup.capture) });
+                try {
+                    await page.screenshot({ path: path.join(config.output, result.startup.capture), fullPage: true, timeout: 5000 });
+                } catch (error) { result.startup.captureError = String(error); }
             }
             assert(result.startup.state === 'running', `Authored player startup: ${result.startup.detail}`);
-            await installObservation(page);
+            result.startup.observation = await boundedObservation(read(page), 5000);
+            assert(!result.startup.observation.observationUnavailable,
+                `The running player did not reach the installed input observer: ${JSON.stringify(result.startup.observation.observation)}.`);
             await page.waitForFunction(() => globalThis.uiParityRead().controls.length >= 17);
             // The shared toggle publishes its bound property on its normal late tick.
             await page.waitForFunction(() => globalThis.uiParityRead().controls
@@ -517,13 +610,22 @@ export async function uiParityGameCheck(browser, origin, report, config, instrum
             result.status = 'passed';
         } catch (error) {
             failed = true; result.status = 'failed'; result.error = String(error);
-            try { await checkpoint('failure'); } catch (captureError) { result.failureCaptureError = String(captureError); }
-            await page.screenshot({ path: path.join(config.output, `ui-parity-${iteration}-failure-page.png`), fullPage: true }).catch(() => {});
+            // Failure evidence must not wait for scrolling, stable element bounds,
+            // or another animation frame from an already-stalled renderer.
+            const failure = { name: 'failure', capture: `ui-parity-${iteration}-failure-page.png` };
+            result.steps.push(failure);
+            await Promise.all([
+                boundedObservation(read(page), 5000).then(state => { failure.state = state; },
+                    observationError => { failure.observationError = String(observationError); }),
+                page.screenshot({ path: path.join(config.output, failure.capture), fullPage: true, timeout: 5000 })
+                    .catch(captureError => { result.failureCaptureError = String(captureError); }),
+            ]);
             throw error;
         } finally {
             // Secondary cleanup errors must never hide the original assertion or player failure.
             const cleanupErrors = [];
-            try { await page.evaluate(() => globalThis.uiParityCleanup?.()); } catch (error) { cleanupErrors.push(String(error)); }
+            try { await boundedObservation(page.evaluate(() => globalThis.uiParityCleanup?.()), 5000); }
+            catch (error) { cleanupErrors.push(String(error)); }
             if (touch) try { await touch.detach(); } catch (error) { cleanupErrors.push(String(error)); }
             try { await context.close(); } catch (error) { cleanupErrors.push(String(error)); }
             if (cleanupErrors.length) {

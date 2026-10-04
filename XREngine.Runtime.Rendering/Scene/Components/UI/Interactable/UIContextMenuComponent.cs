@@ -297,6 +297,7 @@ namespace XREngine.Rendering.UI
         // --- Auto-dismiss logic ---
 
         private bool _dismissClickArmed;
+        private bool _armDismissClickSubscribed;
 
         private void SubscribeForDismiss()
         {
@@ -313,8 +314,12 @@ namespace XREngine.Rendering.UI
 
             // Delay one frame before listening for left-clicks so the same click that
             // opened the menu doesn't immediately dismiss it.
-            _dismissClickArmed = false;
-            RuntimeEngine.Time.Timer.PostUpdateFrame += ArmDismissClick;
+            SetField(ref _dismissClickArmed, false, publishNotifications: false);
+            if (!_armDismissClickSubscribed)
+            {
+                RuntimeEngine.Time.Timer.PostUpdateFrame += ArmDismissClick;
+                SetField(ref _armDismissClickSubscribed, true, publishNotifications: false);
+            }
         }
 
         private void UnsubscribeForDismiss()
@@ -326,6 +331,17 @@ namespace XREngine.Rendering.UI
                 _subscribedInput.LeftClickDown -= OnLeftClickDown;
                 _subscribedInput = null;
             }
+            UnsubscribeArmDismissClick();
+        }
+
+        private void UnsubscribeArmDismissClick()
+        {
+            if (!_armDismissClickSubscribed)
+                return;
+
+            // Post-update removals are deferred; a second removal could also remove
+            // the callback registered by a menu reopened before the next frame.
+            SetField(ref _armDismissClickSubscribed, false, publishNotifications: false);
             RuntimeEngine.Time.Timer.PostUpdateFrame -= ArmDismissClick;
         }
 
@@ -334,10 +350,10 @@ namespace XREngine.Rendering.UI
         /// </summary>
         private void ArmDismissClick()
         {
-            RuntimeEngine.Time.Timer.PostUpdateFrame -= ArmDismissClick;
+            UnsubscribeArmDismissClick();
             if (!_isOpen)
                 return;
-            _dismissClickArmed = true;
+            SetField(ref _dismissClickArmed, true, publishNotifications: false);
         }
 
         private void OnEscapeDismiss()
