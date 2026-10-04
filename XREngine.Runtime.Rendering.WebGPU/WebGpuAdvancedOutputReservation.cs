@@ -11,4 +11,5 @@ internal sealed class WebGpuAdvancedOutputReservation
     internal int NextOperation;
     internal long ResourceGeneration;
     internal AdvancedVisibilityStageBackendRequest Request;
+    internal RenderFrameViewSelection FrozenView;
 }
