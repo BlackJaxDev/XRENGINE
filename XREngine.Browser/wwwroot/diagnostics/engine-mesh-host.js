@@ -1,5 +1,5 @@
 import { WebGpuCanvasRenderer } from '../webgpu/webgpu-renderer.js';
-import { captureSubmittedEngineFrame, readEngineDiagnosticRegion, requireEngineDiagnosticTarget } from './engine-mesh-readback.js';
+import { retainSubmittedEngineFrameEvidence, readEngineDiagnosticRegion, requireEngineDiagnosticTarget } from './engine-mesh-readback.js';
 
 /** Isolated renderer/component qualification; this host never starts a production world or physics backend. */
 export class EngineMeshDiagnosticHost {
@@ -21,6 +21,7 @@ export class EngineMeshDiagnosticHost {
         this.readyFrames = 0;
         this.settleFrames = 0;
         this.lastReadySession = 0;
+        this.unlitFrameEvidence = null;
         this.unlitNativeIds = new WeakMap();
         this.nextUnlitNativeId = 0;
         this.previousUnlitNatives = new WeakSet();
@@ -121,6 +122,7 @@ export class EngineMeshDiagnosticHost {
                 await renderer.initializeEngine(controller.signal);
                 if (controller.signal.aborted || epoch !== this.epoch) { renderer.dispose(); return; }
                 renderer.setOwner(this.session);
+                if (this.kind === 'unlit') this.unlitFrameEvidence = retainSubmittedEngineFrameEvidence(renderer, this.session);
                 this.renderers.set(this.session, renderer);
                 this.stage = 'resizing-canvas';
                 const generation = renderer.resize(512, 512);
@@ -254,7 +256,7 @@ export class EngineMeshDiagnosticHost {
             }
         });
         return { ...JSON.parse(this.exports.GetUnlitState(this.session)), shaders, pipelines, hdrTargets, targets,
-            submittedFrame: captureSubmittedEngineFrame(this.renderer, this.session) };
+            submittedFrame: this.unlitFrameEvidence.capture() };
     }
 
     /** Reads only a canonical x1 texture owned by the current ordinary-unlit generation. */
@@ -419,6 +421,7 @@ export class EngineMeshDiagnosticHost {
             throw new Error(`Diagnostic resize dimensions must be integers from ${minimum} through 1024.`);
         this.canvas.style.width = `${width}px`;
         this.canvas.style.height = `${height}px`;
+        this.unlitFrameEvidence?.invalidate();
         const generation = this.renderer.resize(width, height);
         this.exports.ResizeGraphics(this.session, width, height, generation);
         if (this.kind === 'unlit') this.lastReadySession = 0;
@@ -585,6 +588,8 @@ export class EngineMeshDiagnosticHost {
         if (this.request) cancelAnimationFrame(this.request);
         this.request = 0;
         const session = this.session;
+        this.unlitFrameEvidence?.dispose();
+        this.unlitFrameEvidence = null;
         if (session && this.kind === 'unlit' && this.renderer) {
             this.previousUnlitNatives = new WeakSet();
             for (const entry of this.renderer._resources.slots)

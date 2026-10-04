@@ -1,9 +1,66 @@
-/** Cold diagnostic snapshots of one submitted engine packet and bounded canonical targets. */
-export function captureSubmittedEngineFrame(renderer, owner) {
+/** Retains detached metadata only for this explicitly instrumented diagnostic renderer. */
+export function retainSubmittedEngineFrameEvidence(renderer, owner) {
+    renderer._requireOwner();
+    if (renderer._owner !== owner) throw new Error('The engine diagnostic must own its renderer.');
+    const frame = renderer.commands.engineFrame, submit = frame.submit;
+    const descriptor = Object.getOwnPropertyDescriptor(frame, 'submit');
+    let snapshot = null, captureError = null, generation = 0, submittedFrames = 0, disposed = false;
+    const wrappedSubmit = function(memory, uniforms, storage, preparation = null) {
+        snapshot = null;
+        captureError = null;
+        const previousSubmissions = frame.stats.submittedFrames;
+        const presented = submit.call(frame, memory, uniforms, storage, preparation);
+        generation = renderer._generation;
+        submittedFrames = frame.stats.submittedFrames;
+        // The native queue has accepted this packet, but the synchronous managed
+        // import has not returned to command retirement. Copy only scalar metadata;
+        // neither the reusable packet arena nor any GPU resource is retained.
+        try {
+            if (frame.stats.submittedFrames !== previousSubmissions + 1)
+                throw new Error('The engine diagnostic requires exactly one accepted scene submission.');
+            snapshot = captureSubmittedEngineFrame(renderer, owner);
+        } catch (error) {
+            // Evidence failure must not turn an accepted GPU submission into a
+            // failed managed receipt and release its completion-owned resources.
+            snapshot = null;
+            captureError = error;
+        }
+        return presented;
+    };
+    frame.submit = wrappedSubmit;
+    return {
+        capture() {
+            renderer._requireOwner();
+            if (disposed || renderer._owner !== owner || renderer.commands.engineFrame !== frame ||
+                frame.submit !== wrappedSubmit || generation !== renderer._generation ||
+                submittedFrames !== frame.stats.submittedFrames) {
+                snapshot = null;
+                throw new Error('Current owner, generation and accepted scene evidence are required.');
+            }
+            if (captureError) throw captureError;
+            if (!snapshot) throw new Error('A submitted engine frame has not been captured for this diagnostic.');
+            // Callers cannot mutate the retained evidence between paused samples.
+            return structuredClone(snapshot);
+        },
+        invalidate() { snapshot = null; captureError = null; },
+        dispose() {
+            snapshot = null;
+            captureError = null;
+            disposed = true;
+            if (frame.submit !== wrappedSubmit) return;
+            if (descriptor) Object.defineProperty(frame, 'submit', descriptor);
+            else delete frame.submit;
+        },
+    };
+}
+
+/** Copies the just-accepted packet before its import returns to managed resource retirement. */
+function captureSubmittedEngineFrame(renderer, owner) {
     const frame = renderer.commands.engineFrame, packet = frame.view;
     const count = packet.getUint32(12, true), sequence = packet.getUint32(40, true);
     if (packet.getUint32(0, true) !== 0x45475258 || packet.getUint32(4, true) !== 5 ||
-        packet.getUint32(16, true) !== owner || packet.getUint32(20, true) !== renderer._generation ||
+        renderer._owner !== owner || packet.getUint32(16, true) !== owner ||
+        packet.getUint32(20, true) !== renderer._generation ||
         count < 1 || count > 4097 || sequence !== frame.lastSequence || frame.stats.submittedFrames < 1)
         throw new Error('A current submitted engine packet is required for Unlit execution evidence.');
     const texture = view => ({ label: view.texture?.label ?? (view.canvasHandle === 0 ? 'canvas' : ''),
