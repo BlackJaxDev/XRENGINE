@@ -24,7 +24,7 @@ internal static class StandardLitTextureVariantFactory
             StandardLitColorSourceMaterial = source,
             StandardLitColorAuxiliaryPass = EStandardLitColorAuxiliaryPass.DepthNormal,
             EngineSemantic = EngineMaterialSemanticIdentity.StandardLitTextureV1,
-            RenderOptions = new RenderingParameters
+            RenderOptions =
             {
                 CullMode = source.RenderOptions.CullMode,
                 Winding = source.RenderOptions.Winding,

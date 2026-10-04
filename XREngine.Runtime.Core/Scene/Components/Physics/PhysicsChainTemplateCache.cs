@@ -17,6 +17,9 @@ internal sealed class PhysicsChainTemplateCache
     public static PhysicsChainTemplateCache ForWorld(PhysicsChainWorld world)
         => WorldCaches.GetValue(world, static _ => new PhysicsChainTemplateCache());
 
+    internal static void ReleaseWorld(PhysicsChainWorld world)
+        => WorldCaches.Remove(world);
+
     public PhysicsChainTemplate GetOrAdd(PhysicsChainTemplate candidate)
     {
         if (_templatesByHash.TryGetValue(candidate.ContentHash, out List<PhysicsChainTemplate>? bucket))

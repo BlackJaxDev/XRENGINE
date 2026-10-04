@@ -12,8 +12,13 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeScenePreparationS
         => BindUiFontsAsync(world.Scenes, StartupWorldPath, cancellationToken);
 
     /// <summary>Resolves only resources declared by this scene's catalog dependency entry.</summary>
-    public Task PrepareSceneAsync(XRScene scene, string catalogPath, CancellationToken cancellationToken = default)
-        => BindUiFontsAsync([scene], catalogPath, cancellationToken);
+    public async Task PrepareSceneAsync(XRScene scene, string catalogPath, CancellationToken cancellationToken = default)
+    {
+        await PrepareAssetAsync(catalogPath, cancellationToken);
+        await BindUiFontsAsync([scene], catalogPath, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        RequireSession();
+    }
 
     private async Task BindUiFontsAsync(IEnumerable<XRScene> scenes, string ownerPath, CancellationToken cancellationToken)
     {

@@ -120,15 +120,19 @@ Replay traverses retained arrays without new per-draw objects. WebGPU encoder, p
 
 ### Engine frame replay
 
-The engine adapter additionally records `submitEngineFrame(commands, uniforms, uploads)`.
+The engine adapter additionally records `submitEngineFrame(commands, uniforms, uploads, preparations, payload, resourceDescriptions, resourceReceipts)`.
 Its little-endian command arena has a 48-byte header and 112-byte records, bounded
-to 4097 records and 262144 replay draws. The header identifies magic `0x45475258`, schema 4,
+to 4097 records and 262144 replay draws. The header identifies magic `0x45475258`, schema 5,
 byte length, record count, session, surface generation, width/height, an owned
 uniform-buffer handle, uniform byte length, and a monotonically increasing frame
 sequence and upload-record count. Each record selects one retained raster,
 attachment, compute or buffer-copy command and up to 16 dynamic uniform offsets,
 in group/binding order. The final fields carry admitted instance-count,
-viewport and scissor overrides. The executor validates the
+viewport and scissor overrides. Flag 8 selects exact RGBA/depth clear values in
+the first five otherwise-unused dynamic-offset words, with offset count zero and
+an explicit retained-clear opt-in. Animated colors do not recreate physical clear
+commands. Old engine-frame schemas are rejected; this internal ABI does not alter
+authored assets, network messages or the frozen reference packet. The executor validates the
 whole arena, ownership, surface/sequence, alignment, active uniform ranges, and
 retained command shape before GPU encoding. It imports uniform bytes synchronously
 and executes all records through one encoder/queue submission. Managed views do
@@ -199,25 +203,21 @@ attempt or an outstanding authored preamble. Owned-storage immediate preparation
 or resize rejects a queued snapshot of the same generation. GPU producer/copy/
 consumer sequences use retained `copyBuffer` commands in the existing frame.
 
-### Remaining direct preparation and transfer boundaries
+### Engine preparation acceptance
 
-The upload changes do not establish one bridge crossing for every rendering
-callback. `WebGpuDataBuffer.Generate` still creates and initializes a fresh
-physical candidate using direct resource imports, including lazy creation or
-resize inside recording. `WebGpuOwnedStorageBuffer.UploadPreparation` still
-performs complete-slot or oversized direct writes, and indirect-count parameter
-creation has its own initialization write. Texture mip/layer updates and texture
-subresource copies remain direct imports. The standalone `CopyBuffer` capability
-has no engine call site in the current source; its queued-buffer overlap is
-explicitly rejected rather than reordered.
+Engine initialization images, oversized slot preparation and texture mip/layer
+uploads or safe subresource copies share the retained preparation journal.
+Incomplete scenes submit that preparation without submitting partial scene
+commands. Copies of a current-frame GPU producer remain ordered scene commands.
+Physical buffer/texture/view/sampler/layout/group/command creation uses distinct
+retained request identities and same-call result storage. Only ready real handles
+enter dependent descriptors; cancellation and exact retry preserve ownership.
+Raw standalone APIs retain their immediate contract. Existing asynchronous shader
+and native pipeline compilation keep their completion APIs.
 
-Lazy buffer/texture/view/sampler/binding/command-plan preparation can also run
-inside rendering. These are concrete remaining paths, not proof of cold work.
-Batching them requires a coherent pending-resource identity and acceptance owner:
-a new texture or buffer must not become ready after a queued initialization whose
-frame was rejected, and a copy that depends on a rejected GPU producer cannot
-simply be replayed as an independent preamble. That lifecycle prerequisite and
-ordered texture/copy transport remain open.
+See [engine resource acceptance](browser-engine-resource-acceptance-2026-10-03.md)
+for the request state machine, capacity bounds, initial/replacement generation
+lifecycle, exact upload order, and validation evidence limits.
 
 ### Buffer upload validation boundary
 

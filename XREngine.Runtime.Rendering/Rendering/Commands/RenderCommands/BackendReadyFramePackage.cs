@@ -123,6 +123,7 @@ public sealed partial class BackendReadyFramePackage
 
     internal void Reset()
     {
+        ResetMeshOrder();
         NativeAuthoredDecalsEnabled = false;
         _authoredDecalCommandCount = 0;
         AuthoredDecalCommandSignature = 0;

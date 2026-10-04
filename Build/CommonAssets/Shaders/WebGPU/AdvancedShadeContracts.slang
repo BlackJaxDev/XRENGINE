@@ -372,6 +372,17 @@ struct XRAdvancedSurface
     float3 bitangent;
     float2 texCoord0;
     float2 texCoord1;
+    float2 uberTexCoord2;
+    float2 uberTexCoord3;
+    float3 uberLocalPosition;
+    float3 uberLocalPositionDx;
+    float3 uberLocalPositionDy;
+    float2 uberTexCoord2Dx;
+    float2 uberTexCoord2Dy;
+    float2 uberTexCoord3Dx;
+    float2 uberTexCoord3Dy;
+    float4 uberColorDx;
+    float4 uberColorDy;
     float4 color0;
     float4 color1;
     uint custom0;
@@ -402,7 +413,7 @@ struct ShadeParameters
     uint2 standardDeferredHash; uint2 standardForwardHash; uint2 standardMaskedHash; uint2 mirrorHash;
     uint standardWordCount; uint baseColorWord; uint rmseWord; uint materialFlagsWord;
     uint emissionColorWord; uint emissionStrengthWord; uint emissionMetadataWord; uint emissionUvWord;
-    uint emissionRotationWord; uint reserved0; uint reserved1; uint reserved2;
+    uint emissionRotationWord; uint reserved0; uint reserved1; uint renderTimeBits;
 };
 [[vk::binding(0, 0)]] StructuredBuffer<uint> SceneArena;
 [[vk::binding(1, 0)]] StructuredBuffer<uint> GeometryArena;
@@ -1141,7 +1152,7 @@ XRAdvancedSurface XR_ADV_InvalidSurface(
     uint2 identity,
     uint reason)
 {
-    XRAdvancedSurface surface;
+    XRAdvancedSurface surface = (XRAdvancedSurface)0;
     surface.identity = identity;
     surface.producer = 0u;
     surface.viewIndex = 0u;

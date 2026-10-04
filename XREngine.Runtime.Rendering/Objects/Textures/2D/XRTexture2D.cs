@@ -44,6 +44,13 @@ namespace XREngine.Rendering
         {
             Load3rdParty(path);
         }
+
+        public override Task ReloadAsync(string path)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.ReloadAsync(path);
+        }
+
         public override bool Load3rdParty(string filePath)
         {
             string authorityPath = ResolveTextureStreamingAuthorityPathInternal(filePath, out string? originalSourcePath);
@@ -53,8 +60,21 @@ namespace XREngine.Rendering
         public override bool Load3rdParty(string filePath, AssetImportContext context)
             => Load3rdPartyCore(filePath);
 
+        public override Task<bool> Load3rdPartyAsync(string filePath)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Load3rdPartyAsync(filePath);
+        }
+
+        public override Task<bool> Load3rdPartyAsync(string filePath, AssetImportContext context)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Load3rdPartyAsync(filePath, context);
+        }
+
         private bool Load3rdPartyCore(string filePath, string? originalSourcePath = null)
         {
+            RuntimeTextureSourceAccess.RequireHostFiles();
             FilePath = string.IsNullOrWhiteSpace(filePath) ? filePath : Path.GetFullPath(filePath);
             if (!string.IsNullOrWhiteSpace(originalSourcePath))
                 OriginalPath ??= Path.GetFullPath(originalSourcePath);
@@ -118,6 +138,12 @@ namespace XREngine.Rendering
             }
 
             return true;
+        }
+
+        public override Task<bool> Import3rdPartyAsync(string filePath, object? importOptions)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Import3rdPartyAsync(filePath, importOptions);
         }
 
         /// <summary>
@@ -197,6 +223,7 @@ namespace XREngine.Rendering
             if (string.IsNullOrWhiteSpace(filePath))
                 throw new ArgumentException("File path must be provided.", nameof(filePath));
 
+            RuntimeTextureSourceAccess.RequireHostFiles();
             XRTexture2D target = texture ?? new XRTexture2D();
             ApplyTextureStreamingAuthorityPath(target, filePath);
             if (string.IsNullOrWhiteSpace(target.Name))
@@ -274,6 +301,7 @@ namespace XREngine.Rendering
             if (string.IsNullOrWhiteSpace(filePath))
                 throw new ArgumentException("File path must be provided.", nameof(filePath));
 
+            RuntimeTextureSourceAccess.RequireHostFiles();
             XRTexture2D target = texture ?? new XRTexture2D();
             ApplyTextureStreamingAuthorityPath(target, filePath);
             if (string.IsNullOrWhiteSpace(target.Name))
@@ -883,6 +911,7 @@ namespace XREngine.Rendering
 
         private static bool LooksLikeTextureAssetFile(string filePath)
         {
+            RuntimeTextureSourceAccess.RequireHostFiles();
             try
             {
                 using FileStream stream = new(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -1000,6 +1029,7 @@ namespace XREngine.Rendering
 
         private static void LoadPreviewFrom3rdParty(string filePath, XRTexture2D target, uint maxPreviewSize)
         {
+            RuntimeTextureSourceAccess.RequireHostFiles();
             try
             {
                 using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(filePath));
@@ -1018,6 +1048,7 @@ namespace XREngine.Rendering
 
         private static bool TryLoadPreviewFromTextureAsset(string filePath, XRTexture2D target, uint maxPreviewSize)
         {
+            RuntimeTextureSourceAccess.RequireHostFiles();
             try
             {
                 byte[] assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(filePath);
@@ -1241,7 +1272,8 @@ namespace XREngine.Rendering
         private static RuntimeImage GetFillerBitmap()
         {
             string? path = RuntimeRenderingHostServices.Assets.TextureFallbackPath;
-            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path) && RuntimeImageCodecs.Current is { } codec)
+            if (RuntimeTextureSourceAccess.CanAccessHostFiles &&
+                !string.IsNullOrWhiteSpace(path) && File.Exists(path) && RuntimeImageCodecs.Current is { } codec)
                 return codec.Decode(File.ReadAllBytes(path));
 
             const int squareExtent = 4;
@@ -1441,6 +1473,15 @@ namespace XREngine.Rendering
 
         public XRTexture2D(params string[] mipMapPaths)
         {
+            if (mipMapPaths.Length != 0)
+            {
+                try { RuntimeTextureSourceAccess.RequireHostFiles(); }
+                catch
+                {
+                    AbortFailedConstruction();
+                    throw;
+                }
+            }
             List<Mipmap2D> mips = [];
             for (int i = 0; i < mipMapPaths.Length; ++i)
             {

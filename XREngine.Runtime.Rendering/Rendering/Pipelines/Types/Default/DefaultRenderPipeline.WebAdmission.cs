@@ -3,6 +3,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering;
 
@@ -44,6 +45,13 @@ public partial class DefaultRenderPipeline
 
     private static void DescribeWebEffectRequirements(RenderPipelineRequirements requirements)
     {
+        requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Msaa);
+        if (WebMsaaEnabled(requirements.OutputProfile))
+        {
+            if (requirements.OutputProfile.MsaaSampleCount != 4)
+                requirements.Diagnostics.Add($"Default WebGPU MSAA requires four samples; requested x{requirements.OutputProfile.MsaaSampleCount}.");
+            requirements.RequireOperation("color-resolve");
+        }
         PipelinePostProcessState state = requirements.PostProcessState;
         if (GetWebPostProcessRejection(state, out string pass) is { } effect)
             requirements.Diagnostics.Add($"Pass '{pass}': {effect}");
@@ -51,7 +59,7 @@ public partial class DefaultRenderPipeline
         BrowserWebGpuQualitySettings quality = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality;
         if (quality.EnableGtao && GetWebAmbientOcclusionRejection(ao) is { } aoReason)
             requirements.Diagnostics.Add(aoReason);
-        requirements.RequireOperation("cpu-direct-meshes");
+        VPRC_RenderMeshesPassShared.DescribeSubmissionRequirements(requirements, MeshSubmissionStrategy);
         requirements.RequireOperation("fullscreen-quad");
         if (GetSettings<ColorGradingSettings>(state) is { AutoExposure: true })
         {
@@ -65,7 +73,12 @@ public partial class DefaultRenderPipeline
                 requirements.ScenePasses.Add((int)scenePass);
         if (quality.EnableGtao && ao is { Enabled: true })
         {
+            if (WebMsaaEnabled(requirements.OutputProfile))
+                requirements.RequireRasterProgram("depth-normal-msaa-resolve");
             requirements.RequireRasterProgram("depth-normal");
+            requirements.RequireDepthNormalScenePass((int)EDefaultRenderPass.OpaqueDeferred);
+            requirements.RequireDepthNormalScenePass((int)EDefaultRenderPass.OpaqueForward);
+            requirements.RequireDepthNormalScenePass((int)EDefaultRenderPass.MaskedForward);
             requirements.RequireRasterProgram("gtao-generate");
             requirements.RequireRasterProgram("gtao-blur-horizontal");
             requirements.RequireRasterProgram("gtao-blur-vertical");

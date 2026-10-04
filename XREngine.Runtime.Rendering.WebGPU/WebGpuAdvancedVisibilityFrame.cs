@@ -8,7 +8,7 @@ internal sealed class WebGpuAdvancedVisibilityFrame : IDisposable
     internal const int MaximumBuckets = 64;
     internal const int MaximumRetainedBuckets = MaximumBuckets * (int)AdvancedFrameSlotContract.DefaultSlotCount *
         WebGpuRendererHost.MaximumAdvancedOutputFamilies;
-    internal const int MaximumRetainedRasterStates = 4 * WebGpuRendererHost.MaximumAdvancedOutputFamilies;
+    internal const int MaximumRetainedRasterStates = 12 * WebGpuRendererHost.MaximumAdvancedOutputFamilies;
     internal const int MaximumCpuDraws = 1024;
     internal const int MaximumRetainedDirectCommands = MaximumCpuDraws * (int)AdvancedFrameSlotContract.DefaultSlotCount *
         WebGpuRendererHost.MaximumAdvancedOutputFamilies;
@@ -17,7 +17,7 @@ internal sealed class WebGpuAdvancedVisibilityFrame : IDisposable
     private int _retainedCpuDrawCount;
     private int _retainedTopologyBucketCount;
     private bool _retainedReversedDepth;
-    internal WebGpuAdvancedVisibilityFrame(WebGpuRendererHost renderer, int slot)
+    internal WebGpuAdvancedVisibilityFrame(WebGpuRendererHost renderer, int slot, WebGpuAdvancedUberRasterFrame uberRaster)
     {
         Payloads = new(renderer, $"Advanced visibility payloads {slot}");
         Candidates = new(renderer, $"Advanced visibility candidates {slot}");
@@ -25,19 +25,26 @@ internal sealed class WebGpuAdvancedVisibilityFrame : IDisposable
         Triangles = new(renderer, $"Advanced compact triangles {slot}");
         Arguments = new(renderer, $"Advanced triangle arguments {slot}", BrowserBufferUsage.Indirect);
         PreparedDeformations = new(renderer, $"Advanced prepared temporal relations {slot}");
+        NativeVertices = new(renderer, slot);
+        UberRaster = uberRaster;
     }
+    internal WebGpuAdvancedUberRasterFrame UberRaster { get; }
+    internal bool HasUberRaster;
     internal WebGpuOwnedStorageBuffer Payloads { get; }
     internal WebGpuOwnedStorageBuffer Candidates { get; }
     internal WebGpuOwnedStorageBuffer Producers { get; }
     internal WebGpuOwnedStorageBuffer Triangles { get; }
     internal WebGpuOwnedStorageBuffer Arguments { get; }
     internal WebGpuOwnedStorageBuffer PreparedDeformations { get; }
+    internal WebGpuAdvancedNativeVertexFrame NativeVertices { get; }
+    internal WebGpuOwnedStorageBuffer GeometryArena => NativeVertices.HasWork ? NativeVertices.Geometry : Scene!.GeometryArena;
     internal AdvancedPreparedDrawDeformationRecord[] PreparedRows = [];
     internal byte[] PreparedWrites = [];
     internal uint[] ProducerRows = [];
     internal WebGpuAdvancedCpuDraw[] CpuDraws = new WebGpuAdvancedCpuDraw[MaximumCpuDraws];
     internal int CpuDrawCount;
     internal WebGpuAdvancedVisibilityBucket[] Buckets { get; } = new WebGpuAdvancedVisibilityBucket[MaximumBuckets];
+    internal readonly WebGpuAdvancedVisibilitySampling?[] Sampling = new WebGpuAdvancedVisibilitySampling?[MaximumBuckets];
     internal int BucketCount;
     internal int RetainedRasterBucketCount;
     internal ulong RasterCacheRevision;
@@ -77,5 +84,7 @@ internal sealed class WebGpuAdvancedVisibilityFrame : IDisposable
         Triangles.Dispose();
         Arguments.Dispose();
         PreparedDeformations.Dispose();
+        NativeVertices.Dispose();
+        foreach (WebGpuAdvancedVisibilitySampling? sampling in Sampling) sampling?.Dispose();
     }
 }

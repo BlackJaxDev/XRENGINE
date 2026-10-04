@@ -9,6 +9,9 @@ public sealed partial class WebGpuRendererHost
 {
     private static readonly string[] RequiredAdvancedMultisamplePrograms =
     [
+        "advanced::uber-visibility-msaa", "advanced::uber-raster-surface-msaa",
+        "advanced::shade-uber-native-msaa", "advanced::shade-uber-native-depth-msaa",
+        "advanced::shade-uber-surface-exports-msaa", "advanced::shade-uber-surface-exports-depth-msaa",
         "advanced::visibility-pull-msaa", "advanced::visibility-msaa-resolve", "advanced::shade-classify-msaa",
         "advanced::shade-native-msaa", "advanced::shade-msaa-resolve", "advanced::shade-surface-exports-msaa",
         "advanced::shade-native-depth-msaa", "advanced::shade-surface-exports-depth-msaa",
@@ -22,7 +25,9 @@ public sealed partial class WebGpuRendererHost
         {
             if (artifacts is null || !artifacts.TryResolve(binding, out ShaderProgramArtifact? artifact))
                 return $"WebGPU.Advanced.MultisampleProgramMissing: the selected four-sample output requires '{binding}'.";
-            if (artifact.Pass == "visibility-pull-msaa")
+            if (artifact.Pass is "uber-visibility-msaa" or "uber-raster-surface-msaa")
+                WebGpuAdvancedUberRasterProgramContract.Validate(artifact, artifact.Pass);
+            else if (artifact.Pass == "visibility-pull-msaa")
                 WebGpuAdvancedVisibilityProgramContract.Validate(artifact, artifact.Pass);
             else if (artifact.Pass == "visibility-msaa-resolve")
                 WebGpuAdvancedMsaaProgramContract.Validate(artifact, artifact.Pass);

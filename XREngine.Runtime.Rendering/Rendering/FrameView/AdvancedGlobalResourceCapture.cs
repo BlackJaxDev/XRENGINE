@@ -37,7 +37,8 @@ public readonly record struct AdvancedGlobalResourceCapture(
     /// </summary>
     public static AdvancedGlobalResourceCapture Capture(
         ulong frameId,
-        IRuntimeRenderWorld? world)
+        IRuntimeRenderWorld? world,
+        bool includeShadows = true)
     {
         if (world is null)
             return Empty(frameId);
@@ -70,7 +71,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
         }
 
         List<AdvancedShadowCaptureRow> shadowRows = [];
-        for (int lightIndex = 0; lightIndex < index; ++lightIndex)
+        for (int lightIndex = 0; includeShadows && lightIndex < index; ++lightIndex)
         {
             int groupStart = shadowRows.Count;
             if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&

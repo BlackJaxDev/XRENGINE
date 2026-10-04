@@ -2,6 +2,7 @@
 #include "AdvancedShadeContracts.slang"
 #include "AdvancedShadeTextures.slang"
 #include "AdvancedShadeEngineSurface.slang"
+#include "AdvancedShadeUberBase.slang"
 #include "AdvancedShadeReconstruction.slang"
 #include "AdvancedShadeLighting.slang"
 #include "AdvancedMsaaVisibility.slang"
@@ -75,6 +76,9 @@ void advancedShadeNativeMsaa(uint3 group : SV_GroupID, uint3 local : SV_GroupThr
     uint selectedSample = XR_WEB_SelectSidecarSample(pixel);
     for (uint sampleIndex = 0u; sampleIndex < 4u; ++sampleIndex)
     {
+#if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
+        if (sampleIndex != ((Parameters.flags >> 24u) & 3u)) continue;
+#endif
 #if defined(XR_ADV_SURFACE_EXPORTS)
         if (sampleIndex != selectedSample) continue;
 #endif
@@ -93,8 +97,17 @@ void advancedShadeNativeMsaa(uint3 group : SV_GroupID, uint3 local : SV_GroupThr
         if (!diagnostic && resolved && (kernelDense != Parameters.kernelIndex || ShadeTiles[tileWord + 2u] != kernelDense)) continue;
         textureFailure = 0u;
         XRAdvancedOpaqueSampleResult result;
+        #if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
+    XR_ADV_UberRasterAddress=uint3(pixel,0u);
+#endif
+
         XR_ADV_EvaluateNativeOpaqueSample(pixel, viewIndex, identity, metadata,
-            RawVisibilityDepth.Load(int2(pixel), int(sampleIndex)), float2(pixel) + XR_WEB_SamplePosition(sampleIndex),
+            RawVisibilityDepth.Load(int2(pixel), int(sampleIndex)),
+#if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
+            float2(pixel) + 0.5,
+#else
+            float2(pixel) + XR_WEB_SamplePosition(sampleIndex),
+#endif
             ambientOcclusion, false, ShadeTiles[tileWord + 3u], !diagnostic, result);
         if (diagnostic && resolved && metadataMatchesView) textureFailure |= 1u << 17u;
         if (textureFailure != 0u)

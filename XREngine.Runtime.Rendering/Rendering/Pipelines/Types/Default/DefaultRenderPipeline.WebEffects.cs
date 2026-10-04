@@ -95,12 +95,17 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
         RenderPipelineResourceProfile profile = builder.Profile;
         if (WebGtaoEnabled(profile))
         {
+            bool multisampled = WebMsaaEnabled(profile);
+            string normal = multisampled ? WebMsaaNormalTextureName : WebNormalTextureName;
+            string depth = multisampled ? WebMsaaDepthTextureName : DepthStencilTextureName;
             DeclareWebColorTexture(builder, WebNormalTextureName, RenderResourceSizePolicy.Internal(),
                 () => CreateWebColorTexture(WebNormalTextureName, InternalWidth, InternalHeight));
             builder.FrameBuffer(WebNormalFboName).Size(RenderResourceSizePolicy.Internal())
                 .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
-                .Color(0, WebNormalTextureName).Depth(DepthStencilTextureName)
-                .Factory(() => CreateWebColorFbo(WebNormalFboName, WebNormalTextureName, DepthStencilTextureName)).Add();
+                .Color(0, normal).Depth(depth)
+                .Factory(() => CreateWebColorFbo(WebNormalFboName, normal, depth)).Add();
+            if (multisampled)
+                DeclareWebMsaaNormalResolve(builder);
 
             uint divisor = WebGtaoDivisor(profile);
             RenderResourceSizePolicy reduced = RenderResourceSizePolicy.InternalDividedRoundedUp(divisor);
@@ -180,11 +185,12 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
         => builder.FrameBuffer(fboName).Size(size).Usage(RenderPipelineResourceUsage.ColorAttachment)
             .Color(0, textureName).Factory(() => CreateWebColorFbo(fboName, textureName)).Add();
 
-    private XRTexture CreateWebColorTexture(string name, uint width, uint height)
+    private XRTexture CreateWebColorTexture(string name, uint width, uint height, uint samples = 1)
     {
         XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(Math.Max(width, 1u), Math.Max(height, 1u),
             EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, EFrameBufferAttachment.ColorAttachment0);
         texture.Name = name;
+        texture.MultiSampleCount = samples;
         texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
         texture.Resizable = false;
         texture.AutoGenerateMipmaps = false;
@@ -203,20 +209,13 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
             : new XRFrameBuffer((color, EFrameBufferAttachment.ColorAttachment0, 0, -1),
                 (GetTexture<XRTexture2D>(depthName)!, EFrameBufferAttachment.DepthAttachment, 0, -1));
         framebuffer.Name = name;
-        try
-        {
-            AbstractRenderer.Current!.GetOrCreateAPIRenderObject(framebuffer, generateNow: true);
-            return framebuffer;
-        }
-        catch
-        {
-            framebuffer.Destroy(true);
-            throw;
-        }
+        // The pending generation retains this logical owner before the renderer starts
+        // asynchronous attachment preparation, so Pending cannot abandon its GPU request.
+        return framebuffer;
     }
 
     private XRQuadFrameBuffer CreateWebEffectQuad(string name, string pass,
-        DelSetUniforms publishUniforms, bool additive = false)
+        DelSetUniforms publishUniforms, bool additive = false, bool writesDepth = false)
     {
         ShaderProgramArtifact artifact = GetRequiredWebPipelineArtifact(pass);
         XRShader vertex = new(EShaderType.Vertex) { CookedArtifact = artifact };
@@ -226,7 +225,8 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
             Name = name,
             RenderOptions = new RenderingParameters
             {
-                DepthTest = { Enabled = ERenderParamUsage.Disabled, UpdateDepth = false, Function = EComparison.Always },
+                DepthTest = { Enabled = writesDepth ? ERenderParamUsage.Enabled : ERenderParamUsage.Disabled,
+                    UpdateDepth = writesDepth, Function = EComparison.Always },
                 BlendModeAllDrawBuffers = additive
                     ? new BlendMode
                     {
@@ -333,9 +333,12 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
             ?? throw new InvalidOperationException("WebGPU.DefaultPipeline.GtaoCameraMissing: GTAO requires a scene camera.");
         XRTexture2D raw = RequireWebEffectTexture(WebGtaoRawTextureName);
         XRTexture2D depth = RequireWebEffectTexture(DepthStencilTextureName);
-        program.Uniform("ViewMatrix", camera.Transform.InverseRenderMatrix);
-        program.Uniform("InverseProjMatrix", camera.InverseProjectionMatrix);
-        program.Uniform("ProjMatrix", camera.ProjectionMatrix);
+        RenderFrameViewSelection view = WebPipelineRasterProgram.CaptureView(camera, new Vector2(raw.Width, raw.Height));
+        if (!Matrix4x4.Invert(view.ProjectionMatrix, out Matrix4x4 inverseProjection))
+            throw new NotSupportedException("WebGPU.DefaultPipeline.GtaoProjectionInvalid: the captured projection must be invertible.");
+        program.Uniform("ViewMatrix", view.View.ViewMatrix);
+        program.Uniform("InverseProjMatrix", inverseProjection);
+        program.Uniform("ProjMatrix", view.ProjectionMatrix);
         program.Uniform("OutputSize", new Vector2(raw.Width, raw.Height));
         program.Uniform("DepthSize", new Vector2(depth.Width, depth.Height));
         program.Uniform("Radius", MathF.Max(settings.Radius, 0.001f));
@@ -347,7 +350,7 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
         program.Uniform("StepsPerSlice", Math.Max(settings.GroundTruth.StepsPerSlice, 1));
         program.Uniform("UseInputNormals", settings.GroundTruth.UseInputNormals ? 1 : 0);
         program.Uniform("UseVisibilityBitmask", settings.GroundTruth.UseVisibilityBitmask ? 1 : 0);
-        program.Uniform("DepthMode", (int)camera.DepthMode);
+        program.Uniform("DepthMode", view.View.ReversedDepth ? 1 : 0);
         program.Uniform("OutputOrigin", Vector2.Zero);
         program.Sampler("DepthView", depth, 0);
         program.Sampler("Normal", RequireWebEffectTexture(WebNormalTextureName), 1);
@@ -367,6 +370,7 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
         XRTexture2D output = RequireWebEffectTexture(horizontal ? WebGtaoHorizontalTextureName : WebGtaoFinalTextureName);
         XRTexture2D input = RequireWebEffectTexture(horizontal ? WebGtaoRawTextureName : WebGtaoHorizontalTextureName);
         XRTexture2D depth = RequireWebEffectTexture(DepthStencilTextureName);
+        RenderFrameViewSelection view = WebPipelineRasterProgram.CaptureView(camera, new Vector2(output.Width, output.Height));
         program.Uniform("OutputSize", new Vector2(output.Width, output.Height));
         program.Uniform("DepthSize", new Vector2(depth.Width, depth.Height));
         program.Uniform("TexelSize", new Vector2(1.0f / output.Width, 1.0f / output.Height));
@@ -376,7 +380,7 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
         program.Uniform("DenoiseEnabled", settings.GroundTruth.DenoiseEnabled ? 1 : 0);
         program.Uniform("UseInputNormals", settings.GroundTruth.UseInputNormals ? 1 : 0);
         program.Uniform("UseNormalWeightedBlur", settings.GroundTruth.UseNormalWeightedBlur ? 1 : 0);
-        program.Uniform("DepthMode", (int)camera.DepthMode);
+        program.Uniform("DepthMode", view.View.ReversedDepth ? 1 : 0);
         program.Uniform("OutputOrigin", Vector2.Zero);
         program.Sampler("GTAOInputTexture", input, 0);
         program.Sampler("DepthView", depth, 1);
@@ -470,9 +474,13 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
             throw new NotSupportedException($"WebGPU.DefaultPipeline.GlobalIlluminationUnsupported: '{GlobalIlluminationMode}' has no cooked WebGPU path.");
         IRuntimeRenderWorld world = RuntimeEngine.Rendering.State.RenderingWorld
             ?? throw new InvalidOperationException("WebGPU.DefaultPipeline.RenderWorldMissing: forward ambient lighting requires a live world.");
-        if (world.Lights.LightProbes.Count != 0 || ProbeCount != 0 ||
-            ProbeIrradianceArray is not null || ProbePrefilterArray is not null)
-            throw new NotSupportedException("WebGPU.DefaultPipeline.LightProbeIblUnsupported: active light probes or IBL resources require a cooked probe lighting path.");
+        foreach (var probe in world.Lights.LightProbes)
+            if (probe is not XREngine.Components.Capture.Lights.PublishedRetainedLightProbeComponent { PublishedRetainedIbl: not null } ||
+                probe.AutoCaptureOnActivate || probe.RealtimeCapture || !probe.TryGetActiveIblOutput(out var generation) ||
+                generation.Provenance != XREngine.Components.Capture.Lights.ELightProbeIblProvenance.RetainedCookedData)
+                throw new NotSupportedException("WebGPU.DefaultPipeline.LightProbeProducerUnsupported: the selected world requires target-cooked retained probe data with both authored capture switches disabled.");
+        // Receiver admission occurs for every selected lit draw, including mixed
+        // material worlds, when its physical lighting bindings are published.
     }
 
     private static VPRC_RenderQuadToFBO AddWebEffectQuad(ViewportRenderCommandContainer commands, string quadName,
@@ -499,8 +507,9 @@ public partial class DefaultRenderPipeline : IRenderPipelineAmbientOcclusionProv
             VPRC_ForwardDepthNormalPrePass prepass = commands.Add<VPRC_ForwardDepthNormalPrePass>();
             prepass.SetOptions(
                 [(int)EDefaultRenderPass.OpaqueDeferred, (int)EDefaultRenderPass.OpaqueForward, (int)EDefaultRenderPass.MaskedForward],
-                gpuDispatch: false);
+                MeshSubmissionStrategy);
         }
+        AppendWebDepthNormalResolveCommands(commands);
         commands.Add<VPRC_DepthTest>().Enable = false;
         commands.Add<VPRC_DepthWrite>().Allow = false;
         AddWebEffectQuad(commands, WebGtaoGenerateQuadName, WebGtaoRawFboName,

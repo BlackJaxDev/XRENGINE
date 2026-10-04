@@ -681,8 +681,18 @@ namespace XREngine.Rendering
 
         private bool EnsureLayoutResourcesReady()
         {
-            if (!TryGetLayoutResourceIssue(this, out _))
+            if (!TryGetLayoutResourceIssue(this, out string? issue))
                 return true;
+
+            try
+            {
+                RuntimeAssetReadServices.EnsureHostFileAccess("Font layout recovery");
+            }
+            catch (NotSupportedException error)
+            {
+                throw new NotSupportedException(
+                    $"Font.CookedLayoutMissing: '{OriginalPath ?? FilePath ?? Name ?? ID.ToString()}' has {issue}; load a cooked font with its glyph table and bitmap atlas before layout.", error);
+            }
 
             string recoveryKey = !string.IsNullOrWhiteSpace(OriginalPath)
                 ? OriginalPath!

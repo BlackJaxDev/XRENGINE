@@ -1,3 +1,4 @@
+using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders.Compilation;
@@ -37,7 +38,7 @@ public partial class AdvancedRenderPipeline
             RequireAdvancedWebPostInput(AutoExposureTextureName), RequireAdvancedWebPostInput(AtmosphereColorTextureName),
             RequireAdvancedWebPostInput(VolumetricFogColorTextureName), RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata),
         ]);
-        quad.SettingUniforms += program => ApplyPostProcessProgramBindings(quad.Material!, program);
+        quad.SettingUniforms += program => ApplyPostProcessProgramBindings(quad.Material!, program, CaptureAdvancedWebPostView());
         return quad;
     }
 
@@ -108,8 +109,18 @@ public partial class AdvancedRenderPipeline
         {
             program.Sampler("ColorSource", RequirePostProcessTexture(DepthOfFieldTextureName), 0);
             program.Sampler(DepthViewTextureName, RequirePostProcessTexture(DepthViewTextureName), 1);
-            ApplyDepthOfFieldProgramBindings(program);
+            RenderFrameViewSelection view = CaptureAdvancedWebPostView();
+            program.Uniform("DepthMode", view.View.ReversedDepth ? 1 : 0);
+            ApplyDepthOfFieldProgramBindings(program, view);
         };
         return quad;
+    }
+
+    private RenderFrameViewSelection CaptureAdvancedWebPostView()
+    {
+        XRCamera camera = ResolveCurrentSettingsCamera()
+            ?? throw new InvalidOperationException("WebGPU.Pipeline.PostCameraMissing: post-processing depth consumers require their scene camera.");
+        return WebPipelineRasterProgram.CaptureView(camera,
+            new Vector2(Math.Max(1u, InternalWidth), Math.Max(1u, InternalHeight)));
     }
 }

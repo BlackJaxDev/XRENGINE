@@ -12,6 +12,24 @@ namespace XREngine.Scene
         private bool _parentChangeHadBegunPlay;
 
         /// <summary>
+        /// Omits notifications that the transform callbacks below do not consume.
+        /// </summary>
+        protected override bool CanSkipPropertyNotification(Delegate handler, string? propertyName)
+        {
+            if (string.IsNullOrEmpty(propertyName) || !ReferenceEquals(handler.Target, this))
+                return false;
+
+            var method = handler.Method;
+            if (method.DeclaringType != typeof(SceneNode))
+                return false;
+            if (handler is XRPropertyChangingEventHandler && method.Name == nameof(TransformPropertyChanging))
+                return propertyName != nameof(TransformBase.Parent);
+            if (handler is XRPropertyChangedEventHandler && method.Name == nameof(TransformPropertyChanged))
+                return propertyName is not (nameof(TransformBase.Parent) or nameof(TransformBase.World));
+            return false;
+        }
+
+        /// <summary>
         /// Disconnects the current transform from this scene node.
         /// </summary>
         /// <remarks>

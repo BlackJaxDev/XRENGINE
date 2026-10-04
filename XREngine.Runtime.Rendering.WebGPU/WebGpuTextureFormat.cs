@@ -23,7 +23,8 @@ internal static class WebGpuTextureFormat
             throw Unsupported($"format '{format}' with {samples} samples has no admitted storage-image encoding");
         BrowserTextureUsage usage = BrowserTextureUsage.TextureBinding | BrowserTextureUsage.RenderAttachment;
         if (samples == 1 && !IsDepth(format)) usage |= BrowserTextureUsage.CopySource | BrowserTextureUsage.CopyDestination;
-        else if (samples == 1 && format == "depth32float") usage |= BrowserTextureUsage.CopySource;
+        else if (samples == 1 && format is "depth16unorm" or "depth24plus" or "depth32float")
+            usage |= BrowserTextureUsage.CopySource | BrowserTextureUsage.CopyDestination;
         if (storage) usage |= BrowserTextureUsage.StorageBinding;
         return usage;
     }

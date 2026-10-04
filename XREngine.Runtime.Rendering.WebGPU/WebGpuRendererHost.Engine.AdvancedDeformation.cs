@@ -9,7 +9,7 @@ public sealed partial class WebGpuRendererHost : IAdvancedAggregateDeformationBa
     public bool SupportsAggregateDeformation => State == BrowserRendererState.Ready &&
         _advancedPipelineArtifacts is { } artifacts && artifacts.TryResolve("advanced::aggregate-deformation", out _) &&
         HasAdvancedLimit("maxComputeWorkgroupSizeX", 256) && HasAdvancedLimit("maxComputeInvocationsPerWorkgroup", 256) &&
-        HasAdvancedLimit("maxStorageBuffersPerShaderStage", 2);
+        HasAdvancedLimit("maxStorageBuffersPerShaderStage", 3);
 
     /// <inheritdoc />
     public bool TryCaptureAggregateGpuPaletteCopy(XRDataBuffer source, uint sourceByteOffset,
@@ -71,6 +71,7 @@ public sealed partial class WebGpuRendererHost : IAdvancedAggregateDeformationBa
             api.SetNativeBindingCacheOwner(inputs.Storage);
             api.BindStorageBuffer(0, inputs.Storage);
             program.BindBuffer(output, 1);
+            api.BindStorageBuffer(2, inputs.BasisOutput);
             program.Uniform("FirstGroupedJob", batch.FirstJobIndex);
             program.Uniform("GroupedJobCount", batch.JobCount);
             program.Uniform("BatchVertexCount", checked((uint)batch.VertexCount));
@@ -81,7 +82,10 @@ public sealed partial class WebGpuRendererHost : IAdvancedAggregateDeformationBa
             uint groups = (output.ElementCount + 255) / 256;
             ERendererComputeEnqueueStatus status = TryDispatchCompute(program, groups, 1, 1);
             if (status == ERendererComputeEnqueueStatus.Enqueued)
+            {
+                inputs.MarkBasisRecorded(resources.Publication);
                 CountEngineMeshDeformation(checked((int)batch.VertexCount));
+            }
             return status;
         }
         finally { api.ClearTransientComputeBindings(); }
@@ -103,7 +107,47 @@ public sealed partial class WebGpuRendererHost : IAdvancedAggregateDeformationBa
         {
             if (scene.CopiedDeformation != publication)
                 throw new InvalidOperationException("WebGPU.Advanced.DeformationChanged: one retained geometry arena cannot consume conflicting aggregate publications.");
-            return true;
+        }
+        else
+        {
+            if (!TryCopyAdvancedDeformationTo(frame, pipeline, scene.GeometryArena, out reason)) return false;
+            scene.CopiedDeformation = publication;
+        }
+        if (frame.NativeVertices.HasWork && !frame.NativeVertices.AggregateCopied)
+        {
+            if (!TryCopyAdvancedDeformationTo(frame, pipeline, frame.NativeVertices.Geometry, out reason)) return false;
+            frame.NativeVertices.AggregateCopied = true;
+        }
+        return true;
+    }
+
+    private bool TryCopyAdvancedDeformationTo(WebGpuAdvancedVisibilityFrame frame, RenderPipeline pipeline,
+        WebGpuOwnedStorageBuffer destination, out string reason)
+    {
+        reason = string.Empty;
+        AdvancedGpuDeformationPublication publication = frame.Deformation;
+        if (!_advancedDeformationInputs.TryGetValue(publication.CurrentVertices, out WebGpuAdvancedDeformationInputArena? current) ||
+            !current.HasCurrentBasis(in publication))
+        {
+            reason = "WebGPU.Advanced.DeformationBasisProducerMissing: the current aggregate output has no matching recorded authored-basis producer.";
+            return false;
+        }
+        WebGpuAdvancedDeformationInputArena previous = current;
+        if (publication.PreviousOutputValid &&
+            (!_advancedDeformationInputs.TryGetValue(publication.PreviousVertices, out previous!) ||
+             !previous.HasPreviousBasis(in publication)))
+        {
+            reason = "WebGPU.Advanced.DeformationBasisHistoryMissing: the previous aggregate generation has no matching authored-basis history.";
+            return false;
+        }
+        XRDataBuffer previousVertices = publication.PreviousOutputValid ? publication.PreviousVertices : publication.CurrentVertices;
+        if ((frame.CurrentDeformationBytes | frame.PreviousDeformationBytes) % 64 != 0 ||
+            frame.CurrentDeformationBytes > publication.CurrentVertices.Length || frame.PreviousDeformationBytes > previousVertices.Length ||
+            frame.CurrentDeformationBytes / 2 > current.BasisOutput.ByteLength || frame.PreviousDeformationBytes / 2 > previous.BasisOutput.ByteLength ||
+            !HasAdvancedLimit("maxStorageBuffersPerShaderStage", 5))
+        {
+            reason = "WebGPU.Advanced.DeformationBasisCopyRange: exact current/previous vertex and basis ranges or five storage bindings are unavailable.";
+            return false;
         }
         WebGpuRenderProgram api = GetAdvancedStageApi(pipeline, "advanced::deformation-copy");
         WebGpuAdvancedDeformationProgramContract.Validate(api.Artifact, copy: true);
@@ -116,10 +160,12 @@ public sealed partial class WebGpuRendererHost : IAdvancedAggregateDeformationBa
         try
         {
             XRRenderProgram program = api.Data;
-            api.SetNativeBindingCacheOwner(scene.GeometryArena);
+            api.SetNativeBindingCacheOwner(destination);
             program.BindBuffer(publication.CurrentVertices, 0);
-            program.BindBuffer(publication.PreviousOutputValid ? publication.PreviousVertices : publication.CurrentVertices, 1);
-            api.BindStorageBuffer(2, scene.GeometryArena);
+            program.BindBuffer(previousVertices, 1);
+            api.BindStorageBuffer(2, destination);
+            api.BindStorageBuffer(3, current.BasisOutput);
+            api.BindStorageBuffer(4, previous.BasisOutput);
             program.Uniform("CurrentWordCount", frame.CurrentDeformationBytes / 4);
             program.Uniform("PreviousWordCount", frame.PreviousDeformationBytes / 4);
             program.Uniform("Reserved0", 0u);
@@ -135,7 +181,6 @@ public sealed partial class WebGpuRendererHost : IAdvancedAggregateDeformationBa
                 reason = $"WebGPU.Advanced.DeformationCopyRejected: {status}.";
                 return false;
             }
-            scene.CopiedDeformation = publication;
             return true;
         }
         finally { api.ClearTransientComputeBindings(); }

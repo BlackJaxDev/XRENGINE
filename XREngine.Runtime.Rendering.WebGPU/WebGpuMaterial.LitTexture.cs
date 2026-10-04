@@ -46,8 +46,8 @@ public sealed partial class WebGpuMaterial
         if (surface.VertexProfile != _litTextureVertexProfile)
             throw new NotSupportedException("WebGPU.Material.TexturedLayoutChanged: normal-map presence requires replacement at a resource-generation boundary.");
         WebGpuFrameBuffer? target = Renderer.GetBoundEngineFrameBuffer();
-        if (target is null || !target.HasDepth || target.SampleCount != 1 || target.ColorFormats.Length != 1 || target.ColorFormats[0] != "rgba16float")
-            throw new NotSupportedException("WebGPU.Material.TexturedOutputUnsupported: the opaque textured surface requires one linear RGBA16F attachment with single-sample depth.");
+        if (target is null || !target.HasDepth || target.SampleCount is not (1 or 4) || target.ColorFormats.Length != 1 || target.ColorFormats[0] != "rgba16float")
+            throw new NotSupportedException("WebGPU.Material.TexturedOutputUnsupported: the opaque textured surface requires one linear RGBA16F attachment with matching one- or four-sample depth.");
         ValidateCoverageRasterState(surface.Values);
         if (_litAuxiliaryPass == EStandardLitColorAuxiliaryPass.DepthNormal)
         {

@@ -13,8 +13,11 @@ public sealed partial class WebGpuRendererHost
     internal bool TryValidateBrowserStandaloneShadow(in AdvancedShadowRecord record, XRTexture texture,
         out string reason)
     {
-        IRuntimeRenderWorld? world = _engineViewport?.World;
-        ulong outputGeneration = CurrentFrameOutput?.TargetGeneration ?? 0;
+        if (_activeSceneCaptureLighting is not null)
+            return TryValidateCapturedShadow(in record, texture, out reason);
+        IRuntimeRenderWorld? world = _activeSceneCaptureWorld ?? _engineViewport?.World;
+        ulong outputGeneration = _activeSceneCaptureWorld is not null
+            ? _sceneCaptureLightingOutputGeneration : CurrentFrameOutput?.TargetGeneration ?? 0;
         if (_engineRecording && world is not null && outputGeneration != 0)
         {
             for (int index = 0; index < world.Lights.DynamicDirectionalLights.Count; index++)

@@ -16,12 +16,29 @@ namespace XREngine.Rendering.Pipelines.Commands
     {
         private IReadOnlyList<int> _renderPasses = [];
         private bool _gpuDispatch;
+        private EMeshSubmissionStrategy? _meshSubmissionStrategy;
         private int _resolvedRenderGraphPassIndex = int.MinValue;
 
         public void SetOptions(IReadOnlyList<int> renderPasses, bool gpuDispatch)
         {
             _renderPasses = renderPasses;
             _gpuDispatch = gpuDispatch;
+            _meshSubmissionStrategy = null;
+        }
+
+        /// <summary>Preserves the forward pass's authored strategy and physical viewport override.</summary>
+        public void SetOptions(IReadOnlyList<int> renderPasses, EMeshSubmissionStrategy meshSubmissionStrategy)
+        {
+            _renderPasses = renderPasses;
+            _meshSubmissionStrategy = meshSubmissionStrategy;
+        }
+
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            base.DescribeRequirements(requirements);
+            if (_meshSubmissionStrategy is { } strategy)
+                VPRC_RenderMeshesPassShared.DescribeSubmissionRequirements(requirements, strategy);
+            foreach (int pass in _renderPasses) requirements.RequireDepthNormalScenePass(pass);
         }
 
         protected override void Execute()
@@ -70,8 +87,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             // dynamically-created materials without bindless registration) MUST set
             // RenderOptions.ExcludeFromGpuIndirect = true so the filtered CPU fallback picks
             // them up; otherwise they will fault the GPU side of this dispatch.
-            EMeshSubmissionStrategy strategy =
-                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(_gpuDispatch);
+            XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport
+                ?? rs.WindowViewport ?? ActivePipelineInstance.LastWindowViewport;
+            EMeshSubmissionStrategy strategy = _meshSubmissionStrategy is { } authoredStrategy
+                ? viewport?.MeshSubmissionStrategyOverride ?? authoredStrategy
+                : RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy(_gpuDispatch);
             EMeshSubmissionStrategy prepassStrategy = ResolveDepthNormalSubmissionStrategy(strategy);
             bool useGpuRenderPath = prepassStrategy != EMeshSubmissionStrategy.CpuDirect;
             foreach (int pass in _renderPasses)
@@ -80,17 +100,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                 {
                     // Auxiliary geometry passes must not execute callback commands: debug callbacks
                     // populate the late overlay and otherwise run once per auxiliary replay.
-                    if (prepassStrategy.IsAnyMeshletStrategy() && AbstractRenderer.Current is IAuthoredIndexedBackendCapability)
-                    {
-                        commands.RenderCPUExplicitlyExcludedMeshes(pass);
-                    }
-                    else if (!prepassStrategy.IsGpuZeroReadbackStrategy())
+                    bool authoredIndexed = AbstractRenderer.Current is IAuthoredIndexedBackendCapability;
+                    if (!authoredIndexed && !prepassStrategy.IsGpuZeroReadbackStrategy())
                     {
                         commands.RenderCPUFiltered(
                             pass,
                             static command => command is IRenderCommandMesh mesh && IsGpuPathCpuFallbackMesh(mesh));
                     }
-                    commands.RenderGPU(pass, prepassStrategy, _resolvedRenderGraphPassIndex);
+                    commands.RenderGPU(pass, prepassStrategy, _resolvedRenderGraphPassIndex,
+                        authoredIndexed ? EAuthoredIndexedCpuReplayPolicy.MeshesOnly : EAuthoredIndexedCpuReplayPolicy.None);
                 }
                 else
                 {

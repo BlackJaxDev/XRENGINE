@@ -30,6 +30,9 @@ public sealed record ShaderProgramArtifact(
     /// <summary>The declared authored frontend used by the target cook.</summary>
     public string SourceLanguage { get; internal init; } = string.Empty;
 
+    /// <summary>Optional exact authored local vertex function shared by the generated raster and native compute programs.</summary>
+    public ShaderNativeVertexCompanion? NativeVertexCompanion { get; internal init; }
+
     /// <summary>The format of the compiled module; authored shader language remains unchanged.</summary>
     public ShaderCompileTarget Target => Artifact.Target;
 }

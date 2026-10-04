@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Tools.ShaderCooker;
 
@@ -28,7 +29,8 @@ internal static class SlangWgslCompiler
         IReadOnlyList<string> includes,
         IReadOnlyList<string> defines,
         CancellationToken cancellationToken,
-        IReadOnlyDictionary<string, string>? entryPoints = null)
+        IReadOnlyDictionary<string, string>? entryPoints = null,
+        bool preserveResourceParameters = false)
     {
         ArgumentNullException.ThrowIfNull(sourceRoot);
         ArgumentNullException.ThrowIfNull(sourcePath);
@@ -85,6 +87,7 @@ internal static class SlangWgslCompiler
                 "-reflection-json", reflection, "-depfile", depfile,
             })
                 start.ArgumentList.Add(argument);
+            if (preserveResourceParameters) start.ArgumentList.Add("-preserve-params");
             // For WGSL module output, -o must precede entries. A trailing -o is
             // associated with the last stage by Slang and may leave the module on stdout.
             entryPoints ??= new Dictionary<string, string> { ["vertex"] = "vertexMain", ["fragment"] = "fragmentMain" };
@@ -111,7 +114,8 @@ internal static class SlangWgslCompiler
 
             (int exitCode, string diagnostics) = await RunAsync(start, cancellationToken).ConfigureAwait(false);
             if (exitCode != 0)
-                throw new InvalidOperationException($"Slang WGSL compilation failed (exit {exitCode}): {diagnostics.Trim()}");
+                throw new ShaderCompilationException($"Slang WGSL compilation failed (exit {exitCode}).",
+                    ParseDiagnostics(diagnostics, root, Path.GetDirectoryName(source)!));
             string output = await ReadUtf8Async(wgsl, MaxSourceBytes, cancellationToken).ConfigureAwait(false);
             string reflectionJson = await ReadUtf8Async(reflection, MaxReflectionBytes, cancellationToken).ConfigureAwait(false);
             using (JsonDocument parsed = JsonDocument.Parse(reflectionJson))
@@ -145,6 +149,95 @@ internal static class SlangWgslCompiler
             catch (DirectoryNotFoundException) { }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static IReadOnlyList<ShaderCompileDiagnostic> ParseDiagnostics(string output, string root, string workingDirectory)
+    {
+        List<ShaderCompileDiagnostic> result = [];
+        bool hasError = false;
+        string? severity = null;
+        string? reason = null;
+        foreach (string line in output.Split('\n'))
+        {
+            Match header = Regex.Match(line.TrimEnd('\r'), @"^(?<severity>error|warning)(?:\[[^\]\r\n]+\])?:\s*(?<reason>.+)$", RegexOptions.CultureInvariant);
+            if (header.Success)
+            {
+                if (reason is not null)
+                    result.Add(new ShaderCompileDiagnostic(null, null, reason, Severity: severity));
+                severity = header.Groups["severity"].Value;
+                hasError |= severity == "error";
+                reason = header.Groups["reason"].Value.Trim();
+                continue;
+            }
+            if (reason is null && result.Count > 0)
+            {
+                Match detail = Regex.Match(line.TrimEnd('\r'), @"^\s*\|\s*[\^~]+\s+(?<message>.+)$", RegexOptions.CultureInvariant);
+                if (detail.Success)
+                    result[^1] = result[^1] with { Message = detail.Groups["message"].Value.Trim() };
+            }
+            if (reason is null)
+                continue;
+            Match location = Regex.Match(line.TrimEnd('\r'), @"^\s*-->\s*(?<path>.+):(?<line>[1-9][0-9]*):(?<column>[1-9][0-9]*)\s*$", RegexOptions.CultureInvariant);
+            if (!location.Success)
+                continue;
+            string? logicalPath = null;
+            try
+            {
+                string candidate = Path.GetFullPath(location.Groups["path"].Value, workingDirectory);
+                logicalPath = Relative(root, candidate);
+            }
+            catch (Exception error) when (error is ArgumentException or InvalidOperationException or NotSupportedException or PathTooLongException)
+            {
+                // Compiler paths outside the admitted source root have no publishable coordinates.
+            }
+            int? sourceLine = logicalPath is not null && int.TryParse(location.Groups["line"].Value, out int parsedLine) ? parsedLine : null;
+            int? sourceColumn = logicalPath is not null && int.TryParse(location.Groups["column"].Value, out int parsedColumn) ? parsedColumn : null;
+            result.Add(new ShaderCompileDiagnostic(logicalPath, sourceLine, reason, sourceColumn, severity));
+            reason = null;
+        }
+        if (reason is not null)
+            result.Add(new ShaderCompileDiagnostic(null, null, reason, Severity: severity));
+        if (!hasError)
+            result.Add(new ShaderCompileDiagnostic(null, null, SanitizeDiagnosticFallback(output), Severity: "error"));
+        return result;
+    }
+
+    private static string SanitizeDiagnosticFallback(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+            return "Slang rejected the source without a diagnostic message.";
+        StringBuilder builder = new();
+        foreach (string line in output.Split('\n'))
+        {
+            if (builder.Length > 0) builder.Append(' ');
+            builder.Append(SanitizeFallbackLine(line));
+        }
+        string message = builder.ToString();
+        message = Regex.Replace(message, @"\s+", " ", RegexOptions.CultureInvariant).Trim();
+        return message.Length <= 4096 ? message : message[..4096] + "…";
+    }
+
+    private static string SanitizeFallbackLine(string line)
+    {
+        line = Regex.Replace(line, "[\\x00-\\x1f\\x7f]", " ", RegexOptions.CultureInvariant);
+        line = Regex.Replace(line, @"(['""])(?:[A-Za-z]:[\\/]|\\\\|/)[^'""]*\1", "<compiler-path>", RegexOptions.CultureInvariant);
+        int searchStart = 0;
+        while (true)
+        {
+            Match path = Regex.Match(line[searchStart..], @"(?<![A-Za-z0-9_.>])(?:[A-Za-z]:[\\/]|\\\\|/)", RegexOptions.CultureInvariant);
+            if (!path.Success) return line;
+            int pathStart = searchStart + path.Index;
+            string tail = line[pathStart..];
+            Match locationReason = Regex.Match(tail, @"\([0-9]+(?:,[0-9]+)?\):\s+(?<reason>.+)$", RegexOptions.CultureInvariant);
+            Match namedReason = Regex.Match(tail, @":\s+(?<reason>(?:fatal|error|warning|note|undefined|unsupported|cannot|failed|invalid)\b.*)$",
+                RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+            Match reason = locationReason.Success ? locationReason : namedReason;
+            if (!reason.Success)
+                return line[..pathStart] + "<compiler-path>";
+            string prefix = line[..pathStart] + "<compiler-path>: ";
+            line = prefix + reason.Groups["reason"].Value;
+            searchStart = prefix.Length;
         }
     }
 

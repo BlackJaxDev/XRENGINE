@@ -1,4 +1,7 @@
+import { assertColorClear } from './gpu-texture-formats.js';
 import { GpuEngineFrameScopes } from './gpu-engine-frame-scopes.js';
+import { GpuEnginePreparation } from './gpu-engine-preparation.js';
+import { GpuEngineResourceCreation } from './gpu-engine-resource-creation.js';
 
 const headerBytes = 48;
 const recordBytes = 112;
@@ -17,24 +20,72 @@ export class GpuEngineFrame {
         this.bytes = new Uint8Array(headerBytes + maximumRecords * recordBytes + maximumUploads * uploadBytes);
         this.view = new DataView(this.bytes.buffer);
         this.operations = new Array(maximumRecords);
+        this.clearValues = new Float64Array(4);
         this.uploads = Array.from({ length: maximumUploads }, () => ({ destination: null, destinationOffset: 0, payloadOffset: 0, byteLength: 0, beforeRecord: 0 }));
         this.uniformBytes = new Uint8Array(uniformCapacity);
         this.storageBytes = new Uint8Array(storageCapacity);
         this.staging = null;
         this.lastSequence = 0;
         this.scopes = new GpuEngineFrameScopes(commands.renderer);
+        this.preparation = new GpuEnginePreparation(commands);
+        this.creation = new GpuEngineResourceCreation(commands);
+        this.emptySubmission = [];
         this.encoderDescriptor = { label: 'Engine frame encoder' };
         this.commandBufferDescriptor = { label: 'Engine frame commands' };
         this.canvasViewDescriptor = { label: 'Engine canvas output' };
         this.stats = { bridgeCalls: 0, submittedFrames: 0, records: 0, draws: 0, storageUploads: 0,
-            commandBytes: 0, uniformBytes: 0, storageBytes: 0, stagingBufferCreates: 0,
+            commandBytes: 0, uniformBytes: 0, storageBytes: 0, preparationUploads: 0, preparationBytes: 0,
+            preparationOnlyFrames: 0, stagingBufferCreates: 0,
             canvasTextureAcquisitions: 0, textureViewCreates: 0, commandEncoderCreates: 0,
             commandBufferCreates: 0, renderPassCreates: 0, computePassCreates: 0 };
     }
 
-    submit(memory, uniforms, storage) {
+    accept(memory, uniforms, storage, preparations, payload, resourceDescriptions, resourceReceipts) {
+        this.stats.bridgeCalls++;
+        this.scopes.trackCompletion = true;
+        try {
+            this.preparation.validate(preparations, payload, this.lastSequence);
+            this.creation.accept(resourceDescriptions, resourceReceipts);
+            const presented = memory?.byteLength === 0
+                ? this.submitPreparation(uniforms, storage)
+                : this.submit(memory, uniforms, storage, this.preparation);
+            this.stats.preparationUploads += this.preparation.count;
+            this.stats.preparationBytes += this.preparation.length;
+            this.commands.renderer._stats.uploadedBytes += this.preparation.length;
+            return this.scopes.completedSequence * 2 + (presented ? 1 : 0);
+        } finally { this.preparation.release(); }
+    }
+
+    submitPreparation(uniforms, storage) {
+        const r = this.commands.renderer;
+        if (uniforms?.byteLength !== 0 || storage?.byteLength !== 0)
+            throw new RangeError('WebGPU.Preparation.ScenePayload: an incomplete scene cannot submit dynamic frame bytes.');
+        let receipt = null;
+        r._executing = true;
+        try {
+            receipt = this.scopes.begin(this.preparation.sequence, false);
+            if (this.preparation.textureCount) {
+                const encoder = r.device.createCommandEncoder(this.encoderDescriptor);
+                this.stats.commandEncoderCreates++;
+                this.preparation.encode(encoder);
+                r._submission[0] = encoder.finish(this.commandBufferDescriptor);
+                this.stats.commandBufferCreates++;
+            }
+            this.preparation.write();
+            r.device.queue.submit(this.preparation.textureCount ? r._submission : this.emptySubmission);
+            this.lastSequence = this.preparation.sequence;
+            this.stats.preparationOnlyFrames++;
+            receipt.close(true);
+            return false;
+        } catch (error) {
+            receipt?.close();
+            r._fail(error);
+            throw error;
+        } finally { r._submission[0] = null; r._executing = false; }
+    }
+
+    submit(memory, uniforms, storage, preparation = null) {
         const c = this.commands, r = c.renderer, stats = this.stats;
-        stats.bridgeCalls++;
         r._setOperation('validate-engine-frame', this.commandBufferDescriptor.label);
         r._requireOwner();
         const length = memory?.byteLength;
@@ -44,12 +95,12 @@ export class GpuEngineFrame {
         const data = this.view;
         const count = data.getUint32(12, true), sequence = data.getUint32(40, true);
         const uploadCount = data.getUint32(44, true);
-        if (data.getUint32(0, true) !== 0x45475258 || data.getUint32(4, true) !== 4 ||
+        if (data.getUint32(0, true) !== 0x45475258 || data.getUint32(4, true) !== 5 ||
             data.getUint32(8, true) !== length || count < 1 || count > maximumRecords || uploadCount > maximumUploads ||
             length !== headerBytes + count * recordBytes + uploadCount * uploadBytes ||
             data.getUint32(16, true) !== r._owner || data.getUint32(20, true) !== r._generation ||
             data.getUint32(24, true) !== r._width || data.getUint32(28, true) !== r._height ||
-            !r._configured || sequence <= this.lastSequence)
+            !r._configured || sequence <= this.lastSequence || preparation && sequence !== preparation.sequence)
             throw new Error('WebGPU.EngineFrame.Obsolete: owner, surface, sequence or schema does not match the renderer.');
 
         const uniformHandle = data.getInt32(32, true), uniformLength = data.getUint32(36, true);
@@ -61,7 +112,7 @@ export class GpuEngineFrame {
         if (uniformLength && (!arena || !(arena.usage & GPUBufferUsage.UNIFORM) || !(arena.usage & GPUBufferUsage.COPY_DST) || uniformLength > arena.size))
             throw new Error('WebGPU.EngineFrame.UniformBuffer: uploads require an owned UNIFORM/COPY_DST buffer.');
 
-        let presentsCanvas = false, drawCount = 0;
+        let presentsCanvas = false, hasCanvas = false, drawCount = 0;
         try {
         // Validate the entire packet before uploads or GPU command encoding. Retained
         // plans retain their own dependencies; packet records cannot forge native state.
@@ -74,16 +125,33 @@ export class GpuEngineFrame {
                 throw new Error('WebGPU.EngineFrame.ObsoletePlan: rebuild commands after output replacement.');
             const operation = prepared.operations[0];
             this.operations[record] = operation;
-            if (operation.type !== 'render' && operation.type !== 'clear' && operation.type !== 'compute' && operation.type !== 'copyBuffer')
-                throw new Error('WebGPU.EngineFrame.CommandType: only retained raster, compute, buffer-copy and attachment operations are admitted.');
+            if (operation.type !== 'render' && operation.type !== 'clear' && operation.type !== 'compute' &&
+                operation.type !== 'copyBuffer' && operation.type !== 'copyTexture')
+                throw new Error('WebGPU.EngineFrame.CommandType: only retained raster, compute, copy and attachment operations are admitted.');
             const offsetCount = data.getUint32(base + 4, true);
             if (offsetCount > maximumDynamicOffsets)
                 throw new RangeError('WebGPU.EngineFrame.DynamicOffsets: too many dynamic bindings.');
-            for (let offset = offsetCount; offset < maximumDynamicOffsets; offset++)
+            const clearValues = (data.getUint32(base + 76, true) & 8) !== 0;
+            if (operation.engineClearValues && !clearValues)
+                throw new Error('WebGPU.EngineFrame.ClearOverride: engine clear operations require exact per-record clear values.');
+            if (clearValues) {
+                if (operation.type !== 'clear' || !operation.engineClearValues || offsetCount !== 0)
+                    throw new Error('WebGPU.EngineFrame.ClearOverride: dynamic clear values require an opted-in clear operation.');
+                for (let value = 0; value < 5; value++)
+                    if (!Number.isFinite(data.getFloat32(base + 8 + value * 4, true)))
+                        throw new RangeError('WebGPU.EngineFrame.ClearValue: clear values must be finite.');
+                for (let value = 0; value < 4; value++) this.clearValues[value] = data.getFloat32(base + 8 + value * 4, true);
+                for (let slot = 0; slot < operation.plan.signature.colorFormats.length; slot++)
+                    if (operation.plan.descriptor.colorAttachments[slot]?.loadOp === 'clear')
+                        assertColorClear(operation.plan.signature.colorFormats[slot], this.clearValues);
+                const depth = data.getFloat32(base + 24, true);
+                if (depth < 0 || depth > 1) throw new RangeError('WebGPU.EngineFrame.ClearDepth: clear depth must be zero to one.');
+            }
+            for (let offset = clearValues ? 5 : offsetCount; offset < maximumDynamicOffsets; offset++)
                 if (data.getUint32(base + 8 + offset * 4, true) !== 0)
                     throw new RangeError('WebGPU.EngineFrame.ReservedOffset: unused dynamic-offset fields must be zero.');
             const instanceCount = data.getUint32(base + 72, true), flags = data.getUint32(base + 76, true);
-            if (flags & ~7 || (!(flags & 1) && instanceCount !== 0) ||
+            if (flags & ~15 || (!(flags & 1) && instanceCount !== 0) ||
                 ((flags & 1) && (operation.type !== 'render' || !operation.engineInstanceCountLimit ||
                     instanceCount > operation.engineInstanceCountLimit)))
                 throw new RangeError('WebGPU.EngineFrame.InstanceOverride: an instance count requires a bounded direct-draw opt-in.');
@@ -127,6 +195,7 @@ export class GpuEngineFrame {
                 drawCount += prepared.draws;
             }
             presentsCanvas ||= prepared.presentsCanvas;
+            hasCanvas ||= prepared.hasCanvas;
         }
 
         let previousRecord = 0, expectedPayloadOffset = 0;
@@ -175,18 +244,22 @@ export class GpuEngineFrame {
                     usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, label: 'Engine frame staging' });
                 stats.stagingBufferCreates++;
             }
-            r._setOperation('acquire-canvas', this.canvasViewDescriptor.label);
-            const canvasTexture = r.context.getCurrentTexture();
-            stats.canvasTextureAcquisitions++;
-            c.canvasColor.view = canvasTexture.createView(this.canvasViewDescriptor);
-            stats.textureViewCreates++;
-            c.canvasColor.width = c.canvasDepth.width = r._width;
-            c.canvasColor.height = c.canvasDepth.height = r._height;
-            c.canvasColor.format = r.format;
-            c.canvasDepth.view = r.depthView;
+            let canvasTexture;
+            if (hasCanvas) {
+                r._setOperation('acquire-canvas', this.canvasViewDescriptor.label);
+                canvasTexture = r.context.getCurrentTexture();
+                stats.canvasTextureAcquisitions++;
+                c.canvasColor.view = canvasTexture.createView(this.canvasViewDescriptor);
+                stats.textureViewCreates++;
+                c.canvasColor.width = c.canvasDepth.width = r._width;
+                c.canvasColor.height = c.canvasDepth.height = r._height;
+                c.canvasColor.format = r.format;
+                c.canvasDepth.view = r.depthView;
+            }
             r._setOperation('create-command-encoder', this.encoderDescriptor.label);
             const encoder = r.device.createCommandEncoder(this.encoderDescriptor);
             stats.commandEncoderCreates++;
+            preparation?.encode(encoder);
             if (uniformLength) encoder.copyBufferToBuffer(this.staging, 0, arena.buffer, 0, uniformLength);
             let uploadIndex = 0;
             for (let record = 0; record <= count; record++) {
@@ -203,6 +276,7 @@ export class GpuEngineFrame {
             r._setOperation('finish-command-encoder', this.commandBufferDescriptor.label);
             r._submission[0] = encoder.finish(this.commandBufferDescriptor);
             stats.commandBufferCreates++;
+            preparation?.write();
             if (uniformLength) r.device.queue.writeBuffer(this.staging, 0, this.uniformBytes, 0, uniformLength);
             if (storageLength) r.device.queue.writeBuffer(this.staging, uniformCapacity, this.storageBytes, 0, storageLength);
             r._setOperation('submit-engine-frame', this.commandBufferDescriptor.label);
@@ -247,5 +321,5 @@ export class GpuEngineFrame {
         return { ...this.stats, errorScopes: { ...this.scopes.stats } };
     }
 
-    dispose() { this.scopes.dispose(); this.staging?.destroy(); this.staging = null; }
+    dispose() { this.scopes.dispose(); this.preparation.dispose(); this.creation.dispose(); this.staging?.destroy(); this.staging = null; }
 }

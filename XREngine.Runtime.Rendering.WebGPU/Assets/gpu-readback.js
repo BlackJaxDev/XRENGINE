@@ -38,38 +38,49 @@ export class GpuReadback {
             offset > source.size || byteLength > source.size - offset || !(source.usage & GPUBufferUsage.COPY_SRC))
             throw new RangeError('Buffer readback requires a bounded aligned range and copy-source usage.');
         const ticket = this._reserve(byteLength, byteLength, byteLength, 1);
+        this._retainSource(ticket, source);
         this._start(ticket, encoder => encoder.copyBufferToBuffer(source.buffer, offset, ticket.buffer, 0, byteLength));
         return ticket.handle;
     }
 
-    beginTexture(handle, mipLevel, x, y, width, height) {
+    beginTexture(handle, mipLevel, x, y, width, height, arrayLayer = 0, format = '', producerFrameSequence = 0) {
         const renderer = this.renderer;
         renderer._requireOwner();
         integer(mipLevel, 'Mip level');
+        integer(arrayLayer, 'Array layer');
+        integer(producerFrameSequence, 'Producer frame sequence');
+        if (producerFrameSequence > 0xffffffff)
+            throw new RangeError('Producer frame sequence exceeds the engine frame range.');
         integer(x, 'Texture X');
         integer(y, 'Texture Y');
         integer(width, 'Texture width', 1);
         integer(height, 'Texture height', 1);
         const source = renderer._resources.getHandle(handle, 'texture', renderer._owner);
-        if (!['rgba8unorm', 'rgba8unorm-srgb', 'bgra8unorm', 'bgra8unorm-srgb', 'depth32float'].includes(source.format) ||
-            source.sampleCount !== 1 || !(source.usage & GPUTextureUsage.COPY_SRC) || mipLevel >= source.mipLevelCount)
-            throw new RangeError('Texture readback requires a single-sample RGBA8/BGRA8 color or depth32float mip with copy-source usage.');
+        if (typeof format !== 'string' || (format !== '' && format !== source.format) ||
+            !['rgba8unorm', 'rgba8unorm-srgb', 'bgra8unorm', 'bgra8unorm-srgb', 'rgba16float', 'depth32float'].includes(source.format) ||
+            (source.format === 'rgba16float' && format !== 'rgba16float') ||
+            source.sampleCount !== 1 || !(source.usage & GPUTextureUsage.COPY_SRC) ||
+            mipLevel >= source.mipLevelCount || arrayLayer >= (source.arrayLayerCount ?? 1))
+            throw new RangeError('Texture readback requires an exact single-sample RGBA8/BGRA8, RGBA16F or depth32float format, valid mip/layer and copy-source usage.');
         const mipWidth = Math.max(1, Math.floor(source.width / 2 ** mipLevel));
         const mipHeight = Math.max(1, Math.floor(source.height / 2 ** mipLevel));
         if (source.format === 'depth32float' && (x !== 0 || y !== 0 || width !== mipWidth || height !== mipHeight))
             throw new RangeError('Depth32float readback must copy the complete mip subresource.');
-        const rowBytes = width * 4;
+        const rowBytes = width * (source.format === 'rgba16float' ? 8 : 4);
         const byteLength = rowBytes * height;
         const paddedRowBytes = Math.ceil(rowBytes / 256) * 256;
         const stagingBytes = paddedRowBytes * height;
         if (x > mipWidth || y > mipHeight || width > mipWidth - x || height > mipHeight - y ||
             !Number.isSafeInteger(byteLength) || byteLength > maximumReadbackBytes || !Number.isSafeInteger(stagingBytes))
             throw new RangeError('Texture readback rectangle exceeds the mip extent or readback byte budget.');
+        const producerGate = producerFrameSequence === 0 ? undefined :
+            renderer.commands.engineFrame.scopes.getAcceptedProducerGate(producerFrameSequence);
         const ticket = this._reserve(byteLength, stagingBytes, rowBytes, height);
+        this._retainSource(ticket, source);
         this._start(ticket, encoder => encoder.copyTextureToBuffer(
-            { texture: source.texture, mipLevel, origin: [x, y, 0], aspect: source.format === 'depth32float' ? 'depth-only' : 'all' },
+            { texture: source.texture, mipLevel, origin: [x, y, arrayLayer], aspect: source.format === 'depth32float' ? 'depth-only' : 'all' },
             { buffer: ticket.buffer, bytesPerRow: paddedRowBytes, rowsPerImage: height },
-            [width, height, 1]));
+            [width, height, 1]), producerGate);
         return ticket.handle;
     }
 
@@ -150,10 +161,15 @@ export class GpuReadback {
         }
     }
 
-    beginCompletion() {
+    beginCompletion(producerFrameSequence = 0) {
         this.renderer._requireOwner();
+        integer(producerFrameSequence, 'Producer frame sequence');
+        if (producerFrameSequence > 0xffffffff)
+            throw new RangeError('Producer frame sequence exceeds the engine frame range.');
+        const producerGate = producerFrameSequence === 0 ? undefined :
+            this.renderer.commands.engineFrame.scopes.getAcceptedProducerGate(producerFrameSequence);
         const ticket = this._reserve(0, 0, 0, 0);
-        this._start(ticket, null);
+        this._start(ticket, null, producerGate);
         return ticket.handle;
     }
 
@@ -194,6 +210,21 @@ export class GpuReadback {
         this.residentBytes += cost;
         this.activeCount++;
         return ticket;
+    }
+
+    _retainSource(ticket, source) {
+        // The packed handle was validated before reserving. Keep that exact
+        // allocation alive if its managed owner retires it during the copy.
+        source.references = (source.references ?? 0) + 1;
+        ticket.source = source;
+    }
+
+    _releaseSource(ticket) {
+        const source = ticket.source;
+        if (!source) return;
+        ticket.source = null;
+        source.references--;
+        if (!source.references) source.tryRetire?.();
     }
 
     _start(ticket, encode, producerGate = undefined) {
@@ -268,13 +299,17 @@ export class GpuReadback {
             ticket.state = 'failed';
             ticket.reject(error);
         } finally {
-            if (ticket.buffer) {
-                ticket.buffer.unmap();
-                ticket.buffer.destroy();
-                ticket.buffer = null;
+            try {
+                if (ticket.buffer) {
+                    ticket.buffer.unmap();
+                    ticket.buffer.destroy();
+                    ticket.buffer = null;
+                }
+            } finally {
+                this._releaseSource(ticket);
+                ticket.finished = true;
+                if (ticket.released) this._free(ticket);
             }
-            ticket.finished = true;
-            if (ticket.released) this._free(ticket);
         }
     }
 
@@ -340,12 +375,11 @@ export class GpuReadback {
             ticket.released = true;
             ticket.bytes = null;
             ticket.reject(canceled());
-            if (ticket.buffer) {
-                ticket.buffer.unmap();
-                ticket.buffer.destroy();
-                ticket.buffer = null;
-            }
-            this._free(ticket);
+            ticket.buffer?.unmap();
+            // As with cancellation, keep in-flight allocation references and
+            // reservations until the submitted queue work and map have settled.
+            if (!ticket.started) ticket.finished = true;
+            if (ticket.finished) this._free(ticket);
         }
     }
 }

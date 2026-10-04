@@ -11,6 +11,7 @@ public sealed unsafe partial class WebGpuTexture2D
     private readonly Dictionary<SampledViewKey, int> _sampledViews = [];
     private SamplerState _samplerState;
     private int _samplerHandle;
+    private WebGpuResourceRequest? _samplerRequest;
 
     internal int GetSampledView(bool depth, bool multisampled = false, bool decodeSrgb = false)
     {
@@ -24,11 +25,26 @@ public sealed unsafe partial class WebGpuTexture2D
         int finalMip = Math.Min(_mipCount - 1, Data.SmallestAllowedMipmapLevel);
         if (baseMip < 0 || baseMip > finalMip)
             throw Unsupported("Sample", "the authored sampled mip range is empty or outside texture storage");
-        SampledViewKey key = new(baseMip, finalMip - baseMip + 1, decodeSrgb);
+        return GetSampledViewCore(baseMip, finalMip - baseMip + 1, decodeSrgb, depthFormat);
+    }
+
+    /// <summary>Resolves a publication-owned mip range without consulting mutable authored sampler settings.</summary>
+    internal int GetFrozenSampledView(uint samplingKey)
+    {
+        Generate();
+        AdvancedEngineSurfaceSamplingKey sampling = new(samplingKey);
+        if (!sampling.IsValid || sampling.StorageMipCount != _mipCount || _samples != 1 || WebGpuTextureFormat.IsDepth(Format))
+            throw Unsupported("Sample", "the frozen ordinary 2D mip view does not match current physical storage");
+        return GetSampledViewCore(sampling.BaseMip, sampling.ViewMipCount, false, false);
+    }
+
+    private int GetSampledViewCore(int baseMip, int mipCount, bool decodeSrgb, bool depthFormat)
+    {
+        SampledViewKey key = new(baseMip, mipCount, decodeSrgb);
         if (_sampledViews.TryGetValue(key, out int view)) return view;
         if (_sampledViews.Count >= 32)
             throw Unsupported("Sample", "the texture exceeds 32 retained mip/color-space sampled views for its current storage generation");
-        view = Renderer.CreateTextureView(new BrowserTextureViewDescription(_handle,
+        view = Renderer.CreateEngineTextureView(this, new BrowserTextureViewDescription(_handle,
             key.BaseMip, key.MipCount, depthFormat ? "depth-only" : "all", Data.Name ?? "Engine sampled view",
             Format: decodeSrgb ? "rgba8unorm-srgb" : ""));
         _sampledViews.Add(key, view);
@@ -68,16 +84,21 @@ public sealed unsafe partial class WebGpuTexture2D
             throw Unsupported("Sampler", "the authored LOD clamp range excludes available sampled levels");
         SamplerState state = new(Address(Data.UWrap), Address(Data.VWrap), min, mag, mip, minLod, maxLod,
             (int)anisotropy, comparison ? "less-equal" : null);
-        if (_samplerHandle != 0 && state == _samplerState) return _samplerHandle;
+        if (_samplerHandle != 0 && state == _samplerState)
+        {
+            if (_samplerRequest is { } obsolete) Renderer.CancelEngineResourceRequest(obsolete);
+            _samplerRequest = null;
+            return _samplerHandle;
+        }
+        int handle = Renderer.CreateEngineReplacement(this, ref _samplerRequest, 4, new BrowserSamplerDescription(state.AddressU, state.AddressV,
+            state.MinFilter, state.MagFilter, state.MipmapFilter, Data.Name ?? "Engine sampler",
+            state.MaxLod, state.Anisotropy, LodMinClamp: state.MinLod, Compare: state.Compare));
         if (_samplerHandle != 0)
         {
             Renderer.ReleaseEngineDrawDependencies(this);
             Renderer.RetireEngineResourceAfterFrame(_samplerHandle);
             SetField(ref _samplerHandle, 0);
         }
-        int handle = Renderer.CreateSampler(new BrowserSamplerDescription(state.AddressU, state.AddressV,
-            state.MinFilter, state.MagFilter, state.MipmapFilter, Data.Name ?? "Engine sampler",
-            state.MaxLod, state.Anisotropy, LodMinClamp: state.MinLod, Compare: state.Compare));
         SetField(ref _samplerState, state);
         SetField(ref _samplerHandle, handle);
         return handle;

@@ -12,4 +12,6 @@ public enum EMaterialTextureSemantic : byte
     Roughness,
     Emissive,
     Transmission,
+    /// <summary>Linear red-channel intensity multiplying the authored specular factor.</summary>
+    Specular = 7,
 }

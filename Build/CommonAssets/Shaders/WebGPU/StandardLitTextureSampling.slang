@@ -22,10 +22,12 @@ float3 mappedTextureNormal(float2 uv, float3 normal, float3 tangent, float3 bita
     float3 b = bitangent - n * dot(n, bitangent);
     if (!all(isfinite(t)) || !all(isfinite(b)) || dot(t, t) < 1e-10 || dot(b, b) < 1e-10) return n;
     sample.y = -sample.y;
-    if (dot(sample, sample) <= 1e-6) return n;
+    if (!all(isfinite(sample)) || dot(sample, sample) <= 1e-6) return n;
     sample = normalize(sample);
     sample.z = max(sample.z, 0.001);
     sample = normalize(sample);
-    return normalize(normalize(t) * sample.x + normalize(b) * sample.y + n * sample.z);
+    float3 mapped = normalize(t) * sample.x + normalize(b) * sample.y + n * sample.z;
+    if (!all(isfinite(mapped)) || dot(mapped, mapped) <= 1e-6) return n;
+    return normalize(mapped);
 }
 #endif

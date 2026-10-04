@@ -334,14 +334,16 @@ export class GpuCommands {
                 let attributes = 0;
                 for (const buffer of descriptor.vertex.buffers) {
                     object(buffer, ['arrayStride', 'stepMode', 'attributes']);
-                    integer(buffer.arrayStride, 4, r.device.limits.maxVertexBufferArrayStride, 'vertex stride');
+                    integer(buffer.arrayStride, 0, r.device.limits.maxVertexBufferArrayStride, 'vertex stride');
                     if (buffer.arrayStride % 4) throw new RangeError('Vertex stride must be four-byte aligned.');
                     oneOf(buffer.stepMode, ['vertex', 'instance'], 'vertex step mode');
                     for (const attribute of array(buffer.attributes, r.device.limits.maxVertexAttributes, 'vertex attributes')) {
                         object(attribute, ['format', 'offset', 'shaderLocation']);
                         oneOf(attribute.format, ['float32', 'float32x2', 'float32x3', 'float32x4', 'uint32', 'uint32x2', 'uint32x3', 'uint32x4', 'sint32', 'sint32x2', 'sint32x3', 'sint32x4'], 'vertex format');
                         const width = attribute.format.includes('x') ? Number(attribute.format.at(-1)) * 4 : 4;
-                        integer(attribute.offset, 0, buffer.arrayStride - width, 'vertex attribute offset');
+                        // A zero stride repeats one constant vertex value. Its full
+                        // attribute extent is checked against the bound range below.
+                        integer(attribute.offset, 0, (buffer.arrayStride || r.device.limits.maxVertexBufferArrayStride) - width, 'vertex attribute offset');
                         if (attribute.offset % 4) throw new RangeError('Vertex attributes require four-byte alignment.');
                         integer(attribute.shaderLocation, 0, r.device.limits.maxVertexAttributes - 1, 'vertex attribute location');
                         attributes++;
@@ -438,7 +440,7 @@ export class GpuCommands {
                 const operationLabel = `${name} ${operations.length} ${command.type}`.slice(0, 128);
                 if (command.type === 'render' || command.type === 'clear') {
                     const clearOnly = command.type === 'clear';
-                    object(command, clearOnly ? ['type', 'pass'] : ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference', 'engineInstanceStorage', 'engineInstanceCountLimit', 'viewport', 'scissor']);
+                    object(command, clearOnly ? ['type', 'pass', 'engineClearValues'] : ['type', 'pass', 'pipeline', 'bindings', 'vertexBuffers', 'indexBuffer', 'draws', 'stencilReference', 'engineInstanceStorage', 'engineInstanceCountLimit', 'viewport', 'scissor']);
                     const pipeline = clearOnly ? undefined : hold(dependencies, this.get(command.pipeline, 'render-pipeline'));
                     const metadata = { color: { width: r._width, height: r._height, format: r.format, sampleCount: 1, usage: 16 }, depth: { width: r._width, height: r._height, format: 'depth24plus', sampleCount: 1, usage: 16 } };
                     const plan = new GpuPassPlan(r._resources, r._owner, command.pass, metadata, operationLabel, r.device);
@@ -463,7 +465,9 @@ export class GpuCommands {
                     if (clearOnly) {
                         const scope = new GpuCommandUsageScope();
                         for (const attachment of plan.bindings) scope.texture(attachment.source, true, 'render attachment');
-                        operations.push({ type: 'clear', label: operationLabel, plan });
+                        if (command.engineClearValues !== undefined && command.engineClearValues !== true)
+                            throw new TypeError('Engine clear values require an explicit true opt-in.');
+                        operations.push({ type: 'clear', label: operationLabel, plan, engineClearValues: command.engineClearValues === true });
                         continue;
                     }
                     const bindings = this.bindings(command.bindings, pipeline, dependencies);
@@ -477,6 +481,12 @@ export class GpuCommands {
                         const offset = integer(item.offset ?? 0, 0, buffer.size, 'vertex offset');
                         const size = integer(item.size ?? buffer.size - offset, 1, buffer.size - offset, 'vertex range');
                         if (!(buffer.usage & 32) || offset % 4 || size % 4) throw new Error('Vertex buffer usage or alignment is invalid.');
+                        const vertexLayout = pipeline.descriptor.vertex.buffers[slot];
+                        if (vertexLayout.arrayStride === 0)
+                            for (const attribute of vertexLayout.attributes) {
+                                const width = attribute.format.includes('x') ? Number(attribute.format.at(-1)) * 4 : 4;
+                                if (attribute.offset + width > size) throw new RangeError('Constant vertex attribute exceeds the bound vertex range.');
+                            }
                         scope.buffer(buffer, false, 'vertex');
                         return { buffer: buffer.buffer, offset, size, slot };
                     });
@@ -603,22 +613,31 @@ export class GpuCommands {
                     if (source === destination || !(source.usage & 4) || !(destination.usage & 8) || (sourceOffset | destinationOffset | size) % 4) throw new Error('Buffer copy resources, usages or alignment are invalid.');
                     operations.push({ type: 'copyBuffer', label: operationLabel, source: source.buffer, destination: destination.buffer, sourceOffset, destinationOffset, size });
                 } else if (command.type === 'copyTexture') {
-                    object(command, ['type', 'source', 'destination', 'sourceMip', 'destinationMip', 'sourceX', 'sourceY', 'destinationX', 'destinationY', 'width', 'height']);
+                    object(command, ['type', 'source', 'destination', 'sourceMip', 'destinationMip', 'sourceLayer', 'sourceX', 'sourceY', 'destinationX', 'destinationY', 'destinationLayer', 'width', 'height']);
                     const source = hold(dependencies, this.get(command.source, 'texture'));
                     const destination = hold(dependencies, this.get(command.destination, 'texture'));
                     if (source === destination || source.sampleCount !== 1 || destination.sampleCount !== 1 || source.format !== destination.format
-                        || !['rgba8unorm', 'rgba8unorm-srgb'].includes(source.format) || !(source.usage & 1) || !(destination.usage & 2))
-                        throw new Error('Texture copy requires distinct, equal-format single-sampled RGBA8 copy resources.');
+                        || !['r8unorm', 'rgba8unorm', 'rgba8unorm-srgb', 'r16float', 'r32float', 'rgba16float', 'depth16unorm', 'depth24plus', 'depth32float'].includes(source.format) ||
+                        !(source.usage & GPUTextureUsage.COPY_SRC) || !(destination.usage & GPUTextureUsage.COPY_DST))
+                        throw new Error('Texture copy requires distinct, equal-format single-sample color or depth-only copy resources.');
                     const sourceMip = integer(command.sourceMip ?? 0, 0, source.mipLevelCount - 1, 'source mip');
                     const destinationMip = integer(command.destinationMip ?? 0, 0, destination.mipLevelCount - 1, 'destination mip');
+                    const sourceLayer = integer(command.sourceLayer ?? 0, 0, (source.arrayLayerCount ?? 1) - 1, 'source layer');
+                    const destinationLayer = integer(command.destinationLayer ?? 0, 0, (destination.arrayLayerCount ?? 1) - 1, 'destination layer');
                     const sourceWidth = Math.max(1, Math.floor(source.width / 2 ** sourceMip)), sourceHeight = Math.max(1, Math.floor(source.height / 2 ** sourceMip));
                     const destinationWidth = Math.max(1, Math.floor(destination.width / 2 ** destinationMip)), destinationHeight = Math.max(1, Math.floor(destination.height / 2 ** destinationMip));
                     const sourceX = integer(command.sourceX ?? 0, 0, sourceWidth - 1, 'source x'), sourceY = integer(command.sourceY ?? 0, 0, sourceHeight - 1, 'source y');
                     const destinationX = integer(command.destinationX ?? 0, 0, destinationWidth - 1, 'destination x'), destinationY = integer(command.destinationY ?? 0, 0, destinationHeight - 1, 'destination y');
                     const width = integer(command.width, 1, Math.min(sourceWidth - sourceX, destinationWidth - destinationX), 'copy width');
                     const height = integer(command.height, 1, Math.min(sourceHeight - sourceY, destinationHeight - destinationY), 'copy height');
-                    operations.push({ type: 'copyTexture', label: operationLabel, source: { texture: source.texture, mipLevel: sourceMip, origin: [sourceX, sourceY, 0] },
-                        destination: { texture: destination.texture, mipLevel: destinationMip, origin: [destinationX, destinationY, 0] }, size: [width, height, 1] });
+                    const depth = ['depth16unorm', 'depth24plus', 'depth32float'].includes(source.format);
+                    if (depth && (sourceX !== 0 || sourceY !== 0 || destinationX !== 0 || destinationY !== 0 ||
+                        width !== sourceWidth || height !== sourceHeight || width !== destinationWidth || height !== destinationHeight))
+                        throw new RangeError('Depth texture copies require complete matching mip subresources.');
+                    const aspect = depth ? 'depth-only' : 'all';
+                    operations.push({ type: 'copyTexture', label: operationLabel,
+                        source: { texture: source.texture, mipLevel: sourceMip, origin: [sourceX, sourceY, sourceLayer], aspect },
+                        destination: { texture: destination.texture, mipLevel: destinationMip, origin: [destinationX, destinationY, destinationLayer], aspect }, size: [width, height, 1] });
                 } else throw new Error('Unsupported ordered command type.');
             }
             return this.publish('commands', { label: name, encoderDescriptor: { label: name }, commandBufferDescriptor: { label: name }, operations, hasCanvas, presentsCanvas, generation: r._generation, width: r._width, height: r._height, draws, encodedDraws }, dependencies);
@@ -679,7 +698,21 @@ export class GpuCommands {
             return;
         }
         r._setOperation('begin-pass', operationLabel, commandIndex);
-        const pass = operation.type === 'compute' ? encoder.beginComputePass(operation.descriptor) : encoder.beginRenderPass(operation.plan.prepare(this.canvasColor, this.canvasDepth));
+        let passDescriptor;
+        if (operation.type !== 'compute') {
+            passDescriptor = operation.plan.prepare(this.canvasColor, this.canvasDepth);
+            if (packet && operation.engineClearValues && (packet.getUint32(offsetBase + 68, true) & 8)) {
+                for (const color of passDescriptor.colorAttachments) if (color && color.loadOp === 'clear') {
+                    color.clearValue.r = packet.getFloat32(offsetBase, true);
+                    color.clearValue.g = packet.getFloat32(offsetBase + 4, true);
+                    color.clearValue.b = packet.getFloat32(offsetBase + 8, true);
+                    color.clearValue.a = packet.getFloat32(offsetBase + 12, true);
+                }
+                if (passDescriptor.depthStencilAttachment?.depthLoadOp === 'clear')
+                    passDescriptor.depthStencilAttachment.depthClearValue = packet.getFloat32(offsetBase + 16, true);
+            }
+        }
+        const pass = operation.type === 'compute' ? encoder.beginComputePass(operation.descriptor) : encoder.beginRenderPass(passDescriptor);
         if (statistics) {
             if (operation.type === 'compute') statistics.computePassCreates++;
             else statistics.renderPassCreates++;
@@ -757,7 +790,9 @@ export class GpuCommands {
         pass.end();
     }
 
-    submitEngineFrame(commands, uniforms, storage) { return this.engineFrame.submit(commands, uniforms, storage); }
+    submitEngineFrame(commands, uniforms, storage, preparations, payload, resourceDescriptions, resourceReceipts) {
+        return this.engineFrame.accept(commands, uniforms, storage, preparations, payload, resourceDescriptions, resourceReceipts);
+    }
 
     dispose() {
         this.engineFrame.dispose();

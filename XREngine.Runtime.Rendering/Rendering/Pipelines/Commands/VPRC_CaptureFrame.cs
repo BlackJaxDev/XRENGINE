@@ -3,6 +3,7 @@ using System;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
+using XREngine.Data;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands;
@@ -91,6 +92,9 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
             CompleteTemporalScenarioFrameIfNeeded();
             return;
         }
+
+        if ((standardCaptureDue && !string.IsNullOrWhiteSpace(OutputFilePath)) || temporalCaptureDue)
+            RuntimeAssetReadServices.EnsureHostFileAccess("Frame capture output");
 
         XRRenderPipelineInstance instance = ActivePipelineInstance;
         if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? texture, out string failure) ||
@@ -203,6 +207,7 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
         int height,
         RenderedOutputCaptureMetrics metrics)
     {
+        RuntimeAssetReadServices.EnsureHostFileAccess("Frame capture output");
         string filePath = Path.GetFullPath(outputFilePath);
         string? directory = Path.GetDirectoryName(filePath);
         if (!string.IsNullOrWhiteSpace(directory))

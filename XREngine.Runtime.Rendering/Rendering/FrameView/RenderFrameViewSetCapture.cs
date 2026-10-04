@@ -8,6 +8,26 @@ namespace XREngine.Rendering;
 /// </summary>
 public static class RenderFrameViewSetCapture
 {
+    [ThreadStatic]
+    private static float? s_elapsedTimeOverride;
+
+    internal static float ResolveElapsedTime(float elapsedTime) => s_elapsedTimeOverride ?? elapsedTime;
+
+    /// <summary>Freezes shared view uniforms for a multi-frame scene capture without changing the engine clock.</summary>
+    public static ElapsedTimeScope PushElapsedTime(float? elapsedTime) => new(elapsedTime);
+
+    public readonly struct ElapsedTimeScope : IDisposable
+    {
+        private readonly float? _previous;
+        internal ElapsedTimeScope(float? elapsedTime)
+        {
+            if (elapsedTime.HasValue && !float.IsFinite(elapsedTime.Value))
+                throw new ArgumentOutOfRangeException(nameof(elapsedTime));
+            _previous = s_elapsedTimeOverride;
+            s_elapsedTimeOverride = elapsedTime;
+        }
+        public void Dispose() => s_elapsedTimeOverride = _previous;
+    }
     [InlineArray(RenderFrameViewSet.MaxViewCount)]
     private struct FrameViewBuffer
     {
@@ -29,9 +49,7 @@ public static class RenderFrameViewSetCapture
         if (!float.IsFinite(viewportSize.X) || !float.IsFinite(viewportSize.Y) ||
             viewportSize.X <= 0 || viewportSize.Y <= 0)
             throw new NotSupportedException("RenderFrameView.InvalidViewport: a frozen draw requires positive finite dimensions.");
-        RenderFrameViewDescriptor? selected = state?.ScopedFrameView is { } scoped &&
-            scoped.SourceCameraIdentity == camera.RenderIdentity ? scoped : null;
-        selected ??= FindCapturedView(state, camera);
+        RenderFrameViewDescriptor? selected = FindCapturedPassView(state, camera);
         if (!selected.HasValue)
         {
             if (requireCapturedView)
@@ -41,13 +59,17 @@ public static class RenderFrameViewSetCapture
             selected = CaptureView(camera, EVrOutputViewKind.DesktopEditor, 0,
                 checked((uint)viewportSize.X), checked((uint)viewportSize.Y), MonoHistoryKey);
         }
-        return new(selected.Value, useUnjitteredProjection, viewportSize, elapsedTime, state?.ShadowPass == true);
+        return new(selected.Value, useUnjitteredProjection, viewportSize, ResolveElapsedTime(elapsedTime), state?.ShadowPass == true);
     }
 
     internal static RenderFrameViewDescriptor CaptureScopedView(
         IRuntimeRenderCommandExecutionState state, XRCamera camera, uint width, uint height)
         => FindCapturedView(state, camera) ??
             CaptureView(camera, EVrOutputViewKind.DesktopEditor, 0, width, height, MonoHistoryKey);
+
+    internal static RenderFrameViewDescriptor? FindCapturedPassView(IRuntimeRenderCommandExecutionState? state, XRCamera camera)
+        => state?.ScopedFrameView is { } scoped && scoped.SourceCameraIdentity == camera.RenderIdentity
+            ? scoped : FindCapturedView(state, camera);
 
     private static RenderFrameViewDescriptor? FindCapturedView(IRuntimeRenderCommandExecutionState? state, XRCamera camera)
     {

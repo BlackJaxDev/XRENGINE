@@ -46,7 +46,7 @@ public sealed partial class WebGpuRenderProgram
         if (!_imageViews.TryGetValue(key, out int view))
         {
             if (_imageViews.Count >= 1024) throw UnsupportedBinding(selected.Contract.Name, "the program exceeds 1024 retained storage subresource views");
-            view = Renderer.CreateTextureView(new BrowserTextureViewDescription(physical.Handle, key.Mip, 1, "all",
+            view = Renderer.CreateEngineTextureView(this, new BrowserTextureViewDescription(physical.Handle, key.Mip, 1, "all",
                 selected.Contract.Name, key.Layer, key.Layers, key.Dimension));
             _imageViews.Add(key, view);
         }

@@ -1,4 +1,5 @@
 using System.Threading;
+using XREngine.Execution;
 
 namespace XREngine.Components;
 
@@ -6,12 +7,13 @@ namespace XREngine.Components;
 /// Persistent coarse-range CPU scheduler. Worker threads and synchronization
 /// primitives are created once; steady execution reuses a high-water handle
 /// buffer and performs no managed allocations.
+/// Browser and caller-thread hosts execute the same ranges inline without workers.
 /// </summary>
 public sealed class PhysicsChainCpuWorkScheduler : IDisposable
 {
     private readonly Thread[] _threads;
     private readonly AutoResetEvent[] _workSignals;
-    private readonly CountdownEvent _completion;
+    private readonly CountdownEvent? _completion;
     private PhysicsChainArenaHandle[] _handles;
     private IPhysicsChainCpuBatchExecutor? _executor;
     private int _handleCount;
@@ -28,9 +30,11 @@ public sealed class PhysicsChainCpuWorkScheduler : IDisposable
     {
         ArgumentOutOfRangeException.ThrowIfNegative(workerCount);
         ArgumentOutOfRangeException.ThrowIfLessThan(initialHandleCapacity, 1);
+        if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread)
+            workerCount = 0;
         _threads = new Thread[workerCount];
         _workSignals = new AutoResetEvent[workerCount];
-        _completion = new CountdownEvent(workerCount);
+        _completion = workerCount > 0 ? new CountdownEvent(workerCount) : null;
         _handles = new PhysicsChainArenaHandle[initialHandleCapacity];
 
         for (int workerIndex = 0; workerIndex < workerCount; ++workerIndex)
@@ -75,13 +79,14 @@ public sealed class PhysicsChainCpuWorkScheduler : IDisposable
             _failedRangeCount = 0;
             _deterministic = deterministic;
 
-            if (deterministic || _threads.Length == 0 || handles.Length <= batchSize)
+            if (deterministic || _threads.Length == 0 || handles.Length <= batchSize
+                || OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread)
             {
                 ProcessRanges();
             }
             else
             {
-                _completion.Reset(_threads.Length);
+                _completion!.Reset(_threads.Length);
                 for (int workerIndex = 0; workerIndex < _workSignals.Length; ++workerIndex)
                     _workSignals[workerIndex].Set();
                 ProcessRanges();
@@ -124,7 +129,7 @@ public sealed class PhysicsChainCpuWorkScheduler : IDisposable
             _threads[workerIndex].Join();
         for (int workerIndex = 0; workerIndex < _workSignals.Length; ++workerIndex)
             _workSignals[workerIndex].Dispose();
-        _completion.Dispose();
+        _completion?.Dispose();
     }
 
     private void WorkerMain(object? state)
@@ -137,7 +142,7 @@ public sealed class PhysicsChainCpuWorkScheduler : IDisposable
             if (Volatile.Read(ref _lifecycleState) == 2)
                 return;
             ProcessRanges();
-            _completion.Signal();
+            _completion!.Signal();
         }
     }
 

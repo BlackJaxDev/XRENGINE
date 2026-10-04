@@ -15,6 +15,8 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(GameAssetsPath) || string.IsNullOrWhiteSpace(GameMetadataPath))
                 return;
 
+            EnsureHostFileAssetAccess();
+
             string assetsRoot = Path.GetFullPath(GameAssetsPath);
             string metadataRoot = Path.GetFullPath(GameMetadataPath);
             if (!Directory.Exists(assetsRoot))
@@ -164,7 +166,7 @@ namespace XREngine
             metadataPath = string.Empty;
             relativePath = string.Empty;
 
-            if (!IsPathUnderGameAssets(assetPath))
+            if (string.IsNullOrWhiteSpace(GameMetadataPath) || !IsPathUnderGameAssets(assetPath))
                 return false;
 
             string assetsRoot = Path.GetFullPath(GameAssetsPath);
@@ -189,6 +191,8 @@ namespace XREngine
         {
             if (!TryGetMetadataPath(assetPath, out string metaPath, out string relativePath))
                 return;
+
+            EnsureHostFileAssetAccess();
 
             lock (_metadataLock)
             {

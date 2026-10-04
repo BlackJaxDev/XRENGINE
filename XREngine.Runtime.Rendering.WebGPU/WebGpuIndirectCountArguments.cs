@@ -43,20 +43,34 @@ internal sealed class WebGpuIndirectCountArguments : IDisposable
     {
         await _kernel.Preparation;
         if (_disposed || !_renderer.AcceptsBackendWork) return;
-        _output = _renderer.CreateBuffer(new BrowserBufferDescription(checked((int)(maximum * 20)),
+        int output = await _renderer.CreateEngineBufferAsync(this, new BrowserBufferDescription(checked((int)(maximum * 20)),
             BrowserBufferUsage.Storage | BrowserBufferUsage.Indirect, "Count-masked indexed arguments"));
-        _parameters = _renderer.CreateBuffer(new BrowserBufferDescription(16,
+        if (!Accept(output)) return;
+        _output = output;
+        int parameters = await _renderer.CreateEngineBufferAsync(this, new BrowserBufferDescription(16,
             BrowserBufferUsage.Uniform | BrowserBufferUsage.CopyDestination, "Indirect count parameters"));
-        Span<byte> parameters = stackalloc byte[16];
-        BinaryPrimitives.WriteUInt32LittleEndian(parameters, offset / 4);
-        BinaryPrimitives.WriteUInt32LittleEndian(parameters[4..], stride / 4);
-        BinaryPrimitives.WriteUInt32LittleEndian(parameters[8..], countOffset / 4);
-        BinaryPrimitives.WriteUInt32LittleEndian(parameters[12..], maximum);
-        _renderer.WriteBuffer(_parameters, 0, parameters);
-        _bindings = _renderer.CreateBindingGroup(
+        if (!Accept(parameters)) return;
+        _parameters = parameters;
+        Span<byte> parameterBytes = stackalloc byte[16];
+        BinaryPrimitives.WriteUInt32LittleEndian(parameterBytes, offset / 4);
+        BinaryPrimitives.WriteUInt32LittleEndian(parameterBytes[4..], stride / 4);
+        BinaryPrimitives.WriteUInt32LittleEndian(parameterBytes[8..], countOffset / 4);
+        BinaryPrimitives.WriteUInt32LittleEndian(parameterBytes[12..], maximum);
+        _renderer.StageEngineBufferPreparation(_parameters, 0, parameterBytes);
+        int bindings = await _renderer.CreateEngineBindingGroupAsync(this,
             $$$"""{"label":"Indirect count masking","layout":{{{_kernel.Layout}}},"entries":[{"binding":0,"resource":{{{_sourceHandle}}},"size":{{{sourceBytes}}}},{"binding":1,"resource":{{{_countHandle}}},"size":{{{countBytes}}}},{"binding":2,"resource":{{{_output}}},"size":{{{maximum * 20}}}},{"binding":3,"resource":{{{_parameters}}},"size":16}]}""");
-        _command = _renderer.PrepareCommands(
+        if (!Accept(bindings)) return;
+        _bindings = bindings;
+        int command = await _renderer.PrepareEngineCommandsAsync(this,
             $$$"""{"label":"Indirect count masking","commands":[{"type":"compute","pipeline":{{{_kernel.Pipeline}}},"bindings":[{"index":0,"group":{{{_bindings}}},"dynamicOffsets":[]}],"workgroups":[{{{(maximum + 63) / 64}}},1,1]}]}""");
+        if (Accept(command)) _command = command;
+    }
+
+    private bool Accept(int handle)
+    {
+        if (!_disposed && _renderer.AcceptsBackendWork) return true;
+        _renderer.RetireEngineResourceAfterFrame(handle);
+        return false;
     }
 
     public void Record()
@@ -69,6 +83,7 @@ internal sealed class WebGpuIndirectCountArguments : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _renderer.CancelEngineResourceRequests(this);
         _renderer.RetireEngineResourceAfterFrame(_command);
         _renderer.RetireEngineResourceAfterFrame(_bindings);
         _renderer.RetireEngineResourceAfterFrame(_parameters);

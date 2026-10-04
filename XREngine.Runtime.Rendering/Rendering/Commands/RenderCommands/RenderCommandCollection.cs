@@ -121,12 +121,18 @@ namespace XREngine.Rendering.Commands
             => Add(item, sortOrderKey, item.CaptureSortDistance(camera: null));
 
         public void Add(RenderCommand item, long sortOrderKey, float renderDistance)
-        {
-            if (!_membership.Add(item))
-                return;
+            => TryAdd(item, sortOrderKey, renderDistance, out _);
 
-            _entries.Add(Entry.Capture(item, renderDistance, sortOrderKey));
+        internal bool TryAdd(RenderCommand item, long sortOrderKey, float renderDistance, out Entry entry)
+        {
+            entry = default;
+            if (!_membership.Add(item))
+                return false;
+
+            entry = Entry.Capture(item, renderDistance, sortOrderKey);
+            _entries.Add(entry);
             _sortDirty = true;
+            return true;
         }
 
         public void Clear()
@@ -224,18 +230,7 @@ namespace XREngine.Rendering.Commands
                     sortOrderKey,
                     RuntimeHelpers.GetHashCode(command),
                     OpaqueStateBucketRenderCommandSorter.ResolveStateBucket(command),
-                    CaptureTransparentSortPriority(command));
-
-            private static int CaptureTransparentSortPriority(RenderCommand command)
-            {
-                if (command.RenderPass != (int)EDefaultRenderPass.TransparentForward || command is not IRenderCommandMesh mesh)
-                    return 0;
-                XRMaterial? material = mesh.MaterialOverride ?? mesh.Mesh?.Material;
-                // V1 and arbitrary shader materials retain their existing neutral
-                // CPU sort priority, including in mixed V1/V2 transparent lists.
-                return material?.EngineSemantic.IsColorCoverage() == true
-                    ? material.TransparentSortPriority : 0;
-            }
+                    RenderCommandSortPriority.Capture(command));
         }
 
         private sealed class ReferenceRenderCommandComparer : IEqualityComparer<RenderCommand>
@@ -375,6 +370,7 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         private void ClearPipelineTransitionPublicationsNoLock()
         {
+            ResetMeshOrderCollectionNoLock();
             CancelCollectedResourcesNoLock();
             foreach (ICollection<RenderCommand> pass in _updatingPasses.Values)
                 pass.Clear();
@@ -747,6 +743,7 @@ namespace XREngine.Rendering.Commands
                 _updatingPasses,
                 passMetadata,
                 nativeAuthoredDecals);
+            PrepareMeshOrderPublicationNoLock(scene, camera);
 
             XRViewport? submissionViewport = ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport;
             if (pipeline?.RequiresGpuMeshSubmissionPublication == true ||
@@ -821,6 +818,7 @@ namespace XREngine.Rendering.Commands
                 using var renderingBufferScope = EnterRenderingBufferWriteScope();
                 _updatingBackendReadyPackage.Cancel();
                 _renderingBackendReadyPackage.Cancel();
+                ResetMeshOrderCollectionNoLock();
                 CancelCollectedResourcesNoLock();
             }
         }
@@ -915,7 +913,11 @@ namespace XREngine.Rendering.Commands
         public void AddCPU(RenderCommand item, IRuntimeRenderCamera? camera)
         {
             int pass = item.RenderPass;
-            float renderDistance = item.CaptureSortDistance(camera);
+            AABB? sortBounds = null;
+            Vector3 fallbackPosition = default;
+            float renderDistance = _updatingOrderScopeDepth == 1 && item.GetType() == typeof(RenderCommandMesh3D)
+                ? ((RenderCommandMesh3D)item).CaptureSortDistance(camera, out sortBounds, out fallbackPosition)
+                : item.CaptureSortDistance(camera);
 
             using (_lock.EnterScope())
             {
@@ -935,9 +937,12 @@ namespace XREngine.Rendering.Commands
 
                 long sortOrderKey = GetSortOrderKey(pass);
                 int beforeCount = set.Count;
+                int sortPriority = 0;
                 if (set is SnapshotSortedRenderCommandCollection snapshotSet)
                 {
-                    snapshotSet.Add(item, sortOrderKey, renderDistance);
+                    if (snapshotSet.TryAdd(item, sortOrderKey, renderDistance,
+                        out SnapshotSortedRenderCommandCollection.Entry entry))
+                        sortPriority = entry.TransparentSortPriority;
                 }
                 else
                 {
@@ -945,6 +950,8 @@ namespace XREngine.Rendering.Commands
                     set.Add(item);
                 }
                 int afterCount = set.Count;
+                if (afterCount > beforeCount)
+                    ObserveMeshOrderInsertionNoLock(item, camera, pass, sortOrderKey, sortBounds, fallbackPosition, sortPriority);
                 ++_numCommandsRecentlyAddedToUpdate;
                 _updatingRevision++;
                 // Dirty-delta enqueue: only swap commands whose state has actually changed since
@@ -2187,24 +2194,28 @@ namespace XREngine.Rendering.Commands
         public void RenderGPU(
             int renderPass,
             EMeshSubmissionStrategy meshSubmissionStrategy,
-            int renderGraphPassIndex)
+            int renderGraphPassIndex,
+            EAuthoredIndexedCpuReplayPolicy cpuReplayPolicy = EAuthoredIndexedCpuReplayPolicy.None)
             => RenderGPU(
                 renderPass,
                 meshSubmissionStrategy.ToSubmissionMode(),
                 meshSubmissionStrategy.ToPrimitivePathPreference(),
-                renderGraphPassIndex);
-
-        public void RenderGPU(
-            int renderPass,
-            EMeshSubmissionStrategy meshSubmissionMode,
-            EMeshPrimitivePathPreference primitivePathPreference)
-            => RenderGPU(renderPass, meshSubmissionMode, primitivePathPreference, int.MinValue);
+                renderGraphPassIndex,
+                cpuReplayPolicy);
 
         public void RenderGPU(
             int renderPass,
             EMeshSubmissionStrategy meshSubmissionMode,
             EMeshPrimitivePathPreference primitivePathPreference,
-            int renderGraphPassIndex)
+            EAuthoredIndexedCpuReplayPolicy cpuReplayPolicy = EAuthoredIndexedCpuReplayPolicy.None)
+            => RenderGPU(renderPass, meshSubmissionMode, primitivePathPreference, int.MinValue, cpuReplayPolicy);
+
+        public void RenderGPU(
+            int renderPass,
+            EMeshSubmissionStrategy meshSubmissionMode,
+            EMeshPrimitivePathPreference primitivePathPreference,
+            int renderGraphPassIndex,
+            EAuthoredIndexedCpuReplayPolicy cpuReplayPolicy = EAuthoredIndexedCpuReplayPolicy.None)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
@@ -2222,7 +2233,8 @@ namespace XREngine.Rendering.Commands
                     ? meshSubmissionMode : meshSubmissionMode.IsGpuZeroReadbackStrategy()
                         ? EMeshSubmissionStrategy.GpuMeshletZeroReadback : EMeshSubmissionStrategy.GpuMeshletInstrumented;
                 AuthoredIndexedBackendRequest request = new(publishedWorld.GpuScene, publishedWorld.FrameId, renderPass,
-                    renderGraphPassIndex, meshletCamera, view, authoredStrategy);
+                    renderGraphPassIndex, meshletCamera, view, authoredStrategy, _renderingBackendReadyPackage,
+                    cpuReplayPolicy == EAuthoredIndexedCpuReplayPolicy.None ? null : this, cpuReplayPolicy);
                 EAuthoredIndexedSubmissionStatus status = authoredIndexed.EnqueueAuthoredIndexed(in request, out string reason);
                 if (status == EAuthoredIndexedSubmissionStatus.Rejected)
                     XREngine.Debug.RenderingWarningEvery("RenderMeshes.AuthoredIndexedRejected", TimeSpan.FromSeconds(2),
@@ -2631,6 +2643,7 @@ namespace XREngine.Rendering.Commands
                 _numCommandsRecentlyAddedToUpdate = 0;
                 _updatingRevision++;
                 _updatingBackendReadyPackage.Reset();
+                ResetMeshOrderCollectionNoLock();
             }
         }
 

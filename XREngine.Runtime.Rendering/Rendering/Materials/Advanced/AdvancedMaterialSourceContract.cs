@@ -1,5 +1,6 @@
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Materials;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering;
 
@@ -9,6 +10,12 @@ public static class AdvancedMaterialSourceContract
     public static EAdvancedMaterialSourceContract Classify(XRMaterial? material)
     {
         if (material is null) return EAdvancedMaterialSourceContract.Unclassified;
+        if (material.TessCtrlShaders.Count != 0 || material.TessEvalShaders.Count != 0)
+            return EAdvancedMaterialSourceContract.TessellatedVertexProgram;
+        if (material.GeometryShaders.Count != 0 || material.MeshShaders.Count != 0 || material.TaskShaders.Count != 0)
+            return EAdvancedMaterialSourceContract.TopologyChangingProgram;
+        if (material.BillboardMode != EMeshBillboardMode.None || material.HasSettingVertexUniformHandlers)
+            return EAdvancedMaterialSourceContract.CustomVertexProgram;
         if (material is AdvancedProjectiveMirrorMaterial) return EAdvancedMaterialSourceContract.ProjectiveMirror;
         foreach (MaterialPassDefinition pass in material.PassSet.Passes)
         {
@@ -17,6 +24,13 @@ public static class AdvancedMaterialSourceContract
             if (!string.IsNullOrWhiteSpace(pass.FragmentShaderPath)) return EAdvancedMaterialSourceContract.CustomSurfaceProgram;
         }
         EngineMaterialSemanticIdentity semantic = material.EngineSemantic;
+        if (semantic.IsUnlit() && EngineUnlitNativeAdmission.TryRead(material, out EngineUnlitSurface unlit, out _))
+            return unlit.TransparencyMode == (semantic == EngineMaterialSemanticIdentity.UnlitAlphaTextureV4
+                    ? ETransparencyMode.Masked : ETransparencyMode.Opaque)
+                ? EAdvancedMaterialSourceContract.EngineGeneratedSurface
+                : EAdvancedMaterialSourceContract.CustomSurfaceProgram;
+        if (semantic == EngineMaterialSemanticIdentity.UberBaseV1 && EngineUberBaseNativeAdmission.TryRead(material, out _, out _))
+            return EAdvancedMaterialSourceContract.UberBaseSurface;
         if (material.Shaders.Count == 0 &&
             (semantic == EngineMaterialSemanticIdentity.StandardLitColorV1 ||
              semantic == EngineMaterialSemanticIdentity.StandardLitColorV2 ||
@@ -24,6 +38,12 @@ public static class AdvancedMaterialSourceContract
             return EAdvancedMaterialSourceContract.StandardSurface;
         if (semantic.IsAuthoredLit() && material.Shaders.Count is 1 or 2)
         {
+            if (semantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1 &&
+                EngineAuthoredLitNativeAdmission.TryReadTexturedAlpha(material, out _, out _))
+                return EAdvancedMaterialSourceContract.EngineGeneratedSurface;
+            if (semantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1 &&
+                EngineAuthoredLitNativeAdmission.TryReadAuthoredTextured(material, out _, out _))
+                return EAdvancedMaterialSourceContract.EngineGeneratedSurface;
             if (EngineAuthoredLitNativeAdmission.TryRead(material, out _, out _, out _, out _))
                 return EAdvancedMaterialSourceContract.EngineGeneratedSurface;
             string? identity = null;

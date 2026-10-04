@@ -743,7 +743,8 @@ float3 XR_ADV_EvaluateLight(
     float roughness,
     float metallic,
     float specularIntensity,
-    bool engineSurface)
+    bool engineSurface,
+    bool receiveShadows)
 {
     XRAdvancedLightRecord light = XR_ADV_LoadLight(index);
     if (!XR_ADV_LightAffectsView(light, surface.viewIndex)) return float3(0.0);
@@ -766,8 +767,8 @@ float3 XR_ADV_EvaluateLight(
         }
     }
     else return float3(0.0);
-    uint reason;
-    float visibility = XR_ADV_EvaluateShadow(light, surface, N, L, reason);
+    uint reason = 0u;
+    float visibility = receiveShadows ? XR_ADV_EvaluateShadow(light, surface, N, L, reason) : 1.0;
     shadowReason = max(shadowReason, reason);
     shadowVisibility = min(shadowVisibility, visibility);
     float3 radiance = light.colorAndIntensity.rgb * light.colorAndIntensity.w * attenuation * visibility;
@@ -854,7 +855,14 @@ void XR_ADV_EvaluateNativeOpaqueSample(
 
     XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
     XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
-    bool engineSurface = XR_ADV_IsEngineSurfaceMaterial(material);
+    bool uberSurface = XR_ADV_IsUberBaseMaterial(material);
+    bool engineSurface = XR_ADV_IsEngineSurfaceMaterial(material) || uberSurface;
+    uint engineSurfaceWord, engineSurfaceKind, engineSurfaceRoles;
+    bool nativeUnlitEngine = !uberSurface && XR_ADV_TryLoadEngineSurfaceHeader(material,
+        engineSurfaceWord, engineSurfaceKind, engineSurfaceRoles) &&
+        engineSurfaceKind >= XR_ADV_ENGINE_SURFACE_UNLIT_COLOR &&
+        engineSurfaceKind <= XR_ADV_ENGINE_SURFACE_UNLIT_ARRAY_SLICE;
+    uint uberPipeline = 15u;
     if (!engineSurface && XR_ADV_IsProjectiveMirrorMaterial(material))
     {
         float3 mirrorColor;
@@ -877,7 +885,12 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     float4 rmse;
     float3 emittedRadiance;
     float3 N;
-    if (engineSurface)
+    if (uberSurface)
+    {
+        if (!XR_ADV_TryEvaluateUberBase(material, surface, base, rmse, N, emittedRadiance, uberPipeline))
+        { textureFailure |= 1u << 17u; return; }
+    }
+    else if (engineSurface)
     {
         if (!XR_ADV_TryEvaluateEngineSurface(material, surface, base, rmse, N, emittedRadiance))
         {
@@ -918,18 +931,29 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     float metallic = clamp(rmse.y, 0.0, 1.0);
     float linearDepth = -XR_ADV_TransformRowVector(float4(surface.worldPosition, 1.0), view.view).z;
     // Exact canonical overflow evaluation, with the same view/layer/volume tests.
-    XR_ADV_ApplySelectedDecals(surface, base.rgb, N, roughness, metallic, rmse.z, emittedRadiance);
+#if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
+    // Admission proves that no selected decal can affect this source-lit receiver.
+    if (!uberSurface)
+#endif
+        if (!nativeUnlitEngine)
+            XR_ADV_ApplySelectedDecals(surface, base.rgb, N, roughness, metallic, rmse.z, emittedRadiance);
 
     float3 color = emittedRadiance;
-    bool unlit = (material.eligibilityFlags & 16u) != 0u;
+    bool unlit = uberSurface ? (uberPipeline & 1u) == 0u :
+        nativeUnlitEngine || (material.eligibilityFlags & 16u) != 0u;
+    if (uberSurface && (uberPipeline & 4u) == 0u) ambientOcclusion = 1.0;
+#if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
+    if (uberSurface) color += XR_ADV_UberRasterLighting;
+    else
+#endif
     if (unlit) color += base.rgb;
     else
     {
         uint lightCount = min(u_Push.lightCount, SceneCount(5u));
         for (uint lightIndex = 0u; lightIndex < lightCount; ++lightIndex)
             color += XR_ADV_EvaluateLight(lightIndex, surface, N, V, base.rgb,
-                roughness, metallic, rmse.z, engineSurface);
-        if ((u_Push.flags & 8u) != 0u)
+                roughness, metallic, rmse.z, engineSurface, !uberSurface || (uberPipeline & 2u) != 0u);
+        if ((u_Push.flags & 8u) != 0u && (!uberSurface || (uberPipeline & 8u) != 0u))
         {
             float3 diffuseIndirect, specularIndirect;
             XR_ADV_EvaluateProbeIbl(viewIndex, surface.worldPosition, N, V,

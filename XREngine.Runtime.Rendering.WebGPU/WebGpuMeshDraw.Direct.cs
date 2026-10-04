@@ -20,7 +20,7 @@ internal sealed partial class WebGpuMeshDraw
             int capacity = bindings.IsNativeRaster ? WebGpuAdvancedVisibilityFrame.MaximumRetainedDirectCommands : 4096;
             if (_directCommands.Count >= capacity)
                 throw Unsupported($"vertexless direct draws exceed {capacity} retained binding/count variants");
-            command = _renderer.PrepareCommands(DescribeDraw(bindings,
+            command = _renderer.PrepareEngineCommands(this, DescribeDraw(bindings,
                 directVertices: vertices, directFirstVertex: firstVertex, directInstances: instances));
             _directCommands.Add(key, command);
         }

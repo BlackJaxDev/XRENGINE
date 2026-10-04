@@ -206,7 +206,7 @@ public sealed class OctahedralBillboardAsset : XRAsset
 /// <summary>
 /// Utility for baking 26-view octahedral impostor textures from an existing <see cref="ModelComponent"/>.
 /// </summary>
-public sealed class OctahedralImposterGenerator
+public sealed partial class OctahedralImposterGenerator
 {
     private const string UnsupportedDepthMessage =
         "Depth output for octahedral billboards is deferred for v1. Captures use a depth buffer for correct rendering, but no depth texture asset is produced.";
@@ -220,7 +220,9 @@ public sealed class OctahedralImposterGenerator
     public sealed record Settings(
         uint SheetSize = 1024,
         float CapturePadding = 1.15f,
-        bool CaptureDepth = false);
+        bool CaptureDepth = false,
+        RenderPipeline? Pipeline = null,
+        EMeshSubmissionStrategy? SubmissionStrategy = null);
 
     public sealed record CaptureProgress(int CompletedViews, int TotalViews, string Message)
     {
@@ -247,6 +249,8 @@ public sealed class OctahedralImposterGenerator
 
     public static Result? Generate(ModelComponent component, Settings settings, IReadOnlyCollection<int>? submeshIndices)
     {
+        RequireSceneCaptureSupport();
+
         Result? result = null;
         Exception? exception = null;
 
@@ -296,6 +300,8 @@ public sealed class OctahedralImposterGenerator
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(component);
+        if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+            return GenerateBrowserAsync(component, settings, submeshIndices, progress, cancellationToken);
 
         TaskCompletionSource<Result?> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
         RuntimeEngine.EnqueueMainThreadTask(() =>
@@ -326,6 +332,13 @@ public sealed class OctahedralImposterGenerator
         }, "OctahedralImposterGenerator.GenerateAsync");
 
         return tcs.Task;
+    }
+
+    private static void RequireSceneCaptureSupport()
+    {
+        if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+            throw new NotSupportedException(
+                "OctahedralImposter.AsyncCaptureRequired: caller-thread scene capture requires GenerateAsync; the owner thread cannot synchronously wait for GPU completion.");
     }
 
     private static Result? GenerateOnRenderThread(
@@ -373,7 +386,7 @@ public sealed class OctahedralImposterGenerator
 
         XRFrameBuffer[] framebuffers = BuildLayerFramebuffers(colorArray, depthBuffer);
         XRTexture[] previewTextures = BuildPreviewTextures(colorArray);
-        CaptureResources resources = GetCaptureResources(settings.SheetSize);
+        CaptureResources resources = GetCaptureResources(settings);
         ConfigureCommandCollection(resources);
 
         try
@@ -459,7 +472,7 @@ public sealed class OctahedralImposterGenerator
         return null;
     }
 
-    private static XRTexture2DArray CreateColorArray(uint sheetSize)
+    private static XRTexture2DArray CreateColorArray(uint sheetSize, bool initializeGpu = true)
     {
         XRTexture2DArray viewArray = XRTexture2DArray.CreateFrameBufferTexture(
             (uint)s_captureDirections.Length,
@@ -475,7 +488,8 @@ public sealed class OctahedralImposterGenerator
             ? viewArray.Textures[0].SizedInternalFormat
             : ESizedInternalFormat.Rgba16f;
         OctahedralBillboardAsset.ConfigureColorViewTexture(viewArray);
-        viewArray.PushData();
+        if (initializeGpu)
+            viewArray.PushData();
         return viewArray;
     }
 
@@ -522,12 +536,12 @@ public sealed class OctahedralImposterGenerator
         return views;
     }
 
-    private static CaptureResources GetCaptureResources(uint resolution)
+    private static CaptureResources GetCaptureResources(Settings settings)
     {
         lock (s_resourceLock)
         {
             s_resources ??= new CaptureResources();
-            s_resources.Configure(resolution);
+            s_resources.Configure(settings);
             return s_resources;
         }
     }
@@ -553,7 +567,7 @@ public sealed class OctahedralImposterGenerator
         int viewIndex,
         XRFrameBuffer fbo)
     {
-        XRCamera camera = BuildCaptureCamera(captureCenter, orthographicExtent, axis);
+        XRCamera camera = BuildCaptureCamera(captureCenter, orthographicExtent, axis, resources.Viewport.RenderPipeline);
         XRViewport viewport = resources.Viewport;
         RenderCommandCollection commands = resources.Commands;
         viewport.Camera = camera;
@@ -592,7 +606,7 @@ public sealed class OctahedralImposterGenerator
         return true;
     }
 
-    private static XRCamera BuildCaptureCamera(Vector3 captureCenter, float orthographicExtent, Vector3 axis)
+    private static XRCamera BuildCaptureCamera(Vector3 captureCenter, float orthographicExtent, Vector3 axis, RenderPipeline? pipeline = null)
     {
         Vector3 normalizedAxis = Vector3.Normalize(axis);
         float eyeDistance = orthographicExtent * 2.0f;
@@ -627,6 +641,8 @@ public sealed class OctahedralImposterGenerator
             TsrRenderScaleOverride = 1.0f
         };
 
+        if (pipeline is not null)
+            camera.RenderPipeline = pipeline;
         var colorStage = camera.GetPostProcessStageState<ColorGradingSettings>();
         if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
         {
@@ -883,6 +899,10 @@ public sealed class OctahedralImposterGenerator
 
     private sealed class CaptureResources
     {
+        private readonly RenderPipeline _defaultPipeline;
+
+        public CaptureResources() => _defaultPipeline = Viewport.RenderPipeline!;
+
         public XRViewport Viewport { get; } = new(null, 1u, 1u)
         {
             PipelineRequest = RenderPipelineRequest.OffscreenCapture(),
@@ -897,14 +917,14 @@ public sealed class OctahedralImposterGenerator
 
         public RenderCommandCollection Commands { get; } = new();
 
-        public void Configure(uint resolution)
+        public void Configure(Settings settings)
         {
-            uint safeResolution = Math.Max(1u, resolution);
+            uint safeResolution = Math.Max(1u, settings.SheetSize);
             if (Viewport.Width != safeResolution || Viewport.Height != safeResolution)
                 Viewport.Resize(safeResolution, safeResolution);
 
-            Viewport.RenderPipeline ??=
-                RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline();
+            Viewport.RenderPipeline = settings.Pipeline ?? _defaultPipeline;
+            Viewport.MeshSubmissionStrategyOverride = settings.SubmissionStrategy;
         }
     }
 }

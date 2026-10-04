@@ -15,11 +15,11 @@ internal sealed partial class WebGpuMeshDraw
         foreach (ShaderVertexBufferLayout layout in _program.Artifact.VertexBuffers)
             foreach (ShaderVertexAttribute attribute in layout.Attributes)
             {
-                var (buffer, offset, format) = ResolveAttribute(mesh, attribute.Semantic, deformation, owner);
+                var (buffer, offset, format) = ResolveAttribute(mesh, attribute.Semantic, deformation, owner, renderer: _renderer);
                 bool found = false;
                 foreach (WebGpuVertexStream stream in _streams)
                 {
-                    if (!ReferenceEquals(stream.Buffer.Data, buffer) || stream.Stride != buffer.ElementSize ||
+                    if (!ReferenceEquals(stream.Buffer.Data, buffer) || stream.Stride != (_renderer.IsAuthoredConstantVertex(buffer) ? 0 : buffer.ElementSize) ||
                         stream.StepMode != (buffer.InstanceDivisor == 0 ? "vertex" : "instance")) continue;
                     foreach (ShaderVertexAttribute resolved in stream.Attributes)
                         if (resolved.Semantic == attribute.Semantic && resolved.Offset == offset && resolved.Format == format)
@@ -80,7 +80,7 @@ internal sealed partial class WebGpuMeshDraw
         if (command.CommandHandle == 0)
         {
             int source = command.MaskedArguments?.ResourceHandle ?? argumentHandle;
-            command.CommandHandle = _renderer.PrepareCommands(DescribeDraw(bindings, source, drawCount,
+            command.CommandHandle = _renderer.PrepareEngineCommands(this, DescribeDraw(bindings, source, drawCount,
                 countBuffer is null ? stride : 20, countBuffer is null ? offset : 0));
         }
         (var viewport, var scissor) = _renderer.ResolveEngineDrawArea();

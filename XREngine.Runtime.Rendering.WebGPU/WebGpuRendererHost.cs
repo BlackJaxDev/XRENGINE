@@ -54,6 +54,8 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
         State = _deviceLost ? BrowserRendererState.Lost : BrowserRendererState.Failed;
         SetField(ref _submittedFrame, false);
         DeviceCapabilities = null;
+        ResetEngineResourceRequests();
+        CancelSceneCaptures();
     }
 
     private void RequireReady()
@@ -112,7 +114,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
             return;
         }
         RequireReady();
-        if (HasUnsubmittedEngineBufferUpload(handle))
+        if (HasUnsubmittedEngineBufferUpload(handle) || HasPendingEnginePreparation(handle) || HasPendingEngineTextureCopySource(handle))
             throw new InvalidOperationException("WebGPU.Resource.PendingUpload: a buffer with unsubmitted mutations must remain alive until submission or renderer teardown.");
         WebGpuImports.DestroyResource(_session, handle);
         _resources.Remove(handle);
@@ -166,6 +168,9 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
         copy.Validate();
         if (!_resources.Contains(copy.SourceHandle) || !_resources.Contains(copy.DestinationHandle))
             throw new InvalidOperationException("Both copy textures must belong to this WebGPU renderer.");
+        if (_engineRecording || HasPendingEnginePreparation(copy.SourceHandle) || HasPendingEnginePreparation(copy.DestinationHandle) ||
+            HasPendingEngineTextureCopySource(copy.DestinationHandle))
+            throw new NotSupportedException("WebGPU.Texture.PendingCopyUnsupported: a standalone texture copy cannot overtake an active engine frame or unsubmitted transfers; use an ordered engine copy or wait for frame acceptance.");
         WebGpuImports.CopyTexture(_session, copy.SourceHandle, copy.DestinationHandle,
             copy.SourceX, copy.SourceY, copy.DestinationX, copy.DestinationY, copy.Width, copy.Height);
     }
@@ -195,14 +200,17 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
             {
                 DestroyDirectionalShadowDefaults();
                 DestroyAmbientOcclusionDefaults();
+                DestroyAuthoredZeroTangent();
                 DestroyAdvancedStagePrograms();
             }
         }
         finally
         {
             State = BrowserRendererState.Disposed;
+            CancelSceneCaptures();
             ArmPendingEngineFences();
             DeviceCapabilities = null;
+        ResetEngineResourceRequests();
             SetField(ref _submittedFrame, false);
             try
             {
@@ -215,6 +223,7 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
                 DisposeAuthoredIndexedResources();
                 _resources.Clear();
                 _enginePendingStorage.Clear();
+                ResetEnginePreparation();
                 _engineDeferredReleases.Clear();
                 SetField(ref _engineUploadCount, 0, publishNotifications: false);
                 SetField(ref _engineStorageBytes, 0, publishNotifications: false);
@@ -223,6 +232,8 @@ public sealed partial class WebGpuRendererHost : AbstractRenderer, IBrowserRende
                 SetField(ref _engineUploadsSubmitted, false, publishNotifications: false);
                 SetField(ref _engineUploadsNeedCompaction, false, publishNotifications: false);
                 SetField(ref _engineClearCommands, 0);
+                Array.Clear(_engineClearVariants);
+                Array.Clear(_engineClearRequests);
                 SetField(ref _engineUniformBuffer, 0);
                 SetField(ref _engineUniformArena, null);
                 SetField(ref _engineViewport, null);

@@ -231,3 +231,11 @@ Generated audit outputs should be treated as disposable report artifacts rather 
 
 - If a work doc becomes the long-term source of truth, move the durable parts into `docs/developer-guides`, `docs/user-guide`, `docs/architecture`, or another stable docs area.
 - Completed timing migration notes were folded into the user/developer guide split where relevant.
+
+[Mipmap caller-thread resizing](progress/platform/browser-mipmap-caller-resize-2026-10-03.md) records request-owned pixels, cancellation and unchanged serialization evidence. [Uber caller preparation](progress/rendering/browser-uber-caller-preparation-2026-10-03.md) records the implemented job route and owner-observed scheduler failures and remaining cooked-program boundary.
+
+[Runtime asset wrappers](progress/platform/browser-runtime-asset-wrapper-boundaries-2026-10-03.md) record serialization-owner admission. [Gaussian and baked DDGI consumers](progress/platform/browser-gaussian-ddgi-asset-consumers-2026-10-04.md) record captured asynchronous reads, owner-side adoption and reviewed cancellation lifetimes. [Caller frame identity](progress/rendering/browser-caller-scene-frame-identity-2026-10-03.md) records canonical collection, scene and retained-package identity. [Octahedral billboard preparation](progress/rendering/browser-octahedral-impostor-2026-10-03.md) and [asynchronous scene capture](progress/platform/browser-hlod-impostor-capture-boundary-2026-10-03.md) distinguish shader/geometry implementation from capture lifetime and physical rendering acceptance.
+
+[Runtime I/O admission](progress/platform/browser-runtime-io-admission-2026-10-04.md) records captured remote-response ownership, cooked-font diagnostics and host-only capture, profiling, archive and transport boundaries.
+
+[Browser download size](progress/platform/browser-download-size-boundary-2026-10-04.md) separates current framework build-resource measurements from final transfer acceptance and records the remaining streamed-shader and managed-assembly boundaries.

@@ -89,7 +89,8 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
             using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(renderGraphPass);
             if (useGpuRenderPath)
             {
-                if (!overdrawStrategy.IsGpuZeroReadbackStrategy())
+                bool authoredIndexed = AbstractRenderer.Current is IAuthoredIndexedBackendCapability;
+                if (!authoredIndexed && !overdrawStrategy.IsGpuZeroReadbackStrategy())
                 {
                     commands.RenderCPUFiltered(
                         pass,
@@ -97,7 +98,8 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
                         respectCpuQueryOcclusion: true);
                 }
 
-                commands.RenderGPU(pass, overdrawStrategy);
+                commands.RenderGPU(pass, overdrawStrategy, int.MinValue,
+                    authoredIndexed ? EAuthoredIndexedCpuReplayPolicy.MeshesOnly : EAuthoredIndexedCpuReplayPolicy.None);
             }
             else
             {

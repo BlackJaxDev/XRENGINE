@@ -111,8 +111,8 @@ public static partial class BrowserEngineExports
             bootstrap?.InitializeRegistrations();
             stage = "load shader catalog";
             _shaderArtifacts = await _source.LoadShaderArtifactsAsync(token);
-            _materialArtifacts = RuntimeEngineMaterialArtifactServices.Install(_shaderArtifacts);
             _materialVariants = _source.LoadEngineMaterialVariants(_shaderArtifacts);
+            _materialArtifacts = RuntimeEngineMaterialArtifactServices.Install(_shaderArtifacts, _materialVariants);
             WebComputeArtifactCatalog computeArtifacts = _source.LoadComputeArtifacts(_shaderArtifacts);
             _session = new BrowserEngineSession(PhysicsBackends);
             stage = "preload default UI font";

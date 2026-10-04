@@ -26,7 +26,8 @@ internal static class BrowserWorldCapabilityAudit
         ICollection<RenderPipelineRequirements>? admittedPipelineRequirements = null,
         BrowserNativeSceneCapabilityAudit? nativeAdmission = null)
     {
-        using IDisposable materialArtifacts = RuntimeEngineMaterialArtifactServices.InstallForCurrentThread(resolver);
+        using IDisposable materialArtifacts = RuntimeEngineMaterialArtifactServices.InstallForCurrentThread(
+            resolver, resolver as IEngineMaterialVariantResolver);
         Dictionary<string, ShaderProgramArtifact> artifacts = new(StringComparer.Ordinal);
         string? worldSourcePath = world.Name is { } name && name.StartsWith("/game/", StringComparison.Ordinal)
             ? name : report?.WorldAssetPath ?? world.FilePath;
@@ -147,7 +148,10 @@ internal static class BrowserWorldCapabilityAudit
                 if (component is CameraComponent camera)
                     Collect(() => rendering.Inspect(camera, path, report, scenePath), scenePath, path, componentName,
                         pass: "camera-pipeline");
-                if (component is SceneCaptureComponentBase or AdvancedOffscreenTextureCaptureComponent or
+                if (component is XREngine.Components.Capture.Lights.LightProbeComponent retainedProbe)
+                    Collect(() => _ = XREngine.Components.Capture.Lights.RetainedLightProbeIblProfile.Capture(retainedProbe),
+                        scenePath, path, componentName);
+                else if (component is SceneCaptureComponentBase or AdvancedOffscreenTextureCaptureComponent or
                     MirrorCaptureComponent or LightProbeGridSpawnerComponent)
                     Collect(() => throw new NotSupportedException($"BrowserCook.EnvironmentCaptureUnsupported: '{path}' component '{componentName}' requires an explicit cooked capture and probe/IBL path."),
                         scenePath, path, componentName);
@@ -175,11 +179,25 @@ internal static class BrowserWorldCapabilityAudit
                                 !computeSource.ComputeArtifacts.ContainsKey(WebComputeArtifactCatalog.PackedSkinningKernel)))
                                 Collect(() => throw new NotSupportedException($"BrowserCook.ComputeArtifactMissing: '{path}' mesh '{mesh.Name}' requires packed-skinning in the project shader manifest."),
                                     scenePath, path, componentName, lod.Material?.Name, "packed-skinning");
-                            Collect(() => InspectMaterial(lod.Material, path, mesh.Name, scenePath, lod.Mesh),
+                            Collect(() => InspectMaterial(lod.Material, path, mesh.Name, scenePath, lod.Mesh,
+                                    castsShadows: ((ModelComponent)component).MeshCastsShadows != false),
                                 scenePath, path, componentName, lod.Material?.Name,
                                 lod.Material?.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture),
                                 MaterialSourcePath(lod.Material));
                         }
+                else if (component is OctahedralBillboardComponent impostor)
+                {
+                    Collect(() =>
+                    {
+                        XRMaterial material = impostor.ValidateWebGpuProfile();
+                        string shaderRoot = Path.Combine(Engine.Assets?.EngineAssetsPath
+                            ?? throw new NotSupportedException("BrowserCook.Impostor.SourceRootMissing: the canonical engine shader root is required."), "Shaders");
+                        if (!EngineOctahedralImpostorShaderContract.TryValidateDesktopSources(relative =>
+                            File.Exists(Path.Combine(shaderRoot, relative)) ? File.ReadAllText(Path.Combine(shaderRoot, relative)) : null, out string reason))
+                            throw new NotSupportedException($"BrowserCook.Impostor.SourceMismatch: '{path}': {reason}");
+                        InspectMaterial(material, path, "OctahedralBillboard", scenePath, castsShadows: false);
+                    }, scenePath, path, componentName, pass: EngineOctahedralImpostorShaderContract.Pass);
+                }
                 else if (component is SkyboxComponent sky)
                 {
                     Collect(() =>
@@ -267,14 +285,30 @@ internal static class BrowserWorldCapabilityAudit
         }
 
         void InspectMaterial(XRMaterial? material, string path, string? meshName, string scenePath,
-            XRMesh? geometry = null, bool sceneRoute = true)
+            XRMesh? geometry = null, bool sceneRoute = true, bool castsShadows = true)
         {
-            shadows.InspectMaterial(material, path, meshName, scenePath);
+            shadows.InspectMaterial(material, path, meshName, scenePath, geometry, castsShadows);
             if (material is null)
                 throw new InvalidDataException($"BrowserCook.MaterialMissing: '{path}' mesh '{meshName}'.");
             Collect(() => rendering.InspectMaterial(material, path, meshName, sceneRoute, report, scenePath), scenePath, path,
                 material: material.Name, pass: material.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 sourcePath: MaterialSourcePath(material));
+            if (material.EngineSemantic == EngineMaterialSemanticIdentity.OctahedralImpostorV1)
+            {
+                EngineMaterialVariantKey key = EngineOctahedralImpostorShaderContract.Key();
+                string reason = "the exact canonical companion is absent from the project shader manifest";
+                if (material.Shaders.Count != 0 || resolver is not BrowserShaderArtifactSource source ||
+                    !source.TryResolveMaterialVariant(key, out ShaderProgramArtifact? artifact) ||
+                    !EngineOctahedralImpostorShaderProvenance.TryValidate(artifact, orderGate: false, out reason))
+                    throw new NotSupportedException($"BrowserCook.Impostor.CookedContractMissing: '{path}' requires '{key}': {reason}.");
+                artifacts.TryAdd(artifact.Identity, artifact);
+                EngineMaterialVariantKey orderedKey = EngineOctahedralImpostorShaderContract.Key(orderGate: true);
+                if (!source.TryResolveMaterialVariant(orderedKey, out ShaderProgramArtifact? ordered) ||
+                    !EngineAuthoredOrderGateContract.TryValidate(artifact, ordered, out _, out reason))
+                    throw new NotSupportedException($"BrowserCook.Impostor.OrderedContractMissing: '{path}' requires '{orderedKey}': {reason}.");
+                artifacts.TryAdd(ordered.Identity, ordered);
+                return;
+            }
             if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
             {
                 if (material.Shaders.Count != 0)
@@ -322,6 +356,22 @@ internal static class BrowserWorldCapabilityAudit
                 }
                 return;
             }
+            if (material.EngineSemantic.IsUnlit() && material.Shaders.Count == 0)
+            {
+                EngineMaterialVariantKey key = EngineUnlitMaterialShaderGenerator.BuiltInKey(material.EngineSemantic);
+                string? reason = "The exact built-in unlit variant is absent from the project shader manifest.";
+                if (resolver is not BrowserShaderArtifactSource builtInSource ||
+                    !builtInSource.TryResolveMaterialVariant(key, out ShaderProgramArtifact? builtIn) ||
+                    !EngineUnlitMaterialAdmission.TryAdmitBuiltIn(material, builtIn, key,
+                        out EngineUnlitSurfaceBinding? binding, out reason) || binding is null ||
+                    !binding.TryRead(out EngineUnlitSurface surface, out reason))
+                    throw new NotSupportedException($"BrowserCook.UnlitBuiltInUnsupported: '{path}' material '{material.Name}' requires '{key}': {reason}.");
+                if (geometry is not null && (!geometry.HasNormals || surface.Texture is not null && geometry.TexCoordCount == 0))
+                    throw new NotSupportedException($"BrowserCook.UnlitVertexUnsupported: '{path}' mesh '{meshName}' requires normals and UV0 for sampled unlit surfaces.");
+                artifacts.TryAdd(builtIn.Identity, builtIn);
+                RequireUnlitCatalogCompanions(surface, builtInSource);
+                return;
+            }
             if (material.Shaders.Count == 0)
                 throw new NotSupportedException($"BrowserCook.ShaderMissing: '{path}' material '{material.Name}' has no selected cooked WebGPU stages.");
             ShaderProgramArtifact? authored = null;
@@ -339,12 +389,110 @@ internal static class BrowserWorldCapabilityAudit
                     throw new NotSupportedException($"BrowserCook.ShaderProgramMismatch: '{path}' material '{material.Name}' retains stages with different whole-program companions.");
                 authored = verified;
                 artifacts.TryAdd(verified.Identity, verified);
+                if (verified.SemanticSchemaIdentity == AdvancedNativeVertexMaterialSource.Schema)
+                {
+                    if (resolver is null || !EngineNativeVertexShaderProvenance.TryValidate(verified, resolver,
+                        out ShaderProgramArtifact? nativeVertex, out string vertexReason) || nativeVertex is null)
+                        throw new NotSupportedException($"BrowserCook.NativeVertexCompanionMissing: '{path}' material '{material.Name}': recook its exact shared local-vertex raster and compute pair.");
+                    artifacts.TryAdd(nativeVertex.Identity, nativeVertex);
+                    foreach (EngineNativeVertexAuxiliaryPass nativePass in Enum.GetValues<EngineNativeVertexAuxiliaryPass>())
+                        if (EngineNativeVertexShaderProvenance.TryResolveAuxiliary(verified, resolver, nativePass,
+                            out ShaderProgramArtifact? auxiliary, out _) && auxiliary is not null)
+                            artifacts.TryAdd(auxiliary.Identity, auxiliary);
+                }
             }
             string? authoredReason = null;
+            if (material.EngineSemantic.IsUnlit())
+            {
+                if (authored is null || !EngineUnlitMaterialAdmission.TryAdmit(material, authored,
+                        out EngineUnlitSurfaceBinding? binding, out authoredReason) || binding is null ||
+                    !binding.TryRead(out EngineUnlitSurface surface, out authoredReason))
+                    throw new NotSupportedException($"BrowserCook.UnlitUnsupported: '{path}' material '{material.Name}': {authoredReason}.");
+                if (geometry is not null && (!geometry.HasNormals || surface.Texture is not null && geometry.TexCoordCount == 0))
+                    throw new NotSupportedException($"BrowserCook.UnlitVertexUnsupported: '{path}' mesh '{meshName}' requires normals and UV0 for sampled unlit surfaces.");
+                if (resolver is not BrowserShaderArtifactSource unlitSource)
+                    throw new NotSupportedException($"BrowserCook.UnlitCatalogMissing: '{path}' material '{material.Name}' requires its exact auxiliary shader catalog.");
+                RequireUnlitCatalogCompanions(surface, unlitSource);
+                return;
+            }
+            void RequireUnlitCatalogCompanions(EngineUnlitSurface surface, BrowserShaderArtifactSource unlitSource)
+            {
+                if (!material.IsTransparentLike())
+                    RequireUnlitCompanion("depth-normal");
+                if (surface.Semantic == EngineMaterialSemanticIdentity.UnlitAlphaTextureV4 && !material.IsTransparentLike())
+                {
+                    RequireUnlitCompanion("depth");
+                    RequireUnlitCompanion("point-shadow-depth");
+                    RequireUnlitCompanion("spot-shadow-depth");
+                }
+                if (material.IsTransparentLike())
+                    RequireUnlitCompanion("forward-unlit", orderGate: true);
+
+                void RequireUnlitCompanion(string pass, bool orderGate = false)
+                {
+                    EngineMaterialVariantKey companionKey = EngineUnlitMaterialShaderGenerator.CompanionKey(surface.Semantic, pass, orderGate);
+                    string companionReason = "The selected material variant is missing from the cooked shader manifest.";
+                    if (!unlitSource.TryResolveMaterialVariant(companionKey, out ShaderProgramArtifact? companion) ||
+                        !EngineUnlitShaderProvenance.TryValidateCompanion(companion, companionKey, out companionReason))
+                        throw new NotSupportedException($"BrowserCook.UnlitCompanionMissing: '{path}' material '{material.Name}' requires exact '{companionKey}': {companionReason}.");
+                    artifacts.TryAdd(companion.Identity, companion);
+                }
+            }
+            if (material.EngineSemantic == EngineMaterialSemanticIdentity.UberBaseV1)
+            {
+                if (authored is null || !EngineUberBaseMaterialAdmission.TryAdmit(material, authored,
+                    out UberBaseSurfaceBinding? binding, out authoredReason) || binding is null)
+                    throw new NotSupportedException($"BrowserCook.UberBaseUnsupported: '{path}' material '{material.Name}': {authoredReason}.");
+                if (geometry is not null && !geometry.HasNormals)
+                    throw new NotSupportedException($"BrowserCook.UberBaseVertexUnsupported: '{path}' mesh '{meshName}' requires its canonical normal stream.");
+                foreach (UberBasePassArtifact companion in binding.Profile.PassArtifacts)
+                {
+                    if (resolver is null || !resolver.TryResolve(companion.ArtifactIdentity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? passArtifact) ||
+                        !EngineUberBaseMaterialAdmission.TryValidateArtifact(material.ID, binding.Profile, passArtifact, companion.Pass, out authoredReason))
+                        throw new NotSupportedException($"BrowserCook.UberBaseAuxiliaryMissing: '{path}' material '{material.Name}', pass '{companion.Pass}': {authoredReason}.");
+                    artifacts.TryAdd(passArtifact.Identity, passArtifact);
+                }
+                return;
+            }
             if (material.EngineSemantic.Semantic == EngineMaterialSemantic.None)
             {
                 if (authored?.VertexEntryPoint is null || authored.FragmentEntryPoint is null || authored.ComputeEntryPoint is not null)
                     throw new NotSupportedException($"BrowserCook.RasterProgramMissing: '{path}' material '{material.Name}' requires a complete cooked raster program.");
+                return;
+            }
+            if (material.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1)
+            {
+                if (authored is null || !EngineTexturedAlphaMaterialAdmission.TryAdmit(material, authored, out _, out authoredReason))
+                    throw new NotSupportedException($"BrowserCook.TexturedAlphaUnsupported: '{path}' material '{material.Name}': {authoredReason}.");
+                if (geometry is not null && (!geometry.HasNormals || geometry.TexCoordCount == 0))
+                    throw new NotSupportedException($"BrowserCook.TexturedAlphaVertexUnsupported: '{path}' mesh '{meshName}' requires normals and UV0.");
+                if (!material.IsTransparentLike())
+                {
+                    EngineMaterialVariantKey normal = new(material.EngineSemantic, ShaderCompileTarget.WebGPUWgsl,
+                        "depth-normal", "position-normal-uv-v1", "normal-rgba16f-v1");
+                    if (resolver is not BrowserShaderArtifactSource alphaSource ||
+                        !alphaSource.TryResolveMaterialVariant(normal, out ShaderProgramArtifact? normalArtifact) ||
+                        !EngineTexturedAlphaMaterialAdmission.TryValidateCompanion(normalArtifact, normal, out authoredReason))
+                        throw new NotSupportedException($"BrowserCook.TexturedAlphaNormalVariantMissing: '{path}' material '{material.Name}' requires exact two-image coverage in its depth-normal companion: {authoredReason}.");
+                }
+                return;
+            }
+            if (material.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1)
+            {
+                if (authored is null || !EngineAuthoredTexturedMaterialAdmission.TryAdmit(material, authored,
+                        out AuthoredTexturedSurfaceBinding? binding, out authoredReason) || binding is null ||
+                    !binding.TryRead(out AuthoredTexturedSurface surface, out authoredReason))
+                    throw new NotSupportedException($"BrowserCook.AuthoredTexturedUnsupported: '{path}' material '{material.Name}': {authoredReason}.");
+                if (geometry is not null && (!geometry.HasNormals || geometry.TexCoordCount == 0))
+                    throw new NotSupportedException($"BrowserCook.AuthoredTexturedVertexUnsupported: '{path}' mesh '{meshName}' requires normals and UV0.");
+                if (!material.IsTransparentLike())
+                {
+                    EngineMaterialVariantKey normal = EngineAuthoredTexturedShaderGenerator.CompanionKey(surface.TextureFlags, "depth-normal");
+                    if (resolver is not BrowserShaderArtifactSource texturedSource ||
+                        !texturedSource.TryResolveMaterialVariant(normal, out ShaderProgramArtifact? normalArtifact) ||
+                        !EngineAuthoredTexturedMaterialAdmission.TryValidateCompanion(normalArtifact, normal, out authoredReason))
+                        throw new NotSupportedException($"BrowserCook.AuthoredTexturedNormalVariantMissing: '{path}' material '{material.Name}' requires its exact normal/coverage companion: {authoredReason}.");
+                }
                 return;
             }
             if (authored is null || !EngineAuthoredLitMaterialAdmission.TryAdmit(material, authored,

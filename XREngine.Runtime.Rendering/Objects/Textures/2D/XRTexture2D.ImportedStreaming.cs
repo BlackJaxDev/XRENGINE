@@ -93,6 +93,7 @@ public partial class XRTexture2D
     {
         if (!AllowAutomaticImportedTextureStreaming
             || !RuntimeRenderingHostServices.HasConcreteHost
+            || !RuntimeTextureSourceAccess.CanAccessHostFiles
             || string.IsNullOrWhiteSpace(OriginalPath)
             || HasAssetExtension(OriginalPath))
         {
@@ -145,6 +146,7 @@ public partial class XRTexture2D
 
     internal static string ResolveTextureStreamingAuthorityPathInternal(string filePath, out string? originalSourcePath)
     {
+        RuntimeTextureSourceAccess.RequireHostFiles();
         originalSourcePath = null;
         if (string.IsNullOrWhiteSpace(filePath))
             return filePath;

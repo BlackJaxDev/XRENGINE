@@ -85,22 +85,24 @@ public sealed partial class WebGpuRendererHost
         PointLightComponent? point = null;
         int spotIndex = 0, pointIndex = 0;
         for (int i = 0; i < world.Lights.DynamicSpotLights.Count; i++)
-            if (world.Lights.DynamicSpotLights[i].CastsShadows && world.Lights.DynamicSpotLights[i].ShadowFrustumRelevant)
+            if (world.Lights.DynamicSpotLights[i].CastsShadows && (_activeSceneCaptureLighting is not null
+                ? GetCapturedShadow(world.Lights.DynamicSpotLights[i]) is not null : world.Lights.DynamicSpotLights[i].ShadowFrustumRelevant))
             { spot = world.Lights.DynamicSpotLights[i]; spotIndex = i; }
         for (int i = 0; i < world.Lights.DynamicPointLights.Count; i++)
             if (world.Lights.DynamicPointLights[i].CastsShadows)
             { point = world.Lights.DynamicPointLights[i]; pointIndex = i; }
 
-        XRTexture2D spotTexture = spot?.CookedShadowReceiverTexture ?? EnsureDefaultSpotShadow();
+        SceneCaptureShadowSnapshot? capturedSpot = spot is not null ? GetCapturedShadow(spot) : null;
+        XRTexture2D spotTexture = capturedSpot?.Texture as XRTexture2D ?? spot?.CookedShadowReceiverTexture ?? EnsureDefaultSpotShadow();
         if (spot is not null)
         {
             if (spot.CookedShadowReceiverTexture is null)
                 throw ShadowUnsupported($"spot '{spot.Name}' has no light-owned projected depth texture");
             WebGpuTexture2D api = (WebGpuTexture2D)GetOrCreateAPIRenderObject(spotTexture, generateNow: true)!;
-            if (!api.WasProducedInFrame(_engineFrameSequence) && !CanPublishReusedShadow(spot, spotTexture))
+            if (capturedSpot is null && !api.WasProducedInFrame(_engineFrameSequence) && !CanPublishReusedShadow(spot, spotTexture))
                 MarkEngineDrawPending();
         }
-        program.SetMatrix("SpotShadowViewProjection", spot?.ShadowCamera?.ViewProjectionMatrix ?? Matrix4x4.Identity);
+        program.SetMatrix("SpotShadowViewProjection", capturedSpot?.ViewProjection ?? spot?.ShadowCamera?.ViewProjectionMatrix ?? Matrix4x4.Identity);
         program.SetVector4("SpotShadowControl", spot is null ? Vector4.Zero :
             new Vector4(1, spotIndex, spot.ShadowCamera!.NearZ, spot.ShadowCamera.FarZ));
         program.SetVector4("SpotShadowPosition", spot is null ? Vector4.Zero : new Vector4(spot.Transform.RenderTranslation, 0));
@@ -114,11 +116,12 @@ public sealed partial class WebGpuRendererHost
         if (point is null) pointTexture = EnsureDefaultPointShadow();
         else
         {
-            pointTexture = point.CookedShadowReceiverTexture
+            SceneCaptureShadowSnapshot? capturedPoint = GetCapturedShadow(point);
+            pointTexture = capturedPoint?.Texture as XRTextureCube ?? point.CookedShadowReceiverTexture
                 ?? throw ShadowUnsupported($"point '{point.Name}' has no light-owned radial-distance cube");
             WebGpuTextureCube api = (WebGpuTextureCube)GetOrCreateAPIRenderObject(pointTexture, generateNow: true)!;
-            if ((!api.WasProducedInFrame(_engineFrameSequence) && !CanPublishReusedShadow(point, pointTexture)) ||
-                point.LastRenderedShadowFaceMask != 63)
+            if (capturedPoint is null && ((!api.WasProducedInFrame(_engineFrameSequence) && !CanPublishReusedShadow(point, pointTexture)) ||
+                point.LastRenderedShadowFaceMask != 63))
                 MarkEngineDrawPending();
         }
         program.SetVector4("PointShadowControl", point is null ? Vector4.Zero :
@@ -159,7 +162,7 @@ public sealed partial class WebGpuRendererHost
             {
                 WebGpuTexture2D api = (WebGpuTexture2D)GetOrCreateAPIRenderObject(_defaultSpotShadow, generateNow: true)!;
                 BrowserFrameBufferPlan plan = new([new BrowserColorAttachmentPlan(api.GetRenderView(0, -1), true, true, Vector4.One)]);
-                SetField(ref _defaultSpotShadowClear, PrepareCommands(
+                SetField(ref _defaultSpotShadowClear, PrepareEngineCommands(this,
                     "{\"label\":\"Disabled spot shadow initialization\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}"));
             }
             RecordEngineCommands(_defaultSpotShadowClear, []);
@@ -199,7 +202,7 @@ public sealed partial class WebGpuRendererHost
                     WebGpuTextureCube api = (WebGpuTextureCube)GetOrCreateAPIRenderObject(_defaultPointShadow, generateNow: true)!;
                     BrowserFrameBufferPlan plan = new([new BrowserColorAttachmentPlan(api.GetRenderView(0, face), true, true, Vector4.One)]);
                     // Every ordered engine frame record references one retained operation.
-                    _defaultPointShadowClears[face] = PrepareCommands(
+                    _defaultPointShadowClears[face] = PrepareEngineCommands(this,
                         "{\"label\":\"Disabled point shadow face initialization\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}");
                 }
                 RecordEngineCommands(_defaultPointShadowClears[face], []);

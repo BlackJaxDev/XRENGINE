@@ -9,11 +9,10 @@ public sealed partial class WebGpuRendererHost
 {
     private Vector4 _engineClearColor = new(0, 0, 0, 1);
     private float _engineClearDepth = 1;
-    private bool _engineClearPlanDirty = true;
     private int _engineClearCommands;
+    private readonly int[] _engineClearVariants = new int[4];
+    private readonly WebGpuResourceRequest?[] _engineClearRequests = new WebGpuResourceRequest?[4];
     private ulong _engineClearSurfaceGeneration;
-    private bool _engineClearColorEnabled;
-    private bool _engineClearDepthEnabled;
     private int _engineClearStencil;
     private BoundingRectangle? _engineRenderArea;
     private BoundingRectangle? _engineCropArea;
@@ -67,6 +66,10 @@ public sealed partial class WebGpuRendererHost
                     finally { world.GlobalPostRender(); }
                 }
                 else ready = RecordEngineViewport(output);
+                if (ready && !_engineDrawPending)
+                    ready = RecordPendingSceneLighting();
+                if (ready && !_engineDrawPending)
+                    ready = RecordPendingSceneCapture();
                 // A consumer must never see a partially prepared producer (for example,
                 // a clear without its mesh draws, or HDR without a ready output pass).
                 if (!ready || _engineCommandCount == 0 || _engineDrawPending || !AreAdvancedFamiliesComplete())
@@ -88,11 +91,34 @@ public sealed partial class WebGpuRendererHost
                         submissionBytes = GC.GetAllocatedBytesForCurrentThread() - submissionStart;
                 }
             }
+            catch (RenderResourcePreparationPendingException)
+            {
+                MarkEngineDrawPending();
+                outcome = "Incomplete";
+            }
             finally
             {
                 try
                 {
-                    DiscardEngineViewHistory();
+                    try
+                    {
+                        if (!_engineAcceptanceAttempted)
+                        {
+                            long submissionStart = statistics is null ? 0 : GC.GetAllocatedBytesForCurrentThread();
+                            if (statistics is not null && !recordingMeasured)
+                            {
+                                recordingBytes = submissionStart - allocationStart;
+                                recordingMeasured = true;
+                            }
+                            try { SubmitPendingEnginePreparation(); }
+                            finally
+                            {
+                                if (statistics is not null)
+                                    submissionBytes += GC.GetAllocatedBytesForCurrentThread() - submissionStart;
+                            }
+                        }
+                    }
+                    finally { DiscardEngineViewHistory(); }
                 }
                 finally
                 {
@@ -113,7 +139,8 @@ public sealed partial class WebGpuRendererHost
                         try { ArmPendingEngineFences(submitted); }
                         finally
                         {
-                            RetireEngineDeferredResources();
+                            try { RetireEngineDeferredResources(); }
+                            finally { CompleteAcceptedSceneCapture(submitted && !_engineDrawPending); }
                         }
                     }
                 }
@@ -140,35 +167,39 @@ public sealed partial class WebGpuRendererHost
     {
         if (_engineViewport is not null) return _engineViewport.TryRender();
         PrepareEngineClear(output);
-        RecordEngineCommands(_engineClearCommands, []);
+        RecordEngineClear(_engineClearCommands);
         return true;
     }
 
     private void PrepareEngineClear(in RenderFrameOutputDescription output, bool color = true, bool depth = true)
     {
-        if (!_engineClearPlanDirty && _engineClearCommands != 0 &&
-            _engineClearSurfaceGeneration == output.TargetGeneration &&
-            _engineClearColorEnabled == color && _engineClearDepthEnabled == depth)
+        if (_engineClearSurfaceGeneration != output.TargetGeneration)
+        {
+            for (int variant = 0; variant < _engineClearVariants.Length; variant++)
+            {
+                RetireEngineResourceAfterFrame(_engineClearVariants[variant]);
+                _engineClearVariants[variant] = 0;
+                if (_engineClearRequests[variant] is { } request) CancelEngineResourceRequest(request);
+                _engineClearRequests[variant] = null;
+            }
+            SetField(ref _engineClearSurfaceGeneration, output.TargetGeneration, publishNotifications: false);
+        }
+        int index = (color ? 1 : 0) | (depth ? 2 : 0);
+        if (_engineClearVariants[index] != 0)
+        {
+            SetField(ref _engineClearCommands, _engineClearVariants[index], publishNotifications: false);
             return;
+        }
 
         // Descriptions and arrays are cold state/generation work. Steady-state frames
         // replay the retained handle without serializing commands or allocating storage.
         BrowserFrameBufferPlan plan = new(
-            [new BrowserColorAttachmentPlan(0, clear: color, store: true, _engineClearColor)],
-            new BrowserDepthStencilAttachmentPlan(-1, clearDepth: depth, depthClearValue: _engineClearDepth));
-        int replacement = PrepareCommands(
-            "{\"label\":\"Engine canvas clear\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}");
-        int previous = _engineClearCommands;
-        SetField(ref _engineClearCommands, replacement);
-        SetField(ref _engineClearSurfaceGeneration, output.TargetGeneration);
-        SetField(ref _engineClearPlanDirty, false);
-        SetField(ref _engineClearColorEnabled, color);
-        SetField(ref _engineClearDepthEnabled, depth);
-        if (previous != 0)
-        {
-            if (_engineRecording) _engineDeferredReleases.Add(previous);
-            else RetireEngineResource(previous);
-        }
+            [new BrowserColorAttachmentPlan(0, clear: color, store: true, Vector4.Zero)],
+            new BrowserDepthStencilAttachmentPlan(-1, clearDepth: depth, depthClearValue: 1));
+        int replacement = CreateEngineReplacement(this, ref _engineClearRequests[index], 7,
+            "{\"label\":\"Engine canvas clear\",\"commands\":[{\"type\":\"clear\",\"engineClearValues\":true,\"pass\":" + plan.ToJson() + "}]}");
+        _engineClearVariants[index] = replacement;
+        SetField(ref _engineClearCommands, replacement, publishNotifications: false);
     }
 
     public override void ClearColor(ColorF4 color)
@@ -177,16 +208,14 @@ public sealed partial class WebGpuRendererHost
         if (!float.IsFinite(value.X) || !float.IsFinite(value.Y) ||
             !float.IsFinite(value.Z) || !float.IsFinite(value.W))
             throw new ArgumentOutOfRangeException(nameof(color));
-        if (SetField(ref _engineClearColor, value))
-            SetField(ref _engineClearPlanDirty, true);
+        SetField(ref _engineClearColor, value);
     }
 
     public override void ClearDepth(float value)
     {
         if (!float.IsFinite(value) || value < 0 || value > 1)
             throw new ArgumentOutOfRangeException(nameof(value));
-        if (SetField(ref _engineClearDepth, value))
-            SetField(ref _engineClearPlanDirty, true);
+        SetField(ref _engineClearDepth, value);
     }
 
     public override void ClearStencil(int value)
@@ -208,7 +237,7 @@ public sealed partial class WebGpuRendererHost
             if (!_engineRecording)
                 throw new InvalidOperationException("WebGPU.FrameBuffer.ClearOutsideFrame: framebuffer clears require an active engine frame.");
             int command = framebuffer.GetClearCommand(color, depth, _engineClearColor, _engineClearDepth);
-            RecordEngineCommands(command, []);
+            RecordEngineClear(command);
             framebuffer.MarkRecorded(color, depth);
             return;
         }
@@ -218,7 +247,7 @@ public sealed partial class WebGpuRendererHost
         if (_engineRecording && CurrentFrameOutput is { } output)
         {
             PrepareEngineClear(output, color, depth);
-            RecordEngineCommands(_engineClearCommands, []);
+            RecordEngineClear(_engineClearCommands);
             if (color)
                 MarkEngineViewHistoryCanvasWrite(in output);
         }
@@ -361,22 +390,33 @@ public sealed partial class WebGpuRendererHost
     {
         if (!_resources.Contains(handle))
             return;
-        if (State == BrowserRendererState.Ready && _engineRecording && HasPendingEngineBufferUpload(handle))
+        if (State == BrowserRendererState.Ready && (HasPendingEngineTextureCopySource(handle) ||
+            _engineRecording && (HasPendingEngineBufferUpload(handle) || HasPendingEnginePreparation(handle))))
         {
             if (!_engineDeferredReleases.Contains(handle)) _engineDeferredReleases.Add(handle);
             return;
         }
+        CancelEngineResourceDependents(handle);
+        CompactEnginePreparation(handle);
         if (!_engineRecording) DiscardRetiredBufferUploads(handle);
         if (State == BrowserRendererState.Ready)
             WebGpuImports.RetireResource(_session, handle);
         _resources.Remove(handle);
+        ForgetEngineResourceHandle(handle);
     }
 
     private void RetireEngineDeferredResources()
     {
+        int retained = 0;
         for (int index = 0; index < _engineDeferredReleases.Count; index++)
-            RetireEngineResource(_engineDeferredReleases[index]);
-        _engineDeferredReleases.Clear();
+        {
+            int handle = _engineDeferredReleases[index];
+            if (State == BrowserRendererState.Ready && HasPendingEngineTextureCopySource(handle))
+                _engineDeferredReleases[retained++] = handle;
+            else RetireEngineResource(handle);
+        }
+        if (retained < _engineDeferredReleases.Count)
+            _engineDeferredReleases.RemoveRange(retained, _engineDeferredReleases.Count - retained);
     }
 
     /// <summary>Keeps handles referenced by an already recorded frame alive through submission.</summary>

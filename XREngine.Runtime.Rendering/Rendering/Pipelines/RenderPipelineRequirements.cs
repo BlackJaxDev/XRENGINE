@@ -97,6 +97,8 @@ public sealed class RenderPipelineRequirements
     public HashSet<string> ComputePrograms { get; } = new(StringComparer.Ordinal);
     public HashSet<int> ScenePasses { get; } = [];
     public HashSet<int> RasterScenePasses { get; } = [];
+    /// <summary>Source passes replayed into depth/normal targets and requiring geometry-equivalent material variants.</summary>
+    public HashSet<int> DepthNormalScenePasses { get; } = [];
     public bool HasConflictingAuthoredDecalConsumers
         => RasterScenePasses.Contains((int)EDefaultRenderPass.DeferredDecals) && Operations.Contains("native-authored-decals");
     /// <summary>Native geometry routes with optional explicitly authored strategy; null uses the packaged startup policy.</summary>
@@ -129,6 +131,12 @@ public sealed class RenderPipelineRequirements
         RasterScenePasses.Add(pass);
         if (pass == (int)EDefaultRenderPass.DeferredDecals && Operations.Contains("native-authored-decals"))
             Diagnostics.Add("The selected graph applies DeferredDecals through both a native authored-decal operation and a raster pass.");
+    }
+
+    public void RequireDepthNormalScenePass(int pass)
+    {
+        ScenePasses.Add(pass);
+        DepthNormalScenePasses.Add(pass);
     }
 
     /// <summary>Declares a package program, optionally pinned to an authored descriptor identity.</summary>

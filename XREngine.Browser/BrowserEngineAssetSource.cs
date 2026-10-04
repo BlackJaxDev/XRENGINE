@@ -135,6 +135,7 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
             DefaultUiFontPath = path;
         }
         ReadDeliveryRoots(root);
+        ReadShaderDelivery(root);
     }
 
     private void ReadPipelineArtifacts(JsonElement pipelines)
@@ -184,26 +185,6 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
         }
     }
 
-    /// <summary>Loads exact cooked shader companions before world activation, independent of authored source text.</summary>
-    public async Task<ShaderProgramArtifactCatalog> LoadShaderArtifactsAsync(CancellationToken cancellationToken = default)
-    {
-        int session = RequireSession();
-        List<ShaderProgramArtifact> artifacts = new(_shaderArtifacts.Count);
-        foreach (BrowserShaderArtifactReference reference in _shaderArtifacts)
-        {
-            byte[] source = await ReadAllBytesAsync(reference.Source, cancellationToken);
-            using BrowserAssetStagingLease sourceStaging = new(session, source.Length);
-            using RuntimeAssetIntegration descriptor = await ReadForIntegrationAsync(reference.Descriptor, reference.Source, cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            if (session != RequireSession()) throw new OperationCanceledException("AssetSource.StaleSession.");
-            ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(descriptor.Payload, source);
-            if (!string.Equals(artifact.Identity, reference.Identity, StringComparison.Ordinal))
-                throw new InvalidDataException($"ShaderArtifact.IdentityMismatch: '{reference.Descriptor}'.");
-            artifacts.Add(artifact);
-        }
-        return new ShaderProgramArtifactCatalog(artifacts);
-    }
-
     /// <summary>Hydrates the explicitly packaged default font before UI can activate.</summary>
     public async Task<FontGlyphSet?> LoadDefaultUiFontAsync(CancellationToken cancellationToken = default)
     {
@@ -223,21 +204,24 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
     public EngineMaterialVariantCatalog LoadEngineMaterialVariants(ShaderProgramArtifactCatalog artifacts)
     {
         RequireSession();
-        return new EngineMaterialVariantCatalog(_materialVariants, artifacts);
+        return _shaderCatalogs is { } catalogs && ReferenceEquals(artifacts, catalogs.Artifacts) ? catalogs.MaterialVariants
+            : new EngineMaterialVariantCatalog(_materialVariants, artifacts);
     }
 
     /// <summary>Resolves exact pass declarations against verified modules without inferring from names or source paths.</summary>
     public WebPipelineArtifactCatalog LoadPipelineArtifacts(ShaderProgramArtifactCatalog artifacts)
     {
         RequireSession();
-        return new WebPipelineArtifactCatalog(_pipelineArtifactIdentities, artifacts);
+        return _shaderCatalogs is { } catalogs && ReferenceEquals(artifacts, catalogs.Artifacts) ? catalogs.PipelineArtifacts
+            : new WebPipelineArtifactCatalog(_pipelineArtifactIdentities, artifacts);
     }
 
     /// <summary>Resolves declared engine compute kernels against verified hash-owned modules.</summary>
     public WebComputeArtifactCatalog LoadComputeArtifacts(ShaderProgramArtifactCatalog artifacts)
     {
         RequireSession();
-        return new WebComputeArtifactCatalog(_computeArtifactIdentities, artifacts);
+        return _shaderCatalogs is { } catalogs && ReferenceEquals(artifacts, catalogs.Artifacts) ? catalogs.ComputeArtifacts
+            : new WebComputeArtifactCatalog(_computeArtifactIdentities, artifacts);
     }
 
     /// <summary>Retains the existing exact-tonemap lookup for compatible diagnostic callers.</summary>
@@ -314,6 +298,7 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeAssetSource, IRun
     public void Dispose()
     {
         int session = Interlocked.Exchange(ref _session, 0);
+        RetireShaderDelivery();
         if (session != 0) BrowserEngineAssetImports.Dispose(session);
         _assets.Clear();
         _shaderArtifacts.Clear();

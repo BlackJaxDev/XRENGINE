@@ -420,9 +420,11 @@ namespace XREngine.Components.Capture.Lights.Types
             if (_shadowCameraParentTransform.RenderTranslation == lightPosition && shadowCamerasSynced)
                 return;
 
-            _shadowCameraParentTransform
-                .SetRenderMatrix(Matrix4x4.CreateTranslation(lightPosition), recalcAllChildRenderMatrices: true)
-                .Wait();
+            Matrix4x4 parentRenderMatrix = Matrix4x4.CreateTranslation(lightPosition);
+            if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+                _shadowCameraParentTransform.SetRenderMatrixHierarchyImmediate(parentRenderMatrix);
+            else
+                _shadowCameraParentTransform.SetRenderMatrix(parentRenderMatrix, recalcAllChildRenderMatrices: true).Wait();
         }
 
         public override void CollectVisibleItems()

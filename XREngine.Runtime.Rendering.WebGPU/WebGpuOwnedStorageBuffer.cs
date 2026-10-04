@@ -10,6 +10,7 @@ internal sealed class WebGpuOwnedStorageBuffer : AbstractRenderAPIObject
     private readonly string _label;
     private readonly BrowserBufferUsage _usage;
     private int _handle;
+    private WebGpuResourceRequest? _allocationRequest;
     private int _byteLength;
     private uint _recordedFrameSequence;
 
@@ -23,7 +24,8 @@ internal sealed class WebGpuOwnedStorageBuffer : AbstractRenderAPIObject
 
     internal int ResourceHandle => _handle;
     internal uint ByteLength => checked((uint)_byteLength);
-    public override bool IsGenerated => _handle != 0;
+    internal bool SupportsCopySource => (_usage & BrowserBufferUsage.CopySource) != 0;
+    public override bool IsGenerated => _handle != 0 && _allocationRequest is null;
     public override nint GetHandle() => _handle;
     public override string GetDescribingName() => _label;
 
@@ -38,7 +40,12 @@ internal sealed class WebGpuOwnedStorageBuffer : AbstractRenderAPIObject
     {
         RequireLiveOwner();
         if (requiredBytes <= 0) throw new ArgumentOutOfRangeException(nameof(requiredBytes));
-        if (_handle != 0 && requiredBytes <= _byteLength) return;
+        if (_handle != 0 && requiredBytes <= _byteLength)
+        {
+            if (_allocationRequest is { } unused) _renderer.CancelEngineResourceRequest(unused);
+            _allocationRequest = null;
+            return;
+        }
         RequireUnrecordedPreparation();
         int limit = _renderer.MaximumAdvancedStorageBytes;
         if (requiredBytes > limit)
@@ -46,7 +53,12 @@ internal sealed class WebGpuOwnedStorageBuffer : AbstractRenderAPIObject
         int capacity = Math.Max(_byteLength, 16);
         while (capacity < requiredBytes)
             capacity = checked((int)Math.Min(limit, (long)capacity * 2));
-        int replacement = _renderer.CreateBuffer(new BrowserBufferDescription(capacity, _usage, _label));
+        BrowserBufferDescription descriptor = new(capacity, _usage, _label);
+        if (_allocationRequest is { } obsolete && !obsolete.Descriptor.Equals(descriptor))
+        { _renderer.CancelEngineResourceRequest(obsolete); _allocationRequest = null; }
+        _allocationRequest ??= _renderer.RequestEngineResource(this, 1, descriptor);
+        int replacement = _renderer.RequireEngineResource(_allocationRequest);
+        _allocationRequest = null;
         int previous = _handle;
         if (previous != 0)
             _renderer.ReleaseEngineStorageGeneration(this, previous);
@@ -70,13 +82,7 @@ internal sealed class WebGpuOwnedStorageBuffer : AbstractRenderAPIObject
         RequireUnrecordedPreparation();
         if (_handle == 0 || destinationOffset < 0 || bytes.Length > _byteLength - destinationOffset)
             throw new InvalidOperationException("WebGPU.Advanced.PreparationRange: the candidate arena exceeds its storage generation.");
-        const int chunkBytes = 64 * 1024 * 1024;
-        for (int offset = 0; offset < bytes.Length; offset += chunkBytes)
-        {
-            ReadOnlySpan<byte> chunk = bytes.Slice(offset, Math.Min(chunkBytes, bytes.Length - offset));
-            _renderer.CountAdvancedPreparationUpload(chunk.Length);
-            _renderer.WriteBuffer(_handle, checked(destinationOffset + offset), chunk);
-        }
+        _renderer.StageEngineBufferPreparation(_handle, destinationOffset, bytes);
     }
 
     internal void MarkRecorded()
@@ -85,9 +91,9 @@ internal sealed class WebGpuOwnedStorageBuffer : AbstractRenderAPIObject
     private void RequireUnrecordedPreparation()
     {
         if (_renderer.IsRecordingEngineFrame && _recordedFrameSequence == _renderer.EngineFrameSequence)
-            throw new InvalidOperationException("WebGPU.Advanced.RecordedStorage: immediate writes or capacity replacement cannot change an earlier unsubmitted command's storage.");
+            throw new InvalidOperationException("WebGPU.Advanced.RecordedStorage: initialization or capacity replacement cannot change an earlier unsubmitted command's storage.");
         if (_renderer.HasUnsubmittedEngineBufferUpload(_handle))
-            throw new InvalidOperationException("WebGPU.Advanced.PendingStorage: immediate preparation or capacity replacement cannot overtake an unsubmitted storage snapshot.");
+            throw new InvalidOperationException("WebGPU.Advanced.PendingStorage: initialization or capacity replacement cannot overtake an unsubmitted storage snapshot.");
     }
 
     private void RequireLiveOwner()
@@ -98,6 +104,8 @@ internal sealed class WebGpuOwnedStorageBuffer : AbstractRenderAPIObject
 
     public override void Destroy()
     {
+        _renderer.CancelEngineResourceRequests(this);
+        _allocationRequest = null;
         if (_handle == 0) return;
         _renderer.ReleaseEngineDrawDependencies(this);
         if (_renderer.State != BrowserRendererState.Disposed)

@@ -12,6 +12,7 @@ namespace XREngine;
 public sealed partial class RuntimeWorldLifecycle
 {
     private readonly Dictionary<ETickGroup, SortedList<int, TickQueue>> _ticks = [];
+    private volatile bool _ticksReleased;
 
     public RuntimeWorldLifecycle(
         IRuntimeWorldContext worldContext,
@@ -43,13 +44,25 @@ public sealed partial class RuntimeWorldLifecycle
     public void RegisterTick(ETickGroup group, int order, WorldTick callback)
     {
         ArgumentNullException.ThrowIfNull(callback);
-        GetTickQueue(group, order).Enqueue(add: true, callback);
+        GetTickQueue(group, order)?.Enqueue(add: true, callback);
     }
 
     public void UnregisterTick(ETickGroup group, int order, WorldTick callback)
     {
         ArgumentNullException.ThrowIfNull(callback);
-        GetTickQueue(group, order).Enqueue(add: false, callback);
+        GetTickQueue(group, order)?.Enqueue(add: false, callback);
+    }
+
+    /// <summary>
+    /// Ends callback ownership without dispatching pending changes. Existing
+    /// dispatch snapshots may finish, but additions cannot reopen these queues.
+    /// </summary>
+    internal void ReleaseTicks()
+    {
+        _ticksReleased = true;
+        foreach (SortedList<int, TickQueue> ordered in _ticks.Values)
+            lock (ordered)
+                ordered.Clear();
     }
 
     /// <summary>
@@ -58,7 +71,7 @@ public sealed partial class RuntimeWorldLifecycle
     /// </summary>
     public void TickGroup(ETickGroup group)
     {
-        if (!_ticks.TryGetValue(group, out SortedList<int, TickQueue>? ordered))
+        if (_ticksReleased || !_ticks.TryGetValue(group, out SortedList<int, TickQueue>? ordered))
             return;
 
         TickQueue[] snapshot;
@@ -77,7 +90,7 @@ public sealed partial class RuntimeWorldLifecycle
 
         try
         {
-            for (int index = 0; index < count; ++index)
+            for (int index = 0; index < count && !_ticksReleased; ++index)
                 snapshot[index].Dispatch();
         }
         finally
@@ -87,13 +100,15 @@ public sealed partial class RuntimeWorldLifecycle
         }
     }
 
-    private TickQueue GetTickQueue(ETickGroup group, int order)
+    private TickQueue? GetTickQueue(ETickGroup group, int order)
     {
         if (!_ticks.TryGetValue(group, out SortedList<int, TickQueue>? ordered))
-            _ticks[group] = ordered = [];
+            throw new ArgumentOutOfRangeException(nameof(group));
 
         lock (ordered)
         {
+            if (_ticksReleased)
+                return null;
             if (!ordered.TryGetValue(order, out TickQueue? queue))
                 ordered.Add(order, queue = new TickQueue());
             return queue;

@@ -1,10 +1,12 @@
+using System.Runtime.ExceptionServices;
+
 namespace XREngine.Components;
 
 /// <summary>
 /// Bounded per-world request registry. GPU gather and staging passes consume
 /// pending entries later; request submission never waits for the renderer.
 /// </summary>
-internal sealed partial class PhysicsChainReadbackService
+internal sealed partial class PhysicsChainReadbackService : IDisposable
 {
     private readonly PhysicsChainSlotArena<PhysicsChainReadbackRequestInfo> _requests = new();
     private readonly Dictionary<RequestKey, PhysicsChainReadbackHandle> _coalescedRequests = [];
@@ -25,6 +27,24 @@ internal sealed partial class PhysicsChainReadbackService
     {
         limits.Validate();
         _limits = limits;
+    }
+
+    public void Dispose()
+    {
+        // The staging source owns a lease, not the renderer's backing buffer.
+        // Cancellation releases the lease and fence without mapping or waiting.
+        ExceptionDispatchInfo? firstFault = null;
+        foreach (StagingSlot slot in _stagingSlots)
+        {
+            try { ReleaseStagingSlot(slot); }
+            catch (Exception ex) { firstFault ??= ExceptionDispatchInfo.Capture(ex); }
+            slot.DeliveryScratch = [];
+        }
+        foreach (PhysicsChainReadbackHandle handle in _liveHandles)
+            _requests.Free(new PhysicsChainArenaHandle(handle.Slot, handle.Generation));
+        _liveHandles.Clear();
+        _coalescedRequests.Clear();
+        firstFault?.Throw();
     }
 
     public bool TryRequest(

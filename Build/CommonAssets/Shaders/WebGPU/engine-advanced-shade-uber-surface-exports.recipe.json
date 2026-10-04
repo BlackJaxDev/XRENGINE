@@ -1,0 +1,1109 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-shade-uber-surface-exports",
+  "pass": "shade-uber-surface-exports",
+  "source": "AdvancedShadeNative.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "compute": "advancedShadeNative"
+  },
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "shade-uber-surface-exports"
+  },
+  "workgroupSize": [
+    16,
+    16,
+    1
+  ],
+  "defines": [
+    "XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION=1",
+    "XR_ADV_SURFACE_EXPORTS",
+    "XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=6",
+    "XR_ADV_UBER_BASE_SCHEMA_VERSION=1",
+    "XR_ADV_SCENE_DIRECTORY_TABLE_COUNT=36",
+    "XR_ADV_AUTHORED_DECAL_SCHEMA_VERSION=1",
+    "XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1",
+    "XR_ADV_AUTHORED_BASIS_SCHEMA_VERSION=1",
+    "XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION=2"
+  ],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxBindGroups": 3,
+    "maxBindingsPerBindGroup": 28,
+    "maxUniformBufferBindingSize": 944,
+    "maxDynamicUniformBuffersPerPipelineLayout": 2,
+    "maxUniformBuffersPerShaderStage": 2,
+    "maxStorageBuffersPerShaderStage": 7,
+    "maxStorageBufferBindingSize": 4,
+    "maxSampledTexturesPerShaderStage": 16,
+    "maxSamplersPerShaderStage": 11,
+    "maxStorageTexturesPerShaderStage": 4,
+    "maxComputeWorkgroupSizeX": 16,
+    "maxComputeWorkgroupSizeY": 16,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 256
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.uber-raster-consumer.v2",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "SceneArena",
+        "physicalName": "SceneArena_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "GeometryArena",
+        "physicalName": "GeometryArena_0",
+        "group": 0,
+        "binding": 1,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "PreparedDrawDeformations",
+        "physicalName": "PreparedDrawDeformations_0",
+        "group": 0,
+        "binding": 2,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "MaterialGroups",
+        "physicalName": "MaterialGroups_0",
+        "group": 0,
+        "binding": 3,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "ShadeTiles",
+        "physicalName": "ShadeTiles_0",
+        "group": 0,
+        "binding": 4,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "ShadeCounts",
+        "physicalName": "ShadeCounts_0",
+        "group": 0,
+        "binding": 5,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "TextureBindings",
+        "physicalName": "TextureBindings_0",
+        "group": 0,
+        "binding": 6,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "FrozenView",
+        "physicalName": "FrozenView_0",
+        "group": 0,
+        "binding": 7,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 944,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "view_0",
+            "provider": "view",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "projectionJittered_0",
+            "provider": "projectionJittered",
+            "offset": 64,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "projectionUnjittered_0",
+            "provider": "projectionUnjittered",
+            "offset": 128,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "viewProjectionJittered_0",
+            "provider": "viewProjectionJittered",
+            "offset": 192,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "viewProjectionUnjittered_0",
+            "provider": "viewProjectionUnjittered",
+            "offset": 256,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "previousView_0",
+            "provider": "previousView",
+            "offset": 320,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "previousProjectionJittered_0",
+            "provider": "previousProjectionJittered",
+            "offset": 384,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "previousProjectionUnjittered_0",
+            "provider": "previousProjectionUnjittered",
+            "offset": 448,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "previousViewProjectionJittered_0",
+            "provider": "previousViewProjectionJittered",
+            "offset": 512,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "previousViewProjectionUnjittered_0",
+            "provider": "previousViewProjectionUnjittered",
+            "offset": 576,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "inverseViewProjectionJittered_0",
+            "provider": "inverseViewProjectionJittered",
+            "offset": 640,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "inverseViewProjectionUnjittered_0",
+            "provider": "inverseViewProjectionUnjittered",
+            "offset": 704,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "cameraPositionAndNear_0",
+            "provider": "cameraPositionAndNear",
+            "offset": 768,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "cameraForwardAndFar_0",
+            "provider": "cameraForwardAndFar",
+            "offset": 784,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "renderSizeAndInverse_0",
+            "provider": "renderSizeAndInverse",
+            "offset": 800,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "outputSizeAndInverse_0",
+            "provider": "outputSizeAndInverse",
+            "offset": 816,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "currentAndPreviousJitter_0",
+            "provider": "currentAndPreviousJitter",
+            "offset": 832,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "depthParams_0",
+            "provider": "depthParams",
+            "offset": 848,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "viewId_0",
+            "provider": "viewId",
+            "offset": 864,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "outputLayer_0",
+            "provider": "outputLayer",
+            "offset": 868,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "flags_1",
+            "provider": "flags",
+            "offset": 872,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "historyKeyLo_0",
+            "provider": "historyKeyLo",
+            "offset": 876,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "historyKeyHi_0",
+            "provider": "historyKeyHi",
+            "offset": 880,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "viewGeneration_0",
+            "provider": "viewGeneration",
+            "offset": 884,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "viewMaskLo_0",
+            "provider": "viewMaskLo",
+            "offset": 888,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "viewMaskHi_0",
+            "provider": "viewMaskHi",
+            "offset": 892,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "foveationCenterAndBias_0",
+            "provider": "foveationCenterAndBias",
+            "offset": 896,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "foveationRadii_0",
+            "provider": "foveationRadii",
+            "offset": 912,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "sourceCameraIdentityLo_0",
+            "provider": "sourceCameraIdentityLo",
+            "offset": 928,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "sourceCameraIdentityHi_0",
+            "provider": "sourceCameraIdentityHi",
+            "offset": 932,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "sourceCameraIdentityPadding0_0",
+            "provider": "sourceCameraIdentityPadding0",
+            "offset": 936,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "sourceCameraIdentityPadding1_0",
+            "provider": "sourceCameraIdentityPadding1",
+            "offset": 940,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "Parameters_0",
+        "group": 0,
+        "binding": 8,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 160,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "screenExtent_0",
+            "provider": "screenExtent",
+            "offset": 0,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "tilesCount_0",
+            "provider": "tilesCount",
+            "offset": 8,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "viewIndex_0",
+            "provider": "viewIndex",
+            "offset": 16,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "viewCount_0",
+            "provider": "viewCount",
+            "offset": 20,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "kernelIndex_0",
+            "provider": "kernelIndex",
+            "offset": 24,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "flags_0",
+            "provider": "flags",
+            "offset": 28,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "depthSlices_0",
+            "provider": "depthSlices",
+            "offset": 32,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "maxLightIndices_0",
+            "provider": "maxLightIndices",
+            "offset": 36,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "lightCount_0",
+            "provider": "lightCount",
+            "offset": 40,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "maxKernelTiles_0",
+            "provider": "maxKernelTiles",
+            "offset": 44,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "backgroundColor_0",
+            "provider": "backgroundColor",
+            "offset": 48,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "cohortIndex_0",
+            "provider": "cohortIndex",
+            "offset": 64,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "cohortCount_0",
+            "provider": "cohortCount",
+            "offset": 68,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "tileCapacity_0",
+            "provider": "tileCapacity",
+            "offset": 72,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "bindingCount_0",
+            "provider": "bindingCount",
+            "offset": 76,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "standardDeferredHash_0",
+            "provider": "standardDeferredHash",
+            "offset": 80,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "standardForwardHash_0",
+            "provider": "standardForwardHash",
+            "offset": 88,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "standardMaskedHash_0",
+            "provider": "standardMaskedHash",
+            "offset": 96,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "mirrorHash_0",
+            "provider": "mirrorHash",
+            "offset": 104,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "standardWordCount_0",
+            "provider": "standardWordCount",
+            "offset": 112,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "baseColorWord_0",
+            "provider": "baseColorWord",
+            "offset": 116,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "rmseWord_0",
+            "provider": "rmseWord",
+            "offset": 120,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "materialFlagsWord_0",
+            "provider": "materialFlagsWord",
+            "offset": 124,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "emissionColorWord_0",
+            "provider": "emissionColorWord",
+            "offset": 128,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "emissionStrengthWord_0",
+            "provider": "emissionStrengthWord",
+            "offset": 132,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "emissionMetadataWord_0",
+            "provider": "emissionMetadataWord",
+            "offset": 136,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "emissionUvWord_0",
+            "provider": "emissionUvWord",
+            "offset": 140,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "emissionRotationWord_0",
+            "provider": "emissionRotationWord",
+            "offset": 144,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved0_0",
+            "provider": "reserved0",
+            "offset": 148,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved1_0",
+            "provider": "reserved1",
+            "offset": 152,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "renderTimeBits_0",
+            "provider": "RenderTimeBits",
+            "offset": 156,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      },
+      {
+        "name": "VisibilityIdentity",
+        "physicalName": "VisibilityIdentity_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-uint",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "VisibilityMetadata",
+        "physicalName": "VisibilityMetadata_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "texture-2d-uint",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "VisibilityDepth",
+        "physicalName": "VisibilityDepth_0",
+        "group": 1,
+        "binding": 2,
+        "kind": "texture-depth-2d",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AmbientOcclusion",
+        "physicalName": "AmbientOcclusion_0",
+        "group": 1,
+        "binding": 3,
+        "kind": "texture-2d-unfilterable-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture0",
+        "physicalName": "NativeTexture0_0",
+        "group": 1,
+        "binding": 4,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture0",
+        "physicalName": "NativeSampler0_0",
+        "group": 1,
+        "binding": 5,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture1",
+        "physicalName": "NativeTexture1_0",
+        "group": 1,
+        "binding": 6,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture1",
+        "physicalName": "NativeSampler1_0",
+        "group": 1,
+        "binding": 7,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture2",
+        "physicalName": "NativeTexture2_0",
+        "group": 1,
+        "binding": 8,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture2",
+        "physicalName": "NativeSampler2_0",
+        "group": 1,
+        "binding": 9,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture3",
+        "physicalName": "NativeTexture3_0",
+        "group": 1,
+        "binding": 10,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture3",
+        "physicalName": "NativeSampler3_0",
+        "group": 1,
+        "binding": 11,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture4",
+        "physicalName": "NativeTexture4_0",
+        "group": 1,
+        "binding": 12,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture4",
+        "physicalName": "NativeSampler4_0",
+        "group": 1,
+        "binding": 13,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture5",
+        "physicalName": "NativeTexture5_0",
+        "group": 1,
+        "binding": 14,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture5",
+        "physicalName": "NativeSampler5_0",
+        "group": 1,
+        "binding": 15,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture6",
+        "physicalName": "NativeTexture6_0",
+        "group": 1,
+        "binding": 16,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture6",
+        "physicalName": "NativeSampler6_0",
+        "group": 1,
+        "binding": 17,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture7",
+        "physicalName": "NativeTexture7_0",
+        "group": 1,
+        "binding": 18,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture7",
+        "physicalName": "NativeSampler7_0",
+        "group": 1,
+        "binding": 19,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "UberRasterSurface",
+        "physicalName": "UberRasterSurface_0",
+        "group": 1,
+        "binding": 20,
+        "kind": "texture-2d-array-unfilterable-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture9",
+        "physicalName": "NativeTexture9_0",
+        "group": 1,
+        "binding": 22,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture9",
+        "physicalName": "NativeSampler9_0",
+        "group": 1,
+        "binding": 23,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture10",
+        "physicalName": "NativeTexture10_0",
+        "group": 1,
+        "binding": 24,
+        "kind": "texture-cube-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture10",
+        "physicalName": "NativeSampler10_0",
+        "group": 1,
+        "binding": 25,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture11",
+        "physicalName": "NativeTexture11_0",
+        "group": 1,
+        "binding": 26,
+        "kind": "texture-2d-array-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "NativeTexture11",
+        "physicalName": "NativeSampler11_0",
+        "group": 1,
+        "binding": 27,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "EmissionColor",
+        "physicalName": "EmissionColor_0",
+        "group": 2,
+        "binding": 0,
+        "kind": "storage-texture-2d-write-rgba16float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AlbedoOpacity",
+        "physicalName": "AlbedoOpacity_0",
+        "group": 2,
+        "binding": 1,
+        "kind": "storage-texture-2d-write-rgba16float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Normal",
+        "physicalName": "Normal_0",
+        "group": 2,
+        "binding": 2,
+        "kind": "storage-texture-2d-write-rgba16float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "RMSE",
+        "physicalName": "RMSE_0",
+        "group": 2,
+        "binding": 3,
+        "kind": "storage-texture-2d-write-rgba16float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {}
+}

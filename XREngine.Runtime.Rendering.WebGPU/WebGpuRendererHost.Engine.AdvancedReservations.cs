@@ -11,6 +11,9 @@ public sealed partial class WebGpuRendererHost
     [
         "advanced::compact-triangles", "advanced::finalize-triangles", "advanced::visibility-pull",
         "advanced::aggregate-deformation", "advanced::deformation-copy",
+        "advanced::uber-visibility", "advanced::uber-raster-surface",
+        "advanced::shade-uber-native", "advanced::shade-uber-native-depth",
+        "advanced::shade-uber-surface-exports", "advanced::shade-uber-surface-exports-depth",
         "advanced::depth-pyramid", "advanced::shade-classify",
         "advanced::shade-finalize", "advanced::shade-native", "advanced::shade-native-depth", "advanced::shade-background",
     ];
@@ -40,6 +43,8 @@ public sealed partial class WebGpuRendererHost
             string pass = artifact.Pass;
             if (pass is "aggregate-deformation" or "deformation-copy")
                 WebGpuAdvancedDeformationProgramContract.Validate(artifact, pass == "deformation-copy");
+            else if (pass is "uber-visibility" or "uber-raster-surface")
+                WebGpuAdvancedUberRasterProgramContract.Validate(artifact, pass);
             else if (pass is "compact-triangles" or "finalize-triangles" or "visibility-pull")
                 WebGpuAdvancedVisibilityProgramContract.Validate(artifact, pass);
             else if (pass == "depth-pyramid")

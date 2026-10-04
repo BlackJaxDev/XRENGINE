@@ -58,6 +58,11 @@ public sealed partial class WebGpuMeshRenderer
             SetField(ref _indirectGeometryRevision, mesh?.GeometryRevision ?? 0, publishNotifications: false);
             SetField(ref _indirectSurfaceGeneration, output.TargetGeneration, publishNotifications: false);
         }
+        if (mesh is not null)
+        {
+            RequireNativeVertexRasterSource(mesh, Data.Parent.Material);
+            RequireNativeVertexRasterSource(mesh, program.Artifact);
+        }
         if (Data.Parent.HasRenderDataPreparation) Data.Parent.OnPreparingRenderData();
         WebGpuMeshDeformation? deformation = null;
         if (mesh is not null && !TryPrepareGeometry(mesh, out deformation))

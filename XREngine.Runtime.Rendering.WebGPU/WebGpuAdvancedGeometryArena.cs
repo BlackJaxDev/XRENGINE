@@ -5,7 +5,8 @@ namespace XREngine.Rendering.WebGPU;
 
 /// <summary>
 /// Packs the seven canonical immutable geometry byte streams behind a seven-row
-/// four-word directory (absolute word offset, exact byte length, two reserved words).
+/// four-word directory. Rows 2/3 additionally identify browser-only authored-basis
+/// tails in their final two words; canonical stream bytes and IDs remain unchanged.
 /// Stream bytes and cooked layouts are identical to the shared GL/Vulkan publication.
 /// </summary>
 internal sealed class WebGpuAdvancedGeometryArena
@@ -47,9 +48,34 @@ internal sealed class WebGpuAdvancedGeometryArena
         Write(4, geometry.MeshletDescriptors);
         Write(5, geometry.MeshletVertexIndices);
         Write(6, geometry.MeshletTriangleWords);
+        ReserveAuthoredBasis(2, Math.Max(geometry.PreSkinnedCurrent.ByteCount, currentDeformationBytes));
+        ReserveAuthoredBasis(3, Math.Max(geometry.PreSkinnedPrevious.ByteCount, previousDeformationBytes));
         _databaseEpoch = databaseEpoch;
         _currentDeformationBytes = currentDeformationBytes;
         _previousDeformationBytes = previousDeformationBytes;
+    }
+
+    private void ReserveAuthoredBasis(int stream, uint canonicalBytes)
+    {
+        if (canonicalBytes == 0) return;
+        if (canonicalBytes % 64 != 0)
+            throw new NotSupportedException("WebGPU.Advanced.DeformationBasisAlignment: authored basis requires complete canonical vertices.");
+        int offset = checked((_usedBytes + 15) & ~15);
+        int basisBytes = checked((int)(canonicalBytes / 2));
+        int end = checked(offset + basisBytes);
+        if (end > _maximumBytes)
+            throw new NotSupportedException("WebGPU.Advanced.GeometryBasisCapacity: current/previous authored basis exceeds the retained storage binding limit.");
+        if (end > _bytes.Length)
+        {
+            int capacity = _bytes.Length;
+            while (capacity < end) capacity = checked((int)Math.Min(_maximumBytes, (long)capacity * 2));
+            Array.Resize(ref _bytes, capacity);
+        }
+        _bytes.AsSpan(_usedBytes, end - _usedBytes).Clear();
+        Span<uint> directory = MemoryMarshal.Cast<byte, uint>(_bytes.AsSpan(0, HeaderBytes));
+        directory[stream * 4 + 2] = checked((uint)offset / 4);
+        directory[stream * 4 + 3] = checked((uint)basisBytes);
+        _usedBytes = end;
     }
 
     private void Write(int stream, in AdvancedImmutableByteArenaPublicationSnapshot source, uint reservedBytes = 0)

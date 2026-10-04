@@ -22,7 +22,10 @@ internal static class TextureStreamingSourceFactory
     /// request rather than during placeholder registration.
     /// </summary>
     internal static ITextureStreamingSource CreateDeferred(string filePath)
-        => new DeferredAuthorityTextureStreamingSource(Path.GetFullPath(filePath));
+    {
+        RuntimeTextureSourceAccess.RequireHostFiles();
+        return new DeferredAuthorityTextureStreamingSource(Path.GetFullPath(filePath));
+    }
 }
 
 /// <summary>
@@ -55,6 +58,7 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
 
     public TextureStreamingResidentData LoadResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken)
     {
+        RuntimeTextureSourceAccess.RequireHostFiles();
         if (Volatile.Read(ref _preferFallback) != 0 && _fallbackSource is not null)
             return _fallbackSource.LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
 
@@ -195,6 +199,7 @@ internal sealed class ThirdPartyTextureStreamingSource(string sourcePath) : ITex
 
     public TextureStreamingResidentData LoadResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken)
     {
+        RuntimeTextureSourceAccess.RequireHostFiles();
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
         {
@@ -295,6 +300,8 @@ internal static class TextureStreamingResidentDataReuseCache
         out CacheKey key)
     {
         key = default;
+        if (!RuntimeTextureSourceAccess.CanAccessHostFiles)
+            return false;
         if (string.IsNullOrWhiteSpace(source.SourcePath))
             return false;
 

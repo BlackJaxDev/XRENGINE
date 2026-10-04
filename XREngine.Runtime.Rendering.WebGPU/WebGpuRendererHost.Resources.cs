@@ -21,8 +21,8 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
         RequireOwnedResource(handle);
         // Direct control writes have no managed descriptor/range owner. They must
         // not overtake or poison a queued engine-owned mutation of this buffer.
-        if (HasUnsubmittedEngineBufferUpload(handle))
-            throw new NotSupportedException("WebGPU.Buffer.PendingWriteUnsupported: a direct buffer write cannot overtake an unsubmitted engine mutation; use its owned buffer upload path or wait for frame acceptance.");
+        if (_engineRecording || HasUnsubmittedEngineBufferUpload(handle) || HasPendingEnginePreparation(handle))
+            throw new NotSupportedException("WebGPU.Buffer.PendingWriteUnsupported: a direct buffer write cannot overtake an active engine frame or unsubmitted mutation; use its owned buffer upload path or wait for frame acceptance.");
         WebGpuImports.WriteBuffer(_session, handle, offset, bytes);
     }
 
@@ -40,8 +40,9 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
     {
         RequireOwnedResource(source);
         RequireOwnedResource(destination);
-        if (HasUnsubmittedEngineBufferUpload(source) || HasUnsubmittedEngineBufferUpload(destination))
-            throw new NotSupportedException("WebGPU.Buffer.PendingCopyUnsupported: a standalone buffer copy cannot overtake unsubmitted mutations; record a retained buffer-copy command in the engine frame.");
+        if (_engineRecording || HasUnsubmittedEngineBufferUpload(source) || HasUnsubmittedEngineBufferUpload(destination) ||
+            HasPendingEnginePreparation(source) || HasPendingEnginePreparation(destination))
+            throw new NotSupportedException("WebGPU.Buffer.PendingCopyUnsupported: a standalone buffer copy cannot overtake an active engine frame or unsubmitted mutations; record a retained buffer-copy command in the engine frame.");
         WebGpuImports.CopyBuffer(_session, source, sourceOffset, destination, destinationOffset, size);
     }
 
@@ -49,33 +50,67 @@ public sealed partial class WebGpuRendererHost : IBrowserGpuResourceCapability
     {
         RequireReady();
         ArgumentNullException.ThrowIfNull(description);
-        int qualityLimit = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.MaxTextureDimension;
-        if (qualityLimit > 0 && (description.Width > qualityLimit || description.Height > qualityLimit))
-            throw new NotSupportedException($"WebGPU.Quality.TextureDimensionExceeded: texture '{description.Label}' size {description.Width}x{description.Height} exceeds the selected browser texture limit {qualityLimit}; authored textures are not resized implicitly.");
+        ValidateTextureQuality(description);
         return Track(WebGpuImports.CreateTextureResource(_session, description.Width, description.Height,
             description.MipLevelCount, description.SampleCount, description.Format, (int)description.Usage,
             description.Label, description.ArrayLayerCount, description.AllowSrgbView));
     }
 
+    private static void ValidateTextureQuality(BrowserTextureDescription description)
+    {
+        int qualityLimit = RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.MaxTextureDimension;
+        if (qualityLimit > 0 && (description.Width > qualityLimit || description.Height > qualityLimit))
+            throw new NotSupportedException($"WebGPU.Quality.TextureDimensionExceeded: texture '{description.Label}' size {description.Width}x{description.Height} exceeds the selected browser texture limit {qualityLimit}; authored textures are not resized implicitly.");
+    }
+
     public void UploadTextureMip(int handle, int mip, int x, int y, int width, int height, Span<byte> bytes)
     {
-        RequireOwnedResource(handle);
+        RequireImmediateTextureWrite(handle);
         WebGpuImports.UploadTextureMip(_session, handle, mip, x, y, width, height, bytes, 0);
     }
 
     public void UploadTextureLayerMip(int handle, int mip, int layer, int width, int height, Span<byte> bytes)
     {
-        RequireOwnedResource(handle);
+        RequireImmediateTextureWrite(handle);
         WebGpuImports.UploadTextureMip(_session, handle, mip, 0, 0, width, height, bytes, layer);
+    }
+
+    private void RequireImmediateTextureWrite(int handle)
+    {
+        RequireOwnedResource(handle);
+        if (_engineRecording || HasPendingEnginePreparation(handle) || HasPendingEngineTextureCopySource(handle))
+            throw new NotSupportedException("WebGPU.Texture.PendingWriteUnsupported: a standalone texture write cannot overtake an engine frame or retained texture transfer; use the owned texture update path or wait for acceptance.");
+    }
+
+    internal void StageEngineTextureMip(int handle, int mip, int x, int y, int width, int height, Span<byte> bytes)
+    {
+        RequireOwnedResource(handle);
+        StageEngineTextureUpload(handle, mip, 0, x, y, width, height, bytes);
+    }
+
+    internal void StageEngineTextureLayerMip(int handle, int mip, int layer, int width, int height, Span<byte> bytes)
+    {
+        RequireOwnedResource(handle);
+        StageEngineTextureUpload(handle, mip, layer, 0, 0, width, height, bytes);
     }
 
     public void CopyTextureSubresource(int source, int destination, int sourceMip, int destinationMip,
         int destinationLayer, int width, int height)
     {
         RequireOwnedResource(source);
-        RequireOwnedResource(destination);
+        RequireImmediateTextureWrite(destination);
+        if (HasPendingEnginePreparation(source))
+            throw new NotSupportedException("WebGPU.Texture.PendingCopyUnsupported: a standalone copy cannot read an unsubmitted texture transfer.");
         WebGpuImports.CopyTextureSubresource(_session, source, destination, sourceMip, destinationMip,
             destinationLayer, width, height);
+    }
+
+    internal void StageEngineTextureSubresourceCopy(int source, int destination, int sourceMip, int destinationMip,
+        int destinationLayer, int width, int height)
+    {
+        RequireOwnedResource(source);
+        RequireOwnedResource(destination);
+        StageEngineTextureCopy(source, destination, sourceMip, destinationMip, destinationLayer, width, height);
     }
 
     public int CreateTextureView(BrowserTextureViewDescription description)

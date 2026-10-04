@@ -8,7 +8,7 @@ public sealed partial class WebGpuRendererHost
         description.Validate();
         cancellationToken.ThrowIfCancellationRequested();
         RequireReadbackResource(description.BufferHandle);
-        if (HasUnsubmittedEngineBufferUpload(description.BufferHandle))
+        if (HasUnsubmittedEngineBufferUpload(description.BufferHandle) || HasPendingEnginePreparation(description.BufferHandle))
             throw new NotSupportedException("WebGPU.Readback.PendingBufferUnsupported: buffer readback cannot overtake unsubmitted mutations; request it after the engine frame is accepted.");
         int session = _session;
         int ticket = WebGpuImports.BeginBufferReadback(session, description.BufferHandle, description.Offset, description.ByteLength);
@@ -21,9 +21,13 @@ public sealed partial class WebGpuRendererHost
         description.Validate();
         cancellationToken.ThrowIfCancellationRequested();
         RequireReadbackResource(description.TextureHandle);
+        if (HasPendingEnginePreparation(description.TextureHandle) ||
+            _engineRecording && _engineRecordedTextures.Contains(description.TextureHandle))
+            throw new NotSupportedException("WebGPU.Readback.PendingTextureUnsupported: texture readback cannot overtake an unsubmitted upload, copy or producer; request it after the engine frame is accepted.");
         int session = _session;
         int ticket = WebGpuImports.BeginTextureReadback(session, description.TextureHandle, description.MipLevel,
-            description.X, description.Y, description.Width, description.Height);
+            description.X, description.Y, description.Width, description.Height, description.ArrayLayer, description.Format,
+            description.ProducerFrameSequence);
         return FinishReadbackAsync(session, ticket, description.ByteLength, cancellationToken);
     }
 
@@ -57,12 +61,12 @@ public sealed partial class WebGpuRendererHost
             throw new InvalidOperationException("The WebGPU renderer session ended before the asynchronous GPU request completed.");
     }
 
-    private async Task CompleteSubmittedWorkTicketAsync(CancellationToken cancellationToken)
+    private async Task CompleteSubmittedWorkTicketAsync(CancellationToken cancellationToken, uint producerFrameSequence = 0)
     {
         RequireReady();
         cancellationToken.ThrowIfCancellationRequested();
         int session = _session;
-        int ticket = WebGpuImports.BeginCompletion(session);
+        int ticket = WebGpuImports.BeginCompletion(session, producerFrameSequence);
         try
         {
             await WebGpuImports.WaitReadbackAsync(session, ticket).WaitAsync(cancellationToken);

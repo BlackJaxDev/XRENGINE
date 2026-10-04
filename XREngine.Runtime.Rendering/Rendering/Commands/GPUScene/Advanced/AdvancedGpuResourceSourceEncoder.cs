@@ -44,7 +44,10 @@ public static class AdvancedGpuResourceSourceEncoder
             record.Width = textureArray.Width;
             record.Height = textureArray.Height;
             record.DepthOrLayers = textureArray.Depth;
-            record.MipCount = checked((uint)Math.Max(textureArray.Mipmaps?.Length ?? 0, 1));
+            bool automaticArrayMips = textureArray.AutoGenerateMipmaps || textureArray.Textures[0].AutoGenerateMipmaps;
+            record.MipCount = automaticArrayMips
+                ? checked((uint)(1 + System.Numerics.BitOperations.Log2(Math.Max(textureArray.Width, textureArray.Height))))
+                : checked((uint)textureArray.Mipmaps!.Length);
             source = new(textureArray, record, layer.SamplerRecord, fallback, 0u);
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
             reason = string.Empty;

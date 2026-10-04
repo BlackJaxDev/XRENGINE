@@ -37,7 +37,10 @@ internal sealed partial class BrowserMaterialCookProjection : IDisposable
     private object? Project(object? value)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (value is not XRMaterial source || source is PublishedStandardLitTextureMaterial or PublishedUiImageMaterial or PublishedDeferredDecalMaterial)
+        if (value is XREngine.Components.Capture.Lights.PublishedRetainedLightProbeComponent) return value;
+        if (value is XREngine.Components.Capture.Lights.LightProbeComponent probe) return ProjectRetainedProbe(probe);
+        if (value is not XRMaterial source || source is PublishedStandardLitTextureMaterial or PublishedTexturedAlphaMaterial or PublishedAuthoredTexturedMaterial or PublishedUberBaseMaterial or PublishedUiImageMaterial or PublishedDeferredDecalMaterial or PublishedUnlitMaterial ||
+            _copies.ContainsValue(source))
             return value;
         try
         {
@@ -48,7 +51,9 @@ internal sealed partial class BrowserMaterialCookProjection : IDisposable
             error.Data["BrowserCook.Material"] = source.Name;
             if (!error.Data.Contains("BrowserCook.Pass"))
                 error.Data["BrowserCook.Pass"] = source.EngineSemantic.IsAuthoredLit()
-                    ? source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2 ? "forward-coverage" : "opaque-forward"
+                    ? source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1 ? "forward-textured-alpha"
+                        : source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1 ? "forward-authored-textured"
+                        : source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2 ? "forward-coverage" : "opaque-forward"
                     : source.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture);
             XRShader? stage = source.Shaders.FirstOrDefault();
             string? sourcePath = stage?.Source?.FilePath ?? stage?.FilePath ?? source.FilePath;
@@ -65,8 +70,16 @@ internal sealed partial class BrowserMaterialCookProjection : IDisposable
             return ProjectDeferredDecal(source);
         if (source.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outline) && outline.Enabled)
             return ProjectOutlineSource(source, outline);
+        if (source.TryGetUberMaterialState(out _, out _))
+            return ProjectUberBase(source);
+        if (source.EngineSemantic.IsUnlit() || IsUnlitStageCandidate(source))
+            return ProjectUnlit(source);
         if (source.EngineSemantic == EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1)
             return ProjectUiImage(source);
+        if (source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1)
+            return ProjectTexturedAlpha(source);
+        if (source.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1)
+            return ProjectAuthoredTextured(source);
         if (source.EngineSemantic.IsAuthoredLit())
             return ProjectAuthored(source);
         if (source.EngineSemantic != EngineMaterialSemanticIdentity.StandardLitTextureV1)
@@ -171,6 +184,17 @@ internal sealed partial class BrowserMaterialCookProjection : IDisposable
         if (_copies.TryGetValue(source, out XRMaterial? existing)) return existing;
         if (source.GetType() != typeof(XRMaterial))
             throw new NotSupportedException($"BrowserCook.AuthoredLitTypeUnsupported: '{source.Name}' requires the engine XRMaterial type.");
+        if (source.Shaders.Count != 0 && source.Shaders[0].CookedArtifactIdentity is { } nativeIdentity &&
+            _shaderSource?.TryResolve(nativeIdentity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? nativeArtifact) == true &&
+            nativeArtifact.SemanticSchemaIdentity == AdvancedNativeVertexMaterialSource.Schema)
+        {
+            if (!AdvancedNativeVertexMaterialSource.TryCapture(source, _shaderSource, out _, out string nativeReason) ||
+                !EngineAuthoredLitNativeAdmission.TryRead(source, _shaderSource, out _, out _, out _, out nativeReason))
+                throw new NotSupportedException($"BrowserCook.NativeVertexCompanionUnsupported: '{source.Name}': {nativeReason}");
+            // This already-authored target program retains its exact stage
+            // identities and parameter representation; no desktop source rewrite.
+            return source;
+        }
         if (!EngineLitMaterialShaderGenerator.TryPlanForCook(source, ShaderCompileTarget.WebGPUWgsl,
             EquivalentTexture, out EngineLitMaterialShaderPlan plan, out string? reason))
             throw new NotSupportedException($"BrowserCook.AuthoredLitSurfaceUnsupported: '{source.Name}': {reason}");
@@ -421,6 +445,18 @@ internal sealed partial class BrowserMaterialCookProjection : IDisposable
 
     private static void Release(XRMaterial copy)
     {
+        if (copy is PublishedUberBaseMaterial uber)
+        {
+            uber.PublishedUberBaseProfile = null;
+            foreach (XRShader shader in copy.Shaders) shader.Destroy(now: true);
+        }
+        else if (copy is PublishedUnlitMaterial unlit)
+        {
+            // The unlit projection creates this exact cooked companion. Source
+            // images and parameters are borrowed, but this shader is owned here.
+            unlit.PublishedUnlitTextureProfile = null;
+            foreach (XRShader shader in copy.Shaders) shader.Destroy(now: true);
+        }
         copy.Parameters = [];
         // Every projection owns its detached list; images remain borrowed.
         // Replacing it here would register an unowned empty EventList at disposal.
@@ -434,6 +470,8 @@ internal sealed partial class BrowserMaterialCookProjection : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
+        ReleaseRetainedProbeCopies();
+        ReleaseDerivedProbeImages();
         foreach (XRMaterial copy in _copies.Values) Release(copy);
         _copies.Clear();
         _canonicalSources.Clear();

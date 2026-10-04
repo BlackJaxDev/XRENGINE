@@ -284,7 +284,6 @@ internal static partial class UberShaderVariantBuilder
         IReadOnlyCollection<string> resolvedPipelineMacros,
         IReadOnlyCollection<string>? additionalPipelineMacros)
     {
-        HashSet<string> enabledFeatureSet = new(enabledFeatures, StringComparer.Ordinal);
         HashSet<string> pipelineMacros = new(resolvedPipelineMacros, StringComparer.Ordinal);
         if (additionalPipelineMacros is not null)
             pipelineMacros.UnionWith(additionalPipelineMacros);
@@ -302,7 +301,7 @@ internal static partial class UberShaderVariantBuilder
                 break;
         }
 
-        bool forwardLightingEnabled = RequiresForwardLighting(material, enabledFeatureSet);
+        bool forwardLightingEnabled = RequiresForwardLighting(material, enabledFeatures);
         bool forwardShadowsEnabled = forwardLightingEnabled && RequiresForwardShadows(material);
         if (!forwardLightingEnabled)
             pipelineMacros.Add(DisableForwardLightingMacro);
@@ -320,17 +319,30 @@ internal static partial class UberShaderVariantBuilder
         return pipelineMacroArray;
     }
 
-    private static bool RequiresForwardLighting(XRMaterial material, IReadOnlySet<string> enabledFeatures)
+    /// <summary>Checks live source requirements against a retained prepared variant without preparing shaders or allocating.</summary>
+    internal static bool MatchesForwardPipelineRequirements(XRMaterial material, string[] enabledFeatures, string[] pipelineMacros)
     {
-        if (material.RenderOptions.RequiredEngineUniforms.HasFlag(EUniformRequirements.Lights))
+        bool lighting = RequiresForwardLighting(material, enabledFeatures);
+        bool shadows = lighting && RequiresForwardShadows(material);
+        return HasMacro(DisableForwardLightingMacro) == !lighting &&
+            HasMacro(DisableForwardAmbientOcclusionMacro) == (!lighting || (material.RenderOptions.RequiredEngineUniforms & EUniformRequirements.AmbientOcclusion) == 0) &&
+            HasMacro(DisableForwardShadowsMacro) == !shadows &&
+            HasMacro(DisableForwardContactShadowsMacro) == (!shadows || !RequiresForwardContactShadows(material)) &&
+            HasMacro(DisableForwardPbrResourcesMacro) == (!lighting || !RequiresForwardPbrResources(material));
+
+        bool HasMacro(string name) => Array.IndexOf(pipelineMacros, name) >= 0;
+    }
+
+    private static bool RequiresForwardLighting(XRMaterial material, IReadOnlyList<string> enabledFeatures)
+    {
+        if ((material.RenderOptions.RequiredEngineUniforms & EUniformRequirements.Lights) != 0)
             return true;
 
-        return enabledFeatures.Contains("stylized-shading") ||
-               enabledFeatures.Contains("shadow-masks") ||
-               enabledFeatures.Contains("matcap") ||
-               enabledFeatures.Contains("rim-lighting") ||
-               enabledFeatures.Contains("advanced-specular") ||
-               enabledFeatures.Contains("subsurface");
+        for (int index = 0; index < enabledFeatures.Count; index++)
+            if (enabledFeatures[index] is "stylized-shading" or "shadow-masks" or "matcap" or
+                "rim-lighting" or "advanced-specular" or "subsurface")
+                return true;
+        return false;
     }
 
     private static bool RequiresForwardShadows(XRMaterial material)
@@ -1111,20 +1123,14 @@ internal static partial class UberShaderVariantBuilder
     private static bool HasPositiveFloatParameter(XRMaterial material, string name)
         => material.Parameter<ShaderFloat>(name) is { Value: > 0.000001f };
 
-    private static bool HasTruthyParameter(XRMaterial material, params string[] names)
+    private static bool HasTruthyParameter(XRMaterial material, string first, string second)
     {
-        foreach (string name in names)
-        {
-            if (material.Parameter<ShaderBool>(name) is { Value: true } ||
-                material.Parameter<ShaderInt>(name) is { Value: not 0 } ||
-                material.Parameter<ShaderUInt>(name) is { Value: not 0u } ||
-                material.Parameter<ShaderFloat>(name) is { Value: > 0.000001f })
-            {
-                return true;
-            }
-        }
+        return IsTruthy(first) || IsTruthy(second);
 
-        return false;
+        bool IsTruthy(string name) => material.Parameter<ShaderBool>(name) is { Value: true } ||
+            material.Parameter<ShaderInt>(name) is { Value: not 0 } ||
+            material.Parameter<ShaderUInt>(name) is { Value: not 0u } ||
+            material.Parameter<ShaderFloat>(name) is { Value: > 0.000001f };
     }
 
     private static bool HasAuthoredSamplerTexture(XRMaterial material, string samplerName)
@@ -1455,6 +1461,9 @@ internal static partial class UberShaderVariantBuilder
     private static string? NormalizeSourcePathKey(string? sourcePath)
     {
         if (string.IsNullOrWhiteSpace(sourcePath))
+            return sourcePath;
+
+        if (!ShaderSourceResolver.CanAccessHostShaderFiles)
             return sourcePath;
 
         try

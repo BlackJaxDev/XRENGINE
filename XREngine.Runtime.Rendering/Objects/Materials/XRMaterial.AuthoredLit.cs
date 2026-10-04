@@ -7,12 +7,32 @@ namespace XREngine.Rendering;
 
 public partial class XRMaterial : IPostCookedBinaryDeserialize
 {
+    private bool _preserveCookedUnlitParameters;
+
     /// <summary>Restores subscriptions and admitted texture metadata after reflection-cooked material hydration.</summary>
     public void OnPostCookedBinaryDeserialize()
     {
-        if (GetType() != typeof(XRMaterial) || !EngineSemantic.IsAuthoredLit() && CookedOutlineProfile is null)
+        if (this is PublishedUnlitMaterial unlit)
+        {
+            if (!EngineSemantic.IsUnlit())
+                throw new InvalidDataException("CookedMaterial.UnlitSemanticInvalid: recook this target material with an exact versioned unlit semantic.");
+            (unlit.PublishedUnlitTextureProfile ?? throw new InvalidDataException(
+                "CookedMaterial.UnlitProfileMissing: recook this target material with its versioned texture profile."))
+                .RestoreDecodedTextures(this);
+            RestoreCookedParameterSubscriptions();
+            PreShadersSet();
+            _preserveCookedUnlitParameters = true;
+            try { PostShadersSet(); }
+            finally { _preserveCookedUnlitParameters = false; }
+            if (!EngineUnlitSurfaceBinding.TryRead(this, out _, out string? reason))
+                throw new InvalidDataException($"CookedMaterial.UnlitInvalid: {reason}");
+            return;
+        }
+        if (GetType() != typeof(XRMaterial) && GetType() != typeof(PublishedUberBaseMaterial) ||
+            !EngineSemantic.IsAuthoredLit() && !EngineSemantic.IsUnlit() && CookedOutlineProfile is null && CookedUberBaseProfile is null)
             return;
         CookedOutlineProfile?.RestoreDecodedTextures(this);
+        CookedUberBaseProfile?.RestoreDecodedTextures(this);
         RestoreCookedParameterSubscriptions();
         PreShadersSet();
         PostShadersSet();

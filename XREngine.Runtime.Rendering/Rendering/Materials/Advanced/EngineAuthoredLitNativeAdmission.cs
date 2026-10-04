@@ -9,6 +9,85 @@ namespace XREngine.Rendering;
 public static class EngineAuthoredLitNativeAdmission
 {
     private static readonly ConditionalWeakTable<ShaderProgramArtifact, ProgramProof> Proofs = new();
+    private static readonly ConditionalWeakTable<ShaderProgramArtifact, NativeProgramProof> NativeProofs = new();
+
+    /// <summary>Reads the separate red-opacity family only after its exact cooked raster program is admitted.</summary>
+    public static bool TryReadTexturedAlpha(XRMaterial material, out TexturedAlphaSurface surface, out string reason)
+        => TryReadTexturedAlpha(material, RuntimeEngineMaterialArtifactServices.Resolver, out surface, out reason);
+
+    /// <summary>Uses the selected content catalog without interpreting authored desktop GLSL as native code.</summary>
+    public static bool TryReadTexturedAlpha(XRMaterial material, IShaderProgramArtifactResolver? resolver,
+        out TexturedAlphaSurface surface, out string reason)
+    {
+        surface = default;
+        reason = "Native textured-alpha shading requires the exact loaded engine-generated raster companion.";
+        if (material.EngineSemantic != EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1 ||
+            material.Shaders.Count is < 1 or > 2 || resolver is null)
+            return false;
+        ShaderProgramArtifact? program = null;
+        int fragments = 0;
+        for (int index = 0; index < material.Shaders.Count; index++)
+        {
+            XRShader shader = material.Shaders[index];
+            if (shader.Type is not (EShaderType.Vertex or EShaderType.Fragment) ||
+                !string.IsNullOrWhiteSpace(shader.Source?.Text) || !string.IsNullOrWhiteSpace(shader.Source?.FilePath) ||
+                shader.CookedArtifactIdentity is not { } identity ||
+                !resolver.TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact) ||
+                artifact.Identity != identity || program is not null && program.Identity != artifact.Identity)
+                return false;
+            if (shader.Type == EShaderType.Fragment) fragments++;
+            program = artifact;
+        }
+        if (fragments != 1 || program is null) return false;
+        if (!EngineTexturedAlphaMaterialAdmission.TryAdmit(material, program,
+                out TexturedAlphaSurfaceBinding? binding, out string? admissionReason) || binding is null ||
+            !binding.TryRead(out surface, out admissionReason))
+        {
+            reason = admissionReason ?? reason;
+            return false;
+        }
+        reason = string.Empty;
+        return true;
+    }
+
+    /// <summary>Reads the exact authored normal/specular family only after its exact cooked raster program is admitted.</summary>
+    public static bool TryReadAuthoredTextured(XRMaterial material, out AuthoredTexturedSurface surface, out string reason)
+        => TryReadAuthoredTextured(material, RuntimeEngineMaterialArtifactServices.Resolver, out surface, out reason);
+
+    /// <summary>Uses the selected content catalog without interpreting authored desktop GLSL as native code.</summary>
+    public static bool TryReadAuthoredTextured(XRMaterial material, IShaderProgramArtifactResolver? resolver,
+        out AuthoredTexturedSurface surface, out string reason)
+    {
+        surface = default;
+        reason = "Native authored textured shading requires the exact loaded engine-generated raster companion.";
+        if (material.EngineSemantic != EngineMaterialSemanticIdentity.AuthoredLitTexturedV1 ||
+            material.Shaders.Count is < 1 or > 2 || resolver is null)
+            return false;
+        ShaderProgramArtifact? program = null;
+        int fragments = 0;
+        for (int index = 0; index < material.Shaders.Count; index++)
+        {
+            XRShader shader = material.Shaders[index];
+            if (shader.Type is not (EShaderType.Vertex or EShaderType.Fragment) ||
+                !string.IsNullOrWhiteSpace(shader.Source?.Text) || !string.IsNullOrWhiteSpace(shader.Source?.FilePath) ||
+                shader.CookedArtifactIdentity is not { } identity ||
+                !resolver.TryResolve(identity, ShaderCompileTarget.WebGPUWgsl, out ShaderProgramArtifact? artifact) ||
+                artifact.Identity != identity || program is not null && program.Identity != artifact.Identity)
+                return false;
+            if (shader.Type == EShaderType.Fragment) fragments++;
+            program = artifact;
+        }
+        if (fragments != 1 || program is null) return false;
+        if (!EngineAuthoredTexturedMaterialAdmission.TryAdmit(material, program,
+                out AuthoredTexturedSurfaceBinding? binding, out string? admissionReason) || binding is null ||
+            !binding.TryRead(out surface, out admissionReason))
+        {
+            reason = admissionReason ?? reason;
+            return false;
+        }
+        reason = string.Empty;
+        return true;
+    }
 
     /// <summary>Reads current factors and roles without allocating after catalog admission.</summary>
     public static bool TryRead(XRMaterial material, out StandardLitColorSurface values,
@@ -42,6 +121,23 @@ public static class EngineAuthoredLitNativeAdmission
             program = artifact;
         }
         if (fragments != 1 || program is null) return false;
+        if (program.SemanticSchemaIdentity == AdvancedNativeVertexMaterialSource.Schema)
+        {
+            if (!AdvancedNativeVertexMaterialSource.TryCapture(material, resolver, out _, out reason))
+                return false;
+            if (!NativeProofs.GetValue(program, static artifact => new NativeProgramProof(artifact)).Valid)
+            {
+                reason = "The native local-vertex raster companion does not declare the exact canonical PBR and four-input physical ABI; recook the material.";
+                return false;
+            }
+            if (!StandardLitColorSurfaceBinding.TryReadAuthoredCooked(material, out values, out string? nativeReason))
+            {
+                reason = nativeReason!;
+                return false;
+            }
+            reason = string.Empty;
+            return true;
+        }
         ProgramProof proof = Proofs.GetValue(program, static artifact => new ProgramProof(artifact));
         if (proof.Reason is { } proofReason) { reason = proofReason; return false; }
         ShaderProgramArtifact verified = proof.Artifact!;
@@ -95,5 +191,11 @@ public static class EngineAuthoredLitNativeAdmission
             catch (InvalidDataException)
             { Reason = "The generated native companion is incomplete or stale; recook its verified descriptor and WGSL module."; }
         }
+    }
+
+    private sealed class NativeProgramProof(ShaderProgramArtifact artifact)
+    {
+        internal bool Valid { get; } = EngineAuthoredLitMaterialAdmission.HasPhysicalPbrAbi(
+            artifact, false, false, false, nativeVertex: true);
     }
 }

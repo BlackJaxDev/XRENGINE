@@ -54,12 +54,25 @@ buffer uploads are encoder copies at their authored command boundary, including
 indirect, count and atlas buffers. `MemoryBarrier` expresses visibility across
 these existing pass/copy boundaries; it neither blocks the browser thread nor
 maps GPU memory.
-Fresh, unreferenced physical buffer candidates are initialized with bounded
-preparation queue writes, so large initial geometry is not limited by the 8 MiB
-steady-state upload arena. Mutations of published storage retain ordered-copy
-semantics. Abandoned frames retain pending mutations for the next draw attempt;
-replacement generations invalidate retained command users immediately while
-earlier packet handles remain alive through submission.
+Fresh physical buffer candidates and complete reusable-slot images own immutable
+preparation snapshots until the engine frame's single acceptance import. Their
+bounded 256 MiB/4096-record journal is separate from the 8 MiB dynamic upload
+budget and its equally sized retry preamble. Incomplete or aborted scenes use
+that same import for preparation-only work; no partial scene commands or
+frame-local dynamic bytes are submitted. Mutations of published storage retain
+ordered-copy semantics. Abandoned frames retain authored mutations for the next
+draw attempt; replacement generations invalidate retained command users
+immediately while earlier packet handles remain alive through submission.
+
+CPU texture snapshots and lazy array copies share the preparation journal.
+Padded buffer-to-texture copies preserve upload/copy/upload ordering in one
+encoder, including single-byte mip rows. A copy of a current-frame producer is
+instead an ordered retained frame command. Rejecting that producer also rejects
+its dependent copy; the array rebuilds before reuse. Sources from an earlier
+uncommitted producer keep the scene pending until the source is produced again.
+Committed sources remain supported, and a pending copy retains its exact source
+generation through acceptance. Physical buffer, texture, view, sampler, binding
+group and command-plan creation are still explicit resource creation calls.
 
 `DispatchComputeIndirect` reads three GPU-produced uint workgroup dimensions
 from an aligned argument range. The generic descriptor's `indirect` field and
@@ -67,8 +80,11 @@ from an aligned argument range. The generic descriptor's `indirect` field and
 the indirect consumer in a separate pass; writable aliases in the consuming
 pass are rejected.
 
-Completion receipts continue to use asynchronous queue completion. Receipts
-covering abandoned frames report failure and cannot authorize resource reuse.
+Completion receipts continue to use asynchronous queue completion. The cached
+watermark returns with each acceptance, including preparation-only attempts;
+the hot frame loop does not issue separate completion polling imports. Accepting
+preparation never marks an abandoned scene's frame slots as submitted. Receipts
+covering abandoned scene commands cannot authorize resource reuse.
 Synchronous GPU waits and mapped pointer APIs remain unavailable.
 Instrumented algorithms that require those synchronous mappings are rejected;
 declaring an instrumented strategy does not authorize a hidden readback-based

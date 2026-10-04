@@ -891,7 +891,7 @@ namespace XREngine
             DateTime now = DateTime.Now;
 
             bool isRenderThread = IsCurrentRenderThread();
-            if (isRenderThread)
+            if (isRenderThread && !OperatingSystem.IsBrowser())
             {
                 ThreadPool.QueueUserWorkItem(static state =>
                 {
@@ -1278,6 +1278,13 @@ namespace XREngine
 
         private static void WriteLogMessage(string message, bool logToFile, ELogCategory category = ELogCategory.General)
         {
+            if (OperatingSystem.IsBrowser())
+            {
+                AddConsoleEntry(message, category);
+                Trace.WriteLine(message);
+                Console.WriteLine(message);
+                return;
+            }
             if (IsCurrentRenderThread())
             {
                 ThreadPool.QueueUserWorkItem(static state =>
@@ -1341,6 +1348,13 @@ namespace XREngine
         {
             if (string.IsNullOrWhiteSpace(message))
                 return;
+
+            if (OperatingSystem.IsBrowser())
+            {
+                Trace.WriteLine($"[{fileName}] {message}");
+                Console.WriteLine($"[{fileName}] {message}");
+                return;
+            }
 
             if (IsCurrentRenderThread())
             {

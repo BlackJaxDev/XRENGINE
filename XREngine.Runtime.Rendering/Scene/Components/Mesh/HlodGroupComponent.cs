@@ -28,22 +28,25 @@ namespace XREngine.Components.Scene.Mesh
     [Category("Rendering")]
     [DisplayName("HLOD Group")]
     [Description("Builds a batched proxy for child static meshes and swaps based on camera distance.")]
-    public sealed class HLODGroupComponent : XRComponent, IRenderable
+    public sealed partial class HLODGroupComponent : XRComponent, IRenderable
     {
         private const string ImposterNodeName = "__HLOD_Imposter";
         private const string ImposterCaptureNodeName = "__HLOD_ImposterCapture";
 
-        private sealed record SourceHook(RenderInfo RenderInfo, RenderInfo.DelAddRenderCommandsCallback? OriginalCallback);
+        private sealed record SourceHook(RenderInfo RenderInfo, RenderInfo.DelAddRenderCommandsCallback? OriginalCallback,
+            RenderInfo.DelAddRenderCommandsCallback InstalledCallback);
 
         private readonly RenderCommandMesh3D _renderCommand;
         private readonly RenderInfo3D _renderInfo;
 
         private readonly List<SourceHook> _sourceHooks = new();
         private XRMeshRenderer? _proxyRenderer;
+        private ProxyBuild? _ownedProxy;
 
         private SceneNode? _imposterNode;
         private OctahedralBillboardComponent? _imposterBillboard;
         private XRTexture2DArray? _imposterViews;
+        private GeneratedImposterResources? _ownedImposter;
 
         private bool _built;
         private bool _building;
@@ -192,16 +195,33 @@ namespace XREngine.Components.Scene.Mesh
 
         protected override void OnDestroying()
         {
-            base.OnDestroying();
-            UnhookSources();
-            DestroyProxy();
-            DestroyImposter();
+            try
+            {
+                CancelImposterRebuild();
+                base.OnDestroying();
+            }
+            finally
+            {
+                try { UnhookSources(); }
+                finally
+                {
+                    try { DestroyProxy(); }
+                    finally { DestroyImposter(); }
+                }
+            }
         }
 
         public void Rebuild()
         {
+            if ((OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread) && UseOctahedralImposters && GenerateImposterOnRebuild)
+            {
+                BeginImposterRebuild();
+                return;
+            }
             if (_building)
                 return;
+
+            CancelImposterRebuild();
 
             _building = true;
             try
@@ -219,7 +239,8 @@ namespace XREngine.Components.Scene.Mesh
                     return;
                 }
 
-                BuildProxyFromSources(sources);
+                if (BuildProxyCandidateFromSources(sources) is { } candidate)
+                    InstallProxy(candidate);
                 HookSources(sources);
 
                 if (UseOctahedralImposters && GenerateImposterOnRebuild && _proxyRenderer is not null)
@@ -283,7 +304,7 @@ namespace XREngine.Components.Scene.Mesh
                 RenderInfo ri = renderable.RenderInfo;
                 var prev = ri.PreCollectCommandsCallback;
 
-                ri.PreCollectCommandsCallback = (info, passes, cam) =>
+                RenderInfo.DelAddRenderCommandsCallback installed = (info, passes, cam) =>
                 {
                     // Preserve existing behavior (LOD selection, etc.), but skip when proxy is active.
                     if (Enabled && _built && cam is not null && ShouldHideSources(cam.DistanceFromRenderNearPlane(Transform.RenderTranslation)))
@@ -292,42 +313,57 @@ namespace XREngine.Components.Scene.Mesh
                     return prev?.Invoke(info, passes, cam) ?? true;
                 };
 
-                _sourceHooks.Add(new SourceHook(ri, prev));
+                _sourceHooks.Add(new SourceHook(ri, prev, installed));
+                ri.PreCollectCommandsCallback = installed;
             }
         }
 
         private void UnhookSources()
         {
+            List<Exception>? failures = null;
             foreach (var hook in _sourceHooks)
             {
-                hook.RenderInfo.PreCollectCommandsCallback = hook.OriginalCallback;
+                try
+                {
+                    if (ReferenceEquals(hook.RenderInfo.PreCollectCommandsCallback, hook.InstalledCallback))
+                        hook.RenderInfo.PreCollectCommandsCallback = hook.OriginalCallback;
+                }
+                catch (Exception error) { (failures ??= []).Add(error); }
             }
             _sourceHooks.Clear();
+            if (failures is not null) throw new AggregateException("HLOD source callback restoration failed.", failures);
         }
 
         private void DestroyProxy()
         {
-            _renderCommand.Mesh = null;
-
-            _proxyRenderer?.Destroy();
-            _proxyRenderer = null;
+            ProxyBuild? previous = _ownedProxy;
+            SetField(ref _ownedProxy, null, publishNotifications: false);
+            SetField(ref _proxyRenderer, null, publishNotifications: false);
+            try { _renderCommand.Mesh = null; }
+            finally { previous?.Dispose(); }
         }
 
         private void DestroyImposter()
         {
-            _imposterViews = null;
-
-            if (_imposterBillboard is not null)
+            GeneratedImposterResources? previous = _ownedImposter;
+            SetField(ref _ownedImposter, null, publishNotifications: false);
+            SetField(ref _imposterViews, null, publishNotifications: false);
+            SceneNode? node = _imposterNode;
+            OctahedralBillboardComponent? billboard = _imposterBillboard;
+            SetField(ref _imposterNode, null, publishNotifications: false);
+            SetField(ref _imposterBillboard, null, publishNotifications: false);
+            try
             {
-                _imposterBillboard.ImposterViews = null;
-                _imposterBillboard.IsActive = false;
+                if (billboard is not null)
+                {
+                    billboard.ImposterViews = null;
+                    billboard.IsActive = false;
+                }
             }
-
-            if (_imposterNode is not null)
+            finally
             {
-                _imposterNode.Destroy();
-                _imposterNode = null;
-                _imposterBillboard = null;
+                try { node?.Destroy(); }
+                finally { previous?.Dispose(); }
             }
         }
 
@@ -405,15 +441,19 @@ namespace XREngine.Components.Scene.Mesh
                 return;
             }
 
-            var settings = new OctahedralImposterGenerator.Settings(ImposterSheetSize, ImposterCapturePadding, CaptureDepth: false);
+            var settings = new OctahedralImposterGenerator.Settings(ImposterSheetSize, ImposterCapturePadding, CaptureDepth: false,
+                Pipeline: RuntimeImposterCapturePipeline, SubmissionStrategy: RuntimeImposterCaptureSubmissionStrategy);
             var result = OctahedralImposterGenerator.Generate(captureModel, settings);
             captureNode.Destroy();
 
             if (result is null)
                 return;
 
-            _imposterViews = result.Views;
+            GeneratedImposterResources owner = new(result);
+            SetField(ref _ownedImposter, owner, publishNotifications: false);
+            SetField(ref _imposterViews, result.Views, publishNotifications: false);
             _imposterBillboard.ApplyCaptureResult(result, matchBounds: true);
+            owner.DisposePreviews();
         }
 
         private bool ImposterPreCollect(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
@@ -448,7 +488,27 @@ namespace XREngine.Components.Scene.Mesh
             return subMeshes.Count == 0 ? null : new Model(subMeshes);
         }
 
-        private void BuildProxyFromSources(List<RenderableMesh> sources)
+        private sealed record ProxyBuild(XRMeshRenderer Renderer, AABB? Bounds, int RenderPass, XRMesh[] OwnedMeshes) : IDisposable
+        {
+            private bool _disposed;
+
+            public void Dispose()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                List<Exception>? failures = null;
+                foreach (XRMesh mesh in OwnedMeshes)
+                {
+                    try { mesh.Destroy(); }
+                    catch (Exception error) { (failures ??= []).Add(error); }
+                }
+                try { Renderer.Destroy(); }
+                catch (Exception error) { (failures ??= []).Add(error); }
+                if (failures is not null) throw new AggregateException("Generated HLOD proxy cleanup failed.", failures);
+            }
+        }
+
+        private ProxyBuild? BuildProxyCandidateFromSources(List<RenderableMesh> sources)
         {
             // Group-local space so the proxy moves with this node.
             Matrix4x4 groupInv = Matrix4x4.Invert(Transform.RenderMatrix, out var inv) ? inv : Matrix4x4.Identity;
@@ -539,48 +599,58 @@ namespace XREngine.Components.Scene.Mesh
             }
 
             if (trianglesByMaterial.Count == 0)
-            {
-                _renderCommand.Mesh = null;
-                _renderInfo.LocalCullingVolume = null;
-                return;
-            }
+                return null;
 
             var submeshes = new List<(XRMesh mesh, XRMaterial material)>(trianglesByMaterial.Count);
-            foreach (var kvp in trianglesByMaterial)
+            XRMeshRenderer? renderer = null;
+            try
             {
-                XRMaterial mat = kvp.Key;
-                var tris = kvp.Value;
-                if (tris.Count == 0)
-                    continue;
+                foreach (var kvp in trianglesByMaterial)
+                {
+                    XRMaterial mat = kvp.Key;
+                    var tris = kvp.Value;
+                    if (tris.Count == 0)
+                        continue;
 
-                XRMesh proxyMesh = XRMesh.Create(tris);
-                proxyMesh.Name = $"HLOD_{SceneNode.Name}_{mat.Name ?? mat.ID.ToString()}";
-                submeshes.Add((proxyMesh, mat));
+                    XRMesh proxyMesh = XRMesh.Create(tris);
+                    submeshes.Add((proxyMesh, mat));
+                    proxyMesh.Name = $"HLOD_{SceneNode.Name}_{mat.Name ?? mat.ID.ToString()}";
+                    if (OperatingSystem.IsBrowser() || RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                        XREngine.Rendering.Meshlets.GeneratedStaticMeshletPayloadBuilder.Attach(proxyMesh);
+                }
+
+                if (submeshes.Count == 0)
+                    return null;
+
+                renderer = new(submeshes)
+                {
+                    GenerateAsync = false,
+                    Name = $"HLOD_{SceneNode.Name}",
+                };
+
+                // Prefer the first material's render pass; this is a simplification.
+                // The renderer supports per-submesh materials; the pass is used for sorting/collection.
+                var firstMat = submeshes[0].material;
+                return new(renderer, localBounds, firstMat.RenderPass, [.. submeshes.Select(x => x.mesh)]);
             }
-
-            if (submeshes.Count == 0)
+            catch
             {
-                _renderCommand.Mesh = null;
-                _renderInfo.LocalCullingVolume = null;
-                return;
+                foreach (var submesh in submeshes) submesh.mesh.Destroy();
+                renderer?.Destroy();
+                throw;
             }
+        }
 
-            _proxyRenderer = new XRMeshRenderer(submeshes)
-            {
-                GenerateAsync = false,
-                Name = $"HLOD_{SceneNode.Name}",
-            };
-
-            _renderCommand.Mesh = _proxyRenderer;
-
-            // Prefer the first material's render pass; this is a simplification.
-            // The renderer supports per-submesh materials; the pass is used for sorting/collection.
-            var firstMat = submeshes[0].material;
-            _renderCommand.RenderPass = firstMat.RenderPass;
+        private void InstallProxy(ProxyBuild candidate)
+        {
+            SetField(ref _proxyRenderer, candidate.Renderer, publishNotifications: false);
+            SetField(ref _ownedProxy, candidate, publishNotifications: false);
+            _renderCommand.Mesh = candidate.Renderer;
+            _renderCommand.RenderPass = candidate.RenderPass;
 
             _renderCommand.WorldMatrix = Transform.RenderMatrix;
             _renderInfo.CullingOffsetMatrix = Transform.RenderMatrix;
-            _renderInfo.LocalCullingVolume = localBounds;
+            _renderInfo.LocalCullingVolume = candidate.Bounds;
         }
     }
 }

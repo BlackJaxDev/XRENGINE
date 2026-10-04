@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-unlit-alpha-texture",
+  "shadingModel": "unlit",
+  "surface": "opaque",
+  "baseColor": "alpha-texture",
+  "semanticVersion": 4
+}

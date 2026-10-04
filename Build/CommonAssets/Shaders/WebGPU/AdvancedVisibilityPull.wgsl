@@ -14,8 +14,8 @@ struct VisibilityParameters {
     masked: u32,
     directPayloadIndex: u32,
     direct: u32,
-    reserved0: u32,
-    reserved1: u32,
+    opacityCoverage: u32,
+    renderTimeBits: u32,
 };
 @group(0) @binding(0) var<storage, read> scene: array<u32>;
 @group(0) @binding(1) var<storage, read> geometry: array<u32>;
@@ -24,6 +24,8 @@ struct VisibilityParameters {
 @group(0) @binding(4) var<uniform> parameters: VisibilityParameters;
 @group(0) @binding(5) var coverageTexture: texture_2d<f32>;
 @group(0) @binding(6) var coverageSampler: sampler;
+@group(0) @binding(7) var opacityTexture: texture_2d<f32>;
+@group(0) @binding(8) var opacitySampler: sampler;
 const INVALID = 0xffffffffu;
 
 fn sceneRow(table: u32, index: u32) -> u32 {
@@ -63,9 +65,48 @@ struct VisibilityVertex {
     @location(2) @interpolate(flat) selection: u32,
     @location(3) @interpolate(flat) material: u32,
     @location(4) uv: vec2<f32>,
+    @location(5) uberUv01: vec4<f32>,
+    @location(6) uberUv23: vec4<f32>,
+    @location(7) uberColor: vec4<f32>,
+    @location(8) uberWorld: vec3<f32>,
+    @location(9) uberLocal: vec3<f32>,
+    @location(10) @interpolate(flat) uberWord: u32,
 };
 fn rejectedVertex() -> VisibilityVertex {
-    return VisibilityVertex(vec4<f32>(2.0, 2.0, 2.0, 1.0), vec2<u32>(INVALID), INVALID, INVALID, INVALID, vec2<f32>(0.0));
+    return VisibilityVertex(vec4<f32>(2.0, 2.0, 2.0, 1.0), vec2<u32>(INVALID), INVALID, INVALID, INVALID, vec2<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(1.0), vec3<f32>(0.0), vec3<f32>(0.0), INVALID);
+}
+fn sceneVector(word: u32) -> vec4<f32> {
+    return bitcast<vec4<f32>>(vec4<u32>(scene[word], scene[word+1u], scene[word+2u], scene[word+3u]));
+}
+fn uberMaterialRow(material: u32) -> u32 {
+    let size=arrayLength(&scene); let h=34u*8u;
+    if(size<288u || scene[h+2u]!=156u || scene[h+5u]!=1u || scene[h+6u]!=36u) {return INVALID;}
+    let index=scene[material];let offset=scene[h];
+    if(index==0u || index>=scene[h+1u] || offset<288u || offset>size || index>=(size-offset)/156u) {return INVALID;}
+    let row=offset+index*156u;
+    if(scene[row]!=scene[material+1u] || scene[row+1u]!=1u || (scene[row+2u]&~31u)!=0u) {return INVALID;}
+    return row;
+}
+fn uberAttributeWord(draw: vec2<u32>, mesh: vec2<u32>, vertex: u32) -> u32 {
+    let size=arrayLength(&scene);let h=35u*8u;
+    if(size<288u || scene[h+2u]!=12u || scene[h+5u]!=1u || scene[h+6u]!=36u) {return INVALID;}
+    let dense=scene[scene[3u]+draw.x*2u+1u];let start=scene[h];
+    if(dense>=scene[h+1u] || start<288u || start>size || dense>=(size-start)/12u) {return INVALID;}
+    let row=start+dense*12u;
+    if(any(loadHandle(row)!=draw) || any(loadHandle(row+2u)!=mesh) || vertex>=scene[row+7u]) {return INVALID;}
+    let offset=scene[row+6u];
+    if(offset>size || vertex>=(size-offset)/12u) {return INVALID;}
+    return offset+vertex*12u;
+}
+fn uberSelectedUv(mode: i32,input: VisibilityVertex) -> vec2<f32> {
+    switch mode {
+        case 1: {return input.uberUv01.zw;}
+        case 2: {return input.uberUv23.xy;}
+        case 3: {return input.uberUv23.zw;}
+        case 5: {return input.uberWorld.xz;}
+        case 8: {return input.uberLocal.xy;}
+        default: {return input.uberUv01.xy;}
+    }
 }
 @vertex
 fn advancedVisibilityVertex(@builtin(vertex_index) vertexIndex: u32) -> VisibilityVertex {
@@ -136,7 +177,16 @@ fn advancedVisibilityVertex(@builtin(vertex_index) vertexIndex: u32) -> Visibili
     let metadata = producer | (parameters.origin << 3u) | (parameters.masked << 4u) |
         (select(0u, 1u, velocityValid) << 6u) | (parameters.viewIndex << 8u) | (1u << 16u) |
         (select(0u, 1u, selection != INVALID) << 24u) | (editorFlags << 25u);
-    return VisibilityVertex(clip, vec2<u32>(drawHandle.x, primitive), metadata, selection, material, unpack2x16float(geometry[address + 5u]));
+    var result=VisibilityVertex(clip, vec2<u32>(drawHandle.x, primitive), metadata, selection, material,
+        unpack2x16float(geometry[address+5u]),vec4<f32>(0.0),vec4<f32>(0.0),vec4<f32>(1.0),world.xyz,localPosition,INVALID);
+    if(scene[material+15u]==10u) {
+        result.uberWord=uberMaterialRow(material);
+        if(result.uberWord==INVALID || vertex<payloads[payload+6u]) {return rejectedVertex();}
+        let attributes=uberAttributeWord(drawHandle,vec2<u32>(payloads[payload+2u],payloads[payload+3u]),vertex-payloads[payload+6u]);
+        if(attributes==INVALID) {return rejectedVertex();}
+        result.uberUv01=sceneVector(attributes);result.uberUv23=sceneVector(attributes+4u);result.uberColor=sceneVector(attributes+8u);
+    }
+    return result;
 }
 struct VisibilityOutput {
     @location(0) identity: vec2<u32>,
@@ -148,14 +198,49 @@ fn advancedVisibilityFragment(input: VisibilityVertex, @builtin(front_facing) fr
     // Derivatives are evaluated before any material-dependent control flow.
     let dx = dpdx(input.uv);
     let dy = dpdy(input.uv);
+    var mainUv=input.uv;var maskUv=input.uv;
+    let uber=input.uberWord!=INVALID;
+    if(uber) {
+        let p=input.uberWord+4u;
+        let time=select(0.0,bitcast<f32>(parameters.renderTimeBits),(scene[input.uberWord+2u]&16u)!=0u);
+        let mainSt=sceneVector(p+4u);let maskSt=sceneVector(p+16u);
+        mainUv=uberSelectedUv(bitcast<i32>(scene[p+10u]),input)*mainSt.xy+mainSt.zw+sceneVector(p+8u).xy*time;
+        maskUv=uberSelectedUv(bitcast<i32>(scene[p+22u]),input)*maskSt.xy+maskSt.zw+sceneVector(p+20u).xy*time;
+    }
+    let mainDx=dpdx(mainUv);let mainDy=dpdy(mainUv);let maskDx=dpdx(maskUv);let maskDy=dpdy(maskUv);
     if (input.metadata == INVALID || input.identity.x == 0u || input.identity.x == INVALID || input.identity.y == INVALID) { discard; }
-    if (parameters.masked != 0u) {
+    if (parameters.masked != 0u && uber) {
+        let p=input.uberWord+4u;
+        let mainMode=bitcast<i32>(scene[p+10u]);let maskMode=bitcast<i32>(scene[p+22u]);
+        if(mainMode==4 || mainMode==6 || ((scene[input.uberWord+2u]&2u)!=0u && (maskMode==4 || maskMode==6))) {discard;}
+        var alpha=textureSampleGrad(coverageTexture,coverageSampler,mainUv,mainDx,mainDy).a*bitcast<f32>(scene[p+3u]);
+        if(bitcast<f32>(scene[p+11u])>0.5) {alpha*=mix(1.0,input.uberColor.a,bitcast<f32>(scene[p+14u]));}
+        let mode=bitcast<i32>(scene[p+23u]);
+        if((scene[input.uberWord+2u]&2u)!=0u && mode>0) {
+            var mask=textureSampleGrad(opacityTexture,opacitySampler,maskUv,maskDx,maskDy).r;
+            if(bitcast<f32>(scene[p+26u])>0.5) {mask=1.0-mask;}
+            mask=mask*bitcast<f32>(scene[p+24u])+bitcast<f32>(scene[p+25u]);
+            switch mode {
+                case 1: {alpha=mask;}
+                case 2: {alpha*=mask;}
+                case 3: {alpha=clamp(alpha+mask,0.0,1.0);}
+                case 4: {alpha=clamp(alpha-mask,0.0,1.0);}
+                default: {}
+            }
+        }
+        alpha=clamp(alpha+bitcast<f32>(scene[p+15u]),0.0,1.0);
+        if(bitcast<f32>(scene[p+29u])>0.5) {alpha=1.0;}
+        if(bitcast<i32>(scene[p+28u])==1 && alpha<bitcast<f32>(scene[p+27u])) {discard;}
+    } else if (parameters.masked != 0u) {
         let constants = sceneRow(11u, scene[input.material + 11u]);
         if (constants == INVALID || parameters.baseColorWord + 3u >= scene[input.material + 12u] ||
             parameters.alphaCutoffWord >= scene[input.material + 12u] || parameters.materialFlagsWord >= scene[input.material + 12u]) { discard; }
         var alpha = bitcast<f32>(scene[constants + parameters.baseColorWord + 3u]);
         if ((scene[constants + parameters.materialFlagsWord] & 1u) != 0u) {
             alpha *= textureSampleGrad(coverageTexture, coverageSampler, input.uv, dx, dy).a;
+        }
+        if (parameters.opacityCoverage != 0u) {
+            alpha *= textureSampleGrad(opacityTexture, opacitySampler, input.uv, dx, dy).r;
         }
         if (alpha < bitcast<f32>(scene[constants + parameters.alphaCutoffWord])) { discard; }
     }

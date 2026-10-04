@@ -90,7 +90,18 @@ namespace XREngine.Rendering
                 FullScreenMesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
                 FullScreenMesh.SetShaderPipelinesAllowedForAllVersions(false);
                 if (prepareForInitialRendering)
-                    PrepareForInitialRendering();
+                {
+                    try
+                    {
+                        PrepareForInitialRendering();
+                    }
+                    catch (RenderResourcePreparationPendingException)
+                    {
+                        // Keep the logical owner alive while its backend receipt
+                        // is pending. Materialization or rendering retries the
+                        // same version without reconstructing its resources.
+                    }
+                }
             }
             catch
             {

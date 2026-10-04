@@ -26,6 +26,13 @@ public partial class AssetManager
         if (UsesRuntimeAssetCatalog)
             return (T?)await LoadFromRuntimeSourceAsync(filePath, typeof(T), progressCallback).ConfigureAwait(false);
 
+        if (!SupportsSynchronousAssetWork
+            && TryGetAssetByPath(Path.GetFullPath(filePath), out XRAsset? cached)
+            && !cached.IsDestroyed)
+            return (T)RequireCachedRuntimeAsset(filePath, typeof(T));
+
+        EnsureHostFileLoadRoute(bypassJobThread);
+
         if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
         {
             await TryDownloadAssetFromRemoteAsync(
@@ -36,6 +43,7 @@ public partial class AssetManager
                 additionalMetadata: null).ConfigureAwait(false);
         }
 
+        EnsureHostFileLoadRoute(bypassJobThread);
         return await RunOnJobThreadAsync(() =>
         {
             using IDisposable progressScope = AssetLoadProgressContext.Begin(filePath, progressCallback);
@@ -61,6 +69,13 @@ public partial class AssetManager
         if (UsesRuntimeAssetCatalog)
             return await LoadFromRuntimeSourceAsync(filePath, type, progressCallback).ConfigureAwait(false);
 
+        if (!SupportsSynchronousAssetWork
+            && TryGetAssetByPath(Path.GetFullPath(filePath), out XRAsset? cached)
+            && !cached.IsDestroyed)
+            return RequireCachedRuntimeAsset(filePath, type);
+
+        EnsureHostFileLoadRoute(bypassJobThread);
+
         if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
         {
             await TryDownloadAssetFromRemoteAsync(
@@ -71,6 +86,7 @@ public partial class AssetManager
                 additionalMetadata: null).ConfigureAwait(false);
         }
 
+        EnsureHostFileLoadRoute(bypassJobThread);
         return await RunOnJobThreadAsync(() =>
         {
             using IDisposable progressScope = AssetLoadProgressContext.Begin(filePath, progressCallback);
@@ -84,8 +100,10 @@ public partial class AssetManager
         bool bypassJobThread = false)
         where T : XRAsset, new()
     {
-        if (UsesRuntimeAssetCatalog || _runtimeAssetSource is { SupportsSynchronousReads: false })
+        if (!SupportsSynchronousAssetWork)
             return (T?)RequireCachedRuntimeAsset(filePath, typeof(T));
+
+        EnsureHostFileLoadRoute(bypassJobThread);
 
         if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
         {
@@ -97,6 +115,7 @@ public partial class AssetManager
                 additionalMetadata: null).GetAwaiter().GetResult();
         }
 
+        EnsureHostFileLoadRoute(bypassJobThread);
         return RunOnJobThreadBlocking(() => LoadCore<T>(filePath), priority, bypassJobThread);
     }
 
@@ -107,8 +126,10 @@ public partial class AssetManager
         bool bypassJobThread = false)
     {
         ArgumentNullException.ThrowIfNull(type);
-        if (UsesRuntimeAssetCatalog || _runtimeAssetSource is { SupportsSynchronousReads: false })
+        if (!SupportsSynchronousAssetWork)
             return RequireCachedRuntimeAsset(filePath, type);
+
+        EnsureHostFileLoadRoute(bypassJobThread);
 
         if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
         {
@@ -120,6 +141,7 @@ public partial class AssetManager
                 additionalMetadata: null).GetAwaiter().GetResult();
         }
 
+        EnsureHostFileLoadRoute(bypassJobThread);
         return RunOnJobThreadBlocking(() => LoadCore(filePath, type), priority, bypassJobThread);
     }
 

@@ -87,6 +87,10 @@ public static class MeshRenderMaterialResolver
                 localMaterialOverride?.EngineSemantic.IsColorCoverage() == true
                 ? localMaterialOverride ?? meshRenderer.Material
                 : meshRenderer.Material;
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+                AdvancedNativeVertexMaterialSource.IsRequested(depthNormalSource))
+                return new(depthNormalSource!.GetNativeVertexPassMaterial(Shaders.Generation.EngineNativeVertexAuxiliaryPass.DepthNormal),
+                    null, false, true, "CookedNativeVertexDepthNormal");
             XRMaterial? depthNormalVariant = depthNormalSource?.DepthNormalPrePassVariant;
             if (depthNormalVariant is not null)
                 return new(depthNormalVariant, null, false, true, "DepthNormalVariant");

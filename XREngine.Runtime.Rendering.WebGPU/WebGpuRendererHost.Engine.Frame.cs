@@ -107,7 +107,7 @@ public sealed partial class WebGpuRendererHost
             viewport.Resize(checked((uint)_target.Surface.PhysicalWidth), checked((uint)_target.Surface.PhysicalHeight));
     }
 
-    internal int EnsureEngineUniformBuffer()
+    internal async Task<int> EnsureEngineUniformBufferAsync()
     {
         RequireReady();
         if (_engineUniformBuffer != 0)
@@ -116,8 +116,19 @@ public sealed partial class WebGpuRendererHost
             !capabilities.Limits.TryGetValue("minUniformBufferOffsetAlignment", out long alignment) ||
             alignment <= 0 || alignment > EngineUniformCapacity)
             throw new InvalidOperationException("WebGPU.UniformAlignment.Unavailable: the selected device did not publish a usable uniform alignment.");
-        int handle = CreateBuffer(new BrowserBufferDescription(EngineUniformCapacity,
+        long generation = BackendGeneration;
+        int handle = await CreateEngineBufferAsync(this, new BrowserBufferDescription(EngineUniformCapacity,
             BrowserBufferUsage.Uniform | BrowserBufferUsage.CopyDestination, "Engine frame uniforms"));
+        if (!AcceptsBackendWork || State != BrowserRendererState.Ready || generation != BackendGeneration)
+        {
+            RetireEngineResourceAfterFrame(handle);
+            throw new InvalidOperationException("WebGPU.UniformArena.Obsolete: uniform allocation completed after its renderer retired.");
+        }
+        if (_engineUniformBuffer != 0)
+        {
+            if (_engineUniformBuffer != handle) RetireEngineResourceAfterFrame(handle);
+            return _engineUniformBuffer;
+        }
         SetField(ref _engineUniformBuffer, handle);
         SetField(ref _engineUniformAlignment, checked((int)alignment));
         SetField(ref _engineUniformArena, new byte[EngineUniformCapacity]);
@@ -136,9 +147,11 @@ public sealed partial class WebGpuRendererHost
         SetField(ref _engineFrameSequence, _engineFrameSequence + 1, publishNotifications: false);
         SetField(ref _engineCommandCount, 0, publishNotifications: false);
         SetField(ref _engineUniformBytes, 0, publishNotifications: false);
+        SetField(ref _engineAcceptanceAttempted, false, publishNotifications: false);
         BeginEngineBufferUploads();
         SetField(ref _engineDrawPending, false, publishNotifications: false);
         _engineProducedTextures.Clear();
+        _engineRecordedTextures.Clear();
         ResetAuthorizedShadowReuse();
         SetField(ref _engineMeshDrawCount, 0, publishNotifications: false);
         if (_engineMeshResolutionTraceEnabled)
@@ -234,6 +247,19 @@ public sealed partial class WebGpuRendererHost
         SetField(ref _engineCommandCount, _engineCommandCount + 1, publishNotifications: false);
     }
 
+    private void RecordEngineClear(int handle)
+    {
+        RecordEngineCommands(handle, []);
+        Span<byte> record = _engineCommandArena.AsSpan(
+            EngineFrameHeaderBytes + (_engineCommandCount - 1) * EngineFrameRecordBytes, EngineFrameRecordBytes);
+        BinaryPrimitives.WriteSingleLittleEndian(record[8..], _engineClearColor.X);
+        BinaryPrimitives.WriteSingleLittleEndian(record[12..], _engineClearColor.Y);
+        BinaryPrimitives.WriteSingleLittleEndian(record[16..], _engineClearColor.Z);
+        BinaryPrimitives.WriteSingleLittleEndian(record[20..], _engineClearColor.W);
+        BinaryPrimitives.WriteSingleLittleEndian(record[24..], _engineClearDepth);
+        BinaryPrimitives.WriteUInt32LittleEndian(record[76..], 8);
+    }
+
     private static void WriteEngineDrawRectangle(Span<byte> destination, BoundingRectangle region, bool allowEmpty)
     {
         if (region.X < 0 || region.Y < 0 || region.Width < (allowEmpty ? 0 : 1) ||
@@ -260,7 +286,7 @@ public sealed partial class WebGpuRendererHost
         Span<byte> header = _engineCommandArena.AsSpan(0, EngineFrameHeaderBytes);
         header.Clear();
         BinaryPrimitives.WriteUInt32LittleEndian(header, 0x45475258);
-        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], 4);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], 5);
         BinaryPrimitives.WriteInt32LittleEndian(header[8..], length);
         BinaryPrimitives.WriteInt32LittleEndian(header[12..], _engineCommandCount);
         BinaryPrimitives.WriteInt32LittleEndian(header[16..], _session);
@@ -272,17 +298,24 @@ public sealed partial class WebGpuRendererHost
         BinaryPrimitives.WriteUInt32LittleEndian(header[40..], _engineFrameSequence);
         BinaryPrimitives.WriteInt32LittleEndian(header[44..], _engineUploadCount);
         Span<byte> uniforms = _engineUniformArena is null ? Span<byte>.Empty : _engineUniformArena.AsSpan(0, _engineUniformBytes);
-        CountEngineFrameSubmission(length, uniforms.Length, _engineStorageBytes);
-        bool presented = WebGpuImports.SubmitEngineFrame(_session, _engineCommandArena.AsSpan(0, length), uniforms,
-            _engineStorageArena.AsSpan(0, _engineStorageBytes));
-        // Queue ownership survives any failure in subsequent managed bookkeeping.
-        submitted = true;
-        SetField(ref _engineUploadsSubmitted, true, publishNotifications: false);
+        bool presented;
+        try
+        {
+            presented = AcceptEngineFrame(_engineCommandArena.AsSpan(0, length), uniforms,
+                _engineStorageArena.AsSpan(0, _engineStorageBytes), ref submitted);
+        }
+        finally
+        {
+            if (submitted)
+            {
+                try { AcceptSubmittedBufferUploads(); }
+                finally { NotifyAcceptedBufferInitializations(); }
+            }
+        }
         try
         {
             // Once the queue owns the bytes, no later receipt or notification
             // failure may leave a buffer waiting for an already accepted snapshot.
-            AcceptSubmittedBufferUploads();
             // The complete-frame gate has passed. Canvas presentation alone is not a
             // color-write receipt: settle only the exact authored and attested views.
             // These CPU metadata slots do not wait for the GPU completion watermark.
@@ -297,10 +330,13 @@ public sealed partial class WebGpuRendererHost
         }
         CountEngineFrameSubmissionResult(presented);
         CommitDirectionalShadowDefaults();
-        if (presented && !_engineDrawPending)
+        if (submitted && !_engineDrawPending)
         {
             for (int i = 0; i < _engineProducedTextures.Count; i++)
                 _engineProducedTextures[i].CommitProducedFrame(_engineFrameSequence);
+        }
+        if (presented && !_engineDrawPending)
+        {
             SetField(ref _submittedEngineSurfaceGeneration, output.TargetGeneration, publishNotifications: false);
             SetField(ref _submittedEngineOutputProperties, output.Properties, publishNotifications: false);
         }

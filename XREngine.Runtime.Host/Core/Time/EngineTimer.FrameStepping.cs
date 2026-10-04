@@ -11,6 +11,9 @@ public partial class EngineTimer
     /// <summary>Whether a host owns frame cadence and executes all phases on its calling thread.</summary>
     public bool IsCallerThreadLoop => Volatile.Read(ref _callerThreadLoopOwnerThreadId) != 0;
 
+    /// <summary>The canonical render identity reserved by the caller's current visibility collection.</summary>
+    internal ulong CallerThreadCollectionRenderFrameId { get; private set; }
+
     /// <summary>
     /// Starts a host-driven clock without creating loop workers. The host must install the
     /// caller-thread job executor and claim the render thread before starting this lifecycle.
@@ -38,6 +41,7 @@ public partial class EngineTimer
         _visibilityGenerationGate.Reset();
         _renderDone.Reset();
         _renderReadyForNextCollectSignaled = 0;
+        CallerThreadCollectionRenderFrameId = 0UL;
         Interlocked.Exchange(ref _firstTerminalFault, null);
         Volatile.Write(ref _collectVisiblePhase, "Idle");
         Volatile.Write(ref _callerThreadLoopOwnerThreadId, threadId);
@@ -103,6 +107,9 @@ public partial class EngineTimer
                 return false;
 
             phase = "CollectVisible";
+            // Collection and world publication precede BeginRenderFrame on this topology.
+            // Reserve its identity once; the raw collect counter remains independent telemetry.
+            CallerThreadCollectionRenderFrameId = checked(RuntimeEngine.Rendering.State.RenderFrameId + 1UL);
             if (!TryCollectVisibleGeneration(out long generation))
             {
                 if (FirstTerminalFault is not null)

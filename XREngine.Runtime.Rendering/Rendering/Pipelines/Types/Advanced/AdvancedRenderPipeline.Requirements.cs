@@ -36,7 +36,11 @@ public partial class AdvancedRenderPipeline
             requirements.RequireComputeProgram("advanced::finalize-triangles");
         }
         if (IncludesStage(EAdvancedRenderStage.VisibilityRaster))
+        {
             requirements.RequireRasterProgram(multisample ? "advanced::visibility-pull-msaa" : "advanced::visibility-pull");
+            requirements.RequireRasterProgram(multisample ? "advanced::uber-visibility-msaa" : "advanced::uber-visibility");
+            requirements.RequireRasterProgram(multisample ? "advanced::uber-raster-surface-msaa" : "advanced::uber-raster-surface");
+        }
         if (IncludesStage(EAdvancedRenderStage.AmbientOcclusion) && UsesWebAmbientOcclusion)
             requirements.RequireComputeProgram("advanced::gtao");
         if (IncludesStage(EAdvancedRenderStage.DepthPyramidAndLateVisibility))
@@ -54,11 +58,15 @@ public partial class AdvancedRenderPipeline
             requirements.RequireRasterProgram("advanced::scene-copy");
             requirements.RequireComputeProgram(multisample ? "advanced::shade-native-msaa" : "advanced::shade-native");
             requirements.RequireComputeProgram(multisample ? "advanced::shade-native-depth-msaa" : "advanced::shade-native-depth");
+            requirements.RequireComputeProgram(multisample ? "advanced::shade-uber-native-msaa" : "advanced::shade-uber-native");
+            requirements.RequireComputeProgram(multisample ? "advanced::shade-uber-native-depth-msaa" : "advanced::shade-uber-native-depth");
             requirements.RequireComputeProgram(multisample ? "advanced::shade-msaa-resolve" : "advanced::shade-background");
             if (GlobalIlluminationPlan is { RequiresNativeMaterialSurfaceExports: true })
             {
                 requirements.RequireComputeProgram(multisample ? "advanced::shade-surface-exports-msaa" : "advanced::shade-surface-exports");
                 requirements.RequireComputeProgram(multisample ? "advanced::shade-surface-exports-depth-msaa" : "advanced::shade-surface-exports-depth");
+                requirements.RequireComputeProgram(multisample ? "advanced::shade-uber-surface-exports-msaa" : "advanced::shade-uber-surface-exports");
+                requirements.RequireComputeProgram(multisample ? "advanced::shade-uber-surface-exports-depth-msaa" : "advanced::shade-uber-surface-exports-depth");
                 requirements.RequireComputeProgram(multisample ? "advanced::shade-background-exports-msaa" : "advanced::shade-background-exports");
             }
         }

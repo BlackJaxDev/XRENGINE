@@ -11,4 +11,8 @@ public enum EAdvancedMaterialSourceContract : uint
     CustomSurfaceProgram,
     UnsupportedTextureSemantics,
     EngineGeneratedSurface,
+    TessellatedVertexProgram,
+    TopologyChangingProgram,
+    /// <summary>Exact canonical Uber base shader with a separately versioned browser surface companion.</summary>
+    UberBaseSurface,
 }

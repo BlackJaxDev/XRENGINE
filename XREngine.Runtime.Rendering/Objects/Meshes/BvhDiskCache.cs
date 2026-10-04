@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using SimpleScene.Util.ssBVH;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Execution;
 
 namespace XREngine.Rendering;
 
@@ -44,6 +45,8 @@ internal static class BvhDiskCache
     {
         bvh = null;
         triangleLookup = null;
+        if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread)
+            return false;
 
         if (!TryResolveCacheFilePath(triangles, out string? cachePath) || !File.Exists(cachePath))
             return false;
@@ -122,6 +125,8 @@ internal static class BvhDiskCache
         Dictionary<Triangle, (IndexTriangle Indices, int FaceIndex)> triangleLookup,
         BVH<Triangle> bvh)
     {
+        if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread)
+            return;
         if (!TryResolveCacheFilePath(triangles, out string? cachePath))
             return;
 

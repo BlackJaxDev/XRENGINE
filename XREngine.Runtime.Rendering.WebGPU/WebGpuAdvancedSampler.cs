@@ -13,7 +13,7 @@ internal sealed class WebGpuAdvancedSampler : AbstractRenderAPIObject
     private int _references;
 
     internal WebGpuAdvancedSampler(WebGpuRendererHost renderer, in AdvancedSamplerRecord record,
-        (ulong Epoch, AdvancedGpuHandle Handle) key, Action<WebGpuAdvancedSampler> onUnused) : base(renderer)
+        (ulong Epoch, AdvancedGpuHandle Handle, uint SamplingKey) key, Action<WebGpuAdvancedSampler> onUnused) : base(renderer)
     {
         _renderer = renderer;
         _record = record;
@@ -21,7 +21,7 @@ internal sealed class WebGpuAdvancedSampler : AbstractRenderAPIObject
         _onUnused = onUnused;
     }
 
-    internal (ulong Epoch, AdvancedGpuHandle Handle) Key { get; }
+    internal (ulong Epoch, AdvancedGpuHandle Handle, uint SamplingKey) Key { get; }
     internal void Retain()
     {
         ObjectDisposedException.ThrowIf(IsRetired, this);
@@ -66,11 +66,12 @@ internal sealed class WebGpuAdvancedSampler : AbstractRenderAPIObject
         ObjectDisposedException.ThrowIf(IsRetired, this);
         ValidateOwnerGeneration();
         if (_handle != 0) return;
-        SetField(ref _handle, _renderer.CreateSampler(Describe(in _record)), publishNotifications: false);
+        SetField(ref _handle, _renderer.CreateEngineSampler(this, Describe(in _record)), publishNotifications: false);
     }
 
     public override void Destroy()
     {
+        _renderer.CancelEngineResourceRequests(this);
         if (_handle == 0) return;
         _renderer.ReleaseEngineDrawDependencies(this);
         _renderer.RetireEngineResourceAfterFrame(_handle);

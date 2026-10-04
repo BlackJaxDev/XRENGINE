@@ -1,12 +1,13 @@
 using System.Runtime.InteropServices;
+using XREngine.Rendering.Commands;
 
 namespace XREngine.Rendering.WebGPU;
 
 /// <summary>Physical packing of one canonical output slot's CPU and GPU-owned aggregate inputs.</summary>
-internal sealed class WebGpuAdvancedDeformationInputArena : IDisposable
+internal sealed partial class WebGpuAdvancedDeformationInputArena : IDisposable
 {
     private const int SectionCount = AdvancedGpuDeformationResources.PackedInputSectionCount;
-    private const int HeaderBytes = SectionCount * 16;
+    private const int HeaderBytes = (SectionCount + 1) * 16;
     private readonly WebGpuRendererHost _renderer;
     private readonly XRDataBuffer?[] _sources = new XRDataBuffer?[SectionCount];
     private readonly uint[] _capacities = new uint[SectionCount];
@@ -24,10 +25,12 @@ internal sealed class WebGpuAdvancedDeformationInputArena : IDisposable
         _paletteCopies = new(renderer);
         Output = output;
         Storage = new(renderer, "Canonical aggregate deformation inputs");
+        BasisOutput = new(renderer, "Authored aggregate deformation basis");
     }
 
     internal XRDataBuffer Output { get; }
     internal WebGpuOwnedStorageBuffer Storage { get; }
+    internal WebGpuOwnedStorageBuffer BasisOutput { get; }
 
     internal bool TryPrepare(AdvancedGpuDeformationResources resources)
     {
@@ -38,6 +41,9 @@ internal sealed class WebGpuAdvancedDeformationInputArena : IDisposable
         {
             if (_publication != publication)
                 throw new InvalidOperationException("WebGPU.Advanced.DeformationChanged: an aggregate output slot changed during its recorded frame.");
+            foreach (AdvancedBrowserGeometryBasisSource basis in _basisSources.Values)
+                if (!basis.IsCurrent(basis.Mesh))
+                    throw new InvalidOperationException("WebGPU.Advanced.DeformationBasisSourceChanged: an authored source changed after aggregate preparation.");
             return true;
         }
         resources.GetPackedInputSection(5, out uint paletteByteLength);
@@ -64,6 +70,10 @@ internal sealed class WebGpuAdvancedDeformationInputArena : IDisposable
                 if (cursor > _renderer.MaximumAdvancedStorageBytes)
                     throw new NotSupportedException("WebGPU.Advanced.DeformationCapacity: packed canonical aggregate inputs exceed the device storage binding limit.");
             }
+            _basisInputOffset = cursor;
+            cursor = checked(cursor + (int)(_capacities[3] / 2));
+            if (cursor > _renderer.MaximumAdvancedStorageBytes)
+                throw new NotSupportedException("WebGPU.Advanced.DeformationBasisCapacity: raw source basis exceeds the device storage binding limit.");
             Storage.EnsureCapacity(cursor);
         }
         Span<uint> header = MemoryMarshal.Cast<byte, uint>(_header.AsSpan());
@@ -88,6 +98,7 @@ internal sealed class WebGpuAdvancedDeformationInputArena : IDisposable
             _lengths[section] = byteLength;
             _revisions[section] = source.Revision;
         }
+        PrepareAuthoredBasis(resources, header, changedLayout || changedGeneration);
         Storage.UploadPreparation(_header);
         // Finish every CPU preparation write before exposing this arena to the
         // ordered frame. Copies then follow their source producers and precede
@@ -116,5 +127,7 @@ internal sealed class WebGpuAdvancedDeformationInputArena : IDisposable
     {
         _paletteCopies.Dispose();
         Storage.Dispose();
+        BasisOutput.Dispose();
+        _basisSources.Clear();
     }
 }

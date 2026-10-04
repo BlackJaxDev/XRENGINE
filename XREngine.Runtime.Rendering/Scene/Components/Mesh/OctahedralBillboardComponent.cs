@@ -235,18 +235,27 @@ namespace XREngine.Components.Scene.Mesh
                 bottomLeftOrigin: false,
                 flipVerticalUVCoord: false));
             quad.SupportsBillboarding = false;
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                Rendering.Meshlets.GeneratedStaticMeshletPayloadBuilder.Attach(quad);
             return quad;
         }
 
         private XRMaterial? BuildMaterial()
         {
-            XRShader? vertex = LoadVertexShader();
-            XRShader? fragment = LoadFragmentShader();
-            if (vertex is null || fragment is null)
-                return null;
-
-            XRMaterial material = new(vertex, fragment)
+            bool cooked = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked;
+            XRShader[] shaders = [];
+            if (!cooked)
             {
+                XRShader? vertex = LoadVertexShader();
+                XRShader? fragment = LoadFragmentShader();
+                if (vertex is null || fragment is null) return null;
+                shaders = [vertex, fragment];
+            }
+
+            XRMaterial material = new(shaders)
+            {
+                EngineSemantic = cooked ? EngineMaterialSemanticIdentity.OctahedralImpostorV1 : EngineMaterialSemanticIdentity.None,
+                AdvancedLatePassMetadata = cooked ? new(EAdvancedLatePassKind.SortedAlpha, isOrderDependent: true) : null,
                 BillboardMode = EMeshBillboardMode.None,
                 RenderPass = (int)EDefaultRenderPass.TransparentForward,
                 RenderOptions = new RenderingParameters
@@ -263,8 +272,22 @@ namespace XREngine.Components.Scene.Mesh
                 }
             };
 
+            if (cooked)
+                material.TransparencyMode = ETransparencyMode.AlphaBlend;
             UpdateMaterialTexture(material);
             return material;
+        }
+
+        /// <summary>Checks the component-owned browser material without loading or substituting desktop shader sources.</summary>
+        public XRMaterial ValidateWebGpuProfile()
+        {
+            if (CastsShadows)
+                throw new NotSupportedException("WebGPU.Impostor.ShadowProducerMissing: baked color impostors have no authored light-view shadow companion.");
+            if (_material is null || _material.EngineSemantic != EngineMaterialSemanticIdentity.OctahedralImpostorV1)
+                throw new NotSupportedException("WebGPU.Impostor.MaterialMissing: construct the component under the cooked browser material target.");
+            if (_imposterViews is not { Depth: 26, MultiSample: false, Width: > 0, Height: > 0, SizedInternalFormat: ESizedInternalFormat.Rgba16f })
+                throw new NotSupportedException("WebGPU.Impostor.TextureProfile: the canonical capture requires exactly 26 single-sample linear RGBA16F layers.");
+            return _material;
         }
 
         private XRShader? LoadVertexShader()
@@ -327,11 +350,31 @@ namespace XREngine.Components.Scene.Mesh
         {
             Matrix4x4 centeredMatrix = GetCenteredRenderMatrix();
             _renderCommand.WorldMatrix = centeredMatrix;
-            _renderInfo.CullingOffsetMatrix = centeredMatrix;
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+            {
+                // The shader applies X/Y scale along camera axes. A rotated scaled
+                // local box can be too narrow along those axes, so publish a world
+                // sphere under translation only for CPU and resident broad culling.
+                double sx = new Vector3(centeredMatrix.M11, centeredMatrix.M12, centeredMatrix.M13).Length();
+                double sy = new Vector3(centeredMatrix.M21, centeredMatrix.M22, centeredMatrix.M23).Length();
+                double x = _billboardSize.X * 0.5 * sx, y = _billboardSize.Y * 0.5 * sy;
+                // Normalized camera axes need not be orthogonal under an authored
+                // shear, so the sum also bounds that permitted camera transform.
+                float radius = MathF.BitIncrement((float)(x + y));
+                if (!float.IsFinite(radius))
+                    throw new NotSupportedException("WebGPU.Impostor.BoundsRange: billboard scale must produce finite conservative bounds.");
+                Vector3 extents = new(radius);
+                _renderInfo.LocalCullingVolume = new AABB(-extents, extents);
+                _renderInfo.CullingOffsetMatrix = Matrix4x4.CreateTranslation(centeredMatrix.Translation);
+            }
+            else
+                _renderInfo.CullingOffsetMatrix = centeredMatrix;
         }
 
         private Matrix4x4 GetCenteredRenderMatrix()
-            => Matrix4x4.CreateTranslation(_billboardLocalCenter) * Transform.RenderMatrix;
+            // Serialized components are constructed before their SceneNode is wired.
+            // OnTransformChanged publishes the attached transform after hydration.
+            => Matrix4x4.CreateTranslation(_billboardLocalCenter) * (SceneNode?.Transform.RenderMatrix ?? Matrix4x4.Identity);
 
         private void DisposeRenderer()
         {

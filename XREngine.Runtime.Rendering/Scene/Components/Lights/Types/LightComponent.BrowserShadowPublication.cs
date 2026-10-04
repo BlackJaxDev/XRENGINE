@@ -6,6 +6,24 @@ namespace XREngine.Components.Capture.Lights.Types;
 
 public abstract partial class LightComponent
 {
+    /// <summary>Reads a matching producer candidate without changing main-output publication metadata.</summary>
+    internal bool TryGetBrowserShadowSnapshot(ulong outputGeneration, IBrowserShadowReuseCapability renderer,
+        out AdvancedShadowRecord record, out XRTexture? texture)
+    {
+        record = _browserRenderedShadowRecord;
+        texture = _browserCachedShadowReceiver;
+        return _browserRenderedShadowValid && CastsShadows && texture is not null &&
+            ReferenceEquals(_browserCachedShadowRenderer, renderer) &&
+            ReferenceEquals(GetBrowserShadowReceiver(), texture) &&
+            _browserCachedShadowOutputGeneration == outputGeneration &&
+            _browserCachedShadowProductionTicket != 0 &&
+            _browserCachedShadowProductionTicket == renderer.GetShadowProductionTicket(texture) &&
+            TryCreateBrowserShadowRecord(_browserCachedShadowFrame, out AdvancedShadowRecord current, out XRTexture? receiver) &&
+            ReferenceEquals(receiver, texture) && BrowserShadowPayloadsMatch(in record, in current) &&
+            TryCaptureBrowserShadowProjections(out BrowserShadowProjectionSnapshot projections) &&
+            BrowserShadowProjectionsMatch(in projections, in _browserRenderedShadowProjections) &&
+            this is not PointLightComponent { LastRenderedShadowFaceMask: not 63 };
+    }
     private AdvancedShadowRecord _browserPendingShadowRecord;
     private AdvancedShadowRecord _browserRenderedShadowRecord;
     private XRTexture? _browserPendingShadowReceiver;
@@ -190,7 +208,7 @@ public abstract partial class LightComponent
            TryCaptureBrowserShadowProjections(out BrowserShadowProjectionSnapshot projections) &&
            BrowserShadowProjectionsMatch(in projections, in _browserRenderedShadowProjections);
 
-    private static bool BrowserShadowPayloadsMatch(in AdvancedShadowRecord left, in AdvancedShadowRecord right)
+    internal static bool BrowserShadowPayloadsMatch(in AdvancedShadowRecord left, in AdvancedShadowRecord right)
         => left.Type == right.Type &&
            (left.Flags & ~EAdvancedShadowRecordFlags.BrowserStandaloneCandidate) ==
                (right.Flags & ~EAdvancedShadowRecordFlags.BrowserStandaloneCandidate) &&

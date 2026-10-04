@@ -2,6 +2,7 @@
 #include "AdvancedShadeContracts.slang"
 #include "AdvancedShadeTextures.slang"
 #include "AdvancedShadeEngineSurface.slang"
+#include "AdvancedShadeUberBase.slang"
 #include "AdvancedShadeReconstruction.slang"
 #include "AdvancedShadeLighting.slang"
 
@@ -75,6 +76,10 @@ void advancedShadeNative(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadI
     if ((Parameters.flags & 4u) != 0u)
         ambientOcclusion = AmbientOcclusion.Load(int3(pixel, 0));
     XRAdvancedOpaqueSampleResult result;
+    #if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
+    XR_ADV_UberRasterAddress=uint3(pixel,0u);
+#endif
+
     XR_ADV_EvaluateNativeOpaqueSample(pixel, viewIndex, identity, metadata,
         VisibilityDepth.Load(int3(pixel, 0)), float2(pixel) + 0.5,
         ambientOcclusion, false, ShadeTiles[tileWord + 3u], !diagnostic, result);

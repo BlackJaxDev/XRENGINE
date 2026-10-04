@@ -12,6 +12,8 @@ internal sealed class WebGpuAdvancedVisibilityInputStorage
     private int _count;
 
     internal ReadOnlySpan<AdvancedVisibilityPayload> Payloads => _payloads.AsSpan(0, _count);
+    internal Span<AdvancedVisibilityPayload> MutablePayloads => _payloads.AsSpan(0, _count);
+    internal Span<AdvancedVisibilityCandidate> MutableCandidates => _candidates.AsSpan(0, _count);
     internal ReadOnlySpan<AdvancedVisibilityCandidate> Candidates => _candidates.AsSpan(0, _count);
     internal ReadOnlySpan<EAdvancedGeometryProducer> Producers => _producers.AsSpan(0, _count);
     internal ReadOnlySpan<AdvancedDeformedArenaSlice> DeformationSlices => _slices.AsSpan(0, _count);

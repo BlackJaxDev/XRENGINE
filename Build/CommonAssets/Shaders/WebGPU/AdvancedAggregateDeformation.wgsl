@@ -9,10 +9,11 @@ struct Parameters {
 
 @group(0) @binding(0) var<storage, read> data: array<u32>;
 @group(0) @binding(1) var<storage, read_write> current: array<u32>;
-@group(0) @binding(2) var<uniform> parameters: Parameters;
+@group(0) @binding(2) var<storage, read_write> authoredBasis: array<u32>;
+@group(0) @binding(3) var<uniform> parameters: Parameters;
 
 const INVALID = 0xffffffffu;
-const HEADER_WORDS = 52u;
+const HEADER_WORDS = 56u;
 const FEATURE_SKINNING = 1u;
 const FEATURE_BLENDSHAPES = 2u;
 const FEATURE_NORMALS = 4u;
@@ -26,7 +27,9 @@ const FEATURE_PRECOMPOSED_PALETTE = 512u;
 // SkinInfluences, Palette, InverseBind, ActiveShapes, Deltas, Spill, ShapeRanges,
 // ShapeRecords and JobControls. Palette records each contain three vec4 rows;
 // JobControls is {influenceCap: u32, morphThreshold: f32}, indexed by job index.
-const STRIDES = array<u32, 13>(28u, 1u, 1u, 16u, 12u, 12u, 12u, 2u, 4u, 2u, 4u, 4u, 2u);
+// Browser-only section 13 is raw normal.xyz, flags, tangent.xyzw. The first
+// thirteen sections and the canonical output remain byte-for-byte unchanged.
+const STRIDES = array<u32, 14>(28u, 1u, 1u, 16u, 12u, 12u, 12u, 2u, 4u, 2u, 4u, 4u, 2u, 8u);
 
 struct DeformationJob {
     sourceVertexOffset: u32,
@@ -49,6 +52,8 @@ struct Deformed {
     position: vec3<f32>,
     normal: vec3<f32>,
     tangent: vec3<f32>,
+    authoredNormal: vec3<f32>,
+    authoredTangent: vec3<f32>,
 };
 
 struct MorphResult {
@@ -64,7 +69,7 @@ struct Weighted {
 fn sectionsValid() -> bool {
     let length = arrayLength(&data);
     if (length < HEADER_WORDS) { return false; }
-    for (var stream = 0u; stream < 13u; stream++) {
+    for (var stream = 0u; stream < 14u; stream++) {
         let offset = data[stream * 4u];
         let bytes = data[stream * 4u + 1u];
         if ((bytes & 3u) != 0u || offset < HEADER_WORDS || offset > length) { return false; }
@@ -163,10 +168,17 @@ fn transformRows(word: u32, source: Deformed) -> Deformed {
     let b = v4(word + 4u);
     let c = v4(word + 8u);
     let point = vec4<f32>(source.position, 1.0);
+    // The authored generated vertex/prepass contract transforms both N and T
+    // with cofactors. Keep the existing packed-only calculation unchanged.
+    let ca = cross(b.xyz, c.xyz);
+    let cb = cross(c.xyz, a.xyz);
+    let cc = cross(a.xyz, b.xyz);
     return Deformed(
         vec3<f32>(dot(a, point), dot(b, point), dot(c, point)),
         vec3<f32>(dot(a.xyz, source.normal), dot(b.xyz, source.normal), dot(c.xyz, source.normal)),
-        vec3<f32>(dot(a.xyz, source.tangent), dot(b.xyz, source.tangent), dot(c.xyz, source.tangent)));
+        vec3<f32>(dot(a.xyz, source.tangent), dot(b.xyz, source.tangent), dot(c.xyz, source.tangent)),
+        vec3<f32>(dot(ca, source.authoredNormal), dot(cb, source.authoredNormal), dot(cc, source.authoredNormal)),
+        vec3<f32>(dot(ca, source.authoredTangent), dot(cb, source.authoredTangent), dot(cc, source.authoredTangent)));
 }
 
 fn addInfluence(weighted: Weighted, source: Deformed, job: DeformationJob, bone: u32, weight: f32) -> Weighted {
@@ -180,6 +192,8 @@ fn addInfluence(weighted: Weighted, source: Deformed, job: DeformationJob, bone:
     result.value.position += transformed.position * weight;
     result.value.normal += transformed.normal * weight;
     result.value.tangent += transformed.tangent * weight;
+    result.value.authoredNormal += transformed.authoredNormal * weight;
+    result.value.authoredTangent += transformed.authoredTangent * weight;
     result.total += weight;
     return result;
 }
@@ -187,7 +201,7 @@ fn addInfluence(weighted: Weighted, source: Deformed, job: DeformationJob, bone:
 fn applySparseBlendshapes(source: Deformed, job: DeformationJob, vertex: u32, threshold: f32) -> MorphResult {
     if ((job.features & FEATURE_BLENDSHAPES) == 0u) { return MorphResult(source, true); }
     if (!rangeValid(7u, job.blendshapeWeightOffset, job.blendshapeCount)) { return MorphResult(source, false); }
-    var accumulated = Deformed(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
+    var accumulated = Deformed(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
     for (var activeIndex = 0u; activeIndex < job.blendshapeCount; activeIndex++) {
         let active = address(7u, job.blendshapeWeightOffset + activeIndex);
         let weight = f(active + 1u);
@@ -235,7 +249,41 @@ fn applySparseBlendshapes(source: Deformed, job: DeformationJob, vertex: u32, th
     result.position += accumulated.position;
     result.normal += accumulated.normal;
     result.tangent += accumulated.tangent;
+    if ((job.features & FEATURE_NORMALS) != 0u) { result.authoredNormal += accumulated.normal; }
+    if ((job.features & FEATURE_TANGENTS) != 0u) { result.authoredTangent += accumulated.tangent; }
     return MorphResult(result, true);
+}
+
+fn authoredLengthValid(value: vec3<f32>) -> bool {
+    let lengthSquared = dot(value, value);
+    return lengthSquared > 0.0 && lengthSquared <= 3.402823466e+38;
+}
+
+fn writeAuthoredBasis(vertex: u32, sourceWord: u32, result: Deformed) {
+    let flags = data[sourceWord + 3u] & 1u;
+    let sign = f(sourceWord + 7u);
+    // Preserve the prepass's normalization, including invalid zero vectors,
+    // without introducing the canonical codec's unit-axis repairs.
+    var normal = vec3<f32>(0.0);
+    var tangent = vec3<f32>(0.0);
+    var outputFlags = flags;
+    if (authoredLengthValid(result.authoredNormal)) {
+        normal = normalize(result.authoredNormal);
+        outputFlags |= 2u;
+    }
+    if (authoredLengthValid(result.authoredTangent)) { tangent = normalize(result.authoredTangent); }
+    if ((outputFlags & 3u) == 3u && authoredLengthValid(tangent) && authoredLengthValid(cross(normal, tangent) * sign)) {
+        outputFlags |= 4u;
+    }
+    let output = vertex * 8u;
+    authoredBasis[output] = bitcast<u32>(normal.x);
+    authoredBasis[output + 1u] = bitcast<u32>(normal.y);
+    authoredBasis[output + 2u] = bitcast<u32>(normal.z);
+    authoredBasis[output + 3u] = outputFlags;
+    authoredBasis[output + 4u] = bitcast<u32>(tangent.x);
+    authoredBasis[output + 5u] = bitcast<u32>(tangent.y);
+    authoredBasis[output + 6u] = bitcast<u32>(tangent.z);
+    authoredBasis[output + 7u] = bitcast<u32>(sign);
 }
 
 @compute @workgroup_size(256, 1, 1)
@@ -254,13 +302,17 @@ fn advancedAggregateDeformation(@builtin(global_invocation_id) invocation: vec3<
     if (job.order != 0u || job.outputStride != 64u ||
         job.sourceVertexOffset > sectionCount(3u) || job.vertexFirst > sectionCount(3u) - job.sourceVertexOffset ||
         job.vertexCount > sectionCount(3u) - job.sourceVertexOffset - job.vertexFirst ||
-        job.currentVertexOffset > outputCount || job.vertexCount > outputCount - job.currentVertexOffset) { return; }
+        job.currentVertexOffset > outputCount || job.vertexCount > outputCount - job.currentVertexOffset ||
+        !rangeValid(13u, job.sourceVertexOffset + job.vertexFirst, job.vertexCount) ||
+        job.currentVertexOffset > arrayLength(&authoredBasis) / 8u ||
+        job.vertexCount > arrayLength(&authoredBasis) / 8u - job.currentVertexOffset) { return; }
     let sourceIndex = job.sourceVertexOffset + job.vertexFirst + localVertex;
     let sourceWord = address(3u, sourceIndex);
     let controls = address(12u, jobIndex);
     let cap = data[controls];
+    let basisWord = address(13u, sourceIndex);
     var source = Deformed(v3(sourceWord), decodeOctValue(unpack2x16snorm(data[sourceWord + 3u])),
-        decodeTangent(data[sourceWord + 4u]));
+        decodeTangent(data[sourceWord + 4u]), v3(basisWord), v3(basisWord + 4u));
     // Authored blendshapes modify bind-space attributes before skinning.
     let morphed = applySparseBlendshapes(source, job, localVertex, f(controls + 1u));
     if (!morphed.valid) { return; }
@@ -271,7 +323,7 @@ fn advancedAggregateDeformation(@builtin(global_invocation_id) invocation: vec3<
             !rangeValid(5u, job.bonePaletteOffset, job.boneCount)) { return; }
         if ((job.features & FEATURE_PRECOMPOSED_PALETTE) == 0u && !rangeValid(6u, job.inverseBindOffset, job.boneCount)) { return; }
         let influence = address(4u, job.boneInfluenceOffset + localVertex);
-        var weighted = Weighted(Deformed(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0)), 0.0);
+        var weighted = Weighted(Deformed(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0)), 0.0);
         for (var lane = 0u; lane < min(4u, cap); lane++) {
             weighted = addInfluence(weighted, source, job, data[influence + lane], f(influence + 4u + lane));
         }
@@ -289,6 +341,10 @@ fn advancedAggregateDeformation(@builtin(global_invocation_id) invocation: vec3<
             result.normal = unitOrZero(weighted.value.normal);
             result.tangent = unitOrZero(weighted.value.tangent);
         }
+        if (weighted.total > 0.0001) {
+            result.authoredNormal = weighted.value.authoredNormal;
+            result.authoredTangent = weighted.value.authoredTangent;
+        }
     }
     // Copy the complete canonical 64-byte vertex before replacing deformation
     // attributes. UVs, colors, flags, custom values and reserved words survive.
@@ -302,4 +358,5 @@ fn advancedAggregateDeformation(@builtin(global_invocation_id) invocation: vec3<
         current[destination + 4u] = encodeTangent(result.tangent, data[sourceWord + 4u] & 0x80000000u);
     }
     current[destination + 10u] = sourceIndex;
+    writeAuthoredBasis(job.currentVertexOffset + localVertex, basisWord, result);
 }

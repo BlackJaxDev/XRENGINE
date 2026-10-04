@@ -65,6 +65,8 @@ public sealed partial class WebGpuRendererHost
         statistics.LastFrameCompletionPollInteropCalls = 0;
         statistics.LastFrameAdvancedPreparationUploadInteropCalls = 0;
         statistics.LastFrameAdvancedPreparationUploadBytes = 0;
+        statistics.LastFramePreparationUploadRecords = 0;
+        statistics.LastFramePreparationUploadBytes = 0;
         statistics.LastFrameSubmissionReturned = false;
         statistics.LastFrameSubmissionPresented = false;
         statistics.LastFrameSubmissionPacketBytes = 0;

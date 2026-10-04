@@ -1,5 +1,6 @@
 using XREngine.Imaging;
 using MemoryPack;
+using XREngine.Core.Files;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Rendering;
@@ -257,8 +258,34 @@ namespace XREngine.Rendering
 
         public override void Reload(string path)
             => Load3rdParty(path);
+
+        public override Task ReloadAsync(string path)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.ReloadAsync(path);
+        }
+
+        public override Task<bool> Load3rdPartyAsync(string filePath)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Load3rdPartyAsync(filePath);
+        }
+
+        public override Task<bool> Load3rdPartyAsync(string filePath, AssetImportContext context)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Load3rdPartyAsync(filePath, context);
+        }
+
+        public override Task<bool> Import3rdPartyAsync(string filePath, object? importOptions)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Import3rdPartyAsync(filePath, importOptions);
+        }
+
         public override bool Load3rdParty(string filePath)
         {
+            RuntimeTextureSourceAccess.RequireHostFiles();
             IReadOnlyList<RuntimeImage> frames = RuntimeImageCodecs.Require().DecodeFrames(File.ReadAllBytes(filePath));
             Textures = new XRTexture2D[frames.Count];
             try

@@ -564,13 +564,23 @@ namespace XREngine.Rendering.Commands
         }
 
         internal override float CaptureSortDistance(IRuntimeRenderCamera? camera)
+            => CaptureSortDistance(camera, out _, out _);
+
+        /// <summary>Captures the same bound or fallback point used by this command's CPU sort distance.</summary>
+        internal float CaptureSortDistance(IRuntimeRenderCamera? camera, out AABB? sortBounds, out Vector3 fallbackPosition)
         {
+            sortBounds = null;
+            fallbackPosition = default;
             if (camera is null)
                 return base.CaptureSortDistance(camera);
 
-            return CullingVolume is AABB bounds && bounds.IsValid
-                ? CalculateRenderDistance(bounds, camera)
-                : Vector3.DistanceSquared(camera.Transform.RenderTranslation, _renderWorldMatrix.Translation);
+            if (CullingVolume is AABB bounds && bounds.IsValid)
+            {
+                sortBounds = bounds;
+                return CalculateRenderDistance(bounds, camera);
+            }
+            fallbackPosition = _renderWorldMatrix.Translation;
+            return Vector3.DistanceSquared(camera.Transform.RenderTranslation, fallbackPosition);
         }
 
         public override void SwapBuffers()

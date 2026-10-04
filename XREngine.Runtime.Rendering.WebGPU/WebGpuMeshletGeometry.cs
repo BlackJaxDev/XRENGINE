@@ -15,6 +15,7 @@ internal sealed class WebGpuMeshletGeometry : IDisposable
     private readonly long _geometryRevision;
     private readonly long _validationRevision;
     private readonly ulong _ownerToken;
+    private byte[]? _initialImage;
 
     internal WebGpuOwnedStorageBuffer Arena { get; }
     internal uint MeshletCount { get; }
@@ -69,12 +70,15 @@ internal sealed class WebGpuMeshletGeometry : IDisposable
         payload.TriangleIndices.AsSpan().CopyTo(image[(int)(TriangleWordOffset * 4)..]);
         BuildSourcePrimitiveMap(mesh, payload, image[(int)(PrimitiveWordOffset * 4)..]);
         Arena = new(renderer, "Immutable authored meshlet geometry");
-        try
-        {
-            Arena.EnsureCapacity(bytes.Length);
-            Arena.UploadPreparation(bytes);
-        }
-        catch { Arena.Dispose(); throw; }
+        _initialImage = bytes;
+    }
+
+    internal void Prepare()
+    {
+        if (_initialImage is not { } image) return;
+        Arena.EnsureCapacity(image.Length);
+        Arena.UploadPreparation(image);
+        _initialImage = null;
     }
 
     internal bool Matches(XRMesh mesh, MeshletPayload payload)
@@ -138,5 +142,5 @@ internal sealed class WebGpuMeshletGeometry : IDisposable
     private static void Write(Span<byte> destination, int word, uint value)
         => BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(word * 4, 4), value);
     private static NotSupportedException Rejected(string code, string reason) => new($"WebGPU.Meshlets.{code}: {reason}.");
-    public void Dispose() => Arena.Dispose();
+    public void Dispose() { _initialImage = null; Arena.Dispose(); }
 }

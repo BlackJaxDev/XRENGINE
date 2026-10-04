@@ -9,12 +9,14 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
 {
     private static readonly string[] MeshletProgramBindings = ["meshlets::cull-expand", "meshlets::finalize-indexed", "meshlets::refit-bounds", "meshlets::select-lod"];
     private static readonly string[] IndirectProgramBindings = ["indirect::cull-primitive", "meshlets::select-lod"];
+    private static readonly string[] OrderingProgramBindings = ["authored-indexed::rank-sources", "authored-indexed::mask-ranked-arguments"];
     private readonly Dictionary<string, XRRenderProgram> _authoredIndexedPrograms = new(StringComparer.Ordinal);
     private readonly Dictionary<MeshletPayload, WebGpuMeshletGeometry> _meshletGeometry = new(ReferenceEqualityComparer.Instance);
     private WebGpuAuthoredIndexedFrameSlot[]? _authoredIndexedSlots;
     private WebPipelineArtifactCatalog? _authoredIndexedArtifacts;
     private string? _meshletProgramFailure = "WebGPU.AuthoredIndexed.CatalogMissing: the owning package has no installed compute meshlet companions.";
     private string? _indirectProgramFailure = "WebGPU.Indirect.CatalogMissing: the owning package has no installed whole-primitive culling companion.";
+    private string? _orderingProgramFailure = "WebGPU.AuthoredOrdering.CatalogMissing: the owning package has no installed source-order companions.";
     private EMeshSubmissionStrategy _lastIndexedSubmissionStrategy;
     private string _lastIndexedSubmissionReason = "NeverSubmitted";
     private int _lastIndexedUnboundedDraws;
@@ -33,6 +35,7 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
         SetField(ref _authoredIndexedArtifacts, artifacts, publishNotifications: false);
         SetField(ref _meshletProgramFailure, ValidateIndexedPrograms(artifacts, MeshletProgramBindings), publishNotifications: false);
         SetField(ref _indirectProgramFailure, ValidateIndexedPrograms(artifacts, IndirectProgramBindings), publishNotifications: false);
+        SetField(ref _orderingProgramFailure, ValidateIndexedPrograms(artifacts, OrderingProgramBindings), publishNotifications: false);
     }
 
     private static string? ValidateIndexedPrograms(WebPipelineArtifactCatalog? artifacts, string[] bindings)
@@ -41,7 +44,9 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
         {
             if (artifacts is null || !artifacts.TryResolve(binding, out ShaderProgramArtifact? artifact) || artifact is null)
                 return $"WebGPU.AuthoredIndexed.ProgramMissing: the package requires '{binding}'.";
-            if (binding == "indirect::cull-primitive") WebGpuIndirectProgramContract.Validate(artifact);
+            if (binding.StartsWith("authored-indexed::", StringComparison.Ordinal))
+                WebGpuAuthoredOrderingProgramContract.Validate(artifact, binding["authored-indexed::".Length..]);
+            else if (binding == "indirect::cull-primitive") WebGpuIndirectProgramContract.Validate(artifact);
             else WebGpuMeshletProgramContract.Validate(artifact, binding["meshlets::".Length..]);
         }
         return null;
@@ -80,6 +85,11 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
     {
         SetField(ref _lastIndexedSubmissionStrategy, request.SubmissionStrategy, publishNotifications: false);
         try { return EnqueueAuthoredIndexedCore(in request, out reason); }
+        catch (RenderResourcePreparationPendingException error)
+        {
+            reason = error.Message;
+            return IndexedResult(EAuthoredIndexedSubmissionStatus.Pending, reason);
+        }
         catch (NotSupportedException error)
         {
             reason = error.Message;
@@ -96,8 +106,8 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
             return IndexedRejected("FrameRequired", "an exact published world, camera and active engine frame are required", out reason);
         if (request.View.View.SourceCameraIdentity != request.Camera.RenderIdentity)
             return IndexedRejected("ViewIdentity", "the frozen view must belong to the exact requested camera", out reason);
-        if (request.View.View.IsXrSubmittedView || request.View.View.ReversedDepth)
-            return IndexedRejected("ViewProfile", "stereo and reversed-Z indexed views need their explicit authored raster profiles", out reason);
+        if (request.View.View.IsXrSubmittedView)
+            return IndexedRejected("ViewProfile", "stereo indexed views need their explicit authored raster profiles", out reason);
         if (request.SubmissionStrategy is not (EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented or
             EMeshSubmissionStrategy.GpuIndirectZeroReadback or EMeshSubmissionStrategy.GpuIndirectInstrumented))
             return IndexedRejected("Strategy", "authored indexed submission requires an explicit indirect or compute-meshlet mode", out reason);
@@ -125,80 +135,110 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
             return invalidOwnership == EGpuMeshSubmissionSourceOwnership.MixedExplicitOwnership
                 ? IndexedRejected("MixedExplicitOwnership", "one selected source mixes CPU-exempt and GPU-owned primitives; exact primitive replay is required", out reason)
                 : IndexedRejected("IncompleteSource", "the selected resident publication omits an authored primitive; exact primitive publication is required", out reason);
-        for (int index = 0; index < records.Length; index++)
+        EAuthoredIndexedSubmissionStatus orderStatus = PrepareAuthoredOrdering(in request, slot,
+            out WebGpuAuthoredOrderingBatch? ordering, out WebGpuRenderProgram? orderMask, out reason);
+        if (orderStatus != EAuthoredIndexedSubmissionStatus.Ready) return IndexedResult(orderStatus, reason);
+        try
         {
-            ref readonly GpuMeshSubmissionRecord record = ref records[index];
-            if (record.InstanceCount == 0) continue;
-            if (!slot.Publication.IncludesRenderPass(index, request.RenderPass) ||
-                slot.Publication.GetSourceOwnership(record.Source) == EGpuMeshSubmissionSourceOwnership.ExplicitCpu) continue;
-            if (record.AuthoredPrimitiveInstanceCount != 1)
-                return IndexedRejected("PrimitiveInstanceCompositionUnavailable", "renderer-local indirect instance counts require their own exact primitive submission profile", out reason);
-            int authoredLodCount = slot.Publication.GetAuthoredLodCount(index);
-            if (authoredLodCount > GPUScene.MaxLogicalMeshLodCount || record.LodCount > GPUScene.MaxLogicalMeshLodCount)
-                return IndexedRejected("LodCapacity", "authored LOD sets beyond four levels require a wider shared selection table", out reason);
-            if (authoredLodCount != Math.Max(1u, record.LodCount))
-                return IndexedRejected("LodPublicationChanged", "the authored LOD owners do not match the shared resident table", out reason);
-            ReadOnlySpan<GpuMeshSubmissionRecord> candidates = record.LodCount > 1
-                ? slot.Publication.GetLodCandidates(index) : records.Slice(index, 1);
-            int residentCandidates = 0;
-            for (int level = 0; level < candidates.Length; level++)
+            if (ordering is null)
             {
-                uint expectedMesh = record.LodCount > 1 ? record.LodMetadata.GetMeshDataId(level) : record.Metadata.MeshID;
-                if (expectedMesh == 0) continue;
-                ref readonly GpuMeshSubmissionRecord candidate = ref candidates[level];
-                if (candidate.Mesh is null || candidate.Metadata.MeshID != expectedMesh ||
-                    record.LodCount > 1 && candidate.Metadata.LodPolicy != (uint)level)
-                    return IndexedRejected("LodCandidateMissing", "a resident LOD has no exact frozen renderer, material and geometry owner", out reason);
-                if (candidate.AuthoredPrimitiveInstanceCount != 1)
-                    return IndexedRejected("PrimitiveInstanceCompositionUnavailable", "an authored LOD uses renderer-local indirect instance counts outside the command-count profile", out reason);
-                if (candidate.SourcePrimitiveCount != record.SourcePrimitiveCount)
-                    return IndexedRejected("LodPrimitiveMembership", "LOD renderers with different primitive membership require a complete per-level source publication", out reason);
-                bool baseRequested = candidate.IsMaterialPassEnabled(shadowPass) && IncludesIndexedPass(in candidate, request.RenderPass);
-                bool outlineRequested = !shadowPass && candidate.TryGetOutlineCandidate(out GpuMeshSubmissionRecord outlineCandidate) &&
-                    IncludesIndexedPass(in outlineCandidate, request.RenderPass);
-                if (!baseRequested && !outlineRequested) continue;
-                if (candidate.RequiresLodTransformPublication)
-                    return IndexedRejected("LodTransformProfile", "mixed static and skinned LODs require proven default source matrices and their distinct frozen transform conventions", out reason);
-                if ((candidate.Metadata.Flags & (uint)GPUIndirectRenderFlags.CpuFallbackOnly) != 0)
-                    return IndexedRejected("LodOwnershipMismatch", "a GPU-selected source includes a CPU-exempt authored LOD", out reason);
-                if (baseRequested)
+                request.CpuReplay?.ReplayUnorderedCpuExempt(request.RenderPass,
+                    request.CpuReplayPolicy == EAuthoredIndexedCpuReplayPolicy.MeshesAndNonMesh);
+                if (_engineDrawPending)
                 {
-                    if (!ValidateIndexedCandidate(in candidate, meshlets, out reason)) return IndexedResult(EAuthoredIndexedSubmissionStatus.Rejected, reason);
-                    residentCandidates++;
-                }
-                if (outlineRequested)
-                {
-                    candidate.TryGetOutlineCandidate(out outlineCandidate);
-                    if (outlineCandidate.RenderOptionsOverride?.ExcludeFromGpuIndirect == true)
-                        return IndexedRejected("OutlineExplicitCpuOwnership", "an explicitly CPU-owned outline needs an exact selected-geometry replay producer", out reason);
-                    if (!ValidateIndexedCandidate(in outlineCandidate, meshlets, out reason)) return IndexedResult(EAuthoredIndexedSubmissionStatus.Rejected, reason);
-                    residentCandidates++;
+                    reason = "WebGPU.AuthoredIndexed.CpuReplayPending: an explicitly CPU-owned candidate is still preparing its exact raster resources.";
+                    return IndexedResult(EAuthoredIndexedSubmissionStatus.Pending, reason);
                 }
             }
-            if (residentCandidates == 0) continue;
-            slot.RequireCandidateCapacity(residentCandidates);
-            WebGpuAuthoredIndexedLodSelection selection = slot.NextLodSelection();
-            selection.Record(in record, request.Camera, selectLod);
-            for (int level = 0; level < candidates.Length; level++)
+            for (int index = 0; index < records.Length; index++)
             {
-                ref readonly GpuMeshSubmissionRecord candidate = ref candidates[level];
-                if (candidate.Mesh is null) continue;
-                if (candidate.IsMaterialPassEnabled(shadowPass) && IncludesIndexedPass(in candidate, request.RenderPass) &&
-                    !TryRecordIndexedCandidate(in candidate, slot, selection, request.Camera, cull, finalize, refit, out reason))
+                ref readonly GpuMeshSubmissionRecord record = ref records[index];
+                if (record.InstanceCount == 0 || (record.Metadata.LayerMask & request.View.View.CameraCullingMask) == 0) continue;
+                if (!slot.Publication.IncludesRenderPass(index, request.RenderPass) ||
+                    slot.Publication.GetSourceOwnership(record.Source) == EGpuMeshSubmissionSourceOwnership.ExplicitCpu) continue;
+                if (record.AuthoredPrimitiveInstanceCount != 1)
+                    return IndexedRejected("PrimitiveInstanceCompositionUnavailable", "renderer-local indirect instance counts require their own exact primitive submission profile", out reason);
+                int authoredLodCount = slot.Publication.GetAuthoredLodCount(index);
+                if (authoredLodCount > GPUScene.MaxLogicalMeshLodCount || record.LodCount > GPUScene.MaxLogicalMeshLodCount)
+                    return IndexedRejected("LodCapacity", "authored LOD sets beyond four levels require a wider shared selection table", out reason);
+                if (authoredLodCount != Math.Max(1u, record.LodCount))
+                    return IndexedRejected("LodPublicationChanged", "the authored LOD owners do not match the shared resident table", out reason);
+                ReadOnlySpan<GpuMeshSubmissionRecord> candidates = record.LodCount > 1
+                    ? slot.Publication.GetLodCandidates(index) : records.Slice(index, 1);
+                int residentCandidates = 0;
+                for (int level = 0; level < candidates.Length; level++)
+                {
+                    uint expectedMesh = record.LodCount > 1 ? record.LodMetadata.GetMeshDataId(level) : record.Metadata.MeshID;
+                    if (expectedMesh == 0) continue;
+                    ref readonly GpuMeshSubmissionRecord candidate = ref candidates[level];
+                    if (candidate.Mesh is null || candidate.Metadata.MeshID != expectedMesh ||
+                        record.LodCount > 1 && candidate.Metadata.LodPolicy != (uint)level)
+                        return IndexedRejected("LodCandidateMissing", "a resident LOD has no exact frozen renderer, material and geometry owner", out reason);
+                    if (candidate.AuthoredPrimitiveInstanceCount != 1)
+                        return IndexedRejected("PrimitiveInstanceCompositionUnavailable", "an authored LOD uses renderer-local indirect instance counts outside the command-count profile", out reason);
+                    if (candidate.SourcePrimitiveCount != record.SourcePrimitiveCount)
+                        return IndexedRejected("LodPrimitiveMembership", "LOD renderers with different primitive membership require a complete per-level source publication", out reason);
+                    bool baseRequested = candidate.IsMaterialPassEnabled(shadowPass) && IncludesIndexedPass(in candidate, request.RenderPass);
+                    bool outlineRequested = !shadowPass && candidate.TryGetOutlineCandidate(out GpuMeshSubmissionRecord outlineCandidate) &&
+                        IncludesIndexedPass(in outlineCandidate, request.RenderPass);
+                    if (!baseRequested && !outlineRequested) continue;
+                    if (candidate.RequiresLodTransformPublication)
+                        return IndexedRejected("LodTransformProfile", "mixed static and skinned LODs require proven default source matrices and their distinct frozen transform conventions", out reason);
+                    if ((candidate.Metadata.Flags & (uint)GPUIndirectRenderFlags.CpuFallbackOnly) != 0)
+                        return IndexedRejected("LodOwnershipMismatch", "a GPU-selected source includes a CPU-exempt authored LOD", out reason);
+                    if (baseRequested)
+                    {
+                        if (!ValidateIndexedCandidate(in candidate, meshlets, out reason)) return IndexedResult(EAuthoredIndexedSubmissionStatus.Rejected, reason);
+                        residentCandidates++;
+                    }
+                    if (outlineRequested)
+                    {
+                        candidate.TryGetOutlineCandidate(out outlineCandidate);
+                        if (outlineCandidate.RenderOptionsOverride?.ExcludeFromGpuIndirect == true)
+                            return IndexedRejected("OutlineExplicitCpuOwnership", "an explicitly CPU-owned outline needs an exact selected-geometry replay producer", out reason);
+                        if (!ValidateIndexedCandidate(in outlineCandidate, meshlets, out reason)) return IndexedResult(EAuthoredIndexedSubmissionStatus.Rejected, reason);
+                        residentCandidates++;
+                    }
+                }
+                if (residentCandidates == 0) continue;
+                slot.RequireCandidateCapacity(residentCandidates);
+                WebGpuAuthoredIndexedLodSelection selection = slot.NextLodSelection();
+                selection.Record(in record, request.Camera, selectLod);
+                for (int level = 0; level < candidates.Length; level++)
+                {
+                    ref readonly GpuMeshSubmissionRecord candidate = ref candidates[level];
+                    if (candidate.Mesh is null) continue;
+                    if (candidate.IsMaterialPassEnabled(shadowPass) && IncludesIndexedPass(in candidate, request.RenderPass) &&
+                        !TryRecordIndexedCandidate(in candidate, slot, selection, request.Camera, cull, finalize, refit,
+                            ordering, candidate.Source, orderMask, out reason))
+                        return IndexedResult(EAuthoredIndexedSubmissionStatus.Pending, reason);
+                    if (!shadowPass && candidate.TryGetOutlineCandidate(out GpuMeshSubmissionRecord outlineCandidate) &&
+                        IncludesIndexedPass(in outlineCandidate, request.RenderPass) &&
+                        !TryRecordIndexedCandidate(in outlineCandidate, slot, selection, request.Camera, cull, finalize, refit,
+                            ordering, candidate.MaterialOutlineCommand ?? candidate.Source, orderMask, out reason))
+                        return IndexedResult(EAuthoredIndexedSubmissionStatus.Pending, reason);
+                }
+            }
+            if (ordering is not null)
+            {
+                CaptureAuthoredDirectSources(in request, slot, ordering);
+                if (_engineDrawPending)
+                {
+                    reason = "WebGPU.AuthoredOrdering.DirectRasterPending: an original direct source is still preparing its exact rank-gated raster.";
                     return IndexedResult(EAuthoredIndexedSubmissionStatus.Pending, reason);
-                if (!shadowPass && candidate.TryGetOutlineCandidate(out GpuMeshSubmissionRecord outlineCandidate) &&
-                    IncludesIndexedPass(in outlineCandidate, request.RenderPass) &&
-                    !TryRecordIndexedCandidate(in outlineCandidate, slot, selection, request.Camera, cull, finalize, refit, out reason))
-                    return IndexedResult(EAuthoredIndexedSubmissionStatus.Pending, reason);
+                }
+                ordering.RecordRaster();
             }
         }
+        finally { if (ordering is not null) EndAuthoredOrdering(); }
         reason = _lastIndexedUnboundedDraws == 0 ? "Ready" : "Ready; undeclared vertex bounds conservatively disable geometric rejection";
         return IndexedResult(EAuthoredIndexedSubmissionStatus.Ready, reason);
     }
 
     private bool TryRecordIndexedCandidate(in GpuMeshSubmissionRecord candidate, WebGpuAuthoredIndexedFrameSlot slot,
         WebGpuAuthoredIndexedLodSelection selection, XRCamera camera, WebGpuRenderProgram cull, WebGpuRenderProgram? finalize,
-        WebGpuRenderProgram? refit, out string reason)
+        WebGpuRenderProgram? refit, WebGpuAuthoredOrderingBatch? ordering, IRenderCommandMesh orderSource,
+        WebGpuRenderProgram? orderMask, out string reason)
     {
         WebGpuAuthoredIndexedDrawRequest drawRequest;
         if (finalize is not null && refit is not null)
@@ -222,12 +262,17 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
             }
             drawRequest = new(candidate, camera, cull, null, null, null, null, slot.NextIndirectWork(), selection);
         }
+        if (ordering is not null)
+            drawRequest = drawRequest with { Ordering = ordering, OrderSourceIndex = ordering.FindSource(orderSource), OrderMask = orderMask };
         WebGpuMeshRenderer renderer = (WebGpuMeshRenderer)GetOrCreateAPIRenderObject(candidate.Renderer.GetDefaultVersion())!;
+        int drawCountBeforeCallbacks = _engineMeshDrawCount;
         if (!renderer.TryRenderAuthoredIndexed(in drawRequest, out bool unbounded))
         {
             reason = "WebGPU.AuthoredIndexed.AuthoredRasterPending: the original material, bindings, deformation or indexed pipeline is preparing.";
             return false;
         }
+        if (ordering is not null && _engineMeshDrawCount != drawCountBeforeCallbacks)
+            throw new NotSupportedException("WebGPU.AuthoredOrdering.NestedRasterCallback: candidate callbacks cannot issue independent raster draws during deferred source ordering.");
         if (unbounded) SetField(ref _lastIndexedUnboundedDraws, _lastIndexedUnboundedDraws + 1, publishNotifications: false);
         reason = string.Empty;
         return true;
@@ -252,7 +297,7 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
         if (record.BillboardMode != EMeshBillboardMode.None)
         { IndexedRejected("BillboardProfile", "billboarded draws need the same published vertex transform as their authored raster stage", out reason); return false; }
         if ((record.Metadata.Flags & (uint)GPUIndirectRenderFlags.Transparent) != 0 &&
-            !RequireFrozenView().ShadowPass)
+            !RequireFrozenView().ShadowPass && !_authoredOrderingActive)
         { IndexedRejected("TransparentOrderUnavailable", "view-dependent transparent source ordering has no shared GPU sort publication", out reason); return false; }
         reason = string.Empty;
         return true;
@@ -267,6 +312,7 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
         {
             if (!geometry.Matches(mesh, payload))
                 throw new NotSupportedException("WebGPU.AuthoredIndexed.GeometryGenerationChanged: the retained payload no longer matches its frozen mesh owner.");
+            geometry.Prepare();
             return geometry;
         }
         if (_meshletGeometry.Count >= 1024)
@@ -279,6 +325,7 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
         }
         geometry = new(this, mesh, payload);
         _meshletGeometry.Add(payload, geometry);
+        geometry.Prepare();
         return geometry;
     }
 
@@ -355,10 +402,7 @@ public sealed partial class WebGpuRendererHost : IAuthoredIndexedBackendCapabili
     {
         SetField(ref _lastIndexedUnboundedDraws, 0, publishNotifications: false);
         if (_authoredIndexedSlots is null) return;
-        double completed = WebGpuImports.PollEngineFrameCompletion(_session);
-        if (!double.IsFinite(completed) || completed < 0 || completed > _engineFrameSequence || completed != Math.Truncate(completed))
-            throw new InvalidOperationException("WebGPU.AuthoredIndexed.CompletionInvalid: invalid queue completion watermark.");
-        foreach (WebGpuAuthoredIndexedFrameSlot slot in _authoredIndexedSlots) slot.Reclaim(checked((uint)completed));
+        foreach (WebGpuAuthoredIndexedFrameSlot slot in _authoredIndexedSlots) slot.Reclaim(_engineCompletedSequence);
     }
 
     private void EndAuthoredIndexedRecording(bool submitted)

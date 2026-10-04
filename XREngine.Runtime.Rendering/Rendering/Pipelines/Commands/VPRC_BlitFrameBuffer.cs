@@ -18,6 +18,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         public bool BlitDepth { get; set; } = false;
         public bool BlitStencil { get; set; } = false;
         public bool LinearFilter { get; set; } = false;
+        /// <summary>Omits an optional resolve from generation metadata when its target is absent.</summary>
+        public string? RequiredDeclaredResourceName { get; set; }
 
         public override string GpuProfilingName
             => SourceFBOName is null || DestinationFBOName is null
@@ -124,6 +126,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (SourceFBOName is null || DestinationFBOName is null)
                 return;
+
+            if (RequiredDeclaredResourceName is not null && context.ResourceLayout is not null &&
+                !context.HasResource(RequiredDeclaredResourceName))
+            {
+                context.ReserveSyntheticPassIndex($"Blit_{SourceFBOName}_to_{DestinationFBOName}");
+                return;
+            }
 
             var builder = context.GetOrCreateSyntheticPass($"Blit_{SourceFBOName}_to_{DestinationFBOName}")
                 .WithStage(ERenderGraphPassStage.Transfer);

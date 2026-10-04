@@ -26,5 +26,7 @@ internal struct AdvancedGpuMaterialTransitionRequest(
     public uint AcquireCount = acquireCount;
     public bool RequiresPayloadUpdate = requiresPayloadUpdate;
     public AdvancedEngineSurfaceRecord EngineSurface;
+    public AdvancedUberBaseSurfaceRecord UberBaseSurface;
+    public AdvancedNativeVertexMaterial NativeVertex;
     public AdvancedGpuHandle MaterialHandle = AdvancedGpuHandle.Invalid;
 }

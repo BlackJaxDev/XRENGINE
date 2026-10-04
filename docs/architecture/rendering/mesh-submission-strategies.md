@@ -31,8 +31,12 @@ indexed replay. Both routes use the shared GPU-selected resident LOD candidates.
 publishers provide exact current/previous transforms and bounds under the authored
 raster ABI; conservative GPU union visibility preserves the full native instance
 count and first-instance zero without optional instance remapping.
-Transparent GPU ordering and other unavailable
-selected profiles report specific diagnostics. The [authored meshlet lowering
+Bounded transparent GPU ordering uses the actual full-resident collection's
+frozen insertion tokens, GPU source ranks and candidate-owned raster input
+copies. Explicit CPU-owned V2 color/coverage sources retain direct draws through
+verified vertex rank gates in the same ordered replay. Unproven raster programs,
+non-mesh commands and other unavailable selected profiles report specific
+diagnostics. The [authored meshlet lowering
 record](../../work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md)
 describes ownership, conservative bounds, capacities, and pending runtime
 acceptance.

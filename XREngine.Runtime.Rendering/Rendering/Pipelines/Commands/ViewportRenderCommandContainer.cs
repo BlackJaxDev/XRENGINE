@@ -522,11 +522,16 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!_instanceStates.TryGetValue(instance, out var state))
             {
                 state = new InstanceResourceState();
+                instance.TrackCommandContainer(this);
                 _instanceStates.Add(instance, state);
             }
 
             return state;
         }
+
+        /// <summary>Forgets one terminated output without releasing resources shared by other outputs.</summary>
+        internal void ForgetInstance(XRRenderPipelineInstance instance)
+            => _instanceStates.Remove(instance);
 
         private void EnsureResourcesAllocated(XRRenderPipelineInstance instance)
         {

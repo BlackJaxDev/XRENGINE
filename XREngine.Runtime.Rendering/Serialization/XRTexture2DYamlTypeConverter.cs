@@ -56,10 +56,10 @@ public sealed class XRTexture2DYamlTypeConverter : IYamlTypeConverter
             return loadedTexture;
 
         string? referenceAssetPath = AssetDeserializationContext.CurrentFilePath;
-        if (!services.TryResolveAssetPathById(id, referenceAssetPath, out string? assetPath) || string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
+        if (!services.TryResolveAssetPathById(id, referenceAssetPath, out string? assetPath) || string.IsNullOrWhiteSpace(assetPath))
             return null;
 
-        if (DeferredAssetReferenceContext.TryDeferAssetLoad(assetPath, typeof(XRTexture2D), out XRAsset? deferredAsset))
+        if (services.TryDeferAssetLoad(assetPath, typeof(XRTexture2D), out XRAsset? deferredAsset))
             return deferredAsset as XRTexture2D;
 
         return services.LoadImmediate(assetPath, typeof(XRTexture2D)) as XRTexture2D;

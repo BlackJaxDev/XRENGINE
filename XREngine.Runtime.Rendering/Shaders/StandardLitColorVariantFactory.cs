@@ -45,21 +45,16 @@ internal static class StandardLitColorVariantFactory
         variant.StandardLitColorSourceMaterial = source;
         variant.StandardLitColorAuxiliaryPass = pass;
         variant.EngineSemantic = EngineMaterialSemanticIdentity.StandardLitColorV2;
-        variant.RenderOptions = new RenderingParameters
-        {
-            CullMode = pass is EStandardLitColorAuxiliaryPass.ShadowDepth or EStandardLitColorAuxiliaryPass.PointShadowDepth or EStandardLitColorAuxiliaryPass.SpotShadowDepth
-                ? ECullMode.None : source.RenderOptions.CullMode,
-            Winding = source.RenderOptions.Winding,
-            AlphaToCoverage = ERenderParamUsage.Disabled,
-            BlendModeAllDrawBuffers = BlendMode.Disabled(),
-            DepthTest = new DepthTest
-            {
-                Enabled = ERenderParamUsage.Enabled,
-                Function = source.RenderOptions.DepthTest.Function,
-                UpdateDepth = true,
-            },
-            RequiredEngineUniforms = EUniformRequirements.Camera,
-        };
+        RenderingParameters options = variant.RenderOptions;
+        options.CullMode = pass is EStandardLitColorAuxiliaryPass.ShadowDepth or EStandardLitColorAuxiliaryPass.PointShadowDepth or EStandardLitColorAuxiliaryPass.SpotShadowDepth
+            ? ECullMode.None : source.RenderOptions.CullMode;
+        options.Winding = source.RenderOptions.Winding;
+        options.AlphaToCoverage = ERenderParamUsage.Disabled;
+        options.BlendModeAllDrawBuffers = BlendMode.Disabled();
+        options.DepthTest.Enabled = ERenderParamUsage.Enabled;
+        options.DepthTest.Function = source.RenderOptions.DepthTest.Function;
+        options.DepthTest.UpdateDepth = true;
+        options.RequiredEngineUniforms = EUniformRequirements.Camera;
         return variant;
     }
 }

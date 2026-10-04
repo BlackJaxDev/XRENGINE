@@ -102,8 +102,12 @@ The unconfigured browser factory still selects Default. The implemented
 Advanced browser family is mono and includes canonical native visibility and
 shading, bounded skin/morph deformation and per-sample x4 MSAA. Each selected
 operation must satisfy its concrete program, resource and deformation contract;
-unsupported material displacement and other unavailable profiles retain named
-failures. Physical browser evidence currently covers bounded static materials
+exact generated local material vertex functions have retained current/previous
+geometry and matching raster auxiliary companions. Unknown displacement and
+other unavailable profiles retain named failures; the
+[material vertex contract](../../work/progress/rendering/browser-native-material-vertices-2026-10-03.md)
+records the admitted inputs and the generic deformation source-equivalence limit.
+Physical browser evidence currently covers bounded static materials
 and directional shadows; deformation and MSAA still need their own rendered
 acceptance. See [native-family admission](../../work/progress/rendering/browser-advanced-admission-2026-10-02.md)
 and [the recovered integration](../../work/progress/rendering/browser-advanced-static-integration-2026-10-03.md)
@@ -111,10 +115,12 @@ for implementation and runtime evidence boundaries.
 Explicit game calls to `RuntimeEngine.Rendering.NewRenderPipeline(...)` must
 therefore resolve the same host recipe as an unconfigured camera. Browser hosts
 bind cooked WebGPU programs through the authored pipeline's shared operation
-contracts. The current default-source factory rejects stereo, XR and offscreen
-capture requests explicitly, while Required Advanced requests preserve the
-Advanced source until its concrete output family is admitted. Shared offscreen
-UI composition does not establish scene-capture support. Scoped
+contracts. The default-source factory rejects stereo and XR requests explicitly,
+while mono offscreen capture uses the same authored operation admission and
+Required Advanced requests preserve the Advanced source. Browser scene capture
+owns a private output/scene publication and accepted asynchronous texture-layer
+readback; its [capture ownership contract](../../work/progress/platform/browser-hlod-impostor-capture-boundary-2026-10-03.md)
+records the memory and physical-validation boundaries. Scoped
 recipes see every request before desktop offscreen selection. Teardown and
 startup rollback skip disposed installations, including out-of-order scopes,
 and preserve newer factories without restoring an expired callback. With no

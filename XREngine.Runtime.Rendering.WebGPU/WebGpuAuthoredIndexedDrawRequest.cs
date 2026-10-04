@@ -12,4 +12,7 @@ internal readonly record struct WebGpuAuthoredIndexedDrawRequest(
     WebGpuRenderProgram? FinalizeProgram,
     WebGpuRenderProgram? Refit,
     WebGpuIndirectWork? IndirectWork,
-    WebGpuAuthoredIndexedLodSelection Selection);
+    WebGpuAuthoredIndexedLodSelection Selection,
+    WebGpuAuthoredOrderingBatch? Ordering = null,
+    int OrderSourceIndex = 0,
+    WebGpuRenderProgram? OrderMask = null);

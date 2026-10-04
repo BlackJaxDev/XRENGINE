@@ -330,6 +330,8 @@ namespace XREngine.Extensions
         {
             if (parallelSearch)
             {
+                if (OperatingSystem.IsBrowser())
+                    throw new PlatformNotSupportedException("Parallel string search requires desktop worker threads. Use parallelSearch: false in a browser world.");
                 ConcurrentBag<int> bag = new();
                 Parallel.For(firstIndex, lastIndex + 1, i =>
                 {

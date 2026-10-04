@@ -28,11 +28,16 @@ public sealed partial class WebGpuRendererHost
     }
 
     /// <summary>Reads the same engine light collections and numeric fields as the desktop forward shader.</summary>
-    internal void PublishForwardLights(WebGpuRenderProgram program, bool directionalShadowReceiver, bool localShadowReceiver)
+    internal void PublishForwardLights(WebGpuRenderProgram program, bool directionalShadowReceiver, bool localShadowReceiver,
+        bool sourceDisablesShadows = false, bool sourceOwnsProbeReceiver = false)
     {
         IRuntimeRenderWorld world = RuntimeEngine.Rendering.State.RenderingWorld
             ?? throw new InvalidOperationException("WebGPU.Lighting.WorldMissing: forward lighting requires the active engine render world.");
         Lights3DCollection lights = world.Lights;
+        if (!sourceOwnsProbeReceiver && lights.LightProbes.Count != 0 &&
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
+                XREngine.Rendering.GI.Contracts.IGlobalIlluminationPlanHost gi && gi.GlobalIlluminationPlan.RequiresNativeProbeIblBindings)
+            throw new NotSupportedException("WebGPU.Lighting.ProbeReceiverUnsupported: this selected forward draw has no exact cooked probe receiver; mixed-material worlds require an admitted receiver for every selected lit draw.");
         int directionalCount = lights.DynamicDirectionalLights.Count;
         int pointCount = lights.DynamicPointLights.Count;
         int spotCount = lights.DynamicSpotLights.Count;
@@ -47,14 +52,14 @@ public sealed partial class WebGpuRendererHost
         for (int i = 0; i < directionalCount; i++)
         {
             DirectionalLightComponent light = lights.DynamicDirectionalLights[i];
-            if (!directionalShadowReceiver) RequireUnshadowedLight(light);
+            if (!directionalShadowReceiver && !sourceDisablesShadows) RequireUnshadowedLight(light);
             program.SetVector4(DirectionNames[i], new Vector4(light.Transform.WorldForward, 0));
             program.SetVector4(DirectionColorNames[i], new Vector4(light.Color, light.DiffuseIntensity));
         }
         for (int i = 0; i < pointCount; i++)
         {
             PointLightComponent light = lights.DynamicPointLights[i];
-            if (!localShadowReceiver) RequireUnshadowedLight(light);
+            if (!localShadowReceiver && !sourceDisablesShadows) RequireUnshadowedLight(light);
             program.SetVector4(PointPositionNames[i], new Vector4(light.Transform.RenderTranslation, light.Radius));
             program.SetVector4(PointColorNames[i], new Vector4(light.Color, light.DiffuseIntensity));
             program.SetVector4(PointBrightnessNames[i], new Vector4(light.Brightness, 0, 0, 0));
@@ -62,7 +67,7 @@ public sealed partial class WebGpuRendererHost
         for (int i = 0; i < spotCount; i++)
         {
             SpotLightComponent light = lights.DynamicSpotLights[i];
-            if (!localShadowReceiver) RequireUnshadowedLight(light);
+            if (!localShadowReceiver && !sourceDisablesShadows) RequireUnshadowedLight(light);
             program.SetVector4(SpotPositionNames[i], new Vector4(light.Transform.RenderTranslation, light.Distance));
             program.SetVector4(SpotColorNames[i], new Vector4(light.Color, light.DiffuseIntensity));
             program.SetVector4(SpotDirectionNames[i], new Vector4(light.Transform.RenderForward, light.Exponent));

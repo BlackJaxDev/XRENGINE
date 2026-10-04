@@ -17,21 +17,32 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
     private int _directionalShadows, _pointShadows, _spotShadows;
     private bool _litV1, _litV2;
     private bool _authoredCoverageCaster;
+    private bool _texturedAlphaCaster;
+    private uint _authoredTexturedCasterFlags;
     private bool _litTexture, _litNormalTexture;
     private readonly List<string> _lightPaths = [];
     private readonly Dictionary<EngineMaterialSemanticIdentity, (string ScenePath, string Path, string? Material, string? Mesh)> _materialPaths = [];
-    private readonly List<(XRMaterial Material, string ScenePath, string Path, string? Mesh)> _authoredMaterials = [];
+    private readonly List<(XRMaterial Material, string ScenePath, string Path, string? Mesh, bool DeformedNativeCaster)> _authoredMaterials = [];
 
-    internal void InspectMaterial(XRMaterial? material, string path, string? mesh, string? scenePath = null)
+    internal void InspectMaterial(XRMaterial? material, string path, string? mesh, string? scenePath = null,
+        XRMesh? geometry = null, bool castsShadows = true)
     {
         if (material is not null)
             _materialPaths.TryAdd(material.EngineSemantic, (scenePath ?? string.Empty, path, material.Name, mesh));
         _litV1 |= material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV1;
         _litV2 |= material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitColorV2;
         if (material?.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV1)
-            _authoredMaterials.Add((material, scenePath ?? string.Empty, path, mesh));
+            _authoredMaterials.Add((material, scenePath ?? string.Empty, path, mesh,
+                castsShadows && geometry is not null && AdvancedNativeVertexMaterialSource.IsRequested(material, resolver) &&
+                AdvancedNativeVertexMaterialSource.RequiresCanonicalDeformationSource(geometry)));
         _authoredCoverageCaster |= material?.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitV2 &&
             material.GetEffectiveTransparencyMode() is ETransparencyMode.Opaque or ETransparencyMode.Masked;
+        _texturedAlphaCaster |= castsShadows && material?.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1 &&
+            material.GetEffectiveTransparencyMode() == ETransparencyMode.Masked;
+        if (castsShadows && material?.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1 &&
+            material.GetEffectiveTransparencyMode() is ETransparencyMode.Opaque or ETransparencyMode.Masked &&
+            AuthoredTexturedSurfaceBinding.TryRead(material, out AuthoredTexturedSurface authoredSurface, out _))
+            _authoredTexturedCasterFlags |= 1u << authoredSurface.TextureFlags;
         if (material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
         {
             if (material.GetSurfaceTexture(XREngine.Rendering.Materials.EMaterialTextureSemantic.Normal) is null)
@@ -92,6 +103,20 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
         if (_directionalShadows == 0 && !local) return;
         foreach (var authored in _authoredMaterials)
         {
+            if (AdvancedNativeVertexMaterialSource.IsRequested(authored.Material, resolver))
+            {
+                if (authored.DeformedNativeCaster)
+                {
+                    InspectAuthored(() => throw new NotSupportedException($"BrowserCook.NativeVertexShadowSourceUnsupported: '{authored.Path}' mesh '{authored.Mesh}', material '{authored.Material.Name}': the selected shadow caster uses generic skin/morph normals and requires an exact canonical aggregate geometry source."), "native-vertex-shadow-source");
+                    continue;
+                }
+                InspectAuthored(() => RequireNative(local ? EngineNativeVertexAuxiliaryPass.LocalReceiver :
+                    EngineNativeVertexAuxiliaryPass.DirectionalReceiver), "opaque-forward");
+                if (_directionalShadows != 0) InspectAuthored(() => RequireNative(EngineNativeVertexAuxiliaryPass.DirectionalShadow), "depth");
+                if (_pointShadows != 0) InspectAuthored(() => RequireNative(EngineNativeVertexAuxiliaryPass.PointShadow), "point-shadow-depth");
+                if (_spotShadows != 0) InspectAuthored(() => RequireNative(EngineNativeVertexAuxiliaryPass.SpotShadow), "spot-shadow-depth");
+                continue;
+            }
             InspectAuthored(() =>
             {
                 if (!EngineLitShadowCompanionContract.TryGetReceiverKey(authored.Material, resolver, localShadows: true,
@@ -119,6 +144,12 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
                     throw new NotSupportedException($"BrowserCook.AuthoredLitShadowCompanionUnsupported: '{authored.Path}' mesh '{authored.Mesh}', material '{authored.Material.Name}', pass '{key.Pass}': {reason}");
             }
 
+            void RequireNative(EngineNativeVertexAuxiliaryPass pass)
+            {
+                if (!AdvancedNativeVertexMaterialSource.TryResolveAuxiliary(authored.Material, resolver, pass, out _, out string reason))
+                    throw new NotSupportedException($"BrowserCook.NativeVertexShadowCompanionMissing: '{authored.Path}' mesh '{authored.Mesh}', material '{authored.Material.Name}', '{pass}': {reason}");
+            }
+
             void InspectAuthored(Action action, string pass)
             {
                 if (report is null) action();
@@ -134,16 +165,32 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
         {
             Check(EngineMaterialSemanticIdentity.OpaqueShadowDepthV1, "depth", "static-position-v1", "depth-normal-v1");
             if (_litV2 || _authoredCoverageCaster) Check(EngineMaterialSemanticIdentity.StandardLitColorV2, "depth", "static-position-v1", "depth-normal-v1");
+            if (_texturedAlphaCaster) Check(EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1, "depth", "position-normal-uv-v1", "depth-normal-v1");
         }
         if (_pointShadows != 0)
         {
             Check(EngineMaterialSemanticIdentity.OpaquePointShadowDepthV1, "point-shadow-depth", "static-position-v1", "radial-r16f-v1");
             if (_litV2 || _authoredCoverageCaster) Check(EngineMaterialSemanticIdentity.StandardLitColorV2, "point-shadow-depth", "static-position-v1", "radial-r16f-v1");
+            if (_texturedAlphaCaster) Check(EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1, "point-shadow-depth", "position-normal-uv-v1", "radial-r16f-v1");
         }
         if (_spotShadows != 0)
         {
             Check(EngineMaterialSemanticIdentity.OpaqueSpotShadowDepthV1, "spot-shadow-depth", "static-position-v1", "projected-r16f-v1");
             if (_litV2 || _authoredCoverageCaster) Check(EngineMaterialSemanticIdentity.StandardLitColorV2, "spot-shadow-depth", "static-position-v1", "projected-r16f-v1");
+            if (_texturedAlphaCaster) Check(EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1, "spot-shadow-depth", "position-normal-uv-v1", "projected-r16f-v1");
+        }
+        for (int flags = 1; flags <= 7; flags++)
+        {
+            if ((_authoredTexturedCasterFlags & (1u << flags)) == 0) continue;
+            if (_directionalShadows != 0) CheckAuthoredTextured(flags, "depth");
+            if (_pointShadows != 0) CheckAuthoredTextured(flags, "point-shadow-depth");
+            if (_spotShadows != 0) CheckAuthoredTextured(flags, "spot-shadow-depth");
+        }
+
+        void CheckAuthoredTextured(int flags, string pass)
+        {
+            EngineMaterialVariantKey key = EngineAuthoredTexturedShaderGenerator.CompanionKey(flags, pass);
+            Check(key.Semantic, key.Pass, key.VertexProfile, key.OutputProfile);
         }
 
         void Check(EngineMaterialSemanticIdentity semantic, string pass, string vertex, string target)
@@ -165,6 +212,20 @@ internal sealed class BrowserShadowCapabilityAudit(IShaderProgramArtifactResolve
     private void Require(EngineMaterialSemanticIdentity semantic, string pass, string vertex, string output)
     {
         EngineMaterialVariantKey key = new(semantic, ShaderCompileTarget.WebGPUWgsl, pass, vertex, output);
+        if (semantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1)
+        {
+            string? reason = null;
+            if (resolver is BrowserShaderArtifactSource texturedSource && texturedSource.TryResolveMaterialVariant(key, out ShaderProgramArtifact? artifact) &&
+                EngineAuthoredTexturedMaterialAdmission.TryValidateCompanion(artifact, key, out reason)) return;
+            throw new NotSupportedException($"BrowserCook.AuthoredTexturedShadowVariantMissing: pass '{pass}' requires its exact authored texture companion '{key}': {reason}.");
+        }
+        if (semantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1)
+        {
+            string? reason = null;
+            if (resolver is BrowserShaderArtifactSource alphaSource && alphaSource.TryResolveMaterialVariant(key, out ShaderProgramArtifact? artifact) &&
+                EngineTexturedAlphaMaterialAdmission.TryValidateCompanion(artifact, key, out reason)) return;
+            throw new NotSupportedException($"BrowserCook.TexturedAlphaShadowVariantMissing: pass '{pass}' requires exact diffuse-alpha times red-mask companion '{key}': {reason}.");
+        }
         if (resolver is BrowserShaderArtifactSource source)
             foreach (EngineMaterialVariantEntry entry in source.MaterialVariants)
                 if (entry.Key == key) return;

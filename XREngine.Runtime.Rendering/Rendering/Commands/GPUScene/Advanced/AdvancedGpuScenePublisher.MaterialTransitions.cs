@@ -96,7 +96,8 @@ public sealed partial class AdvancedGpuScenePublisher
         }
 
         int constantCapacity = checked(required * (int)Database.Materials.MaximumConstantWordsPerMaterial);
-        int bindingCapacity = checked(required * ((int)Database.Materials.MaximumTextureBindingsPerMaterial + AdvancedEngineSurfaceRecord.RoleCount));
+        int bindingCapacity = checked(required * ((int)Database.Materials.MaximumTextureBindingsPerMaterial +
+            AdvancedEngineSurfaceRecord.RoleCount + AdvancedUberBaseSurfaceRecord.RoleCount));
         if (_plannedMaterialConstantWords.Length < constantCapacity)
             Array.Resize(ref _plannedMaterialConstantWords, constantCapacity);
         if (_plannedResourceSources.Length < bindingCapacity)
@@ -420,9 +421,17 @@ public sealed partial class AdvancedGpuScenePublisher
         if (!AdvancedEngineSurfaceSourceEncoder.TryEncode(material, out AdvancedEngineSurfaceRecord engineSurface,
                 companionSources, out _))
             engineSurface = default;
+        if (!AdvancedNativeVertexMaterialSource.TryCapture(material, out AdvancedNativeVertexMaterial nativeVertex, out _))
+            nativeVertex = default;
         int companionBindingCount = engineSurface.SchemaVersion == 0 ? 0 : AdvancedEngineSurfaceRecord.RoleCount;
+        Span<AdvancedGpuResourceBindingSource> uberSources = _plannedResourceSources.AsSpan(
+            bindingOffset + legacyBindingCount + companionBindingCount, AdvancedUberBaseSurfaceRecord.RoleCount);
+        if (!AdvancedUberBaseSurfaceSourceEncoder.TryEncode(material, out AdvancedUberBaseSurfaceRecord uberSurface,
+                uberSources, out _))
+            uberSurface = default;
+        int uberBindingCount = uberSurface.SchemaVersion == 0 ? 0 : AdvancedUberBaseSurfaceRecord.RoleCount;
         Span<AdvancedGpuResourceBindingSource> resourceSources =
-            _plannedResourceSources.AsSpan(bindingOffset, legacyBindingCount + companionBindingCount);
+            _plannedResourceSources.AsSpan(bindingOffset, legacyBindingCount + companionBindingCount + uberBindingCount);
         Span<AdvancedGpuResourceBindingSource> legacySources = resourceSources[..legacyBindingCount];
         if (material is AdvancedProjectiveMirrorMaterial mirror)
         {
@@ -477,7 +486,8 @@ public sealed partial class AdvancedGpuScenePublisher
                 !Database.Materials.TryGetTextureBindings(
                     current,
                     out ReadOnlySpan<AdvancedMaterialTextureBinding> currentBindings) ||
-                !Database.Materials.TryGetEngineSurface(existingHandle, out AdvancedEngineSurfaceRecord currentSurface))
+                !Database.Materials.TryGetEngineSurface(existingHandle, out AdvancedEngineSurfaceRecord currentSurface) ||
+                !Database.Materials.TryGetUberBaseSurface(existingHandle, out AdvancedUberBaseSurfaceRecord currentUberSurface))
             {
                 fatal = true;
                 reason = "A registered material variant lost its canonical payload.";
@@ -485,18 +495,26 @@ public sealed partial class AdvancedGpuScenePublisher
             }
 
             constantsChanged = !currentConstants.SequenceEqual(constantWords) ||
+                !Database.Materials.TryGetNativeVertex(existingHandle, out AdvancedNativeVertexMaterial currentVertex) ||
+                currentVertex != nativeVertex ||
                 !currentSurface.HasSameLayout(in engineSurface) ||
                 currentSurface.BaseColorOpacity != engineSurface.BaseColorOpacity ||
-                currentSurface.RoughnessMetallicSpecularEmission != engineSurface.RoughnessMetallicSpecularEmission;
+                currentSurface.RoughnessMetallicSpecularEmission != engineSurface.RoughnessMetallicSpecularEmission ||
+                currentSurface.NormalControls != engineSurface.NormalControls ||
+                !currentUberSurface.HasSameLayout(in uberSurface) ||
+                !currentUberSurface.HasSameContent(in uberSurface);
             int previousCompanionCount = currentSurface.SchemaVersion == 0 ? 0 : AdvancedEngineSurfaceRecord.RoleCount;
-            resourcesChanged = currentBindings.Length + previousCompanionCount != resourceSources.Length;
+            int previousUberCount = currentUberSurface.SchemaVersion == 0 ? 0 : AdvancedUberBaseSurfaceRecord.RoleCount;
+            resourcesChanged = currentBindings.Length + previousCompanionCount + previousUberCount != resourceSources.Length;
             if (!resourcesChanged)
             {
                 for (int bindingIndex = 0; bindingIndex < resourceSources.Length; ++bindingIndex)
                 {
                     AdvancedMaterialTextureBinding currentBinding = bindingIndex < currentBindings.Length
                         ? currentBindings[bindingIndex]
-                        : currentSurface.GetRole(bindingIndex - currentBindings.Length).Binding;
+                        : bindingIndex < currentBindings.Length + previousCompanionCount
+                            ? currentSurface.GetRole(bindingIndex - currentBindings.Length).Binding
+                            : currentUberSurface.GetBinding(bindingIndex - currentBindings.Length - previousCompanionCount);
                     if (_resourcePublisher.BindingMatches(
                             in currentBinding,
                             in resourceSources[bindingIndex]))
@@ -510,7 +528,7 @@ public sealed partial class AdvancedGpuScenePublisher
 
             if (resourcesChanged)
             {
-                if (!TryAppendMaterialResourceReleases(currentBindings, in currentSurface, out reason))
+                if (!TryAppendMaterialResourceReleases(currentBindings, in currentSurface, in currentUberSurface, out reason))
                 {
                     fatal = true;
                     return false;
@@ -525,6 +543,8 @@ public sealed partial class AdvancedGpuScenePublisher
                         currentBindings.Length));
                 for (int role = 0; role < previousCompanionCount; ++role)
                     _plannedResolvedBindings[bindingOffset + currentBindings.Length + role] = currentSurface.GetRole(role).Binding;
+                for (int role = 0; role < previousUberCount; ++role)
+                    _plannedResolvedBindings[bindingOffset + currentBindings.Length + previousCompanionCount + role] = currentUberSurface.GetBinding(role);
             }
         }
 
@@ -571,6 +591,8 @@ public sealed partial class AdvancedGpuScenePublisher
                 existing && (constantsChanged || resourcesChanged || headerChanged))
             {
                 EngineSurface = engineSurface,
+                UberBaseSurface = uberSurface,
+                NativeVertex = nativeVertex,
             };
         ++_plannedMaterialCount;
         InsertPlannedMaterial(materialPlanIndex);
@@ -740,12 +762,13 @@ public sealed partial class AdvancedGpuScenePublisher
                 !Database.Materials.TryGetTextureBindings(
                     current,
                     out ReadOnlySpan<AdvancedMaterialTextureBinding> bindings) ||
-                !Database.Materials.TryGetEngineSurface(release.Material, out AdvancedEngineSurfaceRecord engineSurface))
+                !Database.Materials.TryGetEngineSurface(release.Material, out AdvancedEngineSurfaceRecord engineSurface) ||
+                !Database.Materials.TryGetUberBaseSurface(release.Material, out AdvancedUberBaseSurfaceRecord uberSurface))
             {
                 reason = "A retiring material variant lost its canonical resource bindings.";
                 return false;
             }
-            if (!TryAppendMaterialResourceReleases(bindings, in engineSurface, out reason))
+            if (!TryAppendMaterialResourceReleases(bindings, in engineSurface, in uberSurface, out reason))
             {
                 return false;
             }
@@ -758,10 +781,12 @@ public sealed partial class AdvancedGpuScenePublisher
     private bool TryAppendMaterialResourceReleases(
         ReadOnlySpan<AdvancedMaterialTextureBinding> legacyBindings,
         in AdvancedEngineSurfaceRecord engineSurface,
+        in AdvancedUberBaseSurfaceRecord uberSurface,
         out string reason)
     {
         int companionCount = engineSurface.SchemaVersion == 0 ? 0 : AdvancedEngineSurfaceRecord.RoleCount;
-        if (legacyBindings.Length + companionCount > _resourceReleaseBindings.Length - _resourceReleaseCount)
+        int uberCount = uberSurface.SchemaVersion == 0 ? 0 : AdvancedUberBaseSurfaceRecord.RoleCount;
+        if (legacyBindings.Length + companionCount + uberCount > _resourceReleaseBindings.Length - _resourceReleaseCount)
         {
             reason = "The preallocated material resource-release plan is full.";
             return false;
@@ -769,6 +794,8 @@ public sealed partial class AdvancedGpuScenePublisher
         if (!TryAppendResourceReleases(legacyBindings, out reason)) return false;
         for (int role = 0; role < companionCount; ++role)
             _resourceReleaseBindings[_resourceReleaseCount++] = engineSurface.GetRole(role).Binding;
+        for (int role = 0; role < uberCount; ++role)
+            _resourceReleaseBindings[_resourceReleaseCount++] = uberSurface.GetBinding(role);
         return true;
     }
 
@@ -882,6 +909,12 @@ public sealed partial class AdvancedGpuScenePublisher
             if (request.EngineSurface.SchemaVersion != 0)
                 request.EngineSurface.SetBindings(_plannedResolvedBindings.AsSpan(
                     plan.BindingOffset + checked((int)request.TextureBindingCount), AdvancedEngineSurfaceRecord.RoleCount));
+            if (request.UberBaseSurface.SchemaVersion != 0)
+            {
+                int companionCount = request.EngineSurface.SchemaVersion == 0 ? 0 : AdvancedEngineSurfaceRecord.RoleCount;
+                request.UberBaseSurface.SetBindings(_plannedResolvedBindings.AsSpan(
+                    plan.BindingOffset + checked((int)request.TextureBindingCount) + companionCount, AdvancedUberBaseSurfaceRecord.RoleCount));
+            }
             bool updatesExisting = request.MaterialHandle.IsValid &&
                 request.RequiresPayloadUpdate;
             _materialPublisher.ApplyPreflightedRequest(
@@ -915,7 +948,7 @@ public sealed partial class AdvancedGpuScenePublisher
 
     private int GetMaterialBindingOffset(int materialPlanIndex)
         => checked(materialPlanIndex *
-            ((int)Database.Materials.MaximumTextureBindingsPerMaterial + AdvancedEngineSurfaceRecord.RoleCount));
+            ((int)Database.Materials.MaximumTextureBindingsPerMaterial + AdvancedEngineSurfaceRecord.RoleCount + AdvancedUberBaseSurfaceRecord.RoleCount));
 
     private void BeginRegistrationPreflight()
     {

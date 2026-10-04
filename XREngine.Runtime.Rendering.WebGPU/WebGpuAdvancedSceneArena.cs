@@ -6,12 +6,14 @@ namespace XREngine.Rendering.WebGPU;
 
 /// <summary>
 /// Packs the sealed shared scene records without lowering their precision or logical handles.
-/// Each of the 33 directory rows contains eight words: record offset/count/stride,
+/// Each of the 36 directory rows contains eight words: record offset/count/stride,
 /// lookup offset/count, and three reserved words. Offsets are absolute word offsets.
 /// </summary>
-internal sealed class WebGpuAdvancedSceneArena
+internal sealed partial class WebGpuAdvancedSceneArena
 {
-    internal const int TableCount = 33;
+    internal const int TableCount = 36;
+    internal const uint UberBaseSurfaces = 34;
+    internal const uint UberSourceAttributes = 35;
     internal const int DirectoryWords = 8;
     internal const uint MaterialLayoutHandles = 30;
     internal const uint MaterialLayoutMembers = 31;
@@ -51,6 +53,12 @@ internal sealed class WebGpuAdvancedSceneArena
         Write(MaterialLayoutHandles, snapshot.MaterialPayloads.MaterialLayoutHandles);
         Write(MaterialLayoutMembers, snapshot.MaterialPayloads.LayoutMembers);
         Write(EngineSurfaces, snapshot.MaterialPayloads.EngineSurfaces);
+        Write(UberBaseSurfaces, snapshot.MaterialPayloads.UberBaseSurfaces);
+        WriteGeometryBasis(snapshot);
+        WriteUberSourceAttributes(snapshot);
+        Span<uint> directory = MemoryMarshal.Cast<byte, uint>(_bytes.AsSpan(0, HeaderBytes));
+        directory[checked((int)UberBaseSurfaces * DirectoryWords + 5)] = AdvancedUberBaseSurfaceRecord.CurrentSchemaVersion;
+        directory[checked((int)UberBaseSurfaces * DirectoryWords + 6)] = TableCount;
         // Views and physical texture descriptors are output/backend bindings, not
         // scene rows. Their directory entries remain empty rather than fabricated.
     }

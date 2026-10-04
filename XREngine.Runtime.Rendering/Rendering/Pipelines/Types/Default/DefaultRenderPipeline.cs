@@ -3235,22 +3235,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
                 parameters[index] = CreateProbeParamData(probe);
             }
 
-            irradiance = new XRTexture2DArray(irradianceSources)
-            {
-                Name = LightProbeIrradianceArrayName,
-                CopyGpuLayerSources = true,
-                MinFilter = ETexMinFilter.Linear,
-                MagFilter = ETexMagFilter.Linear,
-                SizedInternalFormat = ESizedInternalFormat.Rgb16f,
-            };
-            prefilter = new XRTexture2DArray(prefilterSources)
-            {
-                Name = LightProbePrefilterArrayName,
-                CopyGpuLayerSources = true,
-                MinFilter = ETexMinFilter.LinearMipmapLinear,
-                MagFilter = ETexMagFilter.Linear,
-                SizedInternalFormat = ESizedInternalFormat.Rgb16f,
-            };
+            ESizedInternalFormat irradianceFormat = ForwardLightProbeArrayFormat.Resolve(renderer, irradianceSources, prefilter: false);
+            ESizedInternalFormat prefilterFormat = ForwardLightProbeArrayFormat.Resolve(renderer, prefilterSources, prefilter: true);
+            irradiance = ForwardLightProbeArrayFormat.Create(renderer, irradianceSources, prefilter: false,
+                LightProbeIrradianceArrayName, irradianceFormat);
+            prefilter = ForwardLightProbeArrayFormat.Create(renderer, prefilterSources, prefilter: true,
+                LightProbePrefilterArrayName, prefilterFormat);
             PushProbeTextureArray(renderer, irradiance);
             PushProbeTextureArray(renderer, prefilter);
 

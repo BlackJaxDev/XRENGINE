@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace XREngine.Rendering.Shaders.Compilation;
 
-/// <summary>Exact, immutable authored binding-to-program entries from a hash-verified browser package.</summary>
+/// <summary>Exact authored binding-to-program entries from a verified immutable snapshot or stable session provider.</summary>
 public sealed class WebPipelineArtifactCatalog
 {
     public const int MaximumEntries = 256;
@@ -33,17 +33,20 @@ public sealed class WebPipelineArtifactCatalog
         _artifacts = builder.ToImmutable();
     }
 
-    public int Count => _artifacts.Count;
+    private readonly ShaderArtifactCatalogProvider? _provider;
+    internal WebPipelineArtifactCatalog(ShaderArtifactCatalogProvider provider) : this([], new ShaderProgramArtifactCatalog([])) => _provider = provider;
+    private WebPipelineArtifactCatalog Current => _provider?.Snapshot.PipelineArtifacts ?? this;
+    public int Count => Current._artifacts.Count;
 
     public bool TryResolve(string bindingKey, [NotNullWhen(true)] out ShaderProgramArtifact? artifact)
-        => _artifacts.TryGetValue(bindingKey, out artifact);
+        => Current._artifacts.TryGetValue(bindingKey, out artifact);
 
     public bool HasSameIdentities(WebPipelineArtifactCatalog other)
     {
         ArgumentNullException.ThrowIfNull(other);
         if (Count != other.Count)
             return false;
-        foreach ((string bindingKey, ShaderProgramArtifact artifact) in _artifacts)
+        foreach ((string bindingKey, ShaderProgramArtifact artifact) in Current._artifacts)
             if (!other.TryResolve(bindingKey, out ShaderProgramArtifact? candidate) || candidate.Identity != artifact.Identity)
                 return false;
         return true;

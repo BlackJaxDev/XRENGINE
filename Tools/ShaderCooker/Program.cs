@@ -4,13 +4,14 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using XREngine.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Rendering.Shaders.Generation;
 
 namespace XREngine.Tools.ShaderCooker;
 
 /// <summary>Packages explicit engine and legacy fixture shader recipes into immutable, content-addressed assets.</summary>
-internal static class Program
+internal static partial class Program
 {
     private const int MaxSourceBytes = 1024 * 1024;
     private const int MaxJsonBytes = 64 * 1024;
@@ -77,7 +78,14 @@ internal static class Program
                     PreparedShader result = await PrepareAsync(Path.GetFullPath(path), sourceRoot, dependencyRoot, cancellation.Token);
                     if (!names.Add(result.Name)) throw new InvalidDataException($"Duplicate shader artifact name '{result.Name}'.");
                     prepared.Add(result);
+                    for (PreparedShader? companion = result.Companion; companion is not null; companion = companion.Companion)
+                    {
+                        if (!names.Add(companion.Name)) throw new InvalidDataException($"Duplicate shader artifact name '{companion.Name}'.");
+                        prepared.Add(companion);
+                    }
+                    Require(prepared.Count <= MaxArtifacts, $"A package supports at most {MaxArtifacts} artifacts, including generated companions.");
                 }
+                catch (ShaderCompilationException) { throw; }
                 catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException or InvalidOperationException or TimeoutException)
                 {
                     throw new InvalidDataException($"Recipe {path}: {error.Message}", error);
@@ -151,12 +159,58 @@ internal static class Program
             Console.Error.WriteLine("Shader cook canceled; no new manifest was published.");
             return 130;
         }
+        catch (ShaderCompilationException error)
+        {
+            string context = error.Data["ShaderCooker.Context"] as string ?? "shader source";
+            Console.Error.WriteLine($"Shader cook failed: {context}: {error.Message}");
+            foreach (ShaderCompileDiagnostic diagnostic in error.Diagnostics)
+            {
+                string location = diagnostic.OriginalPath is null ? context :
+                    diagnostic.Line is null ? diagnostic.OriginalPath :
+                    diagnostic.Column is null ? $"{diagnostic.OriginalPath}:{diagnostic.Line}" :
+                    $"{diagnostic.OriginalPath}:{diagnostic.Line}:{diagnostic.Column}";
+                Console.Error.WriteLine($"{location}: {diagnostic.Severity ?? "error"}: {diagnostic.Message}");
+            }
+            return 1;
+        }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException or InvalidOperationException or TimeoutException)
         {
             Console.Error.WriteLine($"Shader cook failed: {error.Message}");
             return 1;
         }
         finally { Console.CancelKeyPress -= onCancel; }
+    }
+
+    private static async Task<SlangWgslOutput> CompileSlangWithContextAsync(string context, string sourceRoot,
+        string source, IReadOnlyList<string> includes, IReadOnlyList<string> defines, CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string> entryPoints, bool preserveResourceParameters = false)
+    {
+        try
+        {
+            return await SlangWgslCompiler.CompileAsync(sourceRoot, source, includes, defines, cancellationToken,
+                entryPoints, preserveResourceParameters);
+        }
+        catch (ShaderCompilationException error)
+        {
+            error.Data["ShaderCooker.Context"] = context;
+            throw;
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or
+            ArgumentException or NotSupportedException or InvalidOperationException or TimeoutException)
+        {
+            throw new InvalidDataException($"{context}: {error.Message}", error);
+        }
+    }
+
+    private static T WithMaterialSourceContext<T>(string context, Func<T> plan)
+    {
+        try { return plan(); }
+        catch (Exception error) when (error is InvalidDataException or JsonException or ArgumentException or
+            NotSupportedException or InvalidOperationException)
+        {
+            if (error.Message.StartsWith(context + ":", StringComparison.Ordinal)) throw;
+            throw new InvalidDataException($"{context}: {error.Message}", error);
+        }
     }
 
     private static async Task<PreparedShader> PrepareAsync(string recipePath, string sourceRoot, string dependencyRoot, CancellationToken cancellationToken)
@@ -198,14 +252,43 @@ internal static class Program
                     && variant.ContainsKey("vertexProfile") && variant.ContainsKey("outputProfile"), $"{stageContext}: invalid materialVariant properties.");
                 string semantic = String(variant, "semantic");
                 int semanticVersion = Integer(variant, "semanticVersion");
-                Require(semantic is "StandardLitColor" or "StandardLitTexture" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle" or
+                bool knownSemantic = semantic is "Unlit" or "StandardLitColor" or "StandardLitTexture" or "OpaqueShadowDepth" or "DebugPoint" or "DebugLine" or "DebugTriangle" or
                     "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap" or "UICanvasSurface" or "UberOutline" or "OpaquePointShadowDepth" or "OpaqueSpotShadowDepth" or
                     "SkyboxGradient" or "SkyboxEquirectangular" or "SkyboxOctahedral" or
-                    "SkyboxCubemap" or "SkyboxDynamicProcedural"
-                    && (semanticVersion == 1 || semanticVersion == 2 &&
-                        semantic is "StandardLitColor" or "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap"),
+                    "SkyboxCubemap" or "SkyboxDynamicProcedural" or "AuthoredLitTextureAlpha" or "AuthoredLitTextured" or "OctahedralImpostor";
+                bool knownVersion = semantic == "Unlit" ? semanticVersion is >= 1 and <= 5 :
+                    semanticVersion == 1 || semanticVersion == 2 &&
+                    semantic is "StandardLitColor" or "UIQuadBatched" or "UIQuadBatchedTexture" or "UITextBatchedBitmap";
+                Require(knownSemantic && knownVersion,
                     $"{stageContext}: unsupported engine material semantic.");
                 string vertexProfile = String(variant, "vertexProfile"), outputProfile = String(variant, "outputProfile");
+                if (semantic == "Unlit")
+                {
+                    EngineMaterialSemanticIdentity unlitSemantic = new(EngineMaterialSemantic.Unlit, semanticVersion);
+                    bool builtIn = language == "MaterialRecipe";
+                    EngineMaterialVariantKey expected = builtIn
+                        ? EngineUnlitMaterialShaderGenerator.BuiltInKey(unlitSemantic)
+                        : EngineUnlitMaterialShaderGenerator.CompanionKey(unlitSemantic, String(recipe, "pass"),
+                            String(recipe, "semanticSchemaIdentity") == EngineUnlitMaterialShaderGenerator.OrderGateSchema);
+                    Require(vertexProfile == expected.VertexProfile && outputProfile == expected.OutputProfile &&
+                        (!builtIn || String(recipe, "name") == EngineUnlitMaterialShaderGenerator.BuiltInName(unlitSemantic) &&
+                         String(recipe, "semanticSchemaIdentity") == EngineUnlitMaterialShaderGenerator.SchemaFor(unlitSemantic)) &&
+                        engineLayout.VertexEntryPoint == "unlitVertex" && engineLayout.FragmentEntryPoint ==
+                        (expected.Pass switch
+                        {
+                            EngineUnlitMaterialShaderGenerator.Pass => "unlitFragment",
+                            "depth-normal" => "unlitNormalFragment",
+                            "depth" => "unlitDepthFragment",
+                            "point-shadow-depth" => "unlitPointDepthFragment",
+                            "spot-shadow-depth" => "unlitSpotDepthFragment",
+                            _ => throw new NotSupportedException($"Unsupported unlit pass '{expected.Pass}'."),
+                        }), $"{stageContext}: unlit variant has an unsupported pass, entry or profile.");
+                }
+                if (semantic == "OctahedralImpostor")
+                    Require(String(recipe, "pass") == EngineOctahedralImpostorShaderContract.Pass &&
+                        vertexProfile is EngineOctahedralImpostorShaderContract.VertexProfile or EngineOctahedralImpostorShaderContract.OrderGateVertexProfile &&
+                        outputProfile == EngineOctahedralImpostorShaderContract.OutputProfile,
+                        $"{stageContext}: impostors require their exact camera-facing vertex and 26-view RGBA profile.");
                 if (semantic == "UberOutline")
                     Require(String(recipe, "pass") == "outline" && vertexProfile == "position-normal-uv4-color-v1" &&
                         outputProfile is "linear-hdr-v1" or "linear-hdr-alpha-mask-v1" or "linear-hdr-dissolve-v1" or "linear-hdr-alpha-mask-dissolve-v1" &&
@@ -259,7 +342,8 @@ internal static class Program
                 Require(Regex.IsMatch(vertexProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant)
                     && Regex.IsMatch(outputProfile, "^[a-z][a-z0-9.-]{0,63}$", RegexOptions.CultureInvariant),
                     $"{stageContext}: invalid material variant profile.");
-                Require(language != "MaterialRecipe", $"{stageContext}: authored material recipes use exact stage companions, not built-in semantic variants.");
+                Require(language != "MaterialRecipe" || semantic == "Unlit",
+                    $"{stageContext}: authored material recipes use exact stage companions, not built-in semantic variants.");
                 materialVariant = new JsonObject { ["semantic"] = semantic, ["semanticVersion"] = semanticVersion,
                     ["target"] = "WebGPUWgsl", ["pass"] = String(recipe, "pass"),
                     ["vertexProfile"] = vertexProfile, ["outputProfile"] = outputProfile };
@@ -332,6 +416,9 @@ internal static class Program
         string decoded = StrictUtf8.GetString(originalSource);
         Require(!string.IsNullOrWhiteSpace(decoded) && !decoded.Contains('\0') && !decoded.StartsWith('\ufeff'), $"{stageContext}: source must be nonempty UTF-8 without BOM or NUL.");
         byte[] normalized = StrictUtf8.GetBytes(NormalizeLines(decoded));
+        if (schema == 3 && language == "MaterialRecipe" && Object(ParseJson(normalized), "material").ContainsKey("nativeVertex"))
+            return await PrepareNativeVertexAsync(recipe, recipeBytes, recipePath, sourceRoot, dependencyRoot,
+                sourcePath, originalSource, engineLayout!, cancellationToken);
         string recipeDependency = DependencyPath(dependencyRoot, recipePath);
         string sourceDependency = DependencyPath(dependencyRoot, sourcePath);
         SortedDictionary<string, string> dependencies = new(StringComparer.Ordinal)
@@ -340,6 +427,7 @@ internal static class Program
         };
         byte[] source = normalized;
         string compilerIdentity = "xrengine-wgsl-packager/2";
+        int authoredTextureFlags = 0;
         JsonObject sourceMap = new() { ["kind"] = "identity", ["path"] = sourceDependency };
         if (language == "MaterialRecipe")
         {
@@ -352,16 +440,30 @@ internal static class Program
             }
             else
             {
-                EngineLitMaterialShaderPlan plan = PlanEngineLitMaterial(normalized, name, stageContext);
-                Require(String(recipe, "pass") == plan.Pass && String(recipe, "semanticSchemaIdentity") == plan.SemanticSchemaIdentity,
-                    $"{stageContext}: pass or semantic schema does not match the generated lit surface.");
+                (bool unlit, EngineLitMaterialShaderPlan litPlan, EngineUnlitMaterialShaderPlan unlitPlan) =
+                    WithMaterialSourceContext(stageContext, () =>
+                    {
+                        JsonObject material = Object(ParseJson(normalized), "material");
+                        bool isUnlit = String(material, "shadingModel") == "unlit";
+                        EngineLitMaterialShaderPlan lit = isUnlit ? default : PlanEngineLitMaterial(normalized, name, stageContext);
+                        EngineUnlitMaterialShaderPlan unlitMaterial = isUnlit ? PlanEngineUnlitMaterial(normalized, name, stageContext) : default;
+                        return (isUnlit, lit, unlitMaterial);
+                    });
+                authoredTextureFlags = unlit ? 0 : litPlan.AuthoredTextureFlags;
+                Require(String(recipe, "pass") == (unlit ? unlitPlan.Pass : litPlan.Pass) &&
+                    String(recipe, "semanticSchemaIdentity") == (unlit ? unlitPlan.SemanticSchemaIdentity : litPlan.SemanticSchemaIdentity),
+                    $"{stageContext}: pass or semantic schema does not match the generated material surface.");
                 JsonObject entries = Object(recipe["entryPoints"], "entryPoints");
-                Require(entries.Count == 2 && String(entries, "vertex") == "standardLitVertex" &&
-                    String(entries, "fragment") == "standardLitFragment", $"{stageContext}: generated lit stages require standardLitVertex and standardLitFragment.");
-                VerifyEngineLitSources(sourceRoot, plan, stageContext);
-                SlangWgslOutput generated = await SlangWgslCompiler.CompileAsync(sourceRoot, plan.SlangSource,
-                    [], [], cancellationToken, entries.ToDictionary(pair => pair.Key, pair => ScalarString(pair.Value, "entry point"), StringComparer.Ordinal));
-                VerifyEngineLitSources(sourceRoot, plan, stageContext);
+                Require(entries.Count == 2 && String(entries, "vertex") == (unlit ? "unlitVertex" : "standardLitVertex") &&
+                    String(entries, "fragment") == (unlit ? "unlitFragment" : "standardLitFragment"),
+                    $"{stageContext}: generated material stages require their exact canonical entry points.");
+                if (unlit) VerifyEngineUnlitSources(sourceRoot, dependencyRoot, unlitPlan.Semantic, stageContext);
+                else VerifyEngineLitSources(sourceRoot, litPlan, stageContext);
+                SlangWgslOutput generated = await CompileSlangWithContextAsync(stageContext, sourceRoot,
+                    unlit ? unlitPlan.SlangSource : litPlan.SlangSource, [], [], cancellationToken,
+                    entries.ToDictionary(pair => pair.Key, pair => ScalarString(pair.Value, "entry point"), StringComparer.Ordinal));
+                if (unlit) VerifyEngineUnlitSources(sourceRoot, dependencyRoot, unlitPlan.Semantic, stageContext);
+                else VerifyEngineLitSources(sourceRoot, litPlan, stageContext);
                 source = StrictUtf8.GetBytes(NormalizeLines(generated.Source));
                 compilerIdentity = "xrengine-material-slang/1+" + generated.CompilerIdentity;
                 foreach ((string path, string hash) in generated.Dependencies)
@@ -373,14 +475,53 @@ internal static class Program
                 // The compiler conservatively watches all staged Slang inputs.
                 // Native equivalence uses the generator's closed, pinned frontend
                 // graph, not unrelated shaders found beside those inputs.
-                foreach (EngineLitMaterialShaderSource canonical in EngineLitMaterialShaderGenerator.RequiredCanonicalSources(plan))
+                foreach (EngineLitMaterialShaderSource canonical in unlit
+                    ? EngineUnlitMaterialShaderGenerator.RequiredCanonicalSources(unlitPlan.Semantic)
+                    : EngineLitMaterialShaderGenerator.RequiredCanonicalSources(litPlan))
                     dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot, canonical.Path))] = canonical.Sha256;
+                if (unlit)
+                    foreach (EngineLitMaterialShaderSource canonical in EngineUnlitMaterialShaderGenerator.RequiredDesktopSources(unlitPlan.Semantic))
+                        dependencies[DependencyPath(dependencyRoot, ResolveInput(dependencyRoot, canonical.Path))] = canonical.Sha256;
+                if (!unlit && litPlan.SemanticSchemaIdentity == EngineAuthoredTexturedShaderGenerator.Schema)
+                    foreach (EngineLitMaterialShaderSource canonical in EngineAuthoredTexturedShaderGenerator.DesktopSources(litPlan.AuthoredTextureFlags))
+                        dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot,
+                            EngineAuthoredTexturedShaderGenerator.DesktopStagingDirectory + "/" + canonical.Path))] = canonical.Sha256;
+                if (!unlit && litPlan.SemanticSchemaIdentity == EngineTexturedAlphaShaderGenerator.Schema)
+                    foreach (EngineLitMaterialShaderSource canonical in EngineTexturedAlphaShaderGenerator.RequiredDesktopSources)
+                        dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot,
+                            EngineTexturedAlphaShaderGenerator.DesktopStagingDirectory + "/" + canonical.Path))] = canonical.Sha256;
                 sourceMap = new() { ["kind"] = "generated", ["path"] = sourceDependency };
             }
         }
         else if (language == "Slang")
         {
             Require(schema >= 2, $"{stageContext}: Slang compilation needs schema 2 or later.");
+            bool uberBase = String(recipe, "semanticSchemaIdentity") is EngineUberBaseShaderContract.Schema or EngineUberBaseShaderContract.OrderGateSchema;
+            if (uberBase) VerifyUberBaseSources(sourceRoot, stageContext);
+            bool impostorCompanion = materialVariant is not null && String(materialVariant, "semantic") == "OctahedralImpostor";
+            bool impostorGate = String(recipe, "semanticSchemaIdentity") == EngineOctahedralImpostorShaderContract.OrderGateSchema;
+            if (impostorCompanion) VerifyImpostorSources(sourceRoot, dependencyRoot, impostorGate, sourceRelative, stageContext);
+            bool authoredTexturedCompanion = materialVariant is not null && String(materialVariant, "semantic") == "AuthoredLitTextured";
+            bool authoredTexturedGate = String(recipe, "semanticSchemaIdentity") == EngineAuthoredTexturedShaderGenerator.OrderGateSchema;
+            if (authoredTexturedCompanion)
+                VerifyAuthoredTexturedCompanionSources(sourceRoot, String(recipe, "pass"), authoredTexturedGate, sourceRelative, stageContext);
+            bool texturedAlphaCompanion = materialVariant is not null && String(materialVariant, "semantic") == "AuthoredLitTextureAlpha";
+            bool texturedAlphaGate = String(recipe, "semanticSchemaIdentity") == EngineTexturedAlphaShaderGenerator.OrderGateSchema;
+            if (texturedAlphaCompanion)
+                VerifyTexturedAlphaCompanionSources(sourceRoot, String(recipe, "pass"), texturedAlphaGate, sourceRelative, stageContext);
+            bool unlitCompanion = materialVariant is not null && String(materialVariant, "semantic") == "Unlit";
+            bool unlitGate = String(recipe, "semanticSchemaIdentity") == EngineUnlitMaterialShaderGenerator.OrderGateSchema;
+            EngineMaterialSemanticIdentity unlitSemantic = unlitCompanion
+                ? new(EngineMaterialSemantic.Unlit, Integer(Object(recipe["materialVariant"], "materialVariant"), "semanticVersion")) : default;
+            if (unlitCompanion)
+            {
+                Require(String(recipe, "semanticSchemaIdentity") == (unlitGate
+                    ? EngineUnlitMaterialShaderGenerator.OrderGateSchema
+                    : EngineUnlitMaterialShaderGenerator.SchemaFor(unlitSemantic)),
+                    $"{stageContext}: unlit companion semantic schema does not match the exact surface.");
+                VerifyEngineUnlitCompanionSources(sourceRoot, dependencyRoot, unlitSemantic,
+                    String(recipe, "pass"), unlitGate, sourceRelative, stageContext);
+            }
             List<string> includeValues = includes.Select(node => RelativePath(ScalarString(node, "include"), "include directory")).ToList();
             Require(includeValues.Distinct(StringComparer.Ordinal).Count() == includeValues.Count, $"{stageContext}: duplicate include.");
             foreach (string include in includeValues)
@@ -388,8 +529,9 @@ internal static class Program
                 string resolved = ResolveInput(sourceRoot, include);
                 Require(Directory.Exists(resolved), $"{stageContext}: include directory does not exist: {include}.");
             }
-            SlangWgslOutput result = await SlangWgslCompiler.CompileAsync(sourceRoot, sourceRelative, includeValues, defineValues, cancellationToken,
-                Object(recipe["entryPoints"], "entryPoints").ToDictionary(pair => pair.Key, pair => ScalarString(pair.Value, "entry point"), StringComparer.Ordinal));
+            SlangWgslOutput result = await CompileSlangWithContextAsync(stageContext, sourceRoot, sourceRelative, includeValues, defineValues, cancellationToken,
+                Object(recipe["entryPoints"], "entryPoints").ToDictionary(pair => pair.Key, pair => ScalarString(pair.Value, "entry point"), StringComparer.Ordinal),
+                preserveResourceParameters: uberBase);
             source = StrictUtf8.GetBytes(NormalizeLines(result.Source));
             compilerIdentity = result.CompilerIdentity;
             Require(Regex.IsMatch(compilerIdentity, "^slang/2026\\.8/[0-9a-f]{64}$", RegexOptions.CultureInvariant), $"{stageContext}: incompatible Slang compiler identity.");
@@ -399,7 +541,44 @@ internal static class Program
                 Require(Regex.IsMatch(hash, "^[0-9a-f]{64}$", RegexOptions.CultureInvariant), $"{stageContext}: invalid include hash '{path}'.");
                 string localHash = Hash(ReadBounded(ResolveInput(sourceRoot, checkedPath), MaxSourceBytes));
                 Require(localHash == hash, $"{stageContext}: compiler dependency changed or hash mismatched: {path}.");
-                dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot, checkedPath))] = hash;
+                if (!texturedAlphaCompanion && !authoredTexturedCompanion && !impostorCompanion && !unlitCompanion)
+                    dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot, checkedPath))] = hash;
+            }
+            if (uberBase)
+            {
+                VerifyUberBaseSources(sourceRoot, stageContext);
+                foreach (EngineLitMaterialShaderSource canonical in EngineUberBaseShaderContract.RequiredDesktopSources)
+                    dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot, "Desktop/" + canonical.Path))] = canonical.Sha256;
+            }
+            if (texturedAlphaCompanion)
+            {
+                VerifyTexturedAlphaCompanionSources(sourceRoot, String(recipe, "pass"), texturedAlphaGate, sourceRelative, stageContext);
+                foreach (EngineLitMaterialShaderSource canonical in EngineTexturedAlphaShaderGenerator.CompanionSources(String(recipe, "pass"), texturedAlphaGate))
+                    dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot, canonical.Path))] = canonical.Sha256;
+            }
+            if (unlitCompanion)
+            {
+                VerifyEngineUnlitCompanionSources(sourceRoot, dependencyRoot, unlitSemantic,
+                    String(recipe, "pass"), unlitGate, sourceRelative, stageContext);
+                foreach (EngineLitMaterialShaderSource canonical in EngineUnlitMaterialShaderGenerator.CompanionSources(
+                    unlitSemantic, String(recipe, "pass"), unlitGate))
+                    dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot, canonical.Path))] = canonical.Sha256;
+                foreach (EngineLitMaterialShaderSource canonical in EngineUnlitMaterialShaderGenerator.RequiredDesktopSources(unlitSemantic))
+                    dependencies[DependencyPath(dependencyRoot, ResolveInput(dependencyRoot, canonical.Path))] = canonical.Sha256;
+            }
+            if (authoredTexturedCompanion)
+            {
+                VerifyAuthoredTexturedCompanionSources(sourceRoot, String(recipe, "pass"), authoredTexturedGate, sourceRelative, stageContext);
+                foreach (EngineLitMaterialShaderSource canonical in EngineAuthoredTexturedShaderGenerator.CompanionSources(String(recipe, "pass"), authoredTexturedGate))
+                    dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot, canonical.Path))] = canonical.Sha256;
+            }
+            if (impostorCompanion)
+            {
+                VerifyImpostorSources(sourceRoot, dependencyRoot, impostorGate, sourceRelative, stageContext);
+                foreach (EngineLitMaterialShaderSource canonical in EngineOctahedralImpostorShaderContract.CompanionSources(impostorGate))
+                    dependencies[DependencyPath(dependencyRoot, ResolveInput(sourceRoot, canonical.Path))] = canonical.Sha256;
+                foreach (EngineLitMaterialShaderSource canonical in EngineOctahedralImpostorShaderContract.DesktopSources)
+                    dependencies[DependencyPath(dependencyRoot, ResolveInput(dependencyRoot, canonical.Path))] = canonical.Sha256;
             }
             sourceMap = new() { ["kind"] = "unmapped", ["path"] = sourceDependency };
         }
@@ -413,6 +592,7 @@ internal static class Program
             descriptor[key] = recipe[key]!.DeepClone();
         if (schema == 3) descriptor["pass"] = recipe["pass"]!.DeepClone();
         if (schema == 3 && recipe.ContainsKey("workgroupSize")) descriptor["workgroupSize"] = recipe["workgroupSize"]!.DeepClone();
+        if (authoredTextureFlags != 0) descriptor["authoredTextureFlags"] = authoredTextureFlags;
         if (materialVariant is not null) descriptor["materialVariant"] = recipe["materialVariant"]!.DeepClone();
         descriptor["requiredFeatures"] = new JsonArray();
         descriptor["compilerIdentity"] = schema == 1 ? "xrengine-wgsl-packager/1" : compilerIdentity;
@@ -438,8 +618,44 @@ internal static class Program
         {
             ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(encoded, source);
             if (language == "MaterialRecipe")
-                Require(EngineLitMaterialShaderProvenance.TryValidate(artifact, out string provenanceReason),
-                    $"{stageContext}: {provenanceReason}");
+            {
+                bool unlit = artifact.SemanticSchemaIdentity is EngineUnlitMaterialShaderGenerator.ColorSchema or
+                    EngineUnlitMaterialShaderGenerator.TextureSchema or EngineUnlitMaterialShaderGenerator.OpaqueTextureSchema or
+                    EngineUnlitMaterialShaderGenerator.AlphaTextureSchema or EngineUnlitMaterialShaderGenerator.TextureArraySliceSchema;
+                string provenanceReason;
+                bool admitted = unlit ? EngineUnlitShaderProvenance.TryValidate(artifact, out provenanceReason)
+                    : EngineLitMaterialShaderProvenance.TryValidate(artifact, out provenanceReason);
+                Require(admitted, $"{stageContext}: {provenanceReason}");
+            }
+            if (materialVariant is not null && String(materialVariant, "semantic") == "Unlit")
+            {
+                using JsonDocument declaration = JsonDocument.Parse(Canonical(recipe["materialVariant"]));
+                EngineMaterialVariantKey key = ShaderProgramArtifactReader.ReadMaterialVariantKey(declaration.RootElement, artifact.Pass, artifact.Target);
+                bool builtIn = language == "MaterialRecipe";
+                bool proven = builtIn
+                    ? EngineUnlitShaderProvenance.TryValidateBuiltIn(artifact, key, out string unlitReason)
+                    : EngineUnlitShaderProvenance.TryValidateCompanion(artifact, key, out unlitReason);
+                Require(proven,
+                    $"{stageContext}: {unlitReason}");
+            }
+            if (materialVariant is not null && String(materialVariant, "semantic") == "OctahedralImpostor")
+                Require(EngineOctahedralImpostorShaderProvenance.TryValidate(artifact,
+                    String(recipe, "semanticSchemaIdentity") == EngineOctahedralImpostorShaderContract.OrderGateSchema, out string impostorReason),
+                    $"{stageContext}: {impostorReason}");
+            if (materialVariant is not null && String(materialVariant, "semantic") == "AuthoredLitTextured")
+            {
+                using JsonDocument declaration = JsonDocument.Parse(Canonical(recipe["materialVariant"]));
+                EngineMaterialVariantKey key = ShaderProgramArtifactReader.ReadMaterialVariantKey(declaration.RootElement, artifact.Pass, artifact.Target);
+                Require(EngineAuthoredTexturedShaderProvenance.TryValidateCompanion(artifact, key, out string texturedReason),
+                    $"{stageContext}: {texturedReason}");
+            }
+            if (materialVariant is not null && String(materialVariant, "semantic") == "AuthoredLitTextureAlpha")
+            {
+                using JsonDocument declaration = JsonDocument.Parse(Canonical(recipe["materialVariant"]));
+                EngineMaterialVariantKey key = ShaderProgramArtifactReader.ReadMaterialVariantKey(declaration.RootElement, artifact.Pass, artifact.Target);
+                Require(EngineTexturedAlphaShaderProvenance.TryValidateCompanion(artifact, key, out string alphaReason),
+                    $"{stageContext}: {alphaReason}");
+            }
             if (pipelineArtifact is not null)
                 WebPipelineArtifactCatalog.ValidateProgram(
                     WebPipelineArtifactCatalog.GetBindingKey(
@@ -469,13 +685,70 @@ internal static class Program
         JsonObject material = Object(ParseJson(source), "material");
         bool baseKeys = material.ContainsKey("schemaVersion") && material.ContainsKey("name") &&
             material.ContainsKey("shadingModel") && material.ContainsKey("surface") && material.ContainsKey("baseColor");
-        Require(baseKeys && (material.Count == 5 || material.Count == 6 && material.ContainsKey("normal")),
+        Require(baseKeys && (material.Count == 5 || material.Count == 6 && material.ContainsKey("normal") ||
+            material.Count == 7 && material.ContainsKey("normal") && material.ContainsKey("textureFlags")),
             $"{context}: unsupported authored material properties.");
         Require(Integer(material, "schemaVersion") == 2 && String(material, "name") == name,
             $"{context}: material schema or name does not match the recipe.");
+        if (material.ContainsKey("textureFlags"))
+        {
+            int flags = Integer(material, "textureFlags");
+            Require(String(material, "shadingModel") == "lit" && String(material, "baseColor") == "authored-textured" &&
+                String(material, "normal") == ((flags & 1) != 0 ? "texture" : "vertex"), $"{context}: authored textured feature fields disagree.");
+            return EngineAuthoredTexturedShaderGenerator.Plan(name, flags, String(material, "surface"), ShaderCompileTarget.WebGPUWgsl);
+        }
         return EngineLitMaterialShaderGenerator.Plan(name, String(material, "shadingModel"), String(material, "surface"),
             String(material, "baseColor"), material.ContainsKey("normal") ? String(material, "normal") : "vertex",
             ShaderCompileTarget.WebGPUWgsl);
+    }
+
+    private static EngineUnlitMaterialShaderPlan PlanEngineUnlitMaterial(byte[] source, string name, string context)
+    {
+        JsonObject material = Object(ParseJson(source), "material");
+        Require(material.Count == 6 && material.ContainsKey("schemaVersion") && material.ContainsKey("name") &&
+            material.ContainsKey("shadingModel") && material.ContainsKey("surface") &&
+            material.ContainsKey("baseColor") && material.ContainsKey("semanticVersion"),
+            $"{context}: unsupported unlit material properties.");
+        Require(Integer(material, "schemaVersion") == 3 && String(material, "name") == name &&
+            String(material, "shadingModel") == "unlit", $"{context}: unlit material schema or name does not match the recipe.");
+        EngineMaterialSemanticIdentity semantic = new(EngineMaterialSemantic.Unlit, Integer(material, "semanticVersion"));
+        Require(String(material, "baseColor") == EngineUnlitMaterialShaderGenerator.BaseColorFor(semantic),
+            $"{context}: unlit source and semantic version disagree.");
+        return EngineUnlitMaterialShaderGenerator.Plan(name, semantic, String(material, "surface"), ShaderCompileTarget.WebGPUWgsl);
+    }
+
+    private static void VerifyEngineUnlitSources(string root, string dependencyRoot,
+        EngineMaterialSemanticIdentity semantic, string context)
+    {
+        foreach (EngineLitMaterialShaderSource source in EngineUnlitMaterialShaderGenerator.RequiredCanonicalSources(semantic))
+            Require(Hash(ReadBounded(ResolveInput(root, source.Path), MaxSourceBytes)) == source.Sha256,
+                $"{context}: canonical unlit WebGPU source '{source.Path}' is missing or modified.");
+        foreach (EngineLitMaterialShaderSource source in EngineUnlitMaterialShaderGenerator.RequiredDesktopSources(semantic))
+            Require(Hash(ReadBounded(ResolveInput(dependencyRoot, source.Path), MaxSourceBytes)) == source.Sha256,
+                $"{context}: canonical unlit authored source '{source.Path}' is missing or modified.");
+    }
+
+    private static void VerifyEngineUnlitCompanionSources(string root, string dependencyRoot,
+        EngineMaterialSemanticIdentity semantic, string pass, bool orderGate, string sourcePath, string context)
+    {
+        IReadOnlyList<EngineLitMaterialShaderSource> sources = EngineUnlitMaterialShaderGenerator.CompanionSources(semantic, pass, orderGate);
+        Require(sources[0].Path == sourcePath, $"{context}: unlit companion requires its canonical entry source.");
+        foreach (EngineLitMaterialShaderSource source in sources)
+            Require(Hash(ReadBounded(ResolveInput(root, source.Path), MaxSourceBytes)) == source.Sha256,
+                $"{context}: canonical unlit companion '{source.Path}' is missing or modified.");
+        foreach (EngineLitMaterialShaderSource source in EngineUnlitMaterialShaderGenerator.RequiredDesktopSources(semantic))
+            Require(Hash(ReadBounded(ResolveInput(dependencyRoot, source.Path), MaxSourceBytes)) == source.Sha256,
+                $"{context}: canonical unlit authored source '{source.Path}' is missing or modified.");
+    }
+
+    private static void VerifyUberBaseSources(string root, string context)
+    {
+        foreach (EngineLitMaterialShaderSource source in EngineUberBaseShaderContract.RequiredSources)
+            Require(Hash(ReadBounded(ResolveInput(root, source.Path), MaxSourceBytes)) == source.Sha256,
+                $"{context}: canonical Uber WebGPU source '{source.Path}' is missing or modified.");
+        foreach (EngineLitMaterialShaderSource source in EngineUberBaseShaderContract.RequiredDesktopSources)
+            Require(Hash(ReadBounded(ResolveInput(root, "Desktop/" + source.Path), MaxSourceBytes)) == source.Sha256,
+                $"{context}: canonical Uber authored source '{source.Path}' is missing or modified.");
     }
 
     private static void VerifyEngineLitSources(string root, EngineLitMaterialShaderPlan plan, string context)
@@ -486,6 +759,39 @@ internal static class Program
             Require(actual == canonical.Sha256,
                 $"{context}: engine PBR frontend '{canonical.Path}' differs from its versioned canonical source.");
         }
+        if (plan.SemanticSchemaIdentity == EngineAuthoredTexturedShaderGenerator.Schema)
+            foreach (EngineLitMaterialShaderSource canonical in EngineAuthoredTexturedShaderGenerator.DesktopSources(plan.AuthoredTextureFlags))
+            {
+                byte[] bytes = ReadBounded(ResolveInput(root, EngineAuthoredTexturedShaderGenerator.DesktopStagingDirectory + "/" + canonical.Path), MaxSourceBytes);
+                Require(EngineAuthoredTexturedShaderGenerator.NormalizedHash(StrictUtf8.GetString(bytes)) == canonical.Sha256,
+                    $"{context}: authored desktop source '{canonical.Path}' differs from its versioned canonical graph.");
+            }
+        if (plan.SemanticSchemaIdentity == EngineTexturedAlphaShaderGenerator.Schema)
+            foreach (EngineLitMaterialShaderSource canonical in EngineTexturedAlphaShaderGenerator.RequiredDesktopSources)
+            {
+                byte[] bytes = ReadBounded(ResolveInput(root, EngineTexturedAlphaShaderGenerator.DesktopStagingDirectory + "/" + canonical.Path), MaxSourceBytes);
+                string actual = EngineTexturedAlphaShaderGenerator.NormalizedHash(StrictUtf8.GetString(bytes));
+                Require(actual == canonical.Sha256,
+                    $"{context}: authored desktop source '{canonical.Path}' differs from its versioned canonical graph.");
+            }
+    }
+
+    private static void VerifyTexturedAlphaCompanionSources(string root, string pass, bool gate, string source, string context)
+    {
+        IReadOnlyList<EngineLitMaterialShaderSource> sources = EngineTexturedAlphaShaderGenerator.CompanionSources(pass, gate);
+        Require(sources.Count != 0 && sources[0].Path == source, $"{context}: textured-alpha companion requires its canonical entry source.");
+        foreach (EngineLitMaterialShaderSource canonical in sources)
+            Require(Hash(ReadBounded(ResolveInput(root, canonical.Path), MaxSourceBytes)) == canonical.Sha256,
+                $"{context}: textured-alpha frontend '{canonical.Path}' differs from its canonical source.");
+    }
+
+    private static void VerifyAuthoredTexturedCompanionSources(string root, string pass, bool gate, string source, string context)
+    {
+        IReadOnlyList<EngineLitMaterialShaderSource> sources = EngineAuthoredTexturedShaderGenerator.CompanionSources(pass, gate);
+        Require(sources.Count != 0 && sources[0].Path == source, $"{context}: authored-textured companion requires its canonical entry source.");
+        foreach (EngineLitMaterialShaderSource canonical in sources)
+            Require(Hash(ReadBounded(ResolveInput(root, canonical.Path), MaxSourceBytes)) == canonical.Sha256,
+                $"{context}: authored-textured frontend '{canonical.Path}' differs from its canonical source.");
     }
 
     private static string FindRepository()

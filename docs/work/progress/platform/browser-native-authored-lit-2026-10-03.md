@@ -75,8 +75,8 @@ material admission.
 A successfully verified source publishes `EngineGeneratedSurface` in the
 canonical material header and a generation-checked engine-surface companion.
 The companion retains raw base color, opacity, roughness, metallic, specular and
-emission, together with independent base-color, normal, metallic and roughness
-bindings. Existing UV0, identity transform, red scalar channel and RGB-normal
+emission, together with independent base-color, normal, metallic, roughness and
+opacity bindings. Existing UV0, identity transform, red scalar channel and RGB-normal
 requirements remain unchanged. No packed metallic/roughness alias replaces the
 independent authored maps.
 
@@ -90,10 +90,21 @@ selection.
 Visibility and shading validate the frozen source and companion generation.
 Reconstruction, normal mapping, direct/indirect PBR and surface exports select
 the existing engine evaluator for the verified generated source. No backend
-fallback is introduced. The engine-surface shader contract is now schema 2;
-the 304-byte row layout is unchanged. All eight native shading/export recipes
+fallback is introduced. The browser-only engine-surface shader contract is schema 3;
+its 368-byte row appends the independent opacity role to the preceding 304-byte
+companion. The canonical desktop GPU material records and GLSL bindings are
+unchanged. All eight native shading/export recipes
 declare that version, and old native shader caches fail with an explicit recook
 diagnostic before binding.
+
+The exact `AuthoredLitTextureAlphaV1` masked family retains its diffuse and
+linear red opacity textures independently, including when they alias the same
+image. Mono and x4 visibility use the versioned nine-binding raster contract,
+multiply diffuse alpha by opacity red without clamping, and discard strictly
+below the authored cutoff. Their buckets include both texture/sampler pairs,
+and stale or missing opacity bindings reject the complete native preparation.
+Native shading also retains that alpha product and derives emission from sampled
+diffuse RGB. Sorted textured-alpha materials remain on their late raster pass.
 
 Native raster admission now checks counter-clockwise winding, enabled Lequal
 depth testing with writes, all RGBA writes, disabled blending, inactive stencil,

@@ -20,7 +20,7 @@ public static partial class EngineLitMaterialShaderGenerator
     private static readonly EngineLitMaterialShaderSource Color = new("StandardLitColor.slang",
         "50074cecbde9666073ff50275511151c5b01096e155f92115b5ef4c591a59e9c");
     private static readonly EngineLitMaterialShaderSource Sampling = new("StandardLitTextureSampling.slang",
-        "dfae127a0b03b8022d5fa269c62728e9de12bdf60a50eacce3584c9fec3fb24c");
+        "54b4fb19055f6413f755295090ce615dab078cbe9891a91bd001ff88938f0d35");
     private static readonly EngineLitMaterialShaderSource Texture = new("StandardLitTexture.slang",
         "af1afd388c334aa5e5dabf42db0860974d9791858c01b32c80ade6615df8af14");
     private static readonly EngineLitMaterialShaderSource NormalTexture = new("StandardLitTextureNormal.slang",
@@ -37,6 +37,8 @@ public static partial class EngineLitMaterialShaderGenerator
     public static IReadOnlyList<EngineLitMaterialShaderSource> RequiredCanonicalSources(EngineLitMaterialShaderPlan plan)
         => plan.SemanticSchemaIdentity switch
         {
+            EngineAuthoredTexturedShaderGenerator.Schema => EngineAuthoredTexturedShaderGenerator.RequiredCanonicalSources,
+            EngineTexturedAlphaShaderGenerator.Schema => EngineTexturedAlphaShaderGenerator.RequiredCanonicalSources,
             ColorSchema => [Color],
             ColorCoverageSchema => [ColorCoverage, LocalShadows, DirectionalShadow, LocalShadowSampling],
             TextureSchema => [Color, Sampling, Texture],
@@ -58,6 +60,12 @@ public static partial class EngineLitMaterialShaderGenerator
             throw new NotSupportedException($"{context}: surface '{surface}' has no modeled engine coverage contract.");
         if (normal is not ("vertex" or "texture"))
             throw new NotSupportedException($"{context}: normal source '{normal}' is unsupported.");
+        if (baseColor == "texture-alpha")
+        {
+            if (normal != "vertex")
+                throw new NotSupportedException($"{context}: exact textured alpha uses vertex normals only.");
+            return EngineTexturedAlphaShaderGenerator.Plan(name, surface, target);
+        }
         if (coverage)
         {
             if (baseColor != "tint" || normal != "vertex")
@@ -77,10 +85,12 @@ public static partial class EngineLitMaterialShaderGenerator
 
 /// <summary>Canonical engine source and surface ABI selected by authored lit features.</summary>
 public readonly record struct EngineLitMaterialShaderPlan(string Name, string SlangSource, string SemanticSchemaIdentity,
-    bool UsesBaseColorTexture, bool UsesNormalTexture, string Surface = "opaque")
+    bool UsesBaseColorTexture, bool UsesNormalTexture, string Surface = "opaque", int AuthoredTextureFlags = 0)
 {
     public bool UsesCoverage => SemanticSchemaIdentity == EngineLitMaterialShaderGenerator.ColorCoverageSchema;
-    public string Pass => UsesCoverage ? "forward-coverage" : "opaque-forward";
+    public string Pass => SemanticSchemaIdentity == EngineAuthoredTexturedShaderGenerator.Schema
+        ? EngineAuthoredTexturedShaderGenerator.Pass : SemanticSchemaIdentity == EngineTexturedAlphaShaderGenerator.Schema
+        ? EngineTexturedAlphaShaderGenerator.Pass : UsesCoverage ? "forward-coverage" : "opaque-forward";
 }
 
 /// <summary>Trusted input of the versioned engine PBR lowering.</summary>

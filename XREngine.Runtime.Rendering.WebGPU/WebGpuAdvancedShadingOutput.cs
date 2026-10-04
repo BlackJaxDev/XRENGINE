@@ -98,11 +98,15 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         { reason = "WebGPU.Advanced.ClassificationMissing: shade requires the same frozen view, scene slot, and GPU classification generation."; return false; }
         if (request.MsaaSampleCount == 4) return TryShadeMultisample(in request, instance, visibility, frame, out reason);
         WebGpuRenderProgram native = Program(instance, frame.DepthComparisonBank ? "shade-native-depth" : "shade-native");
+        WebGpuRenderProgram? uberNative = frame.HasUberRaster ? UberProgram(instance, frame.DepthComparisonBank, false, false) : null;
+        WebGpuRenderProgram? uberExports = frame.HasUberRaster && request.RequiresMaterialSurfaceExports ? UberProgram(instance, frame.DepthComparisonBank, false, true) : null;
         WebGpuRenderProgram background = Program(instance, "shade-background");
         WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, frame.DepthComparisonBank ? "shade-surface-exports-depth" : "shade-surface-exports") : null;
         WebGpuRenderProgram? exportBackground = request.RequiresMaterialSurfaceExports ? Program(instance, "shade-background-exports") : null;
         bool ready = Prepare(native) & Prepare(background);
         if (exports is not null) ready &= Prepare(exports) & Prepare(exportBackground!);
+        if (uberNative is not null) ready &= Prepare(uberNative);
+        if (uberExports is not null) ready &= Prepare(uberExports);
         if (!ready) return Pending(out reason);
         _padding.Generate();
         XRTexture2D identity = Texture(instance, request.IdentityTargetName, frame.Width, frame.Height);
@@ -138,23 +142,28 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
                 BindExports(exportBackground, emission!, albedo!, normal!, rmse!);
                 exportBackground.RecordCompute((frame.Width + 15) / 16, (frame.Height + 15) / 16, 1);
             }
+            if (frame.HasUberRaster && !_renderer.TryEnqueueAdvancedUberSample(in request, instance, visibility, 0u, out reason)) return false;
             Span<uint> parameters = stackalloc uint[40];
             for (uint cohort = 0; cohort < frame.CohortCount; cohort++)
             {
-                WebGpuAdvancedShadingParameters.Write(parameters, in request, visibility, frame, cohort);
-                BindNative(native, visibility, frame, cohort, parameters, identity, metadata, depth, ao);
-                BindOutputs(native, hdr, velocity, reactive, diagnostics, 0);
-                _renderer.DispatchComputeIndirect(native.Data, frame.Arguments, (nuint)cohort * 16);
-                if (exports is null) continue;
-                BindNative(exports, visibility, frame, cohort, parameters, identity, metadata, depth, ao);
-                BindExports(exports, emission!, albedo!, normal!, rmse!);
-                _renderer.DispatchComputeIndirect(exports.Data, frame.Arguments, (nuint)cohort * 16);
+                WebGpuRenderProgram selectedNative = frame.Cohorts[cohort]!.UberRaster ? uberNative! : native;
+                WebGpuRenderProgram? selectedExports = frame.Cohorts[cohort]!.UberRaster ? uberExports : exports;
+                WebGpuAdvancedShadingParameters.Write(parameters, in request, visibility, frame, cohort, _renderer.RequireFrozenView().ElapsedTime);
+                BindNative(selectedNative, visibility, frame, cohort, parameters, identity, metadata, depth, ao);
+                BindOutputs(selectedNative, hdr, velocity, reactive, diagnostics, 0);
+                _renderer.DispatchComputeIndirect(selectedNative.Data, frame.Arguments, (nuint)cohort * 16);
+                if (selectedExports is null) continue;
+                BindNative(selectedExports, visibility, frame, cohort, parameters, identity, metadata, depth, ao);
+                BindExports(selectedExports, emission!, albedo!, normal!, rmse!);
+                _renderer.DispatchComputeIndirect(selectedExports.Data, frame.Arguments, (nuint)cohort * 16);
             }
+            if (frame.HasUberRaster) return _renderer.TryCompleteAdvancedUberConsumers(out reason);
             reason = string.Empty;
             return true;
         }
         finally
         {
+            uberNative?.ClearTransientComputeBindings(); uberExports?.ClearTransientComputeBindings();
             native.ClearTransientComputeBindings(); background.ClearTransientComputeBindings();
             exports?.ClearTransientComputeBindings(); exportBackground?.ClearTransientComputeBindings();
         }
@@ -167,7 +176,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         WebGpuAdvancedShadingCohort cohort = frame.Cohorts[index]!;
         api.SetNativeBindingCacheOwner(cohort.Bindings);
         api.BindStorageBuffer(0, visibility.Scene!.SceneArena);
-        api.BindStorageBuffer(1, visibility.Scene.GeometryArena);
+        api.BindStorageBuffer(1, visibility.GeometryArena);
         api.BindStorageBuffer(2, visibility.PreparedDeformations);
         api.BindStorageBuffer(3, frame.Materials);
         api.BindStorageBuffer(4, frame.Tiles);
@@ -178,8 +187,15 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         api.Data.Sampler(multisample ? "RawVisibilityIdentity" : "VisibilityIdentity", identity, 0);
         api.Data.Sampler(multisample ? "RawVisibilityMetadataSelection" : "VisibilityMetadata", metadata, 1);
         api.Data.Sampler(multisample ? "RawVisibilityDepth" : "VisibilityDepth", depth, 2); api.Data.Sampler("AmbientOcclusion", ao, 3);
+        if (cohort.UberRaster)
+        {
+            if (!visibility.UberRaster.IsCurrent(visibility.FrameSequence, visibility.PreparationGeneration, (parameters[7] >> 24) & 3u))
+                throw Invalid("UberRasterProducerMissing", "native consumption requires the same frame and preparation generation's completed full-float fragment exports");
+            api.Data.Sampler("UberRasterSurface", visibility.UberRaster.Surface!, 12);
+        }
         for (int slot = 0; slot < TextureNames.Length; slot++)
         {
+            if (cohort.UberRaster && slot == 8) continue;
             AbstractRenderAPIObject? texture = cohort.TextureOwners[slot];
             WebGpuAdvancedSampler? sampler = cohort.SamplerOwners[slot];
             api.BindAdvancedTexture(TextureNames[slot], texture ?? _padding, texture is null ? _padding.View(slot, frame.DepthComparisonBank) : cohort.Views[slot],
@@ -202,10 +218,24 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         api.Data.BindImageTexture(2, normal, 0, false, 0, EImageAccess.WriteOnly, EImageFormat.RGBA16F);
         api.Data.BindImageTexture(3, rmse, 0, false, 0, EImageAccess.WriteOnly, EImageFormat.RGBA16F);
     }
+    private WebGpuRenderProgram UberProgram(XRRenderPipelineInstance instance, bool depth, bool multisample, bool exports)
+        => Program(instance, exports ? multisample ? depth ? "shade-uber-surface-exports-depth-msaa" : "shade-uber-surface-exports-msaa"
+            : depth ? "shade-uber-surface-exports-depth" : "shade-uber-surface-exports"
+            : multisample ? depth ? "shade-uber-native-depth-msaa" : "shade-uber-native-msaa"
+            : depth ? "shade-uber-native-depth" : "shade-uber-native");
+
     private WebGpuRenderProgram Program(XRRenderPipelineInstance instance, string pass)
     {
         WebGpuRenderProgram api = _renderer.GetAdvancedStageApi(instance.Pipeline!, pass switch
         {
+            "shade-uber-native" => "advanced::shade-uber-native",
+            "shade-uber-native-depth" => "advanced::shade-uber-native-depth",
+            "shade-uber-native-msaa" => "advanced::shade-uber-native-msaa",
+            "shade-uber-native-depth-msaa" => "advanced::shade-uber-native-depth-msaa",
+            "shade-uber-surface-exports" => "advanced::shade-uber-surface-exports",
+            "shade-uber-surface-exports-depth" => "advanced::shade-uber-surface-exports-depth",
+            "shade-uber-surface-exports-msaa" => "advanced::shade-uber-surface-exports-msaa",
+            "shade-uber-surface-exports-depth-msaa" => "advanced::shade-uber-surface-exports-depth-msaa",
             "shade-classify" => "advanced::shade-classify",
             "shade-classify-msaa" => "advanced::shade-classify-msaa",
             "shade-finalize" => "advanced::shade-finalize",

@@ -48,4 +48,15 @@ internal sealed class WebGpuUniformBlock(ShaderAbiResourceContract contract)
             throw new NotSupportedException($"WebGPU.Uniform.IntegerUnsupported: '{member.ProviderName}' requires a scalar 32-bit ABI.");
         BinaryPrimitives.WriteUInt32LittleEndian(Bytes.AsSpan(checked((int)member.Offset), 4), value);
     }
+
+    public void WriteIntegers(ShaderAbiMemberContract member, ReadOnlySpan<int> values)
+    {
+        string type = values.Length switch { 2 => "vec2<i32>", 3 => "vec3<i32>", 4 => "vec4<i32>", _ => string.Empty };
+        int bytes = checked(values.Length * sizeof(int));
+        if (type.Length == 0 || member.PhysicalType != type || member.ArrayCount != 0 || member.Size != bytes || member.Offset > Bytes.Length - bytes)
+            throw new NotSupportedException($"WebGPU.Uniform.IntegerVectorUnsupported: '{member.ProviderName}' requires its exact signed integer-vector ABI.");
+        Span<byte> destination = Bytes.AsSpan(checked((int)member.Offset), bytes);
+        for (int index = 0; index < values.Length; index++)
+            BinaryPrimitives.WriteInt32LittleEndian(destination[(index * sizeof(int))..], values[index]);
+    }
 }

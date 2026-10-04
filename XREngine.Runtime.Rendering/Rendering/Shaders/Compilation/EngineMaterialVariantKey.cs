@@ -18,13 +18,27 @@ public readonly record struct EngineMaterialVariantKey(
         Semantic.Validate();
         if (Semantic.Semantic == EngineMaterialSemantic.None)
             throw new ArgumentException("A cooked material variant requires a non-empty engine semantic.");
-        if (Semantic.IsAuthoredLit())
+        if (Semantic.IsAuthoredLit() && Semantic != EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1 &&
+            Semantic != EngineMaterialSemanticIdentity.AuthoredLitTexturedV1)
             throw new ArgumentException("Authored lit materials require exact per-stage cooked companions, not a built-in variant selector.");
         if (!Enum.IsDefined(Target))
             throw new ArgumentOutOfRangeException(nameof(Target), Target, "Unsupported shader target.");
         ValidateProfile(Pass, nameof(Pass));
         ValidateProfile(VertexProfile, nameof(VertexProfile));
         ValidateProfile(OutputProfile, nameof(OutputProfile));
+        if (Semantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1 &&
+            !Generation.EngineAuthoredTexturedShaderGenerator.TryGetCompanionTextureFlags(this, out _))
+            throw new ArgumentException("AuthoredLitTexturedV1 selectors require an exact feature-specific auxiliary or ordered-raster companion.");
+        if (Semantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1 &&
+            (Target != ShaderCompileTarget.WebGPUWgsl || !IsTexturedAlphaCompanionProfile()))
+            throw new ArgumentException("AuthoredLitTextureAlphaV1 selectors require an exact auxiliary or ordered-raster companion; the ordinary receiver requires its per-material descriptor.");
+        if (Semantic.IsUnlit() && (Target != ShaderCompileTarget.WebGPUWgsl || !IsUnlitCompanionProfile()))
+            throw new ArgumentException("Unlit selectors require their exact forward, depth-normal, alpha caster, or painter-order profile.");
+        if (Semantic == EngineMaterialSemanticIdentity.OctahedralImpostorV1 &&
+            (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "forward-impostor" ||
+             VertexProfile is not ("position-uv4-billboard-v1" or "position-uv4-billboard-order-gate-v1") ||
+             OutputProfile != "linear-hdr-rgba-v1"))
+            throw new ArgumentException("OctahedralImpostorV1 requires its exact camera-facing 26-view RGBA profile.");
         if (Semantic == EngineMaterialSemanticIdentity.UberOutlineV1 &&
             (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "outline" ||
              VertexProfile != "position-normal-uv4-color-v1" ||
@@ -87,7 +101,7 @@ public readonly record struct EngineMaterialVariantKey(
     private bool IsLitCoverageProfile()
         => Pass switch
         {
-            "forward-coverage" => VertexProfile == "static-position-normal-v1" &&
+            "forward-coverage" => (VertexProfile is "static-position-normal-v1" or "static-position-normal-order-gate-v1") &&
                 (OutputProfile is "linear-hdr-v1" or "linear-hdr-directional-shadow-v1" or "linear-hdr-local-shadows-v1"),
             "depth-normal" => VertexProfile == "static-position-normal-v1" && OutputProfile == "normal-rgba16f-v1",
             "depth" => VertexProfile == "static-position-v1" && OutputProfile == "depth-normal-v1",
@@ -95,6 +109,37 @@ public readonly record struct EngineMaterialVariantKey(
             "spot-shadow-depth" => VertexProfile == "static-position-v1" && OutputProfile == "projected-r16f-v1",
             _ => false,
         };
+
+    private bool IsTexturedAlphaCompanionProfile()
+        => Pass == "forward-textured-alpha"
+            ? VertexProfile == "position-normal-uv-order-gate-v1" && OutputProfile == "linear-hdr-local-shadows-v1"
+            : VertexProfile == "position-normal-uv-v1" && (Pass switch
+            {
+                "depth-normal" => OutputProfile == "normal-rgba16f-v1",
+                "depth" => OutputProfile == "depth-normal-v1",
+                "point-shadow-depth" => OutputProfile == "radial-r16f-v1",
+                "spot-shadow-depth" => OutputProfile == "projected-r16f-v1",
+                _ => false,
+            });
+
+    private bool IsUnlitCompanionProfile()
+    {
+        bool color = Semantic == EngineMaterialSemanticIdentity.UnlitColorV1;
+        bool alpha = Semantic == EngineMaterialSemanticIdentity.UnlitAlphaTextureV4;
+        bool forcedOpaque = Semantic == EngineMaterialSemanticIdentity.UnlitOpaqueTextureV3;
+        string vertex = color ? "static-position-normal-v1" : "position-normal-uv-v1";
+        return Pass switch
+        {
+            "forward-unlit" => OutputProfile == "linear-hdr-rgba-v1" &&
+                (VertexProfile == vertex || !forcedOpaque &&
+                 VertexProfile == (color ? "static-position-normal-order-gate-v1" : "position-normal-uv-order-gate-v1")),
+            "depth-normal" => VertexProfile == vertex && OutputProfile == "normal-rgba16f-v1",
+            "depth" => alpha && VertexProfile == vertex && OutputProfile == "depth-normal-v1",
+            "point-shadow-depth" => alpha && VertexProfile == vertex && OutputProfile == "radial-r16f-v1",
+            "spot-shadow-depth" => alpha && VertexProfile == vertex && OutputProfile == "projected-r16f-v1",
+            _ => false,
+        };
+    }
 
     private static void ValidateProfile(string value, string parameterName)
     {

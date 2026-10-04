@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Numerics;
+using System.Runtime.ExceptionServices;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -36,8 +37,8 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
     private XRWorld? _targetWorld;
     private IRuntimeWorldScenePolicy? _scenePolicy;
     private GameMode? _gameMode;
-    private bool _disposed;
-    private bool _disposing;
+    private volatile bool _disposed;
+    private int _disposing;
 
     public RuntimeWorld(AbstractPhysicsScene physicsScene, XRWorld? targetWorld = null)
     {
@@ -50,7 +51,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
     public XRWorld? TargetWorld => _targetWorld;
 
     /// <summary>Whether world teardown is in progress or has completed.</summary>
-    public bool IsDisposing => _disposing || _disposed;
+    public bool IsDisposing => Volatile.Read(ref _disposing) != 0 || _disposed;
 
     /// <summary>
     /// Changes the serialized world represented by this live context. Bootstrap
@@ -382,7 +383,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
     public void LoadScene(XRScene scene)
     {
         ThrowIfDisposed();
-        if (_disposing)
+        if (Volatile.Read(ref _disposing) != 0)
             throw new InvalidOperationException("Scene.WorldDisposing: scenes cannot attach during world teardown.");
         ArgumentNullException.ThrowIfNull(scene);
         if (!_loadedScenes.Add(scene))
@@ -599,9 +600,12 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
 
     public void Dispose()
     {
-        if (_disposed || _disposing)
+        if (IsDisposing || !PhysicsChainWorld.PrepareWorldDisposal(this))
             return;
-        _disposing = true;
+        if (_disposed || Interlocked.CompareExchange(ref _disposing, 1, 0) != 0)
+            return;
+        ExceptionDispatchInfo? firstFault = null;
+        bool ticksReleased = false;
         try
         {
             if (PlayState != RuntimeWorldPlayState.Stopped)
@@ -609,6 +613,8 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
             Disposing?.Invoke(this);
             Disposing = null;
             UnloadTargetWorld();
+            _lifecycle.ReleaseTicks();
+            ticksReleased = true;
             _targetWorld = null;
             _initialDynamicBodyPoses.Clear();
             _externallyOwnedSceneRoots.Clear();
@@ -621,7 +627,25 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
             GameMode = null;
             _disposed = true;
         }
-        finally { _disposing = false; }
+        catch (Exception ex)
+        {
+            firstFault = ExceptionDispatchInfo.Capture(ex);
+        }
+        finally
+        {
+            // An earlier end-play/disposal subscriber may have prevented the
+            // chain's event handler from running. Its admission is already
+            // closed, so always release that ownership before leaving teardown.
+            try { PhysicsChainWorld.Release(this); }
+            catch (Exception ex) { firstFault ??= ExceptionDispatchInfo.Capture(ex); }
+            finally
+            {
+                if (!ticksReleased)
+                    _lifecycle.ReleaseTicks();
+                Volatile.Write(ref _disposing, 0);
+            }
+        }
+        firstFault?.Throw();
     }
 
     private void RemoveCapability(Type type, object capability)

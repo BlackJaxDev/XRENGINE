@@ -14,6 +14,9 @@ public interface IAssetSerializationServices
 {
     string AssetExtension { get; }
 
+    /// <summary>Whether this owner admits creating host project directories after a descriptor load.</summary>
+    bool SupportsHostProjectDirectories => false;
+
     string? GameAssetsPath { get; }
 
     string? EngineAssetsPath { get; }

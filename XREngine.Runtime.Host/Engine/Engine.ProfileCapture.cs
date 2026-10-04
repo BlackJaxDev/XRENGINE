@@ -595,7 +595,11 @@ public static partial class Engine
                 DebugOverlayEnabled: observers.DebugOverlayEnabled,
                 LogVerbosity: RuntimeDebugHostServices.Current.OutputVerbosity.ToString(),
                 LogOutputToFile: RuntimeDebugHostServices.Current.LogOutputToFile,
-                LogSessionPath: CaptureString(Debug.EnsureLogRunDirectory),
+                LogSessionPath: CaptureString(() =>
+                {
+                    XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Speed profile log path");
+                    return Debug.EnsureLogRunDirectory();
+                }),
                 XrRuntime: CaptureString(() => RuntimeEngine.VRState.ActiveRuntime.ToString()),
                 XrRuntimeManifest: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson) ?? string.Empty,
                 ActiveRenderFeatures: activeRenderFeatures,
@@ -1703,9 +1707,12 @@ public static partial class Engine
         }
 
         private static string GetCurrentOutputDirectoryNoLock()
-            => string.IsNullOrWhiteSpace(s_outputDirectory)
+        {
+            XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Speed profile output");
+            return string.IsNullOrWhiteSpace(s_outputDirectory)
                 ? Debug.EnsureLogRunDirectory()
                 : s_outputDirectory!;
+        }
 
         private static int GetSampleIntervalFramesNoLock()
         {
@@ -1725,6 +1732,7 @@ public static partial class Engine
 
             try
             {
+                XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Speed profile output");
                 string sessionDirectory = Debug.EnsureLogRunDirectory();
                 string profileRoot = Path.Combine(sessionDirectory, RuntimeCaptureDirectoryName);
                 Directory.CreateDirectory(profileRoot);
@@ -1807,6 +1815,7 @@ public static partial class Engine
 
             try
             {
+                XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Speed profile output");
                 Directory.CreateDirectory(directory);
                 string path = Path.Combine(directory, fileName);
                 if (append)

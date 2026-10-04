@@ -102,7 +102,7 @@ export function validateEngineAssetManifest(value, manifestUrl) {
         const validProfile = value => typeof value === 'string' && profile.test(value);
         for (const variant of value.materialVariants) {
             if (!variant || Object.keys(variant).length !== 7
-                || !['StandardLitColor', 'StandardLitTexture', 'OpaqueShadowDepth', 'OpaquePointShadowDepth', 'OpaqueSpotShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle',
+                || !['StandardLitColor', 'StandardLitTexture', 'AuthoredLitTextureAlpha', 'AuthoredLitTextured', 'OctahedralImpostor', 'OpaqueShadowDepth', 'OpaquePointShadowDepth', 'OpaqueSpotShadowDepth', 'DebugPoint', 'DebugLine', 'DebugTriangle',
                     'UIQuadBatched', 'UIQuadBatchedTexture', 'UITextBatchedBitmap', 'UICanvasSurface', 'UberOutline', 'SkyboxGradient', 'SkyboxEquirectangular', 'SkyboxOctahedral',
                     'SkyboxCubemap', 'SkyboxDynamicProcedural'].includes(variant.semantic)
                 || !(variant.semanticVersion === 1 || variant.semanticVersion === 2
@@ -111,8 +111,12 @@ export function validateEngineAssetManifest(value, manifestUrl) {
                 || !validProfile(variant.vertexProfile) || !validProfile(variant.outputProfile)
                 || !shaderIdentities.has(variant.descriptorIdentity))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (variant.vertexProfile === 'static-position-normal-order-gate-v1'
+                && !(variant.semantic === 'StandardLitColor' && variant.semanticVersion === 2))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
             if (variant.semantic === 'StandardLitColor' && variant.semanticVersion === 2
-                && !(variant.pass === 'forward-coverage' && variant.vertexProfile === 'static-position-normal-v1'
+                && !(variant.pass === 'forward-coverage'
+                    && ['static-position-normal-v1', 'static-position-normal-order-gate-v1'].includes(variant.vertexProfile)
                     && ['linear-hdr-v1', 'linear-hdr-directional-shadow-v1', 'linear-hdr-local-shadows-v1'].includes(variant.outputProfile)
                     || variant.pass === 'depth-normal' && variant.vertexProfile === 'static-position-normal-v1'
                     && variant.outputProfile === 'normal-rgba16f-v1'
@@ -130,6 +134,35 @@ export function validateEngineAssetManifest(value, manifestUrl) {
                         || variant.pass === 'depth-normal' && variant.vertexProfile === 'position-normal-tangent-uv-v1'
                         && variant.outputProfile === 'normal-rgba16f-v1')))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (variant.semantic === 'AuthoredLitTextureAlpha'
+                && !(variant.pass === 'forward-textured-alpha' && variant.vertexProfile === 'position-normal-uv-order-gate-v1'
+                    && variant.outputProfile === 'linear-hdr-local-shadows-v1'
+                    || variant.vertexProfile === 'position-normal-uv-v1'
+                    && (variant.pass === 'depth-normal' && variant.outputProfile === 'normal-rgba16f-v1'
+                        || variant.pass === 'depth' && variant.outputProfile === 'depth-normal-v1'
+                        || variant.pass === 'point-shadow-depth' && variant.outputProfile === 'radial-r16f-v1'
+                        || variant.pass === 'spot-shadow-depth' && variant.outputProfile === 'projected-r16f-v1')))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (variant.semantic === 'OctahedralImpostor'
+                && (variant.pass !== 'forward-impostor'
+                    || !['position-uv4-billboard-v1', 'position-uv4-billboard-order-gate-v1'].includes(variant.vertexProfile)
+                    || variant.outputProfile !== 'linear-hdr-rgba-v1'))
+                throw new Error('AssetSource.MaterialVariantInvalid.');
+            if (variant.semantic === 'AuthoredLitTextured') {
+                const suffix = /-f[123567]-v1$/.exec(variant.outputProfile);
+                const output = suffix ? variant.outputProfile.slice(0, -suffix[0].length) : '';
+                if (!(variant.pass === 'forward-authored-textured'
+                        && variant.vertexProfile === 'position-normal-optional-tangent-uv-order-gate-v1'
+                        && output === 'linear-hdr-local-shadows'
+                    || variant.pass === 'depth-normal'
+                        && variant.vertexProfile === 'position-normal-optional-tangent-uv-v1'
+                        && output === 'normal-rgba16f'
+                    || variant.vertexProfile === 'position-normal-uv-v1'
+                        && (variant.pass === 'depth' && output === 'depth-normal'
+                            || variant.pass === 'point-shadow-depth' && output === 'radial-r16f'
+                            || variant.pass === 'spot-shadow-depth' && output === 'projected-r16f')))
+                    throw new Error('AssetSource.MaterialVariantInvalid.');
+            }
             if (variant.semantic === 'OpaqueShadowDepth' && (variant.pass !== 'depth'
                 || variant.vertexProfile !== 'static-position-v1' || variant.outputProfile !== 'depth-normal-v1'))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
@@ -233,6 +266,7 @@ async function validatePipelineArtifactDescriptors(loader, { manifest, assets })
     for (const pipeline of manifest.pipelineArtifacts ?? []) {
         const shader = manifest.shaderArtifacts.find(artifact => artifact.identity === pipeline.descriptorIdentity);
         const entry = assets.get(shader.descriptor);
+        if (!entry.essential) continue; // Deferred descriptors receive full managed validation before scene hydration.
         const bytes = await loader.readVerifiedPayload(entry.url, entry.bytes, pipeline.descriptorIdentity, entry.path);
         try {
             const descriptor = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
@@ -255,6 +289,7 @@ async function validatePipelineArtifactDescriptors(loader, { manifest, assets })
     for (const compute of manifest.computeArtifacts ?? []) {
         const shader = manifest.shaderArtifacts.find(artifact => artifact.identity === compute.descriptorIdentity);
         const entry = assets.get(shader.descriptor);
+        if (!entry.essential) continue;
         const bytes = await loader.readVerifiedPayload(entry.url, entry.bytes, compute.descriptorIdentity, entry.path);
         try {
             const descriptor = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));

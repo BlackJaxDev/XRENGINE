@@ -36,6 +36,8 @@ namespace XREngine
             => FromFile(path, prot, offset, length, FileOptions.RandomAccess);
         public static FileMap FromFile(string path, FileMapProtect prot, long offset, long length, FileOptions options)
         {
+            RuntimeAssetReadServices.EnsureHostFileAccess("File mapping");
+            IFileMappingBackend backend = FileMappingServices.Required;
             FileStream stream;
             FileMap map;
             try
@@ -54,7 +56,7 @@ namespace XREngine
             }
             try
             {
-                map = FromStreamInternal(stream, prot, offset, length);
+                map = FromStreamInternal(stream, prot, offset, length, backend);
             }
             catch (Exception)
             {
@@ -68,10 +70,12 @@ namespace XREngine
             => FromTempFile(length, out _);
         public static FileMap? FromTempFile(long length, out string path)
         {
+            RuntimeAssetReadServices.EnsureHostFileAccess("Temporary file mapping");
+            IFileMappingBackend backend = FileMappingServices.Required;
             FileStream stream = new FileStream(path = Path.GetTempFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 8, FileOptions.RandomAccess | FileOptions.DeleteOnClose);
             try
             {
-                return FromStreamInternal(stream, FileMapProtect.ReadWrite, 0, length);
+                return FromStreamInternal(stream, FileMapProtect.ReadWrite, 0, length, backend);
             }
             catch (Exception ex)
             {
@@ -87,6 +91,8 @@ namespace XREngine
             => FromStream(stream, prot, 0, 0);
         public static FileMap FromStream(FileStream stream, FileMapProtect prot, long offset, long length)
         {
+            RuntimeAssetReadServices.EnsureHostFileAccess("File stream mapping");
+            IFileMappingBackend backend = FileMappingServices.Required;
             //FileStream newStream = new FileStream(stream.Name, FileMode.Open, prot == FileMapProtect.Read ? FileAccess.Read : FileAccess.ReadWrite, FileShare.Read, 8, FileOptions.RandomAccess);
             //try { return FromStreamInternal(newStream, prot, offset, length); }
             //catch (Exception x) { newStream.Dispose(); throw x; }
@@ -96,10 +102,16 @@ namespace XREngine
             else
                 length = length.ClampMax(stream.Length);
 
-            return new ProviderFileMap(FileMappingServices.Required.Map(stream, prot == FileMapProtect.ReadWrite, offset, length), stream, ownsStream: false);
+            return new ProviderFileMap(backend.Map(stream, prot == FileMapProtect.ReadWrite, offset, length), stream, ownsStream: false);
         }
 
         public static FileMap FromStreamInternal(FileStream stream, FileMapProtect prot, long offset, long length)
+        {
+            RuntimeAssetReadServices.EnsureHostFileAccess("File stream mapping");
+            return FromStreamInternal(stream, prot, offset, length, FileMappingServices.Required);
+        }
+
+        private static FileMap FromStreamInternal(FileStream stream, FileMapProtect prot, long offset, long length, IFileMappingBackend backend)
         {
             if (length == 0)
                 length = stream.Length;
@@ -108,7 +120,7 @@ namespace XREngine
 
             length = length.ClampMin(stream.Length);
 
-            return new ProviderFileMap(FileMappingServices.Required.Map(stream, prot == FileMapProtect.ReadWrite, offset, length), stream, ownsStream: true);
+            return new ProviderFileMap(backend.Map(stream, prot == FileMapProtect.ReadWrite, offset, length), stream, ownsStream: true);
         }
     }
 }

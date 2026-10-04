@@ -220,7 +220,9 @@ export class EngineMeshDiagnosticHost {
             if (entry.kind === 'buffer') buffers.push({ ...identity, size: entry.value.size,
                 usage: entry.value.usage });
             if (entry.kind === 'commands') {
-                const draw = entry.value.operations?.find(operation => operation.type === 'render' && operation.engineInstanceCountLimit > 0);
+                const draw = entry.value.operations?.find(operation => operation.type === 'render'
+                    && operation.engineInstanceCountLimit > 0
+                    && ['engine-debug-point', 'engine-debug-line', 'engine-debug-triangle'].includes(operation.pipeline?.label));
                 if (draw) commands.push({ ...identity, label: draw.pipeline?.label ?? '',
                     instanceLimit: draw.engineInstanceCountLimit });
             }

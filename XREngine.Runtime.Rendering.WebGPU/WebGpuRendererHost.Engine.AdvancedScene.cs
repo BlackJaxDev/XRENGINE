@@ -50,29 +50,14 @@ public sealed partial class WebGpuRendererHost
     private void ReclaimAdvancedSceneSlots()
     {
         if (_advancedSceneResidency is null && !_advancedReservationsInitialized) return;
-        if (_engineFrameStatisticsActive && _engineFrameStatistics is { } statistics)
-        {
-            statistics.CompletionPollInteropCalls++;
-            statistics.LastFrameCompletionPollInteropCalls++;
-        }
-        double completed = WebGpuImports.PollEngineFrameCompletion(_session);
-        if (!double.IsFinite(completed) || completed < 0 || completed > _engineFrameSequence || completed != Math.Truncate(completed))
-            throw new InvalidOperationException("WebGPU.Advanced.CompletionInvalid: the executor returned an invalid completion watermark.");
-        _advancedSceneResidency?.Reclaim(checked((uint)completed));
-        ReclaimAdvancedReservations(checked((uint)completed));
-    }
-
-    internal void CountAdvancedPreparationUpload(int bytes)
-    {
-        if (!_engineFrameStatisticsActive || _engineFrameStatistics is not { } statistics) return;
-        statistics.AdvancedPreparationUploadInteropCalls++;
-        statistics.AdvancedPreparationUploadBytes += bytes;
-        statistics.LastFrameAdvancedPreparationUploadInteropCalls++;
-        statistics.LastFrameAdvancedPreparationUploadBytes += bytes;
+        _advancedSceneResidency?.Reclaim(_engineCompletedSequence);
+        ReclaimAdvancedReservations(_engineCompletedSequence);
     }
 
     private void EndAdvancedSceneRecording(bool submitted)
     {
+        foreach (WebGpuAdvancedVisibilityOutput output in _advancedVisibilityOutputs.Values)
+            output.EndRecording(_engineFrameSequence, submitted);
         _advancedSceneResidency?.EndRecording(_engineFrameSequence, submitted);
         EndAdvancedReservationRecording(submitted);
     }
