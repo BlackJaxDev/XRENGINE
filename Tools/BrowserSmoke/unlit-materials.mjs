@@ -43,6 +43,25 @@ function assert(condition, message) { if (!condition) throw new Error(message); 
 
 function same(actual, expected) { return JSON.stringify(actual) === JSON.stringify(expected); }
 
+function handles(state) {
+    return { shaders: state.shaders, pipelines: state.pipelines };
+}
+
+function nativePrograms(state) {
+    const entries = values => values.map(({ label, nativeId }) => ({ label, nativeId }))
+        .sort((left, right) => left.label.localeCompare(right.label) || left.nativeId - right.nativeId);
+    return { shaders: entries(state.shaders), pipelines: entries(state.pipelines) };
+}
+
+function cacheSnapshot(statistics) {
+    const resources = statistics.resources;
+    return { shaderModuleCacheEntries: resources.shaderModuleCacheEntries,
+        shaderModuleCacheKeyBytes: resources.shaderModuleCacheKeyBytes,
+        shaderModuleCacheHits: resources.shaderModuleCacheHits,
+        shaderModuleCacheMisses: resources.shaderModuleCacheMisses,
+        pipelineCacheEntries: resources.pipelineCacheEntries };
+}
+
 function checkState(state, index, width, height) {
     const expected = cases[index];
     assert(state.sampleCase === index && state.pipeline === 'DefaultRenderPipeline' &&
@@ -66,6 +85,8 @@ function checkState(state, index, width, height) {
     `BrowserSmoke.UnlitHdrTarget: expected one ${width}x${height} single-sample RGBA16F HDRSceneTex.`);
     assert(state.shaders.length >= 6 && state.pipelines.length >= 6,
         'BrowserSmoke.UnlitPrograms: five material variants and presentation require real shader and pipeline resources.');
+    assert([...state.shaders, ...state.pipelines].every(entry => Number.isInteger(entry.nativeId) && entry.nativeId > 0),
+        'BrowserSmoke.UnlitNativeIdentity: a shader or pipeline lacks its native GPU object identity.');
 }
 
 async function waitReady(page, previous, timeout) {
@@ -80,20 +101,33 @@ async function waitReady(page, previous, timeout) {
     assert(status.startsWith('Engine mesh unlit diagnostic rendered'), `BrowserSmoke.UnlitFrameStatus: ${status}`);
 }
 
-async function sampleBoard(page, output, label, width, height, capturePixels) {
+async function sampleBoard(page, output, label, width, height, capturePixels, boards) {
+    const board = { label, width, height, pixels: null, hdr: [], comparisons: [] };
+    boards.push(board);
     const samples = cases.map((expected, index) => ({ name: `case-${index}`,
         x: Math.floor(width * coordinates[index % 3]),
         y: Math.floor(height * coordinates[Math.floor(index / 3)]),
         expected: display(expected.hdr) }));
     const png = await page.locator('canvas').screenshot({ path: path.join(output, `engine-unlit-${label}.png`) });
-    const pixels = await capturePixels(page, png, samples);
-    assert(pixels.width === width && pixels.height === height,
-        `BrowserSmoke.UnlitCanvasExtent: ${label} captured ${pixels.width}x${pixels.height}.`);
-    const hdr = [];
+    board.pixels = await capturePixels(page, png, samples);
     for (let index = 0; index < cases.length; index++) {
         const expected = cases[index];
         const site = await page.evaluate(({ u, v }) => window.engineMeshDiagnostic.readHdrAt(u, v),
             { u: coordinates[index % 3], v: coordinates[Math.floor(index / 3)] });
+        board.hdr.push(site);
+        board.comparisons.push({ index, expectedHdr: expected.hdr, expectedDisplay: samples[index].expected,
+            observedHdr: site, observedDisplay: board.pixels.samples[index] });
+    }
+    return board;
+}
+
+function assertBoard(board) {
+    const { label, width, height } = board;
+    assert(board.pixels.width === width && board.pixels.height === height,
+        `BrowserSmoke.UnlitCanvasExtent: ${label} captured ${board.pixels.width}x${board.pixels.height}.`);
+    for (const comparison of board.comparisons) {
+        const { index, observedHdr: site, observedDisplay: visible } = comparison;
+        const expected = cases[index];
         assert(site.label === 'HDRSceneTex' && site.format === 'rgba16float' &&
             site.width === width && site.height === height,
         `BrowserSmoke.UnlitReadbackTarget: case ${index} used the wrong target.`);
@@ -102,13 +136,44 @@ async function sampleBoard(page, output, label, width, height, capturePixels) {
             const tolerance = Math.max(0.004, Math.abs(target) * 0.012);
             assert(site.min[channel] >= target - tolerance && site.max[channel] <= target + tolerance,
                 `BrowserSmoke.UnlitHdrMismatch: ${label} case ${index} channel ${channel}, expected ${target} ±${tolerance}, observed ${site.min[channel]}..${site.max[channel]}.`);
-            const visible = pixels.samples[index], displayExpected = visible.expected[channel];
+            const displayExpected = visible.expected[channel];
             assert(visible.min[channel] >= displayExpected - 3 && visible.max[channel] <= displayExpected + 3,
                 `BrowserSmoke.UnlitDisplayMismatch: ${label} case ${index} channel ${channel}, expected ${displayExpected} ±3, observed ${visible.min[channel]}..${visible.max[channel]}.`);
         }
-        hdr.push(site);
     }
-    return { label, width, height, hdr, pixels };
+}
+
+function compareStates(stage, width, height, expectedCatalog, expectedNative) {
+    const stageHandles = handles(stage.states[0]);
+    const nativeBaseline = expectedNative ?? nativePrograms(stage.states[0]);
+    const currentCatalog = stage.states.map(state => state.artifactIdentity);
+    stage.catalogIdentities = currentCatalog;
+    stage.handleBaseline = stageHandles;
+    stage.nativeBaseline = nativeBaseline;
+    for (let index = 0; index < cases.length; index++) {
+        const state = stage.states[index];
+        stage.comparisons.push({ index,
+            expected: { semantic: cases[index].semantic, factory: cases[index].factory,
+                artifactIdentity: expectedCatalog?.[index] ?? currentCatalog[index],
+                handles: stageHandles, nativePrograms: nativeBaseline },
+            actual: { semantic: state.semantic, factory: state.factory,
+                artifactIdentity: state.artifactIdentity, handles: handles(state),
+                nativePrograms: nativePrograms(state) } });
+    }
+    return { currentCatalog, nativeBaseline };
+}
+
+function assertComparedStates(stage, width, height) {
+    for (const comparison of stage.comparisons) {
+        const { index, expected, actual } = comparison;
+        checkState(stage.states[index], index, width, height);
+        assert(same(actual.handles, expected.handles),
+            `BrowserSmoke.UnlitCaseMutation: case ${index} metadata selection replaced live GPU handles.`);
+        assert(actual.artifactIdentity === expected.artifactIdentity,
+            `BrowserSmoke.UnlitCatalogIdentity: case ${index} changed its package artifact.`);
+        assert(same(actual.nativePrograms, expected.nativePrograms),
+            `BrowserSmoke.UnlitNativePrograms: case ${index} changed native shader or render pipeline identity.`);
+    }
 }
 
 export async function unlitMaterialsCheck(browser, origin, report, config, instrumentedPage, capturePixels, assertNoBrowserErrors) {
@@ -120,58 +185,72 @@ export async function unlitMaterialsCheck(browser, origin, report, config, instr
         report.unlitMaterials = { states: [], boards: [], lifecycles: [] };
         let catalogIdentities, initialLive;
         for (let lifecycle = 0; lifecycle < 2; lifecycle++) {
+            const record = { lifecycle, initial: { states: [], statistics: null, comparisons: [] },
+                resizes: [], finalStatistics: null };
+            report.unlitMaterials.lifecycles.push(record);
+            report.unlitMaterials.states.push(record.initial.states);
             await page.locator('#start').click();
             await waitReady(page, 0, config.timeout);
-            const lifecycleStates = [];
-            let gpuIdentity;
             for (let index = 0; index < cases.length; index++) {
                 await page.evaluate(value => window.engineMeshDiagnostic.setUnlitCase(value), index);
-                const state = await page.evaluate(() => window.engineMeshDiagnostic.unlitState());
-                checkState(state, index, 512, 512);
-                const currentGpu = JSON.stringify({ shaders: state.shaders, pipelines: state.pipelines });
-                gpuIdentity ??= currentGpu;
-                assert(currentGpu === gpuIdentity,
-                    'BrowserSmoke.UnlitCaseMutation: metadata selection replaced live GPU programs.');
-                lifecycleStates.push(state);
+                record.initial.states.push(await page.evaluate(() => window.engineMeshDiagnostic.unlitState()));
             }
-            const currentCatalog = lifecycleStates.map(state => state.artifactIdentity);
+            record.initial.statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+            const baseline = record.initial.statistics;
+            record.initial.cache = cacheSnapshot(baseline);
+            const { currentCatalog, nativeBaseline } = compareStates(record.initial, 512, 512, catalogIdentities);
+            record.initial.board = await sampleBoard(page, config.output, `start-${lifecycle}`, 512, 512,
+                capturePixels, report.unlitMaterials.boards);
+            record.initial.postReadbackStatistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+            assertBoard(record.initial.board);
+            assertComparedStates(record.initial, 512, 512);
             assert(currentCatalog[1] === currentCatalog[2] &&
                 currentCatalog[4] === currentCatalog[5] && currentCatalog[5] === currentCatalog[6] &&
                 currentCatalog[7] === currentCatalog[8] && new Set(currentCatalog).size === 5,
             'BrowserSmoke.UnlitCatalogVariants: board cases did not resolve five package variants.');
             catalogIdentities ??= currentCatalog;
-            assert(same(currentCatalog, catalogIdentities),
-                'BrowserSmoke.UnlitRestartCatalog: package artifact identity changed after fresh session startup.');
-            report.unlitMaterials.states.push(lifecycleStates);
-            report.unlitMaterials.boards.push(await sampleBoard(page, config.output, `start-${lifecycle}`, 512, 512, capturePixels));
-            const baseline = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
             assert(baseline.draws >= 10 && baseline.frameSubmitCalls > 0 && baseline.packets === 0 &&
                 baseline.focusedPipeline === null,
             'BrowserSmoke.UnlitSubmission: the board needs real engine mesh and presentation commands.');
             initialLive ??= baseline.resources.live;
             assert(baseline.resources.live <= initialLive && baseline.resources.retiring === 0,
                 'BrowserSmoke.UnlitRestartRetention: fresh startup retained resources from the previous session.');
+            const baselineCache = record.initial.cache;
+            assert([baselineCache.shaderModuleCacheEntries, baselineCache.shaderModuleCacheKeyBytes,
+                baselineCache.shaderModuleCacheHits, baselineCache.shaderModuleCacheMisses,
+                baselineCache.pipelineCacheEntries].every(Number.isInteger),
+            'BrowserSmoke.UnlitCacheStatistics: native program cache counters are missing.');
             for (const [width, height] of [[640, 384], [512, 512]]) {
+                const resized = { width, height, states: [], statistics: null, comparisons: [], cacheComparison: null };
+                record.resizes.push(resized);
                 const previous = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
                 await page.evaluate(([w, h]) => window.engineMeshDiagnostic.resize(w, h), [width, height]);
                 await waitReady(page, previous, config.timeout);
+                resized.statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
                 for (let index = 0; index < cases.length; index++) {
                     await page.evaluate(value => window.engineMeshDiagnostic.setUnlitCase(value), index);
-                    const state = await page.evaluate(() => window.engineMeshDiagnostic.unlitState());
-                    checkState(state, index, width, height);
-                    assert(state.artifactIdentity === currentCatalog[index],
-                        `BrowserSmoke.UnlitResizeCatalog: case ${index} changed package artifact identity.`);
-                    assert(JSON.stringify({ shaders: state.shaders, pipelines: state.pipelines }) === gpuIdentity,
-                        'BrowserSmoke.UnlitResizePrograms: resizing replaced shader or pipeline identity.');
+                    resized.states.push(await page.evaluate(() => window.engineMeshDiagnostic.unlitState()));
                 }
-                report.unlitMaterials.boards.push(await sampleBoard(page, config.output,
-                    `restart-${lifecycle}-${width}x${height}`, width, height, capturePixels));
-                const statistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+                const currentCache = cacheSnapshot(resized.statistics);
+                resized.cacheComparison = { expected: baselineCache, actual: currentCache };
+                compareStates(resized, width, height, currentCatalog, nativeBaseline);
+                resized.board = await sampleBoard(page, config.output,
+                    `restart-${lifecycle}-${width}x${height}`, width, height, capturePixels,
+                    report.unlitMaterials.boards);
+                resized.postReadbackStatistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+                assertBoard(resized.board);
+                assertComparedStates(resized, width, height);
+                assert(currentCache.shaderModuleCacheEntries === baselineCache.shaderModuleCacheEntries &&
+                    currentCache.shaderModuleCacheKeyBytes === baselineCache.shaderModuleCacheKeyBytes &&
+                    currentCache.shaderModuleCacheMisses === baselineCache.shaderModuleCacheMisses &&
+                    currentCache.pipelineCacheEntries === baselineCache.pipelineCacheEntries &&
+                    currentCache.shaderModuleCacheHits >= baselineCache.shaderModuleCacheHits,
+                'BrowserSmoke.UnlitNativeCacheGrowth: resize created or retained additional native programs.');
+                const statistics = resized.postReadbackStatistics;
                 assert(statistics.resources.live <= baseline.resources.live && statistics.resources.retiring === 0,
                     'BrowserSmoke.UnlitResizeRetention: the resized board retained GPU resources.');
             }
-            report.unlitMaterials.lifecycles.push({ baseline, gpuIdentity,
-                finalStatistics: await page.evaluate(() => window.engineMeshDiagnostic.statistics()) });
+            record.finalStatistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
             await page.locator('#stop').click();
             assert(await page.evaluate(() => window.engineMeshDiagnostic.session === 0 &&
                 window.engineMeshDiagnostic.statistics() === null),

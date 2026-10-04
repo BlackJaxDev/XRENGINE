@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { captureUntil } from './canvas-capture.mjs';
+import { installNativeCompileCapture } from './native-compile-isolation.mjs';
 
 function assert(condition, message) { if (!condition) throw new Error(message); }
 const hasSurface = pixels => pixels.colorfulLeft > 100;
@@ -13,6 +14,7 @@ export async function advancedRenderingGameCheck(browser, origin, report, config
             `advanced-rendering-${iteration}`, config);
         let hadFailure = false;
         try {
+            await page.addInitScript(installNativeCompileCapture);
             await page.addInitScript(() => {
                 const maximumCreationRecords = 128;
                 const stats = { compute: {}, raster: {}, readMappings: 0, creation: {
@@ -158,10 +160,12 @@ export async function advancedRenderingGameCheck(browser, origin, report, config
             // Read the failure event before screenshot or context cleanup can also fail.
             const evidence = await page.evaluate(() => ({
                 failure: globalThis.advancedCanvasFailureEvidence ?? null,
+                nativeCompile: globalThis.advancedNativeCompileSnapshot?.() ?? null,
                 submissions: globalThis.advancedSubmissionSnapshot?.() ?? globalThis.advancedSubmissionEvidence ?? null,
             })).catch(() => null);
             report.advancedRenderingFailures.push({ iteration,
-                failure: evidence?.failure ?? null, submissions: evidence?.submissions ?? null });
+                failure: evidence?.failure ?? null, submissions: evidence?.submissions ?? null,
+                nativeCompile: evidence?.nativeCompile ?? null });
             await page.screenshot({ path: path.join(config.output, `advanced-rendering-${iteration}-failure.png`), fullPage: true }).catch(() => {});
             throw error;
         } finally {

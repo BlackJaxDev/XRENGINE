@@ -99,7 +99,12 @@ scopes, outstanding render/crop pushes, both initial-area policies, and retained
 enclosing regions. Existing extent assertions remain. The Windows job runs
 these checks with the existing FBO-stack, thread-isolation and VulkanP1 checks
 after preserving the browser bundles. Their execution still awaits the updated
-CI commit. The atomic-container exception path is covered by the successful
+CI commit. Run 37207710914 subsequently built and published all three worlds,
+but the unit-test project failed to compile because its existing linked
+RollingBall diagnostics omitted the platform-host interface and registration
+sources. Both existing source files are now linked into that project. The
+ownership tests still await execution; the successful browser checks are not
+a substitute for their result. The atomic-container exception path is covered by the successful
 integrated browser flows, without a new mock renderer unit fixture.
 The corrected RollingBall run establishes successful startup and resize. It
 does not identify the original failing target, because the failing artifact

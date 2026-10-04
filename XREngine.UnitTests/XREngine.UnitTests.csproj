@@ -77,10 +77,12 @@
     <!-- Compile the sample's real gameplay types into the test assembly so
          cooked-world and input regressions do not depend on generated build output. -->
     <Compile Include="..\Samples\RollingBall\Assets\Scripts\IRollingBallGameInputTarget.cs" Link="Games\RollingBall\IRollingBallGameInputTarget.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\IRollingBallPlatformHost.cs" Link="Games\RollingBall\IRollingBallPlatformHost.cs" />
     <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallAction.cs" Link="Games\RollingBall\RollingBallAction.cs" />
     <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallActionSet.cs" Link="Games\RollingBall\RollingBallActionSet.cs" />
     <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallGameComponent.cs" Link="Games\RollingBall\RollingBallGameComponent.cs" />
     <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallGlobalUsings.cs" Link="Games\RollingBall\RollingBallGlobalUsings.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallHostRegistration.cs" Link="Games\RollingBall\RollingBallHostRegistration.cs" />
     <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallPawnComponent.cs" Link="Games\RollingBall\RollingBallPawnComponent.cs" />
     <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallRoundState.cs" Link="Games\RollingBall\RollingBallRoundState.cs" />
     <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallRuntimeDiagnostics.cs" Link="Games\RollingBall\RollingBallRuntimeDiagnostics.cs" />

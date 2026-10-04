@@ -137,7 +137,7 @@ export class GpuCommands {
         const r = this.renderer;
         r._requireOwner();
         if (this.pending.size >= 64) throw new Error('Too many GPU resources are being prepared concurrently.');
-        const device = r.device, owner = r._owner;
+        const device = r.device, owner = r._owner, cache = r.pipelineCache;
         const preparation = { stage, label, owner, startedAt: performance.now(), elapsedMs: null, outcome: 'pending', error: null,
             native: { status: 'pending', settledAfterMs: null, error: null },
             validationScope: { status: 'pending', settledAfterMs: null, error: null },
@@ -182,22 +182,32 @@ export class GpuCommands {
         } catch (error) {
             this.retainPreparationFailure(preparation, error, 'failed');
             r._recordError(error, stage, label);
-            r.pipelineCache?.clear();
+            cache?.clear();
             throw error;
         } finally { clearTimeout(timer); this.pending.delete(cancel); this.preparations.delete(preparation); }
     }
 
     async createShaderModule(wgsl, debugName = '') {
-        this.renderer._requireOwner();
+        const r = this.renderer;
+        r._requireOwner();
         if (typeof wgsl !== 'string' || !wgsl.length || wgsl.length > 1048576) throw new RangeError('WGSL modules require 1 to 1048576 characters.');
         const name = label(debugName);
-        const native = await this.operation(async () => {
-            const module = this.renderer.device.createShaderModule({ code: wgsl, label: name });
+        const device = r.device, owner = r._owner, cache = r.pipelineCache, generation = cache.generation;
+        const create = () => this.operation(async () => {
+            const module = device.createShaderModule({ code: wgsl, label: name });
             const info = await module.getCompilationInfo();
             const errors = info.messages.filter(message => message.type === 'error');
             if (errors.length) throw new Error(errors.map(message => `${name}:${message.lineNum}:${message.linePos}: ${message.message}`).join('\n'));
             return module;
         }, 'create-shader-module', name);
+        const cached = cache.getShaderModuleAsync({ code: wgsl, label: name }, create);
+        // Each waiter retains its own error scopes, timeout, concurrency budget and owner check.
+        const native = await (cached.reused
+            ? this.operation(() => cached.value, 'create-shader-module', name)
+            : cached.value);
+        r._requireOwner();
+        if (r.device !== device || r._owner !== owner || r.pipelineCache !== cache || cache.generation !== generation)
+            throw new Error('Shader module preparation belongs to an obsolete device or cache.');
         return this.publish('shader', { native, label: name, size: wgsl.length });
     }
 

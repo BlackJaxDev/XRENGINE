@@ -68,6 +68,36 @@ resize and a fresh session. It also captures the presented canvas and records
 actual shader/pipeline identities, single-sample target state and resource
 retirement. Case selection chooses which tile's metadata to inspect; it does
 not mutate the scene. This is a CPU-direct, single-sample factory cohort. Its
-new rendered result still awaits exact-commit CI; authored material hydration,
+rendered resize/restart result still awaits exact-commit CI; authored material hydration,
 transparent ordering, custom pipelines, GPU-indirect submission, MSAA and native
 Advanced output retain their separate acceptance requirements.
+
+On `04a61646e2db6461e5b431f0071794395afaac08`,
+[run 37207710914](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37207710914)
+passes all nine initial HDR comparisons and all nine presented-color comparisons
+with zero display-byte error. Both retained initial and failure captures show
+the board. The first resize then fails an overly strict logical-handle identity
+comparison before resized pixel reads and restart can complete. Surface-generation
+replacement correctly publishes fresh logical handles, so this is partial
+acceptance rather than completed resize qualification.
+
+The same investigation found actual redundant compilation: a generation-owned
+tonemap material creates an identical shader module, which changes the native
+pipeline-cache key. A device-local shader-module cache now retains the complete
+validated preparation by exact source and label, while each owner gets its own
+logical handle. It is bounded by 128 entries and 8 MiB of serialized key storage;
+settled entries are evictable, while pending-capacity and oversized sources
+compile uncached without reducing the existing preparation budget. Every waiter
+retains its own timeout, owner checks and validation scopes. Device replacement,
+cache invalidation and failures cannot publish an obsolete result or clear a
+replacement device's cache. Independent Node witnesses exercise the production
+classes for those races, validation/compilation errors, retry and concurrency;
+they do not establish GPU behavior.
+
+The resize diagnostic now compares multisets of actual native shader/pipeline
+identities, preserving duplicate counts, and separately requires cache occupancy
+and misses to remain bounded across resize. Metadata-only case selection still
+requires unchanged logical handles. Prior-session native identities are retained
+weakly and rejected on restart. State, counters and comparison evidence are saved
+before assertions. Every HDR, canvas, extent, retirement and restart requirement
+remains in place for the next exact-commit run.

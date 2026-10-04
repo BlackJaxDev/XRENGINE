@@ -332,4 +332,31 @@ creation counts, settlement times, and shader-module UTF-8 lengths/SHA-256s,
 returning the original WebGPU results without changing arguments or deadlines.
 These records will distinguish a retained native compile from repeated creation
 and compare the running module with the exact cook artifact. The new evidence
-path is source/lifecycle checked; live results remain pending.
+path is source/lifecycle checked; live results are recorded below.
+
+On `04a61646e2db6461e5b431f0071794395afaac08`,
+[run 37207710914](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37207710914)
+recooks all sixteen companions. Their descriptor/source hashes and binding ABI
+match the canonical recipes; the emitted height evaluator retains one sample
+call inside the eight-tap loop. The running native module is exactly 393,523
+bytes with SHA-256
+`fc664a5707065b03f5d33f8ab23061d540de58a13ca51ec1a730f3b65be3a515`,
+matching the retained Windows cook. RollingBall and RenderingParity pass.
+Advanced again reaches the unchanged first-frame deadline with one native
+shading request pending for 36.87 seconds. The other seven compute creations
+finish in 16–304 ms. No scene compute/raster dispatch or read mapping occurs;
+there are 2,669 preparation-only frames and eight texture-preparation command
+buffers. Receipt occupancy peaks at ten of 64, with one remaining pending and
+no capacity failure, resource error or device loss. The actual adapter is
+SwiftShader. These observations exclude repeated native compilation and executed
+scene work in this run, but do not establish native compilation beyond 45 seconds
+or a measured benefit from the height-loop change.
+
+The harness now preserves the real native pipeline descriptor, explicit binding
+layouts, device requirements and module identity for a separate compile-only
+replay after the failed application browser has closed. The fresh browser uses
+the same launch profile and hash-verified published WGSL, with a separate
+45-second native compile limit. It reports identity and timing without shader
+source and cannot turn the application failure into a pass. Focused Node checks
+cover forwarding, hash/capability rejection, error redaction and cleanup; the
+isolated browser result remains pending.

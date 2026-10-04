@@ -49,7 +49,9 @@ two-layer array materials all render together over a discard background. The
 check compares independent known values with real RGBA16F readbacks and canvas
 captures, then repeats after non-square resize and fresh session startup. Case
 selection changes metadata only; the check requires stable package identities,
-GPU programs, CPU-direct mesh submission, and drained resources. This qualifies
+native shader modules and render pipelines across resize, bounded device-local
+program caches, CPU-direct mesh submission, and drained resources. Engine draw
+handles may rebuild with the surface generation. This qualifies
 the static, single-sample default-pipeline cohort; it does not qualify custom
 graphs, MSAA, GPU-driven submission, or authored serialized materials.
 
@@ -308,6 +310,15 @@ presentation. GPU read mappings are counted separately and must remain zero.
 This initial sample selects CPU-direct submission; it does not qualify meshlet,
 deformation, MSAA, desktop comparison or performance by association. The wrappers
 add diagnostic allocations, so this run is not steady-state allocation evidence.
+
+After a failed Advanced application check and successful closure of its browser,
+the harness starts a separate Chromium process with the same launch options.
+It verifies the published native shader against the recorded module hash and
+replays the actual entry point, constants, explicit binding layouts and device
+requirements. This compile-only diagnostic has its own 45-second native compile
+bound and reports identity/timing without retaining shader source. It helps
+distinguish compilation cost from application activity; its result cannot change
+the failed application result or qualify a rendered frame.
 
 The diagnostic's static Core scene host creates no production `RuntimeWorld`,
 never begins play, and requests no physics backend. It validates engine rendering

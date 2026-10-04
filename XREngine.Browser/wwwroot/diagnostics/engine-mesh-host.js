@@ -20,6 +20,9 @@ export class EngineMeshDiagnosticHost {
         this.readyFrames = 0;
         this.settleFrames = 0;
         this.lastReadySession = 0;
+        this.unlitNativeIds = new WeakMap();
+        this.nextUnlitNativeId = 0;
+        this.previousUnlitNatives = new WeakSet();
         this.frame = this.frame.bind(this);
     }
 
@@ -98,6 +101,10 @@ export class EngineMeshDiagnosticHost {
             finally { if (this.creation === creation) this.creation = null; }
             if (controller.signal.aborted || epoch !== this.epoch) { this.exports.Stop(session); return; }
             this.session = session;
+            if (this.kind === 'unlit') {
+                this.unlitNativeIds = new WeakMap();
+                this.nextUnlitNativeId = 0;
+            }
             const renderer = new WebGpuCanvasRenderer(this.canvas,
                 stage => { if (epoch === this.epoch) this.onState(stage); },
                 error => { if (epoch === this.epoch) this.fail(error); },
@@ -199,11 +206,22 @@ export class EngineMeshDiagnosticHost {
     unlitState() {
         if (!this.session || this.kind !== 'unlit') throw new Error('An active engine unlit diagnostic is required.');
         const shaders = [], pipelines = [], hdrTargets = [];
+        const nativeId = native => {
+            if (!native || typeof native !== 'object') throw new Error('An engine Unlit GPU program lacks its native object.');
+            if (this.previousUnlitNatives.has(native))
+                throw new Error('An engine Unlit GPU program survived a fresh device session.');
+            let id = this.unlitNativeIds.get(native);
+            if (!id) {
+                id = ++this.nextUnlitNativeId;
+                this.unlitNativeIds.set(native, id);
+            }
+            return id;
+        };
         this.renderer._resources.slots.forEach((entry, slot) => {
             if (entry?.owner !== this.session) return;
             const identity = { slot, generation: entry.generation, label: entry.value.label ?? '' };
-            if (entry.kind === 'shader') shaders.push(identity);
-            if (entry.kind === 'render-pipeline') pipelines.push(identity);
+            if (entry.kind === 'shader') shaders.push({ ...identity, nativeId: nativeId(entry.value.native) });
+            if (entry.kind === 'render-pipeline') pipelines.push({ ...identity, nativeId: nativeId(entry.value.native) });
             if (entry.kind === 'texture' && entry.value.format === 'rgba16float' && entry.value.label === 'HDRSceneTex')
                 hdrTargets.push({ ...identity, width: entry.value.width, height: entry.value.height,
                     format: entry.value.format, sampleCount: entry.value.sampleCount });
@@ -481,6 +499,12 @@ export class EngineMeshDiagnosticHost {
         if (this.request) cancelAnimationFrame(this.request);
         this.request = 0;
         const session = this.session;
+        if (session && this.kind === 'unlit' && this.renderer) {
+            this.previousUnlitNatives = new WeakSet();
+            for (const entry of this.renderer._resources.slots)
+                if (entry?.owner === session && ['shader', 'render-pipeline'].includes(entry.kind) && entry.value.native)
+                    this.previousUnlitNatives.add(entry.value.native);
+        }
         this.session = 0;
         this.readyFrames = 0;
         this.settleFrames = 0;
