@@ -33,27 +33,30 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
     private readonly bool _shadow;
     private readonly bool _debug;
     private readonly bool _effects;
+    private readonly bool _unlit;
     private XRTexture2D? _texture;
     private bool _disposed;
 
-    public EngineMeshDiagnosticFixture(WebGpuRendererHost renderer, ShaderProgramArtifact artifact, uint width, uint height,
+    public EngineMeshDiagnosticFixture(WebGpuRendererHost renderer, ShaderProgramArtifact? artifact, uint width, uint height,
         ShaderProgramArtifact? tonemapArtifact = null, bool shadow = false, bool debug = false,
-        WebPipelineArtifactCatalog? effectArtifacts = null)
+        WebPipelineArtifactCatalog? effectArtifacts = null, bool unlit = false)
     {
         if (!RuntimeWorkScheduler.IsCallerThread)
             throw new InvalidOperationException("EngineMeshDiagnostic.HostRequired: install the real caller-thread rendering host before constructing the fixture.");
         _ = RuntimeRenderingHostServices.Factories;
-        bool textured = artifact.Pass == "texture-probe";
-        _lit = tonemapArtifact is not null;
+        bool textured = artifact?.Pass == "texture-probe";
+        _unlit = unlit;
+        _lit = tonemapArtifact is not null && !unlit;
         _shadow = shadow;
         _debug = debug;
-        _effects = effectArtifacts is not null;
+        _effects = effectArtifacts is not null && !unlit;
         if (_effects && (shadow || debug))
             throw new ArgumentException("The effects fixture uses its own unshadowed lit scene.", nameof(effectArtifacts));
         if (_shadow && !_lit)
             throw new ArgumentException("A directional shadow fixture requires the cooked HDR presentation artifact.", nameof(tonemapArtifact));
-        if ((_lit ? artifact.Pass != "opaque-forward" : artifact.Pass is not ("depth-probe" or "texture-probe")) ||
-            artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null)
+        if (unlit ? artifact is not null || tonemapArtifact is null || shadow || debug || effectArtifacts is null
+            : artifact is null || ((_lit ? artifact.Pass != "opaque-forward" : artifact.Pass is not ("depth-probe" or "texture-probe")) ||
+            artifact.VertexEntryPoint is null || artifact.FragmentEntryPoint is null))
             throw new ArgumentException("The fixture requires an explicitly cooked engine raster diagnostic artifact.", nameof(artifact));
         _renderer = renderer;
         if (_debug)
@@ -63,123 +66,156 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         if (_shadow)
             RuntimeEngine.Rendering.Settings.ForceMeshSubmissionStrategy = EMeshSubmissionStrategy.CpuDirect;
         using IDisposable suppressWrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
-        if (_lit)
-        {
-            _material = XRMaterial.CreateColorMaterialDeferred(new ColorF4(0.4f, 0.2f, 0.1f, 0.7f));
-            _material.Name = "Mutable standard lit engine surface";
-            _pipeline = new DefaultRenderPipeline { WebTonemapArtifact = tonemapArtifact };
-            if (effectArtifacts is not null)
-                ((DefaultRenderPipeline)_pipeline).BindWebPipelineArtifacts(effectArtifacts);
-        }
-        else
-        {
-            _vertex = new XRShader(EShaderType.Vertex)
-            {
-                Name = artifact.Name + " vertex", SourceLanguage = ShaderSourceLanguage.Slang,
-                EntryPoint = artifact.VertexEntryPoint, CookedArtifact = artifact,
-            };
-            _fragment = new XRShader(EShaderType.Fragment)
-            {
-                Name = artifact.Name + " fragment", SourceLanguage = ShaderSourceLanguage.Slang,
-                EntryPoint = artifact.FragmentEntryPoint, CookedArtifact = artifact,
-            };
-            _material = new XRMaterial(_vertex, _fragment)
-            {
-                Name = artifact.Name, RenderPass = (int)EDefaultRenderPass.OpaqueForward,
-                RenderOptions = new RenderingParameters
-                {
-                    CullMode = ECullMode.None,
-                    ExcludeFromCpuOcclusion = true,
-                    DepthTest = new DepthTest { Enabled = ERenderParamUsage.Enabled, UpdateDepth = true, Function = EComparison.Less },
-                },
-            };
-            _pipeline = new EngineMeshDiagnosticPipeline(_material);
-        }
-        _material.RenderOptions.CullMode = ECullMode.None;
-        _material.RenderOptions.ExcludeFromCpuOcclusion = true;
-        if (textured)
-        {
-            _texture = CreateTexture(0);
-            _material.Textures.Add(_texture);
-        }
-        _mesh = _shadow ? CreateShadowReceiverMesh() : _lit ? new XRMesh(
-            [new Vertex(new Vector3(-0.75f, -0.75f, 0), Vector3.UnitZ),
-             new Vertex(new Vector3(0.75f, -0.75f, 0), Vector3.UnitZ),
-             new Vertex(new Vector3(0.75f, 0.75f, 0), Vector3.UnitZ),
-             new Vertex(new Vector3(-0.75f, 0.75f, 0), Vector3.UnitZ)],
-            new List<ushort> { 0, 1, 2, 0, 2, 3 }) : textured ? new XRMesh(
-            [new Vertex(new Vector3(-0.35f, -0.35f, 0), new Vector2(0, 1)),
-             new Vertex(new Vector3(0.35f, -0.35f, 0), new Vector2(1, 1)),
-             new Vertex(new Vector3(0.35f, 0.35f, 0), new Vector2(1, 0)),
-             new Vertex(new Vector3(-0.35f, 0.35f, 0), new Vector2(0, 0))],
-            new List<ushort> { 0, 1, 2, 0, 2, 3 }) : new XRMesh(
-            [new Vertex(new Vector3(-0.35f, -0.35f, 0)), new Vertex(new Vector3(0.35f, -0.35f, 0)), new Vertex(new Vector3(0, 0.35f, 0))],
-            new List<ushort> { 0, 1, 2 });
-        VisualScene3D visual = new();
-        visual.ApplyRenderDispatchPreference(false);
-        visual.SetBounds(new AABB(new Vector3(-2, -2, -5), new Vector3(2, 2, 1)));
-        _renderWorld = new RuntimeWorldRenderer(_scene, visual);
-        if (_lit)
-        {
-            AddModel(_shadow ? "Directional shadow receiver" : "Standard lit normal quad", new Vector3(0, 0, -2));
-            if (_shadow) InitializeShadowScene();
-            else InitializeLights();
-            if (_debug) InitializeDebugScene();
-            if (_effects) InitializeEffectsScene();
-        }
-        else
-        {
-            AddModel("Near left triangle", new Vector3(-0.45f, 0, -1));
-            AddModel("Far right triangle", new Vector3(0.45f, 0, -3));
-            AddModel("Occluded far left triangle", new Vector3(-0.45f, 0, -3));
-        }
-
-        SceneNode cameraNode = new("Engine mesh diagnostic camera");
-        Transform cameraTransform = cameraNode.SetTransform<Transform>();
-        _scene.RootNodes.Add(cameraNode);
-        XROrthographicCameraParameters parameters = new(2, 2, 0, 4) { InheritAspectRatio = false };
-        parameters.SetOriginCentered();
-        XRCamera camera = new(cameraTransform, parameters)
-        {
-            RenderPipeline = _pipeline,
-        };
-        if (_lit)
-        {
-            ConfigureLitCamera(camera);
-            if (!_shadow) SetLitCase(0);
-            if (_effects) ConfigureEffectsCamera(camera);
-        }
-        if (_debug)
-            camera.CullingMask = LayerMask.Everything;
-        _viewport = new XRViewport(null, width, height)
-        {
-            Camera = camera,
-            WorldInstanceOverride = _renderWorld,
-            AutomaticallyCollectVisible = false,
-            AutomaticallySwapBuffers = false,
-        };
-        _renderer.ClearColor(new ColorF4(0.05f, 0.05f, 0.05f, 1));
-        _renderer.ClearDepth(1);
-        _renderer.BindEngineViewport(_viewport);
-        _scene.SwapBuffers();
-        // Register world publication before the viewport's standard collect/swap
-        // callbacks so this static scene follows the production frame contract.
-        Engine.Time.Timer.CollectVisible += CollectFrame;
-        Engine.Time.Timer.SwapBuffers += SwapFrame;
-        Engine.Time.Timer.RenderFrame += RenderFrame;
         try
         {
-            _viewport.AutomaticallyCollectVisible = true;
-            _viewport.AutomaticallySwapBuffers = true;
-            Engine.Time.Timer.StartCallerThreadLoop();
+            if (_unlit)
+            {
+                _material = XRMaterial.CreateUnlitColorMaterialForward(new ColorF4(1.5f, 0.25f, 0.5f, 0.75f));
+                ConfigureUnlitMaterial(_material, "Unlit HDR color");
+                _pipeline = new DefaultRenderPipeline();
+                ((DefaultRenderPipeline)_pipeline).BindWebTonemapArtifact(tonemapArtifact);
+                ((DefaultRenderPipeline)_pipeline).BindWebPipelineArtifacts(effectArtifacts);
+            }
+            else if (_lit)
+            {
+                _material = XRMaterial.CreateColorMaterialDeferred(new ColorF4(0.4f, 0.2f, 0.1f, 0.7f));
+                _material.Name = "Mutable standard lit engine surface";
+                _pipeline = new DefaultRenderPipeline { WebTonemapArtifact = tonemapArtifact };
+                if (effectArtifacts is not null)
+                    ((DefaultRenderPipeline)_pipeline).BindWebPipelineArtifacts(effectArtifacts);
+            }
+            else
+            {
+                ShaderProgramArtifact rasterArtifact = artifact ?? throw new InvalidOperationException("EngineMeshDiagnostic.ArtifactRequired.");
+                _vertex = new XRShader(EShaderType.Vertex)
+                {
+                    Name = rasterArtifact.Name + " vertex", SourceLanguage = ShaderSourceLanguage.Slang,
+                    EntryPoint = rasterArtifact.VertexEntryPoint, CookedArtifact = rasterArtifact,
+                };
+                _fragment = new XRShader(EShaderType.Fragment)
+                {
+                    Name = rasterArtifact.Name + " fragment", SourceLanguage = ShaderSourceLanguage.Slang,
+                    EntryPoint = rasterArtifact.FragmentEntryPoint, CookedArtifact = rasterArtifact,
+                };
+                _material = new XRMaterial(_vertex, _fragment)
+                {
+                    Name = rasterArtifact.Name, RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+                    RenderOptions = new RenderingParameters
+                    {
+                        CullMode = ECullMode.None,
+                        ExcludeFromCpuOcclusion = true,
+                        DepthTest = new DepthTest { Enabled = ERenderParamUsage.Enabled, UpdateDepth = true, Function = EComparison.Less },
+                    },
+                };
+                _pipeline = new EngineMeshDiagnosticPipeline(_material);
+            }
+            _material.RenderOptions.CullMode = ECullMode.None;
+            _material.RenderOptions.ExcludeFromCpuOcclusion = true;
+            if (textured)
+            {
+                _texture = CreateTexture(0);
+                _material.Textures.Add(_texture);
+            }
+            _mesh = _shadow ? CreateShadowReceiverMesh() : _unlit ? CreateUnlitTileMesh() : _lit ? new XRMesh(
+                [new Vertex(new Vector3(-0.75f, -0.75f, 0), Vector3.UnitZ),
+                 new Vertex(new Vector3(0.75f, -0.75f, 0), Vector3.UnitZ),
+                 new Vertex(new Vector3(0.75f, 0.75f, 0), Vector3.UnitZ),
+                 new Vertex(new Vector3(-0.75f, 0.75f, 0), Vector3.UnitZ)],
+                new List<ushort> { 0, 1, 2, 0, 2, 3 }) : textured ? new XRMesh(
+                [new Vertex(new Vector3(-0.35f, -0.35f, 0), new Vector2(0, 1)),
+                 new Vertex(new Vector3(0.35f, -0.35f, 0), new Vector2(1, 1)),
+                 new Vertex(new Vector3(0.35f, 0.35f, 0), new Vector2(1, 0)),
+                 new Vertex(new Vector3(-0.35f, 0.35f, 0), new Vector2(0, 0))],
+                new List<ushort> { 0, 1, 2, 0, 2, 3 }) : new XRMesh(
+                [new Vertex(new Vector3(-0.35f, -0.35f, 0)), new Vertex(new Vector3(0.35f, -0.35f, 0)), new Vertex(new Vector3(0, 0.35f, 0))],
+                new List<ushort> { 0, 1, 2 });
+            VisualScene3D visual = new();
+            if (_unlit) _unlitVisual = visual;
+            visual.ApplyRenderDispatchPreference(false);
+            visual.SetBounds(new AABB(new Vector3(-2, -2, -5), new Vector3(2, 2, 1)));
+            _renderWorld = new RuntimeWorldRenderer(_scene, visual);
+            if (_unlit)
+                InitializeUnlitScene();
+            else if (_lit)
+            {
+                AddModel(_shadow ? "Directional shadow receiver" : "Standard lit normal quad", new Vector3(0, 0, -2));
+                if (_shadow) InitializeShadowScene();
+                else InitializeLights();
+                if (_debug) InitializeDebugScene();
+                if (_effects) InitializeEffectsScene();
+            }
+            else
+            {
+                AddModel("Near left triangle", new Vector3(-0.45f, 0, -1));
+                AddModel("Far right triangle", new Vector3(0.45f, 0, -3));
+                AddModel("Occluded far left triangle", new Vector3(-0.45f, 0, -3));
+            }
+
+            SceneNode cameraNode = new("Engine mesh diagnostic camera");
+            Transform cameraTransform = cameraNode.SetTransform<Transform>();
+            _scene.RootNodes.Add(cameraNode);
+            XROrthographicCameraParameters parameters = new(2, 2, 0, 4) { InheritAspectRatio = false };
+            parameters.SetOriginCentered();
+            XRCamera camera = new(cameraTransform, parameters)
+            {
+                RenderPipeline = _pipeline,
+            };
+            if (_unlit)
+                ConfigureUnlitCamera(camera);
+            else if (_lit)
+            {
+                ConfigureLitCamera(camera);
+                if (!_shadow) SetLitCase(0);
+                if (_effects) ConfigureEffectsCamera(camera);
+            }
+            if (_debug)
+                camera.CullingMask = LayerMask.Everything;
+            if (_unlit)
+            {
+                _viewport = new XRViewport(null, width, height);
+                _viewport.Camera = camera;
+                _viewport.WorldInstanceOverride = _renderWorld;
+                _viewport.AutomaticallyCollectVisible = false;
+                _viewport.AutomaticallySwapBuffers = false;
+            }
+            else
+            {
+                _viewport = new XRViewport(null, width, height)
+                {
+                    Camera = camera,
+                    WorldInstanceOverride = _renderWorld,
+                    AutomaticallyCollectVisible = false,
+                    AutomaticallySwapBuffers = false,
+                };
+            }
+            _renderer.ClearColor(new ColorF4(0.05f, 0.05f, 0.05f, 1));
+            _renderer.ClearDepth(1);
+            _renderer.BindEngineViewport(_viewport);
+            _scene.SwapBuffers();
+            // Register world publication before the viewport's standard collect/swap
+            // callbacks so this static scene follows the production frame contract.
+            Engine.Time.Timer.CollectVisible += CollectFrame;
+            Engine.Time.Timer.SwapBuffers += SwapFrame;
+            Engine.Time.Timer.RenderFrame += RenderFrame;
+            try
+            {
+                _viewport.AutomaticallyCollectVisible = true;
+                _viewport.AutomaticallySwapBuffers = true;
+                Engine.Time.Timer.StartCallerThreadLoop();
+            }
+            catch (Exception) when (!_unlit)
+            {
+                Engine.Time.Timer.CollectVisible -= CollectFrame;
+                Engine.Time.Timer.SwapBuffers -= SwapFrame;
+                Engine.Time.Timer.RenderFrame -= RenderFrame;
+                _viewport.AutomaticallyCollectVisible = false;
+                _viewport.AutomaticallySwapBuffers = false;
+                throw;
+            }
         }
-        catch
+        catch (Exception) when (_unlit)
         {
-            Engine.Time.Timer.CollectVisible -= CollectFrame;
-            Engine.Time.Timer.SwapBuffers -= SwapFrame;
-            Engine.Time.Timer.RenderFrame -= RenderFrame;
-            _viewport.AutomaticallyCollectVisible = false;
-            _viewport.AutomaticallySwapBuffers = false;
+            CleanupFailedUnlitConstruction();
             throw;
         }
     }
@@ -230,7 +266,8 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         // Step the real caller-thread clock without beginning world play or physics.
         return Engine.Time.Timer.StepFrame(1.0 / 60.0) &&
-            _renderer.IsBackendReplacementFrameReady && ((_shadow || _debug || _effects) ? _renderer.LastEngineMeshDrawCount >= 2 :
+            _renderer.IsBackendReplacementFrameReady && (_unlit ? _renderer.LastEngineMeshDrawCount >= 10 :
+                (_shadow || _debug || _effects) ? _renderer.LastEngineMeshDrawCount >= 2 :
                 _renderer.LastEngineMeshDrawCount == (_lit ? 2 : 3)) &&
             (!_shadow || ShadowFrameReady());
     }
@@ -257,6 +294,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             (_shadow ? $"shadow requests={_directional?.StandaloneShadowRenderRequestCount}; shadow passes={_directional?.StandaloneShadowRenderPassCount}; shadow casters={_directional?.PrimaryShadowCasterCount}; {GetShadowRenderStatus()}; " : "") +
             (_debug ? $"debug callbacks={RuntimeEngine.Rendering.Debug.LastDebugDrawComponentCallbackCount}; case={_debugCase}; " : "") +
             (_effects ? $"effects case={_effectsCase}; AO target={pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.WebGtaoFinalTextureName) is not null}; bloom target={pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.WebBloomCombinedTextureName) is not null}; " : "") +
+            (_unlit ? $"unlit case={_unlitCase}; " : "") +
             $"pipeline decline={pipeline.LastRenderDeclineReason ?? "none"}; " +
             $"resource failure={pipeline.LastResourceGenerationFailure ?? "none"}.";
     }
@@ -277,6 +315,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         _mesh.Destroy();
         DisposeShadowScene();
         DisposeEffectsScene();
+        DisposeUnlitScene();
         _material.Destroy();
         _texture?.Destroy();
         _vertex?.Destroy();

@@ -36,6 +36,7 @@ export class EngineCanvasHost {
         this.firstFrameSeconds = 0;
         this.recoveryAttempts = 0;
         this.recoveryDiagnostics = [];
+        this.failure = null;
         this.frame = this.frame.bind(this);
     }
 
@@ -43,6 +44,7 @@ export class EngineCanvasHost {
         const epoch = ++this.epoch;
         await this.stop(false);
         if (epoch !== this.epoch) return;
+        this.failure = null;
         const prior = canvasOwners.get(this.canvas);
         if (prior && prior !== this) throw new Error('The engine canvas already has an owner.');
         canvasOwners.set(this.canvas, this);
@@ -290,6 +292,33 @@ export class EngineCanvasHost {
             return;
         }
         this.failed = true;
+        // Keep one cold snapshot before managed failure handling and stop retire the renderer.
+        // Diagnostics are bounded records; never place shader source in a page event.
+        const capture = read => { try { return read(); } catch { return null; } };
+        this.failure = capture(() => {
+            const diagnostics = capture(() => renderer?.getFailureDiagnostics() ?? null);
+            if (diagnostics?.resourcePreparation?.pending?.length > 64) {
+                diagnostics.resourcePreparation.pendingCount = diagnostics.resourcePreparation.pending.length;
+                diagnostics.resourcePreparation.pending = diagnostics.resourcePreparation.pending.slice(0, 64);
+            }
+            const capabilities = capture(() => renderer?.getCapabilities() ?? null);
+            const adapterInfo = capture(() => renderer?.device?.adapterInfo ?? null);
+            return {
+                message: String(error?.message ?? error).slice(0, 2048),
+                stack: String(error?.stack ?? '').slice(0, 4096),
+                session: this.session,
+                renderer: diagnostics,
+                statistics: capture(() => renderer?.getStatistics() ?? null),
+                adapter: { identity: adapterInfo ? {
+                    vendor: String(adapterInfo.vendor ?? '').slice(0, 128),
+                    architecture: String(adapterInfo.architecture ?? '').slice(0, 128),
+                    device: String(adapterInfo.device ?? '').slice(0, 128),
+                    description: String(adapterInfo.description ?? '').slice(0, 256),
+                } : null, features: capabilities?.features ?? null, limits: capabilities?.limits ?? null },
+            };
+        });
+        try { this.canvas.dispatchEvent(new CustomEvent('xrengine-canvas-failed', { bubbles: true, detail: this.failure })); }
+        catch (snapshotError) { console.error('Engine canvas failure evidence unavailable:', snapshotError); }
         console.error(error);
         this.engine.CanvasRendererFailed(this.session, renderer?.isDeviceLost ?? false);
         const message = `Engine canvas failed: ${error.message ?? error}`;

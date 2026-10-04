@@ -4,6 +4,7 @@ using System.Text.Json;
 using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Rendering.Shaders.Generation;
 using XREngine.Rendering.WebGPU;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Scene.Physics;
@@ -21,6 +22,8 @@ public static partial class EngineMeshDiagnosticExports
     private static ShaderProgramArtifact? _tonemapArtifact;
     private static bool _shadow;
     private static bool _debug;
+    private static bool _unlit;
+    private static EngineMaterialVariantCatalog? _unlitVariants;
     private static WebPipelineArtifactCatalog? _effectArtifacts;
     private static IDisposable? _materialConstruction;
     private static EngineMeshDiagnosticFixture? _fixture;
@@ -43,6 +46,11 @@ public static partial class EngineMeshDiagnosticExports
     [JSExport]
     public static Task<int> CreateAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl)
         => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, null, null, null, null, null);
+
+    /// <summary>Starts the fixed ordinary-unlit board from the package's verified material and pipeline catalogs.</summary>
+    [JSExport]
+    public static Task<int> CreateUnlitAsync(string canvasId, string assetManifestUrl)
+        => CreateCoreAsync(canvasId, assetManifestUrl, null, null, null, null, null, null, null, unlit: true);
 
     [JSExport]
     public static Task<int> CreateLitAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
@@ -73,9 +81,9 @@ public static partial class EngineMeshDiagnosticExports
     private sealed record DebugShaderInputs(string PointDescriptor, string PointSource,
         string LineDescriptor, string LineSource, string TriangleDescriptor, string TriangleSource);
 
-    private static async Task<int> CreateCoreAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
+    private static async Task<int> CreateCoreAsync(string canvasId, string assetManifestUrl, string? descriptorJson, string? wgsl,
         string? tonemapDescriptorJson, string? tonemapWgsl, string? shadowDepthDescriptorJson, string? shadowDepthWgsl,
-        DebugShaderInputs? debugSources, bool effects = false)
+        DebugShaderInputs? debugSources, bool effects = false, bool unlit = false)
     {
         if (_session != 0)
             throw new InvalidOperationException("EngineMeshDiagnostic.AlreadyActive: stop the existing diagnostic session first.");
@@ -91,14 +99,14 @@ public static partial class EngineMeshDiagnosticExports
                 throw new InvalidOperationException("EngineMeshDiagnostic.AlreadyActive: stop the existing diagnostic session first.");
             EnsureCurrentCreation(requestedEpoch, cancellation.Token);
             ownsStartup = true;
-            ShaderProgramArtifact artifact = ShaderProgramArtifactReader.Read(
-                Encoding.UTF8.GetBytes(descriptorJson), Encoding.UTF8.GetBytes(wgsl));
+            ShaderProgramArtifact? artifact = unlit ? null : ShaderProgramArtifactReader.Read(
+                Encoding.UTF8.GetBytes(descriptorJson!), Encoding.UTF8.GetBytes(wgsl!));
             bool lit = tonemapDescriptorJson is not null && tonemapWgsl is not null;
             bool shadow = shadowDepthDescriptorJson is not null && shadowDepthWgsl is not null;
             bool debug = debugSources is not null;
-            if (effects && (artifact.Name != "engine-standard-lit-color" || !lit || shadow || debug))
+            if (effects && (artifact?.Name != "engine-standard-lit-color" || !lit || shadow || debug))
                 throw new InvalidDataException("EngineMeshDiagnostic.EffectArtifactsRequired: select the standard lit surface and tonemap artifacts.");
-            if (lit ? artifact.Pass != "opaque-forward" : artifact.Pass is not ("depth-probe" or "texture-probe"))
+            if (!unlit && (lit ? artifact?.Pass != "opaque-forward" : artifact?.Pass is not ("depth-probe" or "texture-probe")))
                 throw new InvalidDataException("EngineMeshDiagnostic.ArtifactRequired: select a cooked engine raster diagnostic artifact.");
             ShaderProgramArtifact? tonemap = lit ? ShaderProgramArtifactReader.Read(
                 Encoding.UTF8.GetBytes(tonemapDescriptorJson!), Encoding.UTF8.GetBytes(tonemapWgsl!)) : null;
@@ -106,7 +114,7 @@ public static partial class EngineMeshDiagnosticExports
                 throw new InvalidDataException("EngineMeshDiagnostic.TonemapRequired: select the cooked engine tonemap artifact.");
             ShaderProgramArtifact? shadowDepth = shadow ? ShaderProgramArtifactReader.Read(
                 Encoding.UTF8.GetBytes(shadowDepthDescriptorJson!), Encoding.UTF8.GetBytes(shadowDepthWgsl!)) : null;
-            if (shadow && (artifact.Name != "engine-standard-lit-color-directional-shadow" ||
+            if (shadow && (artifact?.Name != "engine-standard-lit-color-directional-shadow" ||
                 shadowDepth?.Name != "engine-shadow-depth" || shadowDepth.Pass != "depth" || tonemap is null))
                 throw new InvalidDataException("EngineMeshDiagnostic.ShadowArtifactsRequired: select exact cooked receiver, depth writer, and tonemap artifacts.");
             ShaderProgramArtifact? point = debug ? ShaderProgramArtifactReader.Read(
@@ -115,7 +123,7 @@ public static partial class EngineMeshDiagnosticExports
                 Encoding.UTF8.GetBytes(debugSources!.LineDescriptor), Encoding.UTF8.GetBytes(debugSources.LineSource)) : null;
             ShaderProgramArtifact? triangle = debug ? ShaderProgramArtifactReader.Read(
                 Encoding.UTF8.GetBytes(debugSources!.TriangleDescriptor), Encoding.UTF8.GetBytes(debugSources.TriangleSource)) : null;
-            if (debug && (artifact.Name != "engine-standard-lit-color" || tonemap is null ||
+            if (debug && (artifact?.Name != "engine-standard-lit-color" || tonemap is null ||
                 point?.Name != "engine-debug-point" || point.Pass != "debug-overlay" ||
                 line?.Name != "engine-debug-line" || line.Pass != "debug-overlay" ||
                 triangle?.Name != "engine-debug-triangle" || triangle.Pass != "debug-overlay"))
@@ -153,7 +161,7 @@ public static partial class EngineMeshDiagnosticExports
             _renderer = (WebGpuRendererHost)_catalog.CreateRequired(RuntimeGraphicsApiKind.WebGPU,
                 new RendererBackendCreateContext(_target));
             stage = "bind shader artifact";
-            List<ShaderProgramArtifact> cookedArtifacts = [artifact];
+            List<ShaderProgramArtifact> cookedArtifacts = artifact is null ? [] : [artifact];
             if (tonemap is not null) cookedArtifacts.Add(tonemap);
             if (shadowDepth is not null) cookedArtifacts.Add(shadowDepth);
             if (point is not null) cookedArtifacts.Add(point);
@@ -167,7 +175,7 @@ public static partial class EngineMeshDiagnosticExports
                 [
                     new(new EngineMaterialVariantKey(EngineMaterialSemanticIdentity.StandardLitColorV1,
                         ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "static-position-normal-v1",
-                        shadow ? "linear-hdr-directional-shadow-v1" : "linear-hdr-v1"), artifact.Identity),
+                        shadow ? "linear-hdr-directional-shadow-v1" : "linear-hdr-v1"), artifact!.Identity),
                 ];
                 if (shadowDepth is not null)
                     entries.Add(new(new EngineMaterialVariantKey(EngineMaterialSemanticIdentity.OpaqueShadowDepthV1,
@@ -194,7 +202,7 @@ public static partial class EngineMeshDiagnosticExports
                 EngineMaterialVariantKey litKey = new(EngineMaterialSemanticIdentity.StandardLitColorV1,
                     ShaderCompileTarget.WebGPUWgsl, "opaque-forward", "static-position-normal-v1", "linear-hdr-v1");
                 if (!variants.TryResolve(litKey, out ShaderProgramArtifact? packagedLit) ||
-                    packagedLit.Identity != artifact.Identity ||
+                    packagedLit.Identity != artifact!.Identity ||
                     !effectArtifacts.TryResolve("tonemap", out ShaderProgramArtifact? packagedTonemap) ||
                     packagedTonemap.Identity != tonemap!.Identity)
                     throw new InvalidDataException("EngineMeshDiagnostic.EffectCatalogMismatch: the verified package must own the selected material and tonemap identities.");
@@ -203,11 +211,36 @@ public static partial class EngineMeshDiagnosticExports
                     if (!effectArtifacts.TryResolve(pass, out _))
                         throw new InvalidDataException($"EngineMeshDiagnostic.EffectPassMissing: {pass}.");
             }
+            if (unlit)
+            {
+                stage = "load verified unlit catalog";
+                artifacts = await _assetSource.LoadShaderArtifactsAsync(cancellation.Token);
+                EnsureCurrentCreation(requestedEpoch, cancellation.Token);
+                variants = _assetSource.LoadEngineMaterialVariants(artifacts);
+                effectArtifacts = _assetSource.LoadPipelineArtifacts(artifacts);
+                tonemap = _assetSource.LoadTonemapArtifact(artifacts)
+                    ?? throw new InvalidDataException("EngineMeshDiagnostic.UnlitTonemapMissing.");
+                foreach (EngineMaterialSemanticIdentity semantic in new[]
+                {
+                    EngineMaterialSemanticIdentity.UnlitColorV1,
+                    EngineMaterialSemanticIdentity.UnlitTextureV2,
+                    EngineMaterialSemanticIdentity.UnlitOpaqueTextureV3,
+                    EngineMaterialSemanticIdentity.UnlitAlphaTextureV4,
+                    EngineMaterialSemanticIdentity.UnlitTextureArraySliceV5,
+                })
+                {
+                    if (!variants.TryResolve(EngineUnlitMaterialShaderGenerator.BuiltInKey(semantic), out _) ||
+                        !variants.TryResolve(EngineUnlitMaterialShaderGenerator.CompanionKey(semantic, "depth-normal"), out _))
+                        throw new InvalidDataException($"EngineMeshDiagnostic.UnlitVariantMissing: {semantic}.");
+                }
+            }
             _renderer.BindShaderArtifacts(artifacts, variants);
             _artifact = artifact;
             _tonemapArtifact = tonemap;
             _shadow = shadow;
             _debug = debug;
+            _unlit = unlit;
+            _unlitVariants = unlit ? variants : null;
             _effectArtifacts = effectArtifacts;
             _session = checked(++_nextSession);
             return _session;
@@ -263,8 +296,10 @@ public static partial class EngineMeshDiagnosticExports
             stage = "initialize renderer";
             _renderer.Initialize();
             stage = "construct engine fixture";
-            _fixture = new EngineMeshDiagnosticFixture(_renderer, _artifact!, checked((uint)width), checked((uint)height),
-                _tonemapArtifact, _shadow, _debug, _effectArtifacts);
+            _fixture = new EngineMeshDiagnosticFixture(_renderer, _artifact, checked((uint)width), checked((uint)height),
+                _tonemapArtifact, _shadow, _debug, _effectArtifacts, _unlit);
+            if (_unlit)
+                _fixture.BindUnlitVariantIdentities(_unlitVariants!);
         }
         catch (Exception error)
         {
@@ -333,6 +368,20 @@ public static partial class EngineMeshDiagnosticExports
     {
         RequireSession(session);
         return (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).GetLitState();
+    }
+
+    [JSExport]
+    public static void SetUnlitCase(int session, int sampleCase)
+    {
+        RequireSession(session);
+        (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).SetUnlitCase(sampleCase);
+    }
+
+    [JSExport]
+    public static string GetUnlitState(int session)
+    {
+        RequireSession(session);
+        return (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).GetUnlitState();
     }
 
     [JSExport]
@@ -450,6 +499,8 @@ public static partial class EngineMeshDiagnosticExports
         _tonemapArtifact = null;
         _shadow = false;
         _debug = false;
+        _unlit = false;
+        _unlitVariants = null;
         _effectArtifacts = null;
         _session = 0;
         if (failures is { Count: > 0 })

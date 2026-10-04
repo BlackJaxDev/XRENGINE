@@ -213,15 +213,19 @@ float3 XR_ADV_AuthoredTexturedNormal(uint word, XRAdvancedSurface surface)
     {
         float2 texel = 1.0 / float2(XR_ADV_Texture2DDimensions(reference));
         float2 uv = surface.texCoord0;
+        // Keep one texture-bank sampling call site when this evaluator is
+        // expanded for surfaces and decals. Skip the unused center tap.
+        float heights[8];
+        [loop]
+        for (int tap = 0; tap < 8; ++tap)
+        {
+            int grid = tap + (tap >= 4 ? 1 : 0);
+            float2 offset = float2(grid % 3 - 1, grid / 3 - 1) * texel;
+            heights[tap] = XR_ADV_AuthoredHeightSample(reference, uv + offset, surface);
+        }
         sample = authoredTexturedSobelNormal(
-            XR_ADV_AuthoredHeightSample(reference, uv + float2(-texel.x, -texel.y), surface),
-            XR_ADV_AuthoredHeightSample(reference, uv + float2(0.0, -texel.y), surface),
-            XR_ADV_AuthoredHeightSample(reference, uv + float2(texel.x, -texel.y), surface),
-            XR_ADV_AuthoredHeightSample(reference, uv + float2(-texel.x, 0.0), surface),
-            XR_ADV_AuthoredHeightSample(reference, uv + float2(texel.x, 0.0), surface),
-            XR_ADV_AuthoredHeightSample(reference, uv + float2(-texel.x, texel.y), surface),
-            XR_ADV_AuthoredHeightSample(reference, uv + float2(0.0, texel.y), surface),
-            XR_ADV_AuthoredHeightSample(reference, uv + float2(texel.x, texel.y), surface), controls.y);
+            heights[0], heights[1], heights[2], heights[3],
+            heights[4], heights[5], heights[6], heights[7], controls.y);
     }
     else sample = authoredTexturedRgbNormal(XR_ADV_SampleTexture2DGrad(reference,
         surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy).rgb);

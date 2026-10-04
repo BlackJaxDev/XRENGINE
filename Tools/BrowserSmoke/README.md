@@ -9,6 +9,11 @@ game result. This keeps Editor CLI execution and GPU qualification
 on runners that provide their required capabilities; the game is not republished
 or rewritten on Linux. The separate Linux engine-regression job remains intact.
 
+After saving the three browser bundles, the Windows job runs targeted
+RenderingState, FBO-binding, thread-isolation, and existing VulkanP1
+ownership checks, with their TRX results retained separately. The Linux game
+pixel jobs still consume the unchanged saved bundles.
+
 This is production-path qualification tooling. It serves an already published
 browser application and cooked shader artifacts, launches real Chromium, and
 checks the actual engine-rendered pixels. It neither mocks WebGPU nor replaces
@@ -37,12 +42,27 @@ recheck HDR/display pixels, and require retired GPU resources to drain without
 live-count growth before teardown. This establishes the bounded static rendering path, separately
 from RuntimeWorld/gameplay, shadows, probes, transparency and broader effects.
 
+The `engine-unlit-materials` check starts a separate nine-tile board through the
+packaged material and pipeline catalogs. Factory-created V1 color, V2 linear and
+sRGB texture, V3 forced-opaque texture, V4 cutoff-boundary texture, and V5
+two-layer array materials all render together over a discard background. The
+check compares independent known values with real RGBA16F readbacks and canvas
+captures, then repeats after non-square resize and fresh session startup. Case
+selection changes metadata only; the check requires stable package identities,
+GPU programs, CPU-direct mesh submission, and drained resources. This qualifies
+the static, single-sample default-pipeline cohort; it does not qualify custom
+graphs, MSAA, GPU-driven submission, or authored serialized materials.
+
 The `engine-shared-gtao-bloom` check runs the static effects diagnostic through
 the real WebGPU default pipeline. It reads prepass depth and normal, GTAO stages,
 raw HDR, bloom mips and the combined target, then changes camera effects and
 authored mesh face coverage. Tiny and odd resizes plus stop/restart exercise
-resource generations. This check requires a package manifest containing the
-exact cooked pipeline artifacts and reports failures separately from the
+resource generations. Once two accepted ready frames have been observed and
+retired GPU resources have drained, the diagnostic holds its own frame pump
+during each effects pixel sample, including the canvas capture, then resumes it
+before the next change. The report records duration and frame and submit deltas.
+This check requires a package manifest containing the exact cooked pipeline
+artifacts and reports failures separately from the
 authored RollingBall world-play check.
 
 The separate `rollingball-editor-published-game` check mounts the unmodified
