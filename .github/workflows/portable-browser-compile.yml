@@ -409,10 +409,9 @@ jobs:
           $project = Join-Path $env:VALIDATION_ROOT 'ui-parity-cli/project'
           if (Test-Path -LiteralPath $project) { throw 'The UI CLI project must start empty.' }
           New-Item -ItemType Directory -Path $project -Force | Out-Null
-          foreach ($name in @('BrowserUiParity.xrproj', 'Assets')) {
+          foreach ($name in @('BrowserUiParity.xrproj', 'Assets', 'Config')) {
             Copy-Item -LiteralPath (Join-Path 'Samples/BrowserUiParity' $name) -Destination $project -Recurse
           }
-          New-Item -ItemType Directory -Path (Join-Path $project 'Config') | Out-Null
           $shaders = Join-Path $project 'Assets/Shaders'
           New-Item -ItemType Directory -Path $shaders -Force | Out-Null
           Copy-Item -LiteralPath (Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU') -Destination $shaders -Recurse

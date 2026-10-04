@@ -82,7 +82,8 @@ async function sampleStage(page, stage, config, capturePixels) {
         const host = window.engineMeshDiagnostic;
         const token = host.pauseUnlitFrames();
         return { token, session: host.session, readyFrames: host.readyFrames,
-            frameSubmitCalls: host.statistics().frameSubmitCalls, startedAt: performance.now() };
+            frameSubmitCalls: host.statistics().frameSubmitCalls, startedAt: performance.now(),
+            nativeEvidence: globalThis.indirectSnapshot?.() ?? null };
     });
     let samplingFailed = false;
     try {
@@ -107,7 +108,8 @@ async function sampleStage(page, stage, config, capturePixels) {
             stage.centers.push({ index, expectedHdr: cases[index].hdr,
                 expectedDisplay: samples[index].expected, hdr, display: stage.display.samples[index] });
         }
-        stage.witness = await page.evaluate(() => window.engineMeshDiagnostic.readUnlitWitness());
+        stage.witness = stage.profile.endsWith('x4') || stage.profile === 'cpu-x4-ao'
+            ? await page.evaluate(() => window.engineMeshDiagnostic.readUnlitWitness()) : null;
         stage.ao = {};
         if (stage.profile === 'cpu-x4-ao') {
             for (const name of aoNames) {
@@ -129,7 +131,8 @@ async function sampleStage(page, stage, config, capturePixels) {
                 try {
                     result = { sessionUnchanged: host.session === session, pausedMs: performance.now() - startedAt,
                         readyFramesDelta: host.readyFrames - readyFrames,
-                        frameSubmitCallsDelta: (host.statistics()?.frameSubmitCalls ?? 0) - frameSubmitCalls };
+                        frameSubmitCallsDelta: (host.statistics()?.frameSubmitCalls ?? 0) - frameSubmitCalls,
+                        nativeEvidence: globalThis.indirectSnapshot?.() ?? null };
                 } finally { resumed = host.resumeUnlitFrames(token); }
                 return { ...result, resumed };
             }, stage.pause);
@@ -141,14 +144,14 @@ async function sampleStage(page, stage, config, capturePixels) {
     }
 }
 
-function assertCenters(stage) {
+function assertCenters(stage, submission = 'CpuDirect') {
     assert(stage.display.width === stage.width && stage.display.height === stage.height,
         `BrowserSmoke.UnlitMsaaCanvasExtent: ${stage.label} captured the wrong extent.`);
     for (const center of stage.centers) {
         const { index, hdr, display: visible } = center;
         const expected = cases[index];
         const state = stage.states[index];
-        assert(state.sampleCase === index && state.pipeline === 'DefaultRenderPipeline' && state.submission === 'CpuDirect' &&
+        assert(state.sampleCase === index && state.pipeline === 'DefaultRenderPipeline' && state.submission === submission &&
             state.target === 'HDRSceneTex' && state.blend === 'disabled' &&
             state.sampleU === coordinates[index % 3] && state.sampleV === coordinates[Math.floor(index / 3)],
         `BrowserSmoke.UnlitMsaaMaterialState: case ${index} changed its producer or fixed board position.`);
@@ -454,8 +457,9 @@ function compareWarmStage(stage, initial, previous) {
     assert(same(stage.states[0].source, initial.states[0].source) &&
         stage.states[0].pipelineInstanceId === initial.states[0].pipelineInstanceId,
     'BrowserSmoke.UnlitMsaaResizeSource: resize replaced the authored source or physical output owner.');
-    for (const label of ['HDRSceneTex', 'WebMsaaHdrTexture', 'WebMsaaDepthTexture',
-        ...(stage.profile === 'cpu-x4-ao' ? sidecarNames : [])]) {
+    for (const label of stage.profile === 'gpu-indirect-x1' ? ['HDRSceneTex', 'DepthStencil'] :
+        ['HDRSceneTex', 'WebMsaaHdrTexture', 'WebMsaaDepthTexture',
+            ...(stage.profile === 'cpu-x4-ao' ? sidecarNames : [])]) {
         const oldTarget = previous.states[0].targets.find(target => target.label === label);
         const target = stage.states[0].targets.find(target => target.label === label);
         assert(oldTarget.slot !== target.slot || oldTarget.generation !== target.generation,
@@ -538,4 +542,251 @@ export async function unlitMsaaCheck(browser, origin, report, config, instrument
         await page.screenshot({ path: path.join(config.output, 'engine-unlit-msaa-failure.png'), fullPage: true }).catch(() => {});
         throw error;
     } finally { await context.close(); }
+}
+
+function installIndirectEvidence() {
+    const counts = { readMaps: 0, computeDispatches: 0, indexedIndirectDraws: 0 };
+    globalThis.indirectSnapshot = () => ({ ...counts });
+    const mapAsync = GPUBuffer.prototype.mapAsync;
+    GPUBuffer.prototype.mapAsync = function (mode, ...args) {
+        if ((mode & GPUMapMode.READ) !== 0) counts.readMaps++;
+        return mapAsync.call(this, mode, ...args);
+    };
+    const dispatch = GPUComputePassEncoder.prototype.dispatchWorkgroups;
+    GPUComputePassEncoder.prototype.dispatchWorkgroups = function (...args) {
+        const result = dispatch.apply(this, args);
+        counts.computeDispatches++;
+        return result;
+    };
+    const draw = GPURenderPassEncoder.prototype.drawIndexedIndirect;
+    GPURenderPassEncoder.prototype.drawIndexedIndirect = function (...args) {
+        const result = draw.apply(this, args);
+        counts.indexedIndirectDraws++;
+        return result;
+    };
+}
+
+function assertIndirectProfile(stage) {
+    const state = stage.states[0], x4 = stage.profile === 'gpu-indirect-x4';
+    const sampleCount = x4 ? 4 : 1;
+    const requiredTargets = [['HDRSceneTex', 'rgba16float', 1],
+        ...(x4 ? [['WebMsaaHdrTexture', 'rgba16float', 4], ['WebMsaaDepthTexture', 'depth32float', 4]] :
+            [['DepthStencil', 'depth32float', 1]])];
+    stage.profileComparison = { expected: { executionProfile: stage.profile,
+        submission: 'GpuIndirectZeroReadback', sampleCount, width: stage.width, height: stage.height,
+        targets: requiredTargets }, actual: { executionProfile: state.executionProfile,
+        submission: state.submission, indexedSubmission: state.indexedSubmission,
+        source: state.source, camera: state.camera, committed: state.committed,
+        resourceGeneration: state.resourceGeneration, targets: state.targets } };
+    assert(state.executionProfile === stage.profile && state.pipeline === 'DefaultRenderPipeline' &&
+        state.submission === 'GpuIndirectZeroReadback' &&
+        state.indexedSubmission?.strategy === 'GpuIndirectZeroReadback' &&
+        state.indexedSubmission.reason?.startsWith('Ready') &&
+        state.source?.type === 'DefaultRenderPipeline' && state.source.id != null &&
+        state.source.cameraOwnsSource && state.source.instanceOwnsSource && state.source.committedOwnsSource &&
+        state.pipelineInstanceId != null && state.renderDraws >= 10 &&
+        !state.pipelineDecline && !state.resourceFailure,
+    'BrowserSmoke.UnlitIndirectSelection: the live Default source did not select successful GPU indexed submission.');
+    assert(state.camera?.antiAliasing === (x4 ? 'Msaa' : 'None') &&
+        state.camera.sampleCount === sampleCount && state.camera.aoEnabled === false &&
+        state.camera.reversedDepth === false && state.committed?.pipeline === 'DefaultRenderPipeline' &&
+        state.committed.antiAliasing === (x4 ? 'Msaa' : 'None') &&
+        state.committed.sampleCount === sampleCount && state.committed.width === stage.width &&
+        state.committed.height === stage.height && state.committed.displayWidth === stage.width &&
+        state.committed.displayHeight === stage.height && state.committed.outputHdr === false &&
+        state.committed.stereo === false &&
+        Number.isSafeInteger(state.resourceGeneration) && state.resourceGeneration > 0,
+    'BrowserSmoke.UnlitIndirectGeneration: the committed output does not match the selected profile and extent.');
+    for (const [label, format, samples] of requiredTargets) {
+        const matches = state.targets.filter(target => target.label === label);
+        assert(matches.length === 1 && matches[0].format === format &&
+            matches[0].sampleCount === samples && matches[0].nativeSampleCount === samples &&
+            matches[0].width === stage.width && matches[0].height === stage.height,
+        `BrowserSmoke.UnlitIndirectTarget: ${label} has the wrong native profile.`);
+    }
+    assert(!state.targets.some(target => sidecarNames.includes(target.label) &&
+            (x4 || target.label !== 'DepthStencil')) &&
+        (x4 || !state.targets.some(target => target.label.startsWith('WebMsaa'))) &&
+        state.shaders.length >= 6 && state.pipelines.length >= 6 &&
+        [...state.shaders, ...state.pipelines].every(program => Number.isInteger(program.nativeId) && program.nativeId > 0),
+    'BrowserSmoke.UnlitIndirectResources: the selected profile has missing native programs or unexpected sidecars.');
+    for (const other of stage.states)
+        assert(other.executionProfile === state.executionProfile && same(other.source, state.source) &&
+            same(other.camera, state.camera) && same(other.committed, state.committed) &&
+            same(other.indexedSubmission, state.indexedSubmission) &&
+            other.pipelineInstanceId === state.pipelineInstanceId &&
+            same(other.targets, state.targets) && other.resourceGeneration === state.resourceGeneration &&
+            same(other.submittedFrame, state.submittedFrame),
+        'BrowserSmoke.UnlitIndirectMetadataMutation: selecting a tile changed the submitted frame.');
+    const frame = state.submittedFrame, operations = frame?.operations ?? [];
+    const attached = (operation, label, key = 'view') => operation.attachments.some(binding =>
+        binding.key === key && binding.label === label);
+    const sampled = (operation, label) => operation.sampledTextures.some(binding => binding.label === label);
+    const indirect = operation => operation.type === 'render' &&
+        operation.raster?.scissorSuppressesDraw === false && operation.raster?.rasterAreaEmpty === false &&
+        operation.drawEvidence.some(item => item.type === 'drawIndexedIndirect' && item.issued && item.issuedCalls > 0);
+    const colorTarget = x4 ? 'WebMsaaHdrTexture' : 'HDRSceneTex';
+    const sceneRasters = operations.filter(operation => operation.type === 'render' &&
+        attached(operation, colorTarget) && operation.drawEvidence.length > 0);
+    const color = sceneRasters.filter(indirect);
+    const select = operations.filter(operation => operation.type === 'compute' &&
+        operation.label === 'engine-meshlets-select-lod 0 compute' &&
+        operation.pipeline === 'engine-meshlets-select-lod');
+    const cull = operations.filter(operation => operation.type === 'compute' &&
+        operation.label === 'engine-indirect-cull-primitive 0 compute' &&
+        operation.pipeline === 'engine-indirect-cull-primitive');
+    const resolve = operations.filter(operation => attached(operation, 'HDRSceneTex', 'resolveTarget'));
+    const presentation = operations.filter(operation => operation.type === 'render' &&
+        attached(operation, 'canvas') && sampled(operation, 'HDRSceneTex') &&
+        operation.raster?.rasterAreaEmpty === false && operation.drawEvidence.length > 0 &&
+        operation.drawEvidence.every(item => ['draw', 'drawIndexed'].includes(item.type) &&
+            item.issued && item.effective === true && item.issuedCalls > 0 &&
+            item.geometryCount > 0 && item.instanceCount > 0));
+    const issuedColorCalls = color.reduce((sum, operation) => sum + operation.drawEvidence.reduce((count, item) =>
+        count + (item.type === 'drawIndexedIndirect' && item.issued ? item.issuedCalls : 0), 0), 0);
+    stage.execution = { sequence: frame?.sequence, records: frame?.records,
+        select: select.map(operation => operation.record), cull: cull.map(operation => operation.record),
+        color: color.map(operation => operation.record), resolve: resolve.map(operation => operation.record),
+        presentation: presentation.map(operation => operation.record), issuedColorCalls };
+    assert(Number.isSafeInteger(frame?.sequence) && frame.sequence > 0 && frame.records === operations.length &&
+        select.length > 0 && cull.length > 0 && color.length > 0 &&
+        color.length === sceneRasters.length && issuedColorCalls >= 10 && presentation.length > 0 &&
+        Math.min(...color.map(operation => operation.record)) > Math.min(...select.map(operation => operation.record)) &&
+        Math.min(...color.map(operation => operation.record)) > Math.min(...cull.map(operation => operation.record)) &&
+        color.every(operation => operation.sampleCount === sampleCount &&
+            attached(operation, x4 ? 'WebMsaaDepthTexture' : 'DepthStencil') &&
+            operation.drawEvidence.every(item => item.type === 'drawIndexedIndirect' && item.issued &&
+                item.issuedCalls > 0 && item.effective === null && item.geometryCount === null &&
+                item.instanceCount === null)) &&
+        operations.every(operation => operation.pipeline !== 'engine-authored-rank-sources' &&
+            operation.pipeline !== 'engine-authored-mask-ranked-arguments' &&
+            !operation.label?.startsWith('engine-authored-rank-sources ') &&
+            !operation.label?.startsWith('engine-authored-mask-ranked-arguments ')),
+    'BrowserSmoke.UnlitIndirectPacket: require GPU LOD/cull and indexed-indirect scene draws without opaque-pass ordering work.');
+    if (x4)
+        assert(resolve.length === 1 && resolve[0].sampleCount === 4 &&
+            attached(resolve[0], 'WebMsaaHdrTexture') &&
+            Math.max(...color.map(operation => operation.record)) < resolve[0].record &&
+            presentation.every(operation => operation.record > resolve[0].record && operation.sampleCount === 1),
+        'BrowserSmoke.UnlitIndirectResolve: x4 scene output did not resolve before presentation.');
+    else
+        assert(resolve.length === 0 && presentation.every(operation => operation.sampleCount === 1 &&
+            operation.record > Math.max(...color.map(item => item.record))),
+        'BrowserSmoke.UnlitIndirectX1Route: x1 scene output did not feed presentation.');
+}
+
+function assertIndirectStatistics(stage, normalStart) {
+    const before = stage.pause.nativeEvidence, after = stage.sampling.nativeEvidence;
+    const statistics = stage.postReadbackStatistics;
+    stage.mapAccounting = { normalStart: normalStart.readMaps, beforeCopies: before?.readMaps,
+        afterCopies: after?.readMaps, expectedCopies: stage.profile === 'gpu-indirect-x4' ? 10 : 9 };
+    assert(before && after && before.readMaps === normalStart.readMaps &&
+        before.computeDispatches > normalStart.computeDispatches &&
+        before.indexedIndirectDraws > normalStart.indexedIndirectDraws &&
+        after.readMaps - before.readMaps === stage.mapAccounting.expectedCopies &&
+        after.computeDispatches === before.computeDispatches &&
+        after.indexedIndirectDraws === before.indexedIndirectDraws &&
+        stage.sampling.sessionUnchanged && stage.sampling.resumed &&
+        stage.sampling.readyFramesDelta === 0 && stage.sampling.frameSubmitCallsDelta === 0,
+    'BrowserSmoke.UnlitIndirectReadMaps: ordinary frames mapped GPU reads or paused diagnostic copies were misattributed.');
+    assert(statistics.frameSubmitCalls > 0 && statistics.engineFrame.submittedFrames > 0 &&
+        statistics.engineFrame.draws >= 10 && statistics.packets === 0 &&
+        statistics.focusedPipeline === null && !statistics.lastPacketFailure &&
+        statistics.resources.retiring === 0 && statistics.resources.readbackTickets === 0 &&
+        statistics.resources.readbackResidentBytes === 0,
+    'BrowserSmoke.UnlitIndirectStatistics: frame submission or resource lifetime is incomplete.');
+    assert(Object.values(stage.cache).every(value => Number.isInteger(value) && value >= 0) &&
+        stage.cache.shaderModuleCacheEntries > 0 && stage.cache.pipelineCacheEntries > 0,
+    'BrowserSmoke.UnlitIndirectCache: native shader or pipeline cache counters are missing.');
+    const scopes = statistics.engineFrame.errorScopes;
+    assert(scopes && ['validationErrors', 'outOfMemoryErrors', 'rejectedScopes', 'obsoleteErrors', 'capacityFailures']
+        .every(key => scopes[key] === 0), 'BrowserSmoke.UnlitIndirectGpuErrors: an engine frame reported a GPU error.');
+}
+
+export async function unlitIndirectCheck(browser, origin, report, config, instrumentedPage, capturePixels, assertNoBrowserErrors) {
+    report.unlitIndirect = { scope: 'DefaultRenderPipeline GpuIndirectZeroReadback indexed x1/x4', profiles: [] };
+    for (const profile of ['gpu-indirect-x1', 'gpu-indirect-x4']) {
+        const qualification = { profile, lifecycles: [] };
+        report.unlitIndirect.profiles.push(qualification);
+        let catalog, startupLive;
+        for (let lifecycle = 0; lifecycle < 2; lifecycle++) {
+            const { page, context, events } = await instrumentedPage(browser, origin, report,
+                `engine-unlit-${profile}-${lifecycle}`, config);
+            const record = { lifecycle, stages: [] };
+            qualification.lifecycles.push(record);
+            let failed = false;
+            try {
+                await page.addInitScript(installIndirectEvidence);
+                await page.goto(`${origin}/diagnostics/engine-mesh.html?probe=unlit&assets=${encodeURIComponent(`${origin}${config.engineManifest}`)}`,
+                    { waitUntil: 'domcontentloaded' });
+                await page.waitForFunction(() => window.engineMeshDiagnostic !== undefined);
+                await page.locator('#execution-profile').selectOption(profile);
+                let normalStart = await page.evaluate(() => window.indirectSnapshot());
+                assert(normalStart.readMaps === 0,
+                    'BrowserSmoke.UnlitIndirectInitialMaps: GPU reads were mapped before the engine session started.');
+                await page.evaluate(({ assets, selected }) => window.engineMeshDiagnostic.start(null, assets,
+                    'engine-unlit-materials', selected), { assets: `${origin}${config.engineManifest}`, selected: profile });
+                for (const [width, height] of [[512, 512], [640, 384], [512, 512]]) {
+                    const index = record.stages.length;
+                    const stage = { profile, width, height,
+                        previousGeneration: index > 0 ? record.stages[index - 1].states[0].resourceGeneration : null,
+                        label: `engine-unlit-${profile}-${lifecycle}-${index}-${width}x${height}` };
+                    record.stages.push(stage);
+                    const before = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
+                    if (index > 0) await page.evaluate(([w, h]) => window.engineMeshDiagnostic.resize(w, h), [width, height]);
+                    await waitReady(page, before, config.timeout, stage);
+                    await sampleStage(page, stage, config, capturePixels);
+                    assertCenters(stage, 'GpuIndirectZeroReadback');
+                    assertIndirectProfile(stage);
+                    if (profile === 'gpu-indirect-x4') assertWitness(stage);
+                    else assert(stage.witness === null && stage.states[0].witness === null,
+                        'BrowserSmoke.UnlitIndirectX1Witness: single-sample profile unexpectedly has a gutter witness.');
+                    assertIndirectStatistics(stage, normalStart);
+                    if (index > 0) compareWarmStage(stage, record.stages[0], record.stages[index - 1]);
+                    else {
+                        assert(stage.postReadbackStatistics.resources.live <=
+                            (startupLive ?? stage.postReadbackStatistics.resources.live) &&
+                            (catalog === undefined || same(catalog, stage.catalogIdentities)),
+                        'BrowserSmoke.UnlitIndirectRestart: startup retained resources or changed cooked variants.');
+                        startupLive ??= stage.postReadbackStatistics.resources.live;
+                        catalog ??= stage.catalogIdentities;
+                    }
+                    await waitReady(page, stage.pause.readyFrames, config.timeout, stage);
+                    stage.resumedStatistics = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
+                    stage.resumedNativeEvidence = await page.evaluate(() => window.indirectSnapshot());
+                    assert(stage.resumedStatistics.frameSubmitCalls > stage.postReadbackStatistics.frameSubmitCalls &&
+                        stage.resumedNativeEvidence.readMaps === stage.sampling.nativeEvidence.readMaps,
+                    'BrowserSmoke.UnlitIndirectResume: resumed frames made a GPU read mapping or failed to submit.');
+                    normalStart = stage.resumedNativeEvidence;
+                }
+                record.teardown = await page.evaluate(async () => {
+                    const host = window.engineMeshDiagnostic, renderer = host.renderer, session = host.session;
+                    await host.stop();
+                    return { session: host.session, statistics: host.statistics(), request: host.request,
+                        rendererRegistered: host.renderers.has(session), released: renderer.getStatistics(),
+                        nativeEvidence: window.indirectSnapshot() };
+                });
+                assert(record.teardown.session === 0 && record.teardown.statistics === null &&
+                    record.teardown.request === 0 && !record.teardown.rendererRegistered &&
+                    record.teardown.released.resources.live === 0 &&
+                    record.teardown.released.resources.retiring === 0 &&
+                    record.teardown.released.resources.readbackTickets === 0 &&
+                    record.teardown.released.resources.shaderModuleCacheEntries === 0 &&
+                    record.teardown.released.resources.pipelineCacheEntries === 0 &&
+                    record.teardown.nativeEvidence.readMaps === normalStart.readMaps,
+                'BrowserSmoke.UnlitIndirectTeardown: session, native programs or GPU read maps survived stop.');
+                assertNoBrowserErrors(events);
+            } catch (error) {
+                failed = true;
+                record.failure = await page.evaluate(() => window.engineMeshDiagnostic?.failure ?? null).catch(() => null);
+                record.assertion = String(error);
+                await page.screenshot({ path: path.join(config.output, `engine-unlit-${profile}-${lifecycle}-failure.png`),
+                    fullPage: true }).catch(() => {});
+                throw error;
+            } finally {
+                try { await context.close(); }
+                catch (error) { record.cleanupFailure = String(error); if (!failed) throw error; }
+            }
+        }
+    }
 }

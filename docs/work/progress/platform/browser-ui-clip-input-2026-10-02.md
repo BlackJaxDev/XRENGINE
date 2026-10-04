@@ -312,3 +312,13 @@ activation can update an already-built child text color while notifications are
 suppressed, leaving the desktop material uniform stale. WebGPU batching reads
 the current color directly. That older desktop material refresh path is not
 changed by this bounded owner/activation repair.
+
+On `e2c47497`, the genuine Editor publisher gets past world type/component
+loading and stops at strict default-font admission. The fixture had no
+`Config/engine_defaults.asset`; normal project loading therefore cloned the
+engine's Roboto Medium default, while the declared browser default bitmap
+profile requires Roboto Regular. The fixture now explicitly selects Regular
+through that existing typed settings asset, and staging copies Config with
+the other authored inputs. The publisher guard, engine-wide default, font
+source/license and bitmap cooking algorithm are unchanged. Successful normal
+cook and browser interaction still require the next exact-commit run.

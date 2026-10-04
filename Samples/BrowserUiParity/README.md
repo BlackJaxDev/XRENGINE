@@ -54,14 +54,17 @@ Serve that generated site through the existing browser player workflow. Do not
 point a harness at the raw source `.asset` or fabricate a cooked manifest.
 
 Keep the checkout's ordinary `Build/CommonAssets` tree available to the Editor.
+The tracked `Config/engine_defaults.asset` explicitly selects Roboto Regular;
+the normal Editor project loader applies it before loading and cooking the world.
+Copy `Config` alongside `Assets` and the `.xrproj` when staging this sample.
 The actual font path is `Build/CommonAssets/Fonts/Roboto/Roboto-Regular.ttf`,
 with `Build/CommonAssets/Fonts/Roboto/LICENSE.txt`. `PrepareBrowserUiFonts`
 discovers the authored `UITextComponent` nodes; `CookBrowserDefaultUiFont`
 uses the existing FreeType cooking rasterizer to produce the bitmap atlas and
 metrics. The publisher packages `/engine/Fonts/Roboto/Roboto-Regular.cooked.asset`
 as an essential asset plus `licenses/Roboto-LICENSE.txt`. Browser startup preloads
-that font before activating text. Keep the default UI font configured to this
-canonical Roboto source and 128-pixel layout em. This sample does not change the
+that font before activating text. The selected source retains the canonical
+128-pixel bitmap layout em. This sample does not change the
 separately pending installed-Editor CommonAssets packaging layout.
 
 ## Browser observation and interaction contract
@@ -149,7 +152,11 @@ text fields. Do not infer glyph acceptance from solid rectangle pixels alone.
 This sample is source-staged. Managed build, Editor load/save/cook, complete
 browser publication, GPU pixels, interaction, restart/resource retirement and
 desktop captures remain pending in an environment with .NET and a browser.
-No test was added or run as a substitute for those live gates.
+The normal Editor run on `e2c47497` gets past world type/component loading and
+stops at its default-font admission: without a project settings file it inherited
+Roboto Medium. The explicit Regular setting and matching staged Config copy
+correct that input. Successful cook, complete publication and browser interaction
+remain pending; source review is not a substitute for those live gates.
 
 Source review found a normal-publishing gap: desktop `UIMaterialComponent`
 defaults create `UnlitColoredForward.fs` with UI state, which the scene-material

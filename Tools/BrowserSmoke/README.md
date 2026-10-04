@@ -66,9 +66,10 @@ enabled-only depth/normal resolve and GTAO stages. Grouped diagnostic copies
 pause that fixture's frame pump, then resume it before the next change. Both
 profiles exercise non-square resize, restoration and fresh-session restart.
 This is Default CPU-direct coverage; custom pipelines and GPU submission modes
-retain separate checks. On `5e42251`, both no-AO x4 sessions pass their initial,
-resized and restored captures. The AO profile stops at a WGSL comparison-argument
-parse error in its depth/normal resolve; that syntax is corrected for the next run.
+retain separate checks. On `e2c47497`, both x4 profiles pass their initial,
+resized and restored captures across two start/stop cycles per profile, including
+coherent depth/normal resolution and GTAO. The earlier comparison-argument parse
+error is fixed without changing the selected depth sample.
 
 The same diagnostic page also exposes `gpu-indirect-x1` and `gpu-indirect-x4`
 for the ordinary authored indexed route. These select managed
@@ -78,8 +79,17 @@ starting **Unlit materials**; `unlitState()` reports the requested strategy and
 the actual indexed submission strategy/reason. The JavaScript renderer's legacy
 packet strategy is separate from these engine-frame commands. GPU qualification
 must inspect actual indirect work, rendered values and visibility/count readback
-activity; selecting the profile alone does not establish acceptance. The current
-automated Unlit checks still exercise the CPU profiles.
+activity; selecting the profile alone does not establish acceptance.
+
+The separate `engine-unlit-indirect` check reuses the known-value centers and x4
+coverage witness with two fresh contexts per GPU profile and the same three
+extents. Managed strategy, actual LOD/cull compute operations, indirect scene
+draw issuance and direct canvas presentation are checked independently. Native
+READ-map counters remain cumulative: ordinary startup/render/resize intervals
+must add zero maps, while paused diagnostic sampling must account for exactly
+nine maps at x1 or ten at x4. Source-ranked transparency and GPU-visible argument
+counts are not inferred from this opaque/masked scene. Existing CPU assertions
+remain unchanged. This newly reviewed check awaits live execution.
 
 The `engine-shared-gtao-bloom` check runs the static effects diagnostic through
 the real WebGPU default pipeline. It reads prepass depth and normal, GTAO stages,

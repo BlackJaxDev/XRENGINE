@@ -444,4 +444,15 @@ helpers while also changing a ten-case gradient texture bank to nine cases.
 A faster result would narrow the cause to that combined difference, not identify
 one helper; two timeouts would remain censored observations. The diagnostic is
 not material or image acceptance and cannot turn the real application failure
-into a pass. Execution of this comparison remains pending.
+into a pass.
+
+The comparison executes successfully as a diagnostic on `e2c47497` in
+[run 37222890374](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37222890374).
+The restored 381,715-byte native control and the exact 349,410-byte Uber consumer
+both remain pending at their 45-second native creation deadlines. Their module
+information completes without errors in 151.6 ms and 124.6 ms respectively.
+The full Uber schema/layout checks pass, the two isolated backends match, and
+both device/context/browser cleanup sequences finish. This rules out that
+combined helper/bank reduction as sufficient to meet the current limit; it does
+not establish equal total compile time or identify a remaining compiler stage.
+The real Advanced application still fails its first-frame deadline.

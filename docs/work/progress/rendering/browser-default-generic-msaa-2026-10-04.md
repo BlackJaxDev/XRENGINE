@@ -152,3 +152,35 @@ is manufactured. The separate legacy browser packet strategy is unchanged.
 These connections have source and JavaScript checks; managed compilation and
 browser indirect output remain pending. Existing automated CPU cases continue
 to select their original profiles, and no additional acceptance row is closed.
+
+The Linux job of
+[run 37222890374](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37222890374)
+on `e2c47497` now passes the complete diagnostic suite, including both CPU x4
+profiles. Twelve captures across two starts per profile and initial/non-square/
+restored extents pass all 108 known-value center comparisons. Maximum HDR
+component error is 0.00022978 and display-byte error is zero. The overlap has
+319 or 402 fractional pixels according to extent, with zero coverage mismatches.
+The AO profile verifies twelve prepass draws, one coherent depth/normal resolve,
+and all three ordered GTAO operations. Its sampled AO spans approximately
+0.7803–0.9429 at 512×512 and 0.7891–0.9424 at 640×384. Its fifteen native modules
+and 59 cached pipeline entries retain identity through resize; sampled live
+resources remain 274 with zero retiring resources and drained readback tickets.
+The no-AO profile retains six modules, 24 pipeline entries and 143 live resources,
+with no unused sidecar/AO operations. The non-square AO restart image was viewed.
+
+This closes only the bounded Default CPU x4 opaque/masked acceptance leaf.
+GPU-indirect x4, custom framebuffer graphs, blended transparent coverage and
+unavailable-profile rejection remain explicit acceptance requirements.
+
+The next separately labelled `engine-unlit-indirect` check reuses the existing
+sample/lifetime helpers for GPU x1/x4, with independent managed selection,
+LOD/cull dispatch and indexed-indirect issuance observations. It permits direct
+presentation but rejects any direct scene draw mixed into the indirect result.
+Actual GPU argument counts remain unknown; the nine material centers and x4
+overlap supply output evidence. A monotonic READ-map counter starts before page
+navigation and records zero increases in ordinary frame/resize intervals, with
+exactly nine or ten maps attributed to each paused diagnostic-copy interval.
+The current opaque/masked source does not select transparent rank/mask work,
+so no source/primitive-order result is inferred. Independent source review,
+JavaScript syntax and diff checks pass; live execution of this added check is
+still pending.
