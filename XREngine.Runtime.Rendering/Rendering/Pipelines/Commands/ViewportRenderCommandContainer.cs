@@ -20,6 +20,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private static readonly object FactorySync = new();
         private static readonly Dictionary<Type, Func<ViewportRenderCommand>> CommandFactories = [];
         private static int _structureNotificationSuppressionDepth;
+        private readonly List<(VPRC_UnbindFBO Command, XRFrameBuffer? FrameBuffer,
+            IDisposable? TargetScope, bool Write)> _savedFrameBufferBindings = new();
 
         /// <summary>
         /// Gets the list of registered command types that can be created by this container.
@@ -433,6 +435,36 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
+            if (AbstractRenderer.Current?.RequiresAtomicFrameAuthoring != true)
+            {
+                ExecuteCommands(instance);
+                return;
+            }
+
+            int savedBindingCount = _savedFrameBufferBindings.Count;
+            bool executionStarted = false;
+            try
+            {
+                SaveOccupiedFrameBufferBindings();
+                executionStarted = true;
+                ExecuteCommands(instance);
+            }
+            finally
+            {
+                if (_savedFrameBufferBindings.Count > savedBindingCount)
+                {
+                    try
+                    {
+                        if (executionStarted)
+                            UnwindFrameBufferBindings(_commands.Count - 1);
+                    }
+                    finally { RestoreSavedFrameBufferBindings(savedBindingCount); }
+                }
+            }
+        }
+
+        private void ExecuteCommands(XRRenderPipelineInstance instance)
+        {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("ViewportRenderCommandContainer.EnsureResourcesAllocated"))
                 EnsureResourcesAllocated(instance);
 
@@ -457,7 +489,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                     // rejection receipt cannot protect the browser output from a partial
                     // frame, so preserve the original exception and abort recording.
                     if (AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
+                    {
+                        UnwindFrameBufferBindings(i);
                         throw;
+                    }
                     // Device loss is already diagnosed by the backend. Continuing the
                     // pipeline only turns the remaining commands into redundant
                     // descriptor/resource exceptions and delays renderer recovery.
@@ -481,6 +516,61 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
             }
         }
+
+        private void SaveOccupiedFrameBufferBindings()
+        {
+            // Authored commands are shared. A recursive invocation needs separate
+            // acquired bindings even when its bind command is skipped this time.
+            for (int i = 0; i < _commands.Count; i++)
+            {
+                if (_commands[i] is not ViewportStateRenderCommand<VPRC_UnbindFBO> binding)
+                    continue;
+                VPRC_UnbindFBO pop = binding.PopCommand;
+                if (pop.FrameBuffer is null && pop.RenderTargetScope is null)
+                    continue;
+                _savedFrameBufferBindings.Add((pop, pop.FrameBuffer, pop.RenderTargetScope, pop.Write));
+                pop.FrameBuffer = null;
+                pop.RenderTargetScope = null;
+            }
+        }
+
+        private void RestoreSavedFrameBufferBindings(int savedBindingCount)
+        {
+            for (int i = _savedFrameBufferBindings.Count - 1; i >= savedBindingCount; i--)
+            {
+                var saved = _savedFrameBufferBindings[i];
+                saved.Command.FrameBuffer = saved.FrameBuffer;
+                saved.Command.RenderTargetScope = saved.TargetScope;
+                saved.Command.Write = saved.Write;
+            }
+            _savedFrameBufferBindings.RemoveRange(savedBindingCount,
+                _savedFrameBufferBindings.Count - savedBindingCount);
+        }
+
+        private void UnwindFrameBufferBindings(int lastCommandIndex)
+        {
+            // A bind command can defer during its auto-clear after both the native
+            // binding and logical target scope have been installed. Nested containers
+            // unwind themselves; only this container's entered bindings belong here.
+            for (int i = lastCommandIndex; i >= 0; i--)
+            {
+                if (_commands[i] is not ViewportStateRenderCommand<VPRC_UnbindFBO> binding ||
+                    binding.PopCommand.FrameBuffer is null && binding.PopCommand.RenderTargetScope is null)
+                    continue;
+
+                try { binding.PopCommand.UnwindBinding(); }
+                catch (Exception restoreFailure)
+                {
+                    // Continue releasing outer bindings without replacing the original
+                    // command failure, including an asynchronous preparation request.
+                    Debug.RenderingWarning(
+                        "[RenderDiag] Framebuffer scope restoration after command failure failed. Command={0} Error={1}",
+                        _commands[i].GetType().Name,
+                        restoreFailure.Message);
+                }
+            }
+        }
+
         public void CollectVisible()
         {
             for (int i = 0; i < _collectVisibleCommands.Count; i++)

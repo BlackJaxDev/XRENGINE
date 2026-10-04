@@ -322,7 +322,8 @@ public sealed partial class XRRenderPipelineInstance
             int sceneDepth = _renderingScenes.Count;
             int cameraDepth = _renderingCameras.Count;
             int renderAreaDepth = _renderRegionStack.Count;
-            int mainAreaDepth = _mainAttributeRenderAreaPushed.Count;
+            int cropAreaDepth = _cropRegionStack.Count;
+            int mainAreaDepth = _mainAttributeRenderAreaDepths.Count;
             try
             {
                 RenderFrameViewSet? capturedViews = camera is null
@@ -370,7 +371,9 @@ public sealed partial class XRRenderPipelineInstance
                 // renderer's global viewport/scissor tracker. Deferred Vulkan recording can
                 // run while collection is building the next frame, so mutating that tracker
                 // here would let a collection viewport leak into an unrelated mesh draw.
-                _mainAttributeRenderAreaPushed.Push(applyRenderArea && PushInitialMainRenderArea(viewport, target));
+                if (applyRenderArea)
+                    PushInitialMainRenderArea(viewport, target);
+                _mainAttributeRenderAreaDepths.Push((renderAreaDepth, cropAreaDepth));
 
                 return StateObject.New(PopMainAttributesAction, this);
             }
@@ -388,16 +391,22 @@ public sealed partial class XRRenderPipelineInstance
                 while (_renderingViewports.Count > viewportDepth) _renderingViewports.Pop();
                 while (_renderingScenes.Count > sceneDepth) _renderingScenes.Pop();
                 while (_renderingCameras.Count > cameraDepth) _renderingCameras.Pop();
-                while (_mainAttributeRenderAreaPushed.Count > mainAreaDepth) _mainAttributeRenderAreaPushed.Pop();
+                while (_mainAttributeRenderAreaDepths.Count > mainAreaDepth) _mainAttributeRenderAreaDepths.Pop();
                 while (_renderRegionStack.Count > renderAreaDepth) PopRenderArea();
+                while (_cropRegionStack.Count > cropAreaDepth) PopCropArea();
                 throw;
             }
         }
 
         public void PopMainAttributes()
         {
-            if (_mainAttributeRenderAreaPushed.Count > 0 && _mainAttributeRenderAreaPushed.Pop())
-                PopRenderArea();
+            if (_mainAttributeRenderAreaDepths.TryPop(out var areaDepths))
+            {
+                // Atomic backends can abort before queued pop commands execute.
+                // Release only this invocation's regions, retaining any enclosing scope.
+                while (_renderRegionStack.Count > areaDepths.Render) PopRenderArea();
+                while (_cropRegionStack.Count > areaDepths.Crop) PopCropArea();
+            }
 
             if (WindowViewport is not null)
                 _renderingViewports.Pop();
@@ -446,7 +455,7 @@ public sealed partial class XRRenderPipelineInstance
             LastVisibilityContentPolicy = ViewBatchContentPolicy.Exact;
         }
 
-        private readonly Stack<bool> _mainAttributeRenderAreaPushed = new();
+        private readonly Stack<(int Render, int Crop)> _mainAttributeRenderAreaDepths = new();
 
         private bool PushInitialMainRenderArea(XRViewport? viewport, XRFrameBuffer? target)
         {
