@@ -2,6 +2,7 @@ using System.Buffers;
 using System.IO.Compression;
 using System.Numerics;
 using System.Text;
+using K4os.Compression.LZ4;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -12,7 +13,10 @@ namespace XREngine.Core.Files;
 internal static class PublishedFontGlyphSetCodec
 {
     private const uint Magic = 0x21464758; // XGF! in little-endian byte order.
-    private const int Version = 2;
+    private const int BrotliVersion = 2;
+    private const int Version = 3;
+    private const byte RawMipEncoding = 0;
+    private const byte Lz4MipEncoding = 1;
     private const int MaxGlyphCount = 65536;
     private const int MaxAtlasDimension = 8192;
     private const int MaxAtlasBytes = 64 * 1024 * 1024;
@@ -64,10 +68,13 @@ internal static class PublishedFontGlyphSetCodec
         foreach (Mipmap2D mip in atlas.Mipmaps)
         {
             byte[] bytes = mip.Data?.GetBytes() ?? throw new InvalidDataException("Cooked bitmap atlas has a missing mip payload.");
-            byte[] compressed = new byte[BrotliEncoder.GetMaxCompressedLength(bytes.Length)];
-            if (!BrotliEncoder.TryCompress(bytes, compressed, out int compressedLength, quality: 5, window: 22))
+            byte[] compressed = new byte[LZ4Codec.MaximumOutputSize(bytes.Length)];
+            int compressedLength = LZ4Codec.Encode(bytes, compressed, LZ4Level.L00_FAST);
+            if (compressedLength <= 0)
                 throw new InvalidDataException("Cooked bitmap atlas mip compression failed.");
-            if (stream.Length + sizeof(uint) * 2 + sizeof(int) * 5 + compressedLength > MaxPayloadBytes)
+            bool useLz4 = compressedLength < bytes.Length;
+            int encodedLength = useLz4 ? compressedLength : bytes.Length;
+            if (stream.Length + sizeof(uint) * 2 + sizeof(int) * 5 + sizeof(byte) + encodedLength > MaxPayloadBytes)
                 throw new InvalidDataException("Cooked bitmap font exceeds the browser payload limit.");
             writer.Write(mip.Width);
             writer.Write(mip.Height);
@@ -75,8 +82,10 @@ internal static class PublishedFontGlyphSetCodec
             writer.Write((int)mip.PixelFormat);
             writer.Write((int)mip.PixelType);
             writer.Write(bytes.Length);
-            writer.Write(compressedLength);
-            writer.Write(compressed.AsSpan(0, compressedLength));
+            writer.Write(useLz4 ? Lz4MipEncoding : RawMipEncoding);
+            writer.Write(encodedLength);
+            ReadOnlySpan<byte> encoded = useLz4 ? compressed.AsSpan(0, compressedLength) : bytes;
+            writer.Write(encoded);
         }
         writer.Flush();
         if (stream.Length > MaxPayloadBytes)
@@ -91,8 +100,13 @@ internal static class PublishedFontGlyphSetCodec
             throw new InvalidDataException("Cooked bitmap font exceeds the portable payload limit.");
         using MemoryStream stream = new(payload, writable: false);
         using BinaryReader reader = new(stream, Utf8, leaveOpen: true);
-        if (reader.ReadUInt32() != Magic || reader.ReadInt32() != Version)
+        if (reader.ReadUInt32() != Magic)
             throw new InvalidDataException("Unsupported cooked bitmap font format or version.");
+        int version = reader.ReadInt32();
+        if (version is not (BrotliVersion or Version))
+            throw new InvalidDataException("Unsupported cooked bitmap font format or version.");
+        if (version == BrotliVersion && OperatingSystem.IsBrowser())
+            throw new NotSupportedException("BrowserFont.CookedV2RequiresRecook: Brotli-compressed cooked bitmap fonts must be republished for the browser.");
         EFontAtlasType atlasType = (EFontAtlasType)reader.ReadInt32();
         float distanceRange = reader.ReadSingle();
         float distanceRangeMiddle = reader.ReadSingle();
@@ -144,22 +158,39 @@ internal static class PublishedFontGlyphSetCodec
             EPixelFormat pixelFormat = (EPixelFormat)reader.ReadInt32();
             EPixelType pixelType = (EPixelType)reader.ReadInt32();
             int byteCount = reader.ReadInt32();
-            int compressedLength = reader.ReadInt32();
+            byte encoding = version == Version ? reader.ReadByte() : byte.MaxValue;
+            int encodedLength = reader.ReadInt32();
             long expectedBytes = (long)Math.Max(1u, width >> level) * Math.Max(1u, height >> level);
             if (mipWidth != Math.Max(1u, width >> level) || mipHeight != Math.Max(1u, height >> level) ||
                 internalFormat != EPixelInternalFormat.R8 || pixelFormat != EPixelFormat.Red ||
                 pixelType != EPixelType.UnsignedByte || byteCount != expectedBytes ||
-                (totalMipBytes += byteCount) > MaxAtlasBytes || compressedLength < 1 ||
-                compressedLength > MaxPayloadBytes || compressedLength > stream.Length - stream.Position)
+                (totalMipBytes += byteCount) > MaxAtlasBytes || encodedLength < 1 ||
+                encodedLength > MaxPayloadBytes || encodedLength > stream.Length - stream.Position ||
+                (version == Version && encoding is not (RawMipEncoding or Lz4MipEncoding)))
                 throw new InvalidDataException($"Invalid cooked bitmap atlas mip {level}.");
             byte[] bytes = new byte[byteCount];
-            ReadOnlySpan<byte> compressed = payload.AsSpan((int)stream.Position, compressedLength);
-            using BrotliDecoder decoder = new();
-            OperationStatus status = decoder.Decompress(compressed, bytes,
-                out int consumed, out int written);
-            if (status != OperationStatus.Done || consumed != compressedLength || written != byteCount)
-                throw new InvalidDataException($"Invalid cooked bitmap atlas mip {level} compression.");
-            stream.Position += compressedLength;
+            ReadOnlySpan<byte> encoded = payload.AsSpan((int)stream.Position, encodedLength);
+            if (version == BrotliVersion)
+            {
+                using BrotliDecoder decoder = new();
+                OperationStatus status = decoder.Decompress(encoded, bytes,
+                    out int consumed, out int written);
+                if (status != OperationStatus.Done || consumed != encodedLength || written != byteCount)
+                    throw new InvalidDataException($"Invalid cooked bitmap atlas mip {level} compression.");
+            }
+            else if (encoding == RawMipEncoding)
+            {
+                if (encodedLength != byteCount)
+                    throw new InvalidDataException($"Invalid cooked bitmap atlas mip {level} raw length.");
+                encoded.CopyTo(bytes);
+            }
+            else
+            {
+                if (encodedLength > LZ4Codec.MaximumOutputSize(byteCount) ||
+                    LZ4Codec.Decode(encoded, bytes) != byteCount)
+                    throw new InvalidDataException($"Invalid cooked bitmap atlas mip {level} LZ4 data.");
+            }
+            stream.Position += encodedLength;
             mipPayloads[level] = bytes;
         }
         if (stream.Position != stream.Length)

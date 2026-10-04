@@ -429,9 +429,13 @@ mip generation. Unsupported clipped, rotated-glyph, textured/custom UI and
 non-screen canvas profiles remain visible errors rather than dropped draws.
 
 Canonical Roboto is cooked with the existing FreeType leaf, preserving all 893
-glyphs, their metrics, and twelve R8 mip levels. The bounded Brotli codec
-round-trips every byte in a 952,658-byte registry payload; the final publisher
-still enforces its 4 MiB asset cap. Default text fonts are explicitly packaged,
+glyphs, their metrics, and twelve R8 mip levels. The original version 2 Brotli
+codec round-tripped every byte in a 952,658-byte registry payload, but the
+browser runtime cannot decode Brotli. The version 3 font payload stores each
+mip raw or with the existing managed LZ4 codec, whichever is smaller, while
+desktop readers retain version 2 support. The final publisher still enforces
+its 4 MiB asset cap; browser recooking and live validation are pending. Default
+text fonts are explicitly packaged,
 preloaded before world hydration, scoped to the session, and accompanied by the
 verbatim font license. No browser font rasterizer or host font path is needed.
 
