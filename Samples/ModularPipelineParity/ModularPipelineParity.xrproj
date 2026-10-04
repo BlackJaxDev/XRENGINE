@@ -1,0 +1,8 @@
+__type: XREngine.XRProject
+ProjectName: ModularPipelineParity
+ProjectVersion: 1.0.0
+EngineVersion: 1.0.0
+ID: 888853fc-9d60-4a34-a654-1375642508b4
+Name: Modular Pipeline Parity
+StartupScenePath: Worlds/ModularPipelineParityWorld.asset
+BrowserShaderArtifactManifestPath: Assets/Shaders/WebGPU/manifest.json

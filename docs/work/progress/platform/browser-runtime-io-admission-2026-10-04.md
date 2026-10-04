@@ -8,6 +8,8 @@ The runtime I/O sites classified below now admit their actual host capability be
 
 The sole in-repository `RemoteJobRequestReceived` subscription is `Engine.InitializeNetworking`. Browser's `ConnectWebSocketClientAsync` starts a WebSocket client but does not subscribe this remote-job handler. The catalog-owner probe qualifies the handler if used with such an owner; it is not evidence that current Browser WebSocket sessions dispatch remote asset jobs.
 
+The synchronous `AssetManager.LoadEngineAssetRemote<T>`, `LoadGameAssetRemote<T>` and `LoadByIdRemote<T>` entry points had no in-repository callers and have been removed from the shared runtime, along with their private synchronous-admission helper. Their asynchronous counterparts and remote-loading behavior remain. External callers must migrate to the matching `*Async` method, await it, and rebuild. This removes three sync-over-async sites from the portable source closure, but other synchronous asset APIs and host-file operations remain, so the wider blocking and I/O inventory stays open. Desktop and Browser compilation after this removal is pending.
+
 ## Cooked font and diagnostic output
 
 `FontGlyphSet.EnsureLayoutResourcesReady` checks the host-file capability only after detecting a missing glyph or atlas resource. A Browser or caller-thread owner gets `Font.CookedLayoutMissing` with the concrete layout issue and font identity. The normal Browser font route is preloaded cooked bitmap data; `LoadEngineFontAsync` is an initial-load API, not a synchronous recovery mechanism for an already-used font instance. Admitted desktop recovery still tries the source font import.

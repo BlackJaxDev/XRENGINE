@@ -25,8 +25,8 @@ export function readConfig(argv = process.argv.slice(2), env = process.env) {
         throw new Error('BrowserSmoke.Config: game-only mode does not run engine diagnostics.');
     if (!['native', 'software'].includes(values['gpu-mode']))
         throw new Error('BrowserSmoke.Config: --gpu-mode must be native or software.');
-    if (!['rollingball', 'rendering-parity', 'advanced-rendering-parity', 'ui-parity'].includes(values['game-kind']))
-        throw new Error('BrowserSmoke.Config: --game-kind must be rollingball, rendering-parity, advanced-rendering-parity or ui-parity.');
+    if (!['rollingball', 'rendering-parity', 'advanced-rendering-parity', 'ui-parity', 'modular-pipeline-parity'].includes(values['game-kind']))
+        throw new Error('BrowserSmoke.Config: --game-kind must be rollingball, rendering-parity, advanced-rendering-parity, ui-parity or modular-pipeline-parity.');
     const timeout = Number(values['timeout-ms']);
     if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 300000)
         throw new Error('BrowserSmoke.Config: timeout must be between 1000 and 300000 milliseconds.');
@@ -74,7 +74,7 @@ export const help = `Usage: node Tools/BrowserSmoke/run.mjs
   [--game-publish <editor-published-game-root>]
   [--shader-artifacts <schema3-engine-shader-artifacts-directory>]
   --output <evidence-directory>
-  [--game-only] [--game-kind rollingball|rendering-parity|advanced-rendering-parity|ui-parity]
+  [--game-only] [--game-kind rollingball|rendering-parity|advanced-rendering-parity|ui-parity|modular-pipeline-parity]
   [--jolt-spike <published-spike-wwwroot>]
   [--engine-manifest /relative/engine-assets/manifest.json]
   [--require-world-play] [--gpu-mode native|software] [--gpu-diagnostics] [--headed]

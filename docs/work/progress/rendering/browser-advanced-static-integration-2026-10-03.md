@@ -439,8 +439,10 @@ artifact in another fresh process. The comparison uses its actual Uber consumer
 schema and independently checked 40-entry explicit layout. It verifies the
 control identity in the same published manifest, shared binding metadata,
 compiler and capability contracts; both arms retain the captured device requests
-and 45-second native compile bounds. The Uber variant removes twenty surface
-helpers while also changing a ten-case gradient texture bank to nine cases.
+and 45-second native compile bounds. The Uber variant removes twenty Uber
+surface-evaluation helpers and one texture-pair resolver clone while changing
+a ten-case gradient texture bank to nine cases. EngineSurface evaluation and
+the shared decal subtree remain in both modules.
 A faster result would narrow the cause to that combined difference, not identify
 one helper; two timeouts would remain censored observations. The diagnostic is
 not material or image acceptance and cannot turn the real application failure
@@ -456,3 +458,43 @@ both device/context/browser cleanup sequences finish. This rules out that
 combined helper/bank reduction as sufficient to meet the current limit; it does
 not establish equal total compile time or identify a remaining compiler stage.
 The real Advanced application still fails its first-frame deadline.
+
+The exact `f628183b` repeat retains the same native and Uber module identities.
+Both isolated native creations again remain pending at their 45-second limits;
+module information completes without messages in 145.4 ms and 121.0 ms. These
+censored observations do not establish equal compile durations or identify
+the native compiler stage responsible for the delay.
+
+The next bounded candidate traverses generic decals and the ordered authored
+list through one call site in `XR_ADV_ApplySelectedDecals`. Both modules retain
+two callers of this selector: main shading and the same-triangle shadow helper.
+Removing its second evaluator call site reduces four syntactic paths into the
+complete decal/material evaluator to two. This targets possible downstream
+inlining duplication; actual native compiler expansion has not been observed.
+
+The traversal retains ascending generic order and its original flag filter,
+then checks the authored enable flag and range after all generic effects.
+Authored entries preserve their exact order and duplicates. Resetting the cursor
+between traversals avoids adding their counts; the guarded range subtraction remains.
+No evaluator, material branch, sample, floating-point blend or diagnostic bit is
+changed. Independent source and generated-code review found no blocking issue.
+A bounded execution of the actual old and new traversal bodies compares 348,800
+modeled cases, preserving ordered reads, evaluator arguments, partial outputs
+and failure accumulation. Its evaluator is an opaque stateful model, so this
+does not establish native floating-point or image equivalence.
+
+All sixteen pinned Slang frontend baseline/candidate pairs compile without
+diagnostics. Every baseline reproduces its retained WGSL hash; complete
+reflection is unchanged, every candidate retains one selector loop and one
+evaluator call site, and all generated decal evaluator bodies are byte-identical.
+The ordinary native candidate is 382,199 bytes, SHA-256
+`53a3f621669975ecbcb9cc7a8bf78e2bcdaf33560df057730275418134b6895b`;
+the Uber candidate is 349,895 bytes, SHA-256
+`59cb88e18871ef64fc84fe9a27f9ab3e2c110cef46e69d186650f4e6dadd672a`.
+They add 484 and 485 WGSL bytes respectively. Neither frontend success nor
+fewer call sites establishes a native compilation benefit. Exact-commit
+packaging, the unchanged application and isolated 45-second acceptance, and
+rendered overlapping-decal/shadow-helper behavior remain unverified. If native
+compilation again exceeds its bound, the next required evidence is a native
+compiler/driver profile of the owned browser processes; another structural
+rewrite is not justified by the current timeout-only evidence.

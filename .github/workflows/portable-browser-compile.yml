@@ -453,6 +453,55 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Stage and cook authored modular pipeline project
+        shell: pwsh
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'modular-pipeline-parity-cli/project'
+          if (Test-Path -LiteralPath $project) { throw 'The modular CLI project must start empty.' }
+          New-Item -ItemType Directory -Path (Join-Path $project 'Assets/Scripts'), (Join-Path $project 'Assets/Worlds'), (Join-Path $project 'Assets/Shaders/WebGPU'), (Join-Path $project 'Config') -Force | Out-Null
+          Copy-Item -LiteralPath 'Samples/ModularPipelineParity/ModularPipelineParity.xrproj' -Destination $project
+          Copy-Item -Path 'Samples/ModularPipelineParity/Assets/Scripts/*.cs' -Destination (Join-Path $project 'Assets/Scripts')
+          Copy-Item -LiteralPath 'Samples/ModularPipelineParity/Assets/Worlds/ModularPipelineParityWorld.asset' -Destination (Join-Path $project 'Assets/Worlds')
+          Copy-Item -LiteralPath 'Samples/ModularPipelineParity/Assets/startup.asset' -Destination (Join-Path $project 'Assets')
+          $compilers = @(Get-ChildItem -LiteralPath (Join-Path $env:VALIDATION_ROOT 'toolchain/slang-windows') -Filter 'slangc.exe' -File -Recurse)
+          if ($compilers.Count -ne 1) { throw 'Expected the already verified pinned Slang compiler.' }
+          $env:XRE_SLANGC = $compilers[0].FullName
+          dotnet run --project Tools/ShaderCooker/ShaderCooker.csproj --configuration Release -- `
+            --recipe Samples/ModularPipelineParity/Shaders/WebGPU/modular-gradient.recipe.json `
+            --source-root Samples/ModularPipelineParity/Shaders/WebGPU `
+            --output (Join-Path $project 'Assets/Shaders/WebGPU')
+          if ($LASTEXITCODE -ne 0) { throw 'The modular authored program failed normal shader cooking.' }
+
+      - name: Publish modular pipeline through the Editor CLI
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'modular-pipeline-parity-cli/project/ModularPipelineParity.xrproj'
+          $log = Join-Path $env:VALIDATION_ROOT 'modular-pipeline-parity-cli/editor-cli.log'
+          dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+            --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+            --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { throw "The modular Editor CLI publisher failed; inspect $log." }
+          $site = Join-Path $env:VALIDATION_ROOT 'modular-pipeline-parity-cli/project/Build/browser-game'
+          $manifest = Get-Content -LiteralPath (Join-Path $site 'content/manifest.json') -Raw | ConvertFrom-Json
+          if (!(Test-Path -LiteralPath (Join-Path $site 'index.html')) -or
+              $manifest.startupWorld -ne '/game/Worlds/ModularPipelineParityWorld.asset' -or
+              !($manifest.pipelineArtifacts | Where-Object { $_.scope -eq 'custom' -and $_.pass -eq 'custom-pass' })) {
+            throw 'The Editor did not activate the authored modular world and scoped program.'
+          }
+          git diff --exit-code -- Samples/ModularPipelineParity
+          if ($LASTEXITCODE -ne 0) { throw 'Authored modular sample inputs changed during CLI publishing.' }
+
+      - name: Preserve exact Editor-published modular pipeline bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-modular-pipeline-parity-bundle
+          path: ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Preserve Windows Editor CLI evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -462,6 +511,9 @@ jobs:
             ${{ env.VALIDATION_ROOT }}/rollingball-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/rendering-parity-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/advanced-rendering-parity-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/project/Build/browser-game/browser-publish.json
+            ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/project/Build/browser-game/content/manifest.json
             ${{ env.VALIDATION_ROOT }}/ui-parity-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/ui-parity-cli/project/Build/browser-game/browser-publish.json
             ${{ env.VALIDATION_ROOT }}/ui-parity-cli/project/Build/browser-game/content/manifest.json
@@ -482,7 +534,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kind: [rollingball, rendering-parity, advanced-rendering-parity, ui-parity]
+        kind: [rollingball, rendering-parity, advanced-rendering-parity, ui-parity, modular-pipeline-parity]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

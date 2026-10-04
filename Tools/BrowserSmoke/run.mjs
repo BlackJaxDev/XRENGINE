@@ -12,6 +12,7 @@ import { rollingBallGameCheck } from './rollingball-game.mjs';
 import { renderingParityGameCheck } from './rendering-parity-game.mjs';
 import { uiParityGameCheck } from './ui-parity-game.mjs';
 import { advancedRenderingGameCheck } from './advanced-rendering-game.mjs';
+import { modularPipelineGameCheck } from './modular-pipeline-game.mjs';
 import { runNativeCompileIsolation } from './native-compile-isolation.mjs';
 import { unlitMaterialsCheck } from './unlit-materials.mjs';
 import { unlitMsaaCheck, unlitIndirectCheck } from './unlit-msaa.mjs';
@@ -1182,8 +1183,10 @@ async function publishedGameCheck(browser, origin, report, config) {
     const parity = config.gameKind === 'rendering-parity';
     const advanced = config.gameKind === 'advanced-rendering-parity';
     const ui = config.gameKind === 'ui-parity';
+    const modular = config.gameKind === 'modular-pipeline-parity';
     const worldPath = ui ? '/game/Worlds/BrowserUiParityWorld.asset'
         : advanced ? '/game/Worlds/AdvancedRenderingParityWorld.asset'
+        : modular ? '/game/Worlds/ModularPipelineParityWorld.asset'
         : parity ? '/game/Worlds/RenderingParityWorld.asset' : '/game/Worlds/RollingBallWorld.asset';
     assert(descriptor.schema === 2 && descriptor.format === 'xrengine-engine-launch' &&
         descriptor.manifest === './content/manifest.json' && manifest.startupWorld === worldPath,
@@ -1201,6 +1204,10 @@ async function publishedGameCheck(browser, origin, report, config) {
             assert(manifest.pipelineArtifacts?.some(entry => entry.scope === 'advanced' && entry.pass === pass),
                 `BrowserSmoke.AdvancedArtifactMissing: advanced::${pass}.`);
         await advancedRenderingGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
+    } else if (modular) {
+        assert(manifest.pipelineArtifacts?.some(entry => entry.scope === 'custom' && entry.pass === 'custom-pass'),
+            'BrowserSmoke.ModularArtifactMissing: custom::custom-pass was not published.');
+        await modularPipelineGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
     } else if (parity) {
         assert(manifest.computeArtifacts?.some(entry => entry.kernel === 'packed-skinning') &&
             manifest.materialVariants?.some(entry => entry.semantic === 'StandardLitTexture' &&

@@ -344,8 +344,37 @@ reading; a browser loading version 2 receives the named
 and trailing-data rejection. Authored fonts and YAML are unchanged; normal
 publication recooks their derived payloads and hashes.
 
-Independent source review and whitespace checks pass. The local C# compiler is
-unavailable, so compilation, actual cooked size and browser font loading still
-require the next exact-commit CI run. Browser UI pixels, interaction and
-lifecycle remain unqualified until font preload and the existing live checks
-succeed; Editor publication alone does not close that acceptance.
+On `051c32f8`, all four genuine Windows Editor publications and the ownership
+tests pass in
+[run 37229683052](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37229683052).
+The UI browser job now completes font preload and reaches engine draw
+preparation. The version-3 raw/LZ4 reader therefore runs in WebAssembly without
+the former Brotli platform exception. No measured cooked-font size is asserted
+by this result.
+
+The [UI job 111522095410](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37229683052/job/111522095410)
+still reaches the existing 45-second first-frame timeout. Its final state is
+`Ready`, `DefaultRenderPipeline`, 1280×720, HDR disabled, AA `None`, 34 recorded
+mesh draws, 35 commands and a pending draw. Pipeline decline, resource-generation
+failure, Advanced stages and pending program preparation all report none. The
+failure screenshot was inspected and is blank. These counters describe recorded
+work, not a submitted complete UI frame; pixels, input and lifecycle acceptance
+remain unqualified.
+
+The existing program diagnostic walks every cached WebGPU program, including UI
+programs, and the JavaScript shader/pipeline preparation registry. It does not
+identify a managed mesh deferral, incomplete texture producer or retained
+resource receipt. The first draw deferral now retains its source, reason and
+owner without allocating frame strings. The existing startup-status request
+formats those references and up to eight retained resource requests, including
+their identities, states, owners and bounded descriptor excerpts. Deferred
+resource exceptions preserve their actual request or program owner. Mesh and
+canvas-surface paths report their concrete preparation stage. Each new frame
+resets the retained reason; ready frames report none. Readiness, acceptance,
+timeout and fallback policy are unchanged.
+
+This is a diagnostic repair for the unresolved first-frame failure, not evidence
+that UI rendering is fixed. Independent source review and whitespace checks cover this
+change; the local C# compiler and browser execution are unavailable. The next
+exact-commit runtime run must identify the pending owner before a behavior fix
+can be justified and the original UI checks can complete.

@@ -283,7 +283,12 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         _renderWorld.GlobalCollectVisible();
     }
 
-    private void SwapFrame() => _renderWorld.GlobalSwapBuffers();
+    private void SwapFrame()
+    {
+        // Caller-thread collection reserves the upcoming render identity before
+        // BeginRenderFrame advances the ambient clock, just as in RuntimeWorldHost.
+        _renderWorld.GlobalSwapBuffers(RuntimeRenderingHostServices.FrameTiming.CollectFrameId);
+    }
 
     private void RenderFrame() => _renderer.RenderFrame(Engine.Time.Timer.Render.Delta);
 

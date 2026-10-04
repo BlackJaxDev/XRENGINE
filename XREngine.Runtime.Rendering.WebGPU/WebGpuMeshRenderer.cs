@@ -227,14 +227,14 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
         if (!material.TryPrepareForRendering())
         {
             if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "MaterialPending");
-            Renderer.MarkEngineDrawPending();
+            Renderer.MarkEngineDrawPending("MaterialPending", this);
             return false;
         }
         bool orderedDirect = indexed is null && Renderer.IsAuthoredDirectOrderCapture;
         WebGpuRenderProgram drawProgram = material.Program;
         if (orderedDirect && !material.TryPrepareAuthoredOrderingProgram(out drawProgram))
         {
-            Renderer.MarkEngineDrawPending();
+            Renderer.MarkEngineDrawPending("AuthoredOrderingProgramPending", this);
             return false;
         }
         using var directCapture = orderedDirect ? Renderer.EnterAuthoredDirectCandidate(Data.Parent) : default;
@@ -289,7 +289,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
             if (!program.TrySnapshotBindings(deferMissingResources, out WebGpuBindingSet? bindings))
             {
                 if (resolutionTraceIndex >= 0) Renderer.UpdateEngineMeshResolutionStage(resolutionTraceIndex, "BindingsOrPipelinePending");
-                Renderer.MarkEngineDrawPending();
+                Renderer.MarkEngineDrawPending("BindingsPending", this);
                 return false;
             }
             if (material.InstanceStorageContract is { } storage)
@@ -326,14 +326,14 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
                 unbounded = !cullEnabled;
                 if (!recorded)
                 {
-                    Renderer.MarkEngineDrawPending();
+                    Renderer.MarkEngineDrawPending("IndexedDrawPending", this);
                     return false;
                 }
             }
             else
             {
                 if (!TryPrepareDraw(mesh, resolved.Material, out _, out WebGpuMeshDraw? draw, programOverride: program))
-                { Renderer.MarkEngineDrawPending(); return false; }
+                { Renderer.MarkEngineDrawPending(_lastPrepareDetail, this); return false; }
                 _ = WebGpuAuthoredInstanceContract.Resolve(Data.Parent, mesh, program, instances, draw!.Deformation, null);
                 if (orderedDirect) Renderer.CaptureAuthoredOrderedDirect(draw!, bindings!, instances);
                 else draw!.Record(bindings!, instances);
@@ -478,7 +478,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
     private bool Pending(string reason)
     {
         if (Renderer.IsRecordingEngineFrame)
-            Renderer.MarkEngineDrawPending();
+            Renderer.MarkEngineDrawPending(reason, this);
         SetField(ref _lastPrepareDetail, reason);
         SetField(ref _generated, false);
         return false;

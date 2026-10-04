@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Shaders.Compilation;
 
@@ -150,6 +151,7 @@ public sealed partial class WebGpuRendererHost
         SetField(ref _engineAcceptanceAttempted, false, publishNotifications: false);
         BeginEngineBufferUploads();
         SetField(ref _engineDrawPending, false, publishNotifications: false);
+        ResetEngineDrawPreparationDiagnostic();
         _engineProducedTextures.Clear();
         _engineRecordedTextures.Clear();
         ResetAuthorizedShadowReuse();
@@ -163,8 +165,17 @@ public sealed partial class WebGpuRendererHost
         SetField(ref _engineRecording, true, publishNotifications: false);
     }
 
-    internal void MarkEngineDrawPending()
-        => SetField(ref _engineDrawPending, true, publishNotifications: false);
+    internal void MarkEngineDrawPending(string? reason = null, object? owner = null,
+        [CallerMemberName] string source = "")
+    {
+        if (!_engineDrawPending)
+        {
+            SetField(ref _engineDrawPendingSource, source, publishNotifications: false);
+            SetField(ref _engineDrawPendingReason, reason, publishNotifications: false);
+            SetField(ref _engineDrawPendingOwner, owner, publishNotifications: false);
+        }
+        SetField(ref _engineDrawPending, true, publishNotifications: false);
+    }
 
     internal void CountEngineMeshDraw()
         => SetField(ref _engineMeshDrawCount, _engineMeshDrawCount + 1, publishNotifications: false);
