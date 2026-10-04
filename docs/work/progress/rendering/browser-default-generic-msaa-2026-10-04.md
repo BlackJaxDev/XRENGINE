@@ -109,3 +109,13 @@ recipe and verifies the exact ten selected pipeline keys instead of only a
 catalog count. Source and JavaScript checks pass; C# compilation and the first
 rendered x4 result remain pending. This fixture does not qualify custom graphs,
 GPU-indirect/meshlet modes, reversed depth or transparent coverage.
+
+The fixture now compiles and reaches real x4 output on `930d1be4` in
+[run 37214531333](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37214531333).
+Its first saved image visibly contains the nine tiles and sloping overlap, but
+both Unlit checks stop at screenshot extent: a 512×512 target is captured as
+512×513 after the added profile control changes page layout. This is not a
+completed x4 qualification; subsequent AO, resize and restart checks did not
+run. The diagnostic now uses integral layout metrics and retains CSS bounds,
+bitmap extent and pixel ratio before each capture. The original exact extent
+and pixel assertions remain unchanged for the rerun.

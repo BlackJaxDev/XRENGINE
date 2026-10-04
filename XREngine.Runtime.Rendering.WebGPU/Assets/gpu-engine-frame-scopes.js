@@ -10,10 +10,19 @@ export class GpuEngineFrameScopes {
         this.receipts = new Array(receiptCapacity);
         this.stats = { capacity: receiptCapacity, pending: 0, peakPending: 0, started: 0, completed: 0,
             validationErrors: 0, outOfMemoryErrors: 0, rejectedScopes: 0, obsoleteErrors: 0,
-            capacityFailures: 0, webGpuPromises: 0, observerPromises: 0, captureGatePromises: 0,
+            capacityFailures: 0, admissionDeferrals: 0, webGpuPromises: 0, observerPromises: 0, captureGatePromises: 0,
             queueCompletionPromises: 0, completionPolls: 0 };
         for (let index = 0; index < receiptCapacity; index++)
             this.receipts[index] = new FrameScopeReceipt(this);
+    }
+
+    /** Check before entering the synchronous managed frame, never after accepting its bytes. */
+    canBegin() {
+        this.renderer._requireOwner();
+        if (this.disposed) throw new Error('WebGPU.EngineFrame.ScopesDisposed: renderer receipts are retired.');
+        if (this.stats.pending < receiptCapacity) return true;
+        this.stats.admissionDeferrals++;
+        return false;
     }
 
     begin(sequence, capture) {

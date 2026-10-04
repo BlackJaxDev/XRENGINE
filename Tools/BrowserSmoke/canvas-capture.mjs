@@ -1,5 +1,16 @@
 import path from 'node:path';
 
+export async function canvasGeometry(page, selector = 'canvas') {
+    const element = page.locator(selector);
+    await element.scrollIntoViewIfNeeded();
+    return element.evaluate(canvas => {
+        const bounds = canvas.getBoundingClientRect();
+        return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+            bitmapWidth: canvas.width, bitmapHeight: canvas.height,
+            devicePixelRatio, scrollX, scrollY };
+    });
+}
+
 export async function inspectCanvas(page, before, after) {
     return page.evaluate(async ({ oldPng, newPng }) => {
         async function pixels(encoded) {

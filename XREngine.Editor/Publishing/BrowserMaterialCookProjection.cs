@@ -14,7 +14,7 @@ using System.Text.RegularExpressions;
 namespace XREngine.Editor.Publishing;
 
 /// <summary>
-/// Projects built-in UI images and built-in or exact-companion authored lit textures while the browser serializer
+/// Projects canonical UI solids/images and built-in or exact-companion authored lit textures while the browser serializer
 /// walks an ordinary engine world. Authored objects remain borrowed and are never rewritten.
 /// </summary>
 internal sealed partial class BrowserMaterialCookProjection : IDisposable
@@ -65,6 +65,8 @@ internal sealed partial class BrowserMaterialCookProjection : IDisposable
 
     private object ProjectMaterial(XRMaterial source)
     {
+        if (_uiSolidConsumers.ContainsKey(source) && source.Textures.Count == 0 && source.Shaders.Count != 0)
+            return ProjectUiSolid(source);
         if (source.RenderPass == (int)EDefaultRenderPass.DeferredDecals ||
             IsDecalStageCandidate(source) || IsDecalSlotCandidate(source))
             return ProjectDeferredDecal(source);
@@ -474,6 +476,8 @@ internal sealed partial class BrowserMaterialCookProjection : IDisposable
         ReleaseDerivedProbeImages();
         foreach (XRMaterial copy in _copies.Values) Release(copy);
         _copies.Clear();
+        _uiSolidConsumers.Clear();
+        _otherMaterialConsumers.Clear();
         _canonicalSources.Clear();
         _outlineCanonicalSources.Clear();
         _disposed = true;

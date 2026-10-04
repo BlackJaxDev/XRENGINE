@@ -34,6 +34,8 @@ export class EngineCanvasHost {
         this.onState = onState;
         this.epoch = 0;
         this.firstFrameSeconds = 0;
+        this.deferredFrameSeconds = 0;
+        this.admissionWaitSeconds = 0;
         this.recoveryAttempts = 0;
         this.recoveryDiagnostics = [];
         this.failure = null;
@@ -170,7 +172,11 @@ export class EngineCanvasHost {
             this.presented = false;
             this.firstFrameSeconds = 0;
         }
-        if (clockDiscontinuity) this.previousFrame = undefined;
+        if (clockDiscontinuity) {
+            this.previousFrame = undefined;
+            this.deferredFrameSeconds = 0;
+            this.admissionWaitSeconds = 0;
+        }
         if (this.drawable) {
             if (!this.request && !this.validatingRecoveryFrame) this.request = requestAnimationFrame(this.frame);
             if (this.presented) this.onState('running', `Engine world ready: ${this.detail}`);
@@ -191,19 +197,40 @@ export class EngineCanvasHost {
                 this.syncSurface();
             if (!this.drawable) return;
             if (this.recovering) {
-                if (!this.validatingRecoveryFrame) void this.prepareRecoveryFrame(now);
+                if (!this.validatingRecoveryFrame) {
+                    const gap = this.previousFrame === undefined ? 0 : now - this.previousFrame;
+                    this.previousFrame = now;
+                    if (Number.isFinite(gap) && gap > 0) this.firstFrameSeconds += gap / 1000;
+                    if (this.hasFrameAdmission(gap)) void this.prepareRecoveryFrame();
+                    else {
+                        if (this.firstFrameSeconds > 45)
+                            throw new Error(`Replacement frame preparation exceeded 45 active seconds. ${this.engine.GetCanvasRenderingStatus()}`);
+                        this.requireFrameAdmissionProgress();
+                        if (!this.request) this.request = requestAnimationFrame(this.frame);
+                    }
+                }
                 return;
             }
-            this.input.publish();
             const gap = this.previousFrame === undefined ? 0 : now - this.previousFrame;
             let elapsed = gap / 1000;
             if (!Number.isFinite(gap) || gap < 0) {
                 this.engine.ResetFrameTiming();
+                this.deferredFrameSeconds = 0;
+                this.admissionWaitSeconds = 0;
                 elapsed = 0;
             }
             this.previousFrame = now;
-            if (!this.engine.Step(elapsed)) throw new Error('The engine caller-thread loop stopped.');
-            this.input.syncTextFocus();
+            if (this.hasFrameAdmission(gap)) {
+                this.input.publish();
+                elapsed += this.deferredFrameSeconds;
+                this.deferredFrameSeconds = 0;
+                if (!this.engine.Step(elapsed)) throw new Error('The engine caller-thread loop stopped.');
+                this.input.syncTextFocus();
+            } else {
+                // Keep simulation debt separate from the active preparation clock.
+                // The next admitted Step applies the engine's existing catch-up bound once.
+                this.deferredFrameSeconds += elapsed;
+            }
             if (!this.presented) {
                 const state = this.engine.GetCanvasPreparationState();
                 if (state < 0) throw new Error(this.engine.GetCanvasRenderingStatus());
@@ -218,20 +245,32 @@ export class EngineCanvasHost {
                         throw new Error(`First-frame preparation exceeded 45 seconds. ${this.engine.GetCanvasRenderingStatus()}`);
                 }
             }
+            this.requireFrameAdmissionProgress();
             if (!this.request) this.request = requestAnimationFrame(this.frame);
         } catch (error) { this.fail(error); }
     }
 
-    async prepareRecoveryFrame(now) {
+    hasFrameAdmission(gap) {
+        if (this.renderer.canBeginEngineFrame()) {
+            this.admissionWaitSeconds = 0;
+            return true;
+        }
+        if (Number.isFinite(gap) && gap > 0) this.admissionWaitSeconds += gap / 1000;
+        return false;
+    }
+
+    requireFrameAdmissionProgress() {
+        if (this.admissionWaitSeconds > 45)
+            throw new Error('WebGPU.EngineFrame.AdmissionTimeout: frame receipt capacity remained unavailable for 45 active seconds.');
+    }
+
+    async prepareRecoveryFrame() {
         const epoch = this.epoch, session = this.session, renderer = this.renderer;
         const signal = this.controller.signal;
         const surfaceGeneration = this.surfaceGeneration;
         const current = () => epoch === this.epoch && session === this.session &&
             renderer === this.renderer && !signal.aborted && !this.failed;
         this.validatingRecoveryFrame = true;
-        const gap = this.previousFrame === undefined ? 0 : now - this.previousFrame;
-        this.previousFrame = now;
-        if (Number.isFinite(gap) && gap > 0) this.firstFrameSeconds += gap / 1000;
         let ticket;
         try {
             const device = renderer.device;
@@ -348,6 +387,8 @@ export class EngineCanvasHost {
             this.drawable = false;
             this.validatingRecoveryFrame = false;
             this.previousFrame = undefined;
+            this.deferredFrameSeconds = 0;
+            this.admissionWaitSeconds = 0;
             this.surfaceGeneration = undefined;
             this.firstFrameSeconds = 0;
             this.recoveryFailure = null;
@@ -387,6 +428,8 @@ export class EngineCanvasHost {
                 this.recovering = false;
                 this.presented = true;
                 this.previousFrame = undefined;
+                this.deferredFrameSeconds = 0;
+                this.admissionWaitSeconds = 0;
                 this.syncSurface();
                 return;
             } catch (recoveryError) {
@@ -425,6 +468,8 @@ export class EngineCanvasHost {
         this.drawable = false;
         this.surfaceGeneration = undefined;
         this.previousFrame = undefined;
+        this.deferredFrameSeconds = 0;
+        this.admissionWaitSeconds = 0;
         this.input.reset();
         this.resizeObserver?.disconnect();
         this.resizeObserver = null;

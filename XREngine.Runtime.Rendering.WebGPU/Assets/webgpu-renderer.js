@@ -240,6 +240,9 @@ export class WebGpuCanvasRenderer {
         }, error => { if (!this._disposed && this.device === device) this._fail(error); });
     }
 
+    /** One synchronous managed frame owns one acceptance; admission precedes simulation and recording. */
+    canBeginEngineFrame() { return this.commands.engineFrame.scopes.canBegin(); }
+
     getFailureDiagnostics() {
         return { firstError: this._firstError, deviceLoss: this._deviceLoss, deviceDestroy: this._deviceDestroy,
             lastOperation: { ...this._operation }, startupStage: this._startup.stage,

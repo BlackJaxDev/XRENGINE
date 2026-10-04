@@ -85,6 +85,20 @@ watermark returns with each acceptance, including preparation-only attempts;
 the hot frame loop does not issue separate completion polling imports. Accepting
 preparation never marks an abandoned scene's frame slots as submitted. Receipts
 covering abandoned scene commands cannot authorize resource reuse.
+The shipping canvas and mesh diagnostic frame pumps check owner-local receipt
+capacity before entering managed simulation or recording. When all 64 receipts
+are active, they defer the entire next attempt until the existing asynchronous
+observers release a receipt; both error scopes and queue completion must settle
+before reuse. Deferred attempts do not accept bytes, advance submission sequences,
+or repeat scene capture. Active preparation deadlines continue to run, and the
+shipping clock passes accumulated simulation time to the next admitted step's
+existing bounded catch-up policy. Receipt saturation is bounded to 45 active
+seconds even after the world has presented; successful admission resets this
+wait independently of preparation and simulation timing. Surface suspension,
+replacement, and recovery clear deferred simulation time along with the frame
+clock. Saturation is reported
+through the `engineFrame.errorScopes.admissionDeferrals` counter; the original
+capacity error remains an invariant guard for direct ungated submission callers.
 Synchronous GPU waits and mapped pointer APIs remain unavailable.
 Instrumented algorithms that require those synchronous mappings are rejected;
 declaring an instrumented strategy does not authorize a hidden readback-based

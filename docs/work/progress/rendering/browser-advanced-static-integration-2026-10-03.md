@@ -389,3 +389,28 @@ The ordinary native module becomes 381,715 bytes with SHA-256
 This proves emitted-code reduction and frontend interface preservation; full
 packaging, native compilation timing and rendered output await exact-commit CI.
 Neither the application nor isolated compilation budget changes.
+
+Run [37214531333](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37214531333)
+on `930d1be4` publishes that exact 381,715-byte module, but both application
+startup and the fresh-process native compile still exceed their existing
+budgets. Isolated module diagnostics finish in 140.1 ms with no errors; native
+creation remains pending at 45,000.6 ms. The reduced matrix duplication does
+not establish a measurable startup improvement.
+
+The next candidate consolidates eight EngineSurface role-sampling call sites
+into one guarded six-step evaluator loop. It preserves lazy conditions and
+sampling order, immediate unlit return, opacity/emission updates, authored normal
+work when specular is absent, and tangent rejection after metallic/roughness
+writes. All sixteen pinned frontend baselines reproduce current published hashes;
+candidate reflection is unchanged and the loop retains one sampling call site.
+Independent review checks every admitted material kind/role combination and
+generated evaluator. A source-body interpreter compares call order, parameters,
+partial outputs and returns over 107,520 modeled cases, but uses modeled helpers
+and JavaScript arithmetic rather than native floating-point execution.
+
+The ordinary native candidate is 385,642 bytes, SHA-256
+`acf6e4f7f0aebf3ab1d32fd2196a8a64c1dfe4e904a6d58be1df2840abd69e37`.
+Its larger scheduling control flow trades module bytes for fewer repeated
+sampling call sites that a downstream compiler may expand. Native compilation
+and rendered behavior still require measurement; no benefit, feature reduction
+or new compatibility limit is claimed.

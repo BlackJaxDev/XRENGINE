@@ -116,6 +116,10 @@ public partial class XRMaterial
     internal bool HasOnlyStandardSurfaceUniformHandlers
         => HasOnlySettingUniformsHandler(_surfaceEmissionHandler);
 
+    /// <summary>Allows known source consumers alongside the surface publisher installed by ordinary hydration.</summary>
+    internal bool HasOnlyStandardSurfaceAndUniformHandlers(IReadOnlySet<Action<XRMaterialBase, XRRenderProgram>> handlers)
+        => HasOnlySettingUniformsHandlers(handlers, _surfaceEmissionHandler);
+
     private void EnsureSurfaceEmissionPublisher()
     {
         if (_surfaceEmissionPublisherAttached)

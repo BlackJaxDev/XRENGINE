@@ -2,6 +2,42 @@
 
 Date: 2026-10-02
 
+## Ordinary solid-material publication
+
+The ordinary desktop `UIMaterialComponent` constructor uses the canonical
+`UnlitColoredForward.fs` fragment with the UI raster state. Browser publication
+now recognizes this UI consumer before ordinary scene-Unlit projection. The
+scene-Unlit admission requires a different depth/blend profile and previously
+rejected this material before shader companion lookup.
+
+The target-only projection verifies the pinned canonical fragment, exact
+material/component types, one finite `MatColor`, empty texture and feature
+state, and the existing UI raster profile. It permits only the owning ordinary
+UI components' bounds callbacks and the engine surface publisher that empty
+surface metadata can install during YAML reload. Custom stages, callbacks,
+material features and explicit scene semantics remain rejected.
+
+A read-only size walk uses the ordinary cooked serializer's member selection
+and reference traversal before projection. It inventories UI consumers, model
+LODs, renderable meshes and overrides, created mesh commands, decals, landscape,
+camera/postprocess materials, framebuffer materials and declared pipeline
+requirements. Registered root serializers and opaque custom payloads retain
+their existing serializer-owned graph contracts. Runtime-created consumers and
+later material reassignment still require runtime admission.
+
+One detached, source-free material is retained per original reference. Its ID,
+parameter array, `MatColor` object and render-options aliases are preserved;
+all ordinary graph references select that same target object. A material also
+used by a scene or pipeline consumer rejects with
+`BrowserCook.UiSolidConsumerConflict` before its stage is removed. This is a
+limit of the UI-only projection contract, not a general WebGPU limitation.
+Authored YAML, desktop construction and raw texture storage are unchanged.
+
+Source/structural inspection and diff whitespace validation cover the change.
+The genuine Editor cook, fresh binary hydration, alias checks and browser
+rendering still require the integrated CI/runtime run; no local .NET runtime
+was available for this change.
+
 ## Engine-owned UI rendering state
 
 The engine-frame command format now uses version 3, with 112-byte draw records.

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { canvasGeometry } from './canvas-capture.mjs';
 
 // Independent authored-input expectations: all nine original centers remain qualified.
 const coordinates = [0.175, 0.5, 0.825];
@@ -96,6 +97,7 @@ async function sampleStage(page, stage, config, capturePixels) {
         const samples = cases.map((expected, index) => ({ name: `case-${index}`,
             x: Math.floor(stage.width * coordinates[index % 3]),
             y: Math.floor(stage.height * coordinates[Math.floor(index / 3)]), expected: display(expected.hdr) }));
+        stage.canvasGeometry = await canvasGeometry(page);
         const png = await page.locator('canvas').screenshot({ path: path.join(config.output, `${stage.label}.png`) });
         stage.display = await capturePixels(page, png, samples);
         stage.centers = [];
@@ -474,6 +476,7 @@ export async function unlitMsaaCheck(browser, origin, report, config, instrument
         await page.waitForFunction(() => window.engineMeshDiagnostic !== undefined);
         let catalog;
         for (const profile of ['cpu-x4', 'cpu-x4-ao']) {
+            await page.locator('#execution-profile').selectOption(profile);
             const qualification = { profile, lifecycles: [] };
             report.unlitMsaa.profiles.push(qualification);
             let startupLive;
