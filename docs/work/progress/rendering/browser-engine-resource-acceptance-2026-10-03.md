@@ -180,3 +180,28 @@ unchanged. No diagnostic assertion is relaxed.
 The source correction passes the focused diff check, independent review and a
 fresh combined Rendering/WebGPU build with zero warnings and errors. Repeated
 browser execution is pending. This correction adds no completed acceptance item.
+
+## Advanced storage allocation correction — 2026-10-04
+
+The next [exact browser run](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37199108586)
+published the Advanced player through the Editor, but its Chromium startup failed
+in `WebGpuDataBuffer.Generate` with the obsolete 8 MiB storage-profile rejection.
+A concrete affected resource is `Advanced.Visibility.PersistentState`:
+65,536 draws × nine view slots × 32 bytes requires 18 MiB. Its factory sets
+`GpuProduced = true` and allocates no CPU image. It is the first oversized buffer
+in declaration order, but physical preparation snapshots an unordered concurrent
+registry. The captured exception omits the buffer name, so it cannot establish
+which oversized resource encountered the guard first.
+
+Physical allocation no longer consumes or compares against the dynamic upload
+budget. The existing resource path still validates four-byte alignment, checked
+managed extents, the 256 MiB physical allocation ceiling and the selected device's
+`maxBufferSize`; each storage binding still validates its device range limit.
+GPU-produced buffers require no retained CPU transfer. CPU-backed initial images
+continue through the bounded 256 MiB preparation journal, while later mutations
+keep the independent 8 MiB current-attempt and retry budgets. Snapshot ownership,
+queue ordering, range validation and capacity diagnostics are unchanged.
+
+The focused source and diff checks cover this separation. The correction still
+requires fresh exact-commit compilation and physical browser execution; it does
+not establish a rendered Advanced frame or completed acceptance item.

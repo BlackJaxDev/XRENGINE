@@ -227,8 +227,19 @@ public sealed partial class WebGpuRendererHost
         if (color || depth || stencil)
         {
             BoundingRectangle? scissor = ResolveEngineDrawArea(validateViewport: false).Scissor;
-            if (scissor is not null)
-                throw UnsupportedEngineOperation(nameof(Clear), "scissored attachment clears are not admitted by the engine framebuffer profile");
+            if (scissor is { } clearArea)
+            {
+                WebGpuFrameBuffer? target = _boundEngineFrameBuffer;
+                _target.TryDescribeFrameOutput(out RenderFrameOutputDescription clearOutput);
+                uint width = target?.Width ?? clearOutput.Properties.Width;
+                uint height = target?.Height ?? clearOutput.Properties.Height;
+                throw UnsupportedEngineOperation(nameof(Clear),
+                    $"scissored attachment clears are not admitted by the engine framebuffer profile; " +
+                    $"target='{(target is null ? "<canvas>" : target.Data.Name ?? "<unnamed framebuffer>")}' " +
+                    $"attachment={width}x{height} effectiveScissor(top-left)=({clearArea.X},{clearArea.Y},{clearArea.Width},{clearArea.Height}) " +
+                    $"crop(bottom-left)={_engineCropArea} renderArea(bottom-left)={_engineRenderArea} " +
+                    $"color={color} depth={depth} stencil={stencil}");
+            }
         }
         if (_boundEngineFrameBuffer is { } framebuffer)
         {

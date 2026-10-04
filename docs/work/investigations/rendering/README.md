@@ -16,6 +16,9 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Other open investigations
 
+- [Browser Attachment-Clear Scope Unwind](browser-scissored-clear-unwind-2026-10-04.md):
+  pending command preparation leaked viewport crops and framebuffer scopes;
+  bounded restoration is implemented and exact-source browser validation remains.
 - [Browser Canonical Shader Staging](browser-canonical-shader-staging-2026-10-04.md):
   canonical source closure, portable provenance and manifest-capacity corrections
   for the complete browser shader inventory; fresh Windows publication remains

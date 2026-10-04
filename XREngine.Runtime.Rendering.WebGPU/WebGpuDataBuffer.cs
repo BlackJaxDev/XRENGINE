@@ -40,8 +40,9 @@ public sealed unsafe class WebGpuDataBuffer(WebGpuRendererHost renderer, XRDataB
 
         int length = checked((int)Data.Length);
         int allocationLength = checked((Math.Max(length, 1) + 3) & ~3);
-        if (Data.Target == EBufferTarget.ShaderStorageBuffer && allocationLength > 8 * 1024 * 1024)
-            throw Unsupported("Resize", "the storage profile exceeds the bounded 8 MiB frame upload capacity");
+        // Physical allocation is bounded by the resource/device limits. CPU images
+        // use the retained initialization budget; GPU-produced storage needs none.
+        // Only subsequent mutations consume the separate frame upload budget.
         int oldHandle = _handle, oldAllocated = _allocatedBytes;
         int oldPendingStart = _pendingStart, oldPendingEnd = _pendingEnd;
         uint oldUploadedBytes = _uploadedBytes;

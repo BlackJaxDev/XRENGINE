@@ -23,6 +23,13 @@ namespace XREngine.Rendering.Pipelines.Commands
             Write = write;
         }
 
+        /// <summary>Releases an acquired binding when execution cannot reach its queued pop.</summary>
+        internal void UnwindBinding()
+        {
+            try { Execute(); }
+            finally { ShouldExecute = true; }
+        }
+
         protected override void Execute()
         {
             try
@@ -38,8 +45,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             finally
             {
                 FrameBuffer = null;
-                RenderTargetScope?.Dispose();
+                IDisposable? targetScope = RenderTargetScope;
                 RenderTargetScope = null;
+                targetScope?.Dispose();
             }
         }
 
