@@ -29,7 +29,19 @@ public sealed partial class WebGpuRendererHost
         int completed = 0;
         while (preparation.Cursor < preparation.Resources.Length)
         {
-            try { GetOrCreateAPIRenderObject(preparation.Resources[preparation.Cursor], generateNow: true)!.Generate(); }
+            try
+            {
+                GenericRenderObject resource = preparation.Resources[preparation.Cursor];
+                if (resource is XRQuadFrameBuffer quad && resource.Name is { } name &&
+                    generation.Layout.TryGet(name, out RenderPipelineResourceSpec? spec) && spec is QuadMaterialSpec)
+                {
+                    // Material-only helpers share the framebuffer registry, but render into
+                    // a separately bound target. Prepare their retained draw owner instead.
+                    quad.PrepareForInitialRendering();
+                }
+                else
+                    GetOrCreateAPIRenderObject(resource, generateNow: true)!.Generate();
+            }
             catch (RenderResourcePreparationPendingException)
             {
                 failureReason = "Physical generation dependencies are awaiting engine resource acceptance.";

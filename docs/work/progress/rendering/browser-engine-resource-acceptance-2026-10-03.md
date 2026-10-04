@@ -151,3 +151,32 @@ Device-loss/recovery, repeated resize, large texture pressure and rendered
 array-copy output still require live browser validation on the selected device.
 No shader source, persistent asset format, dependency or tracked test change is
 part of this work.
+
+## Default material-helper admission correction — 2026-10-04
+
+The first fresh browser run of commit `2f61fd7ea927cc09d6f8f11a76cc037f98109ace`
+compiled and published the native host and cooked the diagnostic shaders, but
+Default lit, effects, directional-shadow and debug-overlay frames failed during
+physical generation preparation. The explicit error was
+`WebGPU.FrameBuffer.OperationUnsupported: Create: the framebuffer has no declared render attachments`.
+The independent depth, texture, world-lifecycle, audio, asset-delivery and native
+Jolt checks passed. See [the exact CI run](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37196549762).
+
+The registry intentionally stores `QuadMaterialSpec` fullscreen draw owners in
+its framebuffer collection. Helpers such as `WebTonemapMaterial` have no render
+attachments because they draw into a separately bound target. The new physical
+generation cursor had incorrectly requested a framebuffer wrapper for those
+material-only owners.
+
+WebGPU preparation now resolves each retained quad's declared resource kind.
+An `XRQuadFrameBuffer` declared as a `QuadMaterialSpec` prepares its retained
+fullscreen renderer through `PrepareForInitialRendering`; physical framebuffer
+specifications and undeclared framebuffers retain the existing generation and
+empty-attachment rejection. The rule applies to custom named helpers as well as
+Default. Pending preparation still returns before advancing the same retained
+cursor, and shared factories, resource ownership and desktop behavior are
+unchanged. No diagnostic assertion is relaxed.
+
+The source correction passes the focused diff check, independent review and a
+fresh combined Rendering/WebGPU build with zero warnings and errors. Repeated
+browser execution is pending. This correction adds no completed acceptance item.

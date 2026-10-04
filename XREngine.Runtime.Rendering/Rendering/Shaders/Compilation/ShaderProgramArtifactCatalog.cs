@@ -9,6 +9,9 @@ namespace XREngine.Rendering.Shaders.Compilation;
 /// </summary>
 public sealed class ShaderProgramArtifactCatalog : IShaderProgramArtifactResolver
 {
+    /// <summary>Maximum encoded size of an engine manifest containing the bounded artifact and binding catalogs.</summary>
+    public const int MaximumManifestBytes = 1024 * 1024;
+
     private readonly ImmutableDictionary<string, ShaderProgramArtifact> _artifacts;
     private readonly ImmutableHashSet<(ShaderCompileTarget Target, string Language, string Schema, string Pass)> _profiles;
 

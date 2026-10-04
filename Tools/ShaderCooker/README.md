@@ -11,8 +11,9 @@ dotnet run --project Tools/ShaderCooker/ShaderCooker.csproj -- --recipe XREngine
 The default invocation packages the original explicit `browser-unlit` WGSL
 recipe as schema 1, byte compatible with the existing checked-in assets. Schema
 1, schema 2, and schema 3 recipes must be cooked in separate invocations. `--recipe` can
-be repeated up to 24 times; `--source-root` defaults to the WebGPU `Assets`
-directory, and `--output` defaults to its `shaders` directory. The source root
+be repeated up to 256 times; generated companions also count toward the 256-artifact
+budget. `--source-root` defaults to the WebGPU `Assets` directory, and `--output`
+defaults to its `shaders` directory. The source root
 and recipes must live under the same parent directory, so dependencies have
 stable, normalized paths such as `Assets/mesh.wgsl` and
 `Shaders/browser-unlit-color.recipe.json`. An explicit alternate source root
@@ -54,6 +55,19 @@ does not invoke Slang. The engine implementation also preserves these recipes as
 checks; successful cooking alone does not qualify browser rendering.
 
 ## Engine artifacts
+
+`Tools/Cook-EngineBrowserShaders.ps1 -OutputDirectory <artifact-output>` cooks
+the complete canonical production inventory, excluding diagnostic probe recipes.
+Its temporary source tree preserves `WebGPU`, `Common`, `Scene3D`, and `Snippets`
+as siblings and adds the backend-owned WGSL kernels under `WebGPU/Assets`.
+The authored GLSL files are copied unchanged. Unlit and impostor provenance
+compares their strict UTF-8 text with canonical LF line endings, so a Windows
+checkout retains the same pinned source identity; other source changes still
+fail. Engine schema-three manifests have a separate 1 MiB limit shared with
+the publisher. Individual recipes and descriptors retain their 64 KiB limits,
+and legacy schema-one/two manifests retain their 64 KiB limit. The
+[canonical staging investigation](../../docs/work/investigations/rendering/browser-canonical-shader-staging-2026-10-04.md)
+records the failure and validation boundaries.
 
 The `AuthoredLitTexturedV1` family lowers the six exact forward normal/specular
 sources with `baseColor: "authored-textured"` and `textureFlags` equal to 1, 2, 3,
