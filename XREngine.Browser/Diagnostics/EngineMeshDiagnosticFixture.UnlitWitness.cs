@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Data.Colors;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
