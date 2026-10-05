@@ -226,5 +226,10 @@ The producer checked every content file before upload; this archive digest has
 not yet been independently checked after download. The Linux portable/runtime
 job also passed on this commit. These results qualify the native/browser
 publication boundary, not browser connection, locomotion, reconnection or TLS
-certificate-store behavior. The proposed bounded real-server walkthrough still
-awaits authorization and execution.
+certificate-store behavior. The owner subsequently approved one isolated
+Windows real-server walkthrough and its validation helper/workflow. It uses the
+exact qualified bundle, normal TLS and one temporary current-user localhost
+certificate, with an eight-minute live-operation limit and one-minute cleanup
+limit. Windows parsing, embedded-helper compilation, independent workflow
+review and exact-run activation remain prerequisites. No certificate/trust or
+live server-connection action has run yet.

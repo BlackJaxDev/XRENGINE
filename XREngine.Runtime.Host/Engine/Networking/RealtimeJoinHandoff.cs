@@ -9,21 +9,6 @@ public static class RealtimeJoinHandoff
 
     public static string CurrentProtocolVersion => RealtimeJoinHandoffContract.CurrentProtocolVersion;
 
-    public static bool TryApplyFromEnvironment(
-        GameStartupSettings settings,
-        out RealtimeJoinHandoffPayload? payload,
-        out string? source)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-
-        if (!RealtimeJoinHandoffContract.TryReadFromEnvironment(out payload, out source))
-            return false;
-
-        if (payload is not null)
-            ApplyToSettings(settings, payload);
-        return true;
-    }
-
     public static void ApplyToSettings(GameStartupSettings settings, RealtimeJoinHandoffPayload payload)
     {
         ArgumentNullException.ThrowIfNull(settings);
