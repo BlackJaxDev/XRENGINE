@@ -13,6 +13,7 @@ import { renderingParityGameCheck } from './rendering-parity-game.mjs';
 import { uiParityGameCheck } from './ui-parity-game.mjs';
 import { advancedRenderingGameCheck } from './advanced-rendering-game.mjs';
 import { modularPipelineGameCheck } from './modular-pipeline-game.mjs';
+import { staticMeshletParityGameCheck } from './static-meshlet-parity-game.mjs';
 import { runNativeCompileIsolation } from './native-compile-isolation.mjs';
 import { unlitMaterialsCheck } from './unlit-materials.mjs';
 import { unlitMsaaCheck, unlitIndirectCheck } from './unlit-msaa.mjs';
@@ -41,6 +42,7 @@ async function startServer(config, requests) {
         ...(config.shaderArtifacts ? [{ prefix: '/__shaders/', root: await directory(config.shaderArtifacts) }] : []),
         ...(config.joltSpike ? [{ prefix: '/__jolt/', root: await directory(config.joltSpike) }] : []),
         ...(config.gamePublish ? [{ prefix: '/__game/', root: await directory(config.gamePublish) }] : []),
+        ...(config.baselinePublish ? [{ prefix: '/__baseline/', root: await directory(config.baselinePublish) }] : []),
         { prefix: '/', root: await directory(config.browserPublish ?? config.gamePublish) },
     ];
     let authority;
@@ -1184,14 +1186,25 @@ async function publishedGameCheck(browser, origin, report, config) {
     const advanced = config.gameKind === 'advanced-rendering-parity';
     const ui = config.gameKind === 'ui-parity';
     const modular = config.gameKind === 'modular-pipeline-parity';
+    const meshlet = config.gameKind === 'static-meshlet-parity';
     const worldPath = ui ? '/game/Worlds/BrowserUiParityWorld.asset'
         : advanced ? '/game/Worlds/AdvancedRenderingParityWorld.asset'
         : modular ? '/game/Worlds/ModularPipelineParityWorld.asset'
+        : meshlet ? '/game/Worlds/StaticMeshletParityWorld.asset'
         : parity ? '/game/Worlds/RenderingParityWorld.asset' : '/game/Worlds/RollingBallWorld.asset';
     assert(descriptor.schema === 2 && descriptor.format === 'xrengine-engine-launch' &&
         descriptor.manifest === './content/manifest.json' && manifest.startupWorld === worldPath,
         'BrowserSmoke.GameBundle: expected the Editor-activated canonical game publish.');
-    if (ui) {
+    if (meshlet) {
+        const baseline = JSON.parse(await fs.readFile(path.join(config.baselinePublish, 'content', 'manifest.json'), 'utf8'));
+        assert(baseline.startupWorld === worldPath,
+            'BrowserSmoke.StaticMeshletBaseline: CPU and GPU bundles must publish the same saved world.');
+        for (const pass of ['select-lod', 'cull-expand', 'finalize-indexed', 'refit-bounds'])
+            assert(manifest.pipelineArtifacts?.some(entry => entry.pass === pass && entry.scope === 'meshlets') &&
+                baseline.pipelineArtifacts?.some(entry => entry.pass === pass && entry.scope === 'meshlets'),
+                `BrowserSmoke.StaticMeshletArtifactMissing: meshlets::${pass}.`);
+        await staticMeshletParityGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
+    } else if (ui) {
         for (const [semantic, semanticVersion] of [['UIQuadBatched', 2], ['UIQuadBatchedTexture', 2],
             ['UITextBatchedBitmap', 2], ['UICanvasSurface', 1]])
             assert(manifest.materialVariants?.some(entry => entry.semantic === semantic &&

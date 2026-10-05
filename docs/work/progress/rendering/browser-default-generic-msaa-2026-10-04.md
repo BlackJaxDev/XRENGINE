@@ -308,3 +308,44 @@ game assembly build identifies the missing `XREngine` namespace import for
 `EAntiAliasingMode` in `ModularMsaaRenderPipeline`; that import is restored.
 Custom x4 publication and pixels remain unqualified. These bounded results do
 not close the wider custom, blended and unsupported-profile acceptance item.
+
+## GPU depth, AO and blended execution
+
+Exact commit `c9139dd69679c2872d956323971df46fb5292926` passes the complete
+[Linux browser job in run 37261633781](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37261633781/job/111609908659).
+Artifact `11325318497` has SHA-256
+`b5bbdb1496eafd5809a706e6fae1cf545f5c64230bc1abbf22d0974f70758b03`.
+The software adapter executes all four GPU profiles: x1, x4, x4 blended and
+x4 with GTAO. Each completes two fresh starts and the same three extents.
+The x4 ordinary and AO profiles together supply twelve captures and 108
+material-center comparisons. Maximum HDR component error is 0.0002297794;
+display-byte error and silhouette/sidecar coverage mismatches are zero.
+
+The AO profile records twenty-four GPU selection/cull pairs, twelve indexed
+depth/normal calls and twelve indexed color calls. Closest-covered depth/normal
+resolve precedes all three GTAO stages; HDR color resolve precedes presentation.
+The witness observes the authored near/far depth and normal values at every
+quarter-coverage step. Its final AO ranges from 0.7802734375 to 0.94287109375
+at 512 x 512 and from 0.7890625 to 0.9423828125 at 640 x 384. Ordinary frames
+and resize add zero READ maps; each paused AO capture accounts for exactly
+twenty-two diagnostic pixel maps. Native module/pipeline identities remain
+stable at seventeen modules and sixty-five pipelines, and the exact non-slot
+inventory remains 232 entries across all six AO captures. Both AO teardowns,
+and all eight GPU-profile teardowns, report zero live/retiring resources,
+readback tickets and estimated logical GPU memory.
+
+The GPU blended profile now progresses through the repaired draw cache. Its
+six captures pass the straight-alpha and fractional-coverage witness with zero
+mismatches. Actual commands include source ranking, two argument-mask
+dispatches, six raster-input copies and fourteen issued indexed color calls,
+followed by color resolve and presentation. Effective GPU-visible counts remain
+unread. Each paused capture uses ten diagnostic maps and ordinary intervals use
+none. Initial blended and initial/resized AO screenshots were inspected.
+Native program identities stay stable; the blended retained owner inventory
+warms from 275 to 295 to 313 entries over the three extents, unlike the stable
+ordinary/AO non-slot inventory. It returns to zero on teardown, but repeated
+resize budget/stability is not established by this bounded blended result.
+
+This closes Default GPU x4 ordinary/depth/AO acceptance. Custom x4 graphs,
+their blended coverage and precise unavailable-profile rejection remain open,
+as do physical-device, long-duration memory and wider renderer acceptance.

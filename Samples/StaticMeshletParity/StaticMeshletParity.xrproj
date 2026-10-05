@@ -1,0 +1,8 @@
+__type: XREngine.XRProject
+ProjectName: StaticMeshletParity
+ProjectVersion: 1.0.0
+EngineVersion: 1.0.0
+ID: 046057b1-9f99-4f9d-aa5c-57b411ae07b2
+Name: Static Meshlet Parity
+StartupScenePath: Worlds/StaticMeshletParityWorld.asset
+BrowserShaderArtifactManifestPath: Assets/Shaders/WebGPU/manifest.json

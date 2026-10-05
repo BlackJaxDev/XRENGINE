@@ -140,6 +140,21 @@ artifacts in the genuine Editor bundle. These broad pixel/artifact checks do not
 by themselves prove GPU dispatch or known-value mapped-lighting semantics; those
 remain separate acceptance evidence.
 
+The `static-meshlet-parity-editor-published-world` check uses the saved single
+mapped panel from RenderingParity with meshlets enabled. Windows publishes two
+copies of that same saved world through the Editor: GPU meshlet startup and a
+CPU-direct startup reference. Linux compares matching settled panel captures
+at both initial and resized extents, then requires an explicit startup marker,
+CPU direct indexed draws, actual select/cull/finalize compute dispatches,
+`drawIndexedIndirect`, and the same original mapped vertex/fragment module
+identity on both paths. The expected program comes from each published
+StandardLitTexture material variant, with descriptor and WGSL hashes checked
+against the active draw. It requires zero GPU READ maps of any label, two fresh
+GPU contexts, and zero retained resources or tickets after owned host disposal.
+The saved-world bootstrap rejects missing or non-owner-validated cooked
+payloads. The smoke report does not infer GPU-visible meshlet counts from CPU
+commands.
+
 The directional-shadow diagnostic is a separate static fixture. It cooks the
 `StandardLitColorV1` HDR shadow receiver and `OpaqueShadowDepthV1` writer as
 distinct variants, then uses one registered `DirectionalLightComponent` and its

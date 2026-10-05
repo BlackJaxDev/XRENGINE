@@ -4,6 +4,7 @@ export function readConfig(argv = process.argv.slice(2), env = process.env) {
     const { values } = parseArgs({ args: argv, strict: true, allowPositionals: false, options: {
         'browser-publish': { type: 'string' },
         'game-publish': { type: 'string' },
+        'baseline-publish': { type: 'string' },
         'game-kind': { type: 'string', default: 'rollingball' },
         'game-only': { type: 'boolean', default: false },
         'shader-artifacts': { type: 'string' },
@@ -24,10 +25,14 @@ export function readConfig(argv = process.argv.slice(2), env = process.env) {
         if (!values[required]) throw new Error(`BrowserSmoke.Config: --${required} is required.`);
     if (gameOnly && (values['engine-manifest'] || values['jolt-spike'] || values['require-world-play'] || values['gpu-diagnostics']))
         throw new Error('BrowserSmoke.Config: game-only mode does not run engine diagnostics.');
+    if (values['game-kind'] === 'static-meshlet-parity' && !values['baseline-publish'])
+        throw new Error('BrowserSmoke.Config: static-meshlet-parity requires --baseline-publish.');
+    if (values['baseline-publish'] && values['game-kind'] !== 'static-meshlet-parity')
+        throw new Error('BrowserSmoke.Config: --baseline-publish is only for static-meshlet-parity.');
     if (!['native', 'software'].includes(values['gpu-mode']))
         throw new Error('BrowserSmoke.Config: --gpu-mode must be native or software.');
-    if (!['rollingball', 'rendering-parity', 'advanced-rendering-parity', 'ui-parity', 'modular-pipeline-parity'].includes(values['game-kind']))
-        throw new Error('BrowserSmoke.Config: --game-kind must be rollingball, rendering-parity, advanced-rendering-parity, ui-parity or modular-pipeline-parity.');
+    if (!['rollingball', 'rendering-parity', 'advanced-rendering-parity', 'ui-parity', 'modular-pipeline-parity', 'static-meshlet-parity'].includes(values['game-kind']))
+        throw new Error('BrowserSmoke.Config: --game-kind must be rollingball, rendering-parity, advanced-rendering-parity, ui-parity, modular-pipeline-parity or static-meshlet-parity.');
     if (values['native-compile-trace'] && (!gameOnly || values['game-kind'] !== 'advanced-rendering-parity'))
         throw new Error('BrowserSmoke.Config: --native-compile-trace requires the Advanced game-only qualification.');
     const timeout = Number(values['timeout-ms']);
@@ -40,7 +45,8 @@ export function readConfig(argv = process.argv.slice(2), env = process.env) {
         engineManifest.includes('\\') || engineManifest.includes('..') || engineManifest.includes('?') || engineManifest.includes('#')))
         throw new Error('BrowserSmoke.Config: --engine-manifest must be a root-relative path inside browser publish output.');
     return {
-        browserPublish: values['browser-publish'], gamePublish: values['game-publish'], gameOnly, gameKind: values['game-kind'],
+        browserPublish: values['browser-publish'], gamePublish: values['game-publish'],
+        baselinePublish: values['baseline-publish'], gameOnly, gameKind: values['game-kind'],
         shaderArtifacts: values['shader-artifacts'],
         joltSpike: values['jolt-spike'], output: values.output, engineManifest,
         requireWorldPlay: values['require-world-play'], gpuMode: values['gpu-mode'],
@@ -76,9 +82,10 @@ export const depthSamples = Object.freeze([
 export const help = `Usage: node Tools/BrowserSmoke/run.mjs
   [--browser-publish <published-wwwroot>]
   [--game-publish <editor-published-game-root>]
+  [--baseline-publish <same-fixture-cpu-published-game-root>]
   [--shader-artifacts <schema3-engine-shader-artifacts-directory>]
   --output <evidence-directory>
-  [--game-only] [--game-kind rollingball|rendering-parity|advanced-rendering-parity|ui-parity|modular-pipeline-parity]
+  [--game-only] [--game-kind rollingball|rendering-parity|advanced-rendering-parity|ui-parity|modular-pipeline-parity|static-meshlet-parity]
   [--jolt-spike <published-spike-wwwroot>]
   [--engine-manifest /relative/engine-assets/manifest.json]
   [--require-world-play] [--gpu-mode native|software] [--gpu-diagnostics] [--headed]
