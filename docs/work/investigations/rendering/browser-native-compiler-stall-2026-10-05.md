@@ -67,8 +67,19 @@ whether the expected metadata or FIFO properties match. It records whether
 the original one-second budget was exceeded. Raw command output is not
 retained. The script starts no perf process, browser or privileged command,
 creates only its own temporary FIFOs and verifies their deletion. This is an
-informational prerequisite record, not shader or profiling acceptance; its
-first runner result remains pending.
+informational prerequisite record, not shader or profiling acceptance.
+
+On exact source `2b97bda4075563efc9f2558832c6fbcf57611f31`,
+[normal run 37290314776](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37290314776/job/111698924336)
+passes every prerequisite on its fresh runner: the expected-package query takes
+13.769 ms, file-owner lookup 84.771 ms, actual-owner version lookup 10.556 ms,
+and FIFO creation 2.448 ms. Each finishes within the earlier one-second budget,
+all expected metadata matches, and FIFO cleanup is verified. The fixed perf file
+is a regular root-owned executable with no group/other write or special mode
+bits. These results rule out a persistent missing prerequisite on that runner;
+they do not identify the earlier failure under the shader workload or authorize
+another capture. Evidence artifact `11337247033` has ZIP SHA-256
+`75ecd6f52c1a6f4710dbf3faa665f847f5d86e78a5f42e2b0eb32499b3afa39a`.
 
 The local unprivileged execution completed with the expected missing-package
 outcomes on the cloud development environment and successful FIFO creation and
