@@ -54,8 +54,26 @@ public static class RuntimeAssetReadServices
     /// <summary>Rejects authoring APIs before host-file access or a default background import is started.</summary>
     public static void EnsureHostFileAccess(string operation)
     {
-        using RuntimeAssetReadLease read = Capture();
-        read.EnsureHostFileAccess(operation);
+        RuntimeAssetReadBinding binding;
+        lock (Gate)
+        {
+            binding = _current;
+            binding.Readers++;
+        }
+        try
+        {
+            binding.Token.ThrowIfCancellationRequested();
+            EnsureCurrent(binding);
+            if (OperatingSystem.IsBrowser() || IsCallerThread
+                || binding.Source is { SupportsHostFileAccess: false })
+                throw new NotSupportedException($"AssetSource.HostFileUnavailable: {operation} requires a synchronous host-file owner; use the installed runtime asset source for reads.");
+            binding.Token.ThrowIfCancellationRequested();
+            EnsureCurrent(binding);
+        }
+        finally
+        {
+            binding.ReleaseReader();
+        }
     }
 
     internal static async Task<T> RunHostOperationAsync<T>(string operation, Func<T> action)
