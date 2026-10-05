@@ -31,8 +31,9 @@ public sealed class VulkanFullyBindlessMaterialTests
     [Test]
     public void VulkanBindlessMaterialDescriptorTable_SourceContracts_ArePresent()
     {
-        string tableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.BindlessMaterialTextureTable.cs");
-        string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+        string tableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanRenderer.BindlessMaterialTextureTable.cs");
+        string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs");
+        string lifecycleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.Lifecycle.cs");
         string profileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Vulkan/VulkanFeatureProfile.cs");
         string hostInterfaceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSettingsServices.cs");
         string commandBufferSource = SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
@@ -51,8 +52,9 @@ public sealed class VulkanFullyBindlessMaterialTests
         tableSource.ShouldContain("TryEnsureGlobalMaterialTextureDescriptorTable");
         tableSource.ShouldContain("DescriptorPoolCreateFlags.UpdateAfterBindBit");
         tableSource.ShouldContain("DescriptorSetVariableDescriptorCountAllocateInfo");
-        tableSource.ShouldContain("DstArrayElement = descriptorIndex");
-        tableSource.ShouldContain("GetPlaceholderImageInfo(DescriptorType.CombinedImageSampler");
+        tableSource.ShouldContain("DstArrayElement = publication.RangeStarts[rangeIndex]");
+        tableSource.ShouldContain("BackendContext.Resources.FallbackTexture.GetImageInfo(");
+        tableSource.ShouldContain("if (fallbackInfo.ImageView.Handle == 0 || fallbackInfo.Sampler.Handle == 0)");
         tableSource.ShouldContain("GlobalMaterialTextureRetireDelayFrames");
         tableSource.ShouldContain("ValidateRequiredVulkanBindlessMaterialCapability");
         tableSource.ShouldContain("TryBindGlobalMaterialTextureDescriptorSet");
@@ -67,9 +69,9 @@ public sealed class VulkanFullyBindlessMaterialTests
         commandBufferSource.ShouldContain("op.BindlessMaterialTextures is { } bindlessMaterialTextures");
         commandBufferSource.ShouldContain("TryBindGlobalMaterialTextureDescriptorSet(");
 
-        logicalDeviceSource.ShouldContain("DestroyGlobalMaterialTextureDescriptorTable();");
-        logicalDeviceSource.ShouldContain("ValidateRequiredVulkanBindlessMaterialCapability();");
-        logicalDeviceSource.ShouldContain("VulkanBindlessMaterialCapability bindlessMaterialCapability = RefreshBindlessMaterialCapability();");
+        lifecycleSource.ShouldContain("_resourceRuntime.Descriptors.DestroyGlobalMaterialTextureDescriptorTable();");
+        logicalDeviceSource.ShouldContain("ResourceRuntime.Descriptors.ValidateRequiredVulkanBindlessMaterialCapability();");
+        tableSource.ShouldContain("VulkanBindlessMaterialCapability capability = RefreshBindlessMaterialCapability();");
 
         hostInterfaceSource.ShouldContain("EVulkanBindlessMaterialMode VulkanBindlessMaterialMode");
         hostInterfaceSource.ShouldContain("bool EnableVulkanBindlessMaterialTable");
@@ -85,7 +87,8 @@ public sealed class VulkanFullyBindlessMaterialTests
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
 
         materialLayoutSource.ShouldContain("EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable");
-        materialLayoutSource.ShouldContain("layout(set = 2, binding = 31) uniform sampler2D XR_BindlessMaterialTextures[];");
+        materialLayoutSource.ShouldContain("VulkanMaterialTextureDescriptorTableBinding = 31u;");
+        materialLayoutSource.ShouldContain("binding = {MaterialBindingLayouts.VulkanMaterialTextureDescriptorTableBinding}) uniform sampler2D XR_BindlessMaterialTextures[];");
         materialLayoutSource.ShouldContain("XR_BindlessMaterialTextures[nonuniformEXT(descriptorIndex)]");
 
         materialReferenceSource.ShouldContain("FromVulkanDescriptorIndex");

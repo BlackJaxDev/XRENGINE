@@ -14,7 +14,7 @@ public sealed class VulkanZeroReadbackSubmissionContractTests
     {
         foreach (string path in new[]
         {
-            "XREngine.Runtime.Bootstrap/Settings/EditorPreferences.cs",
+            "XREngine.Runtime.Host/Settings/EditorPreferences.cs",
             "XREngine.Runtime.Rendering/Runtime/RuntimeEffectiveSettings.cs",
             "XREngine.Runtime.Rendering/Runtime/RuntimeDebugPreferences.cs",
             "XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs",
@@ -117,7 +117,7 @@ public sealed class VulkanZeroReadbackSubmissionContractTests
         string rung = Read("XREngine.Data/Rendering/Enums/EMaterialTextureBindingRung.cs");
         string stats = Read(
             "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.GpuDriven.cs");
-        string profile = Read("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
+        string profile = Read("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
         string visibility = Read(
             "XREngine.Runtime.Rendering/Rendering/Commands/IGpuCompactVisibilityInput.cs");
 
@@ -179,7 +179,7 @@ public sealed class VulkanZeroReadbackSubmissionContractTests
             "XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.ShadersAndInit.cs");
         string manager = Read(
             "XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
-        string profile = Read("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
+        string profile = Read("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
 
         environment.ShouldContain(
             "XRE_GPU_DRIVEN_VALIDATION_CAPACITY_MULTIPLIER");
@@ -204,12 +204,12 @@ public sealed class VulkanZeroReadbackSubmissionContractTests
     public void VulkanIntegerAttachmentReadback_ProducesExactCaptureFingerprint()
     {
         string blit = Read(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Readback/VulkanCommandRuntime.PixelReadback.cs");
         string capture = Read(
             "XREngine.Editor/Mcp/Actions/EditorMcpActions.RenderPipeline.cs");
 
         blit.ShouldContain("case Format.R32Uint:");
-        blit.ShouldContain("float value = *(uint*)(src + srcIndex);");
+        blit.ShouldContain("float value = ReadUInt32(source, srcIndex);");
         blit.ShouldContain("Format.R32Uint => 4");
         capture.ShouldContain("ComputeRgbaFloatSha256(rgbaFloats)");
         capture.ShouldContain("rgba_float_sha256 = result.RgbaFloatSha256");

@@ -14,5 +14,8 @@ namespace XREngine.Rendering.Vulkan
         ImageView PrimaryView,
         ImageView[] AttachmentViews,
         Sampler Sampler,
-        long AllocatedVRAMBytes);
+        long AllocatedVRAMBytes,
+        ulong PrimaryViewGeneration = 0,
+        ulong[]? AttachmentViewGenerations = null,
+        bool QualifiedViewGenerations = false);
 }

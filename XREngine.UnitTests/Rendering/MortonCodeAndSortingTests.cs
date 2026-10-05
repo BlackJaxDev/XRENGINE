@@ -53,15 +53,16 @@ public class MortonCodeAndSortingTests
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
-        source.ShouldContain("uint renderPass = floatBitsToUint(culled[base + 8u]);");
+        source.ShouldContain("uint drawID = visibleDrawIds[logicalIdx];");
+        source.ShouldContain("uint renderPass = draw.RenderPass;");
         source.ShouldContain("MaxSortKeys");
         source.ShouldContain("StateBitMask");
         source.ShouldContain("SortDomain");
         source.ShouldContain("SortDirection");
         source.ShouldContain("sortKeys");
         source.ShouldContain("packedPassPipelineState");
-        source.ShouldContain("COMMAND_FLOATS = 20");
-        source.ShouldContain("KEY_UINTS = 4");
+        source.ShouldContain("layout(std430, binding = 5) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };");
+        source.ShouldContain("KEY_UINTS = 4u");
     }
 
     [Test]
@@ -96,9 +97,9 @@ public class MortonCodeAndSortingTests
         string source = LoadShaderSource("Compute/Indirect/GPURenderBuildKeys.comp");
 
         // Verify material/state + mesh lanes are emitted for downstream batching/sorting.
-        source.ShouldContain("uint materialID = floatBitsToUint(culled[base + 6u])");
-        source.ShouldContain("uint meshID = floatBitsToUint(culled[base + 4u])");
-        source.ShouldContain("uint stateClassID = floatBitsToUint(culled[base + 17u])");
+        source.ShouldContain("uint materialID = draw.MaterialID;");
+        source.ShouldContain("uint meshID = draw.MeshID;");
+        source.ShouldContain("uint stateClassID = draw.StateClassID;");
         source.ShouldContain("primarySortKey = stateClassID");
         source.ShouldContain("secondarySortKey = meshID");
         source.ShouldContain("sortKeys[outBase + 1u] = primarySortKey");

@@ -9,8 +9,10 @@ public sealed class VulkanCoreHardeningPhase523Tests
     [Test]
     public void ImageViews_AreInternedByCompleteStructuralIdentityAndReferenceCounted()
     {
-        string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Textures/VulkanRenderer.ImageViewLifetime.cs");
+        string identity = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanImageViewStructuralKey.cs");
+        string service = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Images/VulkanImageResourceService.cs");
 
         foreach (string identityField in new[]
                  {
@@ -19,20 +21,22 @@ public sealed class VulkanCoreHardeningPhase523Tests
                      "AspectMask", "BaseMipLevel", "LevelCount", "BaseArrayLayer", "LayerCount"
                  })
         {
-            source.ShouldContain(identityField);
+            identity.ShouldContain(identityField);
         }
 
-        source.ShouldContain("TryAcquireInternedImageView");
-        source.ShouldContain("existing.ReferenceCount++");
-        source.ShouldContain("ReleaseInternedImageView");
-        source.ShouldContain("entry.ReferenceCount--");
-        source.ShouldContain("RetireImageViewsForBackingImage");
-        source.ShouldContain("entry.ReferenceCount = 0");
+        service.ShouldContain("TryAcquireInternedView(");
+        service.ShouldContain("record.Generation == existing.Generation");
+        service.ShouldContain("existing.ReferenceCount++");
+        service.ShouldContain("ReleaseInternedView(in VulkanInternedImageViewReference reference)");
+        service.ShouldContain("entry.Generation != reference.Generation");
+        service.ShouldContain("entry.ReferenceCount = Math.Max(0, entry.ReferenceCount - 1)");
+        service.ShouldContain("RetireViewsForBackingImage(ulong imageHandle, string owner)");
 
-        string imageBacked = ReadWorkspaceFile(
+        string imageBacked = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
         imageBacked.ShouldContain("CreateView(descriptor, _view)");
-        imageBacked.ShouldContain("IsLiveImageViewStructurallyEquivalent(reusableView, in viewInfo)");
+        imageBacked.ShouldContain("IsStructurallyEquivalent(reusableView, in viewInfo)");
+        imageBacked.ShouldContain("if (replacement == _view)");
     }
 
     [Test]
@@ -103,7 +107,7 @@ public sealed class VulkanCoreHardeningPhase523Tests
     [Test]
     public void ExactInvalidationTelemetry_IsCapturedAndGlobalFallbackFailsTheStrictGate()
     {
-        string capture = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
+        string capture = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
         string harness = ReadWorkspaceFile("Tools/Measure-GameLoopRenderPipeline.ps1");
 
         capture.ShouldContain("vulkan_exact_variants_dirtied");

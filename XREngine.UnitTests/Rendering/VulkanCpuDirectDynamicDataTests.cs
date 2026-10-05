@@ -60,7 +60,7 @@ public sealed class VulkanCpuDirectDynamicDataTests
     {
         string arena = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs");
-        string profileCapture = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
+        string profileCapture = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
 
         arena.ShouldContain("internal bool TryReserve(");
         arena.ShouldContain("internal bool TryWriteIfChanged<T>");
@@ -127,8 +127,34 @@ public sealed class VulkanCpuDirectDynamicDataTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkDataBuffer.cs");
         source.ShouldContain("requiredByteSize > _bufferSize");
         source.ShouldNotContain("_bufferSize != Data.Length");
-        source.ShouldContain("if (replacesExistingBacking)");
-        source.ShouldContain("Renderer.MarkCommandBuffersDirty(\"VkDataBufferRecreated\")");
+        source.ShouldContain("BackendContext.Resources.Buffers.Retire(_vkBuffer.Value, _vkMemory.Value, \"VkDataBuffer.PushData\")");
+
+        string bufferService = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanBufferResourceService.cs");
+        bufferService.ShouldContain("lifetime.Tracker.FenceResourceRecordingAdmission(key, owner);");
+        bufferService.ShouldContain("lifetime.Tracker.SetPublishedGenerationNoLock(key, 0UL);");
+        bufferService.ShouldContain("lifetime.EnqueueSupersededResourceDescriptorOwner(key, record.Generation);");
+        bufferService.IndexOf("lifetime.Tracker.FenceResourceRecordingAdmission(key, owner);", StringComparison.Ordinal)
+            .ShouldBeLessThan(bufferService.IndexOf("lifetime.Tracker.SetPublishedGenerationNoLock(key, 0UL);", StringComparison.Ordinal));
+
+        string lifetimeTracker = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Lifetime/VulkanResourceLifetimeTracker.cs");
+        lifetimeTracker.ShouldContain("PublishedResourceGenerations[key] = generation;");
+        lifetimeTracker.ShouldContain("if (nativeBufferPublicationChanged)");
+        lifetimeTracker.ShouldContain("IncrementNativeBufferBindingRevisionNoLock();");
+        lifetimeTracker.IndexOf("PublishedResourceGenerations[key] = generation;", StringComparison.Ordinal)
+            .ShouldBeLessThan(lifetimeTracker.IndexOf("if (nativeBufferPublicationChanged)", StringComparison.Ordinal));
+
+        string packetKey = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOps/RecordedPacketKey.cs");
+        packetKey.ShouldContain("IndexBuffer == other.IndexBuffer");
+        packetKey.ShouldContain("VertexBuffers.Equals(other.VertexBuffers)");
+        packetKey.ShouldContain("AuxiliaryBuffers.Equals(other.AuxiliaryBuffers)");
+
+        string dependencies = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Reuse/Dependencies/CommandRecordingDependencySignature.cs");
+        dependencies.ShouldContain("if (!recordedPacketKey.Matches(in currentRecordedPacketKey))");
+        dependencies.ShouldContain("Binding(CommandRecordingDependencyField.RecordedPacketKey)");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

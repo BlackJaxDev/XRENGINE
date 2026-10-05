@@ -57,6 +57,7 @@ internal sealed class VulkanImportedTextureUploadPreparation(
     public Image Image;
     public DeviceMemory Memory;
     public ImageView ImageView;
+    public ulong ImageViewGeneration;
     public Sampler Sampler;
     public long CommittedBytes;
 

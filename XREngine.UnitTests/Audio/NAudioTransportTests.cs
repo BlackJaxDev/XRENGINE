@@ -786,6 +786,10 @@ namespace XREngine.UnitTests.Audio
                 listener.EffectsProcessor.ShouldNotBeNull();
                 listener.EffectsProcessor.ShouldBeOfType<PassthroughProcessor>();
             }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("NAudio could not open the playback device.", StringComparison.Ordinal))
+            {
+                Assert.Inconclusive($"NAudio playback device unavailable: {ex.Message}");
+            }
             finally
             {
                 AudioSettings.AudioArchitectureV2 = prev;
@@ -814,6 +818,10 @@ namespace XREngine.UnitTests.Audio
                  || listener.EffectsProcessor is PassthroughProcessor)
                     .ShouldBeTrue("Should be SteamAudioProcessor or PassthroughProcessor fallback.");
             }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("NAudio could not open the playback device.", StringComparison.Ordinal))
+            {
+                Assert.Inconclusive($"NAudio playback device unavailable: {ex.Message}");
+            }
             finally
             {
                 AudioSettings.AudioArchitectureV2 = prev;
@@ -839,6 +847,10 @@ namespace XREngine.UnitTests.Audio
                 listener.Transport.ShouldBeOfType<NAudioTransport>();
                 // EFX requires OpenAL — ValidateCombo auto-corrects to Passthrough
                 listener.EffectsProcessor.ShouldBeOfType<PassthroughProcessor>();
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("NAudio could not open the playback device.", StringComparison.Ordinal))
+            {
+                Assert.Inconclusive($"NAudio playback device unavailable: {ex.Message}");
             }
             finally
             {

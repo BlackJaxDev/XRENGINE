@@ -1832,6 +1832,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
             OpenXrSubmissionMetadata submissionMetadata = new(
                 Context.PendingFrameId,
                 Context.PendingPredictedDisplayTime);
+            if (!stereoViewport.TryCaptureRenderingBackendReadyFramePackageAuthority(
+                    out var packageAuthority))
+                return false;
 
             var renderRequest = new OpenXrEyeMirrorRenderRequest(
                 target.FrameBuffer,
@@ -1841,12 +1844,19 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 OpenXrImageIndex: leftImageIndex,
                 EmitFrameOps: () =>
                 {
-                    stereoViewport.RenderStereo(
-                        target.FrameBuffer,
-                        leftCamera,
-                        rightCamera,
-                        _openXrFrameWorld,
-                        stereoPacing);
+                    if (!stereoViewport.TryRenderOpenXrStereoFramePackage(
+                            target.FrameBuffer,
+                            leftCamera,
+                            rightCamera,
+                            _openXrFrameWorld,
+                            stereoPacing,
+                            in packageAuthority))
+                    {
+                        throw new InvalidOperationException(
+                            "OpenXR strict stereo rendering rejected its published backend-ready frame package. " +
+                            (stereoViewport.RenderPipelineInstance.LastRenderDeclineReason ??
+                                "The captured package authority or viewport state is no longer valid."));
+                    }
                 },
                 RendersExternalSwapchainTarget: false,
                 SubmissionMetadata: submissionMetadata,

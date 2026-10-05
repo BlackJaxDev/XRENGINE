@@ -15,7 +15,8 @@ namespace XREngine.Editor.GpuLayouts;
 /// </summary>
 public static unsafe class GpuRecordSpirvValidator
 {
-    private static readonly Shaderc ShadercApi = Shaderc.GetApi();
+    private static readonly Shaderc ShadercApi = new(new Silk.NET.Core.Contexts.DefaultNativeContext(
+        Path.Combine(AppContext.BaseDirectory, "xr_shaderc.dll")));
 
     public static void ValidateGeneratedRecords(string repositoryRoot)
     {

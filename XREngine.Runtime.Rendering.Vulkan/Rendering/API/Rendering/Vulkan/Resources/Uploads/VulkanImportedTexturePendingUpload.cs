@@ -19,6 +19,7 @@ internal sealed class VulkanImportedTexturePendingUpload(
     Image image,
     DeviceMemory memory,
     ImageView imageView,
+    ulong imageViewGeneration,
     Sampler sampler,
     Format format,
     ImageAspectFlags aspectMask,
@@ -47,6 +48,7 @@ internal sealed class VulkanImportedTexturePendingUpload(
     public Image Image { get; private set; } = image;
     public DeviceMemory Memory { get; private set; } = memory;
     public ImageView ImageView { get; private set; } = imageView;
+    public ulong ImageViewGeneration { get; private set; } = imageViewGeneration;
     public Sampler Sampler { get; private set; } = sampler;
     public Format Format { get; } = format;
     public ImageAspectFlags AspectMask { get; } = aspectMask;
@@ -131,7 +133,8 @@ internal sealed class VulkanImportedTexturePendingUpload(
         ulong samplerGeneration = Sampler.Handle == 0
             ? 1UL
             : resources.GetPublishedGeneration(ObjectType.Sampler, Sampler.Handle);
-        if (imageGeneration == 0 || viewGeneration == 0 || samplerGeneration == 0)
+        if (imageGeneration == 0 || viewGeneration == 0 ||
+            viewGeneration != ImageViewGeneration || samplerGeneration == 0)
         {
             failureReason =
                 $"Imported texture upload '{Request.TextureName ?? "<unnamed>"}' token={PublicationToken} has an unpublished destination generation before transfer recording.";
@@ -177,6 +180,7 @@ internal sealed class VulkanImportedTexturePendingUpload(
         Image = default;
         Memory = default;
         ImageView = default;
+        ImageViewGeneration = 0;
         Sampler = default;
     }
 

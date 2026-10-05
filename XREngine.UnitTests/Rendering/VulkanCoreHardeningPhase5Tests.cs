@@ -297,15 +297,15 @@ public sealed class VulkanCoreHardeningPhase5Tests
         string tracker = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Lifetime/VulkanResourceLifetimeTracker.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.LifetimeLedger.cs");
 
         tracker.ShouldContain("FenceResourceRecordingAdmission");
-        tracker.ShouldContain("PublishedResourceGenerations[key] = 0");
-        lifetime.ShouldContain("ulong expectedGeneration = _resourceLifetimeTracker.GetPublishedGeneration(key)");
-        lifetime.ShouldContain("ulong observedGeneration = _resourceLifetimeTracker.GetPublishedGeneration(key)");
-        lifetime.ShouldContain("FenceResourceRecordingAdmission(key, owner);");
-        lifetime.IndexOf("FenceResourceRecordingAdmission(key, owner);", StringComparison.Ordinal)
-            .ShouldBeLessThan(lifetime.IndexOf("PublishCommandBufferTrackingDependenciesBeforeResourceRetirement(key);", StringComparison.Ordinal));
+        tracker.ShouldContain("SetPublishedGenerationNoLock(key, 0UL);");
+        tracker.ShouldContain("TryFenceResourceRecordingAdmission(");
+        lifetime.ShouldContain("Lifetime.Tracker.FenceResourceRecordingAdmission(key, owner);");
+        lifetime.ShouldContain("Lifetime.Tracker.TryFenceResourceRecordingAdmission(key, expectedGeneration)");
+        lifetime.IndexOf("Lifetime.Tracker.FenceResourceRecordingAdmission(key, owner);", StringComparison.Ordinal)
+            .ShouldBeLessThan(lifetime.IndexOf("Lifetime.PublishTrackingDependenciesBeforeRetirement(key);", StringComparison.Ordinal));
     }
 
     [Test]

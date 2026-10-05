@@ -115,16 +115,17 @@ public sealed class RendererBackendModuleSourceContractTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/VulkanRendererBackendFactory.cs");
 
         int generationAssignment = renderer.IndexOf(
-            "BackendGeneration = backendGeneration;", StringComparison.Ordinal);
+            "BackendGeneration = hostContext.BackendGeneration;", StringComparison.Ordinal);
+        generationAssignment.ShouldBeGreaterThanOrEqualTo(0);
         int wrapperCreation = renderer.IndexOf(
             "CreateObjectsForOwner(this)", generationAssignment, StringComparison.Ordinal);
-        generationAssignment.ShouldBeGreaterThanOrEqualTo(0);
         wrapperCreation.ShouldBeGreaterThan(generationAssignment);
 
         catalog.ShouldContain(
             "renderer.BackendGeneration != registration.Metadata.Generation");
-        openGlFactory.ShouldContain("context.ModuleGeneration");
-        vulkanFactory.ShouldContain("context.ModuleGeneration");
+        openGlFactory.ShouldContain("new OpenGLRenderer(context.ToRendererHostContext())");
+        vulkanFactory.ShouldContain("new VulkanRenderer(context.ToRendererHostContext())");
+        vulkanFactory.ShouldContain("VulkanRenderer renderer = new(context.ToRendererHostContext())");
     }
 
     [Test]
@@ -135,14 +136,14 @@ public sealed class RendererBackendModuleSourceContractTests
         string rendererContract = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRendererHost.cs");
         string vulkanPresentation = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Presentation.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.Presentation.cs");
 
         coordinator.ShouldContain("!window.Renderer.IsBackendReplacementFrameReady");
         rendererContract.ShouldContain("bool IsBackendReplacementFrameReady => true;");
         vulkanPresentation.ShouldContain(
             "attempt.SceneSwapchainWriteCount > 0");
         vulkanPresentation.ShouldContain(
-            "Volatile.Write(ref _hasPresentedCompleteSceneFrame, 1)");
+            "Volatile.Write(ref _outputRuntime._hasPresentedCompleteSceneFrame, 1)");
     }
 
     [Test]

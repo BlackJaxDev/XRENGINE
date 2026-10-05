@@ -13,14 +13,18 @@ public sealed class McpServerAutomationTests
     {
         string viewportActions = ReadWorkspaceFile("XREngine.Editor/Mcp/Actions/EditorMcpActions.Viewport.cs");
         string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs");
-        string vulkanReadback = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Readback.cs");
+        string vulkanReadback = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.Readback.cs");
         string docs = ReadWorkspaceFile("docs/developer-guides/ai/mcp-server.md");
 
         viewportActions.ShouldContain("[XRMcp(Name = \"capture_viewport_screenshot\")]");
         viewportActions.ShouldContain("renderer.TryQueueScreenshotReadback(captureRegion");
-        viewportActions.ShouldContain("renderer.ScreenshotRequiresVerticalFlip");
+        viewportActions.ShouldContain("RuntimeImageCodecs.Require().EncodePng(img)");
+        string imageCodec = ReadWorkspaceFile("XREngine.Runtime.Imaging.Magick/MagickRuntimeImageCodec.cs");
+        imageCodec.ShouldContain("image.Origin == RuntimeImageOrigin.BottomLeft");
         rendererSource.ShouldContain("public virtual bool ScreenshotRequiresVerticalFlip => true;");
-        vulkanReadback.ShouldContain("public override bool ScreenshotRequiresVerticalFlip => false;");
+        vulkanReadback.ShouldContain("public override bool ScreenshotRequiresVerticalFlip => _frameLoop.ScreenshotRequiresVerticalFlip;");
+        vulkanReadback.ShouldContain("internal bool ScreenshotRequiresVerticalFlip => false;");
         vulkanReadback.ShouldContain("if (!withTransparency)");
         vulkanReadback.ShouldContain("ForceOpaqueAlpha");
         docs.ShouldContain("capture_viewport_screenshot");
@@ -56,7 +60,7 @@ public sealed class McpServerAutomationTests
     public void VulkanViewportCapture_UsesBoundedNonblockingFencePolling()
     {
         string vulkanReadback = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ScreenshotReadback.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.ScreenshotReadback.cs");
         string windowLoop = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
         string sequenceManager = ReadWorkspaceFile(
@@ -68,9 +72,9 @@ public sealed class McpServerAutomationTests
 
         vulkanReadback.ShouldContain("private const int ScreenshotReadbackRingSize = 8;");
         vulkanReadback.ShouldContain("MaximumScreenshotReadbackRawBytes");
-        vulkanReadback.ShouldContain("SubmitToQueueTracked(");
-        vulkanReadback.ShouldContain("Api!.GetFenceStatus(device, slot.Fence)");
-        vulkanReadback.ShouldContain("CmdResolveImageTracked(");
+        vulkanReadback.ShouldContain("SubmitToQueueTrackedWithDisposition(");
+        vulkanReadback.ShouldContain("Api!.GetFenceStatus(_deviceContext.Device, slot.Fence)");
+        vulkanReadback.ShouldContain("_commandRuntime.ResolveImageTracked(");
         vulkanReadback.ShouldContain("FailPendingScreenshotReadbacksForDeviceLoss");
         vulkanReadback.ShouldContain("Task.Run(() => ProcessScreenshotReadbackPixels");
         vulkanReadback.ShouldNotContain("WaitForFences");
@@ -109,13 +113,12 @@ public sealed class McpServerAutomationTests
         host.ShouldContain("--mcp-allow-all");
         host.ShouldContain("--mcp-no-prompts");
         host.ShouldContain("--mcp-permission-policy");
-        host.ShouldContain("SetCliOverride(overrides.McpPermissionPolicyOverride, cliPermissionPolicy.Value);");
-        host.ShouldContain("SetCliOverride(overrides.McpServerEnabledOverride, true);");
-        host.ShouldContain("SetCliOverride(overrides.McpServerPortOverride, cliPort.Value);");
-        host.ShouldContain("Engine.RefreshEffectiveEditorPreferences();");
+        host.ShouldContain("Engine.SetSessionSetting(");
+        host.ShouldContain("(EditorPreferences preferences) => preferences.McpPermissionPolicy,");
+        host.ShouldContain("(EditorPreferences preferences) => preferences.McpServerEnabled,");
+        host.ShouldContain("(EditorPreferences preferences) => preferences.McpServerPort,");
         host.ShouldContain("McpPermissionPolicy.AllowAll");
         host.ShouldContain("permissionPolicy = prefs.McpPermissionPolicy.ToString()");
-        host.ShouldContain("private static void SetCliOverride<T>(OverrideableSetting<T> setting, T value)");
 
         prefs.ShouldContain("public McpPermissionPolicy McpPermissionPolicy");
         prefs.ShouldContain("overrides.McpPermissionPolicyOverride is { HasOverride: true }");

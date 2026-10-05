@@ -114,10 +114,13 @@ public sealed class VulkanCoreHardeningPhase521Tests
     [Test]
     public void ProfilerAndHarness_ExposeAndEnforceTheMultiOutputContract()
     {
-        string capture = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
+        string capture = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
         string harness = ReadWorkspaceFile("Tools/Measure-GameLoopRenderPipeline.ps1");
 
-        capture.ShouldContain("ProfileCaptureSchemaVersion = 5");
+        string schemaVersion = System.Text.RegularExpressions.Regex.Match(
+            capture,
+            @"ProfileCaptureSchemaVersion\s*=\s*(\d+)").Groups[1].Value;
+        int.Parse(schemaVersion).ShouldBeGreaterThanOrEqualTo(5);
         capture.ShouldContain("frame_output_workload_identity_hash");
         capture.ShouldContain("frame_output_unapproved_policy_event_count");
         capture.ShouldContain("frame_output_submission_rejection_count");

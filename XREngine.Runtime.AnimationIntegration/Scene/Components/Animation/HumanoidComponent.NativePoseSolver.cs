@@ -171,8 +171,40 @@ public partial class HumanoidComponent
 
         StageLimb(compiled, muscles, isLeft: true);
         StageLimb(compiled, muscles, isLeft: false);
+        StageAuthoredLimbAxisDegrees(compiled, muscles, isLeft: true);
+        StageAuthoredLimbAxisDegrees(compiled, muscles, isLeft: false);
         StageFingers(compiled, muscles, isLeft: true);
         StageFingers(compiled, muscles, isLeft: false);
+    }
+
+    private void StageAuthoredLimbAxisDegrees(
+        CompiledHumanoidAvatarDefinition compiled,
+        ReadOnlySpan<float> muscles,
+        bool isLeft)
+    {
+        EHumanoidAvatarBoneRole shoulder = isLeft ? EHumanoidAvatarBoneRole.LeftShoulder : EHumanoidAvatarBoneRole.RightShoulder;
+        if (compiled.GetBoneSolvePlan(shoulder).HasAuthoredAxisMapping)
+            _nativePoseWorkspace.SetMuscleDegrees(
+                shoulder,
+                0.0f,
+                GetMuscleDegrees(compiled, muscles, isLeft ? EHumanoidValue.LeftShoulderDownUp : EHumanoidValue.RightShoulderDownUp),
+                GetMuscleDegrees(compiled, muscles, isLeft ? EHumanoidValue.LeftShoulderFrontBack : EHumanoidValue.RightShoulderFrontBack));
+
+        EHumanoidAvatarBoneRole upperLeg = isLeft ? EHumanoidAvatarBoneRole.LeftUpperLeg : EHumanoidAvatarBoneRole.RightUpperLeg;
+        if (compiled.GetBoneSolvePlan(upperLeg).HasAuthoredAxisMapping)
+            _nativePoseWorkspace.SetMuscleDegrees(
+                upperLeg,
+                GetMuscleDegrees(compiled, muscles, isLeft ? EHumanoidValue.LeftUpperLegTwistInOut : EHumanoidValue.RightUpperLegTwistInOut),
+                GetMuscleDegrees(compiled, muscles, isLeft ? EHumanoidValue.LeftUpperLegFrontBack : EHumanoidValue.RightUpperLegFrontBack),
+                GetMuscleDegrees(compiled, muscles, isLeft ? EHumanoidValue.LeftUpperLegInOut : EHumanoidValue.RightUpperLegInOut));
+
+        EHumanoidAvatarBoneRole foot = isLeft ? EHumanoidAvatarBoneRole.LeftFoot : EHumanoidAvatarBoneRole.RightFoot;
+        if (compiled.GetBoneSolvePlan(foot).HasAuthoredAxisMapping)
+            _nativePoseWorkspace.SetMuscleDegrees(
+                foot,
+                GetMuscleDegrees(compiled, muscles, isLeft ? EHumanoidValue.LeftFootTwistInOut : EHumanoidValue.RightFootTwistInOut),
+                GetMuscleDegrees(compiled, muscles, isLeft ? EHumanoidValue.LeftFootUpDown : EHumanoidValue.RightFootUpDown),
+                0.0f);
     }
 
     private void StageLimb(
@@ -350,11 +382,14 @@ public partial class HumanoidComponent
         float twistSign = 1.0f,
         float frontBackSign = 1.0f,
         float leftRightSign = 1.0f)
-        => _nativePoseWorkspace.SetMuscleDegrees(
+    {
+        bool usesAuthoredAxes = compiled.GetBoneSolvePlan(role).HasAuthoredAxisMapping;
+        _nativePoseWorkspace.SetMuscleDegrees(
             role,
-            twist.HasValue ? GetMuscleDegrees(compiled, muscles, twist.Value) * twistSign : 0.0f,
-            frontBack.HasValue ? GetMuscleDegrees(compiled, muscles, frontBack.Value) * frontBackSign : 0.0f,
-            leftRight.HasValue ? GetMuscleDegrees(compiled, muscles, leftRight.Value) * leftRightSign : 0.0f);
+            twist.HasValue ? GetMuscleDegrees(compiled, muscles, twist.Value) * (usesAuthoredAxes ? 1.0f : twistSign) : 0.0f,
+            frontBack.HasValue ? GetMuscleDegrees(compiled, muscles, frontBack.Value) * (usesAuthoredAxes ? 1.0f : frontBackSign) : 0.0f,
+            leftRight.HasValue ? GetMuscleDegrees(compiled, muscles, leftRight.Value) * (usesAuthoredAxes ? 1.0f : leftRightSign) : 0.0f);
+    }
 
     private static float GetMuscleDegrees(
         CompiledHumanoidAvatarDefinition compiled,

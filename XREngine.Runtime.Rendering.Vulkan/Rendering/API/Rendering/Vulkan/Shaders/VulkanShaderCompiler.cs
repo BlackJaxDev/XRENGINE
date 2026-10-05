@@ -27,7 +27,7 @@ internal static class VulkanShaderCompiler
     internal const string TargetProfileIdentity = "Vulkan1.4-SPIRV1.6";
     internal const string ShaderAbiIdentity = "XREngine.VulkanShaderAbi.v3";
 
-    private static readonly Shaderc ShadercApi = Shaderc.GetApi();
+    private static readonly Shaderc ShadercApi = VulkanShaderCompilerLibrary.CreateApi();
     private static readonly Regex OvrMultiviewExtensionRegex = new(
         @"^\s*#\s*extension\s+GL_OVR_multiview2\s*:\s*(?<behavior>\w+)\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);

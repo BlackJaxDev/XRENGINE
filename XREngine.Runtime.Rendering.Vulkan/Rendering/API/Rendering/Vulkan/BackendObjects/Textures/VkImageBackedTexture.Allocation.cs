@@ -128,25 +128,34 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         }
 
         ImageView[] retiredAttachmentViews;
+        ulong[] retiredAttachmentGenerations;
         if (_attachmentViews.Count > 0)
         {
             retiredAttachmentViews = new ImageView[_attachmentViews.Count];
+            retiredAttachmentGenerations = new ulong[_attachmentViews.Count];
             int index = 0;
-            foreach ((_, ImageView attachmentView) in _attachmentViews)
-                retiredAttachmentViews[index++] = attachmentView;
+            foreach ((_, VulkanOwnedImageView attachmentView) in _attachmentViews)
+            {
+                retiredAttachmentViews[index] = attachmentView.View;
+                retiredAttachmentGenerations[index++] = attachmentView.Generation;
+            }
         }
         else
         {
             retiredAttachmentViews = [];
+            retiredAttachmentGenerations = [];
         }
 
         BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
             _image,
             _memory,
-            _view,
+            _view.View,
             retiredAttachmentViews,
             default,
-            _allocatedVRAMBytes),
+            _allocatedVRAMBytes,
+            _view.Generation,
+            retiredAttachmentGenerations,
+            true),
             "VkImageBackedTexture.ReleaseOwnedImageResources");
 
         if (_allocatedVRAMBytes > 0)

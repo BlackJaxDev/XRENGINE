@@ -42,6 +42,8 @@ public sealed class HumanoidAvatarBoneBinding
     public HumanoidAvatarJointLimit JointLimit { get; set; } = new();
     public BoneAxisMapping AxisMapping { get; set; } = BoneAxisMapping.Default;
     public bool HasAxisMapping { get; set; }
+    /// <summary>Whether an author selected the axis mapping for this bone.</summary>
+    public bool HasAuthoredAxisMapping { get; set; }
     public EHumanoidAvatarMappingSource MappingSource { get; set; }
     public float Confidence { get; set; }
     public float ImportedMetadataScore { get; set; }

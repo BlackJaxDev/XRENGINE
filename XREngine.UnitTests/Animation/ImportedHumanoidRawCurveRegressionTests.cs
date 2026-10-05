@@ -28,9 +28,12 @@ public sealed class ImportedHumanoidRawCurveRegressionTests
         var clip = AnimYamlImporter.Import(clipPath);
 
         var root = new SceneNode("Root", new Transform());
+        AnimationClipComponentTests.AddPlaybackSkeleton(root);
         var clipComponent = root.AddComponent<AnimationClipComponent>()!;
         clipComponent.Animation = clip;
         var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+        humanoid.TryValidateAvatarDefinitionForPlayback(out string diagnostic).ShouldBeTrue(diagnostic);
 
         var summaries = new List<string>(fixture.Channels.Count);
         foreach (var channel in fixture.Channels)

@@ -855,7 +855,7 @@ public sealed class VrViewRenderModeContractTests
         window.ShouldContain("TryRenderDesktopMirrorComposition");
         packet.ShouldContain("FrameOutputManifestData");
         profileCapture.ShouldContain("\"frame_outputs\"");
-        profileCapture.ShouldContain("ProfileCaptureSchemaVersion = 7");
+        profileCapture.ShouldContain("ProfileCaptureSchemaVersion = 11");
     }
 
     [Test]
@@ -937,12 +937,13 @@ public sealed class VrViewRenderModeContractTests
         openXrResolution.ShouldContain("RuntimeEngine.Rendering.SettingsChanged += HandleOpenXrRenderSettingsChanged");
         openXrResolution.ShouldContain("QueueOpenXrEyeResolutionSessionRecreate");
         openXrResolution.ShouldContain("RecreateOpenXrSessionResourcesForEyeResolution");
-        openXrResolution.ShouldContain("TearDownSessionResourcesWithCurrentContext(destroyInstance: true)");
+        openXrResolution.ShouldContain("TearDownSessionResourcesOnOwningThread(destroyInstance: true)");
         openXrResolution.ShouldContain("RuntimeRenderingHostServices.Presentation.TryEnsureOpenXrRuntimeService(serviceReason)");
         openXrResolution.ShouldContain("SetRuntimeState(OpenXrRuntimeState.DesktopOnly)");
         openXrRuntimeState.ShouldContain("GetGraphicsDeviceFailureProbeDelay");
         openXrState.ShouldContain("_appliedOpenXrEyeResolutionPreset");
-        openXrState.ShouldContain("_openXrEyeResolutionRecreateQueued");
+        openXrState.ShouldContain("_openXrEyeResolutionReplacementAdmissionState");
+        openXrState.ShouldContain("_openXrEyeResolutionReplacementRetryTimestamp");
         openXrState.ShouldContain("_intentionalOpenXrRecreateBackoffBypassUntilUtc");
         openXr.ShouldContain("LogOpenXrViewRenderModeResolution");
         openXr.ShouldContain("requested={0} effective={1} backend={2} supported={3} path={4} temporalHistoryPolicy={5} parallelGate={6} swapchainFormats={7} trueStereoMultiviewSupport={8}");

@@ -44,12 +44,6 @@ public sealed class PortableKernelPolicyTests
             Assert.That(source, Does.Contain("<TargetFramework>net10.0</TargetFramework>"), name);
             Assert.That(source, Does.Not.Contain("XREnginePortableRuntime"), name);
             Assert.That(source, Does.Not.Contain("<Compile Remove="), name);
-            if (name == "XREngine.Runtime.Rendering")
-            {
-                const string generatedCommandSource = "<Compile Include=\"$(GeneratedRenderCommandRegistrations)\" />";
-                Assert.That(source.Split(generatedCommandSource, StringSplitOptions.None), Has.Length.EqualTo(2), name);
-                source = source.Replace(generatedCommandSource, string.Empty, StringComparison.Ordinal);
-            }
             Assert.That(source, Does.Not.Contain("<Compile Include="), name);
         }
     }

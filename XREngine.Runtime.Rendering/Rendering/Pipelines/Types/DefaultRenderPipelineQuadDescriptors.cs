@@ -77,6 +77,7 @@ internal static class DefaultRenderPipelineQuadDescriptors
             .ReadBuffer(LightProbeGridIndexBufferName)
             .DependsOn((int)EDefaultRenderPass.DeferredDecals)
             .MakePassDependOnThis((int)EDefaultRenderPass.Background, EDefaultRenderPass.Background.ToString())
+            .UseColorFbo(DefaultRenderPipeline.ForwardPassFBOName)
             .UseDestinationDepthStencilAttachments();
 
     /// <summary>

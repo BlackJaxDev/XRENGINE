@@ -594,8 +594,17 @@ internal sealed class VulkanPreparedStableBinStream
                 sceneState.Indices,
                 in native,
                 in context);
+            // Skipped payloads do not consume a row. Grow the compact row
+            // before its manifest is accessed, not after it is built.
+            int recordIndex = _recordCount;
+            if (!EnsureRowCapacity(recordIndex + 1))
+            {
+                reason = "the canonical visibility stream exceeded its fixed capacity";
+                ThawForReuse();
+                return false;
+            }
             VulkanTemplateResourceManifest manifest =
-                VisibilityAtlasManifest(payloadIndex);
+                VisibilityAtlasManifest(recordIndex);
             manifest.ResetVisibilityGeometry(
                 in payload,
                 in preparedVertices,

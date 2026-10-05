@@ -29,7 +29,7 @@ public sealed class VulkanP0ValidationTests
         string statsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs");
         string commandBufferSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string packetSource = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
-        string profilerSenderSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfilerSender.cs");
+        string profilerSenderSource = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.ProfilerSender.cs");
         string editorSource = ReadWorkspaceFile("XREngine.Editor/EngineProfilerDataSource.cs");
         string profilerUiSource = ReadWorkspaceFile("XREngine.Profiler.UI/ProfilerPanelRenderer.cs");
 
@@ -710,10 +710,10 @@ public sealed class VulkanP0ValidationTests
         textureView.ShouldContain("SamplerConversions.FromMinFilter(Data.MinFilter)");
         textureView.ShouldContain("MaxLod = Math.Max(0f, Math.Max(Data.NumLevels, 1u) - 1u)");
         textureView.ShouldContain("case nameof(XRTextureViewBase.MinFilter):");
-        textureView.ShouldContain("private void RetireOwnedImageViews()");
-        textureView.ShouldContain("RetireOwnedImageViews();");
+        textureView.ShouldContain("private void ReleaseInternedViews()");
+        textureView.ShouldContain("ReleaseInternedViews();");
         textureView.ShouldContain("if (_view.Handle != 0 && _sampler.Handle == 0)");
-        textureView.ShouldContain("RetireOwnedViewsAndSampler()");
+        textureView.ShouldContain("ReleaseInternedViewsAndRetireSampler()");
         textureView.ShouldContain("DestroySampler();");
 
         bloomPass.ShouldContain("MinFilter = ETexMinFilter.Linear,");
@@ -1015,7 +1015,7 @@ public sealed class VulkanP0ValidationTests
     {
         string interfaceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSettingsServices.cs");
         string runtimeSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeVulkanRobustnessSettings.cs");
-        string hostSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
+        string hostSource = ReadWorkspaceFile("XREngine.Runtime.Host/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
         string defaultsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeRenderingHostServiceDefaults.cs");
 
         interfaceSource.ShouldContain("VulkanAllocatorBackend");
@@ -1271,7 +1271,7 @@ public sealed class VulkanP0ValidationTests
     public void VulkanTextureUploadPrepWorker_DefaultsToWorkerPath()
     {
         string flagsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RenderDiagnosticsFlags.cs");
-        string preferencesSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/EditorPreferences.cs");
+        string preferencesSource = ReadWorkspaceFile("XREngine.Runtime.Host/Settings/EditorPreferences.cs");
 
         flagsSource.ShouldContain("VkTextureUploadPrepWorker = ReadBoolDefaultTrue(XREngineEnvironmentVariables.VulkanTextureUploadPrepWorker)");
         preferencesSource.ShouldContain("Run Vulkan imported-texture upload preparation on the worker/upload context");
@@ -1298,7 +1298,8 @@ public sealed class VulkanP0ValidationTests
     {
         string prewarmSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs");
         string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
-        string extensionsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+        string renderPassState = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
+        string programServices = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VulkanProgramWrapperPort.cs");
 
         prewarmSource.ShouldContain("internal const int CurrentVersion = 5");
         prewarmSource.ShouldContain("RenderPassSignature");
@@ -1306,8 +1307,9 @@ public sealed class VulkanP0ValidationTests
         prewarmSource.ShouldNotContain("RenderPassHandle");
         prewarmSource.ShouldNotContain("renderPass.Handle.ToString");
 
-        extensionsSource.ShouldContain("_renderPassSemanticSignatures");
-        extensionsSource.ShouldContain("GetRenderPassSemanticSignature");
+        renderPassState.ShouldContain("RenderPassSemanticSignatures[renderPass.Handle] = semanticSignature;");
+        programServices.ShouldContain("GetRenderPassSemanticSignature(RenderPass renderPass)");
+        programServices.ShouldContain("context.Resources.RenderPassSemanticSignatures.TryGetValue(");
 
         string graphicsFingerprint = SliceMethod(programSource, "public ulong ComputeGraphicsPipelineFingerprint()");
         graphicsFingerprint.ShouldContain("LastArtifact?.Identity");

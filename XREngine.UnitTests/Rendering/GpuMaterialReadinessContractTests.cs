@@ -118,7 +118,7 @@ public sealed class GpuMaterialReadinessContractTests
     public void VulkanIndirectDrawOperations_AreFramePooled()
     {
         string indirectSource = SourceContractWorkspace.ReadFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.IndirectDraw.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.IndirectDrawProducer.cs");
         string opSource = SourceContractWorkspace.ReadFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOps/IndirectDrawOp.cs");
         string frameOpSource = SourceContractWorkspace.ReadFile(
@@ -126,7 +126,7 @@ public sealed class GpuMaterialReadinessContractTests
 
         indirectSource.ShouldNotContain("new IndirectDrawOp(");
         indirectSource.ShouldContain("IndirectDrawOp.Rent(");
-        opSource.ShouldContain("TryRentForCurrentFrame(out IndirectDrawOp? reusable)");
-        frameOpSource.ShouldContain("FramePool<IndirectDrawOp>.ReleaseCurrentThread();");
+        opSource.ShouldContain("TryRentForCurrentFrame(context, out IndirectDrawOp? reusable)");
+        frameOpSource.ShouldContain("context.OperationWorkspace.TryRent(frameId, out reusable)");
     }
 }

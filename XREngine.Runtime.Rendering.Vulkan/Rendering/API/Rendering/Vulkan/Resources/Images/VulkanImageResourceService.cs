@@ -46,22 +46,33 @@ internal unsafe sealed class VulkanImageResourceService(
         if (!CanQueueOwnedImageRetirement(resources.Image, resources.Memory, owner))
             return;
 
-        ImageView primaryView = CanQueueImageViewRetirement(resources.PrimaryView, owner)
+        ImageView primaryView =
+            (!resources.QualifiedViewGenerations || resources.PrimaryViewGeneration != 0) &&
+            CanQueueImageViewRetirement(resources.PrimaryView, owner)
             ? resources.PrimaryView
             : default;
-        ImageView[] sourceAttachments = FilterOwnedImageViewRetirementCandidates(resources.AttachmentViews, owner);
+        ImageView[] sourceAttachments = resources.QualifiedViewGenerations
+            ? resources.AttachmentViews
+            : FilterOwnedImageViewRetirementCandidates(resources.AttachmentViews, owner);
         VulkanRetirementTicket imageTicket = CaptureTicket(new(ObjectType.Image, resources.Image.Handle), owner);
         VulkanRetirementTicket ticket = imageTicket;
         if (resources.Image.Handle == 0 && resources.Memory.Handle != 0)
             ticket = ticket.Merge(lifetime.Tracker.CaptureRetirementWatermark());
-        VulkanRetirementTicket primaryViewTicket = CaptureTicket(
-            new(ObjectType.ImageView, primaryView.Handle), owner);
+        VulkanRetirementTicket primaryViewTicket = resources.QualifiedViewGenerations
+            ? CaptureTicket(new(ObjectType.ImageView, primaryView.Handle), owner, resources.PrimaryViewGeneration)
+            : CaptureTicket(new(ObjectType.ImageView, primaryView.Handle), owner);
         ticket = ticket.Merge(primaryViewTicket);
         ulong[] attachmentGenerations = sourceAttachments.Length == 0 ? [] : new ulong[sourceAttachments.Length];
         for (int index = 0; index < sourceAttachments.Length; index++)
         {
-            VulkanRetirementTicket attachmentTicket = CaptureTicket(
-                new(ObjectType.ImageView, sourceAttachments[index].Handle), owner);
+            ulong expectedGeneration = resources.AttachmentViewGenerations is { } expected && index < expected.Length
+                ? expected[index]
+                : 0;
+            VulkanRetirementTicket attachmentTicket = resources.QualifiedViewGenerations
+                ? expectedGeneration != 0 && CanQueueImageViewRetirement(sourceAttachments[index], owner)
+                    ? CaptureTicket(new(ObjectType.ImageView, sourceAttachments[index].Handle), owner, expectedGeneration)
+                    : VulkanRetirementTicket.None
+                : CaptureTicket(new(ObjectType.ImageView, sourceAttachments[index].Handle), owner);
             attachmentGenerations[index] = attachmentTicket.ResourceGeneration;
             ticket = ticket.Merge(attachmentTicket);
         }
@@ -103,7 +114,8 @@ internal unsafe sealed class VulkanImageResourceService(
                 return;
 
             lifetime.Retirement.Images[frameSlot].Add(new RetiredImageResourceEntry(
-                new RetiredImageResources(image, memory, primaryView, attachments, sampler, resources.AllocatedVRAMBytes),
+                new RetiredImageResources(image, memory, primaryView, attachments, sampler, resources.AllocatedVRAMBytes,
+                    primaryViewTicket.ResourceGeneration, retainedAttachmentGenerations, resources.QualifiedViewGenerations),
                 ticket, imageTicket.ResourceGeneration, primaryViewTicket.ResourceGeneration,
                 retainedAttachmentGenerations, samplerTicket.ResourceGeneration));
         }
@@ -279,17 +291,27 @@ internal unsafe sealed class VulkanImageResourceService(
         VulkanBackendObjectContext context,
         in ImageViewCreateInfo createInfo,
         string owner,
-        out ImageView imageView)
+        out VulkanInternedImageViewReference reference)
     {
         VulkanImageViewStructuralKey key = BuildKey(createInfo);
         lock (Views.InternGate)
         {
-            if (Views.InternedViews.TryGetValue(key, out InternedImageViewEntry? existing) &&
-                IsAvailableForDescriptor(existing.View))
+            Views.InternedViews.TryGetValue(key, out InternedImageViewEntry? existing);
+            if (existing is not null)
             {
-                existing.ReferenceCount++;
-                imageView = existing.View;
-                return true;
+                lock (lifetime.Tracker.SyncRoot)
+                {
+                    VulkanResourceLifetimeKey viewKey = new(ObjectType.ImageView, existing.View.Handle);
+                    if (lifetime.Tracker.ResourceLifetimes.TryGetValue(viewKey, out VulkanResourceLifetimeRecord? record) &&
+                        record.Generation == existing.Generation &&
+                        record.PublishedGeneration == existing.Generation &&
+                        IsAvailableForDescriptor(existing.View))
+                    {
+                        existing.ReferenceCount++;
+                        reference = new(existing.View, existing.Generation);
+                        return true;
+                    }
+                }
             }
 
             if (existing is not null)
@@ -299,46 +321,54 @@ internal unsafe sealed class VulkanImageResourceService(
             }
 
             ImageViewCreateInfo mutableInfo = createInfo;
-            if (context.Api.CreateImageView(context.Device, ref mutableInfo, null, out imageView) != Result.Success)
+            if (context.Api.CreateImageView(context.Device, ref mutableInfo, null, out ImageView imageView) != Result.Success)
+            {
+                reference = default;
                 return false;
+            }
 
-            RegisterView(imageView, in mutableInfo, owner);
-            Views.InternedViews[key] = new InternedImageViewEntry(imageView);
-            Views.InternedKeysByHandle[imageView.Handle] = key;
+            lock (lifetime.Tracker.SyncRoot)
+            {
+                ulong generation = RegisterView(imageView, in mutableInfo, owner);
+                Views.InternedViews[key] = new InternedImageViewEntry(imageView, generation);
+                Views.InternedKeysByHandle[imageView.Handle] = key;
+                reference = new(imageView, generation);
+            }
             return true;
         }
     }
 
-    internal bool ReleaseInternedView(ImageView imageView)
+    /// <summary>Releases one matching acquisition. The service keeps ownership of the native view.</summary>
+    internal void ReleaseInternedView(in VulkanInternedImageViewReference reference)
     {
-        if (imageView.Handle == 0)
-            return false;
+        if (!reference.IsValid)
+            return;
         lock (Views.InternGate)
         {
-            if (!Views.InternedKeysByHandle.TryGetValue(imageView.Handle, out VulkanImageViewStructuralKey key) ||
-                !Views.InternedViews.TryGetValue(key, out InternedImageViewEntry? entry))
-            {
-                return true;
-            }
+            if (!Views.InternedKeysByHandle.TryGetValue(reference.View.Handle, out VulkanImageViewStructuralKey key) ||
+                !Views.InternedViews.TryGetValue(key, out InternedImageViewEntry? entry) ||
+                entry.View.Handle != reference.View.Handle ||
+                entry.Generation != reference.Generation)
+                return;
 
             entry.ReferenceCount = Math.Max(0, entry.ReferenceCount - 1);
-            return false;
         }
     }
 
-    internal void RegisterView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner)
+    internal ulong RegisterView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner)
     {
         if (imageView.Handle == 0)
-            return;
+            return 0;
 
-        Views.LiveHandles[imageView.Handle] = owner;
-        Views.DescriptorHeapCreateInfos[imageView.Handle] = createInfo with { PNext = null };
-        lifetime.Tracker.RegisterResource(
-            new VulkanResourceLifetimeKey(ObjectType.ImageView, imageView.Handle),
-            owner,
-            externallyOwned: false);
         lock (lifetime.Tracker.SyncRoot)
+        {
+            VulkanResourceLifetimeKey key = new(ObjectType.ImageView, imageView.Handle);
+            lifetime.Tracker.RegisterResource(key, owner, externallyOwned: false);
+            Views.LiveHandles[imageView.Handle] = owner;
+            Views.DescriptorHeapCreateInfos[imageView.Handle] = createInfo with { PNext = null };
             lifetime.Tracker.ImageViewBackingImages[imageView.Handle] = createInfo.Image.Handle;
+            return lifetime.Tracker.ResourceLifetimes[key].Generation;
+        }
     }
 
     internal bool IsAvailableForDescriptor(ImageView imageView)
@@ -518,6 +548,7 @@ internal unsafe sealed class VulkanImageResourceService(
         return false;
     }
 
+
     private ImageView[] FilterOwnedImageViewRetirementCandidates(ImageView[]? views, string owner)
     {
         if (views is null || views.Length == 0)
@@ -575,6 +606,14 @@ internal unsafe sealed class VulkanImageResourceService(
     {
         return RequireResourceRuntime().CaptureRetirementTicket(key, owner);
     }
+
+    private VulkanRetirementTicket CaptureTicket(
+        VulkanResourceLifetimeKey key,
+        string owner,
+        ulong expectedGeneration)
+        => expectedGeneration == 0
+            ? VulkanRetirementTicket.None
+            : RequireResourceRuntime().CaptureImageViewRetirementTicket(key, owner, expectedGeneration);
 
     private VulkanResourceRuntime? _resourceRuntime;
 

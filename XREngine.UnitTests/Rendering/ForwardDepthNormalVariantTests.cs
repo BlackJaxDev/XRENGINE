@@ -162,7 +162,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
         string variantText = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
         variantText.ShouldContain("#define XRENGINE_DEPTH_NORMAL_PREPASS");
         variantText.ShouldContain("layout (location = 0) out vec2 Normal;");
-        variantText.ShouldContain("float alphaMask = texture(Texture2, FragUV0).r;");
+        variantText.ShouldContain("float alphaMask = texColor.a * texture(Texture2, FragUV0).r;");
     }
 
     [Test]

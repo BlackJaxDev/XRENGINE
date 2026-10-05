@@ -7,6 +7,13 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanResourceRuntime
 {
+    private static readonly bool ViewRetirementDiagnosticsEnabled =
+        string.Equals(
+            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanRecordingDiag),
+            "1",
+            StringComparison.Ordinal);
+    private int _viewRetirementDiagnosticCount;
+
     internal VulkanRetirementTicket CaptureRetirementWatermark()
         => Lifetime.Tracker.CaptureRetirementWatermark();
 
@@ -239,27 +246,113 @@ internal sealed partial class VulkanResourceRuntime
         return ticket;
     }
 
+    /// <summary>Retire only the native generation that the caller owns.</summary>
+    internal VulkanRetirementTicket CaptureImageViewRetirementTicket(
+        VulkanResourceLifetimeKey key,
+        string owner,
+        ulong expectedGeneration)
+    {
+        if (key.Type != ObjectType.ImageView)
+            throw new ArgumentException("Exact view retirement requires an image-view key.", nameof(key));
+        if (!Lifetime.Tracker.TryFenceResourceRecordingAdmission(key, expectedGeneration))
+            return VulkanRetirementTicket.None;
+
+        Lifetime.PublishTrackingDependenciesBeforeRetirement(key);
+        VulkanRetirementTicket ticket = CaptureRetirementTicketCore(
+            key,
+            owner,
+            out ulong generation,
+            out _,
+            out int invalidatedDescriptorSetCount,
+            out bool beganRetirement,
+            expectedGeneration);
+        if (beganRetirement)
+            Lifetime.EnqueueSupersededResourceDescriptorOwner(key, generation);
+        if (invalidatedDescriptorSetCount != 0)
+            Debug.VulkanEvery(
+                $"Vulkan.ResourceLifetime.TargetedDescriptorInvalidation.{key.Type}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan.ResourceLifetime] Targeted descriptor invalidation resource={0} generation={1} descriptorSets={2}.",
+                key,
+                generation,
+                invalidatedDescriptorSetCount);
+        return ticket;
+    }
+
     private VulkanRetirementTicket CaptureRetirementTicketCore(
         VulkanResourceLifetimeKey key,
         string owner,
         out ulong generation,
         out ulong[] dependentCommandBuffers,
         out int invalidatedDescriptorSetCount,
-        out bool beganRetirement)
+        out bool beganRetirement,
+        ulong expectedGeneration = 0)
     {
         dependentCommandBuffers = [];
         invalidatedDescriptorSetCount = 0;
         beganRetirement = false;
+        bool recordViewRetirement = false;
+        ulong viewPublishedGeneration = 0;
+        EVulkanResourceLifetimeState viewStateBeforeRetirement = default;
+        string? viewOwner = null;
+        ulong backingImageHandle = 0;
+        bool hasBackingImageRecord = false;
+        ulong backingImageGeneration = 0;
+        EVulkanResourceLifetimeState backingImageState = default;
+        string? backingImageOwner = null;
+        ulong retirementSerial = 0;
+        VulkanRetirementTicket result;
         lock (Lifetime.Tracker.SyncRoot)
         {
-            VulkanResourceLifetimeRecord resource =
-                Lifetime.Tracker.GetOrRegisterResourceNoLock(key, owner);
+            VulkanResourceLifetimeRecord resource;
+            if (expectedGeneration != 0)
+            {
+                if (!Lifetime.Tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? matching) ||
+                    matching.Generation != expectedGeneration ||
+                    (matching.State & EVulkanResourceLifetimeState.Destroyed) != 0)
+                {
+                    generation = 0;
+                    return VulkanRetirementTicket.None;
+                }
+                resource = matching;
+            }
+            else
+            {
+                resource = Lifetime.Tracker.GetOrRegisterResourceNoLock(key, owner);
+            }
             generation = resource.Generation;
             if ((resource.State &
                  (EVulkanResourceLifetimeState.Destroyed |
                   EVulkanResourceLifetimeState.PendingRetirement)) != 0)
             {
                 return resource.RetirementTicket;
+            }
+
+            // Capture the first accepted retirement transition before state changes.
+            if (ViewRetirementDiagnosticsEnabled &&
+                key.Type == ObjectType.ImageView &&
+                Volatile.Read(ref _viewRetirementDiagnosticCount) < 32 &&
+                resource.Owner is (
+                    "VkImageBackedTexture.View:ForwardPrePassDepthStencil" or
+                    "VkImageBackedTexture.View:HistoryDepthStencil") &&
+                Interlocked.Increment(ref _viewRetirementDiagnosticCount) <= 32)
+            {
+                recordViewRetirement = true;
+                viewPublishedGeneration = resource.PublishedGeneration;
+                viewStateBeforeRetirement = resource.State;
+                viewOwner = resource.Owner;
+                Lifetime.Tracker.ImageViewBackingImages.TryGetValue(key.Handle, out backingImageHandle);
+                VulkanResourceLifetimeRecord? backingImageRecord = null;
+                hasBackingImageRecord = backingImageHandle != 0 &&
+                    Lifetime.Tracker.ResourceLifetimes.TryGetValue(
+                        new VulkanResourceLifetimeKey(ObjectType.Image, backingImageHandle),
+                        out backingImageRecord);
+                if (hasBackingImageRecord)
+                {
+                    backingImageGeneration = backingImageRecord!.Generation;
+                    backingImageState = backingImageRecord.State;
+                    backingImageOwner = backingImageRecord.Owner;
+                }
             }
 
             UpdateResourceCompletionStateNoLock(resource);
@@ -273,6 +366,8 @@ internal sealed partial class VulkanResourceRuntime
                 VulkanRetirementPinSet.Single(key, generation));
             resource.RetirementSerial = unchecked(
                 (ulong)Interlocked.Increment(ref Lifetime.Tracker.RetirementSerial));
+            if (recordViewRetirement)
+                retirementSerial = resource.RetirementSerial;
             resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
             resource.RetirementOwner = owner;
             resource.RetirementTicket = ticket;
@@ -304,8 +399,20 @@ internal sealed partial class VulkanResourceRuntime
                     Array.Resize(ref dependentCommandBuffers, count);
             }
 
-            return ticket;
+            result = ticket;
         }
+
+        if (recordViewRetirement)
+        {
+            Debug.WriteAuxiliaryLog(
+                "vulkan-view-retirement.log",
+                $"view=0x{key.Handle:X} generation={generation} publishedGenerationAtTransition={viewPublishedGeneration} " +
+                $"stateBeforeRetirement={viewStateBeforeRetirement} currentOwner='{viewOwner}' requestedRetirementOwner='{owner}' " +
+                $"assignedRetirementSerial={retirementSerial} backingImage=0x{backingImageHandle:X} " +
+                $"backingImageRecord={hasBackingImageRecord} backingImageGeneration={backingImageGeneration} " +
+                $"backingImageState={backingImageState} backingImageOwner='{backingImageOwner ?? "<none>"}'");
+        }
+        return result;
     }
 
     internal bool TryBeginDestroyResourceGeneration(

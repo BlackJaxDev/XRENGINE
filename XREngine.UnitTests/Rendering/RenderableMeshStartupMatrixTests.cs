@@ -30,6 +30,7 @@ public sealed class RenderableMeshStartupMatrixTests
     [Test]
     public void ModelComponent_NewRenderableMesh_SeedsRenderCommandFromRenderMatrix()
     {
+        using var workSchedulerScope = VulkanPresentationIndependentHostWorkSchedulerScope.EnsureInstalled();
         SceneNode node = new("RenderableRoot");
         Transform transform = node.SetTransform<Transform>();
         transform.Translation = new Vector3(1.0f, 2.0f, 3.0f);

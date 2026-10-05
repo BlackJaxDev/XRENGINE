@@ -163,6 +163,7 @@ public sealed class RenderableMeshBoundsTests
     [Test]
     public void RuntimeSkinnedBoneCullingBounds_ReplaceStaticAuthoredBoundsDuringPreCollect()
     {
+        using var workSchedulerScope = VulkanPresentationIndependentHostWorkSchedulerScope.EnsureInstalled();
         SceneNode root = new("SkinnedRoot");
         SceneNode meshNode = new(root, "MeshNode");
         SceneNode boneNode = new(root, "Bone");

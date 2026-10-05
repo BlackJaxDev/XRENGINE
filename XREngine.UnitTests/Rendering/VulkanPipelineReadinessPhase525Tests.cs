@@ -127,15 +127,16 @@ public sealed class VulkanPipelineReadinessPhase525Tests
         string compileQueue = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
         string cache = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanGraphicsPipelineCache.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineManager.cs");
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
 
         compileQueue.ShouldNotContain("renderer.MarkCommandBuffersDirty()");
         cache.ShouldContain("_sharedGraphicsPipelineGeneration++");
-        cache.ShouldContain("RetirePipeline(pipeline)");
-        retirement.ShouldContain("CaptureVulkanRetirementTicket(");
-        retirement.ShouldContain("IsVulkanRetirementReady(candidate.Ticket)");
+        cache.ShouldContain("RequireProgramServices().RetirePipeline(pipeline);");
+        retirement.ShouldContain("tracker.FenceResourceRecordingAdmission(key, owner);");
+        retirement.ShouldContain("VulkanRetirementTicket ticket;");
+        retirement.ShouldContain("Lifetime.Tracker.IsRetirementReady(candidate.Ticket)");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

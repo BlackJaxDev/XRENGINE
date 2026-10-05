@@ -80,25 +80,36 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         // resources.  By retiring them to the current frame slot's queue, they
         // will be destroyed after the timeline fence for this slot signals.
         ImageView[] retiredAttachmentViews;
+        ulong[] retiredAttachmentGenerations;
         if (_attachmentViews.Count > 0)
         {
             retiredAttachmentViews = new ImageView[_attachmentViews.Count];
+            retiredAttachmentGenerations = new ulong[_attachmentViews.Count];
             int idx = 0;
-            foreach ((_, ImageView av) in _attachmentViews)
-                retiredAttachmentViews[idx++] = av;
+            foreach ((_, VulkanOwnedImageView av) in _attachmentViews)
+            {
+                retiredAttachmentViews[idx] = av.View;
+                retiredAttachmentGenerations[idx++] = av.Generation;
+            }
         }
         else
         {
             retiredAttachmentViews = [];
+            retiredAttachmentGenerations = [];
         }
 
-        BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
+        RetiredImageResources retiredResources = new(
             _ownsImageMemory ? _image : default,
             _ownsImageMemory ? _memory : default,
-            _view,
+            _view.View,
             retiredAttachmentViews,
             _sampler,
-            _ownsImageMemory ? _allocatedVRAMBytes : 0),
+            _ownsImageMemory ? _allocatedVRAMBytes : 0,
+            _view.Generation,
+            retiredAttachmentGenerations,
+            true);
+        TracePrimaryViewDeletion(retiredResources.PrimaryView, retiredResources.Image, _image);
+        BackendContext.Resources.Images.RetireOwnedResources(retiredResources,
             "VkImageBackedTexture.DeleteObjectInternal");
 
         RemovePhysicalImageViewCacheEntry(_physicalGroup, _image.Handle);

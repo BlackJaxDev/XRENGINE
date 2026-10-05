@@ -166,7 +166,8 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
     {
         string root = ResolveWorkspaceRoot();
         string bootstrapRoot = Path.Combine(root, "XREngine.Runtime.Bootstrap");
-        string hostRoot = Path.Combine(bootstrapRoot, "SubsystemHost");
+        string hostRoot = Path.Combine(root, "XREngine.Runtime.Host", "SubsystemHost");
+        string bootstrapHostRoot = Path.Combine(bootstrapRoot, "SubsystemHost");
         string bootstrapProject = File.ReadAllText(Path.Combine(bootstrapRoot, "XREngine.Runtime.Bootstrap.csproj"));
         string adapterBootstrap = File.ReadAllText(Path.Combine(hostRoot, "RuntimeAdapterBootstrap.cs"));
 
@@ -175,15 +176,20 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
             "Engine.RuntimeAnimationHostServices.cs",
             "Engine.RuntimeAudioIntegrationServices.cs",
             "Engine.RuntimeInputServices.cs",
-            "Engine.RuntimeVrInputServices.cs",
-            "Engine.RuntimeVrLifecycleServices.cs",
-            "Engine.RuntimeVrStateServices.cs",
         ];
         foreach (string hostFile in hostFiles)
         {
             File.Exists(Path.Combine(hostRoot, hostFile)).ShouldBeTrue();
             File.Exists(Path.Combine(root, "XRENGINE", "Engine", hostFile)).ShouldBeFalse();
         }
+        string[] bootstrapHostFiles =
+        [
+            "Engine.RuntimeVrInputServices.cs",
+            "Engine.RuntimeVrLifecycleServices.cs",
+            "Engine.RuntimeVrStateServices.cs",
+        ];
+        foreach (string hostFile in bootstrapHostFiles)
+            File.Exists(Path.Combine(bootstrapHostRoot, hostFile)).ShouldBeTrue();
 
         File.Exists(Path.Combine(hostRoot, "Engine.RuntimeModelImportServices.cs")).ShouldBeFalse();
         File.Exists(Path.Combine(
@@ -196,8 +202,8 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
         adapterBootstrap.ShouldContain("UninstallEngineHostServices()");
         adapterBootstrap.ShouldContain("DisposeWithoutLock()");
         foreach (string adapterName in BootstrapAotAdapterNames)
-            bootstrapProject.ShouldContain($"..\\{adapterName}\\**\\*.cs");
-        bootstrapProject.ShouldContain("..\\XREngine.Runtime.ModelAssetPipeline\\**\\*.cs");
+            bootstrapProject.ShouldContain($"..\\{adapterName}\\{adapterName}.csproj");
+        bootstrapProject.ShouldContain("../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj");
         bootstrapProject.ShouldNotContain("..\\XREngine.Runtime.ModelingIntegration\\**\\*.cs");
         File.Exists(Path.Combine(root, "XRENGINE", "XREngine.csproj")).ShouldBeFalse();
     }
@@ -251,8 +257,8 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
             RuntimeAdapterProfile.Animation | RuntimeAdapterProfile.Audio | RuntimeAdapterProfile.ModelAssetPipeline);
         try
         {
-            RuntimeAnimationHostServices.Current.GetType().Assembly.GetName().Name.ShouldBe("XREngine.Runtime.Bootstrap");
-            RuntimeAudioIntegrationServices.Current.GetType().Assembly.GetName().Name.ShouldBe("XREngine.Runtime.Bootstrap");
+            RuntimeAnimationHostServices.Current.GetType().Assembly.GetName().Name.ShouldBe("XREngine.Runtime.Host");
+            RuntimeAudioIntegrationServices.Current.GetType().Assembly.GetName().Name.ShouldBe("XREngine.Runtime.Host");
             RuntimeModelImportServices.Current.ShouldBeSameAs(previousModelAssetPipeline);
         }
         finally

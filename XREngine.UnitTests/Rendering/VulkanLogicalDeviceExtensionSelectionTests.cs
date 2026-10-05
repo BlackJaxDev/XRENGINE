@@ -60,10 +60,16 @@ public sealed class VulkanLogicalDeviceExtensionSelectionTests
     public void OpenXrStreamlineFeatureRequirements_ArePassedThroughTypedBootstrapFacts()
     {
         string source = ReadLogicalDeviceBootstrapSource();
+        string request = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanLogicalDeviceBootstrapRequest.cs");
 
-        source.ShouldContain("StreamlineRequirementSet(");
-        source.ShouldContain("string[] RequiredFeatures12");
-        source.ShouldContain("string[] RequiredFeatures13");
+        request.ShouldContain("StreamlineRequirementSet Active,");
+        request.ShouldContain("StreamlineRequirementSet WithoutFrameGeneration,");
+        request.ShouldContain("StreamlineRequirementSet Disabled,");
+        request.ShouldContain("string[] RequiredFeatures12");
+        request.ShouldContain("string[] RequiredFeatures13");
+        source.ShouldContain("Apply(streamline.Active);");
+        source.ShouldContain("Apply(selected);");
         source.ShouldContain("_outputRuntime._streamlineRequiredFeatures12");
         source.ShouldContain("_outputRuntime._streamlineRequiredFeatures13");
     }

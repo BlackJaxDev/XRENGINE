@@ -100,7 +100,7 @@ public sealed class RuntimeModularizationPhase3RenderingTests
         gpuPassViewSource.ShouldContain("public void SetIndirectSourceViewId(uint viewId)");
 
         string cameraSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Camera/XRCamera.cs");
-        cameraSource.ShouldContain("public class XRCamera : XRBase, IRuntimeRenderCamera");
+        cameraSource.ShouldContain("public partial class XRCamera : XRBase, IRuntimeRenderCamera");
         cameraSource.ShouldContain("public bool? StereoEyeLeft");
     }
 
@@ -225,7 +225,7 @@ public sealed class RuntimeModularizationPhase3RenderingTests
         cameraComponentSource.ShouldContain("private Func<IRuntimeCullingCamera>? _cullingCameraOverride = null;");
         cameraComponentSource.ShouldContain("public Func<IRuntimeCullingCamera>? CullingCameraOverride");
 
-        cameraSource.ShouldContain("public class XRCamera : XRBase, IRuntimeRenderCamera, IRuntimeCullingCamera");
+        cameraSource.ShouldContain("public partial class XRCamera : XRBase, IRuntimeRenderCamera, IRuntimeCullingCamera");
         cameraSource.ShouldContain("public Frustum WorldFrustum()");
         cameraSource.ShouldContain("public BoundingRectangleF? GetOrthoCameraBounds()");
     }

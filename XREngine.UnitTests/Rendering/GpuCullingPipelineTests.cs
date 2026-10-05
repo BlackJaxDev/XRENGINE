@@ -150,8 +150,11 @@ public class GpuCullingPipelineTests
     public void CullingShader_ConsumesMetadataFlags()
     {
         string source = LoadShaderSource("Compute/Culling/GPURenderCulling.comp");
+        string records = LoadShaderSource("Advanced/Generated/GPUSceneRecords.glslinc");
 
-        source.ShouldContain("uint Flags;");
+        source.ShouldContain("#include \"Advanced/Generated/GPUSceneRecords.glslinc\"");
+        records.ShouldContain("struct DrawMetadata");
+        records.ShouldContain("uint Flags;");
         source.ShouldContain("uint flags = meta.Flags;");
         source.ShouldContain("FLAG_TRANSPARENT    (1u<<0)");
     }

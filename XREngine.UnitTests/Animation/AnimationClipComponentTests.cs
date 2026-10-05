@@ -294,7 +294,7 @@ public sealed class AnimationClipComponentTests
     }
 
     [Test]
-    public void ImportedSourceCurve_ShiftsStartTimeAndAppliesClampInfinity()
+    public void ImportedSourceCurve_ShiftsStartTimeAndAppliesOnceInfinity()
     {
         string path = WriteTempAnimYaml(
             """
@@ -341,8 +341,8 @@ public sealed class AnimationClipComponentTests
 
             anim.Keyframes[0].Second.ShouldBe(0.0f, 0.0001f);
             anim.Keyframes[1].Second.ShouldBe(1.0f, 0.0001f);
-            anim.Keyframes.PreInfinityMode.ShouldBe(EKeyframeInfinityMode.Clamp);
-            anim.Keyframes.PostInfinityMode.ShouldBe(EKeyframeInfinityMode.Clamp);
+            anim.Keyframes.PreInfinityMode.ShouldBe(EKeyframeInfinityMode.Once);
+            anim.Keyframes.PostInfinityMode.ShouldBe(EKeyframeInfinityMode.Once);
         }
         finally
         {
@@ -389,9 +389,12 @@ public sealed class AnimationClipComponentTests
         var clip = AnimYamlImporter.Import(clipPath);
 
         var root = new SceneNode("Root", new Transform());
+        AddPlaybackSkeleton(root);
         var clipComponent = root.AddComponent<AnimationClipComponent>()!;
         clipComponent.Animation = clip;
         var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+        humanoid.TryValidateAvatarDefinitionForPlayback(out string diagnostic).ShouldBeTrue(diagnostic);
 
         clipComponent.EvaluateAtTime(0.0f);
 
@@ -424,10 +427,13 @@ public sealed class AnimationClipComponentTests
         var clip = AnimYamlImporter.Import(clipPath);
 
         var root = new SceneNode("Root", new Transform());
+        AddPlaybackSkeleton(root);
         var clipComponent = root.AddComponent<AnimationClipComponent>()!;
         clipComponent.Animation = clip;
         clipComponent.FlipMuscleZ = true;
         var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+        humanoid.TryValidateAvatarDefinitionForPlayback(out string diagnostic).ShouldBeTrue(diagnostic);
 
         clipComponent.EvaluateAtTime(0.0f);
 
@@ -563,6 +569,29 @@ public sealed class AnimationClipComponentTests
         object?[] args = [member, value];
         ApplyRuntimeClipRemapsMethod.Invoke(component, args);
         return args[1];
+    }
+
+    internal static void AddPlaybackSkeleton(SceneNode root)
+    {
+        var hips = new SceneNode(root, "Hips", new Transform());
+        var spine = new SceneNode(hips, "Spine", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        var chest = new SceneNode(spine, "Chest", new Transform(translation: new(0.0f, 0.3f, 0.0f)));
+        _ = new SceneNode(chest, "Head", new Transform(translation: new(0.0f, 0.25f, 0.0f)));
+        var leftLeg = new SceneNode(hips, "LeftLeg", new Transform(translation: new(-0.2f, -0.4f, 0.0f)));
+        var leftKnee = new SceneNode(leftLeg, "LeftKnee", new Transform(translation: new(0.0f, -0.35f, 0.0f)));
+        _ = new SceneNode(leftKnee, "LeftFoot", new Transform(translation: new(0.0f, -0.25f, 0.0f)));
+        var rightLeg = new SceneNode(hips, "RightLeg", new Transform(translation: new(0.2f, -0.4f, 0.0f)));
+        var rightKnee = new SceneNode(rightLeg, "RightKnee", new Transform(translation: new(0.0f, -0.35f, 0.0f)));
+        _ = new SceneNode(rightKnee, "RightFoot", new Transform(translation: new(0.0f, -0.25f, 0.0f)));
+        var leftShoulder = new SceneNode(chest, "LeftShoulder", new Transform(translation: new(-0.25f, 0.1f, 0.0f)));
+        var leftArm = new SceneNode(leftShoulder, "LeftArm", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        var leftElbow = new SceneNode(leftArm, "LeftElbow", new Transform(translation: new(-0.3f, 0.0f, 0.0f)));
+        _ = new SceneNode(leftElbow, "LeftHand", new Transform(translation: new(-0.2f, 0.0f, 0.0f)));
+        var rightShoulder = new SceneNode(chest, "RightShoulder", new Transform(translation: new(0.25f, 0.1f, 0.0f)));
+        var rightArm = new SceneNode(rightShoulder, "RightArm", new Transform(translation: new(0.3f, 0.0f, 0.0f)));
+        var rightElbow = new SceneNode(rightArm, "RightElbow", new Transform(translation: new(0.3f, 0.0f, 0.0f)));
+        _ = new SceneNode(rightElbow, "RightHand", new Transform(translation: new(0.2f, 0.0f, 0.0f)));
+        SaveBindPoseRecursive(root);
     }
 
     private static void SaveBindPoseRecursive(SceneNode node)
