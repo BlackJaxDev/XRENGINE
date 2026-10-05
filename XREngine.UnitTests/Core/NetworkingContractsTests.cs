@@ -223,7 +223,7 @@ public sealed class NetworkingContractsTests
             Environment.SetEnvironmentVariable(RealtimeJoinHandoff.PayloadEnvironmentVariable, null);
             GameStartupSettings settings = new();
 
-            bool applied = RealtimeJoinHandoff.TryApplyFromEnvironment(settings, out RealtimeJoinHandoffPayload? imported, out string? source);
+            bool applied = DesktopRealtimeJoinHandoffLoader.TryApplyFromEnvironment(settings, out RealtimeJoinHandoffPayload? imported, out string? source);
 
             applied.ShouldBeTrue();
             imported.ShouldNotBeNull();
