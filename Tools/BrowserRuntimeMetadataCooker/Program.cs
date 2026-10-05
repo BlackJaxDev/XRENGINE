@@ -60,7 +60,7 @@ XRWorld world = AssetManager.Deserializer.Deserialize<XRWorld>(reader)
 byte[] worldPayload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
     () => CookedBinarySerializer.Serialize(world));
 CookedAssetBlob worldBlob = new(typeof(XRWorld).AssemblyQualifiedName!, CookedAssetFormat.BinaryV2, worldPayload);
-File.WriteAllBytes(Path.Combine(outputDirectory, "EngineSmokeWorld.bin"), MemoryPackSerializer.Serialize(worldBlob));
+File.WriteAllBytes(Path.Combine(outputDirectory, "EngineSmokeWorld.bin"), CookedAssetEnvelope.Serialize(worldBlob));
 
 AotRuntimeMetadata metadata = AotRuntimeMetadataBuilder.Build(
     [typeof(AotRuntimeMetadata).Assembly, typeof(XRWorld).Assembly,

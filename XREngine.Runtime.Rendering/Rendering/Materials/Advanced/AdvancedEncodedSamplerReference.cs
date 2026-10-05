@@ -5,6 +5,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Fixed shader-facing uvec4 payload produced from a logical sampler reference.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedEncodedSamplerReference")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public readonly record struct AdvancedEncodedSamplerReference(
     uint Payload0,

@@ -39,7 +39,7 @@ Run repository PowerShell tools with PowerShell 7. Under Windows PowerShell 5.1,
 Not established by these results:
 
 - These build results alone do not establish application behavior. Subsequent browser and desktop attempts are recorded in the harness investigation.
-- The Linux CI compile lane was not run. Core casing is now normalized in the Git index: 244 case-only renames preserve file blobs and modes, and all 759 paths use `XREngine.Runtime.Core`.
+- The full Linux CI compile lane remains unqualified. Core casing is now normalized in the Git index: 244 case-only renames preserve file blobs and modes, and all 759 paths use `XREngine.Runtime.Core`. The focused Linux calibration closure builds, as recorded below.
 - The subsequent full unit-test baseline executed 4,022 of 4,071 cases before a Vulkan finalizer abort: 3,737 passed and 285 failed. The null-data cleanup crash is repaired and forced-GC reproduction passes. Existing stale source/path contracts, dependency-graph checks and unrelated behavioral failures still require integration triage; they are not all device-only failures. Server/VRClient model-pipeline links and Bootstrap's model-pipeline factory scan were approved and their checks updated. The separate ModelingIntegration scan decision remains pending.
 - The repeat suite completes without abort: 4,804 passed, 669 failed and seven runner skips. No baseline-passing test name regresses; 1,451 additional cases execute. Failure families and the TRX skip-accounting discrepancy are recorded in the investigation; broader unit-suite acceptance remains unqualified.
 
@@ -99,4 +99,14 @@ The optional OpenGL mesh-task lookup now respects capability admission and unava
 
 The final portable-host gate repeats the full solution, WebGPU closure, Release browser compile lane, browser publish and MonkeyBall sample build with zero warnings/errors. Logs are `Build/_AgentValidation/20260930-105523-unified-browser-runtime/logs/portable-host-qualified-*.log`. Fresh output under `temp-build/qualified-browser-publish/` has 257 raw site files totaling 50,851,045 bytes; including compressed variants, 751 files total 86,915,676 bytes. Prior incremental output retained obsolete hash-named Rendering/WebGPU payloads, so its 107,376,300 raw bytes do not describe the fresh publish. These size measurements establish the current untrimmed package, not the production performance budget.
 
-Remaining qualification includes the Linux lane, broader test/contract acceptance, application publish layouts and native integration smokes. D1 approved `XREngine.Runtime.Host`; D6 approved the existing shared PowerShell generator. The [portable host ownership record](portable-engine-host-ownership.md) and host validation record contain the completed extraction, live startup/play evidence and limits. Browser-world execution remains active.
+Remaining qualification includes the full Linux CI lane, broader test/contract acceptance, application publish layouts and native integration smokes. D1 approved `XREngine.Runtime.Host`; D6 approved the existing shared PowerShell generator. The [portable host ownership record](portable-engine-host-ownership.md) and host validation record contain the completed extraction, live startup/play evidence and limits. Browser-world execution remains active.
+
+## Focused Linux validation (2026-09-30)
+
+The Core directory is now normalized in the git index to `XREngine.Runtime.Core/`: 244 tracked entries (243 C# files and the existing CoACD binary) move without content changes. The CoACD build script uses the same canonical path, so it does not recreate the differently cased directory. Existing project references and reflection allowlists already use this spelling and need no exceptions. This preserves the effective layout on case-insensitive Windows checkouts while making the same source set visible on Linux.
+
+The first-class `XREngine.UnitTests/Headless/XREngine.HeadlessTests.csproj` compiles its complete production dependency projects on Linux with .NET SDK 10.0.401 and PowerShell 7.6.6, with zero warnings or errors. It links the existing calibration/solver tests unchanged. Six baseline/control tests pass; the explicitly selected persistence contract fails with cleared targets and duplicate calibration nodes, confirming the known calibration defect. See the [calibration rerun](../../investigations/avatar/vr-calibration-baseline-2026-09-24.md#linux-headless-rerun-2026-09-30).
+
+This focused local result does not qualify the complete Linux CI/browser publish lane, the full desktop test suite, native rendering, or a headset. Those checks remain separate.
+
+The subsequent six-slot calibration ownership repair promotes the persistence contract into the default headless suite. The updated focused build remains warning-free and all 16 headless tests pass. The earlier six-pass/one-known-failure result above records the pre-repair reproduction, not the current suite outcome.

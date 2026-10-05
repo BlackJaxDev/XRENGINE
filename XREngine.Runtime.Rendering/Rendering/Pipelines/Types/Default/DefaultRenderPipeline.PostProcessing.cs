@@ -789,7 +789,8 @@ public partial class DefaultRenderPipeline
         Vector2 currentJitterUv = Vector2.Zero;
         Vector2 previousJitterUv = Vector2.Zero;
         bool temporalHistoryAllowed = !DisableHistoryBasedVrEffects();
-        if (temporalHistoryAllowed && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+        if (temporalHistoryAllowed && CurrentRenderingPipeline is { } pipeline &&
+            VPRC_TemporalAccumulationPass.TryGetTemporalResolveUniformData(pipeline, out var temporalData))
         {
             // TSR owns a full-resolution color history; the exposure-variance history is only produced by the TAA resolve.
             historyReady = temporalData.HistoryReady;
@@ -899,7 +900,8 @@ public partial class DefaultRenderPipeline
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
         bool temporalHistoryAllowed = !DisableHistoryBasedVrEffects();
-        if (temporalHistoryAllowed && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
+        if (temporalHistoryAllowed && CurrentRenderingPipeline is { } pipeline &&
+            VPRC_TemporalAccumulationPass.TryGetTemporalResolveUniformData(pipeline, out var temporalData))
         {
             float width = Math.Max(1u, temporalData.Width);
             float height = Math.Max(1u, temporalData.Height);

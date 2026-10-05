@@ -89,9 +89,11 @@ internal static class RollingBallWorldCookedSerializer
         Plane,
     }
 
-    public static byte[] Serialize(RollingBallWorldAsset world)
+    /// <summary>Serializes the world into the caller's buffer writer. Cooking runs in the editor, so the staging stream here is not a runtime cost.</summary>
+    public static void Serialize(RollingBallWorldAsset world, System.Buffers.IBufferWriter<byte> destination)
     {
         ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(destination);
 
         bool requiresAudio = world.RequiresAudio;
 
@@ -109,15 +111,28 @@ internal static class RollingBallWorldCookedSerializer
         if (requiresAudio)
             writer.Write(requiresAudio);
         writer.Flush();
-        return stream.ToArray();
+
+        ReadOnlySpan<byte> written = new(stream.GetBuffer(), 0, checked((int)stream.Length));
+        written.CopyTo(destination.GetSpan(written.Length));
+        destination.Advance(written.Length);
     }
 
-    public static RollingBallWorldAsset Deserialize(byte[] payload)
+    /// <summary>Reads the world directly from the leased payload span without copying it into an array.</summary>
+    public static unsafe RollingBallWorldAsset Deserialize(ReadOnlySpan<byte> payload)
     {
-        ArgumentNullException.ThrowIfNull(payload);
+        if (payload.IsEmpty)
+            throw new InvalidDataException("The cooked Rolling Ball world payload is empty.");
 
-        using MemoryStream stream = new(payload, writable: false);
-        using BinaryReader reader = new(stream, Encoding.UTF8, leaveOpen: false);
+        fixed (byte* pointer = payload)
+        {
+            using UnmanagedMemoryStream stream = new(pointer, payload.Length);
+            return Deserialize(stream);
+        }
+    }
+
+    private static RollingBallWorldAsset Deserialize(Stream stream)
+    {
+        using BinaryReader reader = new(stream, Encoding.UTF8, leaveOpen: true);
         if (reader.ReadUInt32() != Magic)
             throw new InvalidDataException("The cooked Rolling Ball world has an invalid signature.");
 

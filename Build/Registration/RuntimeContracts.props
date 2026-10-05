@@ -1,0 +1,9 @@
+<Project>
+  <ItemGroup Condition="'$(XREngineRuntimeContractMode)' != ''">
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../../XREngine.SourceGenerators/XREngine.SourceGenerators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false"
+                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;SelfContained;RuntimeIdentifier;RuntimeIdentifiers;PublishDir;IsAotCompatible;IsTrimmable;EnableAotAnalyzer;EnableTrimAnalyzer" />
+    <CompilerVisibleProperty Include="XREngineRuntimeContractMode" />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)RuntimeContractSchemas.txt" />
+  </ItemGroup>
+</Project>

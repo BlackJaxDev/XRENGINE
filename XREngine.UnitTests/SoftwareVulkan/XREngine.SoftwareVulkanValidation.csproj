@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../XREngine.Runtime.Rendering.Vulkan/XREngine.Runtime.Rendering.Vulkan.csproj" />
+    <!-- Reuse the production RenderBench fixture, rather than a second rasterizer. -->
+    <Compile Include="../../XREngine.RenderBench/RenderBenchFullscreenPipeline.cs" Link="RenderBenchFullscreenPipeline.cs" />
+    <Compile Include="../../XREngine.RenderBench/RenderBenchGpuDiagnostic.cs" Link="RenderBenchGpuDiagnostic.cs" />
+    <Compile Include="../../XREngine.RenderBench/RenderBenchGpuDiagnosticSnapshot.cs" Link="RenderBenchGpuDiagnosticSnapshot.cs" />
+    <Compile Include="../../XREngine.RenderBench/RenderBenchGpuPassSample.cs" Link="RenderBenchGpuPassSample.cs" />
+    <Compile Include="../../XREngine.RenderBench/RenderBenchGpuCalibrationSample.cs" Link="RenderBenchGpuCalibrationSample.cs" />
+  </ItemGroup>
+</Project>

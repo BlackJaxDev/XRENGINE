@@ -78,7 +78,7 @@ internal static partial class ProjectBuilder
             string sourceName = asset.GetProperty("source").GetString()!;
             if (sourceName != Path.GetFileName(sourceName))
                 throw new InvalidDataException("BrowserPublish.CookedAssetSourceInvalid: a cooked asset source must be a file name.");
-            CookedAssetBlob blob = MemoryPackSerializer.Deserialize<CookedAssetBlob>(
+            CookedAssetBlob blob = CookedAssetEnvelope.Deserialize(
                 File.ReadAllBytes(Path.Combine(sourceDirectory, sourceName)));
             if (blob.Format != CookedAssetFormat.RuntimeBinaryV1)
                 continue;

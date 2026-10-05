@@ -92,15 +92,46 @@ if errorlevel 1 (
 exit /b 0
 
 :ensure_msbuild
-if not "%MSBUILD_EXE%"=="" exit /b 0
+if defined MSBUILD_EXE if exist "%MSBUILD_EXE%" exit /b 0
+set "MSBUILD_EXE="
+set "VS_INSTALL_PATH="
+
+set "VSWHERE_EXE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE_EXE%" (
+    REM Prefer an installation that can build both the managed and native Rive projects.
+    for /f "usebackq delims=" %%I in (`"%VSWHERE_EXE%" -latest -products * -requires Microsoft.Component.MSBuild Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+        if exist "%%I\MSBuild\Current\Bin\MSBuild.exe" (
+            set "VS_INSTALL_PATH=%%I"
+            set "MSBUILD_EXE=%%I\MSBuild\Current\Bin\MSBuild.exe"
+            goto msbuild_found
+        )
+    )
+    for /f "usebackq delims=" %%I in (`"%VSWHERE_EXE%" -latest -products * -requires Microsoft.Component.MSBuild -property installationPath`) do (
+        if exist "%%I\MSBuild\Current\Bin\MSBuild.exe" (
+            set "VS_INSTALL_PATH=%%I"
+            set "MSBUILD_EXE=%%I\MSBuild\Current\Bin\MSBuild.exe"
+            goto msbuild_found
+        )
+    )
+)
+
 for /f "delims=" %%I in ('where msbuild 2^>nul') do (
     set "MSBUILD_EXE=%%I"
     goto msbuild_found
 )
-if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe" set "MSBUILD_EXE=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
-if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" set "MSBUILD_EXE=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"
-if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe" set "MSBUILD_EXE=%ProgramFiles(x86)%\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
-if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe" set "MSBUILD_EXE=%ProgramFiles(x86)%\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe"
+
+REM Keep discovery working when vswhere is unavailable.
+for %%P in ("%ProgramFiles%" "%ProgramFiles(x86)%") do (
+    for /d %%V in ("%%~P\Microsoft Visual Studio\*") do (
+        for /d %%E in ("%%~fV\*") do (
+            if exist "%%~fE\MSBuild\Current\Bin\MSBuild.exe" (
+                set "VS_INSTALL_PATH=%%~fE"
+                set "MSBUILD_EXE=%%~fE\MSBuild\Current\Bin\MSBuild.exe"
+                goto msbuild_found
+            )
+        )
+    )
+)
 
 :msbuild_found
 if "%MSBUILD_EXE%"=="" (
@@ -111,40 +142,24 @@ if "%MSBUILD_EXE%"=="" (
 exit /b 0
 
 :ensure_vctargets
-if defined VCTargetsPath if exist "%VCTargetsPath%Microsoft.Cpp.Default.props" exit /b 0
+if defined VCTargetsPath if exist "%VCTargetsPath%\Microsoft.Cpp.Default.props" exit /b 0
 
 set "VCTargetsPath="
-for %%T in (
-    "%ProgramFiles%\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\"
-    "%ProgramFiles%\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\"
-    "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\"
-    "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\"
-    "%ProgramFiles%\Microsoft Visual Studio\2026\BuildTools\MSBuild\Microsoft\VC\v180\"
-    "%ProgramFiles%\Microsoft Visual Studio\2026\Community\MSBuild\Microsoft\VC\v180\"
-    "%ProgramFiles(x86)%\Microsoft Visual Studio\2026\BuildTools\MSBuild\Microsoft\VC\v180\"
-    "%ProgramFiles(x86)%\Microsoft Visual Studio\2026\Community\MSBuild\Microsoft\VC\v180\"
-    "%ProgramFiles%\Microsoft Visual Studio\2019\BuildTools\MSBuild\Microsoft\VC\v142\"
-    "%ProgramFiles%\Microsoft Visual Studio\2019\Community\MSBuild\Microsoft\VC\v142\"
-    "%ProgramFiles(x86)%\Microsoft Visual Studio\2019\BuildTools\MSBuild\Microsoft\VC\v142\"
-    "%ProgramFiles(x86)%\Microsoft Visual Studio\2019\Community\MSBuild\Microsoft\VC\v142\"
-) do (
-    if exist "%%~T\Microsoft.Cpp.Default.props" (
-        set "VCTargetsPath=%%~T"
-        goto vctargets_found
-    )
-)
+if defined VS_INSTALL_PATH call :find_vctargets_in_installation "%VS_INSTALL_PATH%"
+if defined VCTargetsPath goto vctargets_found
+if defined VS_INSTALL_PATH goto vctargets_found
 
-if "%VCTargetsPath%"=="" (
-    for /f "delims=" %%I in ('dir /s /b "%ProgramFiles%\Microsoft Visual Studio\*\MSBuild\Microsoft\VC\*\Microsoft.Cpp.Default.props" 2^>nul') do (
-        set "VCTargetsPath=%%~dpI"
-        goto vctargets_found
-    )
-)
+REM PATH may have supplied MSBuild without a vswhere installation record.
+if defined MSBUILD_EXE for %%I in ("%MSBUILD_EXE%") do call :find_vctargets_in_installation "%%~dpI..\..\.."
+if defined VCTargetsPath goto vctargets_found
 
-if "%VCTargetsPath%"=="" (
-    for /f "delims=" %%I in ('dir /s /b "%ProgramFiles(x86)%\Microsoft Visual Studio\*\MSBuild\Microsoft\VC\*\Microsoft.Cpp.Default.props" 2^>nul') do (
-        set "VCTargetsPath=%%~dpI"
-        goto vctargets_found
+REM Look through installed editions when PATH supplied an unrelated MSBuild.
+for %%P in ("%ProgramFiles%" "%ProgramFiles(x86)%") do (
+    for /d %%V in ("%%~P\Microsoft Visual Studio\*") do (
+        for /d %%E in ("%%~fV\*") do (
+            call :find_vctargets_in_installation "%%~fE"
+            if defined VCTargetsPath goto vctargets_found
+        )
     )
 )
 
@@ -158,32 +173,15 @@ if "%VCTargetsPath%"=="" (
 set "VCTargetsPath=%VCTargetsPath%"
 exit /b 0
 
-:build_rivesharp_managed
-call :ensure_msbuild
-if errorlevel 1 (
-    echo Skipping RiveSharp managed build due to missing MSBuild.
-    exit /b 1
+:find_vctargets_in_installation
+if not exist "%~1\MSBuild\Microsoft\VC" exit /b 1
+for /f "delims=" %%T in ('dir /b /ad /o-n "%~1\MSBuild\Microsoft\VC\v*" 2^>nul') do (
+    if exist "%~1\MSBuild\Microsoft\VC\%%T\Microsoft.Cpp.Default.props" (
+        set "VCTargetsPath=%~1\MSBuild\Microsoft\VC\%%T\"
+        exit /b 0
+    )
 )
-
-call :ensure_vctargets
-if errorlevel 1 (
-    echo ERROR: Required Visual C++ build tools are missing.
-    exit /b 1
-)
-
-set "RIVESHARP_CSPROJ=%REPO_ROOT%\Build\Submodules\rive-sharp\RiveSharp\RiveSharp.csproj"
-if not exist "%RIVESHARP_CSPROJ%" (
-    echo ERROR: RiveSharp project file not found at "%RIVESHARP_CSPROJ%".
-    exit /b 1
-)
-
-echo Building %RIVESHARP_CSPROJ% with MSBuild...
-"%MSBUILD_EXE%" "%RIVESHARP_CSPROJ%" /p:Configuration=%CONFIG% /p:Platform=%PLATFORM%
-if errorlevel 1 (
-    echo Failed to build RiveSharp managed project.
-    exit /b 1
-)
-exit /b 0
+exit /b 1
 
 :build_rivesharp_managed_only
 set "RIVESHARP_CSPROJ=%REPO_ROOT%\Build\Submodules\rive-sharp\RiveSharp\RiveSharp.csproj"
@@ -223,7 +221,7 @@ if errorlevel 1 exit /b 1
 call :build_rive_native
 if errorlevel 1 exit /b 1
 
-call :build_rivesharp_managed
+call :build_rivesharp_managed_only
 if errorlevel 1 exit /b 1
 
 exit /b 0
@@ -288,6 +286,9 @@ if not exist "%RIVE_NATIVE_DIR%" (
     exit /b 0
 )
 
+call :apply_rive_patch
+if errorlevel 1 exit /b 1
+
 set "RIVE_PLATFORM=x64"
 if /I "%PLATFORM%"=="ANYCPU" set "RIVE_PLATFORM=x64"
 if /I "%PLATFORM%"=="X64" set "RIVE_PLATFORM=x64"
@@ -323,3 +324,28 @@ if errorlevel 1 (
 )
 popd >nul 2>&1
 exit /b 0
+
+:apply_rive_patch
+set "RIVE_PATCH=%REPO_ROOT%\Tools\Patches\rive-sharp\reuse-scene-pointer.patch"
+if not exist "%RIVE_PATCH%" (
+    echo ERROR: Required RiveSharp build patch is missing: "%RIVE_PATCH%".
+    exit /b 1
+)
+
+git -C "%REPO_ROOT%\Build\Submodules\rive-sharp" apply --check "%RIVE_PATCH%" >nul 2>&1
+if not errorlevel 1 (
+    echo Applying RiveSharp scene pointer build patch...
+    git -C "%REPO_ROOT%\Build\Submodules\rive-sharp" apply "%RIVE_PATCH%"
+    if errorlevel 1 exit /b 1
+    exit /b 0
+)
+
+git -C "%REPO_ROOT%\Build\Submodules\rive-sharp" apply --reverse --check "%RIVE_PATCH%" >nul 2>&1
+if not errorlevel 1 (
+    echo RiveSharp scene pointer build patch is already applied.
+    exit /b 0
+)
+
+echo ERROR: RiveSharp build patch does not match the source. Review the submodule changes and Tools\Patches\rive-sharp\reuse-scene-pointer.patch.
+git -C "%REPO_ROOT%\Build\Submodules\rive-sharp" apply --check "%RIVE_PATCH%"
+exit /b 1

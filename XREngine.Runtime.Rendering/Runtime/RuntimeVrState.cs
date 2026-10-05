@@ -37,6 +37,8 @@ public sealed class RuntimeVrState
     public IOpenXrRuntime? OpenXRApi { get; set; }
     public object? CalibrationSettings { get; set; }
     public event Action<bool>? OpenXRSessionRunningChanged;
+    public event Action? TrackingBasisChanged;
+    public event Action? SessionGenerationChanged;
     public event Action<RuntimeVrPoseTiming>? RecalcMatrixOnDraw;
     public event Action<float>? IPDScalarChanged;
     public event Action<float>? RealWorldHeightChanged;
@@ -145,7 +147,8 @@ public sealed class RuntimeVrState
         }
     }
 
-    public float ScaledIPD => RealWorldIPD * ModelToRealWorldHeightRatio * IPDScalar;
+    /// <summary>Metric eye separation with only the explicitly configured stereo scalar; avatar measurements never rescale tracking.</summary>
+    public float ScaledIPD => RealWorldIPD * IPDScalar;
     public float RealToDesiredAvatarHeightRatio => DesiredAvatarHeight / RealWorldHeight;
     public float ModelToRealWorldHeightRatio => RealWorldHeight / ModelHeight;
     public float RealWorldToDesiredAvatarHeightRatio => DesiredAvatarHeight / RealWorldHeight;
@@ -238,6 +241,12 @@ public sealed class RuntimeVrState
 
     public void NotifyOpenXRSessionRunningChanged(bool running)
         => OpenXRSessionRunningChanged?.Invoke(running);
+
+    public void NotifyTrackingBasisChanged()
+        => TrackingBasisChanged?.Invoke();
+
+    public void NotifySessionGenerationChanged()
+        => SessionGenerationChanged?.Invoke();
 
     private void ApplyViewInformation(XRViewport? viewport, XRCamera? camera)
     {

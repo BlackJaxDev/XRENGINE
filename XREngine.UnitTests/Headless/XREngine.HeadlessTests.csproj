@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="NUnitLite" Version="4.6.1" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <ProjectReference Include="../../XREngine.Runtime.AnimationIntegration/XREngine.Runtime.AnimationIntegration.csproj" />
+    <ProjectReference Include="../../XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../Animation/VrCalibrationCaptureTests.cs" Link="Animation/VrCalibrationCaptureTests.cs" />
+    <Compile Include="../VR/VrTrackerBinderTests.cs" Link="VR/VrTrackerBinderTests.cs" />
+    <Compile Include="../Animation/VRIKAdditionalTargetTests.cs" Link="Animation/VRIKAdditionalTargetTests.cs" />
+    <Compile Include="../Animation/VRIKKneeTargetTests.cs" Link="Animation/VRIKKneeTargetTests.cs" />
+    <Compile Include="../Animation/VrControllerWristPresetTests.cs" Link="Animation/VrControllerWristPresetTests.cs" />
+    <!-- The narrow desktop filesystem adapter is OS-neutral BCL code; exercise it without the windowing/native desktop closure. -->
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopAssetFileSystem.cs" Link="Platform/DesktopAssetFileSystem.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopBvhDiskCache.cs" Link="Platform/DesktopBvhDiskCache.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopAssetChangeMonitor.cs" Link="Platform/DesktopAssetChangeMonitor.cs" />
+    <Compile Include="../Platform/DesktopAssetFileSystemTests.cs" Link="Platform/DesktopAssetFileSystemTests.cs" />
+    <Compile Include="../Animation/RecordingVrMovementComponent.cs" Link="Animation/RecordingVrMovementComponent.cs" />
+    <Compile Include="../VR/VrDesktopRoutingTests.cs" Link="VR/VrDesktopRoutingTests.cs" />
+    <!-- Reuse the same regression assertions as the desktop suite. -->
+    <Compile Include="../VR/VrSpectatorFollowTests.cs" Link="VR/VrSpectatorFollowTests.cs" />
+    <Compile Include="../VR/TestEyeCamera.cs" Link="VR/TestEyeCamera.cs" />
+    <Compile Include="../VR/VrSpectatorOutputLifetimeTests.cs" Link="VR/VrSpectatorOutputLifetimeTests.cs" />
+    <Compile Include="../VR/SpectatorTestFence.cs" Link="VR/SpectatorTestFence.cs" />
+    <Compile Include="../Animation/VRTrackingValidityTests.cs" Link="Animation/VRTrackingValidityTests.cs" />
+    <Compile Include="../Animation/ControlledVrPoseSource.cs" Link="Animation/ControlledVrPoseSource.cs" />
+    <Compile Include="../Animation/StubVrTrackingServices.cs" Link="Animation/StubVrTrackingServices.cs" />
+    <Compile Include="../Animation/StubVrCalibrationInputServices.cs" Link="Animation/StubVrCalibrationInputServices.cs" />
+    <Compile Include="../Animation/VrPlayerCalibrationTestRig.cs" Link="Animation/VrPlayerCalibrationTestRig.cs" />
+    <Compile Include="../Animation/VRPlayerCalibrationFlowTests.cs" Link="Animation/VRPlayerCalibrationFlowTests.cs" />
+    <Compile Include="../Animation/VRPlayerDiscontinuityTests.cs" Link="Animation/VRPlayerDiscontinuityTests.cs" />
+    <Compile Include="../Animation/VRTrackerCollectionLifecycleTests.cs" Link="Animation/VRTrackerCollectionLifecycleTests.cs" />
+    <Compile Include="../Animation/VrCalibrationStationaryWindowTests.cs" Link="Animation/VrCalibrationStationaryWindowTests.cs" />
+    <Compile Include="../Animation/VRIKCalibrationTests.cs" Link="Animation/VRIKCalibrationTests.cs" />
+    <Compile Include="../Animation/SyntheticVrCalibrationRig.cs" Link="Animation/SyntheticVrCalibrationRig.cs" />
+    <Compile Include="../Animation/SyntheticVrDeviceTransform.cs" Link="Animation/SyntheticVrDeviceTransform.cs" />
+    <Compile Include="../Animation/VRIKSolverComponentTests.cs" Link="Animation/VRIKSolverComponentTests.cs" />
+    <Compile Include="../Animation/IKAnimationStabilityTests.cs" Link="Animation/IKAnimationStabilityTests.cs" />
+    <Compile Include="../Animation/CountingIKSolverComponent.cs" Link="Animation/CountingIKSolverComponent.cs" />
+    <Compile Include="../Animation/VrBodyMeasurementTests.cs" Link="Animation/VrBodyMeasurementTests.cs" />
+    <Compile Include="../Animation/VrCalibrationSessionStoreTests.cs" Link="Animation/VrCalibrationSessionStoreTests.cs" />
+  </ItemGroup>
+</Project>

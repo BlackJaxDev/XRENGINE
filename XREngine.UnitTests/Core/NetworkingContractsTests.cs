@@ -18,7 +18,6 @@ public sealed class NetworkingContractsTests
 {
     private static readonly Type[] RealtimeDtoTypes =
     [
-        typeof(StateChangeInfo),
         typeof(PlayerJoinRequest),
         typeof(PlayerAssignment),
         typeof(PlayerInputSnapshot),
@@ -47,7 +46,7 @@ public sealed class NetworkingContractsTests
     }
 
     [Test]
-    public void StateChangePayloadSerializer_RoundTripsMemoryPackPayload()
+    public void StateChangeCodec_RoundTripsMemoryPackPayload()
     {
         var sessionId = Guid.NewGuid();
         var payload = new PlayerHeartbeat
@@ -58,7 +57,7 @@ public sealed class NetworkingContractsTests
             SessionId = sessionId
         };
 
-        string serialized = InvokeSerializerSerialize(payload);
+        byte[] serialized = InvokeSerializerSerialize(payload);
         bool success = InvokeSerializerTryDeserialize(serialized, out PlayerHeartbeat? deserialized);
 
         success.ShouldBeTrue();
@@ -460,22 +459,15 @@ public sealed class NetworkingContractsTests
         bytesConsumed.ShouldBe(HumanoidPoseCodec.BaselineAvatarBytes);
     }
 
-    private static string InvokeSerializerSerialize<T>(T payload)
+    private static byte[] InvokeSerializerSerialize<T>(T payload)
     {
-        var serializerType = typeof(PlayerJoinRequest).Assembly.GetType("XREngine.Networking.StateChangePayloadSerializer")!;
-        var method = serializerType.GetMethod("Serialize")!.MakeGenericMethod(typeof(T));
-        return (string)method.Invoke(null, [payload])!;
+        var writer = new System.Buffers.ArrayBufferWriter<byte>();
+        StateChangeCodec.Write(writer, payload);
+        return writer.WrittenSpan.ToArray();
     }
 
-    private static bool InvokeSerializerTryDeserialize<T>(string data, out T? payload)
-    {
-        object?[] args = [data, null];
-        var serializerType = typeof(PlayerJoinRequest).Assembly.GetType("XREngine.Networking.StateChangePayloadSerializer")!;
-        var method = serializerType.GetMethod("TryDeserialize")!.MakeGenericMethod(typeof(T));
-        bool result = (bool)method.Invoke(null, args)!;
-        payload = (T?)args[1];
-        return result;
-    }
+    private static bool InvokeSerializerTryDeserialize<T>(byte[] data, out T? payload)
+        => StateChangeCodec.TryRead(data, out payload);
 
     private static IEnumerable<TestCaseData> RealtimeDtoSamples()
     {
@@ -483,7 +475,6 @@ public sealed class NetworkingContractsTests
         Guid transformId = Guid.NewGuid();
         NetworkEntityId entityId = NetworkEntityId.FromGuid(Guid.NewGuid());
 
-        yield return new TestCaseData(new StateChangeInfo(EStateChangeType.Heartbeat, "payload")).SetName("StateChangeInfo_RoundTrip");
         yield return new TestCaseData(CreateWorldAsset()).SetName("WorldAssetIdentity_RoundTrip");
         yield return new TestCaseData(CreateEndpoint()).SetName("RealtimeEndpointDescriptor_RoundTrip");
         yield return new TestCaseData(entityId).SetName("NetworkEntityId_RoundTrip");
@@ -657,7 +648,7 @@ public sealed class NetworkingContractsTests
 
     private static T RoundTripThroughStateChangeSerializer<T>(T payload)
     {
-        string serialized = InvokeSerializerSerialize(payload);
+        byte[] serialized = InvokeSerializerSerialize(payload);
         InvokeSerializerTryDeserialize(serialized, out T? clone).ShouldBeTrue();
         if (clone is null)
             Assert.Fail($"Deserializing {typeof(T).FullName} returned null.");
@@ -673,6 +664,7 @@ public sealed class NetworkingContractsTests
             ClientId = "client-a",
             DisplayName = "Client A",
             BuildVersion = "1.2.3",
+            WireProtocolVersion = RealtimeProtocol.WireVersion,
             ClientWorldAsset = clientWorldAsset,
             SessionId = sessionId,
             SessionToken = sessionToken

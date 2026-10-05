@@ -430,6 +430,10 @@ namespace XREngine.Components.Scene.Mesh
                 throw new AggregateException("ModelComponent.RuntimeMeshRetirementIncomplete: pending runtime ownership is retained for retry.", failures);
         }
 
+        /// <summary>
+        /// Removes model subscriptions and disposes the owned renderable meshes.
+        /// Retains incomplete runtime ownership so destruction can be retried.
+        /// </summary>
         protected override void OnDestroying()
         {
             _runtimeMeshTeardown = true;
@@ -440,8 +444,11 @@ namespace XREngine.Components.Scene.Mesh
             {
                 try
                 {
-                    if (_subscribedModel is not null)
-                        UnsubscribeModelMeshEvents(_subscribedModel);
+                    Model? subscribedModel = _subscribedModel;
+                    if (subscribedModel is not null)
+                        UnsubscribeModelMeshEvents(subscribedModel);
+                    if (Model is { } model && !ReferenceEquals(model, subscribedModel))
+                        UnsubscribeModelMeshEvents(model);
                     RetainCurrentRuntimeMeshesForRetirement();
                     List<Exception>? failures = null;
                     try { RetirePendingRuntimeMeshes(); }

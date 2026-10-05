@@ -52,6 +52,7 @@ public static partial class CookedBinarySerializer
             return true;
         }
 
+#if !XRE_PUBLISHED
         public override CookedBinarySchemaNode? TryBuildValueSchema(CookedBinarySchemaBuilder builder, string name, Type? declaredType, object value, Type runtimeType, bool allowCustom)
         {
             if (value is not IDictionary dictionary)
@@ -110,5 +111,6 @@ public static partial class CookedBinarySerializer
             node.Notes = "repeated for each dictionary entry";
             return builder.FinalizeNode(node, allowUnknownChildren: true);
         }
+#endif
     }
 }

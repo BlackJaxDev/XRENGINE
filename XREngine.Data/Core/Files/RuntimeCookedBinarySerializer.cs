@@ -2,28 +2,39 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Numerics;
+#if !XRE_PUBLISHED
 using System.Reflection;
+#endif
 using System.Runtime.CompilerServices;
 using System.Text;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine.Data.Runtime.AotParity;
+#if !XRE_PUBLISHED
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
+#endif
 
 namespace XREngine.Core.Files;
 
 public interface IRuntimeCookedBinarySerializable
 {
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     void WriteCookedBinary(RuntimeCookedBinaryWriter writer);
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     void ReadCookedBinary(RuntimeCookedBinaryReader reader);
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     long CalculateCookedBinarySize();
 }
 
@@ -82,13 +93,17 @@ public ref struct RuntimeCookedBinaryWriter
 
     public readonly void Dispose() { }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     public void WriteValue(object? value)
         => RuntimeCookedBinarySerializer.WriteValue(this, value);
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     public void WriteBaseObject<T>(T instance) where T : class
         => RuntimeCookedBinarySerializer.WriteBaseObject(this, instance!, typeof(T));
 
@@ -193,13 +208,17 @@ public ref struct RuntimeCookedBinaryReader
 
     public readonly void Dispose() { }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     public T? ReadValue<T>()
         => (T?)RuntimeCookedBinarySerializer.ReadValue(this, typeof(T));
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     public void ReadBaseObject<T>(T instance) where T : class
         => RuntimeCookedBinarySerializer.ReadBaseObject(this, instance!, typeof(T));
 
@@ -310,9 +329,9 @@ public static class RuntimeCookedBinarySerializer
     private static readonly AsyncLocal<int> RecursionDepth = new();
     private static readonly object FactorySync = new();
     private static readonly Dictionary<Type, RuntimeFactoryEntry> RuntimeObjectFactories = [];
+#if !XRE_PUBLISHED
     private static readonly DataSourceYamlTypeConverter YamlPayloadConverter = new();
-    private static readonly PropertyInfo? XRObjectIdProperty = typeof(XRObjectBase)
-        .GetProperty(nameof(XRObjectBase.ID), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+#endif
 
     public static IDisposable RegisterRuntimeFactory<T>(Func<T> factory)
     {
@@ -336,8 +355,10 @@ public static class RuntimeCookedBinarySerializer
         return new RuntimeFactoryLease(entry);
     }
 
-    private static bool TryCreateRegisteredRuntimeObject(Type type, out object? value)
+    /// <summary>Creates an object through an installed runtime factory, if one owns the exact type.</summary>
+    public static bool TryCreateRegisteredRuntimeObject(Type type, out object? value)
     {
+        ArgumentNullException.ThrowIfNull(type);
         RuntimeFactoryEntry? entry;
         lock (FactorySync)
             RuntimeObjectFactories.TryGetValue(type, out entry);
@@ -349,6 +370,9 @@ public static class RuntimeCookedBinarySerializer
         }
 
         value = entry.Factory();
+        if (value is null || !type.IsInstanceOfType(value))
+            throw new InvalidOperationException(
+                $"The runtime factory for '{type.FullName}' returned '{value?.GetType().FullName ?? "null"}'.");
         return true;
     }
 
@@ -378,8 +402,10 @@ public static class RuntimeCookedBinarySerializer
     private static InvalidOperationException CreatePublishedAotUnsupportedException(string feature)
         => new($"Runtime cooked binary {feature} is not available in published AOT builds without an explicit registered factory or typed serializer.");
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     public static byte[] Serialize(object? value)
     {
         long length = CalculateSize(value);
@@ -393,8 +419,36 @@ public static class RuntimeCookedBinarySerializer
         return buffer;
     }
 
+    /// <summary>
+    /// Serializes directly into the caller's buffer writer. The exact size is computed first so the
+    /// writer hands back a single span and no intermediate array is allocated.
+    /// </summary>
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
+    public static void Serialize(object? value, System.Buffers.IBufferWriter<byte> destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+
+        long length = CalculateSize(value);
+        if (length > int.MaxValue)
+            throw new InvalidOperationException($"Runtime cooked payload exceeds maximum supported size ({length} bytes).");
+
+        int size = (int)length;
+        if (size == 0)
+            return;
+
+        Span<byte> span = destination.GetSpan(size)[..size];
+        RuntimeCookedBinaryWriter writer = new(span);
+        WriteValue(writer, value);
+        destination.Advance(size);
+    }
+
+#if !XRE_PUBLISHED
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     public static unsafe object? Deserialize(Type expectedType, ReadOnlySpan<byte> data)
     {
         ArgumentNullException.ThrowIfNull(expectedType);
@@ -404,6 +458,7 @@ public static class RuntimeCookedBinarySerializer
 
         if (!HasValidLeadingMarker(data))
         {
+#if !XRE_PUBLISHED
             if (TryExtractYamlCookedPayload(data, out byte[]? yamlPayload))
                 return DeserializeCore(expectedType, yamlPayload);
 
@@ -413,8 +468,12 @@ public static class RuntimeCookedBinarySerializer
                     $"Input for '{expectedType}' appears to be UTF-8 text/YAML rather than runtime cooked binary. " +
                     "If this is an asset YAML file, deserialize it through the asset serializer or extract its cooked Payload bytes first.");
             }
+#else
+            throw new NotSupportedException($"Input for '{expectedType}' is not runtime cooked binary. Published content must supply a cooked binary payload.");
+#endif
         }
 
+#if !XRE_PUBLISHED
         try
         {
             return DeserializeCore(expectedType, data);
@@ -434,10 +493,15 @@ public static class RuntimeCookedBinarySerializer
 
             throw;
         }
+#else
+        return DeserializeCore(expectedType, data);
+#endif
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     private static object? DeserializeCore(Type expectedType, ReadOnlySpan<byte> data)
     {
         RuntimeCookedBinaryReader reader = new(data);
@@ -458,13 +522,17 @@ public static class RuntimeCookedBinarySerializer
         }
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     public static long CalculateSize(object? value)
         => CalculateValueSize(value);
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     public static long CalculateBaseObjectSize(object instance, Type metadataType)
     {
         ArgumentNullException.ThrowIfNull(instance);
@@ -480,8 +548,10 @@ public static class RuntimeCookedBinarySerializer
             + CalculateSize(asset.OriginalLastWriteTimeUtc);
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     internal static void WriteBaseObject(RuntimeCookedBinaryWriter writer, object instance, Type metadataType)
     {
         ArgumentNullException.ThrowIfNull(instance);
@@ -497,8 +567,10 @@ public static class RuntimeCookedBinarySerializer
         writer.WriteValue(asset.OriginalLastWriteTimeUtc);
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     internal static void ReadBaseObject(RuntimeCookedBinaryReader reader, object instance, Type metadataType)
     {
         ArgumentNullException.ThrowIfNull(instance);
@@ -509,8 +581,8 @@ public static class RuntimeCookedBinarySerializer
 
         using IDisposable suppression = XRBase.SuppressPropertyNotifications();
         Guid? id = reader.ReadValue<Guid>();
-        if (id.HasValue && XRObjectIdProperty?.SetMethod is not null)
-            XRObjectIdProperty.SetValue(asset, id.Value);
+        if (id.HasValue)
+            asset.ID = id.Value;
 
         asset.Name = reader.ReadValue<string>();
         asset.FilePath = reader.ReadValue<string>();
@@ -518,8 +590,10 @@ public static class RuntimeCookedBinarySerializer
         asset.OriginalLastWriteTimeUtc = reader.ReadValue<DateTime?>();
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     internal static void WriteValue(RuntimeCookedBinaryWriter writer, object? value)
     {
         if (value is null)
@@ -696,8 +770,10 @@ public static class RuntimeCookedBinarySerializer
         throw new NotSupportedException($"Runtime cooked binary serialization does not support '{runtimeType.FullName ?? runtimeType.Name}'.");
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     internal static object? ReadValue(RuntimeCookedBinaryReader reader, Type? expectedType)
     {
         RuntimeCookedBinaryTypeMarker marker = (RuntimeCookedBinaryTypeMarker)reader.ReadByte();
@@ -735,8 +811,10 @@ public static class RuntimeCookedBinarySerializer
         return expectedType is null ? value : ConvertValue(value, expectedType);
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     private static object? ReadEnum(RuntimeCookedBinaryReader reader, Type? expectedType)
     {
         string typeName = reader.ReadString();
@@ -744,8 +822,10 @@ public static class RuntimeCookedBinarySerializer
         return Enum.ToObject(enumType, reader.ReadInt64());
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     private static object ReadArray(RuntimeCookedBinaryReader reader, Type? expectedType)
     {
         string typeName = reader.ReadString();
@@ -755,7 +835,7 @@ public static class RuntimeCookedBinarySerializer
             throw new InvalidOperationException($"Runtime cooked payload type '{arrayType}' is not an array.");
 
         int length = reader.ReadInt32();
-        Array array = Array.CreateInstance(elementType, length);
+        Array array = CreateRuntimeArray(arrayType, elementType, length);
         for (int i = 0; i < length; i++)
         {
             object? item = ReadValue(reader, elementType);
@@ -765,8 +845,10 @@ public static class RuntimeCookedBinarySerializer
         return array;
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     private static object ReadCustomObject(RuntimeCookedBinaryReader reader, Type? expectedType)
     {
         string typeName = reader.ReadString();
@@ -779,8 +861,10 @@ public static class RuntimeCookedBinarySerializer
         return instance;
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
+#endif
     private static long CalculateValueSize(object? value)
     {
         if (value is null)
@@ -886,22 +970,97 @@ public static class RuntimeCookedBinarySerializer
         if (XRRuntimeEnvironment.IsPublishedBuild)
             throw new InvalidOperationException($"Unable to resolve runtime cooked type '{name}' from published metadata.");
 
+#if !XRE_PUBLISHED
         resolved = Type.GetType(name, throwOnError: false, ignoreCase: false);
-        if (resolved is not null)
-            return resolved;
-
-        foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+        if (resolved is null)
         {
-            resolved = assembly.GetType(name, throwOnError: false, ignoreCase: false);
-            if (resolved is not null)
-                return resolved;
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                resolved = assembly.GetType(name, throwOnError: false, ignoreCase: false);
+                if (resolved is not null)
+                    break;
+            }
         }
 
+        if (resolved is not null)
+        {
+            AotParityDiagnostics.Report(
+                resolved,
+                EAotParityCategory.TypeResolutionScan,
+                $"{nameof(RuntimeCookedBinarySerializer)}.{nameof(ResolveType)}",
+                "Add the type to the published runtime metadata known-type table so runtime cooked payloads resolve it without Type.GetType or an assembly scan.");
+        }
+
+        return resolved;
+#else
         return null;
+#endif
     }
 
     private static Type? UnwrapNullable(Type? type)
         => type is null ? null : Nullable.GetUnderlyingType(type) ?? type;
+
+    private static Array CreateRuntimeArray(Type arrayType, Type elementType, int length)
+    {
+        if (CookedBinaryFormatterRegistry.TryCreateArray(arrayType, length, out Array? registered))
+            return registered!;
+
+        if (XRRuntimeEnvironment.IsPublishedBuild)
+            throw new InvalidOperationException($"Runtime cooked array '{arrayType}' has no registered closed array formatter.");
+
+#if !XRE_PUBLISHED
+        AotParityDiagnostics.Report(
+            arrayType,
+            EAotParityCategory.ReflectiveFactory,
+            $"{nameof(RuntimeCookedBinarySerializer)}.{nameof(CreateRuntimeArray)}",
+            $"Declare a {nameof(RuntimeClosedFormatterAttribute)} for '{arrayType}' so published runtime cooked arrays use a generated constructor.");
+        return Array.CreateInstance(elementType, length);
+#else
+        throw new InvalidOperationException($"Runtime cooked array '{arrayType}' has no registered closed array formatter.");
+#endif
+    }
+
+    private static object CreateDefaultValue(Type type)
+    {
+        if (type == typeof(bool)) return default(bool);
+        if (type == typeof(byte)) return default(byte);
+        if (type == typeof(sbyte)) return default(sbyte);
+        if (type == typeof(short)) return default(short);
+        if (type == typeof(ushort)) return default(ushort);
+        if (type == typeof(int)) return default(int);
+        if (type == typeof(uint)) return default(uint);
+        if (type == typeof(long)) return default(long);
+        if (type == typeof(ulong)) return default(ulong);
+        if (type == typeof(float)) return default(float);
+        if (type == typeof(double)) return default(double);
+        if (type == typeof(decimal)) return default(decimal);
+        if (type == typeof(char)) return default(char);
+        if (type == typeof(Guid)) return default(Guid);
+        if (type == typeof(DateTime)) return default(DateTime);
+        if (type == typeof(Vector2)) return default(Vector2);
+        if (type == typeof(Vector3)) return default(Vector3);
+        if (type == typeof(Vector4)) return default(Vector4);
+        if (type == typeof(Quaternion)) return default(Quaternion);
+        if (type == typeof(Matrix4x4)) return default(Matrix4x4);
+        if (CookedBinaryFormatterRegistry.TryCreateValueDefault(type, out object? registered))
+            return registered!;
+        if (type.IsEnum)
+            return Enum.ToObject(type, 0L);
+
+        if (XRRuntimeEnvironment.IsPublishedBuild)
+            throw new InvalidOperationException($"Runtime cooked value type '{type}' has no registered closed default.");
+
+#if !XRE_PUBLISHED
+        AotParityDiagnostics.Report(
+            type,
+            EAotParityCategory.ReflectiveFactory,
+            $"{nameof(RuntimeCookedBinarySerializer)}.{nameof(CreateDefaultValue)}",
+            $"Register a closed default for '{type}' with {nameof(CookedBinaryFormatterRegistry)}.{nameof(CookedBinaryFormatterRegistry.RegisterValueDefault)}.");
+        return RuntimeHelpers.GetUninitializedObject(type);
+#else
+        throw new InvalidOperationException($"Runtime cooked value type '{type}' has no registered closed default.");
+#endif
+    }
 
     private static object? CreateInstance(Type type)
     {
@@ -911,15 +1070,25 @@ public static class RuntimeCookedBinarySerializer
                 return registered;
 
             if (type.IsValueType)
-                return RuntimeHelpers.GetUninitializedObject(type);
+                return CreateDefaultValue(type);
 
-            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+            if (XRRuntimeEnvironment.IsPublishedBuild)
                 throw CreatePublishedAotUnsupportedException($"object construction for '{type.FullName}'");
+
+#if !XRE_PUBLISHED
+            AotParityDiagnostics.Report(
+                type,
+                EAotParityCategory.ReflectiveFactory,
+                $"{nameof(RuntimeCookedBinarySerializer)}.{nameof(CreateInstance)}",
+                $"Register a runtime factory with {nameof(RuntimeCookedBinarySerializer)}.{nameof(RegisterRuntimeFactory)} or generate one so the object is constructed without a reflected constructor.");
 
             ConstructorInfo? ctor = type.GetConstructor(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, Type.EmptyTypes, modifiers: null);
             return ctor?.Invoke(null);
+#else
+            throw CreatePublishedAotUnsupportedException($"object construction for '{type.FullName}'");
+#endif
         }
-        catch when (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+        catch (Exception ex) when (!XRRuntimeEnvironment.IsPublishedBuild && ex is not AotParityViolationException)
         {
             return null;
         }
@@ -931,7 +1100,7 @@ public static class RuntimeCookedBinarySerializer
         {
             Type? nullableType = Nullable.GetUnderlyingType(targetType);
             return targetType.IsValueType && nullableType is null
-                ? RuntimeHelpers.GetUninitializedObject(targetType)
+                ? CreateDefaultValue(targetType)
                 : null;
         }
 
@@ -962,7 +1131,7 @@ public static class RuntimeCookedBinarySerializer
             Type? elementType = targetType.GetElementType();
             if (elementType is not null && targetType.GetArrayRank() == 1 && sourceArray.Rank == 1)
             {
-                Array convertedArray = Array.CreateInstance(elementType, sourceArray.Length);
+                Array convertedArray = CreateRuntimeArray(targetType, elementType, sourceArray.Length);
                 for (int i = 0; i < sourceArray.Length; i++)
                     convertedArray.SetValue(ConvertValue(sourceArray.GetValue(i), elementType), i);
                 return convertedArray;
@@ -981,6 +1150,7 @@ public static class RuntimeCookedBinarySerializer
         }
     }
 
+#if !XRE_PUBLISHED
     private static bool TryExtractYamlCookedPayload(ReadOnlySpan<byte> data, out byte[]? payload)
     {
         payload = null;
@@ -1071,9 +1241,11 @@ public static class RuntimeCookedBinarySerializer
         return false;
     }
 
+#endif
     private static bool HasValidLeadingMarker(ReadOnlySpan<byte> data)
         => !data.IsEmpty && data[0] <= (byte)RuntimeCookedBinaryTypeMarker.CustomObject;
 
+#if !XRE_PUBLISHED
     private static ReadOnlySpan<byte> StripUtf8Bom(ReadOnlySpan<byte> data)
         => data.StartsWith(Encoding.UTF8.Preamble) ? data[Encoding.UTF8.Preamble.Length..] : data;
 
@@ -1120,4 +1292,5 @@ public static class RuntimeCookedBinarySerializer
 
         throw new YamlException("Unsupported YAML node encountered while skipping a value.");
     }
+#endif
 }

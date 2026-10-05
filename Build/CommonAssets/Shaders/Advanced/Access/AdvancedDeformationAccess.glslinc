@@ -3,18 +3,6 @@
 
 #include "AdvancedDiagnostics.glslinc"
 
-struct XRAdvancedDeformationRecord
-{
-    XRAdvancedGpuHandle sourceGeometry;
-    XRAdvancedGpuHandle currentGeometry;
-    XRAdvancedGpuHandle previousGeometry;
-    XRAdvancedGpuHandle animation;
-    uint currentFrameSlot;
-    uint previousFrameSlot;
-    uint vertexCount;
-    uint flags;
-};
-
 XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_DEFORMATIONS) readonly buffer XRAdvancedDeformationTable
 {
     XRAdvancedDeformationRecord records[];

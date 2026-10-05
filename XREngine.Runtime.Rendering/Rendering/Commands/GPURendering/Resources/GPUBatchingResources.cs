@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.Commands
 {
+    [XREngine.Rendering.Shaders.GpuRecord("GPUSortKeyEntry", "GPUScene")]
     [StructLayout(LayoutKind.Sequential)]
     public struct GPUSortKeyEntry
     {
@@ -11,6 +12,7 @@ namespace XREngine.Rendering.Commands
         public uint SourceIndex;
     }
 
+    [XREngine.Rendering.Shaders.GpuRecord("GPUBatchRangeEntry", "GPUScene")]
     [StructLayout(LayoutKind.Sequential)]
     public struct GPUBatchRangeEntry
     {

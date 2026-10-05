@@ -26,6 +26,8 @@ namespace XREngine.Scene.Transforms
                 recalculateTask.GetAwaiter().GetResult();
         }
 
+        protected override bool HasCustomWorldMatrix => true;
+
         protected override Matrix4x4 CreateWorldMatrix()
             => _worldMatrix;
 

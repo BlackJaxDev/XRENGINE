@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Commands;
 /// <summary>
 /// Backend-neutral render-state classification referenced by canonical draws.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedRenderStateRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedRenderStateRecord
 {

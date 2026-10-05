@@ -482,9 +482,9 @@ namespace XREngine.Scene.Transforms
             }
         }
 
-        private Vector3 _prevScale = Vector3.One;
-        private Vector3 _prevTranslation = Vector3.Zero;
-        private Quaternion _prevRotation = Quaternion.Identity;
+
+
+
 
         public override byte[] EncodeToBytes(bool delta)
         {
@@ -500,9 +500,9 @@ namespace XREngine.Scene.Transforms
 
             if (delta)
             {
-                s = Scale - _prevScale;
-                t = Translation - _prevTranslation;
-                r = Rotation * Quaternion.Inverse(_prevRotation);
+                s = Scale - TransformReplicationState.For(this).Scale;
+                t = Translation - TransformReplicationState.For(this).Translation;
+                r = Rotation * Quaternion.Inverse(TransformReplicationState.For(this).Rotation);
 
                 hasScale = s.LengthSquared() > tolerance;
                 hasTranslation = t.LengthSquared() > tolerance;
@@ -524,9 +524,9 @@ namespace XREngine.Scene.Transforms
             byte[]? translation = hasTranslation ? WriteHalves(t) : null;
             byte[]? rotation = hasRotation ? Compression.CompressQuaternionToBytes(r) : null;
 
-            _prevScale = Scale;
-            _prevTranslation = Translation;
-            _prevRotation = Rotation;
+            TransformReplicationState.For(this).Scale = Scale;
+            TransformReplicationState.For(this).Translation = Translation;
+            TransformReplicationState.For(this).Rotation = Rotation;
 
             byte scaleBits = (byte)16;
             byte transBits = (byte)16;

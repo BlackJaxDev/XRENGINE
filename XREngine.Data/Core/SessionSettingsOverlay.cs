@@ -455,6 +455,9 @@ public sealed class SessionSettingsOverlay
                     $"Cannot create null session setting path segment '{property.Name}' of type '{childType.FullName}'.");
             }
 
+            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(childType,
+                XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                nameof(SessionSettingsOverlay), "Initialize settings path objects through the typed settings contract before applying an overlay.");
             child = Activator.CreateInstance(childType) ??
                 throw new InvalidOperationException(
                     $"Cannot create null session setting path segment '{property.Name}' of type '{childType.FullName}'.");

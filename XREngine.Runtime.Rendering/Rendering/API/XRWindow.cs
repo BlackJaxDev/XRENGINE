@@ -2678,6 +2678,10 @@ namespace XREngine.Rendering
                             (uint)presentationSize.X, (uint)presentationSize.Y);
                 }
 
+                // Statistics resolve prior-frame GPU queries through the current backend.
+                frameRenderer.Active = true;
+                AbstractRenderer.Current = frameRenderer;
+
                 // Reset per-frame rendering statistics at the start of each frame.
                 long phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 using (var renderStatsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.BeginRenderStatsFrame"))
@@ -2723,8 +2727,6 @@ namespace XREngine.Rendering
                 }
                 RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.ProcessPendingUploads", phaseStart);
 
-                frameRenderer.Active = true;
-                AbstractRenderer.Current = frameRenderer;
                 OcclusionGpuElapsedTiming.Instance.Resolve(frameRenderer, renderFrameId);
 
                 // Publish the effective strategy and meshlet capability snapshot at the

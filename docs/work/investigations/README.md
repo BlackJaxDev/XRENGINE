@@ -8,3 +8,5 @@ Subsystem indexes distinguish actionable investigations from archived evidence.
 For rendering, use [Rendering Investigations](rendering/README.md).
 
 Runtime input: [Browser snapshot transient input edges](runtime/browser-snapshot-transient-edges-2026-10-02.md).
+
+- [Windows CI Build Preparation](platform/windows-ci-build-preparation-2026-10-05.md): workload provisioning, native symbols, and Visual Studio discovery; hosted-runner confirmation pending.

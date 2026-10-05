@@ -72,6 +72,11 @@ internal enum CookedBinaryTypeMarker : byte
     BitArray = 59,
     CultureInfo = 60,
     Regex = 61,
+    // Persisted generic cooked graphs use fixed-width identities.
     ReferenceDefinition = 62,
-    Reference = 63
+    Reference = 63,
+
+    // Transient play-mode snapshots use selected values with 7-bit identities.
+    SharedDefinition = 64,
+    SharedReference = 65
 }

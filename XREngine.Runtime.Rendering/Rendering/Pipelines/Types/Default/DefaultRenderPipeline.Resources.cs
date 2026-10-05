@@ -33,6 +33,8 @@ public partial class DefaultRenderPipeline
         MsaaTargetsEnabled = 1UL << 17,
         AtmosphereResourcesEnabled = 1UL << 18,
         VolumetricFogResourcesEnabled = 1UL << 19,
+        // Set by RvcRenderPipeline while a requested RVC mode plans GPU stages.
+        RvcResourcesEnabled = 1UL << 20,
         DebugVisualizationResourcesEnabled = 1UL << 25,
         // AO mode field [bits 26-29]: 0=disabled/safe-path, (int)NormalizedType+1 for active modes.
         // Changing AO type replaces the generation so mode-specific FBOs are rebuilt.
@@ -105,6 +107,19 @@ public partial class DefaultRenderPipeline
         bool useOpenXrVulkanSafePath = UseOpenXrVulkanDesktopStartupSafePathForViewport(viewport);
         bool usesStereoResources = UsesStereoResources(instance, viewport);
         AmbientOcclusionSettings? generationAoSettings = ResolveAmbientOcclusionSettings(instance, viewport);
+        bool cameraUnavailable = instance.RenderState.SceneCamera is null
+            && instance.RenderState.RenderingCamera is null
+            && instance.LastSceneCamera is null
+            && instance.LastRenderingCamera is null
+            && viewport?.ActiveCamera is null;
+        ulong previousFeatureMask = 0UL;
+        bool usePreviousAoFeatures = cameraUnavailable
+            && generationAoSettings is null
+            && instance.TryGetLastResourceFeatureMask(viewport, out previousFeatureMask);
+        DefaultPipelineResourceFeature previousAoFeatures = usePreviousAoFeatures
+            ? (DefaultPipelineResourceFeature)(previousFeatureMask &
+                ((ulong)DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled | AoModeFieldMask))
+            : DefaultPipelineResourceFeature.None;
 
         if (EnableDeferredMsaa && !useOpenXrVulkanSafePath &&
             ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport) == EAntiAliasingMode.Msaa)
@@ -112,7 +127,8 @@ public partial class DefaultRenderPipeline
         if (!useOpenXrVulkanSafePath && ResolveEffectiveAntiAliasingModeForGeneration(instance, viewport) == EAntiAliasingMode.Msaa)
             mask |= DefaultPipelineResourceFeature.MsaaTargetsEnabled;
         bool useForwardPrePassResources = !useOpenXrVulkanSafePath
-            && (ForwardDepthPrePassEnabled || generationAoSettings?.Enabled == true);
+            && (ForwardDepthPrePassEnabled || generationAoSettings?.Enabled == true
+                || (previousAoFeatures & DefaultPipelineResourceFeature.AmbientOcclusionResourcesEnabled) != 0);
         if (useForwardPrePassResources)
             mask |= DefaultPipelineResourceFeature.ForwardDepthPrePassEnabled;
         bool useVendorUpscale = !useOpenXrVulkanSafePath && RuntimeEnableVendorUpscale;
@@ -143,6 +159,12 @@ public partial class DefaultRenderPipeline
                 int encodedMode = (int)AmbientOcclusionSettings.NormalizeType(activeAoSettings.Type) + 1;
                 mask |= (DefaultPipelineResourceFeature)((ulong)encodedMode << AoModeFieldShift);
             }
+            else if (usePreviousAoFeatures)
+            {
+                // A resize callback can arrive while its viewport camera is unavailable.
+                // Keep the last camera-owned AO layout until that camera can be resolved again.
+                mask |= previousAoFeatures;
+            }
 
             if (ShouldUseBloomForGeneration(instance, viewport))
                 mask |= DefaultPipelineResourceFeature.BloomResourcesEnabled;
@@ -171,8 +193,8 @@ public partial class DefaultRenderPipeline
         }
 
         GroundTruthAmbientOcclusionSettings.EResolution gtaoResolution = generationAoSettings?.GroundTruth.Resolution
-            ?? (instance.TryGetLastResourceFeatureMask(viewport, out ulong previousMask)
-                ? ResolveGtaoResolutionFromFeatureMask(previousMask)
+            ?? (instance.TryGetLastResourceFeatureMask(viewport, out ulong previousResolutionMask)
+                ? ResolveGtaoResolutionFromFeatureMask(previousResolutionMask)
                 : GroundTruthAmbientOcclusionSettings.DefaultResolution);
         mask |= gtaoResolution switch
         {
@@ -477,7 +499,7 @@ public partial class DefaultRenderPipeline
             CreateAmbientOcclusionRawTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
-            .When(UsesAmbientOcclusionResources)
+            .When(UsesRawAmbientOcclusionTexture)
             .Add();
 
         Texture(builder, HBAOPlusRawTextureName, internalSize, PrecomputedColorTexture,
@@ -485,7 +507,7 @@ public partial class DefaultRenderPipeline
             CreateHBAOPlusRawTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
-            .When(UsesAmbientOcclusionResources)
+            .When(UsesHBAOPlusMode)
             .Add();
 
         Texture(builder, HBAOPlusBlurIntermediateTextureName, internalSize, PrecomputedColorTexture,
@@ -493,7 +515,7 @@ public partial class DefaultRenderPipeline
             CreateHBAOPlusBlurIntermediateTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
-            .When(UsesAmbientOcclusionResources)
+            .When(UsesHBAOPlusMode)
             .Add();
 
         Texture(builder, GTAORawTextureName, gtaoScratchSize, PrecomputedColorTexture,
@@ -501,7 +523,7 @@ public partial class DefaultRenderPipeline
             CreateGTAORawTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
-            .When(UsesAmbientOcclusionResources)
+            .When(UsesGTAOMode)
             .Add();
 
         Texture(builder, GTAOBlurIntermediateTextureName, gtaoScratchSize, PrecomputedColorTexture,
@@ -509,7 +531,7 @@ public partial class DefaultRenderPipeline
             CreateGTAOBlurIntermediateTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
-            .When(UsesAmbientOcclusionResources)
+            .When(UsesGTAOMode)
             .Add();
 
         builder.Texture(AmbientOcclusionNoiseTextureName)
@@ -541,6 +563,13 @@ public partial class DefaultRenderPipeline
 
     private static bool UsesSpatialHashAOMode(RenderPipelineResourceProfile profile)
         => UsesAoMode(profile, AmbientOcclusionSettings.EType.SpatialHashAmbientOcclusion);
+
+    /// <summary>
+    /// SSAO, MVAO and MSVO write the shared raw AO texture; HBAO+ and GTAO have
+    /// their own scratch targets, so each mode allocates only its own set.
+    /// </summary>
+    private static bool UsesRawAmbientOcclusionTexture(RenderPipelineResourceProfile profile)
+        => UsesAmbientOcclusionResources(profile) && DecodeAoModeFromProfile(profile) is 1 or 2 or 4;
 
     /// <summary>Decodes the AO mode from the current resource build context feature mask.</summary>
     private static int DecodeCurrentAoMode()
@@ -1043,7 +1072,7 @@ public partial class DefaultRenderPipeline
             .Add();
 
         Texture(builder, BloomBlurTextureName, internalSize, BloomColorTexture,
-            ResolvePostProcessIntermediateInternalFormat(), EPixelFormat.Rgba, ResolvePostProcessIntermediatePixelType(), ResolvePostProcessIntermediateSizedInternalFormat(),
+            BloomInternalFormat, BloomPixelFormat, BloomPixelType, BloomSizedInternalFormat,
             CreateBloomBlurTexture)
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
@@ -2104,14 +2133,24 @@ public partial class DefaultRenderPipeline
         return aoTexture;
     }
 
+    // The bloom chain carries RGB light only: no consumer reads alpha (the format
+    // drops what the bloom copy passes through), every consumer samples .rgb, and
+    // values are clamped non-negative. The packed
+    // unsigned-float format halves its memory against RGBA16F (about 77 MB for
+    // the two-layer chain at 2688² per eye).
+    private const EPixelInternalFormat BloomInternalFormat = EPixelInternalFormat.R11fG11fB10f;
+    private const EPixelFormat BloomPixelFormat = EPixelFormat.Rgb;
+    private const EPixelType BloomPixelType = EPixelType.Float;
+    private const ESizedInternalFormat BloomSizedInternalFormat = ESizedInternalFormat.R11fG11fB10f;
+
     private XRTexture CreateBloomBlurTexture()
     {
         uint width = (uint)Math.Max(1, InternalWidth);
         uint height = (uint)Math.Max(1, InternalHeight);
         int maxMipLevel = checked((int)ResolveBloomMipLevelCount(width, height) - 1);
-        EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
-        EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
-        ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();
+        EPixelInternalFormat internalFormat = BloomInternalFormat;
+        EPixelType pixelType = BloomPixelType;
+        ESizedInternalFormat sized = BloomSizedInternalFormat;
 
         if (Stereo)
         {
@@ -2120,7 +2159,7 @@ public partial class DefaultRenderPipeline
                 width,
                 height,
                 internalFormat,
-                EPixelFormat.Rgba,
+                BloomPixelFormat,
                 pixelType,
                 EFrameBufferAttachment.ColorAttachment0);
             texture.OVRMultiViewParameters = new(0, 2u);
@@ -2132,7 +2171,7 @@ public partial class DefaultRenderPipeline
             width,
             height,
             internalFormat,
-            EPixelFormat.Rgba,
+            BloomPixelFormat,
             pixelType,
             EFrameBufferAttachment.ColorAttachment0);
         ConfigureBloomBlurTexture(mono, sized, maxMipLevel);

@@ -1,14 +1,19 @@
 using System.Diagnostics.CodeAnalysis;
+using XREngine.Data.Runtime.AotParity;
 
 namespace XREngine.Core.Files
 {
     public static class CookedAssetTypeReference
     {
         private const string AotTypeIndexPrefix = "aot:";
+        private const string ContractPrefix = "contract:";
 
         public static string Encode(Type runtimeType, AotRuntimeMetadata? metadata = null)
         {
             ArgumentNullException.ThrowIfNull(runtimeType);
+
+            if (RuntimeTypeContractRegistry.TryGet(runtimeType, out string? contractId, out int schemaVersion))
+                return $"{ContractPrefix}{contractId}:{schemaVersion}";
 
             if (TryGetKnownTypeIndex(runtimeType, metadata, out int typeIndex))
                 return $"{AotTypeIndexPrefix}{typeIndex}";
@@ -28,6 +33,31 @@ namespace XREngine.Core.Files
                 return resolved;
 
             return expectedType;
+        }
+
+        /// <summary>
+        /// Resolves a type reference using only the paths available to a published runtime:
+        /// the encoded metadata index, the metadata known-type table, and published asset
+        /// registrations. It never scans assemblies, so it carries no reflection annotations.
+        /// </summary>
+        public static bool TryResolvePublished(string? typeReference, Type? expectedType, out Type? resolved)
+        {
+            if (TryResolveEncodedTypeReference(typeReference, out resolved))
+            {
+                resolved ??= expectedType;
+                return resolved is not null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(typeReference))
+            {
+                string rewritten = XRTypeRedirectRegistry.RewriteTypeName(typeReference);
+                resolved = AotRuntimeMetadataStore.ResolveType(rewritten);
+                if (resolved is not null)
+                    return true;
+            }
+
+            resolved = expectedType;
+            return resolved is not null;
         }
 
         public static bool MatchesExpectedType(string? typeReference, Type expectedType)
@@ -95,7 +125,14 @@ namespace XREngine.Core.Files
             {
                 resolved = assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
                 if (resolved is not null)
+                {
+                    AotParityDiagnostics.Report(
+                        resolved,
+                        EAotParityCategory.TypeResolutionScan,
+                        $"{nameof(CookedAssetTypeReference)}.{nameof(Resolve)}",
+                        $"Add the type to the published runtime metadata known-type table or register it with {nameof(PublishedCookedAssetRegistry)} so the cooked type reference resolves without scanning assemblies.");
                     return resolved;
+                }
             }
 
             return null;
@@ -104,6 +141,22 @@ namespace XREngine.Core.Files
         private static bool TryResolveEncodedTypeReference(string? typeReference, out Type? resolved)
         {
             resolved = null;
+
+            if (typeReference?.StartsWith(ContractPrefix, StringComparison.Ordinal) == true)
+            {
+                ReadOnlySpan<char> identity = typeReference.AsSpan(ContractPrefix.Length);
+                int separator = identity.LastIndexOf(':');
+                if (separator <= 0 || !int.TryParse(identity[(separator + 1)..], out int schemaVersion) ||
+                    !RuntimeTypeContractRegistry.TryResolve(identity[..separator].ToString(), out Type? registered) ||
+                    registered is null ||
+                    !RuntimeTypeContractRegistry.TryGet(registered, out _, out int installedVersion) ||
+                    schemaVersion != installedVersion)
+                {
+                    throw new InvalidOperationException($"Cooked contract '{typeReference}' is unavailable or has a different schema version. Re-cook the asset against the current runtime contracts.");
+                }
+                resolved = registered;
+                return true;
+            }
 
             if (string.IsNullOrWhiteSpace(typeReference)
                 || !typeReference.StartsWith(AotTypeIndexPrefix, StringComparison.Ordinal)

@@ -13,15 +13,19 @@ internal sealed class AdvancedGpuDeformationOutputBuffers
             new XRDataBuffer<AdvancedDeformedVertex>[frameSlotCount];
         for (int slot = 0; slot < frameSlotCount; slot++)
         {
+            // Only the deformation compute pass writes these slots, so they keep
+            // no CPU copy: GPU storage is allocated from the element metadata.
             Buffers[slot] = new XRDataBuffer<AdvancedDeformedVertex>(
                 $"AdvancedDeformation.Output.Slot{slot}",
                 // ArrayBuffer requests vertex usage while the Vulkan backend retains storage usage for compute writes.
                 EBufferTarget.ArrayBuffer,
-                vertexCapacity)
+                vertexCapacity,
+                allocateClientSideSource: false)
             {
                 Usage = EBufferUsage.StaticCopy,
                 DisposeOnPush = false,
                 Resizable = false,
+                GpuProduced = true,
             };
         }
         VertexCapacity = vertexCapacity;

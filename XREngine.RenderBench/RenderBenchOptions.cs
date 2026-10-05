@@ -14,6 +14,7 @@ public sealed record RenderBenchOptions
         "stability-frames", "capture-frames", "fixed-step", "random-seed", "frozen-world", "help",
         "scenario", "scenario-lane", "scenario-depth", "scenario-frames", "scenario-repeats", "scenario-workload", "scenario-timing", "scenario-renderdoc", "scenario-renderdoc-step",
         "scenario-cache-root", "layout-policy",
+        "runtime-manifest", "runtime-lane",
     };
 
     public string Backend { get; init; } = "Vulkan";
@@ -57,6 +58,9 @@ public sealed record RenderBenchOptions
     public string? ScenarioCacheRoot { get; init; }
     /// <summary>Opt-in GPU fixture layout policy. The default preserves specialized layouts.</summary>
     public string LayoutPolicy { get; init; } = "specialized";
+    /// <summary>Asset identities and fixture locations for the runtime measurement scenario.</summary>
+    public string? RuntimeManifest { get; init; }
+    public string RuntimeLane { get; init; } = "all";
 
     public RenderTargetOutputProperties OutputProperties
         => new(Width, Height, Layers, ColorFormat, DepthFormat, "Linear", Samples, FrameSlots);
@@ -151,7 +155,23 @@ public sealed record RenderBenchOptions
                 ? Path.GetFullPath(cacheRoot)
                 : null,
             LayoutPolicy = Get(values, "layout-policy", "specialized").ToLowerInvariant(),
+            RuntimeManifest = values.GetValueOrDefault("runtime-manifest"),
+            RuntimeLane = Get(values, "runtime-lane", "all").ToLowerInvariant(),
         };
+
+        if (result.Scenario == "runtime-data-layout")
+        {
+            if (result.RuntimeLane is not ("all" or "assets" or "networking" or "transforms"))
+                throw new ArgumentException("--runtime-lane must be all, assets, networking, or transforms.");
+            if (result.RuntimeLane != "networking" && string.IsNullOrWhiteSpace(result.RuntimeManifest))
+                throw new ArgumentException("--runtime-manifest is required for asset and transform measurements.");
+            if (result.McpPolicy != RenderBenchMcpPolicy.Disabled || result.WaitForMcpStart || result.RecipeFile is not null)
+                throw new ArgumentException("Runtime measurements own their process and require disabled MCP and no recipe file.");
+            result.OutputProperties.Validate();
+            return result;
+        }
+        if (values.ContainsKey("runtime-manifest") || values.ContainsKey("runtime-lane"))
+            throw new ArgumentException("Runtime measurement controls require --scenario runtime-data-layout.");
 
         if (result.LayoutPolicy is not ("specialized" or "general"))
             throw new ArgumentException("--layout-policy must be either 'specialized' or 'general'.");
@@ -230,6 +250,8 @@ public sealed record RenderBenchOptions
           --layout-policy specialized|general (GPU-pass paired layout experiment; GENERAL requires VK_KHR_unified_image_layouts)
           --scenario phase52-visibility|phase52-buffers|phase52-all
           --scenario phase53-streaming|phase53-materials|phase53-pipelines
+          --scenario runtime-data-layout --runtime-lane all|assets|networking|transforms
+          --runtime-manifest <fixture-json> --warmup-frames N --capture-frames N
           --scenario-cache-root <path> (required only for isolated pipeline cold/warm evidence)
           --scenario-depth normal|reversed|both --scenario-frames 12..240 --scenario-repeats 2..4
           --scenario-workload default|all|open-static|moderate-static|heavy-static|heavy-moving-cut|masked-static|masked-moving

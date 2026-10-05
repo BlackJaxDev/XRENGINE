@@ -32,7 +32,7 @@ public static class AdvancedShaderAccessLibrary
 
         StringBuilder source = new(4096);
         AppendRequiredExtensions(source, backend, textureEncoding);
-        source.Append(AdvancedShaderRecordLayout.BuildCpuLayoutDefines());
+        AdvancedShaderRecordLayout.ValidateCpuLayouts();
         AdvancedStandardMaterialShaderContract.AppendDefines(source);
         AppendDefine(source, "XR_ADV_GLOBAL_SET", descriptorSet);
         AppendDefine(

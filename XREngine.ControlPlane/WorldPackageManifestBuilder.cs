@@ -16,6 +16,41 @@ public static class WorldPackageManifestBuilder
         return result;
     }
 
+    /// <summary>
+    /// Applies only the data-only content policy to the files a manifest declares, reading each
+    /// file's leading bytes from <paramref name="rootDirectory"/>. The result lists every rejected
+    /// file in <see cref="WorldPackageVerificationResult.ExecutablePayloads"/> and reports missing
+    /// or escaping paths; it does not hash contents.
+    /// </summary>
+    public static WorldPackageVerificationResult VerifyDataOnlyContent(WorldPackageManifest manifest, string? rootDirectory = null)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        string root = Path.GetFullPath(string.IsNullOrWhiteSpace(rootDirectory) ? manifest.RootPath : rootDirectory);
+        WorldPackageVerificationResult result = new();
+        foreach (WorldPackageFile file in manifest.Files)
+        {
+            if (WorldPackageExecutablePayloadPolicy.TryClassifyByExtension(file.RelativePath, out string extensionKind))
+            {
+                result.ExecutablePayloads.Add(WorldPackageExecutablePayloadPolicy.DescribeRejection(file.RelativePath, extensionKind));
+                continue;
+            }
+            if (!TryGetContainedFilePath(root, file.RelativePath, out string path) || IsReparsePoint(path))
+            {
+                result.UnsafePaths.Add(file.RelativePath);
+                continue;
+            }
+            if (!File.Exists(path))
+            {
+                result.MissingFiles.Add(file.RelativePath);
+                continue;
+            }
+            if (WorldPackageExecutablePayloadPolicy.TryClassifyFile(file.RelativePath, path, out string executableKind))
+                result.ExecutablePayloads.Add(WorldPackageExecutablePayloadPolicy.DescribeRejection(file.RelativePath, executableKind));
+        }
+
+        return result;
+    }
+
     public static WorldPackageManifest CreateFromDirectory(
         string rootDirectory,
         WorldAssetIdentity asset,
@@ -36,6 +71,10 @@ public static class WorldPackageManifestBuilder
         foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).OrderBy(static path => path, StringComparer.OrdinalIgnoreCase))
         {
             string relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+            if (!TryGetContainedFilePath(root, relative, out _) || IsReparsePoint(file))
+                throw new InvalidOperationException($"World package file '{relative}' resolves through an unsafe path.");
+            if (WorldPackageExecutablePayloadPolicy.TryClassifyFile(relative, file, out string executableKind))
+                throw new InvalidOperationException(WorldPackageExecutablePayloadPolicy.DescribeRejection(relative, executableKind));
             FileInfo info = new(file);
             files.Add(new WorldPackageFile
             {
@@ -51,7 +90,7 @@ public static class WorldPackageManifestBuilder
         string effectiveWorldEntryPoint = string.IsNullOrWhiteSpace(worldEntryPoint)
             ? files.FirstOrDefault(file => string.Equals(file.RelativePath, "World.asset", StringComparison.OrdinalIgnoreCase))?.RelativePath ?? string.Empty
             : worldEntryPoint!;
-        string effectiveGameBootstrapId = string.IsNullOrWhiteSpace(gameBootstrapId) ? "world-v1" : gameBootstrapId!;
+        string effectiveGameBootstrapId = string.IsNullOrWhiteSpace(gameBootstrapId) ? WorldPackageBootstrapIds.BuiltInWorldV1 : gameBootstrapId!;
         IReadOnlyDictionary<string, string> effectiveMetadata = metadata ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         long totalBytes = files.Sum(static file => file.Length);
         string manifestHash = ComputeManifestHash(files, effectivePackageId, manifestAsset, effectiveWorldEntryPoint, effectiveGameBootstrapId, effectiveBuildVersion, effectiveMetadata, totalBytes, schemaVersion: 1);
@@ -100,6 +139,9 @@ public static class WorldPackageManifestBuilder
                 result.MissingFiles.Add(file.RelativePath);
                 continue;
             }
+
+            if (WorldPackageExecutablePayloadPolicy.TryClassifyFile(file.RelativePath, path, out string executableKind))
+                result.ExecutablePayloads.Add(WorldPackageExecutablePayloadPolicy.DescribeRejection(file.RelativePath, executableKind));
 
             FileInfo info = new(path);
             if (info.Length != file.Length)
@@ -261,6 +303,8 @@ public static class WorldPackageManifestBuilder
                     result.InvalidManifest = true;
                     return false;
                 }
+                if (WorldPackageExecutablePayloadPolicy.TryClassifyByExtension(file.RelativePath, out string executableKind))
+                    result.ExecutablePayloads.Add(WorldPackageExecutablePayloadPolicy.DescribeRejection(file.RelativePath, executableKind));
                 totalBytes = checked(totalBytes + file.Length);
             }
         }
@@ -269,6 +313,10 @@ public static class WorldPackageManifestBuilder
             result.InvalidManifest = true;
             return false;
         }
+
+        // A declared executable extension is a policy violation on its own; the manifest cannot be trusted further.
+        if (result.ExecutablePayloads.Count > 0)
+            return false;
 
         if (totalBytes != manifest.TotalBytes || manifest.Files.Select(file => file.RelativePath).Distinct(StringComparer.OrdinalIgnoreCase).Count() != manifest.Files.Count)
         {
@@ -353,6 +401,7 @@ public static class WorldPackageManifestBuilder
         details.AddRange(result.HashMismatches.Select(file => $"hash:{file}"));
         details.AddRange(result.UnsafePaths.Select(file => $"unsafe:{file}"));
         details.AddRange(result.ExtraFiles.Select(file => $"extra:{file}"));
+        details.AddRange(result.ExecutablePayloads);
         return details.Count == 0 ? "unknown verification failure" : string.Join(", ", details);
     }
 

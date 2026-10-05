@@ -203,6 +203,181 @@ internal sealed partial class VulkanResourcePlannerSessionService(
         switchingState.States[currentKey] = state;
     }
 
+    /// <summary>
+    /// Removes planner states that an older resource generation of the same
+    /// pipeline, viewport, output and logical view left in
+    /// <paramref name="switchingState"/>. The generation counter only advances,
+    /// so such a state can never become current again, but while its key stays in
+    /// the table its allocator counts as owned and its whole physical image/buffer
+    /// set is never retired (every committed generation would otherwise keep each
+    /// previous set alive). Allocators of removed states are appended to
+    /// <paramref name="supersededAllocators"/> for the caller to retire once no
+    /// remaining state owns them.
+    /// </summary>
+    internal static void RemoveSupersededGenerationStates(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        in VulkanFrameOpPlannerStateKey currentKey,
+        VulkanResourceAllocator currentAllocator,
+        List<VulkanResourceAllocator> supersededAllocators)
+    {
+        List<VulkanFrameOpPlannerStateKey>? supersededKeys = null;
+        foreach (VulkanFrameOpPlannerStateKey candidate in switchingState.States.Keys)
+        {
+            if (IsSupersededGenerationKey(candidate, currentKey))
+                (supersededKeys ??= []).Add(candidate);
+        }
+
+        if (supersededKeys is null)
+            return;
+
+        for (int index = 0; index < supersededKeys.Count; index++)
+        {
+            VulkanFrameOpPlannerStateKey supersededKey = supersededKeys[index];
+            if (!switchingState.States.Remove(supersededKey, out ResourcePlannerRuntimeState removed))
+                continue;
+
+            switchingState.LastUsedSerials.Remove(supersededKey);
+            switchingState.ActiveKeys.Remove(supersededKey);
+            if (removed.ResourceAllocator is not null &&
+                !ReferenceEquals(removed.ResourceAllocator, currentAllocator) &&
+                !supersededAllocators.Contains(removed.ResourceAllocator))
+            {
+                supersededAllocators.Add(removed.ResourceAllocator);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Finds the state a resource-generation commit prepared for
+    /// <paramref name="context"/> when <paramref name="activeSwitchingState"/> is a
+    /// thread-scoped table rather than the published one. Commits always publish
+    /// into the published table, but OpenXR planners render from their own
+    /// tables, so without this lookup every committed stereo generation would be
+    /// allocated a second time by its first eye render. The caller shares the
+    /// returned state's allocator; the published entry keeps owning it, so
+    /// supersession or eviction there retires it and the scoped table then sees a
+    /// retired allocator and prepares its own. The published table is mutated only
+    /// on the render thread, so other threads never read it here.
+    /// </summary>
+    internal bool TryFindCommittedGenerationState(
+        FrameOpResourcePlannerSwitchingState activeSwitchingState,
+        in FrameOpContext context,
+        out ResourcePlannerRuntimeState state)
+    {
+        state = default;
+        if (!RuntimeEngine.IsRenderThread)
+            return false;
+
+        lock (planner.PlannerReadbackGate)
+        {
+            FrameOpResourcePlannerSwitchingState published = ResolvePublishedSwitchingState();
+            if (ReferenceEquals(published, activeSwitchingState))
+                return false;
+
+            bool found = false;
+            int bestScore = int.MinValue;
+            VulkanFrameOpPlannerStateKey foundKey = default;
+            foreach ((VulkanFrameOpPlannerStateKey candidateKey, ResourcePlannerRuntimeState candidate) in
+                     published.States)
+            {
+                if (candidate.PreparedGenerationManifest is null ||
+                    !VulkanFrameOpSnapshotSignatures.MatchesPlannerStateKey(
+                        context,
+                        candidateKey,
+                        candidate.LastActiveFrameOpContext?.PassMetadata) ||
+                    !IsReusableState(candidate) ||
+                    !IsAllocatorExclusivelyOwnedByKey(published, candidateKey, candidate.ResourceAllocator))
+                {
+                    continue;
+                }
+
+                int score = Score(candidate);
+                if (found && score <= bestScore)
+                    continue;
+
+                found = true;
+                bestScore = score;
+                foundKey = candidateKey;
+                state = candidate;
+            }
+
+            if (found)
+                MarkStateUsed(published, foundKey);
+            return found;
+        }
+    }
+
+    /// <summary>
+    /// Gets whether the published switching table still references
+    /// <paramref name="allocator"/>, as a state shared into a thread-scoped table does.
+    /// </summary>
+    internal bool IsAllocatorOwnedByPublishedTable(VulkanResourceAllocator allocator)
+    {
+        lock (planner.PlannerReadbackGate)
+            return IsAllocatorOwned(ResolvePublishedSwitchingState(), allocator);
+    }
+
+    /// <summary>
+    /// Marks the published table's entry that owns <paramref name="allocator"/> as
+    /// used. OpenXR eye and mirror planners render from states shared out of the
+    /// published table but touch only their scoped table, so the published LRU
+    /// (<c>MaxPlannerStates</c>) could otherwise evict a stereo state still in use,
+    /// retire its allocator and force the eye planner to allocate the set again.
+    /// Render thread only, like every other published-table mutation.
+    /// </summary>
+    internal void TouchPublishedOwner(VulkanResourceAllocator? allocator)
+    {
+        if (allocator is null || !RuntimeEngine.IsRenderThread)
+            return;
+
+        lock (planner.PlannerReadbackGate)
+        {
+            FrameOpResourcePlannerSwitchingState published = ResolvePublishedSwitchingState();
+            foreach (KeyValuePair<VulkanFrameOpPlannerStateKey, ResourcePlannerRuntimeState> entry in published.States)
+            {
+                if (!ReferenceEquals(entry.Value.ResourceAllocator, allocator))
+                    continue;
+
+                MarkStateUsed(published, entry.Key);
+                return;
+            }
+        }
+    }
+
+    private FrameOpResourcePlannerSwitchingState ResolvePublishedSwitchingState()
+        => planner.GetPublishedResourcePlannerGeneration().State.FrameOpResourcePlannerSwitchingState ??
+            planner.MutableState.DefaultSwitchingState;
+
+    /// <summary>
+    /// Gets whether any state in <paramref name="switchingState"/>, including its
+    /// pending preparation state, still references <paramref name="allocator"/>.
+    /// </summary>
+    internal static bool IsAllocatorOwned(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        VulkanResourceAllocator allocator)
+    {
+        foreach (ResourcePlannerRuntimeState state in switchingState.States.Values)
+        {
+            if (ReferenceEquals(state.ResourceAllocator, allocator))
+                return true;
+        }
+
+        return switchingState.HasPreparationState &&
+            ReferenceEquals(switchingState.PreparationState.ResourceAllocator, allocator);
+    }
+
+    private static bool IsSupersededGenerationKey(
+        in VulkanFrameOpPlannerStateKey candidate,
+        in VulkanFrameOpPlannerStateKey currentKey)
+        => candidate.ResourceGeneration < currentKey.ResourceGeneration &&
+           candidate.ContextKind == currentKey.ContextKind &&
+           candidate.PipelineIdentity == currentKey.PipelineIdentity &&
+           candidate.ViewportIdentity == currentKey.ViewportIdentity &&
+           candidate.OutputFrameBufferIdentity == currentKey.OutputFrameBufferIdentity &&
+           candidate.OutputTargetIdentity == currentKey.OutputTargetIdentity &&
+           candidate.LogicalViewId == currentKey.LogicalViewId &&
+           candidate.SubmissionQueueFamily == currentKey.SubmissionQueueFamily;
+
     private FrameOpResourcePlannerSwitchingState ResolveActiveSwitchingState(
         VulkanCommandThreadContext threadContext)
     {
@@ -212,8 +387,7 @@ internal sealed partial class VulkanResourcePlannerSessionService(
             return threadContext.FrameOpResourcePlannerSwitchingState;
         }
 
-        return planner.GetPublishedResourcePlannerGeneration().State.FrameOpResourcePlannerSwitchingState ??
-            planner.MutableState.DefaultSwitchingState;
+        return ResolvePublishedSwitchingState();
     }
 
     private static bool KeysSharePhysicalOwner(

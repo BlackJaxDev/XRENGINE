@@ -418,6 +418,11 @@ namespace XREngine.Components.Animation
                 Quaternion bone1Rot = _bone1.GetRotation(bendDirection, currentBendNormal);
                 _bone1._transform.SetWorldRotation(bone1Rot);
 
+                // World matrices are cached: the lower joint must move with the
+                // upper rotation before computing its aim and parent-space rotation.
+                RefreshBonePath(_bone2._transform, _bone1._transform);
+                bone2WorldPos = _bone2._transform.WorldTranslation;
+
                 // Rotating bone 2
                 var bone2ToIK = weightedWorldPos - bone2WorldPos;
                 Vector3 bendNormal = _bone2.GetBendNormalFromCurrentRotation();
@@ -427,6 +432,7 @@ namespace XREngine.Components.Animation
 
                 Quaternion bone2Rot = _bone2.GetRotation(bone2ToIK, bendNormal);
                 _bone2._transform.SetWorldRotation(bone2Rot);
+                RefreshBonePath(_bone3._transform, _bone2._transform);
             }
 
             // Rotating bone3
@@ -438,6 +444,13 @@ namespace XREngine.Components.Animation
             }
 
             PostSolve();
+        }
+
+        private static void RefreshBonePath(TransformBase bone, TransformBase ancestor)
+        {
+            if (!ReferenceEquals(bone, ancestor) && bone.Parent is TransformBase parent)
+                RefreshBonePath(parent, ancestor);
+            bone.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
         }
 
         private void ApplyTargetStretch(

@@ -114,7 +114,6 @@ public sealed class MeshOptimizerInteropTests
         clonePayload.Meshlets.ShouldBe(payload.Meshlets);
         clonePayload.VertexIndices.ShouldBe(payload.VertexIndices);
         clonePayload.TriangleIndices.ShouldBe(payload.TriangleIndices);
-        clonePayload.Vertices.Length.ShouldBe(payload.Vertices.Length);
         clonePayload.Stats.ShouldBe(payload.Stats);
         clonePayload.IsFreshFor(clone, meshletSettings, lodSettings, sourceMeshIdentity).ShouldBeTrue();
     }
@@ -168,7 +167,6 @@ public sealed class MeshOptimizerInteropTests
         payload.Meshlets.ShouldBeEmpty();
         payload.VertexIndices.ShouldBeEmpty();
         payload.TriangleIndices.ShouldBeEmpty();
-        payload.Vertices.ShouldBeEmpty();
         payload.Stats.ShouldBe(new MeshOptimizerMeshletStats(0, 0, 0, 0));
         payload.FreshnessHash.ShouldNotBe(0UL);
         payload.IsFreshFor(mesh, settings, lodSettings: null, sourceMeshIdentity: "disabled-source").ShouldBeTrue();

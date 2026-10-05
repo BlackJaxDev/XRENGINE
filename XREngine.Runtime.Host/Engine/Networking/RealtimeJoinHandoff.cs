@@ -17,6 +17,9 @@ public static class RealtimeJoinHandoff
         RealtimeEndpointDescriptor endpoint = payload.Endpoint
             ?? throw new InvalidOperationException("Realtime handoff payload is missing endpoint.");
 
+        if (!RealtimeProtocol.IsCompatible(endpoint.WireProtocolVersion))
+            throw new InvalidOperationException(RealtimeProtocol.DescribeMismatch(endpoint.WireProtocolVersion));
+
         if (endpoint.Transport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls or RealtimeTransportKind.WebSocket))
             throw new NotSupportedException($"Realtime transport '{endpoint.Transport}' is not supported by this runtime.");
 
@@ -147,6 +150,8 @@ public static class RealtimeJoinHandoff
         ArgumentNullException.ThrowIfNull(localWorldAsset);
         if (payload.Endpoint is not { Transport: RealtimeTransportKind.WebSocket } endpoint)
             throw new NotSupportedException("Browser realtime admission requires the WebSocket transport.");
+        if (!RealtimeProtocol.IsCompatible(endpoint.WireProtocolVersion))
+            throw new InvalidOperationException(RealtimeProtocol.DescribeMismatch(endpoint.WireProtocolVersion));
         ValidateWebSocketAdmission(endpoint.Host, endpoint.Port, payload.SessionId, payload.WorkerGeneration,
             payload.AccountId, payload.ClientId, payload.ReservationId, payload.AdmissionSecret, payload.CredentialEpoch);
         if (!string.IsNullOrEmpty(payload.SessionToken))

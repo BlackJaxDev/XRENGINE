@@ -23,22 +23,30 @@ internal enum VulkanBinOrderedExceptionReason : byte
 }
 
 /// <summary>
-/// Fixed-capacity ordered exception stream. It retains source order and reports
+/// Bounded ordered exception stream. It retains source order and reports
 /// saturation explicitly, never silently changing a submission strategy.
+/// Storage starts small and doubles on a new high-water mark up to
+/// <see cref="Capacity"/>; the owning stable-bin stream appends only while it
+/// is mutable.
 /// </summary>
 internal sealed class VulkanBinOrderedExceptionStream
 {
-    private readonly VulkanBinOrderedException[] _entries;
+    private const int InitialCapacity = 16;
+
+    private readonly int _maximumCapacity;
+    private VulkanBinOrderedException[] _entries;
     private int _count;
 
     internal VulkanBinOrderedExceptionStream(int capacity)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(capacity);
-        _entries = new VulkanBinOrderedException[capacity];
+        _maximumCapacity = capacity;
+        _entries = new VulkanBinOrderedException[Math.Min(capacity, InitialCapacity)];
     }
 
     internal int Count => _count;
-    internal int Capacity => _entries.Length;
+    /// <summary>Admission limit; the backing storage may currently be smaller.</summary>
+    internal int Capacity => _maximumCapacity;
     internal ReadOnlySpan<VulkanBinOrderedException> Entries => _entries.AsSpan(0, _count);
 
     internal bool TryAppend(
@@ -46,8 +54,10 @@ internal sealed class VulkanBinOrderedExceptionStream
         VulkanBinOrderedExceptionReason reason,
         ulong sequence)
     {
-        if (reason == 0 || _count == _entries.Length)
+        if (reason == 0 || _count == _maximumCapacity)
             return false;
+        if (_count == _entries.Length)
+            Array.Resize(ref _entries, Math.Min(_maximumCapacity, Math.Max(InitialCapacity, _entries.Length * 2)));
         _entries[_count++] = new(draw, reason, sequence);
         return true;
     }

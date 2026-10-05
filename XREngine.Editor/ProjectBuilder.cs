@@ -91,6 +91,9 @@ internal static partial class ProjectBuilder
         var project = EnsureProjectLoaded();
         var settings = settingsOverride ?? SnapshotSettings();
         AssetPacker.ArchiveCopyBufferBytes = settings.ArchiveCopyBufferBytes;
+        // Published archives keep incompressible entries uncompressed so the runtime can lease them
+        // straight from the mapped file.
+        AssetPacker.StoreIncompressibleEntries = true;
         var context = CreateBuildContext(project, settings);
         var steps = CreateSteps(settings, context);
 
@@ -166,6 +169,7 @@ internal static partial class ProjectBuilder
         var project = EnsureProjectLoaded();
         var settings = SnapshotSettings();
         AssetPacker.ArchiveCopyBufferBytes = settings.ArchiveCopyBufferBytes;
+        AssetPacker.StoreIncompressibleEntries = true;
         var context = CreateBuildContext(project, settings);
         var steps = CreateSteps(settings, context);
 
@@ -544,6 +548,9 @@ internal static partial class ProjectBuilder
         string? engineAssetsPath = Engine.Assets?.EngineAssetsPath;
         if (string.IsNullOrWhiteSpace(engineAssetsPath) || !Directory.Exists(engineAssetsPath))
             throw new DirectoryNotFoundException("The engine common-assets directory is unavailable.");
+
+        XREngine.Editor.GpuLayouts.GpuRecordSpirvValidator.ValidateShaderDirectory(
+            Path.Combine(engineAssetsPath, "Shaders"));
 
         if (packageMode == ECommonAssetsPackageMode.RuntimeShaders)
         {
@@ -1167,7 +1174,7 @@ internal static partial class ProjectBuilder
 
     private static void WriteCookedBlob(string destination, CookedAssetBlob blob)
     {
-        byte[] cookedBytes = MemoryPackSerializer.Serialize(blob);
+        byte[] cookedBytes = CookedAssetEnvelope.Serialize(blob);
         File.WriteAllBytes(destination, cookedBytes);
     }
 

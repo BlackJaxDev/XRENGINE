@@ -1,8 +1,13 @@
 # Vulkan Headless MCP Component Profiling TODO
 
-Last Updated: 2026-08-13
+Last Updated: 2026-10-01
 Owner: Rendering / Vulkan / Profiling / MCP
-Status: In Progress
+Status: Infrastructure Implemented; Production Acceptance Open
+
+Implementation and observed evidence are recorded in
+[Vulkan Component Profiling](../../../progress/rendering/vulkan-component-profiling.md).
+Unchecked items below identify acceptance cohorts or explicitly scoped follow-ups;
+they must not be inferred from synthetic fixture success.
 
 Sequence relationship:
 
@@ -81,18 +86,20 @@ Current gaps:
 - The optional headless-WSI path is driver-gated by
   `VK_EXT_headless_surface`; unsupported drivers report the limitation and
   retain the presentationless lane.
-- The editor MCP dispatcher rejects all tool calls when there is no active
-  `XRWorldInstance`, including tools that only need profiler or renderer state.
-- MCP cannot prepare, arm, start, stop, or execute a deterministic profile
-  recipe. It can only inspect or dump already collected state.
-- The benchmark harness still launches the editor and creates a desktop window,
-  even when ImGui and diagnostic overlays are skipped.
-- Vulkan CPU stage telemetry aggregates elapsed time and allocation totals by
-  stage. It does not retain bounded per-invocation spans, parentage, worker
-  identity, overlap, or exclusive time.
-- Dense Vulkan timestamps can change command-buffer cache behavior and are too
-  broad for isolated component measurement.
-- CPU and GPU clocks are not currently placed on one calibrated timeline.
+- Runtime MCP recipes now prepare, arm, capture, cancel, drain, and report
+  without an editor or world. Renderer lifecycle calls share one owner thread.
+- Aggregate counters, bounded CPU attribution, selected GPU scopes, calibrated
+  timelines, intrusive counter diagnostics, and repeated comparisons are
+  implemented in the dedicated editor-free process.
+- Deferred/Uber benchmark sequences remain fullscreen proxies. Production
+  full-frame, desktop, and XR statistical acceptance cannot use their savings.
+- The distinct production-default fixture passed its exact-output visual gate,
+  selected/coarse timestamps, and Vulkan synchronization validation. Clean
+  production performance and desktop/XR acceptance remain separate requirements.
+- Selected production GPU scopes currently require explicit `GraphicsOnly`
+  queue mode. Split queues need per-native-queue scope boundaries.
+- Instrumented cache variants, controlled observer budgets, supported-device
+  counter replay, and production optimization promotion remain open.
 
 ## External Validity Review
 
@@ -173,7 +180,7 @@ targets.
 
 - [x] Define `Component`, `Presentationless`, `HeadlessWsi`, `DesktopWsi`, and
   `OpenXr` as stable execution-mode identifiers.
-- [ ] Add the execution mode, presentation target, output count, extent,
+- [x] Add the execution mode, presentation target, output count, extent,
   format, sample count, frame-slot count, queue families, and present policy to
   the capture manifest contract.
 - [x] Remove `HeadlessRendering` from current Vulkan metadata until Phase 1 is
@@ -185,12 +192,12 @@ targets.
   same non-promotable development cohort.
 - [ ] Record the current dense-timestamp effect on primary and secondary dirty
   reasons, records, reuse, CPU time, and frame pacing.
-- [ ] Freeze the existing workstream-01 profile-mode and baseline-compatibility
+- [x] Freeze the existing workstream-01 profile-mode and baseline-compatibility
   rules as dependencies of this workstream.
 
 Acceptance criteria:
 
-- [ ] No manifest or report uses unqualified “headless” as an execution mode.
+- [x] No manifest or report uses unqualified “headless” as an execution mode.
 - [x] Current metadata does not claim a usable headless factory path that the
   factory rejects.
 - [ ] Baseline evidence quantifies the editor/window and observer costs this
@@ -252,7 +259,7 @@ Acceptance criteria:
   swapchain, acquire, or present operation.
 - [ ] The same render-graph fixture produces a stable output identity in
   presentationless and desktop modes within documented format differences.
-- [ ] Validation and synchronization-validation runs report no new errors.
+- [x] Validation and synchronization-validation runs report no new errors.
 - [ ] Presentationless steady state performs no managed allocation, resource
   creation, shader compilation, or device-wide wait unless the recipe
   explicitly requests churn.
@@ -476,136 +483,141 @@ Implementation and live validation note (2026-08-13):
 
 ## Phase 5 - Targeted CPU Profiling
 
-- [ ] Keep the current allocation-free aggregate `EVulkanCpuStage` counters as
+- [x] Keep the current allocation-free aggregate `EVulkanCpuStage` counters as
   the low-overhead default.
 - [x] Add a target mask so diagnostic runs retain detailed spans for only the
   selected stage or subtree.
 - [x] Store bounded span records in preallocated per-thread/per-worker ring
   buffers.
-- [ ] Record stable stage ID, frame ID, parent span ID, thread/worker ID,
+- [x] Record stable stage ID, frame ID, parent span ID, thread/worker ID,
   start/end timestamp, invocation ordinal, allocated bytes, and wait reason
   where applicable.
-- [ ] Calculate inclusive time, exclusive time, invocation distribution,
+- [x] Calculate inclusive time, exclusive time, invocation distribution,
   worker overlap, worker imbalance, and wait-versus-work time after capture.
-- [ ] Detect nested-stage double counting and document which aggregate stages
+- [x] Detect nested-stage double counting and document which aggregate stages
   are mutually exclusive.
-- [ ] Add counts or sub-stages for material native calls such as command-buffer
+- [x] Add counts or sub-stages for material native calls such as command-buffer
   begin/end/reset, descriptor updates, command execution, and queue submission
   without timing every call by default.
-- [ ] Export stable allocation-free markers that can be correlated with
+- [x] Export stable allocation-free markers that can be correlated with
   EventPipe/ETW, PerfView/WPA, `dotnet-trace`, and mixed native/managed
   profilers.
-- [ ] Add an explicit CPU-sampling recipe option that launches or records the
+- [x] Add an explicit CPU-sampling recipe option that launches or records the
   required process/frame correlation metadata without treating the sampled run
   as clean promotion evidence.
 
 Acceptance criteria:
 
 - [ ] Aggregate mode retains its current observer-overhead budget.
-- [ ] Targeted mode can explain one stage's exclusive cost and parallel overlap
+- [x] Targeted mode can explain one stage's exclusive cost and parallel overlap
   without allocating during capture.
-- [ ] Primary and secondary recording reports distinguish planning, waiting,
+- [x] Primary and secondary recording reports distinguish planning, waiting,
   native encoding, merge/assembly, and publication.
-- [ ] Per-worker results expose load imbalance and scheduled work that did not
+- [x] Per-worker results expose load imbalance and scheduled work that did not
   actually overlap.
 
 ## Phase 6 - Targeted GPU Profiling And Correlation
 
 ### 6.1 Targeted timestamp scopes
 
-- [ ] Keep coarse whole-command-buffer timestamps as the default supported GPU
+- [x] Keep coarse whole-command-buffer timestamps as the default supported GPU
   timing.
-- [ ] Replace all-or-nothing dense instrumentation with a stable target/pass
+- [x] Replace all-or-nothing dense instrumentation with a stable target/pass
   mask and maximum scope depth.
-- [ ] Use per-frame-slot query pools and availability-based delayed reads.
-- [ ] Record timestamp support, valid bits, timestamp period, query count,
+- [x] Use per-frame-slot query pools and availability-based delayed reads.
+- [x] Record timestamp support, valid bits, timestamp period, query count,
   query bytes, skipped scopes, budget overflow, and readback latency.
-- [ ] Use synchronization2 timestamp commands and stage masks where supported
+- [x] Use synchronization2 timestamp commands and stage masks where supported
   and meaningful.
-- [ ] Reject cross-queue timestamp subtraction; report queue-local intervals
+- [x] Reject cross-queue timestamp subtraction; report queue-local intervals
   independently.
 - [ ] Measure and publish timestamp observer overhead for representative small
   and large passes.
+
+Local small/large ABBA observations are published in the
+[implementation evidence](../../../progress/rendering/vulkan-component-profiling.md).
+The small cohort was rejected for variance; the large report is diagnostic.
+Controlled hardware observer-budget acceptance remains open.
 
 ### 6.2 Preserve command-buffer reuse behavior
 
 - [ ] Prevent profiling one pass from dirtying unrelated primary or secondary
   command buffers.
-- [ ] Evaluate per-frame-slot instrumented command-buffer variants or a
+- [x] Evaluate per-frame-slot instrumented command-buffer variants or a
   dedicated diagnostic recording path for the selected target.
-- [ ] Include profiler-target identity in an instrumented variant without
+- [x] Include profiler-target identity in an instrumented variant without
   changing the clean variant's cache identity.
-- [ ] Report every record/reuse difference between instrumented and clean
+- [x] Report every record/reuse difference between instrumented and clean
   captures.
 
 ### 6.3 Correlate CPU and GPU timelines
 
-- [ ] Probe and enable `VK_EXT_calibrated_timestamps` where supported.
-- [ ] Record the host and device time domains, calibration samples, maximum
+- [x] Probe and enable `VK_EXT_calibrated_timestamps` where supported.
+- [x] Record the host and device time domains, calibration samples, maximum
   deviation, queue-submit CPU interval, and GPU begin/end timestamps.
-- [ ] Export a trace format that can place engine threads, render workers,
+- [x] Export a trace format that can place engine threads, render workers,
   submissions, waits, and GPU pass intervals on one timeline.
-- [ ] Report unsupported calibration explicitly and retain uncorrelated
+- [x] Report unsupported calibration explicitly and retain uncorrelated
   queue-local GPU timings.
 
 ### 6.4 Intrusive hardware counters
 
-- [ ] Probe `VK_KHR_performance_query` and enumerate available counter metadata.
-- [ ] Implement counter-set selection, pass-count reporting, profiling-lock
+- [x] Probe `VK_KHR_performance_query` and enumerate available counter metadata.
+- [x] Implement counter-set selection, pass-count reporting, profiling-lock
   lifetime, and repeated identical submissions only in a dedicated diagnostic
   mode.
-- [ ] Record counters affected by concurrent workloads.
-- [ ] Integrate optional RenderDoc, Nsight, RGP, or other vendor capture
+- [x] Record counters affected by concurrent workloads.
+- [x] Integrate optional RenderDoc, Nsight, RGP, or other vendor capture
   launch/artifact hooks without making them clean-benchmark dependencies.
-- [ ] Mark all hardware-counter and external-capture results intrusive and
+- [x] Mark all hardware-counter and external-capture results intrusive and
   non-promotable.
 
 Acceptance criteria:
 
-- [ ] One selected GPU pass can be timed without enabling dense timestamps for
+- [x] One selected GPU pass can be timed without enabling dense timestamps for
   the rest of the frame.
-- [ ] Query retrieval never blocks a measured frame.
-- [ ] Instrumented command-buffer behavior is reported and cannot masquerade
+- [x] Query retrieval never blocks a measured frame.
+- [x] Instrumented command-buffer behavior is reported and cannot masquerade
   as clean reuse evidence.
-- [ ] Correlated traces can distinguish CPU starvation, queue delay,
+- [x] Correlated traces can distinguish CPU starvation, queue delay,
   synchronization bubbles, and long GPU execution within calibration
   uncertainty.
 
 ## Phase 7 - Results, Statistics, And Artifact Contract
 
-- [ ] Add a versioned component-profile result schema.
-- [ ] Record source commit, dirty-worktree state, executable hash, recipe hash,
+- [x] Add a versioned component-profile result schema.
+- [x] Record source commit, dirty-worktree state, executable hash, recipe hash,
   fixture/workload hash, backend/module generation, adapter identifiers,
   driver, operating system, build configuration, and profile mode.
-- [ ] Record power/clock policy, target refresh, thermal notes where available,
+- [x] Record power/clock policy, target refresh, thermal notes where available,
   process priority, and competing-workload warnings.
-- [ ] Record warmup, stability, capture, drain, and total process intervals
+- [x] Record warmup, stability, capture, drain, and total process intervals
   separately.
-- [ ] Report sample count, p50, p90, p95, p99, worst, mean, standard deviation,
+- [x] Report sample count, p50, p90, p95, p99, worst, mean, standard deviation,
   median absolute deviation, allocation totals, operation counts, and
   throughput where meaningful.
-- [ ] Use repeated A/B or A/B/B/A ordering for comparisons to reduce thermal
+- [x] Use repeated A/B or A/B/B/A ordering for comparisons to reduce thermal
   and temporal bias.
-- [ ] Define minimum repetition, variance, absolute-budget, and relative-
+- [x] Define minimum repetition, variance, absolute-budget, and relative-
   regression rules for component results.
-- [ ] Reject comparison when recipe, fixture, mode, hardware, driver, output,
+- [x] Reject comparison when recipe, fixture, mode, hardware, driver, output,
   instrumentation, or required extension manifests are incompatible.
-- [ ] Keep accepted baselines immutable unless an explicit accept action
+- [x] Keep accepted baselines immutable unless an explicit accept action
   validates and replaces them.
-- [ ] Retain raw frame streams, CPU spans, GPU queries, summaries, manifests,
+- [x] Retain raw frame streams, CPU spans, GPU queries, summaries, manifests,
   optional traces, validation logs, and optional images/captures under one
   bounded run root.
-- [ ] Add a compact component scoreboard showing target cost, full-frame share,
+- [x] Add a compact component scoreboard showing target cost, full-frame share,
   theoretical opportunity, measured improvement, and broader-lane result.
 
 Acceptance criteria:
 
-- [ ] A report distinguishes diagnostic explanation from clean comparison
+- [x] A report distinguishes diagnostic explanation from clean comparison
   evidence.
-- [ ] A result can be reproduced from its recipe and manifest.
-- [ ] An incompatible or unstable result fails instead of producing a
+- [x] A result can be reproduced from its recipe and manifest.
+- [x] An incompatible or unstable result fails instead of producing a
   misleading delta.
-- [ ] The scoreboard prevents a large percentage win on a negligible
+- [x] The scoreboard prevents a large percentage win on a negligible
   component from outranking a smaller win with greater full-frame impact.
 
 ## Phase 8 - Optimization Promotion Ladder
@@ -630,45 +642,45 @@ For every component optimization:
 
 Acceptance criteria:
 
-- [ ] No optimization is promoted solely from a microbenchmark.
-- [ ] The final result states both local component savings and whole-frame
+- [x] No optimization is promoted solely from a microbenchmark.
+- [x] The final result states both local component savings and whole-frame
   savings.
-- [ ] Required desktop and XR budgets remain owned by workstream 01 and the
+- [x] Required desktop and XR budgets remain owned by workstream 01 and the
   shared acceptance closeout.
 
 ## Phase 9 - Tests, Documentation, And Operationalization
 
-- [ ] Add unit tests for recipe parsing, capability requirements, target
+- [x] Add unit tests for recipe parsing, capability requirements, target
   selection, state-machine transitions, manifest compatibility, statistics,
   and regression verdicts without requiring a GPU.
-- [ ] Add deterministic plan/fixture tests for expected work counts and output
+- [x] Add deterministic plan/fixture tests for expected work counts and output
   identity.
-- [ ] Add Vulkan integration tests for presentationless creation, render,
+- [x] Add Vulkan integration tests for presentationless creation, render,
   submit, completion, resize/recreate where applicable, and teardown.
-- [ ] Add validation and synchronization-validation tests for offscreen image
+- [x] Add validation and synchronization-validation tests for offscreen image
   transitions and resource retirement.
-- [ ] Add MCP integration tests for prepare, arm, capture, cancellation,
+- [x] Add MCP integration tests for prepare, arm, capture, cancellation,
   timeout, result retrieval, and missing capabilities.
-- [ ] Add session-manager tests proving one named process cannot stop or reuse
+- [x] Add session-manager tests proving one named process cannot stop or reuse
   another session's PID or port.
-- [ ] Add a short Quick component preset for developer feedback and repeated
+- [x] Add a short Quick component preset for developer feedback and repeated
   Compare/Gate presets for stable hardware.
 - [ ] Add CI regression enforcement only after a controlled hardware runner
   demonstrates acceptable variance.
-- [ ] Update the profiler guide, MCP documentation, renderer architecture,
+- [x] Update the profiler guide, MCP documentation, renderer architecture,
   launch documentation, environment-variable catalog, JSONC schema, and
   `docs/work/README.md`.
-- [ ] Document how to select component, presentationless, WSI, and OpenXR
+- [x] Document how to select component, presentationless, WSI, and OpenXR
   evidence and how not to compare them.
 
 Acceptance criteria:
 
-- [ ] A developer or MCP client can launch, profile, collect, compare, and stop
+- [x] A developer or MCP client can launch, profile, collect, compare, and stop
   one deterministic component recipe from a clean shell.
 - [ ] The same workflow can escalate from a component fixture to
   presentationless, desktop, and OpenXR evidence.
-- [ ] Documentation clearly identifies intrusive modes and observer overhead.
-- [ ] Tests and manifests fail visibly when a requested accelerated or
+- [x] Documentation clearly identifies intrusive modes and observer overhead.
+- [x] Tests and manifests fail visibly when a requested accelerated or
   profiling capability is unavailable.
 
 ## Suggested First Vertical Slice
@@ -691,21 +703,21 @@ timestamps, hardware counters, or a large fixture matrix.
 
 ## Final Completion Gate
 
-- [ ] Vulkan backend metadata truthfully matches implemented target modes.
-- [ ] Presentationless Vulkan rendering works without `XRWindow`, a native
+- [x] Vulkan backend metadata truthfully matches implemented target modes.
+- [x] Presentationless Vulkan rendering works without `XRWindow`, a native
   surface, or a swapchain.
-- [ ] MCP runtime profiler tools work without the editor and without a world
+- [x] MCP runtime profiler tools work without the editor and without a world
   for synthetic fixtures.
-- [ ] Recipes isolate primary recording, secondary recording, resource
+- [x] Recipes isolate primary recording, secondary recording, resource
   planning, descriptor publication, barrier emission, queue submission, and at
   least one GPU render pass.
 - [ ] Targeted CPU and GPU instrumentation has measured observer overhead and
   does not contaminate clean promotion captures.
-- [ ] CPU/GPU correlated traces are available where calibrated timestamps are
+- [x] CPU/GPU correlated traces are available where calibrated timestamps are
   supported.
 - [ ] Component results escalate through subsystem, presentationless, desktop,
   and required OpenXR gates.
-- [ ] A complete artifact bundle and compatible baseline comparison can be
+- [x] A complete artifact bundle and compatible baseline comparison can be
   produced from one bounded command or MCP job.
 - [ ] The workflow has demonstrated at least one accepted optimization whose
   component improvement also reduces full-frame p95 without regressing

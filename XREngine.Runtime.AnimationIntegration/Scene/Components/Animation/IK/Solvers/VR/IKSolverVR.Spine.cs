@@ -17,6 +17,26 @@ namespace XREngine.Components.Animation
         {
             #region Parameters
 
+            private Transform? _chestTarget;
+            /// <summary>Calibrated chest orientation, distinct from the positional look-at chest goal.</summary>
+            public Transform? ChestTarget
+            {
+                get => _chestTarget;
+                set => SetField(ref _chestTarget, value);
+            }
+
+            private float _chestTargetWeight = 1.0f;
+            /// <summary>Tracked chest rotation weight. Head and pelvis reach constraints are solved afterwards.</summary>
+            [Range(0.0f, 1.0f)]
+            public float ChestTargetWeight
+            {
+                get => _chestTargetWeight;
+                set => SetField(ref _chestTargetWeight, float.IsFinite(value) ? Math.Clamp(value, 0.0f, 1.0f) : 0.0f);
+            }
+
+            private bool _hasChestTargetPose;
+            private Quaternion _trackedChestRotation;
+
             private Transform? _headTarget;
             /// <summary>
             /// The head target.
@@ -606,6 +626,15 @@ namespace XREngine.Components.Animation
 
             public override void PreSolve(float scale)
             {
+                _hasChestTargetPose = false;
+                if (_chestTarget is not null && _chestTargetWeight > 0.0f)
+                {
+                    _chestTarget.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
+                    _trackedChestRotation = _chestTarget.WorldRotation;
+                    float lengthSquared = _trackedChestRotation.LengthSquared();
+                    _hasChestTargetPose = float.IsFinite(lengthSquared) && lengthSquared > 1e-8f;
+                }
+
                 if (_headTarget != null)
                 {
                     _headTarget.RecalculateMatrices(true);
@@ -616,7 +645,7 @@ namespace XREngine.Components.Animation
                 if (_chestGoal != null)
                 {
                     _chestGoal.RecalculateMatrices(true);
-                    _goalPositionChest = _chestGoal.WorldTranslation;
+                    _goalPositionChest = _chestGoal.WorldTranslation + _chestGoal.WorldForward;
                 }
 
                 if (_hipsTarget != null)
@@ -704,6 +733,8 @@ namespace XREngine.Components.Animation
             private void CalculateChestTargetRotation(VirtualBone rootBone, ArmSolver[] arms)
             {
                 _chestTargetRotation = _headRotation * _headRelativeChestRotation;
+                if (_chestGoal is not null && _chestGoalWeight > 0f)
+                    _chestTargetRotation = Quaternion.Slerp(_chestTargetRotation, _chestGoal.WorldRotation, Math.Clamp(_chestGoalWeight, 0f, 1f));
 
                 Vector3 v = XRMath.QuaternionToEuler(_headRelativeChestRotation).Each(float.RadiansToDegrees);
                 //Debug.Out($"Chest target rotation: {v.X}, {v.Y}, {v.Z}");
@@ -806,6 +837,12 @@ namespace XREngine.Components.Animation
                         _chestGoalWeight * _rotationWeight);
                 }
 
+                // Apply the tracked chest before re-establishing head/pelvis reach.
+                // An incompatible tracker pose is a soft orientation constraint;
+                // it must not displace the authoritative head or hand targets.
+                if (_hasChestTargetPose)
+                    RotateTo(Chest, _trackedChestRotation, _chestTargetWeight);
+
                 InverseTranslateToHead(legs, false, false, Vector3.Zero, _positionWeight);
 
                 if (Quality < EQuality.Semi)
@@ -847,18 +884,51 @@ namespace XREngine.Components.Animation
                 {
                     if (_hasNeck)
                     {
-                        VirtualBone.SolveTrigonometric(_bones, _spineIndex, _chestIndex, _headIndex, _headTargetPosition, bendNormal, _hipsPositionWeight * 0.9f);
-                        VirtualBone.SolveTrigonometric(_bones, _chestIndex, _neckIndex, _headIndex, _headTargetPosition, bendNormal, _hipsPositionWeight);
+                        VirtualBone.SolveTrigonometric(
+                            _bones, _spineIndex, _chestIndex, _headIndex, _headTargetPosition,
+                            PreserveTrackedChestBendPlane(_spineIndex, _chestIndex, bendNormal),
+                            _hipsPositionWeight * 0.9f);
+                        VirtualBone.SolveTrigonometric(
+                            _bones, _chestIndex, _neckIndex, _headIndex, _headTargetPosition,
+                            PreserveTrackedChestBendPlane(_chestIndex, _neckIndex, bendNormal),
+                            _hipsPositionWeight);
                     }
                     else
-                        VirtualBone.SolveTrigonometric(_bones, _spineIndex, _chestIndex, _headIndex, _headTargetPosition, bendNormal, _hipsPositionWeight);
+                        VirtualBone.SolveTrigonometric(
+                            _bones, _spineIndex, _chestIndex, _headIndex, _headTargetPosition,
+                            PreserveTrackedChestBendPlane(_spineIndex, _chestIndex, bendNormal),
+                            _hipsPositionWeight);
                 }
                 else if (_hasNeck)
-                    VirtualBone.SolveTrigonometric(_bones, _spineIndex, _neckIndex, _headIndex, _headTargetPosition, bendNormal, _hipsPositionWeight);
+                    VirtualBone.SolveTrigonometric(
+                        _bones, _spineIndex, _neckIndex, _headIndex, _headTargetPosition,
+                        PreserveTrackedChestBendPlane(_spineIndex, _neckIndex, bendNormal),
+                        _hipsPositionWeight);
                 else
-                    VirtualBone.SolveTrigonometric(_bones, _pelvisIndex, _spineIndex, _headIndex, _headTargetPosition, bendNormal, _hipsPositionWeight);
+                    VirtualBone.SolveTrigonometric(
+                        _bones, _pelvisIndex, _spineIndex, _headIndex, _headTargetPosition,
+                        PreserveTrackedChestBendPlane(_pelvisIndex, _spineIndex, bendNormal),
+                        _hipsPositionWeight);
 
                 Head.SolverRotation = headSolverRotation;
+            }
+
+            private Vector3 PreserveTrackedChestBendPlane(int first, int second, Vector3 fallback)
+            {
+                if (!_hasChestTargetPose)
+                    return fallback;
+
+                // Endpoint correction must retain the tracked torso's bend plane.
+                // Forcing the untracked sagittal plane here erases chest roll,
+                // especially when the head target compresses the spine.
+                Vector3 origin = _bones[first].SolverPosition;
+                Vector3 normal = Vector3.Cross(
+                    _bones[_headIndex].SolverPosition - origin,
+                    _bones[second].SolverPosition - origin);
+                float lengthSquared = normal.LengthSquared();
+                return float.IsFinite(lengthSquared) && lengthSquared > 1e-10f
+                    ? normal / MathF.Sqrt(lengthSquared)
+                    : fallback;
             }
 
             public override void ResetOffsets()

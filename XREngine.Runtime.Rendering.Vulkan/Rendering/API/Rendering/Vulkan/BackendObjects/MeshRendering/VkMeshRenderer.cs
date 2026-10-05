@@ -55,6 +55,8 @@ internal unsafe partial class VkMeshRenderer(
     private readonly Dictionary<string, VkDataBuffer> _bufferCache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, BufferStructuralIdentity> _bufferStructuralIdentities = new(StringComparer.Ordinal);
     private ulong _cachedBufferResourceFingerprint;
+    // Native buffer binding revision the collected buffer identities were last captured at.
+    private ulong _observedNativeBufferBindingRevision;
     private BufferReadinessSnapshot _bufferReadinessSnapshot = BufferReadinessSnapshot.Empty;
     private XRMesh.BufferCollection? _subscribedRendererBuffers;
     private XRMesh.BufferCollection? _subscribedMeshBuffers;
@@ -77,6 +79,8 @@ internal unsafe partial class VkMeshRenderer(
     private int _pendingAsyncIndexBufferReady;
 
     private readonly Dictionary<VulkanGraphicsPipelineKey, Pipeline> _pipelines = new();
+    // Shared-pipeline retirement wave last applied to the local pipeline lookup.
+    private long _observedPipelineRetirementGeneration;
 
     internal VulkanFrameDrawStats EstimateFrameDrawStats(in PendingMeshDraw draw)
     {
@@ -227,6 +231,7 @@ internal unsafe partial class VkMeshRenderer(
             GetDescribingName());
         DestroyPipelines();
         DestroyGeneratedPrograms();
+        ReleasePersistentProgramBindingArtifacts();
         BackendContext.Resources.MappedFrameArena?.ReleaseReservations(this);
         CommandOperations.RemoveMeshFrameDataManifestRenderer(this);
         RemoveCachedObject(BindingId);
@@ -278,6 +283,7 @@ internal unsafe partial class VkMeshRenderer(
             GetDescribingName());
         DestroyPipelines();
         DestroyGeneratedPrograms();
+        ReleasePersistentProgramBindingArtifacts();
         BackendContext.Resources.MappedFrameArena?.ReleaseReservations(this);
         CommandOperations.RemoveMeshFrameDataManifestRenderer(this);
         lock (_bufferStateSync)

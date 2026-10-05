@@ -24,7 +24,7 @@ public static class RollingBallRuntimeRegistration
 
         PublishedCookedAssetRegistry.Register(
             typeof(RollingBallWorldAsset),
-            static asset => RollingBallWorldCookedSerializer.Serialize((RollingBallWorldAsset)asset),
+            static (asset, writer) => RollingBallWorldCookedSerializer.Serialize((RollingBallWorldAsset)asset, writer),
             static (payload, assetType) => assetType == typeof(RollingBallWorldAsset)
                 ? RollingBallWorldCookedSerializer.Deserialize(payload)
                 : null,

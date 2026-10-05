@@ -1,9 +1,17 @@
+using System.Buffers;
+
 namespace XREngine.Core.Files
 {
-    public delegate byte[] PublishedCookedAssetSerializeDelegate(object asset);
+    /// <summary>Writes an asset's runtime payload to the caller's buffer.</summary>
+    public delegate void PublishedCookedAssetSerializeDelegate(object asset, IBufferWriter<byte> writer);
 
-    public delegate object? PublishedCookedAssetDeserializeDelegate(byte[] payload, Type assetType);
+    /// <summary>Reads an asset from a payload span. The span is valid only for the duration of the call.</summary>
+    public delegate object? PublishedCookedAssetDeserializeDelegate(ReadOnlySpan<byte> payload, Type assetType);
 
+    /// <summary>
+    /// Explicit registry of runtime cooked asset codecs. Published builds deserialize only through
+    /// these registrations; development builds use them before any reflective fallback.
+    /// </summary>
     public static class PublishedCookedAssetRegistry
     {
         static PublishedCookedAssetRegistry()
@@ -22,6 +30,8 @@ namespace XREngine.Core.Files
 
         private static readonly object Sync = new();
         private static readonly Dictionary<Type, Entry> Entries = [];
+        private static readonly Dictionary<string, Type> ByFullName = new(StringComparer.Ordinal);
+        private static readonly Dictionary<string, Type> ByFullNameIgnoreCase = new(StringComparer.OrdinalIgnoreCase);
 
         public static IDisposable Register(
             Type assetType,
@@ -63,29 +73,50 @@ namespace XREngine.Core.Files
                 }
 
                 Entries.Add(assetType, entry);
+                string? fullName = assetType.FullName;
+                if (!string.IsNullOrWhiteSpace(fullName))
+                {
+                    ByFullName[fullName] = assetType;
+                    ByFullNameIgnoreCase.TryAdd(fullName, assetType);
+                }
             }
 
             return new RegistrationLease(entry);
         }
 
+        /// <summary>Writes the asset's payload into <paramref name="writer"/>. False when no codec is registered for its type.</summary>
+        public static bool TrySerialize(object asset, IBufferWriter<byte> writer)
+        {
+            ArgumentNullException.ThrowIfNull(asset);
+            ArgumentNullException.ThrowIfNull(writer);
+
+            if (!TryGetEntry(asset.GetType(), out Entry? entry) || entry is null)
+                return false;
+
+            entry.Serialize(asset, writer);
+            return true;
+        }
+
+        /// <summary>Serializes into a new array. Intended for cooking and tooling, never for the runtime load path.</summary>
         public static bool TrySerialize(object asset, out byte[] payload)
         {
             ArgumentNullException.ThrowIfNull(asset);
 
-            if (TryGetEntry(asset.GetType(), out Entry? entry) && entry is not null)
+            ArrayBufferWriter<byte> writer = new();
+            if (!TrySerialize(asset, writer))
             {
-                payload = entry.Serialize(asset);
-                return true;
+                payload = [];
+                return false;
             }
 
-            payload = Array.Empty<byte>();
-            return false;
+            payload = writer.WrittenSpan.ToArray();
+            return true;
         }
 
-        public static bool TryDeserialize(Type assetType, byte[] payload, out object? asset)
+        /// <summary>Deserializes a payload span through the registered codec for <paramref name="assetType"/>.</summary>
+        public static bool TryDeserialize(Type assetType, ReadOnlySpan<byte> payload, out object? asset)
         {
             ArgumentNullException.ThrowIfNull(assetType);
-            ArgumentNullException.ThrowIfNull(payload);
 
             if (TryGetEntry(assetType, out Entry? entry) && entry is not null)
             {
@@ -125,11 +156,16 @@ namespace XREngine.Core.Files
         {
             lock (Sync)
             {
-                return [.. Entries.Keys
-                    .Select(static x => x.AssemblyQualifiedName)
-                    .Where(static x => !string.IsNullOrWhiteSpace(x))
-                    .Cast<string>()
-                    .OrderBy(static x => x, StringComparer.Ordinal)];
+                List<string> names = new(Entries.Count);
+                foreach (Type type in Entries.Keys)
+                {
+                    string? name = type.AssemblyQualifiedName;
+                    if (!string.IsNullOrWhiteSpace(name))
+                        names.Add(name);
+                }
+
+                names.Sort(StringComparer.Ordinal);
+                return [.. names];
             }
         }
 
@@ -142,18 +178,13 @@ namespace XREngine.Core.Files
 
         internal static bool TryResolveByFullName(string fullTypeName, bool ignoreCase, out Type? assetType)
         {
-            StringComparison comparison = ignoreCase
-                ? StringComparison.OrdinalIgnoreCase
-                : StringComparison.Ordinal;
             lock (Sync)
             {
-                foreach (Type registeredType in Entries.Keys)
+                Dictionary<string, Type> lookup = ignoreCase ? ByFullNameIgnoreCase : ByFullName;
+                if (lookup.TryGetValue(fullTypeName, out Type? found))
                 {
-                    if (string.Equals(registeredType.FullName, fullTypeName, comparison))
-                    {
-                        assetType = registeredType;
-                        return true;
-                    }
+                    assetType = found;
+                    return true;
                 }
             }
 
@@ -185,11 +216,21 @@ namespace XREngine.Core.Files
 
                 lock (Sync)
                 {
-                    if (Entries.TryGetValue(current.AssetType, out Entry? registered)
-                        && registered.RegistrationId == current.RegistrationId)
+                    if (!Entries.TryGetValue(current.AssetType, out Entry? registered)
+                        || registered.RegistrationId != current.RegistrationId)
                     {
-                        Entries.Remove(current.AssetType);
+                        return;
                     }
+
+                    Entries.Remove(current.AssetType);
+                    string? fullName = current.AssetType.FullName;
+                    if (string.IsNullOrWhiteSpace(fullName))
+                        return;
+
+                    if (ByFullName.TryGetValue(fullName, out Type? ordinal) && ordinal == current.AssetType)
+                        ByFullName.Remove(fullName);
+                    if (ByFullNameIgnoreCase.TryGetValue(fullName, out Type? insensitive) && insensitive == current.AssetType)
+                        ByFullNameIgnoreCase.Remove(fullName);
                 }
             }
         }

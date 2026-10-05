@@ -1,6 +1,6 @@
 # Vulkan Primary And Secondary Command Recording
 
-Last updated: 2026-07-30
+Last updated: 2026-10-04
 
 This document explains how XRENGINE turns a frame's rendering work into Vulkan
 command buffers. It covers the desktop path, the persistent secondary-recording
@@ -61,6 +61,15 @@ Worker threads
 | Frame slot | One entry in the frames-in-flight ring. Pools and cached recordings are tracked per slot so in-flight GPU work is not reset. |
 
 ## Recording Modes
+
+Recording-lane contexts have one active command-buffer owner per lane and frame
+slot. Their registry retains both the native handle and recording generation;
+receipt publication validates that exact active owner. Abandonment, successful
+reset and destruction detach the registration before the context or handle can
+be reused. A stale handle entry cannot end another recording or contribute its
+dependencies to an upload/readback command. Overlapping ownership is rejected.
+Descriptor mutation still requires the original resource-completion proof;
+lane cleanup does not release submitted GPU ownership.
 
 The renderer resolves the configured command-recording mode before building the
 frame:
@@ -494,6 +503,15 @@ the render thread while it changes renderer objects.
 
 This phase is part of the thread-safety boundary: the engine parallelizes
 encoding of known commands, not arbitrary mutation of Vulkan resources.
+
+Renderer-local graphics-pipeline lookups are caches over the shared pipeline
+cache, and their keys include native pipeline-layout handles. A destroyed
+layout's handle value can be reused by its replacement, and a re-created
+program can repeat a link generation, so a stale local entry may match a new
+key. Every path that retires shared graphics pipelines must advance
+`VulkanPipelineManager.SharedGraphicsPipelineRetirementGeneration`; mesh
+renderers drop their local lookup when it changes. Binding a pipeline from a
+lookup that survived retirement records a retired or destroyed handle.
 
 ### 4. Lower work into packets and command chains
 

@@ -23,14 +23,14 @@ public sealed class XRMeshTopologyTests
         XRMesh mesh = XRMesh.CreateTriangles(authoredPositions);
         int[] indices = mesh.GetIndices().ShouldNotBeNull();
 
-        mesh.Vertices.Length.ShouldBe(4);
+        mesh.VertexCount.ShouldBe(4);
         indices.Length.ShouldBe(authoredPositions.Length);
 
         Vector3[] reconstructedPositions = new Vector3[indices.Length];
         for (int i = 0; i < indices.Length; i++)
         {
-            indices[i].ShouldBeInRange(0, mesh.Vertices.Length - 1);
-            reconstructedPositions[i] = mesh.Vertices[indices[i]].Position;
+            indices[i].ShouldBeInRange(0, mesh.VertexCount - 1);
+            reconstructedPositions[i] = mesh.GetPosition((uint)indices[i]);
         }
 
         reconstructedPositions.ShouldBe(authoredPositions);

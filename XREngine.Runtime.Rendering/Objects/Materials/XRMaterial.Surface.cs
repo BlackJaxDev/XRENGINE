@@ -120,15 +120,28 @@ public partial class XRMaterial
     internal bool HasOnlyStandardSurfaceAndUniformHandlers(IReadOnlySet<Action<XRMaterialBase, XRRenderProgram>> handlers)
         => HasOnlySettingUniformsHandlers(handlers, _surfaceEmissionHandler);
 
+    /// <summary>
+    /// Attaches the surface-emission uniform publisher once the material carries
+    /// source-surface emission state. Without that state the publisher would write
+    /// the shader's own defaults, so assignments that leave the material without it
+    /// (including the property writes of a play-mode snapshot restore) attach
+    /// nothing: any uniform handler disqualifies the material from the shared opaque
+    /// shadow-caster material and from typed automatic-uniform writes.
+    /// </summary>
     private void EnsureSurfaceEmissionPublisher()
     {
-        if (_surfaceEmissionPublisherAttached)
+        if (_surfaceEmissionPublisherAttached || !HasSurfaceEmissionState())
             return;
 
         SetField(ref _surfaceEmissionHandler, PublishSurfaceEmission, publishNotifications: false);
         SettingUniforms += _surfaceEmissionHandler;
         SetField(ref _surfaceEmissionPublisherAttached, true, publishNotifications: false);
     }
+
+    private bool HasSurfaceEmissionState()
+        => _emissiveColor.HasValue ||
+           _emissionStrength.HasValue ||
+           GetSurfaceTexture(EMaterialTextureSemantic.Emissive) is not null;
 
     private void PublishSurfaceEmission(XRMaterialBase _, XRRenderProgram program)
     {

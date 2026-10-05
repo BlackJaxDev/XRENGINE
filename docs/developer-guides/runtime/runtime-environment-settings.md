@@ -30,3 +30,23 @@ Explicit launch values remain authoritative until a runtime override is
 created. VS Code launch and runnable tasks set environment variables only when
 their names and descriptions identify the specific world, role, validation,
 profiling, or compatibility scenario being requested.
+
+RenderBench owns two opt-in Vulkan device diagnostics. Both are off when
+unset, require renderer recreation, and are applied from the recipe before
+device creation and restored after teardown:
+
+| Variable | Recipe input | Device behavior |
+| --- | --- | --- |
+| `XRE_VK_RENDER_BENCH_GPU_CALIBRATION` | `gpu_profiling.calibrated_timestamps` | Requests `VK_EXT_calibrated_timestamps` for bounded host/device clock correlation. |
+| `XRE_VK_RENDER_BENCH_PERFORMANCE_QUERY` | `hardware_counter_policy` / `HardwareCounters` instrumentation | Requests `VK_KHR_performance_query` and its query-pool feature for intrusive counter replay. |
+
+Unsupported required diagnostics fail preparation. Optional diagnostics publish
+unsupported status; they do not synthesize calibration or hardware counters.
+Use the [profiler recipes](../diagnostics/profiler.md#dedicated-vulkan-renderbench)
+to select these observers rather than inheriting editor environment settings.
+
+## AOT Parity Diagnostics
+
+| Variable | Values | Behavior |
+| --- | --- | --- |
+| `XRE_AOT_PARITY` | `off`, `warn`, `error` | Development-only. Reports player-path resolutions that succeed only through a reflective fallback NativeAOT cannot provide. Defaults to `off` in interactive editor sessions and `error` in the unit-test lane and headless validation. Published builds ignore it. See [AOT Final Game Builds](aot-final-game-builds.md#development-parity-diagnostics). |

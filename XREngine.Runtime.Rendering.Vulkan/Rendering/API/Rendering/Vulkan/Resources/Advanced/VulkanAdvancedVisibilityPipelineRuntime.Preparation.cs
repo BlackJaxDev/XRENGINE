@@ -21,10 +21,81 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private long _preparationStartedTimestamp;
     private long _preparationCompletedTimestamp;
     private readonly VulkanPipelineForegroundWaitObserver _foregroundWaitObserver = new();
+    private const double DirectionalShadowFaultHoldSeconds = 5.0;
+    private PreparationSnapshot _directionalShadowPreparation = new(
+        VulkanAdvancedVisibilityPipelineReadiness.Missing,
+        "Directional shadow lane preparation has not been requested.");
+    private long _directionalShadowFaultTimestamp;
+    private string? _directionalShadowFaultReason;
+    private int _completedDirectionalShadowPreparationIdentity;
+
+    /// <summary>
+    /// Readiness of the directional shadow lane programs. A recorded lane
+    /// fault (a pipeline that failed at family preparation) reports Failed
+    /// for a bounded time so the atlas retries cascades through the generic
+    /// path after rejecting the frame whose group could not be prepared.
+    /// </summary>
+    internal VulkanAdvancedVisibilityPipelineReadiness GetDirectionalShadowLaneReadiness(out string reason)
+    {
+        if (!_resources.AdvancedSceneResources.IsReady ||
+            !_resources.AdvancedVisibilityResources.IsReady)
+        {
+            reason = !_resources.AdvancedSceneResources.IsReady
+                ? _resources.AdvancedSceneResources.AvailabilityReason
+                : _resources.AdvancedVisibilityResources.AvailabilityReason;
+            return VulkanAdvancedVisibilityPipelineReadiness.Missing;
+        }
+
+        long faultTimestamp = Volatile.Read(ref _directionalShadowFaultTimestamp);
+        if (faultTimestamp != 0L &&
+            Stopwatch.GetElapsedTime(faultTimestamp).TotalSeconds < DirectionalShadowFaultHoldSeconds)
+        {
+            reason = Volatile.Read(ref _directionalShadowFaultReason) ??
+                "The directional shadow lane recorded a pipeline fault.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+
+        RequestPreparation();
+        lock (_preparationGate)
+        {
+            PreparationSnapshot preparation = Volatile.Read(ref _directionalShadowPreparation);
+            if (_preparationStopped || _preparationTask is { IsCompleted: false } ||
+                Volatile.Read(ref _preparation).State != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            {
+                reason = "Directional shadow lane preparation is waiting for the visibility family.";
+                return VulkanAdvancedVisibilityPipelineReadiness.Pending;
+            }
+
+            int identity = CaptureDirectionalShadowPreparationIdentity();
+            bool sameIdentity = identity == Volatile.Read(ref _completedDirectionalShadowPreparationIdentity);
+            bool current = preparation.State == VulkanAdvancedVisibilityPipelineReadiness.Ready &&
+                sameIdentity && IsProgramCurrent(_directionalShadowOpaqueProgram, compute: false) &&
+                IsProgramCurrent(_directionalShadowMaskedProgram, compute: false);
+            if (!current && !(preparation.State == VulkanAdvancedVisibilityPipelineReadiness.Failed && sameIdentity))
+            {
+                VulkanAdvancedVisibilityPipelineReadiness polled =
+                    PrepareDirectionalShadowFamily(out string polledReason);
+                preparation = new PreparationSnapshot(polled, polledReason);
+                Volatile.Write(ref _completedDirectionalShadowPreparationIdentity, CaptureDirectionalShadowPreparationIdentity());
+                Volatile.Write(ref _directionalShadowPreparation, preparation);
+            }
+            reason = preparation.Reason;
+            return preparation.State;
+        }
+    }
+
+    /// <summary>Records a lane pipeline failure observed during family preparation.</summary>
+    internal void RecordDirectionalShadowLaneFault(string reason)
+    {
+        Volatile.Write(ref _directionalShadowFaultReason, reason);
+        Volatile.Write(ref _directionalShadowFaultTimestamp, Stopwatch.GetTimestamp());
+    }
 
     internal VulkanAdvancedVisibilityPipelineReadiness GetReadiness(out string reason)
     {
         long pollStart = Stopwatch.GetTimestamp();
+        S13aPublicationTelemetry.StepProbe readinessProbe =
+            S13aPublicationTelemetry.BeginAdvancedFamilyStep();
         try
         {
             if (!_resources.AdvancedSceneResources.IsReady ||
@@ -45,6 +116,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         {
             Interlocked.Add(ref _foregroundPollTicks, Stopwatch.GetTimestamp() - pollStart);
             Interlocked.Increment(ref _foregroundPollCount);
+            readinessProbe.End(S13aAdvancedFamilyStep.ReadinessCall);
         }
     }
 
@@ -142,20 +214,33 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 
     private void RequestPreparation()
     {
+        S13aPublicationTelemetry.StepProbe lockProbe =
+            S13aPublicationTelemetry.BeginAdvancedFamilyStep();
         lock (_preparationGate)
         {
+            lockProbe.End(S13aAdvancedFamilyStep.ReadinessLockWait);
+            S13aPublicationTelemetry.StepProbe refreshProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
             RefreshGeneratedShaderSources();
+            refreshProbe.End(S13aAdvancedFamilyStep.ReadinessSourceRefresh);
             if (_preparationStopped || _preparationTask is { IsCompleted: false })
                 return;
 
             VulkanAdvancedVisibilityPipelineReadiness state =
                 Volatile.Read(ref _preparation).State;
+            S13aPublicationTelemetry.StepProbe identityProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
             int identity = CapturePreparationIdentity();
+            identityProbe.End(S13aAdvancedFamilyStep.ReadinessIdentity);
             if (state == VulkanAdvancedVisibilityPipelineReadiness.Ready &&
-                identity == Volatile.Read(ref _completedPreparationIdentity) &&
-                AreRequiredProgramsCurrent())
+                identity == Volatile.Read(ref _completedPreparationIdentity))
             {
-                return;
+                S13aPublicationTelemetry.StepProbe currentnessProbe =
+                    S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+                bool programsCurrent = AreRequiredProgramsCurrent();
+                currentnessProbe.End(S13aAdvancedFamilyStep.ReadinessCurrentness);
+                if (programsCurrent)
+                    return;
             }
             if (state == VulkanAdvancedVisibilityPipelineReadiness.Failed &&
                 identity == Volatile.Read(ref _completedPreparationIdentity))
@@ -176,6 +261,13 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             PublishPreparationState(
                 VulkanAdvancedVisibilityPipelineReadiness.Pending,
                 "Advanced visibility pipeline preparation is pending.");
+            // The lane readiness follows the family: a relinking shadow program
+            // must not be handed out as Ready while the new preparation runs.
+            Volatile.Write(
+                ref _directionalShadowPreparation,
+                new PreparationSnapshot(
+                    VulkanAdvancedVisibilityPipelineReadiness.Pending,
+                    "Directional shadow lane preparation is pending."));
             _preparationTask = Task.Run(
                 () => PrepareRequiredFamilyAsync(identity, cancellationToken),
                 cancellationToken);
@@ -202,6 +294,11 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                         PublishPreparationState(
                             VulkanAdvancedVisibilityPipelineReadiness.Pending,
                             "Advanced visibility shader identity changed during preparation.");
+                        Volatile.Write(
+                            ref _directionalShadowPreparation,
+                            new PreparationSnapshot(
+                                VulkanAdvancedVisibilityPipelineReadiness.Pending,
+                                "Directional shadow lane preparation is pending."));
                         continue;
                     }
 
@@ -287,6 +384,17 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                     return readiness;
             }
 
+            // The directional shadow lane links after the visibility family and
+            // publishes its own readiness. The family never waits on it: a lane
+            // that is still linking (or failed) keeps cascades on the generic
+            // path, and the lane readiness poll finishes the link on demand.
+            VulkanAdvancedVisibilityPipelineReadiness shadowReadiness =
+                PrepareDirectionalShadowFamily(out string shadowReason);
+            Volatile.Write(ref _completedDirectionalShadowPreparationIdentity, CaptureDirectionalShadowPreparationIdentity());
+            Volatile.Write(
+                ref _directionalShadowPreparation,
+                new PreparationSnapshot(shadowReadiness, shadowReason));
+
             reason = "Ready";
             return VulkanAdvancedVisibilityPipelineReadiness.Ready;
         }
@@ -294,6 +402,15 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         {
             Interlocked.Add(ref _preparationAttemptTicks, Stopwatch.GetTimestamp() - attemptStart);
         }
+    }
+
+    private VulkanAdvancedVisibilityPipelineReadiness PrepareDirectionalShadowFamily(out string reason)
+    {
+        VulkanAdvancedVisibilityPipelineReadiness readiness =
+            PrepareDirectionalShadowProgram(EAdvancedMaterialCoverageMode.Opaque, out reason);
+        return readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready
+            ? readiness
+            : PrepareDirectionalShadowProgram(EAdvancedMaterialCoverageMode.Masked, out reason);
     }
 
     private VulkanAdvancedVisibilityPipelineReadiness PrepareRasterFamily(
@@ -339,6 +456,8 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         WaitForPendingShaderCompiles(_maskedMultiviewRasterProgram);
         WaitForPendingShaderCompiles(_opaqueMultiviewMeshRasterProgram);
         WaitForPendingShaderCompiles(_maskedMultiviewMeshRasterProgram);
+        WaitForPendingShaderCompiles(_directionalShadowOpaqueProgram);
+        WaitForPendingShaderCompiles(_directionalShadowMaskedProgram);
         for (int i = 0; i < _nativeComputePrograms.Length; i++)
             WaitForPendingShaderCompiles(_nativeComputePrograms[i]);
     }
@@ -376,12 +495,28 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return hash.ToHashCode();
     }
 
+    // Optional shadow programs can finish linking after the required family is
+    // admitted. Their lazy creation must not invalidate that family mid-frame.
+    private int CaptureDirectionalShadowPreparationIdentity()
+    {
+        HashCode hash = new();
+        hash.Add(RuntimeEngine.Rendering.Settings.ShaderConfigVersion);
+        AddProgramIdentity(ref hash, _directionalShadowOpaqueProgram);
+        AddProgramIdentity(ref hash, _directionalShadowMaskedProgram);
+        return hash.ToHashCode();
+    }
+
     private static void AddProgramIdentity(ref HashCode hash, XRRenderProgram? program)
     {
         if (program is null)
             return;
-        foreach (XRShader shader in program.Shaders)
-            hash.Add(shader.SourceRevision);
+        // Index the shader list: its interface enumerator allocated once per
+        // program on every readiness poll, which the recording thread issues
+        // several times per frame.
+        EventList<XRShader> shaders = program.Shaders;
+        int count = shaders.Count;
+        for (int index = 0; index < count; index++)
+            hash.Add(shaders[index].SourceRevision);
     }
 
     private bool AreRequiredProgramsCurrent()

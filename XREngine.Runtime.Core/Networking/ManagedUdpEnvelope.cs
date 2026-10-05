@@ -5,21 +5,49 @@ namespace XREngine.Networking;
 
 public static class ManagedUdpEnvelope
 {
-    private static readonly byte[] Magic = "XRMU"u8.ToArray();
+    private static ReadOnlySpan<byte> Magic => "XRMU"u8;
 
+    /// <summary>Total envelope size for an inner payload of <paramref name="payloadLength"/> bytes.</summary>
+    public static int GetEnvelopeLength(int payloadLength)
+        => ManagedUdpEnvelopeHeader.TotalHeaderLength + payloadLength;
+
+    /// <summary>Allocating convenience for handshake and close messages. The data path uses <see cref="TryWrite"/>.</summary>
     public static byte[] Create(ManagedUdpEnvelopeHeader header, ReadOnlySpan<byte> payload, ReadOnlySpan<byte> key)
     {
         if (payload.Length > BaseNetworkingManager.MaxInboundDatagramBytes - ManagedUdpEnvelopeHeader.TotalHeaderLength)
             throw new ArgumentOutOfRangeException(nameof(payload));
 
-        byte[] result = new byte[ManagedUdpEnvelopeHeader.TotalHeaderLength + payload.Length];
-        WriteUnsignedHeader(result, header, payload.Length);
-        payload.CopyTo(result.AsSpan(ManagedUdpEnvelopeHeader.UnsignedHeaderLength));
-        using var hmac = new HMACSHA256(key.ToArray());
-        byte[] tag = hmac.ComputeHash(result.AsSpan(0, ManagedUdpEnvelopeHeader.UnsignedHeaderLength + payload.Length).ToArray());
-        try { tag.CopyTo(result, ManagedUdpEnvelopeHeader.UnsignedHeaderLength + payload.Length); }
-        finally { CryptographicOperations.ZeroMemory(tag); }
+        byte[] result = new byte[GetEnvelopeLength(payload.Length)];
+        if (!TryWrite(result, header, payload, key, out _))
+            throw new InvalidOperationException("Managed UDP envelope could not be authenticated.");
         return result;
+    }
+
+    /// <summary>
+    /// Writes an authenticated envelope into caller-owned storage without allocating. The inner
+    /// payload may alias neither the header nor the tag region of <paramref name="destination"/>.
+    /// </summary>
+    public static bool TryWrite(Span<byte> destination, in ManagedUdpEnvelopeHeader header, ReadOnlySpan<byte> payload, ReadOnlySpan<byte> key, out int bytesWritten)
+    {
+        bytesWritten = 0;
+        if (payload.Length > BaseNetworkingManager.MaxInboundDatagramBytes - ManagedUdpEnvelopeHeader.TotalHeaderLength)
+            return false;
+
+        int total = GetEnvelopeLength(payload.Length);
+        if (destination.Length < total)
+            return false;
+
+        WriteUnsignedHeader(destination, header, payload.Length);
+        payload.CopyTo(destination[ManagedUdpEnvelopeHeader.UnsignedHeaderLength..]);
+        int signedLength = ManagedUdpEnvelopeHeader.UnsignedHeaderLength + payload.Length;
+        if (!HMACSHA256.TryHashData(key, destination[..signedLength], destination.Slice(signedLength, ManagedUdpEnvelopeHeader.TagLength), out int tagLength)
+            || tagLength != ManagedUdpEnvelopeHeader.TagLength)
+        {
+            return false;
+        }
+
+        bytesWritten = total;
+        return true;
     }
 
     public static bool TryRead(ReadOnlySpan<byte> datagram, out ManagedUdpEnvelopeHeader header, out ReadOnlySpan<byte> payload, out ReadOnlySpan<byte> tag)
@@ -73,7 +101,7 @@ public static class ManagedUdpEnvelope
         return ManagedUdpAuthentication.VerifyTag(key, datagram[..signedLength], tag);
     }
 
-    private static void WriteUnsignedHeader(Span<byte> target, ManagedUdpEnvelopeHeader header, int payloadLength)
+    private static void WriteUnsignedHeader(Span<byte> target, in ManagedUdpEnvelopeHeader header, int payloadLength)
     {
         Magic.CopyTo(target);
         target[4] = ManagedUdpEnvelopeHeader.Version;

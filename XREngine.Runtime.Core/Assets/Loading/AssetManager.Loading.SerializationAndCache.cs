@@ -16,6 +16,8 @@ using XREngine.Serialization;
 using AssetImportContext = XREngine.Core.Files.AssetImportContext;
 using XRAsset = XREngine.Core.Files.XRAsset;
 using Stopwatch = System.Diagnostics.Stopwatch;
+using AotParityDiagnostics = XREngine.Data.Runtime.AotParity.AotParityDiagnostics;
+using EAotParityCategory = XREngine.Data.Runtime.AotParity.EAotParityCategory;
 
 namespace XREngine
 {
@@ -225,6 +227,13 @@ namespace XREngine
                 $"'{expectedType.FullName}', but its type hint and legacy root key did not resolve. " +
                 "Install the feature's YAML/type registration at the application composition root.");
 
+        private static void ReportReflectiveAssetTypeResolution(Type resolved)
+            => AotParityDiagnostics.Report(
+                resolved,
+                EAotParityCategory.TypeResolutionScan,
+                $"{nameof(AssetManager)}.{nameof(TryResolveAssetTypeName)}",
+                "Add the asset type to the published runtime metadata known-type table so its type hint resolves without scanning assemblies.");
+
         private static bool TryResolveAssetTypeName(string typeName, Type expectedType, out Type type)
         {
             type = typeof(XRAsset);
@@ -246,6 +255,7 @@ namespace XREngine
                     resolved = assembly.GetType(rewrittenTypeName, throwOnError: false, ignoreCase: false);
                     if (resolved is not null && expectedType.IsAssignableFrom(resolved))
                     {
+                        ReportReflectiveAssetTypeResolution(resolved);
                         type = resolved;
                         return true;
                     }
@@ -254,6 +264,7 @@ namespace XREngine
                 resolved = Type.GetType(rewrittenTypeName, throwOnError: false);
                 if (resolved is not null && expectedType.IsAssignableFrom(resolved))
                 {
+                    ReportReflectiveAssetTypeResolution(resolved);
                     type = resolved;
                     return true;
                 }
@@ -653,7 +664,22 @@ namespace XREngine
             if (!TryGetSourceTimestamp(filePath, out DateTime timestampUtc))
                 return false;
 
-            if (Activator.CreateInstance(assetType) is not XRAsset asset)
+            XRAsset? asset;
+            if (RuntimeCookedBinarySerializer.TryCreateRegisteredRuntimeObject(assetType, out object? registered))
+            {
+                asset = registered as XRAsset
+                    ?? throw new InvalidOperationException($"The runtime factory for '{assetType.FullName}' did not return an asset.");
+            }
+            else
+            {
+                XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(
+                    assetType,
+                    XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                    $"{nameof(AssetManager)}.ThirdPartyCache",
+                    $"Register a runtime factory for the asset type with {nameof(RuntimeCookedBinarySerializer)}.{nameof(RuntimeCookedBinarySerializer.RegisterRuntimeFactory)} so cached third-party assets are constructed without Activator.CreateInstance.");
+                asset = Activator.CreateInstance(assetType) as XRAsset;
+            }
+            if (asset is null)
                 return false;
 
             asset.Name = Path.GetFileNameWithoutExtension(filePath);

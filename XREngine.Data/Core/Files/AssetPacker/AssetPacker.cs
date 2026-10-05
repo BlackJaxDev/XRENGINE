@@ -54,9 +54,18 @@ namespace XREngine.Core.Files
         private const int HashSize = 4; // Using 32-bit hash for path lookup
         private const int DataOffsetSize = 8; // 64-bit offset to data
         private const int CompressedSizeSize = 4; // Compressed data size
-        private const int Magic = 0x4652454B; // "FREK"
+        internal const int Magic = 0x4652454B; // "FREK"
         private static readonly Encoding StringEncoding = Encoding.UTF8;
-        private const int CurrentVersion = 4;
+
+        /// <summary>
+        /// Archive format version. Version 5 pairs with the fixed cooked asset envelope and the
+        /// stored-entry codec; archives from earlier versions are rejected with a re-cook diagnostic.
+        /// </summary>
+        internal const int CurrentVersion = 5;
+
+        /// <summary>Builds the single actionable diagnostic for an archive from another format version.</summary>
+        internal static string DescribeUnsupportedVersion(string archiveFilePath, int version)
+            => $"Archive '{archiveFilePath}' uses format version {version}, but this build reads version {CurrentVersion}. Re-cook the content with the current editor build; earlier archives are not readable.";
 
         // TOC entry: Hash(4) + StringOffset(4) + DataOffset(8) + CompressedSize(4) + UncompressedSize(8) + ContentXXH64(8) + SourceTimestamp(8) + Codec(1) + Reserved(3) = 48
         private const int TocEntrySize = HashSize + 4 + DataOffsetSize + CompressedSizeSize + sizeof(long) + sizeof(ulong) + sizeof(long) + sizeof(byte) + 3;
@@ -109,6 +118,14 @@ namespace XREngine.Core.Files
         /// Existing entries keep their original codec during repack.
         /// </summary>
         public static CompressionCodec DefaultCodec { get; set; } = CompressionCodec.Lzma;
+
+        /// <summary>
+        /// When enabled, entries whose compressed form is not smaller than the source are written
+        /// with <see cref="CompressionCodec.Stored"/>, so the published reader can return a span over
+        /// the mapped archive instead of decompressing. Off by default so authoring archives keep a
+        /// single codec; the published cook enables it.
+        /// </summary>
+        public static bool StoreIncompressibleEntries { get; set; }
 
         private static int _archiveCopyBufferBytes = DefaultArchiveCopyBufferBytes;
 
@@ -198,7 +215,7 @@ namespace XREngine.Core.Files
 
                         int version = reader.ReadInt32();
                         if (version != CurrentVersion)
-                            throw new InvalidOperationException($"Unsupported archive version '{version}'. Only V{CurrentVersion} is supported.");
+                            throw new InvalidOperationException(DescribeUnsupportedVersion(archiveFilePath, version));
 
                         RepackV3(reader, sourceMap, tempPath, inputDirToAddFiles, assetPathsToRemove, archiveFilePath);
                     }
@@ -293,12 +310,7 @@ namespace XREngine.Core.Files
                 ulong contentHash = XxHash64.HashToUInt64(rawData);
                 long sourceTimestamp = File.GetLastWriteTimeUtc(filePath).Ticks;
 
-                CompressionCodec codec = DefaultCodec;
-                byte[] compressed;
-                if (codec == CompressionCodec.Lzma && rawData.Length >= LargeFileThreshold)
-                    compressed = Compression.CompressChunked(rawData);
-                else
-                    compressed = Compression.Compress(rawData, codec);
+                byte[] compressed = CompressForArchive(rawData, progress: null, out CompressionCodec codec);
 
                 PackedAsset asset = new()
                 {
@@ -348,7 +360,7 @@ namespace XREngine.Core.Files
 
                         int version = reader.ReadInt32();
                         if (version != CurrentVersion)
-                            throw new InvalidOperationException($"Compact requires a V{CurrentVersion} archive (found V{version}).");
+                            throw new InvalidOperationException(DescribeUnsupportedVersion(archiveFilePath, version));
 
                         var flags = (ArchiveFlags)reader.ReadInt32();
                         var lookupMode = (TocLookupMode)reader.ReadInt32();
@@ -398,7 +410,7 @@ namespace XREngine.Core.Files
 
                 int version = reader.ReadInt32();
                 if (version != CurrentVersion)
-                    throw new InvalidOperationException($"GetStalePaths requires a V{CurrentVersion} archive (found V{version}).");
+                    throw new InvalidOperationException(DescribeUnsupportedVersion(archiveFilePath, version));
 
                 _ = (ArchiveFlags)reader.ReadInt32();
                 _ = (TocLookupMode)reader.ReadInt32();
@@ -538,39 +550,28 @@ namespace XREngine.Core.Files
                             ulong contentHash = XxHash64.HashToUInt64(data);
                             long sourceTimestamp = File.GetLastWriteTimeUtc(filePath).Ticks;
 
-                            CompressionCodec codec = DefaultCodec;
-                            byte[] compressed;
-                            if (codec == CompressionCodec.Lzma && data.Length >= LargeFileThreshold)
+                            Action<long>? chunkProgress = null;
+                            if (progress is not null && DefaultCodec == CompressionCodec.Lzma && data.Length >= LargeFileThreshold)
                             {
-                                // Large file: split into chunks and compress each
-                                // chunk in parallel for much faster throughput.
-                                Action<long>? chunkProgress = null;
-                                if (progress is not null)
+                                long totalSrc = totalSourceBytes;   // capture
+                                long totalComp = totalCompressedBytes;
+                                long grand = grandTotalBytes;       // capture
+                                chunkProgress = bytesCompressed =>
                                 {
-                                    long totalSrc = totalSourceBytes;   // capture
-                                    long totalComp = totalCompressedBytes;
-                                    long grand = grandTotalBytes;       // capture
-                                    chunkProgress = bytesCompressed =>
-                                    {
-                                        progress.Invoke(new PackProgress(
-                                            PackPhase.CompressingLargeFile,
-                                            filesWritten + j + 1,
-                                            files.Length,
-                                            relativePath,
-                                            data.Length,
-                                            bytesCompressed,
-                                            totalSrc,
-                                            totalComp,
-                                            grand));
-                                    };
-                                }
+                                    progress.Invoke(new PackProgress(
+                                        PackPhase.CompressingLargeFile,
+                                        filesWritten + j + 1,
+                                        files.Length,
+                                        relativePath,
+                                        data.Length,
+                                        bytesCompressed,
+                                        totalSrc,
+                                        totalComp,
+                                        grand));
+                                };
+                            }
 
-                                compressed = Compression.CompressChunked(data, progress: chunkProgress);
-                            }
-                            else
-                            {
-                                compressed = Compression.Compress(data, codec);
-                            }
+                            byte[] compressed = CompressForArchive(data, chunkProgress, out CompressionCodec codec);
 
                             chunkResults[j] = new CompressedFileResult
                             {
@@ -636,6 +637,27 @@ namespace XREngine.Core.Files
         #endregion
 
         #region Archive Writing
+
+        /// <summary>
+        /// Encodes one entry with <see cref="DefaultCodec"/>, using chunked parallel LZMA for large
+        /// files. When <see cref="StoreIncompressibleEntries"/> is set and the encoded form is not
+        /// smaller than the source, the source bytes are returned with <see cref="CompressionCodec.Stored"/>.
+        /// </summary>
+        private static byte[] CompressForArchive(byte[] data, Action<long>? progress, out CompressionCodec codec)
+        {
+            codec = DefaultCodec;
+            byte[] compressed = codec == CompressionCodec.Lzma && data.Length >= LargeFileThreshold
+                ? Compression.CompressChunked(data, progress: progress)
+                : Compression.Compress(data, codec);
+
+            if (StoreIncompressibleEntries && compressed.Length >= data.Length)
+            {
+                codec = CompressionCodec.Stored;
+                return data;
+            }
+
+            return compressed;
+        }
 
         /// <summary>
         /// Writes an archive with layout: [Header][Data][TOC][StringTable][Index][Footer].
@@ -764,7 +786,7 @@ namespace XREngine.Core.Files
             return assets;
         }
 
-        private static string NormalizePath(string path)
+        internal static string NormalizePath(string path)
             => path.Replace('\\', '/');
 
         private static HashSet<string>? CreateRemovalSet(string[] assetPaths)
@@ -920,82 +942,28 @@ namespace XREngine.Core.Files
 
         #region Public API — Read
 
+        /// <summary>
+        /// One-shot read for tooling: opens a temporary handle, decompresses the entry into a new
+        /// array, and closes the archive. Runtime loads go through <see cref="PublishedArchiveRegistry"/>.
+        /// </summary>
         public static byte[] GetAsset(string archiveFilePath, string assetPath)
         {
-            unsafe
-            {
-                using FileMap map = FileMap.FromFile(archiveFilePath, FileMapProtect.Read);
-                using var reader = new CookedBinaryReader((byte*)map.Address, map.Length);
-                if (reader.ReadInt32() != Magic)
-                    throw new InvalidOperationException("Invalid asset archive format.");
-
-                int version = reader.ReadInt32();
-                if (version != CurrentVersion)
-                    throw new InvalidOperationException($"Unsupported archive version '{version}'. Only V{CurrentVersion} is supported.");
-
-                _ = (ArchiveFlags)reader.ReadInt32();  // flags
-                var mode = (TocLookupMode)reader.ReadInt32();
-                int fileCount = reader.ReadInt32();
-                reader.ReadInt64(); // build timestamp
-                reader.ReadInt64(); // dead bytes
-                var footer = ReadFooter(reader);
-
-                reader.Position = ResolveDictionaryOffset(footer);
-                var stringCompressor = new StringCompressor(reader);
-
-                return mode switch
-                {
-                    TocLookupMode.HashBuckets => GetAssetFromBuckets(assetPath, fileCount, reader, stringCompressor, footer),
-                    TocLookupMode.SortedByHash => GetAssetSorted(assetPath, fileCount, reader, stringCompressor, footer),
-                    _ => GetAssetLinear(assetPath, fileCount, reader, stringCompressor, footer.TocPosition),
-                };
-            }
+            using PublishedArchiveHandle handle = PublishedArchiveHandle.Open(archiveFilePath);
+            return handle.ReadAssetBytes(assetPath);
         }
 
+        /// <summary>One-shot listing of every asset path in the archive.</summary>
         public static IReadOnlyList<string> GetAssetPaths(string archiveFilePath)
         {
-            unsafe
-            {
-                using FileMap map = FileMap.FromFile(archiveFilePath, FileMapProtect.Read);
-                using var reader = new CookedBinaryReader((byte*)map.Address, map.Length);
-                if (reader.ReadInt32() != Magic)
-                    throw new InvalidOperationException("Invalid asset archive format.");
-
-                int version = reader.ReadInt32();
-                if (version != CurrentVersion)
-                    throw new InvalidOperationException($"Unsupported archive version '{version}'. Only V{CurrentVersion} is supported.");
-
-                _ = (ArchiveFlags)reader.ReadInt32();  // flags
-                _ = (TocLookupMode)reader.ReadInt32(); // lookup mode
-                int fileCount = reader.ReadInt32();
-                reader.ReadInt64(); // build timestamp
-                reader.ReadInt64(); // dead bytes
-                var footer = ReadFooter(reader);
-                reader.Position = ResolveDictionaryOffset(footer);
-                var stringCompressor = new StringCompressor(reader);
-                return ReadAssetPaths(reader, stringCompressor, fileCount, footer.TocPosition);
-            }
-        }
-
-        private static IReadOnlyList<string> ReadAssetPaths(CookedBinaryReader reader, StringCompressor stringCompressor, int fileCount, long tocPosition)
-        {
-            List<string> paths = new(fileCount);
-            reader.Position = tocPosition;
-            for (int i = 0; i < fileCount; i++)
-            {
-                var entry = ReadSequentialTocEntry(reader);
-                string path = NormalizePath(stringCompressor.GetString(entry.StringOffset));
-                paths.Add(path);
-            }
-
-            return paths;
+            using PublishedArchiveHandle handle = PublishedArchiveHandle.Open(archiveFilePath);
+            return handle.GetAssetPaths();
         }
 
         #endregion
 
         #region Internal I/O Helpers
 
-        private static FooterInfo ReadFooter(CookedBinaryReader reader)
+        internal static FooterInfo ReadFooter(CookedBinaryReader reader)
         {
             long saved = reader.Position;
             reader.Position = reader.Length - FooterSize;
@@ -1010,132 +978,12 @@ namespace XREngine.Core.Files
             return new FooterInfo(tocPosition, stringTableOffset, dictionaryOffset, indexOffset, deadBytes);
         }
 
-        private static long ResolveDictionaryOffset(FooterInfo footer)
+        internal static long ResolveDictionaryOffset(FooterInfo footer)
             => footer.DictionaryOffset < footer.StringTableOffset
                 ? footer.StringTableOffset + footer.DictionaryOffset
                 : footer.DictionaryOffset;
 
-        private static byte[] GetAssetLinear(string assetPath, int fileCount, CookedBinaryReader reader, StringCompressor stringCompressor, long tocPosition)
-        {
-            string normalized = NormalizePath(assetPath);
-            uint targetHash = FastHash(normalized);
-            reader.Position = tocPosition;
-
-            for (int i = 0; i < fileCount; i++)
-            {
-                var entry = ReadSequentialTocEntry(reader);
-                if (TryLoadEntry(normalized, targetHash, reader, stringCompressor, entry, out byte[] data))
-                    return data;
-            }
-
-            throw new FileNotFoundException($"Asset {assetPath} not found");
-        }
-
-        private static byte[] GetAssetFromBuckets(string assetPath, int fileCount, CookedBinaryReader reader, StringCompressor stringCompressor, FooterInfo footer)
-        {
-            if (footer.IndexTableOffset == 0)
-                return GetAssetLinear(assetPath, fileCount, reader, stringCompressor, footer.TocPosition);
-
-            reader.Position = footer.IndexTableOffset;
-            int bucketCount = reader.ReadInt32();
-            if (bucketCount <= 0 || (bucketCount & (bucketCount - 1)) != 0)
-                return GetAssetLinear(assetPath, fileCount, reader, stringCompressor, footer.TocPosition);
-
-            string normalized = NormalizePath(assetPath);
-            uint targetHash = FastHash(normalized);
-            int bucketIndex = (int)(targetHash & (bucketCount - 1));
-            long bucketEntryOffset = footer.IndexTableOffset + sizeof(int) + bucketIndex * sizeof(int) * 2L;
-            reader.Position = bucketEntryOffset;
-            int start = reader.ReadInt32();
-            int count = reader.ReadInt32();
-            if (count <= 0)
-                throw new FileNotFoundException($"Asset {assetPath} not found");
-
-            long tocOffset = footer.TocPosition + start * (long)TocEntrySize;
-            reader.Position = tocOffset;
-            for (int i = 0; i < count; i++)
-            {
-                var entry = ReadSequentialTocEntry(reader);
-                if (TryLoadEntry(normalized, targetHash, reader, stringCompressor, entry, out byte[] data))
-                    return data;
-            }
-
-            throw new FileNotFoundException($"Asset {assetPath} not found");
-        }
-
-        private static byte[] GetAssetSorted(string assetPath, int fileCount, CookedBinaryReader reader, StringCompressor stringCompressor, FooterInfo footer)
-        {
-            string normalized = NormalizePath(assetPath);
-            uint targetHash = FastHash(normalized);
-            int left = 0;
-            int right = fileCount - 1;
-
-            while (left <= right)
-            {
-                int mid = left + ((right - left) / 2);
-                var midEntry = ReadTocEntryAt(reader, footer.TocPosition, mid);
-                if (midEntry.Hash == targetHash)
-                {
-                    int first = mid;
-                    while (first > 0)
-                    {
-                        var prev = ReadTocEntryAt(reader, footer.TocPosition, first - 1);
-                        if (prev.Hash != targetHash)
-                            break;
-                        first--;
-                    }
-
-                    int last = mid;
-                    while (last < fileCount - 1)
-                    {
-                        var next = ReadTocEntryAt(reader, footer.TocPosition, last + 1);
-                        if (next.Hash != targetHash)
-                            break;
-                        last++;
-                    }
-
-                    for (int i = first; i <= last; i++)
-                    {
-                        var entry = ReadTocEntryAt(reader, footer.TocPosition, i);
-                        if (TryLoadEntry(normalized, targetHash, reader, stringCompressor, entry, out byte[] data))
-                            return data;
-                    }
-
-                    break;
-                }
-
-                if (midEntry.Hash < targetHash)
-                    left = mid + 1;
-                else
-                    right = mid - 1;
-            }
-
-            throw new FileNotFoundException($"Asset {assetPath} not found");
-        }
-
-        private static bool TryLoadEntry(string normalizedPath, uint targetHash, CookedBinaryReader reader, StringCompressor stringCompressor, TocEntryData entry, out byte[] data)
-        {
-            if (entry.Hash != targetHash)
-            {
-                data = [];
-                return false;
-            }
-
-            string currentPath = NormalizePath(stringCompressor.GetString(entry.StringOffset));
-            if (!string.Equals(currentPath, normalizedPath, StringComparison.Ordinal))
-            {
-                data = [];
-                return false;
-            }
-
-            // Zero-copy: build a span directly over the memory-mapped compressed data
-            // instead of allocating + copying via ReadBytes.
-            ReadOnlySpan<byte> compressedSpan = reader.GetSpan(entry.DataOffset, entry.CompressedSize);
-            data = Compression.Decompress(compressedSpan, entry.Codec, (int)entry.UncompressedSize);
-            return true;
-        }
-
-        private static TocEntryData ReadSequentialTocEntry(CookedBinaryReader reader)
+        internal static TocEntryData ReadSequentialTocEntry(CookedBinaryReader reader)
         {
             uint hash = reader.ReadUInt32();
             int stringOffset = reader.ReadInt32();
@@ -1151,17 +999,7 @@ namespace XREngine.Core.Files
             return new TocEntryData(hash, stringOffset, dataOffset, compressedSize, uncompressedSize, contentHash, sourceTimestamp, codec);
         }
 
-        private static TocEntryData ReadTocEntryAt(CookedBinaryReader reader, long tocPosition, int index)
-        {
-            long offset = tocPosition + index * (long)TocEntrySize;
-            long saved = reader.Position;
-            reader.Position = offset;
-            var entry = ReadSequentialTocEntry(reader);
-            reader.Position = saved;
-            return entry;
-        }
-
-        private static uint FastHash(string input)
+        internal static uint FastHash(string input)
         {
             uint hash = 5381;
             foreach (char c in input)

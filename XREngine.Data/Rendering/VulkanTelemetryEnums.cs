@@ -86,12 +86,18 @@ public enum EVulkanCpuStage
     PrimaryAdvancedClassificationOperation,
     PrimaryAdvancedAmbientOcclusionOperation,
     PrimaryAdvancedNativeShadingOperation,
+    PrimaryAdvancedDirectionalShadowOperation,
     PrimaryAdvancedCpuDirectDrawOperation,
     PrimaryAdvancedRasterLoweringOperation,
     PrimaryAdvancedRasterValidationOperation,
     PrimaryAdvancedRasterBindingOperation,
     PrimaryFinalization,
     PrimaryEndCommandBuffer,
+    CommandBufferReset,
+    CommandBufferBegin,
+    CommandBufferEnd,
+    SecondaryExecution,
+    ComponentFrame,
     Count,
 }
 

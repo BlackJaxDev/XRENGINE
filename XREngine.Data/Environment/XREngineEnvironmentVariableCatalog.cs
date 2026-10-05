@@ -208,6 +208,10 @@ public static class XREngineEnvironmentVariableCatalog
         if (SensitiveFields.Contains(fieldName))
             return RuntimeEnvironmentValueKind.Secret;
 
+        if (fieldName is nameof(XREngineEnvironmentVariables.VulkanRenderBenchGpuCalibration) or
+            nameof(XREngineEnvironmentVariables.VulkanRenderBenchPerformanceQuery))
+            return RuntimeEnvironmentValueKind.Boolean;
+
         if (fieldName is nameof(XREngineEnvironmentVariables.Path) ||
             fieldName.EndsWith("Path", StringComparison.Ordinal) ||
             fieldName.EndsWith("Root", StringComparison.Ordinal) ||
@@ -293,6 +297,8 @@ public static class XREngineEnvironmentVariableCatalog
         string fieldName,
         RuntimeEnvironmentCategory category)
         => category == RuntimeEnvironmentCategory.Profiling ||
+           fieldName is nameof(XREngineEnvironmentVariables.VulkanRenderBenchGpuCalibration) or
+               nameof(XREngineEnvironmentVariables.VulkanRenderBenchPerformanceQuery) ||
            fieldName.Contains("Diag", StringComparison.OrdinalIgnoreCase) ||
            fieldName.Contains("Debug", StringComparison.OrdinalIgnoreCase) ||
            fieldName.Contains("Trace", StringComparison.OrdinalIgnoreCase) ||
@@ -351,7 +357,9 @@ public static class XREngineEnvironmentVariableCatalog
              fieldName.Contains("ProgramBindingBackend", StringComparison.Ordinal) ||
              fieldName.Contains("RayTracingBackend", StringComparison.Ordinal) ||
              fieldName.Contains("FoveationBackend", StringComparison.Ordinal) ||
-             fieldName.Contains("ObsHook", StringComparison.Ordinal)))
+             fieldName.Contains("ObsHook", StringComparison.Ordinal) ||
+             fieldName is nameof(XREngineEnvironmentVariables.VulkanRenderBenchGpuCalibration) or
+                 nameof(XREngineEnvironmentVariables.VulkanRenderBenchPerformanceQuery)))
         {
             return RuntimeEnvironmentApplyMode.RendererRestart;
         }

@@ -49,8 +49,8 @@ public sealed class PublishedAssetCookingTests
             File.Exists(Path.Combine(cookedDir, "Data", "readme.txt")).ShouldBeTrue();
 
             byte[] bytes = File.ReadAllBytes(Path.Combine(cookedDir, "Data", "round.asset"));
-            CookedAssetBlob blob = MemoryPackSerializer.Deserialize<CookedAssetBlob>(bytes);
-            blob.Format.ShouldBe(CookedAssetFormat.RuntimeBinaryV1);
+            CookedAssetEnvelopeHeader header = CookedAssetEnvelope.ParseHeader(bytes);
+            header.Format.ShouldBe(CookedAssetFormat.RuntimeBinaryV1);
         }
         finally
         {

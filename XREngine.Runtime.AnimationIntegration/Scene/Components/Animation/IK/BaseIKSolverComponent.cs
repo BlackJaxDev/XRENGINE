@@ -44,7 +44,7 @@ namespace XREngine.Components.Animation
             RegisterTick(ETickGroup.Late, ETickOrder.Animation, LateUpdate);
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, Update);
 
-            Initialize();
+            EnsureSolverInitialized();
         }
 
         protected override void OnComponentDeactivated()
@@ -56,7 +56,8 @@ namespace XREngine.Components.Animation
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, Update);
         }
 
-        private void Initialize()
+        /// <summary>Initialize references without advancing or applying a solver frame.</summary>
+        protected void EnsureSolverInitialized()
         {
             if (_componentInitiated)
                 return;
@@ -101,9 +102,6 @@ namespace XREngine.Components.Animation
 
         private void FixedUpdate()
         {
-            if (_skipSolverUpdate)
-                _skipSolverUpdate = false;
-
             if (!ShouldApplySolverPose())
             {
                 _updateFrame = false;
@@ -118,7 +116,16 @@ namespace XREngine.Components.Animation
 
         private void LateUpdate()
         {
-            if (_skipSolverUpdate || !ShouldApplySolverPose())
+            // An external evaluation replaces one scheduled animation solve, not
+            // an arbitrary number of frames until the next physics update.
+            if (_skipSolverUpdate)
+            {
+                _skipSolverUpdate = false;
+                _updateFrame = false;
+                return;
+            }
+
+            if (!ShouldApplySolverPose())
                 return;
 
             // Check if either animatePhysics is false or FixedUpdate has been called

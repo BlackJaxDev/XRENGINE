@@ -3,6 +3,7 @@
 
 #extension GL_ARB_bindless_texture : require
 #extension GL_ARB_gpu_shader_int64 : require
+#include "Advanced/Generated/GPUSceneRecords.glslinc"
 
 // XR generated material layout: DeferredOpaque.
 // Layout must match MaterialBindingLayouts.OpaqueDeferred / GPUMaterialTable packing in C#.
@@ -31,12 +32,6 @@ void XR_LoadMaterial(uint materialId, out XR_MaterialRecord material) {
     if (!XR_TryLoadMaterial(materialId, material))
         material = XR_MaterialRecord(0u, 0u, 0u, 0u, vec4(1.0, 1.0, 1.0, 1.0), vec4(1.0, 0.0, 1.0, 0.0));
 }
-
-struct TextureHandleEntry {
-    uvec2 Handle; // low, high 32 bits
-    uint Flags;
-    uint Pad0;
-};
 
 layout(std430, binding = 17) readonly buffer XR_MaterialTextureHandleTableBuffer { TextureHandleEntry XR_TextureHandleTable[]; };
 #define TextureHandleTable XR_TextureHandleTable

@@ -96,6 +96,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public bool ProcessMeshImportsAsynchronously => RuntimeEngine.Rendering.Settings.ProcessMeshImportsAsynchronously;
     public bool AllowSkinning => RuntimeEngine.Rendering.Settings.AllowSkinning;
     public bool CalculateSkinningInComputeShader => RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader;
+    public EEngineQuality TextureQuality => Engine.UserSettings.TextureQuality;
     public bool CalculateBlendshapesInComputeShader => RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader;
     public bool CalculateSkinnedBoundsInComputeShader => RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
     public bool SkinnedBoundsGpuDirectAabbWrite => RuntimeEngine.Rendering.Settings.SkinnedBoundsGpuDirectAabbWrite;
@@ -792,9 +793,8 @@ internal sealed class EngineRuntimeRenderingHostServices :
 
         string? encoded = RuntimeEngine.EncodeWindowTargetWorldHierarchyJson(xrWindow);
         Engine.Networking?.ReplicateStateChange(
-            new StateChangeInfo(
-                EStateChangeType.WorldChange,
-                encoded is null ? "null" : encoded),
+            EStateChangeType.WorldChange,
+            System.Text.Encoding.UTF8.GetBytes(encoded ?? "null"),
             true,
             true);
     }

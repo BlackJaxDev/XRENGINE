@@ -6,6 +6,16 @@ XRENGINE uses GitHub Actions for pull-request validation and a gated `deploy` to
 
 `windows-ci.yml` builds the managed and native submodules, generates the Unit Testing World settings, builds `XRENGINE.slnx`, and runs the NUnit suite on `windows-latest`.
 
+All build workflows select the SDK through `global.json`. Windows CI, deploy, and release jobs run `dotnet workload restore XRENGINE.slnx` before building submodules so a fresh runner installs the pinned workload set before MSBuild evaluates any projects. Installing the SDK alone does not provision that workload set. The browser workflow installs `wasm-tools` from the repository root, honoring the same pin.
+
+The submodule script discovers Visual Studio MSBuild and C++ targets through `vswhere`, including Enterprise and standalone Build Tools installations. On runners without the Vulkan SDK, the Vulkan project reuses its packaged native bridge DLL; a generated PDB is optional. Native builds register available symbols after bridge preparation so the first clean build, consuming projects, and publish outputs can include them.
+
+Before compiling native Rive, the script applies the tracked patch in
+`Tools/Patches/rive-sharp/`. It accepts an already applied patch and stops if
+the source does not match. The patch fixes the two Clang unused-variable
+errors without disabling compiler warnings. See the
+[patch notes](../../Tools/Patches/rive-sharp/README.md) before updating Rive.
+
 Pull requests authored by Codex, Claude, or Copilot are intentionally skipped by Windows CI. The workflow recognizes both bot login names containing `codex`, `claude`, or `copilot` and head branches under `codex/`, `claude/`, or `copilot/`. Dependency review still runs on these pull requests so automated dependency or agent changes are checked for newly introduced vulnerabilities.
 
 `dependency-review.yml` rejects pull requests that introduce dependencies with known vulnerabilities at moderate severity or higher. GitHub's dependency graph must be enabled. Private repositories also require the applicable GitHub Code Security entitlement.

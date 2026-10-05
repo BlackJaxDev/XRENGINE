@@ -5,6 +5,10 @@ namespace XREngine;
 
 internal sealed class EngineRuntimeRenderObjectServices : IRuntimeRenderObjectServices
 {
+    // Reused per thread: render objects are destroyed in bulk during scene teardown.
+    [ThreadStatic]
+    private static List<XRWindow>? t_windowSnapshot;
+
     public AbstractRenderAPIObject?[] CreateObjectsForAllOwners(GenericRenderObject renderObject)
     {
         XRWindow[] windows;
@@ -15,6 +19,24 @@ internal sealed class EngineRuntimeRenderObjectServices : IRuntimeRenderObjectSe
         for (int index = 0; index < windows.Length; index++)
             wrappers[index] = windows[index].Renderer.TryPublishAPIRenderObject(renderObject);
         return wrappers;
+    }
+
+    public void RemoveObjectFromAllOwners(GenericRenderObject renderObject)
+    {
+        List<XRWindow> windows = t_windowSnapshot ??= [];
+        lock (RuntimeEngine.Windows)
+            windows.AddRange(RuntimeEngine.Windows);
+
+        try
+        {
+            // Renderer cache locks are taken outside the window-list lock, as in creation.
+            for (int index = 0; index < windows.Count; index++)
+                windows[index].Renderer.RemoveAPIRenderObject(renderObject);
+        }
+        finally
+        {
+            windows.Clear();
+        }
     }
 
     public ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject> CreateObjectsForOwner(IRenderApiWrapperOwner owner)

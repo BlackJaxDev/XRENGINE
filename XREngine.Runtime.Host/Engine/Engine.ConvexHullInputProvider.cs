@@ -133,16 +133,16 @@ internal sealed class EngineConvexHullInputProvider : IConvexHullInputProvider
 
     private static void TryAdd(XRMesh? mesh, Matrix4x4? transform, List<ConvexHullInput> inputs)
     {
-        if (mesh?.Vertices is not { Length: > 0 } vertices)
+        if (mesh is null || mesh.VertexCount <= 0 || !AdvancedPackedVertexCodec.HasReadableAttributes(mesh))
             return;
 
         int[]? indices = mesh.GetIndices(EPrimitiveType.Triangles);
         if (indices is null)
             return;
 
-        Vector3[] positions = new Vector3[vertices.Length];
-        for (int i = 0; i < vertices.Length; i++)
-            positions[i] = vertices[i].Position;
+        Vector3[] positions = new Vector3[mesh.VertexCount];
+        for (int i = 0; i < positions.Length; i++)
+            positions[i] = mesh.GetPosition((uint)i);
 
         if (ConvexHullUtility.TryCreateInput(positions, indices, transform, out ConvexHullInput input))
             inputs.Add(input);

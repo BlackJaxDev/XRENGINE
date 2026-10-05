@@ -349,7 +349,7 @@ namespace XREngine.Rendering.Commands
                     var existing = UpdatingDrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(index);
                     var updated = existing;
 
-                    bool transformChanged = UpdateTransform(existing.TransformID, modelMatrix);
+                    bool transformChanged = UpdateTransform(existing.TransformID, modelMatrix, meshCmd as RenderCommand);
                     if (transformChanged && S13aPublicationTelemetry.Enabled)
                         observation.TransformWrites++;
                     BoundsGpu updatedBounds = ComputeRenderCullingBoundsGpu(snapshot.Owner, mesh.Bounds, modelMatrix, updated.BoundsID + 1u);

@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Scene.Transforms;
 
@@ -35,16 +36,24 @@ namespace XREngine.Components
 
         public IHumanoidHeightReference? GetHumanoid()
             => HumanoidComponent as IHumanoidHeightReference
-            ?? SceneNode.GetComponents<XRComponent>().Where(component => component != this).OfType<IHumanoidHeightReference>().FirstOrDefault();
+            ?? SceneNode?.GetComponents<XRComponent>().Where(component => component != this).OfType<IHumanoidHeightReference>().FirstOrDefault();
         public IRuntimeCharacterMovementComponent? GetCharacterMovement()
             => CharacterMovementComponent as IRuntimeCharacterMovementComponent
-            ?? SceneNode.GetComponents<XRComponent>().Where(component => component != this).OfType<IRuntimeCharacterMovementComponent>().FirstOrDefault();
+            ?? SceneNode?.GetComponents<XRComponent>().Where(component => component != this).OfType<IRuntimeCharacterMovementComponent>().FirstOrDefault();
 
         public Vector3 ScaledToRealWorldEyeOffsetFromHead => EyeOffsetFromHead * ModelToRealWorldHeightRatio;
 
         protected abstract float ModelToRealWorldHeightRatio { get; }
         protected abstract float ModelHeightMeters { get; }
         public abstract void ApplyMeasuredHeight(float modelHeight);
+
+        public virtual bool TryApplyPlayerMeasurements(out string notice)
+        {
+            notice = VrBodyScaleCalculation.UnsetNotice;
+            return false;
+        }
+
+        public virtual string? GetCaptureMeasurementWarning(float trackedEyeHeightMeters) => null;
 
         protected override void OnComponentActivated()
         {
@@ -53,13 +62,19 @@ namespace XREngine.Components
         }
 
         /// <summary>
-        /// Determines the avatar's height by measuring the Y position of the head bone plus eye offset, minus the Y position of the root bone.
+        /// Determines the avatar's eye height from head bind position and eye offset in humanoid-root coordinates.
         /// </summary>
         public void MeasureAvatarHeight()
         {
             var h = GetHumanoid();
             if (h is null)
                 return;
+
+            if (h.TryGetCanonicalBodyMeasurements(EyeOffsetFromHead, out AvatarBodyMeasurements measurements))
+            {
+                ApplyMeasuredHeight(measurements.EyeHeight);
+                return;
+            }
 
             var headNode = h.HeadNode;
             if (headNode is null)
@@ -68,9 +83,13 @@ namespace XREngine.Components
             var rootTfm = h.RootTransform;
             var headTfm = headNode.Transform;
 
-            float eyeY = headTfm.BindMatrix.Translation.Y + EyeOffsetFromHead.Y;
-            float footY = rootTfm.BindMatrix.Translation.Y;
-            float height = eyeY - footY;
+            // Bind geometry is measured in the avatar root's own coordinates. Runtime root motion
+            // and the scale applied by this component must not feed back into this denominator.
+            Vector3 headInRoot = Vector3.Transform(headTfm.BindMatrix.Translation, rootTfm.InverseBindMatrix);
+            float height = headInRoot.Y + EyeOffsetFromHead.Y;
+
+            if (!float.IsFinite(height) || height <= 0.0001f)
+                return;
 
             ApplyMeasuredHeight(height);
 
@@ -78,7 +97,7 @@ namespace XREngine.Components
         }
 
         /// <summary>
-        /// Calculates the average position of all vertices rigged to bones that contain the word "eye" in their name and returns the difference from the head bone.
+        /// Measures eye-weighted bind vertices relative to the head in humanoid-root coordinates.
         /// </summary>
         /// <returns></returns>
         public void CalculateEyeOffsetFromHead(XRComponent? eyesModelComponent, string? eyeLBoneName, string? eyeRBoneName, bool forceXToZero = true)
@@ -104,7 +123,7 @@ namespace XREngine.Components
 
             //Find lods with matching eye bones
             int lodCount = 0;
-            Vector3 avgEyePos = Vector3.Zero;
+            Vector3 avgEyeBindWorld = Vector3.Zero;
             foreach (SubMesh mesh in meshes)
             {
                 var lod = mesh.LODs.FirstOrDefault();
@@ -117,23 +136,25 @@ namespace XREngine.Components
 
                 if (bones.Any(b => IsEyeBone(b.tfm, eyeLBoneName, eyeRBoneName)))
                 {
-                    SumEyeVertexPositions(lod, out Vector3 eyePosWorldAvg, eyeLBoneName, eyeRBoneName);
-                    lodCount++;
-                    avgEyePos += eyePosWorldAvg;
+                    if (SumEyeVertexPositions(lod, out Vector3 eyePosWorldAvg, eyeLBoneName, eyeRBoneName))
+                    {
+                        lodCount++;
+                        avgEyeBindWorld += eyePosWorldAvg;
+                    }
                 }
             }
-            avgEyePos /= lodCount;
+            if (lodCount == 0)
+                return;
+            avgEyeBindWorld /= lodCount;
 
+            Matrix4x4 rootInverseBind = h.RootTransform.InverseBindMatrix;
+            Vector3 eyeInRoot = Vector3.Transform(avgEyeBindWorld, rootInverseBind);
+            Vector3 headInRoot = Vector3.Transform(headNode.Transform.BindMatrix.Translation, rootInverseBind);
+            Vector3 offset = eyeInRoot - headInRoot;
             if (forceXToZero)
-                avgEyePos.X = 0;
-
-            Vector3 rootToHead = headNode.Transform.WorldMatrix.Translation - Transform.WorldMatrix.Translation;
-            avgEyePos -= rootToHead;
-
-            //if (forceXToZero)
-            //    avgEyePos.X = 0;
-
-            EyeOffsetFromHead = avgEyePos;
+                offset.X = 0;
+            if (float.IsFinite(offset.X) && float.IsFinite(offset.Y) && float.IsFinite(offset.Z))
+                EyeOffsetFromHead = offset;
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -145,6 +166,7 @@ namespace XREngine.Components
                 case nameof(ModelToRealWorldHeightRatio):
                 case nameof(RadiusRatio):
                 case nameof(FootTransform):
+                case nameof(EyeOffsetFromHead):
                     UpdateHeightScale();
                     break;
 
@@ -166,16 +188,26 @@ namespace XREngine.Components
             }
         }
 
-        protected void UpdateHeightScale()
+        protected virtual void UpdateHeightScale()
         {
+            if (!float.IsFinite(ModelHeightMeters) || ModelHeightMeters <= 0.0f ||
+                !float.IsFinite(ModelToRealWorldHeightRatio) || ModelToRealWorldHeightRatio <= 0.0f)
+                return;
             IHumanoidHeightReference? humanoid = GetHumanoid();
             if (humanoid is null)
                 return;
 
             float height = ModelHeightMeters * ModelToRealWorldHeightRatio;
+            float ratio = ModelToRealWorldHeightRatio;
+            if (!float.IsFinite(height) || height <= 0.0001f || !float.IsFinite(ratio) || ratio <= 0.0f ||
+                !float.IsFinite(RadiusRatio) || RadiusRatio is < 0.0f or >= 0.5f ||
+                !float.IsFinite(CrouchedHeightRatio) || CrouchedHeightRatio is <= 0.0f or > 1.0f ||
+                !float.IsFinite(ProneHeightRatio) || ProneHeightRatio is <= 0.0f or > 1.0f)
+                return;
 
             TransformBase rootTfm = humanoid.RootTransform;
-            TransformBase? footTfm = FootTransform ?? rootTfm.Parent;
+            // A tracking/playspace parent is not an implicit avatar foot offset.
+            TransformBase? footTfm = FootTransform;
 
             float radius = height * RadiusRatio;
             float radius2 = radius * 2.0f;
@@ -199,7 +231,11 @@ namespace XREngine.Components
                 if (footTfm is Transform tfm)
                     tfm.Translation = translation;
                 else
-                    footTfm.DeriveLocalMatrix(Matrix4x4.CreateTranslation(translation));
+                {
+                    Matrix4x4 local = footTfm.LocalMatrix;
+                    local.Translation = translation;
+                    footTfm.DeriveLocalMatrix(local);
+                }
             }
 
             //Scale the root transform to match the real-world height
@@ -207,7 +243,11 @@ namespace XREngine.Components
             if (rootTfm is Transform transform)
                 transform.Scale = scale;
             else
-                rootTfm.DeriveLocalMatrix(Matrix4x4.CreateScale(scale));
+            {
+                if (!Matrix4x4.Decompose(rootTfm.LocalMatrix, out _, out Quaternion rotation, out Vector3 translation))
+                    return;
+                rootTfm.DeriveLocalMatrix(Matrix4x4.CreateScale(scale) * Matrix4x4.CreateFromQuaternion(rotation) * Matrix4x4.CreateTranslation(translation));
+            }
         }
 
         protected static bool SumEyeBonePositions((TransformBase tfm, Matrix4x4 invBindWorldMtx)[] bones, out Vector3 eyePosWorldAvg, string? eyeLBoneName, string? eyeRBoneName)
@@ -230,66 +270,64 @@ namespace XREngine.Components
             return any;
         }
 
-        protected static float AtomicAdd(ref float target, float value)
-        {
-            float initialValue, computedValue;
-            do
-            {
-                initialValue = target;
-                computedValue = initialValue + value;
-            }
-            while (Interlocked.CompareExchange(ref target, computedValue, initialValue) != initialValue);
-            return computedValue;
-        }
-
-        protected static void SumEyeVertexPositions(SubMeshLOD? lod, out Vector3 eyePosWorldAvg, string? eyeLBoneName, string? eyeRBoneName)
+        protected static bool SumEyeVertexPositions(SubMeshLOD? lod, out Vector3 eyePosWorldAvg, string? eyeLBoneName, string? eyeRBoneName)
         {
             if (lod is null)
             {
                 eyePosWorldAvg = Vector3.Zero;
-                return;
+                return false;
             }
             var mesh = lod.Mesh;
             if (mesh is null)
             {
                 eyePosWorldAvg = Vector3.Zero;
-                return;
+                return false;
             }
 
             eyePosWorldAvg = Vector3.Zero;
 
-            float sumX = 0f, sumY = 0f, sumZ = 0f;
+            // Weights are read from the mesh's packed skinning buffers; bind
+            // matrices come from its utilized-bone table.
+            if (!XRMeshSkinningInfluenceReader.TryCreate(mesh, out XRMeshSkinningInfluenceReader reader))
+                return false;
+
+            (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] bones = mesh.UtilizedBones;
+            bool[] eyeBones = new bool[bones.Length];
+            bool anyEyeBone = false;
+            for (int boneIndex = 0; boneIndex < bones.Length; boneIndex++)
+                anyEyeBone |= eyeBones[boneIndex] = bones[boneIndex].tfm is { } bone && IsEyeBone(bone, eyeLBoneName, eyeRBoneName);
+            if (!anyEyeBone)
+                return false;
+
+            Span<int> boneIndices = stackalloc int[reader.MaxInfluenceCount];
+            Span<float> weights = stackalloc float[reader.MaxInfluenceCount];
+            Vector3 sum = Vector3.Zero;
             int counted = 0;
-
-            void AccumulateEyeVertex(XREngine.Data.Rendering.Vertex vertex)
+            for (int vertexIndex = 0; vertexIndex < mesh.VertexCount; vertexIndex++)
             {
-                var weights = vertex.Weights;
-                if (weights is null)
-                    return;
-
-                bool hasEyeBone = weights.Any(w => IsEyeBone(w.Key, eyeLBoneName, eyeRBoneName));
+                int influenceCount = reader.ReadInfluences(vertexIndex, boneIndices, weights);
+                bool hasEyeBone = false;
+                for (int influence = 0; influence < influenceCount && !hasEyeBone; influence++)
+                    hasEyeBone = eyeBones[boneIndices[influence]];
                 if (!hasEyeBone)
-                    return;
+                    continue;
 
-                Vector3 pos = vertex.GetWorldPosition();
-                AtomicAdd(ref sumX, pos.X);
-                AtomicAdd(ref sumY, pos.Y);
-                AtomicAdd(ref sumZ, pos.Z);
-                Interlocked.Increment(ref counted);
+                Vector3 position = mesh.GetPosition((uint)vertexIndex);
+                Vector3 bindPosition = Vector3.Zero;
+                for (int influence = 0; influence < influenceCount; influence++)
+                {
+                    (TransformBase bone, Matrix4x4 inverseBind) = bones[boneIndices[influence]];
+                    bindPosition += Vector3.Transform(position, inverseBind * bone.BindMatrix) * weights[influence];
+                }
+                sum += bindPosition;
+                counted++;
             }
 
-            if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
-            {
-                foreach (var vertex in mesh.Vertices)
-                    AccumulateEyeVertex(vertex);
-            }
-            else
-                Parallel.ForEach(mesh.Vertices, AccumulateEyeVertex);
-
-            eyePosWorldAvg = new Vector3(sumX, sumY, sumZ);
+            eyePosWorldAvg = sum;
             bool any = counted > 0;
             if (any)
                 eyePosWorldAvg /= counted;
+            return any;
         }
 
         protected static bool IsEyeBone(TransformBase tfm, string? eyeLBoneName, string? eyeRBoneName)

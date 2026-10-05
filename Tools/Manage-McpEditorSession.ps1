@@ -585,10 +585,11 @@ function Remove-RebuildableSessionDirectory([string]$Path) {
         try {
             Remove-Item -LiteralPath $fullPath -Recurse -Force
         }
-        catch [System.IO.IOException] {
+        catch [System.IO.IOException], [System.UnauthorizedAccessException] {
             # Retention is best-effort. A compiler or editor from another session may
-            # still hold one rebuildable artifact briefly; that must not block creation
-            # of an otherwise isolated named session.
+            # still hold one rebuildable artifact; Windows reports a loaded native
+            # library as access denied rather than as an I/O error. Neither may block
+            # creation of an otherwise isolated named session.
             Write-Warning "Deferred cleanup of locked session data '$fullPath': $($_.Exception.Message)"
         }
     }
@@ -609,7 +610,11 @@ function Invoke-SessionRetentionCleanup([string]$ProtectedSessionName) {
             else {
                 $null
             }
-            if ($null -ne $manifest -and [string]$manifest.name -ceq $ProtectedSessionName) {
+            # Other tools share this registry but own their session lifetime.
+            if ($null -eq $manifest -or $null -eq $manifest.PSObject.Properties['editorPath']) {
+                continue
+            }
+            if ([string]$manifest.name -ceq $ProtectedSessionName) {
                 continue
             }
             # A build has no editor PID yet, but its live launcher still owns
@@ -991,7 +996,7 @@ function Get-SessionList {
         else {
             $null
         }
-        if ($null -ne $manifest) {
+        if ($null -ne $manifest -and $null -ne $manifest.PSObject.Properties['editorPath']) {
             $views += New-SessionView $manifest -ProbeMcp
         }
     }

@@ -18,7 +18,7 @@ internal static class Program
             ApplicationConfiguration.Initialize();
             try
             {
-                Application.Run(new TrayApplicationContext(repositoryRoot));
+                Application.Run(new TrayApplicationContext(repositoryRoot, showHistory: args.Length == 3));
             }
             finally
             {
@@ -39,11 +39,12 @@ internal static class Program
 
     private static string ParseRepositoryRoot(string[] args)
     {
-        if (args.Length != 2
+        if (args.Length is not (2 or 3)
             || !string.Equals(args[0], "--repo-root", StringComparison.OrdinalIgnoreCase)
-            || string.IsNullOrWhiteSpace(args[1]))
+            || string.IsNullOrWhiteSpace(args[1])
+            || (args.Length == 3 && !string.Equals(args[2], "--show-history", StringComparison.OrdinalIgnoreCase)))
         {
-            throw new ArgumentException("The tray companion requires --repo-root <path>.");
+            throw new ArgumentException("The tray companion requires --repo-root <path> [--show-history].");
         }
 
         string root = Path.GetFullPath(args[1]);

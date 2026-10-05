@@ -34,11 +34,48 @@ namespace XREngine.Scene.Transforms
         public delegate void DelInverseWorldMatrixChanged(TransformBase transform, Matrix4x4 worldInverseMatrix);
         public delegate void DelRenderMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix);
 
-        public event DelLocalMatrixChanged? LocalMatrixChanged;
-        public event DelInverseLocalMatrixChanged? InverseLocalMatrixChanged;
-        public event DelWorldMatrixChanged? WorldMatrixChanged;
-        public event DelInverseWorldMatrixChanged? InverseWorldMatrixChanged;
-        public event DelRenderMatrixChanged? RenderMatrixChanged;
+        private DelLocalMatrixChanged? _localMatrixChanged;
+        public event DelLocalMatrixChanged? LocalMatrixChanged
+        {
+            add { lock (MatrixSubscriptionGate) { _localMatrixChanged += value; RefreshMatrixSubscribers(); } }
+            remove { lock (MatrixSubscriptionGate) { _localMatrixChanged -= value; RefreshMatrixSubscribers(); } }
+        }
+        private DelInverseLocalMatrixChanged? _inverseLocalMatrixChanged;
+        public event DelInverseLocalMatrixChanged? InverseLocalMatrixChanged
+        {
+            add { lock (MatrixSubscriptionGate) { _inverseLocalMatrixChanged += value; RefreshMatrixSubscribers(); } }
+            remove { lock (MatrixSubscriptionGate) { _inverseLocalMatrixChanged -= value; RefreshMatrixSubscribers(); } }
+        }
+        private DelWorldMatrixChanged? _worldMatrixChanged;
+        public event DelWorldMatrixChanged? WorldMatrixChanged
+        {
+            add { lock (MatrixSubscriptionGate) { _worldMatrixChanged += value; RefreshMatrixSubscribers(); } }
+            remove { lock (MatrixSubscriptionGate) { _worldMatrixChanged -= value; RefreshMatrixSubscribers(); } }
+        }
+        private DelInverseWorldMatrixChanged? _inverseWorldMatrixChanged;
+        public event DelInverseWorldMatrixChanged? InverseWorldMatrixChanged
+        {
+            add { lock (MatrixSubscriptionGate) { _inverseWorldMatrixChanged += value; RefreshMatrixSubscribers(); } }
+            remove { lock (MatrixSubscriptionGate) { _inverseWorldMatrixChanged -= value; RefreshMatrixSubscribers(); } }
+        }
+        private DelRenderMatrixChanged? _renderMatrixChanged;
+        public event DelRenderMatrixChanged? RenderMatrixChanged
+        {
+            add { lock (MatrixSubscriptionGate) { _renderMatrixChanged += value; RefreshMatrixSubscribers(); } }
+            remove { lock (MatrixSubscriptionGate) { _renderMatrixChanged -= value; RefreshMatrixSubscribers(); } }
+        }
+
+        private static readonly object MatrixSubscriptionGate = new();
+        internal int MatrixSubscriberCount { get; private set; }
+        private void RefreshMatrixSubscribers()
+        {
+            MatrixSubscriberCount = (_localMatrixChanged?.GetInvocationList().Length ?? 0)
+                + (_inverseLocalMatrixChanged?.GetInvocationList().Length ?? 0)
+                + (_worldMatrixChanged?.GetInvocationList().Length ?? 0)
+                + (_inverseWorldMatrixChanged?.GetInvocationList().Length ?? 0)
+                + (_renderMatrixChanged?.GetInvocationList().Length ?? 0);
+            HierarchyStore?.SetSubscribers(HierarchyHandle, MatrixSubscriberCount);
+        }
 
         #endregion
 
@@ -512,18 +549,7 @@ namespace XREngine.Scene.Transforms
         /// Enables world-space snapshot caching for this transform (if not already enabled)
         /// and returns all cached world-space basis vectors and rotations under a single lock.
         /// </summary>
-        public SpaceSnapshot GetWorldSnapshot()
-        {
-            lock (_worldMatrixLock)
-            {
-                if (!_worldSnapshotEnabled)
-                {
-                    _worldSnapshotEnabled = true;
-                    _worldSnapshot = ComputeSpaceSnapshot(_worldMatrix);
-                }
-                return _worldSnapshot;
-            }
-        }
+        public SpaceSnapshot GetWorldSnapshot() => ComputeSpaceSnapshot(WorldMatrix);
 
         [Browsable(false)]
         public Vector3 LossyWorldScale => WorldMatrix.ExtractScale();
@@ -594,18 +620,7 @@ namespace XREngine.Scene.Transforms
         /// Enables local-space snapshot caching for this transform (if not already enabled)
         /// and returns all cached local-space basis vectors and rotations under a single lock.
         /// </summary>
-        public SpaceSnapshot GetLocalSnapshot()
-        {
-            lock (_localMatrixLock)
-            {
-                if (!_localSnapshotEnabled)
-                {
-                    _localSnapshotEnabled = true;
-                    _localSnapshot = ComputeSpaceSnapshot(_localMatrix);
-                }
-                return _localSnapshot;
-            }
-        }
+        public SpaceSnapshot GetLocalSnapshot() => ComputeSpaceSnapshot(LocalMatrix);
 
         #endregion
 
@@ -644,167 +659,111 @@ namespace XREngine.Scene.Transforms
         /// Enables render-space snapshot caching for this transform (if not already enabled)
         /// and returns all cached render-space basis vectors and rotations under a single lock.
         /// </summary>
-        public SpaceSnapshot GetRenderSnapshot()
+        public SpaceSnapshot GetRenderSnapshot() => ComputeSpaceSnapshot(RenderMatrix);
+
+        #endregion
+
+        #region Matrix Storage
+
+        private bool _localChanged;
+        private bool _worldChanged;
+        private DetachedTransformMatrices? _detachedMatrices = new();
+        internal TransformHierarchyStore? HierarchyStore { get; private set; }
+
+        [Browsable(false), YamlIgnore, MemoryPackIgnore]
+        public TransformHandle HierarchyHandle { get; private set; }
+
+        [Browsable(false), YamlIgnore]
+        public bool IsLocalMatrixDirty => HierarchyStore?.IsDirty(HierarchyHandle, 0) ?? Volatile.Read(ref _localChanged);
+        [Browsable(false), YamlIgnore]
+        public bool IsWorldMatrixDirty => HierarchyStore?.IsDirty(HierarchyHandle, 1) ?? Volatile.Read(ref _worldChanged);
+
+        /// <summary>The latest complete local matrix, with no implicit recalculation.</summary>
+        [Browsable(false), YamlIgnore]
+        public Matrix4x4 LocalMatrix => ReadMatrix(0);
+        /// <summary>The latest complete simulation matrix, with no implicit recalculation.</summary>
+        [Browsable(false), YamlIgnore]
+        public Matrix4x4 WorldMatrix => ReadMatrix(1);
+        /// <summary>The latest published render matrix; may differ from simulation after late latching.</summary>
+        [Browsable(false), YamlIgnore]
+        public Matrix4x4 RenderMatrix => ReadMatrix(2);
+        [Browsable(false), YamlIgnore]
+        public Matrix4x4 InverseLocalMatrix => TryCreateInverseLocalMatrix(out var inverse) ? inverse : Matrix4x4.Identity;
+        [Browsable(false), YamlIgnore]
+        public Matrix4x4 InverseWorldMatrix => TryCreateInverseWorldMatrix(out var inverse) ? inverse : Matrix4x4.Identity;
+        [Browsable(false), YamlIgnore]
+        public Matrix4x4 InverseRenderMatrix => Matrix4x4.Invert(RenderMatrix, out var inverse) ? inverse : Matrix4x4.Identity;
+
+        private void SetMatrixDirty(int space, bool dirty)
         {
-            lock (_renderMatrixLock)
+            if (HierarchyStore is { } store) store.SetDirty(HierarchyHandle, space, dirty);
+            else if (space == 0) Volatile.Write(ref _localChanged, dirty);
+            else Volatile.Write(ref _worldChanged, dirty);
+        }
+
+        private Matrix4x4 ReadMatrix(int space)
+        {
+            if (HierarchyStore is { } store)
+                return store.Read(HierarchyHandle, space);
+            var detached = _detachedMatrices!;
+            lock (detached)
+                return space == 0 ? detached.Local : space == 1 ? detached.World : detached.Render;
+        }
+
+        private void WriteMatrix(int space, Matrix4x4 matrix)
+        {
+            if (HierarchyStore is { } store)
             {
-                if (!_renderSnapshotEnabled)
-                {
-                    _renderSnapshotEnabled = true;
-                    _renderSnapshot = ComputeSpaceSnapshot(_renderMatrix);
-                }
-                return _renderSnapshot;
+                store.Write(HierarchyHandle, space, matrix);
+                return;
+            }
+            var detached = _detachedMatrices!;
+            lock (detached)
+            {
+                if (space == 0) detached.Local = matrix;
+                else if (space == 1) detached.World = matrix;
+                else detached.Render = matrix;
             }
         }
 
-        #endregion
-
-        #region Render Matrix
-
-        private Matrix4x4 _renderMatrix = Matrix4x4.Identity;
-        private Matrix4x4 _inverseRenderMatrix = Matrix4x4.Identity;
-        private readonly object _renderMatrixLock = new();
-        private int _renderMatrixVersion;
-        private bool _renderSnapshotEnabled;
-        private SpaceSnapshot _renderSnapshot;
-
-        /// <summary>
-        /// This transform's render matrix.
-        /// Readers use a sequence lock so visibility collection never contends with
-        /// swap-buffer publication while still rejecting torn matrix copies.
-        /// </summary>
-        [Browsable(false)]
-        [YamlIgnore]
-        public Matrix4x4 RenderMatrix => ReadPublishedRenderMatrix();
-
-        private Matrix4x4 ReadPublishedRenderMatrix()
+        private void UpdateHierarchyStore()
         {
-            SpinWait spinWait = default;
-            while (true)
+            var next = WorldAs<RuntimeWorld>()?.TransformHierarchy;
+            if (ReferenceEquals(next, HierarchyStore)) return;
+            if (HierarchyStore is { } old)
             {
-                int version = Volatile.Read(ref _renderMatrixVersion);
-                if ((version & 1) != 0)
-                {
-                    spinWait.SpinOnce();
-                    continue;
-                }
-
-                Matrix4x4 matrix = _renderMatrix;
-                if (version == Volatile.Read(ref _renderMatrixVersion))
-                    return matrix;
-
-                spinWait.SpinOnce();
+                Volatile.Write(ref _localChanged, old.IsDirty(HierarchyHandle, 0));
+                Volatile.Write(ref _worldChanged, old.IsDirty(HierarchyHandle, 1));
+                _detachedMatrices = old.Detach(HierarchyHandle);
             }
+            HierarchyStore = null;
+            HierarchyHandle = default;
+            if (next is null) return;
+            var detached = _detachedMatrices!;
+            HierarchyHandle = next.Attach(this, detached.Local, detached.World, detached.Render);
+            HierarchyStore = next;
+            _detachedMatrices = null;
         }
 
-        /// <summary>
-        /// This transform's inverse render matrix.
-        /// Always computed and atomically published with <see cref="RenderMatrix"/>.
-        /// </summary>
-        [Browsable(false)]
-        [YamlIgnore]
-        public Matrix4x4 InverseRenderMatrix => ReadPublishedInverseRenderMatrix();
+        /// <summary>True for transforms that evaluate world space independently of ordinary parent composition.</summary>
+        protected virtual bool HasCustomWorldMatrix => false;
+        internal bool UsesCustomWorldMatrix => HasCustomWorldMatrix;
 
-        private Matrix4x4 ReadPublishedInverseRenderMatrix()
+        internal void DispatchMatrixNotifications(int mask)
         {
-            SpinWait spinWait = default;
-            while (true)
-            {
-                int version = Volatile.Read(ref _renderMatrixVersion);
-                if ((version & 1) != 0)
-                {
-                    spinWait.SpinOnce();
-                    continue;
-                }
-
-                Matrix4x4 matrix = _inverseRenderMatrix;
-                if (version == Volatile.Read(ref _renderMatrixVersion))
-                    return matrix;
-
-                spinWait.SpinOnce();
-            }
+            if ((mask & 1) != 0) OnLocalMatrixChanged(LocalMatrix);
+            if ((mask & 2) != 0 && _inverseLocalMatrixChanged is not null) OnInverseLocalMatrixChanged(InverseLocalMatrix);
+            if ((mask & 4) != 0) OnWorldMatrixChanged(WorldMatrix);
+            if ((mask & 8) != 0 && _inverseWorldMatrixChanged is not null) OnInverseWorldMatrixChanged(InverseWorldMatrix);
+            if ((mask & 16) != 0 && _renderMatrixChanged is not null) OnRenderMatrixChanged();
         }
 
-        #endregion
-
-        #region Local Matrix
-
-        private bool _localChanged = false;
-
-        /// <summary>
-        /// Returns true if the local matrix has been marked as dirty and needs recalculation.
-        /// </summary>
-        [Browsable(false)]
-        [YamlIgnore]
-        public bool IsLocalMatrixDirty => Volatile.Read(ref _localChanged);
-
-        private Matrix4x4 _localMatrix;
-        private readonly object _localMatrixLock = new();
-        private bool _localSnapshotEnabled;
-        private SpaceSnapshot _localSnapshot;
-
-        /// <summary>
-        /// This transform's local matrix relative to its parent.
-        /// Thread-safe via locking for atomic access.
-        /// </summary>
-        [Browsable(false)]
-        [YamlIgnore]
-        public Matrix4x4 LocalMatrix { get { lock (_localMatrixLock) return _localMatrix; } }
-
-        #endregion
-
-        #region World Matrix
-
-        private bool _worldChanged = false;
-
-        /// <summary>
-        /// Returns true if the world matrix has been marked as dirty and needs recalculation.
-        /// </summary>
-        [Browsable(false)]
-        [YamlIgnore]
-        public bool IsWorldMatrixDirty => Volatile.Read(ref _worldChanged);
-
-        private Matrix4x4 _worldMatrix;
-        private readonly object _worldMatrixLock = new();
-        private bool _worldSnapshotEnabled;
-        private SpaceSnapshot _worldSnapshot;
-
-        /// <summary>
-        /// This transform's world matrix relative to the root of the scene (all ancestor transforms accounted for).
-        /// Thread-safe via locking for atomic access.
-        /// </summary>
-        [Browsable(false)]
-        public Matrix4x4 WorldMatrix { get { lock (_worldMatrixLock) return _worldMatrix; } }
-
-        #endregion
-
-        #region Inverse Local Matrix
-
-        private Matrix4x4 _inverseLocalMatrix;
-        private readonly object _inverseLocalMatrixLock = new();
-
-        /// <summary>
-        /// The inverse of this transform's local matrix.
-        /// Thread-safe via locking for atomic access.
-        /// </summary>
-        [Browsable(false)]
-        [YamlIgnore]
-        public Matrix4x4 InverseLocalMatrix { get { lock (_inverseLocalMatrixLock) return _inverseLocalMatrix; } }
-
-        #endregion
-
-        #region Inverse World Matrix
-
-        private Matrix4x4 _inverseWorldMatrix;
-        private readonly object _inverseWorldMatrixLock = new();
-
-        /// <summary>
-        /// The inverse of this transform's world matrix.
-        /// Thread-safe via locking for atomic access.
-        /// </summary>
-        [Browsable(false)]
-        [YamlIgnore]
-        public Matrix4x4 InverseWorldMatrix { get { lock (_inverseWorldMatrixLock) return _inverseWorldMatrix; } }
+        private void NotifyMatrixChange(int mask)
+        {
+            if (IsDiagnosticEvaluationActive) return;
+            if (HierarchyStore?.DeferNotification(HierarchyHandle, mask) == true) return;
+            DispatchMatrixNotifications(mask);
+        }
 
         #endregion
 
@@ -820,10 +779,6 @@ namespace XREngine.Scene.Transforms
             _children.PostAnythingAdded += ChildAdded;
             _children.PostAnythingRemoved += ChildRemoved;
 
-            _localMatrix = Matrix4x4.Identity;
-            _worldMatrix = Matrix4x4.Identity;
-            _inverseLocalMatrix = Matrix4x4.Identity;
-            _inverseWorldMatrix = Matrix4x4.Identity;
 
             _debugHandle = RuntimeTransformServices.Current?.CreateDebugHandle(this, RenderDebug);
             DebugRender = RuntimeTransformServices.Current?.RenderTransformDebugInfo ?? false;
@@ -879,6 +834,10 @@ namespace XREngine.Scene.Transforms
                         child.Parent = this;
                 }
             }
+
+            // Authored transform setters ran without notifications. Cached matrices must
+            // be rebuilt from those values before hierarchy attachment or physics uses them.
+            MarkLocalModified(forceDefer: true);
         }
 
         #endregion
@@ -1008,7 +967,7 @@ namespace XREngine.Scene.Transforms
 
                     onApplied?.Invoke(this, newParent);
                     break;
-                    
+
                 case EParentAssignmentMode.Deferred:
                     _parentsToReassign.Enqueue(new ParentReassignRequest(this, newParent, preserveWorldTransform, onApplied));
                     break;
@@ -1111,10 +1070,10 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         public bool RecalculateMatrices(bool forceWorldRecalc = false, bool setRenderMatrixNow = false)
         {
-            bool worldChanged = Volatile.Read(ref _worldChanged);
+            bool worldChanged = IsWorldMatrixDirty;
             bool recalcWorld = worldChanged || forceWorldRecalc;
 
-            if (Volatile.Read(ref _localChanged))
+            if (IsLocalMatrixDirty)
                 RecalcLocal();
 
             if (recalcWorld)
@@ -1180,45 +1139,22 @@ namespace XREngine.Scene.Transforms
 
         public void RecalcLocal()
         {
-            Matrix4x4 localMatrix = CreateLocalMatrix();
-            UpdateLocalCache(localMatrix);
-            lock (_localMatrixLock)
-                _localMatrix = localMatrix;
-            RecalcLocalInv();
-            Volatile.Write(ref _localChanged, false);
-            OnLocalMatrixChanged(localMatrix);
+            WriteMatrix(0, CreateLocalMatrix());
+            SetMatrixDirty(0, false);
+            NotifyMatrixChange(1 | 2);
         }
 
         public void RecalcWorld()
         {
-            Matrix4x4 worldMatrix = CreateWorldMatrix();
-            UpdateWorldCache(worldMatrix);
-            lock (_worldMatrixLock)
-                _worldMatrix = worldMatrix;
-            RecalcWorldInv();
-            Volatile.Write(ref _worldChanged, false);
-            OnWorldMatrixChanged(worldMatrix);
+            WriteMatrix(1, HierarchyStore is { } store && !HasCustomWorldMatrix
+                ? store.ComposeWorld(HierarchyHandle) : CreateWorldMatrix());
+            SetMatrixDirty(1, false);
+            NotifyMatrixChange(4 | 8);
         }
 
-        internal void RecalcLocalInv()
-        {
-            if (!TryCreateInverseLocalMatrix(out Matrix4x4 inverted))
-                return;
+        internal void RecalcLocalInv() => NotifyMatrixChange(2);
 
-            lock (_inverseLocalMatrixLock)
-                _inverseLocalMatrix = inverted;
-            OnInverseLocalMatrixChanged(inverted);
-        }
-
-        internal void RecalcWorldInv()
-        {
-            if (!TryCreateInverseWorldMatrix(out Matrix4x4 inverted))
-                return;
-
-            lock (_inverseWorldMatrixLock)
-                _inverseWorldMatrix = inverted;
-            OnInverseWorldMatrixChanged(inverted);
-        }
+        internal void RecalcWorldInv() => NotifyMatrixChange(8);
 
         public Task SetRenderMatrix(Matrix4x4 matrix, bool recalcAllChildRenderMatrices = true)
         {
@@ -1239,7 +1175,7 @@ namespace XREngine.Scene.Transforms
         public void SetRenderMatrixImmediate(Matrix4x4 matrix)
         {
             PublishRenderState(matrix);
-            OnRenderMatrixChanged();
+            NotifyMatrixChange(16);
         }
 
         /// <summary>Publishes the render matrix and every descendant on the owning caller thread.</summary>
@@ -1265,46 +1201,11 @@ namespace XREngine.Scene.Transforms
             }
         }
 
-        private void PublishRenderState(Matrix4x4 matrix)
-        {
-            Matrix4x4 inverseRenderMatrix = Matrix4x4.Invert(matrix, out var inv) ? inv : Matrix4x4.Identity;
-            lock (_renderMatrixLock)
-            {
-                int writeVersion = Interlocked.Increment(ref _renderMatrixVersion);
-                try
-                {
-                    _renderMatrix = matrix;
-                    _inverseRenderMatrix = inverseRenderMatrix;
-                    if (_renderSnapshotEnabled)
-                        _renderSnapshot = ComputeSpaceSnapshot(matrix);
-                }
-                finally
-                {
-                    // Publish an even version only after the complete matrix pair is visible.
-                    Volatile.Write(ref _renderMatrixVersion, unchecked(writeVersion + 1));
-                }
-            }
-        }
+        private void PublishRenderState(Matrix4x4 matrix) => WriteMatrix(2, matrix);
 
-        private void UpdateLocalCache(Matrix4x4 matrix)
-        {
-            if (_localSnapshotEnabled)
-            {
-                var snap = ComputeSpaceSnapshot(matrix);
-                lock (_localMatrixLock)
-                    _localSnapshot = snap;
-            }
-        }
 
-        private void UpdateWorldCache(Matrix4x4 matrix)
-        {
-            if (_worldSnapshotEnabled)
-            {
-                var snap = ComputeSpaceSnapshot(matrix);
-                lock (_worldMatrixLock)
-                    _worldSnapshot = snap;
-            }
-        }
+
+
 
         #endregion
 
@@ -1352,8 +1253,8 @@ namespace XREngine.Scene.Transforms
         /// <summary>Restores dirty flags captured before temporary diagnostic evaluation.</summary>
         public void RestoreDiagnosticInvalidationState(TransformDiagnosticInvalidationState state)
         {
-            Volatile.Write(ref _localChanged, state.IsLocalMatrixDirty);
-            Volatile.Write(ref _worldChanged, state.IsWorldMatrixDirty);
+            SetMatrixDirty(0, state.IsLocalMatrixDirty);
+            SetMatrixDirty(1, state.IsWorldMatrixDirty);
             HasChanged = state.HasChanged;
         }
 
@@ -1392,7 +1293,7 @@ namespace XREngine.Scene.Transforms
 
         internal void EnqueueHierarchyRecalculation()
         {
-            Volatile.Write(ref _worldChanged, true);
+            SetMatrixDirty(1, true);
             ((RuntimeWorldObjectBase)this).World?.AddDirtyRuntimeObject(this);
             HasChanged = true;
         }
@@ -1408,13 +1309,14 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         protected void MarkLocalModified(bool forceDefer)
         {
+            if (!IsDiagnosticEvaluationActive) HierarchyStore?.RecordLocalInvalidation();
             if (ImmediateLocalMatrixRecalculation && !forceDefer)
             {
                 RecalcLocal();
-                Volatile.Write(ref _localChanged, false);
+                SetMatrixDirty(0, false);
             }
             else
-                Volatile.Write(ref _localChanged, true);
+                SetMatrixDirty(0, true);
 
             MarkWorldModified();
             HasChanged = true;
@@ -1427,7 +1329,7 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         protected void MarkWorldModified()
         {
-            Volatile.Write(ref _worldChanged, true);
+            SetMatrixDirty(1, true);
             if (_diagnosticEvaluationDepth == 0 && !ReferenceEquals(_hierarchyMutationTarget, this))
                 ((RuntimeWorldObjectBase)this).World?.AddDirtyRuntimeObject(this);
             HasChanged = true;
@@ -1496,44 +1398,54 @@ namespace XREngine.Scene.Transforms
         #region Matrix Event Handlers
 
         protected virtual void OnLocalMatrixChanged(Matrix4x4 localMatrix)
-            => LocalMatrixChanged?.Invoke(this, localMatrix);
-
-        protected virtual void OnWorldMatrixChanged(Matrix4x4 worldMatrix)
         {
-            ((RuntimeWorldObjectBase)this).World?.EnqueueRuntimeWorldMatrixChange(this, worldMatrix);
-            WorldMatrixChanged?.Invoke(this, worldMatrix);
-        }
-
-        internal bool ShouldEnqueueRenderMatrix(Matrix4x4 matrix)
-        {
-            lock (_renderMatrixEnqueueLock)
+            if (_localMatrixChanged is { } handlers)
             {
-                // Compare against the applied render matrix, not just the last queued one.
-                // The queued update can be dropped or deferred across engine phases; if that
-                // happens we still need to re-enqueue the same world matrix until render state
-                // actually catches up.
-                if (MatrixEqual(RenderMatrix, matrix))
-                {
-                    _lastEnqueuedRenderMatrix = matrix;
-                    return false;
-                }
-
-                _lastEnqueuedRenderMatrix = matrix;
-                return true;
+                HierarchyStore?.RecordEvent();
+                handlers(this, localMatrix);
             }
         }
 
+        protected virtual void OnWorldMatrixChanged(Matrix4x4 worldMatrix)
+        {
+            if (HierarchyStore is null)
+                ((RuntimeWorldObjectBase)this).World?.EnqueueRuntimeWorldMatrixChange(this, worldMatrix);
+            if (_worldMatrixChanged is { } handlers)
+            {
+                HierarchyStore?.RecordEvent();
+                handlers(this, worldMatrix);
+            }
+        }
+
+        internal bool ShouldEnqueueRenderMatrix(Matrix4x4 matrix) => !MatrixEqual(RenderMatrix, matrix);
+
         protected virtual void OnInverseLocalMatrixChanged(Matrix4x4 localInverseMatrix)
-            => InverseLocalMatrixChanged?.Invoke(this, localInverseMatrix);
+        {
+            if (_inverseLocalMatrixChanged is { } handlers)
+            {
+                HierarchyStore?.RecordEvent();
+                handlers(this, localInverseMatrix);
+            }
+        }
 
         protected virtual void OnInverseWorldMatrixChanged(Matrix4x4 worldInverseMatrix)
-            => InverseWorldMatrixChanged?.Invoke(this, worldInverseMatrix);
+        {
+            if (_inverseWorldMatrixChanged is { } handlers)
+            {
+                HierarchyStore?.RecordEvent();
+                handlers(this, worldInverseMatrix);
+            }
+        }
 
         protected virtual void OnRenderMatrixChanged()
         {
-            var handlers = RenderMatrixChanged;
+            var handlers = _renderMatrixChanged;
             RuntimeTransformServices.Current?.RecordRenderMatrixChange(handlers);
-            handlers?.Invoke(this, RenderMatrix);
+            if (handlers is not null)
+            {
+                HierarchyStore?.RecordEvent();
+                handlers(this, RenderMatrix);
+            }
         }
 
         private static bool MatrixEqual(in Matrix4x4 a, in Matrix4x4 b)
@@ -1584,12 +1496,18 @@ namespace XREngine.Scene.Transforms
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
+            if (propName is nameof(Parent) or nameof(World))
+                HierarchyStore?.RejectHierarchyMutationDuringEvaluation();
             bool change = base.OnPropertyChanging(propName, field, @new);
             if (change)
             {
                 switch (propName)
                 {
                     case nameof(Parent):
+                        if (@new is TransformBase candidate)
+                            for (TransformBase? ancestor = candidate; ancestor is not null; ancestor = ancestor.Parent)
+                                if (ReferenceEquals(ancestor, this))
+                                    throw new InvalidOperationException("A transform cannot be parented beneath itself.");
                         _parent?._children.Remove(this);
                         break;
                     case nameof(Children):
@@ -1619,11 +1537,12 @@ namespace XREngine.Scene.Transforms
                     {
                         Depth = _parent.Depth + 1;
                         _parent._children.Add(this);
-                        World ??= _parent.World;
+                        if (_parent.World is not null) World = _parent.World;
                     }
                     else
                         Depth = 0;
                     SceneNode?.World = World;
+                    HierarchyStore?.HierarchyChanged();
                     MarkWorldModified();
                     break;
                 case nameof(SceneNode):
@@ -1632,6 +1551,7 @@ namespace XREngine.Scene.Transforms
                         World = w;
                     break;
                 case nameof(World):
+                    UpdateHierarchyStore();
                     _debugHandle?.UpdateWorld(World);
                     MarkWorldModified();
                     if (SceneNode is not null)
@@ -1697,11 +1617,11 @@ namespace XREngine.Scene.Transforms
             _debugHandle?.Dispose();
 
             //Clear event handlers to prevent memory leaks
-            LocalMatrixChanged = null;
-            InverseLocalMatrixChanged = null;
-            WorldMatrixChanged = null;
-            InverseWorldMatrixChanged = null;
-            RenderMatrixChanged = null;
+            _localMatrixChanged = null;
+            _inverseLocalMatrixChanged = null;
+            _worldMatrixChanged = null;
+            _inverseWorldMatrixChanged = null;
+            _renderMatrixChanged = null;
 
             base.OnDestroying();
         }
@@ -2018,8 +1938,6 @@ namespace XREngine.Scene.Transforms
 
         #region Render Matrix Enqueue Tracking
 
-        private readonly object _renderMatrixEnqueueLock = new();
-        private Matrix4x4 _lastEnqueuedRenderMatrix;
 
         #endregion
 

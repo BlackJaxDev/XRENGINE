@@ -24,7 +24,6 @@ namespace XREngine.Rendering.Occlusion
             int inspected = 0;
             bool wroteCoverage = false;
             int vertexCount = mesh.VertexCount;
-            Vertex[] vertices = mesh.Vertices;
             for (int i = 0; i < triangles.Count && inspected < triangleBudget; i++)
             {
                 if (workBudget.IsExhausted)
@@ -38,9 +37,9 @@ namespace XREngine.Rendering.Occlusion
                 if ((uint)i0 >= (uint)vertexCount || (uint)i1 >= (uint)vertexCount || (uint)i2 >= (uint)vertexCount)
                     continue;
 
-                Vector3 p0 = vertices.Length > i0 ? vertices[i0].Position : mesh.GetPosition((uint)i0);
-                Vector3 p1 = vertices.Length > i1 ? vertices[i1].Position : mesh.GetPosition((uint)i1);
-                Vector3 p2 = vertices.Length > i2 ? vertices[i2].Position : mesh.GetPosition((uint)i2);
+                Vector3 p0 = mesh.GetPosition((uint)i0);
+                Vector3 p1 = mesh.GetPosition((uint)i1);
+                Vector3 p2 = mesh.GetPosition((uint)i2);
 
                 wroteCoverage |= RasterizeTriangle(buffer, p0, p1, p2, modelViewProjection, renderOptions, workBudget);
             }

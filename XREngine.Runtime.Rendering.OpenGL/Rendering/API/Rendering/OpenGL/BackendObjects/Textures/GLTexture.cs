@@ -439,6 +439,10 @@ namespace XREngine.Rendering.OpenGL
         protected virtual bool IsReadyForBindlessHandle()
             => true;
 
+        /// <summary>Derived textures can retain native work after their manager request is canceled.</summary>
+        protected virtual bool HasInFlightNativeOperation
+            => false;
+
         private void MarkBindlessParametersDirty(string reason)
         {
             if (Interlocked.Exchange(ref _bindlessParametersDirty, 1) != 0)
@@ -467,7 +471,7 @@ namespace XREngine.Rendering.OpenGL
             // A sampler-pair handle retains this native texture identity until the
             // owning submission fence signals. Recreating it before then would make
             // the still-referenced bindless handle point at deleted storage.
-            if (Volatile.Read(ref _activeAdvancedBindlessPairHandleCount) != 0)
+            if (Volatile.Read(ref _activeAdvancedBindlessPairHandleCount) != 0 || HasInFlightNativeOperation)
                 return;
 
             if (!RuntimeEngine.IsRenderThread)
@@ -500,6 +504,8 @@ namespace XREngine.Rendering.OpenGL
         {
             if (Volatile.Read(ref _activeAdvancedBindlessPairHandleCount) != 0)
                 throw new InvalidOperationException("Cannot delete an OpenGL texture while advanced bindless sampler-pair leases are active.");
+            if (HasInFlightNativeOperation)
+                throw new InvalidOperationException("Cannot delete an OpenGL texture while native upload work is active.");
 
             ulong handle = _bindlessHandle;
             _bindlessHandle = 0ul;

@@ -7,8 +7,9 @@
     {
         public event DelSendAxisValue? ListExecuted;
 
-        protected List<DelAxisValue> _continuousUpdate = [];
-        protected List<DelAxisValue> _deltaUpdate = [];
+        private readonly object _axisSubscriptionsSync = new();
+        private DelAxisValue[] _continuousUpdate = [];
+        private DelAxisValue[] _deltaUpdate = [];
         
         private float _value = 0.0f;
         public float Value => Math.Abs(_value) > DeadZoneThreshold ? _value : 0.0f;
@@ -18,29 +19,44 @@
         public float UpdateThreshold { get; set; } = 0.0001f;
 
         #region Registration
-        public override bool IsEmpty() => base.IsEmpty() && _continuousUpdate.Count == 0 && _deltaUpdate.Count == 0;
+        public override bool IsEmpty() => base.IsEmpty()
+            && Volatile.Read(ref _continuousUpdate).Length == 0
+            && Volatile.Read(ref _deltaUpdate).Length == 0;
         public void RegisterAxis(DelAxisValue func, bool continuousUpdate, bool unregister)
         {
-            if (unregister)
+            lock (_axisSubscriptionsSync)
             {
-                if (continuousUpdate)
-                    _continuousUpdate.Remove(func);
+                DelAxisValue[] current = continuousUpdate ? _continuousUpdate : _deltaUpdate;
+                DelAxisValue[] next;
+                if (unregister)
+                {
+                    int index = Array.IndexOf(current, func);
+                    if (index < 0)
+                        return;
+                    next = new DelAxisValue[current.Length - 1];
+                    Array.Copy(current, 0, next, 0, index);
+                    Array.Copy(current, index + 1, next, index, current.Length - index - 1);
+                }
                 else
-                    _deltaUpdate.Remove(func);
-            }
-            else
-            {
+                {
+                    next = new DelAxisValue[current.Length + 1];
+                    Array.Copy(current, next, current.Length);
+                    next[current.Length] = func;
+                }
                 if (continuousUpdate)
-                    _continuousUpdate.Add(func);
+                    Volatile.Write(ref _continuousUpdate, next);
                 else
-                    _deltaUpdate.Add(func);
+                    Volatile.Write(ref _deltaUpdate, next);
             }
         }
         public override void UnregisterAll()
         {
             base.UnregisterAll();
-            _continuousUpdate.Clear();
-            _deltaUpdate.Clear();
+            lock (_axisSubscriptionsSync)
+            {
+                Volatile.Write(ref _continuousUpdate, []);
+                Volatile.Write(ref _deltaUpdate, []);
+            }
         }
         #endregion
 
@@ -67,10 +83,12 @@
 
         private void ExecuteList(bool continuous, float value)
         {
-            List<DelAxisValue> list = continuous ? _continuousUpdate : _deltaUpdate;
+            DelAxisValue[] list = continuous
+                ? Volatile.Read(ref _continuousUpdate)
+                : Volatile.Read(ref _deltaUpdate);
             ListExecuted?.Invoke(Index, continuous, value);
             foreach (DelAxisValue v in list)
-                v?.Invoke(value);
+                v.Invoke(value);
         }
         #endregion
 

@@ -506,6 +506,7 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
             Host = endpoint.Host,
             Port = endpoint.Port,
             ProtocolVersion = endpoint.ProtocolVersion,
+            WireProtocolVersion = endpoint.WireProtocolVersion,
             Metadata = CloneDictionary(endpoint.Metadata),
         };
 

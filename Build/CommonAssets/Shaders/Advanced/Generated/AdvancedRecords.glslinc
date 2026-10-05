@@ -1,0 +1,455 @@
+#ifndef XR_ADVANCED_GENERATED_RECORDS_GLSLINC
+#define XR_ADVANCED_GENERATED_RECORDS_GLSLINC
+
+// Generated from the C# GPU records. Regenerate with GpuRecordIncludeGenerator.
+
+struct ActiveBlendshape
+{
+    uint ShapeIndex;
+    float Weight;
+};
+
+struct BlendshapeRange
+{
+    uint RecordOffset;
+    uint RecordCount;
+    uint AttributeFlags;
+    uint Reserved;
+};
+
+struct BlendshapeRecord
+{
+    uint VertexIndex;
+    uint PositionDelta;
+    uint NormalDelta;
+    uint TangentDelta;
+};
+
+struct XRAdvancedGpuHandle
+{
+    uint index;
+    uint generation;
+};
+
+struct XRAdvancedTextureReference
+{
+    XRAdvancedGpuHandle handle;
+    uint fallback;
+    uint reserved;
+};
+
+struct XRAdvancedDecalRecord
+{
+    XRAdvancedGpuHandle identity;
+    XRAdvancedGpuHandle material;
+    uint flags;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    uint layerMask;
+    mat4 worldToDecal;
+    mat4 previousWorldToDecal;
+    vec4 halfExtentsAndFade;
+    XRAdvancedTextureReference maskTexture;
+};
+
+struct XRAdvancedEncodedSamplerReference
+{
+    uint payload0;
+    uint payload1;
+    uint payload2;
+    uint flags;
+};
+
+struct XRAdvancedEncodedTextureReference
+{
+    uint payload0;
+    uint payload1;
+    uint payload2;
+    uint flags;
+};
+
+struct XRAdvancedEnvironmentRecord
+{
+    uint stableEnvironmentId;
+    uint generation;
+    uint flags;
+    uint priority;
+    XRAdvancedTextureReference environment;
+    XRAdvancedTextureReference irradiance;
+    XRAdvancedTextureReference prefilteredRadiance;
+    XRAdvancedTextureReference brdfLut;
+    vec4 rotationAndExposure;
+    vec4 ambientColorAndIntensity;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    uint reserved0;
+    uint reserved1;
+};
+
+struct XRAdvancedGiResourceRecord
+{
+    uint stableResourceId;
+    uint generation;
+    uint type;
+    uint flags;
+    XRAdvancedTextureReference primaryTexture;
+    XRAdvancedTextureReference secondaryTexture;
+    XRAdvancedTextureReference tertiaryTexture;
+    mat4 worldToGrid;
+    vec4 gridOriginAndSpacing;
+    vec4 gridDimensionsAndMipCount;
+    vec4 params0;
+    vec4 params1;
+    uint bufferResourceOffset;
+    uint bufferResourceCount;
+    uint viewMaskLo;
+    uint viewMaskHi;
+};
+
+struct XRAdvancedLightRecord
+{
+    uint stableLightId;
+    uint generation;
+    uint type;
+    uint flags;
+    vec4 positionAndRadius;
+    vec4 directionAndOuterCone;
+    vec4 colorAndIntensity;
+    vec4 shapeAndInnerCone;
+    XRAdvancedTextureReference cookieTexture;
+    XRAdvancedGpuHandle shadowRecord;
+    uint layerMask;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
+};
+
+struct XRAdvancedMaterialLayoutRecord
+{
+    uint stableLayoutId;
+    uint generation;
+    uvec2 layoutHash;
+    uint memberOffset;
+    uint memberCount;
+    uint constantWordCount;
+    uint textureReferenceCount;
+    uint requiredAttributeMask;
+    uint flags;
+    uint reserved0;
+    uint reserved1;
+};
+
+struct XRAdvancedMaterialRecord
+{
+    uint stableRowId;
+    uint generation;
+    uint shadingKernelId;
+    uint shadingKernelGeneration;
+    uvec2 materialLayoutHash;
+    uint renderStateClass;
+    uint coverageMode;
+    uint requiredAttributeMask;
+    uint textureReferenceOffset;
+    uint textureReferenceCount;
+    uint constantWordOffset;
+    uint constantWordCount;
+    uint featureFlags;
+    uint eligibilityFlags;
+    uint sourceContract;
+};
+
+struct XRAdvancedSamplerReference
+{
+    XRAdvancedGpuHandle handle;
+    uint fallback;
+    uint reserved;
+};
+
+struct XRAdvancedMaterialTextureBinding
+{
+    XRAdvancedTextureReference textureReference;
+    XRAdvancedSamplerReference samplerReference;
+};
+
+struct XRAdvancedProbeRecord
+{
+    uint stableProbeId;
+    uint generation;
+    uint type;
+    uint flags;
+    vec4 positionAndRadius;
+    vec4 influenceInner;
+    vec4 influenceOuter;
+    vec4 influenceOffsetAndShape;
+    vec4 proxyCenterAndEnable;
+    vec4 proxyHalfExtents;
+    vec4 proxyRotation;
+    XRAdvancedTextureReference irradiance;
+    XRAdvancedTextureReference prefilteredRadiance;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    uint priority;
+    uint reserved;
+};
+
+struct XRAdvancedSamplerRecord
+{
+    uint stableSamplerId;
+    uint generation;
+    uint filterMode;
+    uint flags;
+    uint addressU;
+    uint addressV;
+    uint addressW;
+    uint compareOperation;
+    vec4 lodBiasMinMaxAnisotropy;
+    vec4 borderColor;
+};
+
+struct XRAdvancedShadingKernelRecord
+{
+    uint stableKernelId;
+    uint generation;
+    uvec2 materialLayoutHash;
+    uint requiredAttributeMask;
+    uint supportedCoverageMask;
+    uint supportedEligibility;
+    uint supportedFeatures;
+    uvec2 shaderIdentityHash;
+    uint renderStateClassMask;
+    uint flags;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
+    uint reserved3;
+};
+
+struct XRAdvancedShadowRecord
+{
+    uint stableShadowId;
+    uint generation;
+    uint type;
+    uint flags;
+    XRAdvancedTextureReference textureReference;
+    mat4 worldToShadow;
+    mat4 previousWorldToShadow;
+    vec4 uvScaleBias;
+    vec4 depthBiasAndFilter;
+    uint textureLayer;
+    uint encoding;
+    uint cascadeOffset;
+    uint cascadeCount;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    uint lastRenderedFrameLo;
+    uint lastRenderedFrameHi;
+    vec4 momentParameters;
+    vec4 depthRangeAndCascade;
+    vec4 renderedLightPositionAndFar;
+};
+
+struct SkinInfluence
+{
+    uint Bone0;
+    uint Bone1;
+    uint Bone2;
+    uint Bone3;
+    vec4 Weights;
+    uint SpillOffset;
+    uint SpillCount;
+    uint Reserved0;
+    uint Reserved1;
+};
+
+struct SpillInfluence
+{
+    uint Bone;
+    float Weight;
+};
+
+struct XRAdvancedTextureRecord
+{
+    uint stableTextureId;
+    uint generation;
+    uint dimension;
+    uint flags;
+    uint width;
+    uint height;
+    uint depthOrLayers;
+    uint mipCount;
+    uint formatClass;
+    uint encodedReferenceIndex;
+    XRAdvancedGpuHandle defaultSampler;
+    vec4 uvScaleBias;
+};
+
+struct XRAdvancedViewRecord
+{
+    mat4 view;
+    mat4 projectionJittered;
+    mat4 projectionUnjittered;
+    mat4 viewProjectionJittered;
+    mat4 viewProjectionUnjittered;
+    mat4 previousView;
+    mat4 previousProjectionJittered;
+    mat4 previousProjectionUnjittered;
+    mat4 previousViewProjectionJittered;
+    mat4 previousViewProjectionUnjittered;
+    mat4 inverseViewProjectionJittered;
+    mat4 inverseViewProjectionUnjittered;
+    vec4 cameraPositionAndNear;
+    vec4 cameraForwardAndFar;
+    vec4 renderSizeAndInverse;
+    vec4 outputSizeAndInverse;
+    vec4 currentAndPreviousJitter;
+    vec4 depthParams;
+    uint viewId;
+    uint outputLayer;
+    uint flags;
+    uint historyKeyLo;
+    uint historyKeyHi;
+    uint viewGeneration;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    vec4 foveationCenterAndBias;
+    vec4 foveationRadii;
+    uint sourceCameraIdentityLo;
+    uint sourceCameraIdentityHi;
+    uint sourceCameraIdentityPadding0;
+    uint sourceCameraIdentityPadding1;
+};
+
+struct XRAdvancedBufferReference
+{
+    XRAdvancedGpuHandle bufferHandle;
+    uvec2 byteOffset;
+    uint elementOffset;
+    uint elementCount;
+    uint elementStride;
+    uint flags;
+};
+
+struct XRAdvancedDeformationRecord
+{
+    XRAdvancedGpuHandle sourceGeometry;
+    XRAdvancedGpuHandle currentGeometry;
+    XRAdvancedGpuHandle previousGeometry;
+    XRAdvancedGpuHandle animation;
+    uint currentFrameSlot;
+    uint previousFrameSlot;
+    uint vertexCount;
+    uint flags;
+};
+
+struct XRAdvancedDrawRecord
+{
+    XRAdvancedGpuHandle instance;
+    XRAdvancedGpuHandle geometry;
+    XRAdvancedGpuHandle material;
+    XRAdvancedGpuHandle deformation;
+    XRAdvancedGpuHandle renderState;
+    XRAdvancedGpuHandle editorIdentity;
+    XRAdvancedGpuHandle currentTransform;
+    XRAdvancedGpuHandle previousTransform;
+    uint primitiveSection;
+    uint flags;
+    uint reserved0;
+    uint reserved1;
+};
+
+struct XRAdvancedEditorIdentityRecord
+{
+    uvec2 stableInstanceId;
+    uvec2 identityLow;
+    uvec2 identityHigh;
+    uint selectionId;
+    uint flags;
+};
+
+struct XRAdvancedGeometryRecord
+{
+    XRAdvancedBufferReference currentVertexData;
+    XRAdvancedBufferReference previousVertexData;
+    XRAdvancedBufferReference indexData;
+    XRAdvancedBufferReference meshletDescriptors;
+    XRAdvancedBufferReference meshletVertexIndices;
+    XRAdvancedBufferReference meshletTriangleWords;
+    XRAdvancedGpuHandle fallbackGeometry;
+    uint vertexBase;
+    uint vertexCount;
+    uint indexBase;
+    uint indexCount;
+    uint meshletFirst;
+    uint meshletCount;
+    uvec2 vertexLayoutId;
+    uint reservedLayout0;
+    uint reservedLayout1;
+    vec4 boundsSphere;
+    vec4 boundsMin;
+    vec4 boundsMax;
+    uint materialSectionFirst;
+    uint materialSectionCount;
+    int primitiveTopology;
+    uint source;
+    uint residency;
+    uint missingBehavior;
+    uint cookedLayoutVersion;
+    uint flags;
+};
+
+struct XRAdvancedGpuHandleLookup
+{
+    uint generation;
+    uint denseIndex;
+};
+
+struct XRAdvancedGpuHandleRemap
+{
+    XRAdvancedGpuHandle handle;
+    uint previousDenseIndex;
+    uint currentDenseIndex;
+};
+
+struct XRAdvancedInstanceRecord
+{
+    mat4 currentWorld;
+    mat4 previousWorld;
+    vec4 boundsSphere;
+    vec4 boundsMin;
+    vec4 boundsMax;
+    XRAdvancedGpuHandle animation;
+    XRAdvancedGpuHandle deformation;
+    uint visibilityFlags;
+    uint lodLevel;
+    uint layerMask;
+    uint renderPassMask;
+    uint currentFrameSlot;
+    uint previousFrameSlot;
+    uint reserved0;
+    uint reserved1;
+};
+
+struct XRAdvancedRenderStateRecord
+{
+    uint stateClass;
+    uint primitiveTopology;
+    uint coverageMode;
+    uint cullMode;
+    uint depthMode;
+    uint blendMode;
+    uint colorWriteMask;
+    uint flags;
+};
+
+struct XRAdvancedTransformRecord
+{
+    mat4 world;
+    uint frameSlot;
+    uint flags;
+    uint reserved0;
+    uint reserved1;
+};
+
+#endif

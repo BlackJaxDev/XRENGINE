@@ -383,8 +383,21 @@ namespace XREngine.Rendering.OpenGL
                             : StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - _uberLinkStartTimestamp);
                         if (linked)
                         {
+                            ulong completedHash = Hash;
                             if (!AdoptLinkedBuildProgram(linkedProgramId))
+                            {
+                                ReleaseCompletedCompilationClaim(completedHash, linkedProgramId);
+                                if (_asyncAttachedShaderIds is not null)
+                                {
+                                    DetachShaders(linkedProgramId, _asyncAttachedShaderIds);
+                                    _asyncAttachedShaderIds = null;
+                                }
+                                _asyncLinkedProgramId = 0;
+                                _shaderCache.ForEach(x => x.Value.Destroy());
+                                _asyncLinkPhase = EAsyncLinkPhase.Idle;
+                                ResetUberBackendTracking();
                                 return IsLinked;
+                            }
                             IsLinked = true;
                             long reflectionStart = Stopwatch.GetTimestamp();
                             CacheActiveUniforms();

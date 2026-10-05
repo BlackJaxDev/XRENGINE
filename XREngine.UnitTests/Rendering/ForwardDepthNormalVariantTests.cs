@@ -203,7 +203,8 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
         variant.ShouldNotBeNull();
         string variantText = variant.Source.Text ?? throw new InvalidOperationException("Variant shader source text was null.");
         variantText.ShouldContain("#define XRENGINE_SHADOW_CASTER_PASS");
-        variantText.ShouldContain("float alphaMask = texture(Texture1, FragUV0).r;");
+        variantText.ShouldContain("float alphaMask = texColor.a * texture(Texture1, FragUV0).r;");
+        variantText.ShouldContain("if (alphaMask < AlphaCutoff)");
         variantText.ShouldNotContain("#define XRENGINE_FORWARD_WEIGHTED_OIT");
         variantText.ShouldNotContain("#define XRENGINE_FORWARD_PPLL");
         variantText.ShouldNotContain("#define XRENGINE_FORWARD_DEPTH_PEEL");

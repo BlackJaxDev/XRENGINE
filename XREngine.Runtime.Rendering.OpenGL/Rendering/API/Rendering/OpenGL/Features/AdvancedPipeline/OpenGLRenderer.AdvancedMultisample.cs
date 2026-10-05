@@ -36,18 +36,19 @@ public partial class OpenGLRenderer
         if (_advancedMsaaResolveProgram is null)
         {
             XRShader fragmentTemplate = ShaderHelper.LoadEngineShader("Advanced/Visibility/ResolveAdvancedMsaaVisibility.frag", EShaderType.Fragment);
-            XRShader fragment = new(EShaderType.Fragment, new TextFile(fragmentTemplate.Source.FilePath ?? "Advanced/Visibility/ResolveAdvancedMsaaVisibility.frag")
-            {
-                Text = InjectAdvancedPreamble(ResolveAdvancedShaderSource(fragmentTemplate),
-                    AdvancedShaderAccessLibrary.BuildPreamble(RuntimeGraphicsApiKind.OpenGL, mode)),
-            });
+            string preamble = AdvancedShaderAccessLibrary.BuildPreamble(RuntimeGraphicsApiKind.OpenGL, mode);
+            XRShader fragment = CreateAdvancedSourceShader(
+                fragmentTemplate,
+                EShaderType.Fragment,
+                source => InjectAdvancedPreamble(source, preamble));
             XRShader vertex = new(EShaderType.Vertex, new TextFile
             {
                 Text = "#version 450 core\nvoid main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);gl_Position=vec4(p*2.0-1.0,0.0,1.0);}",
             });
             _advancedMsaaResolveProgram = new XRRenderProgram(true, false, vertex, fragment) { Name = "Advanced.Visibility.MultisampleResolve" };
         }
-        bool ready = IsLinked(_advancedMsaaShadeProgram) && IsLinked(_advancedMsaaLateProgram) && IsLinked(_advancedMsaaResolveProgram);
+        // Non-short-circuit: each poll advances only its own program's build.
+        bool ready = IsLinked(_advancedMsaaShadeProgram) & IsLinked(_advancedMsaaLateProgram) & IsLinked(_advancedMsaaResolveProgram);
         reason = ready ? "Ready" : "Advanced MSAA programs are compiling or failed to link.";
         return ready;
     }

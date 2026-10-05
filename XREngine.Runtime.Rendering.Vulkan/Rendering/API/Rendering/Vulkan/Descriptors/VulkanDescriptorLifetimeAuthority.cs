@@ -2149,7 +2149,8 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
                 if (!setUseCompleted && !bindingSupportsUpdateAfterBind)
                 {
                     throw new InvalidOperationException(
-                        $"Cannot update in-flight Vulkan descriptor set {setKey}; binding={write.DstBinding} type={write.DescriptorType} was not registered for update-after-bind.");
+                        $"Cannot update in-flight Vulkan descriptor set {setKey}; binding={write.DstBinding} type={write.DescriptorType} was not registered for update-after-bind." +
+                        DescribeDescriptorCompletionNoLock(tracker, setResource));
                 }
 
                 for (uint descriptorIndex = 0; descriptorIndex < write.DescriptorCount; descriptorIndex++)
@@ -2434,7 +2435,8 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             if (!setUseCompleted && !usesUpdateAfterBind)
             {
                 failureReason =
-                    $"Cannot update in-flight Vulkan descriptor set {setKey}; binding={write.DstBinding} type={write.DescriptorType} was not registered for update-after-bind.";
+                    $"Cannot update in-flight Vulkan descriptor set {setKey}; binding={write.DstBinding} type={write.DescriptorType} was not registered for update-after-bind." +
+                    DescribeDescriptorCompletionNoLock(tracker, setResource);
                 return false;
             }
 

@@ -130,7 +130,15 @@ public readonly record struct MeshLodGenerationSettingsSnapshot(
 public sealed class MeshletPayload
 {
     private static long s_nextValidationRevision;
-    public const int CurrentPayloadVersion = 3;
+    /// <summary>
+    /// Version 4 omits the per-vertex <see cref="MeshletVertex"/> stream that
+    /// version 3 stored: rendering reads the mesh's own vertex buffers, so the
+    /// stream was a second full copy of every vertex. Version 3 payloads are
+    /// read by skipping that stream; nothing else differs.
+    /// </summary>
+    public const int CurrentPayloadVersion = 4;
+    /// <summary>The last version that stored a per-vertex stream.</summary>
+    public const int LastPayloadVersionWithVertexStream = 3;
     public const uint PortableMaxVertices = 64u;
     public const uint PortableMaxTriangles = 124u;
 
@@ -160,7 +168,6 @@ public sealed class MeshletPayload
     public ImmutableArray<CpuMeshletDescriptor> Meshlets { get; init; } = [];
     public ImmutableArray<uint> VertexIndices { get; init; } = [];
     public ImmutableArray<byte> TriangleIndices { get; init; } = [];
-    public ImmutableArray<MeshletVertex> Vertices { get; init; } = [];
     public MeshOptimizerMeshletStats Stats { get; init; }
 
     public bool HasMeshlets => State == MeshletPayloadState.Present && Meshlets.Length > 0;
@@ -197,9 +204,6 @@ public sealed class MeshletPayload
         if (ValidationRevision == 0)
             ValidationRevision = Interlocked.Increment(ref s_nextValidationRevision);
     }
-
-    private static bool IsFinite(Vector4 value)
-        => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z) && float.IsFinite(value.W);
 
     /// <summary>Validates all portable CPU payload ranges before persistence or GPU registration.</summary>
     public void ValidatePortablePayload()
@@ -285,14 +289,6 @@ public sealed class MeshletPayload
             ulong requiredByteCount = (last.TriangleOffset + ((ulong)last.TriangleCount * 3UL) + 3UL) & ~3UL;
             if (requiredByteCount != (ulong)TriangleIndices.Length)
                 throw new InvalidDataException("The meshlet local-triangle stream does not preserve its required terminal padding.");
-        }
-
-        for (int vertexIndex = 0; vertexIndex < Vertices.Length; vertexIndex++)
-        {
-            MeshletVertex vertex = Vertices[vertexIndex];
-            if (!IsFinite(vertex.Position) || !IsFinite(vertex.Normal) || !IsFinite(vertex.Tangent)
-                || !float.IsFinite(vertex.TexCoord.X) || !float.IsFinite(vertex.TexCoord.Y))
-                throw new InvalidDataException($"Meshlet vertex {vertexIndex} contains non-finite data.");
         }
 
     }
@@ -403,7 +399,8 @@ public sealed class MeshletPayload
 
 public static class MeshletPayloadUtility
 {
-    private static readonly ulong s_runtimeCompatibilityToken = CreateRuntimeCompatibilityToken();
+    private static readonly ulong s_runtimeCompatibilityToken = CreateRuntimeCompatibilityToken(MeshletPayload.CurrentPayloadVersion);
+    private static readonly ulong s_legacyVertexStreamRuntimeCompatibilityToken = CreateRuntimeCompatibilityToken(MeshletPayload.LastPayloadVersionWithVertexStream);
     private const int SourceMeshHashVersion = 3;
     private const int MeshletSettingsHashVersion = 1;
     private const int LodSettingsHashVersion = 1;
@@ -461,12 +458,17 @@ public static class MeshletPayloadUtility
         for (int i = 0; i < indices.Length; i++)
             AppendInt32(hash, indices[i]);
 
+        // Skinning presence is read from the packed influence buffers, the
+        // mesh's only copy of its weights.
+        bool skinned = XRMeshSkinningInfluenceReader.TryCreate(mesh, out XRMeshSkinningInfluenceReader skinning);
+        Span<int> influenceBones = stackalloc int[1];
+        Span<float> influenceWeights = stackalloc float[1];
         for (int i = 0; i < mesh.VertexCount; i++)
         {
             AppendVector3(hash, mesh.GetPosition((uint)i));
             AppendVector3(hash, mesh.GetNormal((uint)i));
             AppendVector4(hash, mesh.GetTangentWithSign((uint)i));
-            AppendBoolean(hash, mesh.Vertices.Length > i && mesh.Vertices[i].Weights is { Count: > 0 });
+            AppendBoolean(hash, skinned && skinning.ReadInfluences(i, influenceBones, influenceWeights) > 0);
             for (uint texCoord = 0; texCoord < mesh.TexCoordCount; texCoord++)
                 AppendVector2(hash, mesh.GetTexCoord((uint)i, texCoord));
             for (uint color = 0; color < mesh.ColorCount; color++)
@@ -539,10 +541,14 @@ public static class MeshletPayloadUtility
     public static ulong ComputeRuntimeCompatibilityToken(MeshletGenerationSettingsSnapshot settings)
         => s_runtimeCompatibilityToken;
 
-    private static ulong CreateRuntimeCompatibilityToken()
+    /// <summary>Checks the exact portable layout token before removing the legacy vertex stream.</summary>
+    internal static bool IsLegacyVertexStreamRuntimeCompatible(ulong token)
+        => token == s_legacyVertexStreamRuntimeCompatibilityToken;
+
+    private static ulong CreateRuntimeCompatibilityToken(int payloadVersion)
     {
         XxHash64 hash = new();
-        AppendInt32(hash, MeshletPayload.CurrentPayloadVersion);
+        AppendInt32(hash, payloadVersion);
         AppendInt32(hash, 1); // portable descriptor layout
         AppendInt32(hash, 1); // local-triangle byte packing
         AppendInt32(hash, 1); // uint32 vertex-reference stream encoding

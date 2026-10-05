@@ -213,6 +213,10 @@ companions) to inspect its native HDR/depth resources. It cannot be combined
 with a camera, VR, or non-default window/viewport selector.
 `list_render_pipeline_resources` and `get_advanced_profile_diagnostics` accept
 the same owner selector, including minimal depth/visibility profiles.
+`get_advanced_profile_diagnostics` also reports `directionalShadowLane`: the
+hand-off counters between the shadow atlas and the Advanced directional shadow
+raster stage (deferred, accepted, rejected, unconsumed and generic cascade
+groups, whether the stage reported itself ready, and the last decline reason).
 
 `clear_render_pipeline_cache` rebuilds resources for one selected viewport's
 pipeline instance. Select it with `camera_node_id`, `vr_eye`, or window/viewport
@@ -324,6 +328,15 @@ and elapsed nanoseconds. Count each completed sequence once and reject samples
 whose source frame precedes the workload change. The legacy
 `gpu_command_buffer_ms` scalar alone does not identify the measured frame.
 
+For frame-rate measurements, count fresh scene frames with
+`get_render_profiler_stats.vulkan.frame_lifecycle.outcome_counts`. These are
+cumulative per-outcome counts of published Vulkan frame roots (`completed`,
+`deferred`, `skipped`, `rejected`, `failed`) plus the command-record stage
+outcome counts. A rejected frame can still present by replaying the last
+complete scene, so `render_frame_number` deltas and presentation counters
+overstate the rendered rate whenever frames are rejected. Divide the
+`completed` delta by the window length instead.
+
 `get_render_profiler_stats.vulkan.frame_lifecycle.detail` separates
 `wait_current_frame_slot_ms` from `wait_next_frame_slot_before_collect_ms`.
 Their sum remains `wait_frame_slot_ms`. The latter next-slot wait gates snapshot
@@ -410,7 +423,20 @@ worker preparation and retained ownership separately from queued transfers and
 descriptor publication. These are backend-wide counters, not an atomic frame
 sample. Use repeated observations and completed uploads to establish progress.
 
+## RenderBench Profiling
+
+For windowless Vulkan component profiling, start a named RenderBench MCP
+session with `Tools/Manage-McpRenderBenchSession.ps1 Start -Name <name>`, then
+use `list_render_profile_targets`, `load_render_profile_recipe`,
+`prepare_render_profile`, `wait_render_profile_ready`, `arm_render_profile`,
+and `start_render_profile`. Read the terminal result with
+`get_render_profile_result` and stop the named session with the manager.
+The listener pauses during measured capture. Direct Quick, Compare, and Gate
+commands and the diagnostic recipe choices are in the
+[profiler guide](../../developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench).
+
 ## Safety Notes
+
 
 - Use read-only mode for inspection-only sessions.
 - Require auth when exposing the server beyond trusted local processes.

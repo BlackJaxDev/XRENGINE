@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.IO.Hashing;
@@ -26,6 +27,10 @@ internal static partial class UberShaderVariantBuilder
 
     private static readonly ConcurrentDictionary<UberVariantCacheKey, string> GeneratedSourceCache = new();
     private static readonly ConcurrentDictionary<UberVariantCacheKey, XRShader> GeneratedShaderCache = new();
+    // The canonical shader each generated variant was built from, so a material
+    // holding only the variant (after a Play snapshot restore) recovers its
+    // canonical shader without reading UberShader.frag from disk again.
+    private static readonly ConditionalWeakTable<XRShader, XRShader> CanonicalShaderByVariant = new();
     private static readonly ConcurrentDictionary<SourceResolveCacheKey, Lazy<ResolvedUberShaderSource>> ResolvedSourceCache = new();
     private static readonly ConcurrentDictionary<VertexPermutationCacheKey, ulong> VertexPermutationHashCache = new();
     private static readonly ConcurrentDictionary<string, long> LastKnownSourceVersionsByPath = new(StringComparer.Ordinal);
@@ -364,13 +369,59 @@ internal static partial class UberShaderVariantBuilder
         text.FilePath = canonicalShader.Source?.FilePath ?? canonicalShader.FilePath;
         text.Name = canonicalShader.Source?.Name ?? canonicalShader.Name;
 
-        return new XRShader(canonicalShader.Type, text)
+        XRShader variant = new(canonicalShader.Type, text)
         {
             Name = canonicalShader.Name,
             GenerateAsync = canonicalShader.GenerateAsync,
             IsGeneratedUberVariant = true,
             GeneratedUberVariantHash = variantHash,
         };
+        CanonicalShaderByVariant.AddOrUpdate(variant, canonicalShader);
+        return variant;
+    }
+
+    /// <summary>
+    /// The canonical shader <paramref name="variant"/> was generated from, if it is
+    /// a live cached variant.
+    /// </summary>
+    internal static bool TryGetCanonicalShader(XRShader variant, [NotNullWhen(true)] out XRShader? canonical)
+        => CanonicalShaderByVariant.TryGetValue(variant, out canonical) && !canonical.IsDestroyed;
+
+    /// <summary>
+    /// Finds the live cached variant whose type, source path and generated text
+    /// equal <paramref name="copy"/>'s, such as a variant a Play snapshot restore
+    /// deserialized from its inlined text. Sharing the cached instance keeps
+    /// restored materials on one shader and program instead of one copy of the
+    /// ~450K-character source per material per round trip. Cold path: scans the
+    /// cache, comparing lengths before text.
+    /// </summary>
+    internal static bool TryGetCachedVariant(XRShader copy, [NotNullWhen(true)] out XRShader? live)
+    {
+        live = null;
+        if (!IsGeneratedVariant(copy) || copy.Source?.Text is not { Length: > 0 } text)
+            return false;
+
+        string? path = copy.Source.FilePath;
+        foreach (KeyValuePair<UberVariantCacheKey, XRShader> entry in GeneratedShaderCache)
+        {
+            XRShader candidate = entry.Value;
+            if (ReferenceEquals(candidate, copy) ||
+                candidate.IsDestroyed ||
+                candidate.Type != copy.Type ||
+                (copy.GeneratedUberVariantHash != 0UL && entry.Key.VariantHash != copy.GeneratedUberVariantHash) ||
+                candidate.Source?.Text is not { } candidateText ||
+                candidateText.Length != text.Length ||
+                !string.Equals(candidate.Source.FilePath, path, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(candidateText, text, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            live = candidate;
+            return true;
+        }
+
+        return false;
     }
 
     private static string? ResolveShaderSourcePathOrName(XRShader shader)

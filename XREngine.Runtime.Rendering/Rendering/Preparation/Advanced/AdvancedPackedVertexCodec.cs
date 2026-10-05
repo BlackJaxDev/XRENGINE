@@ -32,6 +32,47 @@ public static partial class AdvancedPackedVertexCodec
             vertex.TextureCoordinateSets is { Count: > 1 });
     }
 
+    /// <summary>
+    /// Packs one vertex directly from the mesh's attribute buffers (separate or
+    /// interleaved). Absent attributes take the same defaults as an authored
+    /// vertex without them: +Y normal, +X tangent with a positive bitangent
+    /// sign, zero texture coordinates and white colors.
+    /// </summary>
+    public static AdvancedDeformedVertex Pack(
+        XRMesh mesh,
+        uint vertexIndex,
+        uint sourceVertex)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        Vector3 normal = mesh.HasNormals ? mesh.GetNormal(vertexIndex) : Vector3.UnitY;
+        Vector4 tangent = mesh.HasTangents
+            ? mesh.GetTangentWithSign(vertexIndex)
+            : new Vector4(Vector3.UnitX, 1.0f);
+        uint texCoordCount = mesh.TexCoordCount;
+        uint colorCount = mesh.ColorCount;
+        return Pack(
+            mesh.GetPosition(vertexIndex),
+            normal,
+            new Vector3(tangent.X, tangent.Y, tangent.Z),
+            tangent.W,
+            texCoordCount > 0u ? mesh.GetTexCoord(vertexIndex, 0u) : Vector2.Zero,
+            texCoordCount > 1u ? mesh.GetTexCoord(vertexIndex, 1u) : Vector2.Zero,
+            colorCount > 0u ? mesh.GetColor(vertexIndex, 0u) : Vector4.One,
+            colorCount > 1u ? mesh.GetColor(vertexIndex, 1u) : Vector4.One,
+            sourceVertex,
+            texCoordCount > 1u);
+    }
+
+    /// <summary>
+    /// True when the mesh's vertex attributes have client-side data covering
+    /// every vertex, so <see cref="Pack(XRMesh, uint, uint)"/> can read them.
+    /// </summary>
+    public static bool HasReadableAttributes(XRMesh mesh)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        return CanReadMesh(mesh);
+    }
+
     public static AdvancedDeformedVertex Pack(
         Vector3 position,
         Vector3 normal,

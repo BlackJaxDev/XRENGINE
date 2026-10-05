@@ -57,6 +57,26 @@ namespace XREngine.Animation
         private bool _syncInOutValues = true;
         private bool _syncInOutTangentDirections = true;
         private bool _syncInOutTangentMagnitudes = true;
+
+        /// <summary>Restores authored handles before enabling synchronization, which must not reshape them.</summary>
+        internal void RestorePublishedHandles(
+            T inValue, T outValue, T inTangent, T outTangent,
+            EVectorInterpType interpolationIn, EVectorInterpType interpolationOut,
+            bool syncValues, bool syncDirections, bool syncMagnitudes)
+        {
+            SetField(ref _syncInOutValues, false);
+            SetField(ref _syncInOutTangentDirections, false);
+            SetField(ref _syncInOutTangentMagnitudes, false);
+            InValue = inValue;
+            OutValue = outValue;
+            InTangent = inTangent;
+            OutTangent = outTangent;
+            InterpolationTypeIn = interpolationIn;
+            InterpolationTypeOut = interpolationOut;
+            SetField(ref _syncInOutValues, syncValues);
+            SetField(ref _syncInOutTangentDirections, syncDirections);
+            SetField(ref _syncInOutTangentMagnitudes, syncMagnitudes);
+        }
         private bool _synchronizing = false;
 
         public bool SyncInOutValues

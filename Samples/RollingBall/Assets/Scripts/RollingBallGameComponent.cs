@@ -66,6 +66,7 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
     private bool? _pendingBallSimulationEnabled;
     private bool _possessionReadyRecorded;
     private bool _physicsRuntimeReadyRecorded;
+    private bool _pendingNativeInitialization;
     private RollingBallRoundState _state = RollingBallRoundState.Playing;
     private RollingBallRoundState _stateBeforePause = RollingBallRoundState.Playing;
     private RollingBallRoundState _lastHudState = RollingBallRoundState.Playing;
@@ -228,11 +229,8 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
         base.OnBeginPlay();
         ResolveSceneReferences();
         SubscribeToDiagnosticPhysicsSteps();
-        _physicsRuntimeReadyRecorded = RecordPhysicsRuntimeState();
+        _pendingNativeInitialization = true;
         RecordDirectionalShadowRuntimeState("resolved");
-        RollingBallRuntimeDiagnostics.RecordEvent(
-            "game-scene-references-resolved",
-            $"courseActor={_courseBody!.RigidBody is not null} ballActor={_ballBody!.RigidBody is not null}");
         _pawn!.PossessByLocalPlayer(ELocalPlayerIndex.One);
         RollingBallRuntimeDiagnostics.RecordEvent("game-pawn-possession-requested");
         RecordPossessionState();
@@ -303,16 +301,6 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
         _directionalLight = root.FindFirstDescendantComponent<DirectionalLightComponent>()
             ?? throw new InvalidOperationException(
                 $"Rolling Ball world has no authored {nameof(DirectionalLightComponent)}.");
-        if (_courseBody.RigidBody is null)
-            throw new InvalidOperationException(
-                "RollingBall's cooked course body did not create a native rigid body. " +
-                "Verify cooked component activation and the active physics backend.");
-        if (_ballBody.RigidBody is null)
-            throw new InvalidOperationException(
-                "RollingBall's cooked ball body did not create a native rigid body. " +
-                "Verify cooked component activation and the active physics backend.");
-        _stageRotation = Quaternion.Normalize(_courseBody.RigidBody.Transform.rotation);
-
         _desktopCamera = cameraNode.GetComponent<CameraComponent>()
             ?? throw new InvalidOperationException(
                 $"Rolling Ball camera node '{DesktopCameraNodeName}' has no {nameof(CameraComponent)}.");
@@ -573,6 +561,25 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
 
     private void PrePhysicsTick()
     {
+        if (_pendingNativeInitialization)
+        {
+            IAbstractDynamicRigidBody initialCourseActor = _courseBody?.RigidBody
+                ?? throw new InvalidOperationException(
+                    "RollingBall's cooked course body did not create a native rigid body. " +
+                    "Verify cooked component activation and the active physics backend.");
+            if (_ballBody?.RigidBody is null)
+                throw new InvalidOperationException(
+                    "RollingBall's cooked ball body did not create a native rigid body. " +
+                    "Verify cooked component activation and the active physics backend.");
+
+            _stageRotation = Quaternion.Normalize(initialCourseActor.Transform.rotation);
+            _physicsRuntimeReadyRecorded = RecordPhysicsRuntimeState();
+            RollingBallRuntimeDiagnostics.RecordEvent(
+                "game-scene-references-resolved",
+                "courseActor=True ballActor=True");
+            _pendingNativeInitialization = false;
+        }
+
         TryApplyPendingBallSimulationState();
         TryApplyPendingBallReset();
 

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Threading;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
@@ -748,7 +749,23 @@ internal sealed partial class VulkanCommandRuntime
         FrameTelemetry._vulkanGpuProfilerNextQuery = 0;
         FrameTelemetry._vulkanGpuProfilerBudgetWarningIssued = false;
         if (FrameTelemetry._vulkanGpuProfilerPendingScopes is { } scopes && (uint)frameSlot < (uint)scopes.Length)
+        {
+            if (FrameTelemetry._vulkanGpuProfilerQueryReady is { } pending && pending[frameSlot])
+            {
+                if (FrameTelemetry._vulkanGpuProfilerQueryPools is { } completedPools &&
+                    (uint)frameSlot < (uint)completedPools.Length && completedPools[frameSlot].Handle != 0)
+                    _resourceRuntime.NotifyResourceUseCompleted(ObjectType.QueryPool, completedPools[frameSlot].Handle);
+                Interlocked.Add(ref FrameTelemetry._vulkanGpuProfilerAbandonedQueries,
+                    FrameTelemetry._vulkanGpuProfilerPendingQueryCounts?[frameSlot] ?? 0);
+                Debug.VulkanWarningEvery(
+                    "Vulkan.GpuProfiler.AbandonedQueries",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Dense GPU profiler discarded {0} unavailable queries at mandatory frame-slot reset; cumulative abandoned={1}.",
+                    FrameTelemetry._vulkanGpuProfilerPendingQueryCounts?[frameSlot] ?? 0,
+                    FrameTelemetry._vulkanGpuProfilerAbandonedQueries);
+            }
             scopes[frameSlot].Clear();
+        }
         if (FrameTelemetry._vulkanGpuProfilerPendingQueryCounts is { } counts && (uint)frameSlot < (uint)counts.Length)
             counts[frameSlot] = 0;
         if (FrameTelemetry._vulkanGpuProfilerSubmittedFrameIds is { } frameIds && (uint)frameSlot < (uint)frameIds.Length)

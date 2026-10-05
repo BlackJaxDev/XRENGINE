@@ -2,11 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using System.Reflection;
 using MemoryPack;
 using XREngine.Animation;
 using XREngine.Core.Files;
-using XREngine.Data.Core;
 using XREngine.Serialization;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
@@ -76,16 +74,19 @@ public sealed class AnimStateMachineYamlTypeConverter : IYamlTypeConverter
 
 internal static class AnimStateMachineSerialization
 {
-    private static readonly PropertyInfo? XRObjectIdProperty = typeof(XRObjectBase)
-        .GetProperty(nameof(XRObjectBase.ID), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
     public static AnimStateMachineSerializedModel CreateModel(AnimStateMachine stateMachine)
+        => CreateModel(stateMachine, published: false);
+
+    public static AnimStateMachineSerializedModel CreatePublishedModel(AnimStateMachine stateMachine)
+        => CreateModel(stateMachine, published: true);
+
+    private static AnimStateMachineSerializedModel CreateModel(AnimStateMachine stateMachine, bool published)
     {
         ArgumentNullException.ThrowIfNull(stateMachine);
 
         List<AnimLayerSerializedModel> layers = new(stateMachine.Layers.Count);
         foreach (AnimLayer layer in stateMachine.Layers)
-            layers.Add(CreateModel(layer));
+            layers.Add(CreateModel(layer, published));
 
         List<AnimVarSerializedModel> variables = new(stateMachine.Variables.Count);
         foreach (KeyValuePair<string, AnimVar> kvp in stateMachine.Variables)
@@ -105,6 +106,12 @@ internal static class AnimStateMachineSerialization
     }
 
     public static void ApplyModel(AnimStateMachine stateMachine, AnimStateMachineSerializedModel? model)
+        => ApplyModel(stateMachine, model, published: false);
+
+    public static void ApplyPublishedModel(AnimStateMachine stateMachine, AnimStateMachineSerializedModel? model)
+        => ApplyModel(stateMachine, model, published: true);
+
+    private static void ApplyModel(AnimStateMachine stateMachine, AnimStateMachineSerializedModel? model, bool published)
     {
         ArgumentNullException.ThrowIfNull(stateMachine);
 
@@ -136,12 +143,12 @@ internal static class AnimStateMachineSerialization
         if (model.Layers is not null)
         {
             foreach (AnimLayerSerializedModel layerModel in model.Layers)
-                layers.Add(CreateRuntimeLayer(layerModel));
+                layers.Add(CreateRuntimeLayer(layerModel, published));
         }
         stateMachine.Layers = [.. layers];
     }
 
-    private static AnimLayerSerializedModel CreateModel(AnimLayer layer)
+    private static AnimLayerSerializedModel CreateModel(AnimLayer layer, bool published)
     {
         Dictionary<AnimState, int> stateIndices = new(ReferenceEqualityComparer.Instance);
         for (int i = 0; i < layer.States.Count; i++)
@@ -149,7 +156,7 @@ internal static class AnimStateMachineSerialization
 
         List<AnimStateSerializedModel> states = new(layer.States.Count);
         for (int i = 0; i < layer.States.Count; i++)
-            states.Add(CreateModel(layer.States[i], stateIndices));
+            states.Add(CreateModel(layer.States[i], stateIndices, published));
 
         return new AnimLayerSerializedModel
         {
@@ -157,12 +164,12 @@ internal static class AnimStateMachineSerialization
             Weight = layer.Weight,
             InitialStateIndex = layer.InitialStateIndex,
             AnyStatePosition = layer.AnyState.Position,
-            AnyStateTransitions = CreateTransitionModels(layer.AnyState.Transitions, stateIndices),
+            AnyStateTransitions = CreateTransitionModels(layer.AnyState.Transitions, stateIndices, published),
             States = states
         };
     }
 
-    private static AnimStateSerializedModel CreateModel(AnimState state, Dictionary<AnimState, int> stateIndices)
+    private static AnimStateSerializedModel CreateModel(AnimState state, Dictionary<AnimState, int> stateIndices, bool published)
     {
         List<AnimStateComponentSerializedModel> components = new(state.Components.Count);
         foreach (AnimStateComponent component in state.Components)
@@ -172,16 +179,16 @@ internal static class AnimStateMachineSerialization
         {
             Name = state.Name,
             Position = state.Position,
-            Motion = MotionSerialization.CreateModel(state.Motion),
+            Motion = published ? MotionSerialization.CreatePublishedModel(state.Motion) : MotionSerialization.CreateModel(state.Motion),
             MotionOccurrenceId = state.MotionOccurrenceId,
             StartSecond = state.StartSecond,
             EndSecond = state.EndSecond,
             Components = components,
-            Transitions = CreateTransitionModels(state.Transitions, stateIndices)
+            Transitions = CreateTransitionModels(state.Transitions, stateIndices, published)
         };
     }
 
-    private static List<AnimStateTransitionSerializedModel> CreateTransitionModels(IEnumerable<AnimStateTransition> transitions, Dictionary<AnimState, int> stateIndices)
+    private static List<AnimStateTransitionSerializedModel> CreateTransitionModels(IEnumerable<AnimStateTransition> transitions, Dictionary<AnimState, int> stateIndices, bool published)
     {
         List<AnimStateTransitionSerializedModel> models = [];
         foreach (AnimStateTransition transition in transitions)
@@ -195,7 +202,9 @@ internal static class AnimStateMachineSerialization
                 Conditions = [.. transition.Conditions],
                 BlendDuration = transition.BlendDuration,
                 BlendType = transition.BlendType,
-                CustomBlendFunction = AnimationPropertySerialization.CreateModel(transition.CustomBlendFunction),
+                CustomBlendFunction = published
+                    ? PublishedAnimationPropertyCodec.CreateModel(transition.CustomBlendFunction, $"transition.{transition.Name}.blend")
+                    : AnimationPropertySerialization.CreateModel(transition.CustomBlendFunction),
                 Priority = transition.Priority,
                 Name = transition.Name,
                 ExitTime = transition.ExitTime,
@@ -271,7 +280,7 @@ internal static class AnimStateMachineSerialization
             _ => throw new NotSupportedException($"Unsupported animation variable type '{variable.GetType().FullName}'.")
         };
 
-    private static AnimLayer CreateRuntimeLayer(AnimLayerSerializedModel model)
+    private static AnimLayer CreateRuntimeLayer(AnimLayerSerializedModel model, bool published)
     {
         AnimLayer layer = new()
         {
@@ -289,7 +298,9 @@ internal static class AnimStateMachineSerialization
                 {
                     Name = stateModel.Name ?? string.Empty,
                     Position = stateModel.Position,
-                    Motion = MotionSerialization.CreateRuntimeMotion(stateModel.Motion),
+                    Motion = published
+                        ? MotionSerialization.CreatePublishedRuntimeMotion(stateModel.Motion)
+                        : MotionSerialization.CreateRuntimeMotion(stateModel.Motion),
                     MotionOccurrenceId = stateModel.MotionOccurrenceId ?? Guid.NewGuid(),
                     StartSecond = stateModel.StartSecond,
                     EndSecond = stateModel.EndSecond,
@@ -305,14 +316,14 @@ internal static class AnimStateMachineSerialization
         if (model.States is not null)
         {
             for (int i = 0; i < model.States.Count && i < states.Count; i++)
-                states[i].Transitions = [.. CreateRuntimeTransitions(model.States[i].Transitions, states)];
+                states[i].Transitions = [.. CreateRuntimeTransitions(model.States[i].Transitions, states, published)];
         }
 
-        layer.AnyState.Transitions = [.. CreateRuntimeTransitions(model.AnyStateTransitions, states)];
+        layer.AnyState.Transitions = [.. CreateRuntimeTransitions(model.AnyStateTransitions, states, published)];
         return layer;
     }
 
-    private static List<AnimStateTransition> CreateRuntimeTransitions(List<AnimStateTransitionSerializedModel>? models, List<AnimState> states)
+    private static List<AnimStateTransition> CreateRuntimeTransitions(List<AnimStateTransitionSerializedModel>? models, List<AnimState> states, bool published)
     {
         List<AnimStateTransition> transitions = new(models?.Count ?? 0);
         if (models is null)
@@ -329,7 +340,9 @@ internal static class AnimStateMachineSerialization
                 Conditions = model.Conditions is null ? [] : [.. model.Conditions],
                 BlendDuration = model.BlendDuration,
                 BlendType = model.BlendType,
-                CustomBlendFunction = AnimationPropertySerialization.CreateRuntimeAnimation(model.CustomBlendFunction) as PropAnimFloat,
+                CustomBlendFunction = (published
+                    ? PublishedAnimationPropertyCodec.CreateRuntimeAnimation(model.CustomBlendFunction, $"transition.{model.Name}.blend")
+                    : AnimationPropertySerialization.CreateRuntimeAnimation(model.CustomBlendFunction)) as PropAnimFloat,
                 Priority = model.Priority,
                 Name = model.Name ?? string.Empty,
                 ExitTime = model.ExitTime,
@@ -404,10 +417,10 @@ internal static class AnimStateMachineSerialization
 
     private static void SetAssetId(AnimStateMachine stateMachine, Guid id)
     {
-        if (id == Guid.Empty || XRObjectIdProperty?.SetMethod is null)
+        if (id == Guid.Empty)
             return;
 
-        XRObjectIdProperty.SetValue(stateMachine, id);
+        stateMachine.AdoptPersistentID(id);
     }
 }
 

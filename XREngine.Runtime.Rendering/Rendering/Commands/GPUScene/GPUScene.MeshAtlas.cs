@@ -41,6 +41,7 @@ namespace XREngine.Rendering.Commands
         private const uint MinLodTableEntries = 16;
         private const uint MinLodRequestEntries = 16;
 
+        [XREngine.Rendering.Shaders.GpuRecord("LODTableEntry", "GPUScene")]
         [StructLayout(LayoutKind.Sequential)]
         public struct LODTableEntry
         {
@@ -78,6 +79,7 @@ namespace XREngine.Rendering.Commands
                 };
         }
 
+        [XREngine.Rendering.Shaders.GpuRecord("GpuMeshletRange", "GPUScene")]
         [StructLayout(LayoutKind.Sequential)]
         public struct GpuMeshletRange
         {
@@ -91,6 +93,7 @@ namespace XREngine.Rendering.Commands
             public readonly bool RequiresTraditionalIndirectFallback => MeshletCount == 0u;
         }
 
+        [XREngine.Rendering.Shaders.GpuRecord("GpuMeshletDescriptor", "GPUScene")]
         [StructLayout(LayoutKind.Sequential)]
         public struct GpuMeshletDescriptor
         {

@@ -80,6 +80,11 @@ internal sealed partial class VulkanCommandRuntime
             ResourceRuntime.EnterReadOnlyStorageRecordingScope(input.ReadOnlyStorageAuthority);
         if (!TryValidatePreparedPrimaryInput(in input, out string reason))
             return VulkanPrimaryCommandRecordingResult.ReplanRequired(reason);
+        // Selected query pools belong to one diagnostic session. Publishing their commands
+        // into a cached owner could replay those commands after that session has disposed them.
+        if (VulkanSelectedGpuPassContext.Current is not null &&
+            (input.Policy.AllowsArtifactReuse || ResolvePreparedPrimaryOwner(input.PrimaryCommandBuffer) is not null))
+            throw new NotSupportedException("Selected GPU pass capture requires a dedicated uncached primary command buffer.");
         if (!input.FramePlan.HasAnyExecutableOutput)
         {
             // Recovery records a new, one-time overlay primary for the acquired

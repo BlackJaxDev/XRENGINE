@@ -1,16 +1,5 @@
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
-[Flags]
-public enum EOpenXrSmokeTemporalResetReason
-{
-    None = 0,
-    ProfileChanged = 1 << 0,
-    CameraCut = 1 << 1,
-    MissingCamera = 1 << 2,
-    MissingSnapshot = 1 << 3,
-    ExplicitReset = 1 << 4,
-}
-
 /// <summary>
 /// Allocation-free render-path evidence for one eye's temporal state at the
 /// point where the frame's color/depth/TSR histories are committed.

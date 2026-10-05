@@ -46,6 +46,11 @@ namespace XREngine.Rendering.Vulkan
 
                 BeginFrameTimingQueries(recordingState.CommandBuffer, recordingState.TimingQuerySlot);
                 BeginVulkanGpuProfilerQueries(recordingState.CommandBuffer, recordingState.TimingQuerySlot);
+                recordingState.SelectedGpuPassStartQuery = -1;
+                VulkanSelectedGpuPassContext.Current?.BeginFrame(
+                    recordingState.CommandBuffer,
+                    unchecked((uint)recordingState.TimingQuerySlot),
+                    recordingState.FramePlan?.RenderFrameId ?? 0UL);
 
                 recordingState.RecordingScratch.PreparedInlineQueries.Clear();
                 recordingState.RecordingScratch.BegunInlineQueries.Clear();

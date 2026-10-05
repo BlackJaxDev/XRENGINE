@@ -34,6 +34,16 @@ maximum when tail-following is active. Newly appended blocks fade in. Theme sele
 is stored in the shared UI settings as system, light, or dark; system mode
 resolves the Windows app theme.
 
+The history window uses fixed-height title and metadata rows so a large
+objective cannot push the conversation viewport outside the window. The title
+is a single-line summary; the complete prompt remains in the WebView2 document
+and raw view. Prompt and system sections are independently collapsible. A new
+selection initially collapses context longer than 4,000 characters or 24 lines,
+and streaming updates preserve the reader's expanded/collapsed choice. The
+preview owns the visible vertical scrollbar; wide code and tables scroll
+horizontally inside their own blocks. Its scroll anchor uses only response
+blocks that actually intersect the viewport.
+
 `BrokerConversationView` maps only the bundled `Preview/` directory to a private
 virtual HTTPS host. It sends snapshots with `PostWebMessageAsJson`, never script
 interpolation. The page uses markdown-it with raw HTML disabled and custom math
@@ -207,7 +217,7 @@ Broker server version `0.5.0` retains requested Responses controls in both
 `RequestedTextVerbosity`, and `MaxOutputTokens`. `text_verbosity` accepts
 `low`, `medium`, or `high` and defaults to `medium`. The broker serializes it
 as `text: { verbosity: ... }`; reasoning effort remains separately serialized
-as `reasoning: { effort: ... }` for the exact selected GPT-5.6 worker model.
+as `reasoning: { effort: ... }` for the exact selected worker model.
 Positive `max_output_tokens` values remain hard combined visible-output and
 reasoning-token limits and are never raised automatically. Zero or omission
 disables the broker limit and omits `max_output_tokens` from the provider
@@ -257,7 +267,13 @@ semantics. Caller cancellation, model/provider output limits, rate limits, and
 other bounded tool/run controls remain in force.
 
 The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`,
-`gpt-5.6-sol`, `gpt-6-luna`, `gpt-6-sol`, and `gpt-6-astra`.
+`gpt-5.6-sol`, `gpt-6-luna`, `gpt-6-sol`, `gpt-6.1-sol`, and `gpt-6-astra`.
+Explicit independent `gpt-6.1-sol` runs accept `low`, `medium`, `high`,
+`xhigh`, and `max` reasoning effort; `none` and `minimal` are rejected before
+provider execution. See the official
+[GPT-6.1 Sol model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
+Automatic route advice still selects `gpt-6-sol` for ordinary work, and
+hierarchical swarms still require exact `gpt-6-luna` at `max`.
 Route advice implements the repository policy but has no launch
 side effect. Both the requested and provider-reported model must match the same
 exact ID; aliases and dated snapshot suffixes are terminal substitution failures
@@ -460,6 +476,16 @@ state. Process-level bounds come from:
 - `XRE_LOCAL_AGENT_BROKER_RETENTION_MINUTES`
 - `XRE_LOCAL_AGENT_BROKER_TRACE`
 
+`XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY` defaults to 4 and accepts 1–100. Its
+semaphore is local to one registry/process and gates independent provider runs
+plus active swarm phases. Admitted independent runs above the executing limit
+remain queued. `XRE_LOCAL_AGENT_BROKER_MAX_RUNS` accepts 4–256 and defaults to
+`Math.Max(32, MaximumConcurrentRuns)`; an explicit value below configured
+concurrency is rejected before server startup. This keeps the configured
+provider concurrency reachable without increasing the ordinary default.
+Terminal records can be evicted for admission; queued/running records cannot.
+These process bounds do not alter per-run tool concurrency or swarm budgets.
+
 Optional editor bearer authentication is read from the environment variable
 named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`. The normal named-session
 workflow uses loopback and no bearer token.
@@ -472,6 +498,12 @@ They cover streaming reconstruction, malformed/provider events, `store: false`
 continuation replay, exact model selection and substitution, mutation
 read-back, duplicate call IDs, cancellation, MCP error preservation, session
 identity, route advice, and reader/writer leases.
+
+`BrokerConfigurationTests` checks concurrency/capacity boundaries and their
+relationship. `BrokerConcurrencyTests` holds scripted HTTP responses open to
+confirm 100 independent runs enter together, the next run is rejected at full
+admission capacity, and overflow queued runs cancel without provider execution.
+No API requests or editor processes are used by those tests.
 
 The broker's non-paid protocol validation must also confirm that
 `editor_session` is optional and that `context_files`, `repository_access`, and

@@ -7,6 +7,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Stable decal transform and material reference.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedDecalRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedDecalRecord
 {

@@ -248,8 +248,12 @@ namespace XREngine.Rendering.Commands
         public bool TryPrepareResources(GPUScene scene, bool allowAsyncBackendCompile = true)
         {
             PreRenderInitialize(scene);
+            if (!allowAsyncBackendCompile && !_initialized && _lastPreparationFailure is { } failure)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
             return _initialized && TryPrepareGpuPrograms(allowAsyncBackendCompile);
         }
+
+        private Exception? _lastPreparationFailure;
 
         private bool TryPrepareGpuPrograms(bool allowAsyncBackendCompile = true)
         {
@@ -300,9 +304,11 @@ namespace XREngine.Rendering.Commands
                     else
                         Initialize(scene, max);
                 }
+                SetField(ref _lastPreparationFailure, null, nameof(_lastPreparationFailure));
             }
             catch (Exception ex)
             {
+                SetField(ref _lastPreparationFailure, ex, nameof(_lastPreparationFailure));
                 Debug.MeshesWarning($"{FormatDebugPrefix("Lifecycle")} Failed to initialize GPURenderPassCollection: {ex}");
                 _initialized = false;
                 Dbg("Initialization failed","Lifecycle");

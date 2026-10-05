@@ -81,6 +81,7 @@ public unsafe partial class OpenXRAPI
     private int _openXrPredictedViewCount;
     private int _openXrLateViewCount;
     private int _openXrPredictedViewFrameNumber;
+    private long _openXrPredictedViewSampleTime;
     private int _openXrLateViewFrameNumber;
     private View[]? _lastValidViews;
     private int _hasLastValidViews;
@@ -93,8 +94,12 @@ public unsafe partial class OpenXRAPI
     private int _openXrLatestViewTrackingValid;
     private FrameState _frameState;
     private System.Action? _deferredOpenGlInit;
+    private readonly object _deferredOpenGlSessionCreationLock = new();
+    // -1 polls events, 0 is idle, 1 is queued, and 2 builds the deferred session.
+    // Polling cannot consume Ready until session creation publishes its complete state.
+    private int _deferredOpenGlSessionCreationPending;
 
-    private bool _sessionBegun;
+    private volatile bool _sessionBegun;
 
     #endregion
 
@@ -117,6 +122,7 @@ public unsafe partial class OpenXRAPI
     private Matrix4x4 _openXrPredLeftEyeLocalPose = Matrix4x4.Identity;
     private Matrix4x4 _openXrPredRightEyeLocalPose = Matrix4x4.Identity;
     private Matrix4x4 _openXrPredHeadLocalPose = Matrix4x4.Identity;
+    private bool _openXrPredHeadTrackingValid;
     private (float Left, float Right, float Up, float Down) _openXrPredLeftEyeFov;
     private (float Left, float Right, float Up, float Down) _openXrPredRightEyeFov;
 
@@ -124,6 +130,7 @@ public unsafe partial class OpenXRAPI
     private Matrix4x4 _openXrLateLeftEyeLocalPose = Matrix4x4.Identity;
     private Matrix4x4 _openXrLateRightEyeLocalPose = Matrix4x4.Identity;
     private Matrix4x4 _openXrLateHeadLocalPose = Matrix4x4.Identity;
+    private bool _openXrLateHeadTrackingValid;
     private (float Left, float Right, float Up, float Down) _openXrLateLeftEyeFov;
     private (float Left, float Right, float Up, float Down) _openXrLateRightEyeFov;
 
@@ -147,6 +154,20 @@ public unsafe partial class OpenXRAPI
     private int _openXrPredRightControllerValid;
     private int _openXrLateLeftControllerValid;
     private int _openXrLateRightControllerValid;
+    private int _openXrPredInputFrameNumber;
+    private long _openXrPredInputSampleTime;
+    private long _openXrPredInputPublicationTimestamp;
+    private int _openXrLateInputFrameNumber;
+
+    private static readonly long MaxPosePublicationAgeTicks = Stopwatch.Frequency / 4;
+
+    // Called with _openXrPoseLock held. A stopped render loop must not leave a valid calibration sample behind.
+    private bool IsRecentPosePublicationLocked()
+    {
+        long published = _openXrPredInputPublicationTimestamp;
+        long age = Stopwatch.GetTimestamp() - published;
+        return _sessionBegun && published > 0 && age >= 0 && age <= MaxPosePublicationAgeTicks;
+    }
 
     // Tracker poses keyed by OpenXR user path string (e.g. /user/vive_tracker_htcx/role/waist).
     private readonly System.Collections.Generic.Dictionary<string, Matrix4x4> _openXrPredTrackerLocalPose = new(StringComparer.Ordinal);
@@ -164,8 +185,14 @@ public unsafe partial class OpenXRAPI
     public bool TryGetHeadLocalPose(OpenXrPoseTiming timing, out Matrix4x4 localPose)
     {
         lock (_openXrPoseLock)
-            localPose = timing == OpenXrPoseTiming.Late ? _openXrLateHeadLocalPose : _openXrPredHeadLocalPose;
-        return true;
+        {
+            localPose = timing == OpenXrPoseTiming.Late ? _openXrLateHeadLocalPose : _openXrPublishedTrackingSnapshot.HeadPose;
+            return IsRecentPosePublicationLocked() && (timing == OpenXrPoseTiming.Late
+                ? _openXrLateHeadValid && _openXrLateHeadTrackingValid &&
+                  _openXrLateViewFrameNumber == _openXrPendingFrameNumber && IsTrackingSampleFresh(_openXrLateActionSampleTimestamp)
+                : _openXrPredHeadValid && _openXrPredHeadTrackingValid && _openXrPublishedTrackingSnapshot.HeadValid &&
+                  _openXrPredictedViewFrameNumber == _openXrPendingFrameNumber && IsTrackingSampleFresh(_openXrTrackingPublicationTimestamp));
+        }
     }
 
     /// <summary>
@@ -209,9 +236,9 @@ public unsafe partial class OpenXRAPI
 
     public bool TryGetControllerLocalPose(bool leftHand, OpenXrPoseTiming timing, out Matrix4x4 localPose)
     {
-        int valid = 0;
         lock (_openXrPoseLock)
         {
+            int valid;
             if (timing == OpenXrPoseTiming.Late)
             {
                 if (leftHand)
@@ -229,25 +256,46 @@ public unsafe partial class OpenXRAPI
             {
                 if (leftHand)
                 {
-                    localPose = _openXrPredLeftControllerLocalPose;
-                    valid = _openXrPredLeftControllerValid;
+                    localPose = _openXrPublishedTrackingSnapshot.LeftControllerPose;
+                    valid = _openXrPublishedTrackingSnapshot.LeftControllerValid ? 1 : 0;
                 }
                 else
                 {
-                    localPose = _openXrPredRightControllerLocalPose;
-                    valid = _openXrPredRightControllerValid;
+                    localPose = _openXrPublishedTrackingSnapshot.RightControllerPose;
+                    valid = _openXrPublishedTrackingSnapshot.RightControllerValid ? 1 : 0;
                 }
             }
+            return valid != 0 && IsRecentPosePublicationLocked() &&
+                IsTrackingSampleFresh(timing == OpenXrPoseTiming.Late ? _openXrLateActionSampleTimestamp : _openXrTrackingPublicationTimestamp) &&
+                (timing == OpenXrPoseTiming.Late
+                ? _openXrLateInputFrameNumber == Volatile.Read(ref _openXrPendingFrameNumber)
+                : _openXrPredInputFrameNumber == Volatile.Read(ref _openXrPendingFrameNumber));
         }
-        return valid != 0;
     }
 
     public bool TryGetTrackerLocalPose(string trackerUserPath, OpenXrPoseTiming timing, out Matrix4x4 localPose)
     {
         lock (_openXrPoseLock)
         {
-            var dict = timing == OpenXrPoseTiming.Late ? _openXrLateTrackerLocalPose : _openXrPredTrackerLocalPose;
-            return dict.TryGetValue(trackerUserPath, out localPose);
+            if (!_openXrKnownTrackers.TryGetValue(trackerUserPath, out RuntimeVrTrackerInfo info) || !info.Connected)
+            {
+                localPose = default;
+                return false;
+            }
+            int frame = timing == OpenXrPoseTiming.Late ? _openXrLateInputFrameNumber : _openXrPredInputFrameNumber;
+            if (frame != Volatile.Read(ref _openXrPendingFrameNumber) || !IsRecentPosePublicationLocked())
+            {
+                localPose = default;
+                return false;
+            }
+            if (timing != OpenXrPoseTiming.Late)
+            {
+                bool published = _openXrPublishedTrackerPoses.TryGetValue(trackerUserPath, out RuntimeVrTrackerPose tracker);
+                localPose = tracker.LocalPose;
+                return published && tracker.Info.PoseCurrentlyUsable && IsTrackingSampleFresh(_openXrTrackingPublicationTimestamp);
+            }
+            bool found = _openXrLateTrackerLocalPose.TryGetValue(trackerUserPath, out localPose);
+            return found && IsTrackingSampleFresh(_openXrLateActionSampleTimestamp);
         }
     }
 
@@ -260,7 +308,43 @@ public unsafe partial class OpenXRAPI
     public RuntimeVrTrackerInfo[] GetKnownTrackers()
     {
         lock (_openXrPoseLock)
-            return [.. _openXrKnownTrackers.Values];
+        {
+            RuntimeVrTrackerInfo[] result = [.. _openXrKnownTrackers.Values];
+            if (!IsRecentPosePublicationLocked() || !IsTrackingSampleFresh(_openXrTrackingPublicationTimestamp))
+                for (int i = 0; i < result.Length; i++)
+                    result[i] = result[i] with { PoseAvailable = false, IsStale = true };
+            return result;
+        }
+    }
+
+    public RuntimeVrTrackerStatus GetTrackerStatus(string persistentPath)
+    {
+        lock (_openXrPoseLock)
+        {
+            if (_viveTrackerInteraction is null)
+                return RuntimeVrTrackerStatus.ProviderUnavailable;
+            if (!_openXrKnownTrackers.TryGetValue(persistentPath, out RuntimeVrTrackerInfo info))
+                return RuntimeVrTrackerStatus.NotDiscovered;
+            return IsRecentPosePublicationLocked() && IsTrackingSampleFresh(_openXrTrackingPublicationTimestamp)
+                ? info.Status
+                : (info with { PoseAvailable = false, IsStale = true }).Status;
+        }
+    }
+
+    public bool TryGetCurrentPoseSnapshot(out long snapshotId, out long sampleTime)
+    {
+        lock (_openXrPoseLock)
+        {
+            bool current = IsRecentPosePublicationLocked() && IsTrackingSampleFresh(_openXrTrackingPublicationTimestamp) &&
+                _openXrPredInputFrameNumber > 0 &&
+                _openXrPredInputFrameNumber == _openXrPredictedViewFrameNumber &&
+                _openXrPredInputFrameNumber == Volatile.Read(ref _openXrPendingFrameNumber) &&
+                _openXrPredInputSampleTime == _openXrPredictedViewSampleTime &&
+                _openXrPublishedTrackingSnapshot.HeadValid;
+            snapshotId = current ? _openXrPublishedTrackingSnapshot.SnapshotId : 0;
+            sampleTime = current ? _openXrPublishedTrackingSnapshot.SampleTime : 0;
+            return current;
+        }
     }
     private TransformBase? _openXrLocomotionRoot;
 

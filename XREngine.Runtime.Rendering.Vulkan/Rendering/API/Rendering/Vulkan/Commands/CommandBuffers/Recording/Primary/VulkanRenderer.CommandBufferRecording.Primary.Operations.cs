@@ -270,6 +270,11 @@ internal sealed partial class VulkanCommandRuntime
                     ref state,
                     in payload,
                     in info),
+            (EAdvancedRenderStage.DirectionalShadowRaster, EAdvancedVisibilityStageBackendPhase.Complete) =>
+                RecordAdvancedDirectionalShadowRasterPayload(
+                    ref state,
+                    in payload,
+                    in info),
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateCompute) =>
                 RecordAdvancedVisibilityLateComputePayload(ref state, in payload, in info),
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster) =>
@@ -314,6 +319,9 @@ internal sealed partial class VulkanCommandRuntime
             (EAdvancedRenderStage.NativeOpaqueShading,
                 EAdvancedVisibilityStageBackendPhase.Complete) =>
                 EVulkanCpuStage.PrimaryAdvancedNativeShadingOperation,
+            (EAdvancedRenderStage.DirectionalShadowRaster,
+                EAdvancedVisibilityStageBackendPhase.Complete) =>
+                EVulkanCpuStage.PrimaryAdvancedDirectionalShadowOperation,
             _ => EVulkanCpuStage.PrimaryOtherOperation,
         };
 
@@ -1820,6 +1828,7 @@ internal sealed partial class VulkanCommandRuntime
         if (state.HasActiveContext && FrameOpContextCompatibility.AreRecordingCompatible(state.ActiveContext, context)) return true;
         bool preserve = state.RenderScope.ShouldPreserveForContextChange(target is null, target, passIndex, state.ActiveInlineQuery is not null, context.SchedulingIdentity, state.ActivePassIndex, state.ActiveSchedulingIdentity, FrameOpContextCompatibility.AreQueryScopeCompatible(state.ActiveContext, context));
         if (!preserve) EndActiveRenderPass(ref state);
+        if (!preserve) EndSelectedGpuPass(ref state);
         if (!preserve && state.PassIndexLabelActive) { _deviceContext.CmdEndLabel(state.CommandBuffer); state.PassIndexLabelActive = false; }
         state.ActiveContext = context; state.HasActiveContext = true; ApplyPipelineOverride(ref state, state.ActiveContext);
         if (!UpdatePrimaryResourcePlannerContext(ref state)) return false;
@@ -1866,16 +1875,30 @@ internal sealed partial class VulkanCommandRuntime
         int schedulingIdentity = state.Ops.GetContext(operationIndex).SchedulingIdentity;
         if (!HasPrimaryPlanAction(node.Actions, EVulkanPrimaryPlanAction.BarrierBatch) || (passIndex == state.ActivePassIndex && schedulingIdentity == state.ActiveSchedulingIdentity)) return;
         EndActiveRenderPass(ref state);
+        EndSelectedGpuPass(ref state);
         if (state.PassIndexLabelActive) { _deviceContext.CmdEndLabel(state.CommandBuffer); state.PassIndexLabelActive = false; }
         if (_deviceContext.CanRecordCommandBufferDebugLabels) state.PassIndexLabelActive = _deviceContext.CmdBeginLabel(state.CommandBuffer, $"Pass={passIndex} Pipe={state.ActiveContext.PipelineIdentity} Vp={state.ActiveContext.ViewportIdentity}");
         EmitPassBarriers(ref state, passIndex);
         state.ActivePassIndex = passIndex; state.ActiveSchedulingIdentity = schedulingIdentity;
+        state.SelectedGpuPassStartQuery = VulkanSelectedGpuPassContext.Current?.BeginProductionPass(
+            state.CommandBuffer, unchecked((uint)state.TimingQuerySlot), passIndex,
+            state.ActiveContext.PassMetadata) ?? -1;
+    }
+
+    private static void EndSelectedGpuPass(scoped ref PrimaryCommandBufferRecordingState state)
+    {
+        if (state.SelectedGpuPassStartQuery < 0)
+            return;
+        VulkanSelectedGpuPassContext.Current?.EndPass(
+            state.CommandBuffer, unchecked((uint)state.TimingQuerySlot), state.SelectedGpuPassStartQuery);
+        state.SelectedGpuPassStartQuery = -1;
     }
 
     private void HandlePrimaryOperationRecordingFailure(scoped ref PrimaryCommandBufferRecordingState state, in FrameOperationHeader header, int operationIndex, Exception exception)
     {
         RecordDroppedPrimaryOperation(ref state, header.OpCode, true);
         EndActiveRenderPass(ref state);
+        EndSelectedGpuPass(ref state);
         Debug.VulkanEvery($"Vulkan.FrameOpError.{GetHashCode()}", TimeSpan.FromSeconds(1), "[Vulkan] Frame op recording failed for {0}: {1}: {2}", header.OpCode, exception.GetType().Name, exception.Message);
     }
 

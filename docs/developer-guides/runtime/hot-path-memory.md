@@ -132,6 +132,11 @@ The maintenance API records reason, detail, generation, LOH compaction request,
 finalizer wait, and before/after heap size. Requests from render-frame dispatch
 are rejected or warned instead of silently collecting inside hot paths.
 
+Exiting play mode requests a full, LOH-compacting collection with finalizer
+wait after edit mode restarts. It is queued as an app-thread job so it runs
+between render frames, where the dispatch check accepts it.
+`XRE_DISABLE_MAINTENANCE_GC` turns it off with the other maintenance requests.
+
 Benchmark `NoGCRegion` is optional and disabled by default. Enable it only with
 `XRE_BENCHMARK_NOGC_REGION` and an explicit byte budget. Startup diagnostics
 report success or failure; normal editor and VR runs must not rely on it.

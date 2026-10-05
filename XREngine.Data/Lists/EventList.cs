@@ -44,6 +44,12 @@ namespace System.Collections.Generic
         private readonly List<T> _list;
         private ReaderWriterLockSlim? _lock;
 
+        /// <summary>
+        /// A list is part of its owner's state and is never resolved by ID, so it stays out of
+        /// the global object cache and is collected with its owner.
+        /// </summary>
+        protected override bool ParticipatesInObjectCache => false;
+
         public bool ThreadSafe
         {
             get => _lock != null;
@@ -1093,6 +1099,31 @@ namespace System.Collections.Generic
             finally
             {
                 _lock?.ExitReadLock();
+            }
+        }
+
+        /// <summary>
+        /// Copies the current contents into caller-owned storage, growing it only
+        /// when necessary, and returns the copied count. Thread-safe lists hold
+        /// their read lock across sizing and copying. The caller must exclusively
+        /// own the buffer and clear retained references after consuming the snapshot.
+        /// Elements beyond the returned count are unchanged.
+        /// </summary>
+        public int CopySnapshot(ref T[] reusableBuffer)
+        {
+            ReaderWriterLockSlim? listLock = _lock;
+            listLock?.EnterReadLock();
+            try
+            {
+                int count = _list.Count;
+                if (reusableBuffer.Length < count)
+                    Array.Resize(ref reusableBuffer, count);
+                _list.CopyTo(reusableBuffer, 0);
+                return count;
+            }
+            finally
+            {
+                listLock?.ExitReadLock();
             }
         }
 

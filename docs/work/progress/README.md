@@ -8,6 +8,7 @@ Organize by subsystem under this directory, for example `progress/rendering/`.
 - [Managed transport and synchronization, Phases 5–6](networking/managed-transport-and-replication.md)
 - [Native audio project split](audio/native-audio-project-split.md)
 - [Native subsystem integration checkpoints](platform/native-subsystem-project-split.md)
+- [Shared runtime integration from master](platform/unified-runtime-master-integration-2026-10-05.md)
 - [Native authored material vertex functions](rendering/browser-native-material-vertices-2026-10-03.md)
 - [Caller-thread physics-chain scheduling](platform/browser-physics-chain-scheduling-2026-10-03.md)
 - [Authored two-image alpha materials](platform/browser-authored-textured-alpha-2026-10-03.md)
@@ -22,3 +23,5 @@ Organize by subsystem under this directory, for example `progress/rendering/`.
 - [Caller scene frame identity](rendering/browser-caller-scene-frame-identity-2026-10-03.md)
 - [Octahedral billboard material and meshlet preparation](rendering/browser-octahedral-impostor-2026-10-03.md)
 - [Asynchronous HLOD and impostor capture ownership](platform/browser-hlod-impostor-capture-boundary-2026-10-03.md)
+
+- [Vulkan stall remediation results](rendering/vulkan-stall-remediation-results.md)

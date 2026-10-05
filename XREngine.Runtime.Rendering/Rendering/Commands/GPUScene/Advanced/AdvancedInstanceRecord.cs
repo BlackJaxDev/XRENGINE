@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Commands;
 /// <summary>
 /// Frame-slot instance state shared by desktop and XR render paths.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedInstanceRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedInstanceRecord
 {

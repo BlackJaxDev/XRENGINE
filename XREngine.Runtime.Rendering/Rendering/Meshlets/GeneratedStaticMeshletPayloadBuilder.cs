@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Numerics;
 using XREngine.Data.Rendering;
 
@@ -111,7 +110,7 @@ public static class GeneratedStaticMeshletPayloadBuilder
             SourceMeshHash = sourceHash, MeshletSettingsHash = settingsHash, LodSettingsHash = lodHash,
             FreshnessHash = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, settingsHash, lodHash, provenance),
             MeshletSettings = settings, LodSettings = lod, Meshlets = [.. descriptors], VertexIndices = [.. references],
-            TriangleIndices = [.. triangles], Vertices = ImmutableArray.Create(vertices),
+            TriangleIndices = [.. triangles],
             Stats = new(descriptors.Count, references.Count, triangles.Count, 0),
         };
         payload.ValidateForMesh(mesh, identity);

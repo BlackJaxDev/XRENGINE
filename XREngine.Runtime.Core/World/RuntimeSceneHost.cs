@@ -1,3 +1,4 @@
+using XREngine.Data.Runtime.AotParity;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Scene;
@@ -31,6 +32,7 @@ public sealed class RuntimeSceneHost : IRuntimeWorldContext, IDisposable
     /// <summary>Starts the existing node/component lifecycle exactly once until stopped.</summary>
     public void Start()
     {
+        using var parityScope = AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode);
         ObjectDisposedException.ThrowIf(_disposed || _disposing, this);
         if (_lifecycle.PlayState != RuntimeWorldPlayState.Stopped)
             return;

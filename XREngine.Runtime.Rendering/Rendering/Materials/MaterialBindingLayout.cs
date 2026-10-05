@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Shaders;
 
 namespace XREngine.Rendering.Materials
 {
@@ -822,11 +823,12 @@ namespace XREngine.Rendering.Materials
         {
             sb.AppendLine($"// XR generated material layout: {layout.Name} ({layout.LayoutHash})");
             sb.AppendLine($"// Row size: {layout.RowByteCount} bytes / {layout.RowWordCount} uint words.");
-            sb.AppendLine("struct XR_MaterialRecord");
-            sb.AppendLine("{");
-            foreach (MaterialBindingPackedMember member in layout.PackedMembers)
-                sb.AppendLine($"    {member.GlslType} {member.Name};");
-            sb.AppendLine("};");
+            GpuRecordGlslDeclaration.AppendStruct(
+                sb,
+                "XR_MaterialRecord",
+                layout.PackedMembers,
+                static member => member.GlslType,
+                static member => member.Name);
             sb.AppendLine($"layout(std430, binding = {materialTableBinding}) readonly buffer XR_MaterialTableBuffer {{ XR_MaterialRecord XR_MaterialTable[]; }};");
             sb.AppendLine("#define MaterialEntry XR_MaterialRecord");
             sb.AppendLine("#define MaterialTable XR_MaterialTable");
@@ -858,12 +860,7 @@ namespace XREngine.Rendering.Materials
 
         private static void AppendOpenGLBindlessTextureHandleTableDefinitions(StringBuilder sb, uint textureHandleTableBinding)
         {
-            sb.AppendLine("struct TextureHandleEntry");
-            sb.AppendLine("{");
-            sb.AppendLine("    uvec2 Handle;");
-            sb.AppendLine("    uint Flags;");
-            sb.AppendLine("    uint Padding0;");
-            sb.AppendLine("};");
+            sb.AppendLine("#include \"Advanced/Generated/GPUSceneRecords.glslinc\"");
             sb.AppendLine($"layout(std430, binding = {textureHandleTableBinding}) readonly buffer XR_MaterialTextureHandleTableBuffer {{ TextureHandleEntry XR_TextureHandleTable[]; }};");
             sb.AppendLine("#define TextureHandleTable XR_TextureHandleTable");
             sb.AppendLine("uint64_t XR_CombineHandle(uvec2 parts)");

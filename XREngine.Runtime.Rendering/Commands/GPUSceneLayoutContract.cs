@@ -1,83 +1,51 @@
-using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.Commands;
 
 /// <summary>
-/// CPU authority for the byte layout of records published by <see cref="GPUScene"/>.
-/// These checks protect the std430 and indirect-command ABI at scene/pass initialization;
-/// they are deliberately not part of a frame path.
+/// Verifies that GPU scene records have the same managed and interop sizes.
+/// Shader member offsets and strides are checked against compiled SPIR-V by
+/// the editor before shader packaging.
 /// </summary>
 public static class GPUSceneLayoutContract
 {
-    // These describe the currently published ABI, not a target layout for future redesign.
-    public const int DrawMetadataSize = 64;
-    public const int TransformGpuSize = 64;
-    public const int BoundsGpuSize = 64;
-    public const int MaterialStateGpuSize = 32;
-    public const int MeshDataEntrySize = 16;
-    public const int LodTableEntrySize = 48;
-    public const int LodTransitionStateSize = 16;
-    public const int MeshletRangeSize = 16;
-    public const int MeshletDescriptorSize = 80;
-    public const int MeshletTaskRecordSize = 16;
-    public const int SortKeyEntrySize = 16;
-    public const int BatchRangeEntrySize = 16;
-    public const int ViewBatchClassificationSize = 32;
+    public static int DrawMetadataSize => Unsafe.SizeOf<DrawMetadata>();
+    public static int TransformGpuSize => Unsafe.SizeOf<TransformGpu>();
+    public static int BoundsGpuSize => Unsafe.SizeOf<BoundsGpu>();
+    public static int MaterialStateGpuSize => Unsafe.SizeOf<MaterialStateGpu>();
+    public static int MeshDataEntrySize => Unsafe.SizeOf<GPUScene.MeshDataEntry>();
+    public static int LodTableEntrySize => Unsafe.SizeOf<GPUScene.LODTableEntry>();
+    public static int LodTransitionStateSize => Unsafe.SizeOf<GPUScene.GPULodTransitionState>();
+    public static int MeshletRangeSize => Unsafe.SizeOf<GPUScene.GpuMeshletRange>();
+    public static int MeshletDescriptorSize => Unsafe.SizeOf<GPUScene.GpuMeshletDescriptor>();
+    public static int MeshletTaskRecordSize => Unsafe.SizeOf<GpuMeshletTaskRecord>();
+    public static int SortKeyEntrySize => Unsafe.SizeOf<GPUSortKeyEntry>();
+    public static int BatchRangeEntrySize => Unsafe.SizeOf<GPUBatchRangeEntry>();
+    public static int ViewBatchClassificationSize => Unsafe.SizeOf<GPUViewBatchClassification>();
 
-    /// <summary>Validates every shared GPUScene record before its buffers are created.</summary>
     public static void ValidateRuntimeLayout()
     {
-        RequireSize<DrawMetadata>(DrawMetadataSize);
-        RequireOffset<DrawMetadata>(nameof(DrawMetadata.DrawID), 0);
-        RequireOffset<DrawMetadata>(nameof(DrawMetadata.TransformID), 16);
-        RequireOffset<DrawMetadata>(nameof(DrawMetadata.Flags), 32);
-        RequireOffset<DrawMetadata>(nameof(DrawMetadata.BoundsID), 60);
-
-        RequireSize<TransformGpu>(TransformGpuSize);
-        RequireOffset<TransformGpu>(nameof(TransformGpu.WorldMatrix), 0);
-
-        RequireSize<BoundsGpu>(BoundsGpuSize);
-        RequireOffset<BoundsGpu>(nameof(BoundsGpu.BoundingSphere), 0);
-        RequireOffset<BoundsGpu>(nameof(BoundsGpu.AabbMin), 16);
-        RequireOffset<BoundsGpu>(nameof(BoundsGpu.AabbMax), 32);
-        RequireOffset<BoundsGpu>(nameof(BoundsGpu.BoundsVersion), 48);
-
-        RequireSize<MaterialStateGpu>(MaterialStateGpuSize);
-        RequireOffset<MaterialStateGpu>(nameof(MaterialStateGpu.StateClassID), 0);
-        RequireOffset<MaterialStateGpu>(nameof(MaterialStateGpu.DescriptorStart), 20);
-        RequireOffset<MaterialStateGpu>(nameof(MaterialStateGpu.Flags), 28);
-
-        RequireSize<GPUScene.MeshDataEntry>(MeshDataEntrySize);
-        RequireSize<GPUScene.LODTableEntry>(LodTableEntrySize);
-        RequireOffset<GPUScene.LODTableEntry>(nameof(GPUScene.LODTableEntry.LOD0_MinProjectedRadiusPixels), 20);
-        RequireSize<GPUScene.GPULodTransitionState>(LodTransitionStateSize);
-        RequireSize<GPUScene.GpuMeshletRange>(MeshletRangeSize);
-        RequireSize<GPUScene.GpuMeshletDescriptor>(MeshletDescriptorSize);
-        RequireOffset<GPUScene.GpuMeshletDescriptor>(nameof(GPUScene.GpuMeshletDescriptor.BoundsSphere), 0);
-        RequireOffset<GPUScene.GpuMeshletDescriptor>(nameof(GPUScene.GpuMeshletDescriptor.Cone), 32);
-        RequireOffset<GPUScene.GpuMeshletDescriptor>(nameof(GPUScene.GpuMeshletDescriptor.PackedCone), 64);
-
-        RequireSize<GpuMeshletTaskRecord>(MeshletTaskRecordSize);
-        RequireSize<GPUSortKeyEntry>(SortKeyEntrySize);
-        RequireSize<GPUBatchRangeEntry>(BatchRangeEntrySize);
-        RequireSize<GPUViewBatchClassification>(ViewBatchClassificationSize);
-        RequireOffset<GPUViewBatchClassification>(nameof(GPUViewBatchClassification.DrawID), 24);
+        RequireMatchingSize<DrawMetadata>();
+        RequireMatchingSize<TransformGpu>();
+        RequireMatchingSize<BoundsGpu>();
+        RequireMatchingSize<MaterialStateGpu>();
+        RequireMatchingSize<GPUScene.MeshDataEntry>();
+        RequireMatchingSize<GPUScene.LODTableEntry>();
+        RequireMatchingSize<GPUScene.GPULodTransitionState>();
+        RequireMatchingSize<GPUScene.GpuMeshletRange>();
+        RequireMatchingSize<GPUScene.GpuMeshletDescriptor>();
+        RequireMatchingSize<GpuMeshletTaskRecord>();
+        RequireMatchingSize<GPUSortKeyEntry>();
+        RequireMatchingSize<GPUBatchRangeEntry>();
+        RequireMatchingSize<GPUViewBatchClassification>();
     }
 
-    private static void RequireSize<T>(int expected) where T : unmanaged
+    private static void RequireMatchingSize<T>() where T : unmanaged
     {
         int unsafeSize = Unsafe.SizeOf<T>();
         int marshalSize = Marshal.SizeOf<T>();
-        if (unsafeSize != expected || marshalSize != expected)
-            throw new InvalidOperationException($"{typeof(T).Name} ABI size mismatch: Unsafe.SizeOf={unsafeSize}, Marshal.SizeOf={marshalSize}, expected={expected}.");
-    }
-
-    private static void RequireOffset<T>(string fieldName, int expected) where T : unmanaged
-    {
-        int actual = checked((int)Marshal.OffsetOf<T>(fieldName));
-        if (actual != expected)
-            throw new InvalidOperationException($"{typeof(T).Name}.{fieldName} ABI offset mismatch: actual={actual}, expected={expected}.");
+        if (unsafeSize != marshalSize)
+            throw new InvalidOperationException($"{typeof(T).Name} CPU size mismatch: Unsafe.SizeOf={unsafeSize}, Marshal.SizeOf={marshalSize}.");
     }
 }

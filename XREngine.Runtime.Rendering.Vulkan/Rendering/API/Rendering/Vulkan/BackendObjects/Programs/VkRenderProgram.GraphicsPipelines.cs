@@ -40,9 +40,8 @@ internal unsafe partial class VkRenderProgram
             colorAttachmentCount = ProgramCreationPort.GetRenderPassColorAttachmentCount(pipelineInfo.RenderPass);
         }
 
-        PipelineShaderStageCreateInfo[] stages = GetShaderStages(VulkanProgramUtilities.GraphicsStageMask).ToArray();
-        if (colorAttachmentCount == 0)
-            stages = stages.Where(static s => s.Stage != ShaderStageFlags.FragmentBit).ToArray();
+        PipelineShaderStageCreateInfo[] stages = VulkanGraphicsPipelineFactory.GetGraphicsPipelineLibraryStages(
+            this, VulkanProgramUtilities.GraphicsStageMask);
 
         if (stages.Length == 0)
             throw new InvalidOperationException("Graphics pipeline creation requires at least one graphics shader stage.");

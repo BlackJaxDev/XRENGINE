@@ -276,16 +276,25 @@ public class XRMeshModelingIntegrationTests
         roundTrippedMesh.UtilizedBones.Length.ShouldBe(sourceMesh.UtilizedBones.Length);
         roundTrippedMesh.BlendshapeNames.ShouldBe(sourceMesh.BlendshapeNames);
 
+        // Weights decode from 8-bit packed buffers and are repacked by the round trip, so allow
+        // one quantization step; blendshape targets are rebuilt as base plus a float delta.
+        const float weightTolerance = 1.0f / 255.0f + 1e-5f;
+        const float blendshapePositionTolerance = 1e-5f;
+
+        using XRMeshVertexView sourceView = XRMeshVertexView.Open(sourceMesh);
+        using XRMeshVertexView roundTripView = XRMeshVertexView.Open(roundTrippedMesh);
         for (int i = 0; i < sourceMesh.VertexCount; i++)
         {
-            Vertex sourceVertex = sourceMesh.Vertices[i];
-            Vertex roundTripVertex = roundTrippedMesh.Vertices[i];
+            Vertex sourceVertex = sourceView.Vertices[i];
+            Vertex roundTripVertex = roundTripView.Vertices[i];
 
             (sourceVertex.Weights?.Count ?? 0).ShouldBe(roundTripVertex.Weights?.Count ?? 0);
             if (sourceVertex.Weights is { Count: > 0 } sourceWeights)
             {
-                sourceWeights.Values.Select(x => x.weight).OrderBy(x => x).ToArray()
-                    .ShouldBe(roundTripVertex.Weights!.Values.Select(x => x.weight).OrderBy(x => x).ToArray());
+                float[] expectedWeights = sourceWeights.Values.Select(x => x.weight).OrderBy(x => x).ToArray();
+                float[] actualWeights = roundTripVertex.Weights!.Values.Select(x => x.weight).OrderBy(x => x).ToArray();
+                for (int weightIndex = 0; weightIndex < expectedWeights.Length; weightIndex++)
+                    actualWeights[weightIndex].ShouldBe(expectedWeights[weightIndex], weightTolerance);
             }
 
             sourceVertex.Blendshapes?.Select(x => x.name).ToArray().ShouldBe(roundTripVertex.Blendshapes?.Select(x => x.name).ToArray());
@@ -293,8 +302,9 @@ public class XRMeshModelingIntegrationTests
             {
                 for (int blendshapeIndex = 0; blendshapeIndex < sourceVertex.Blendshapes.Count; blendshapeIndex++)
                 {
-                    sourceVertex.Blendshapes[blendshapeIndex].data.Position
-                        .ShouldBe(roundTripVertex.Blendshapes![blendshapeIndex].data.Position);
+                    Vector3 expectedPosition = sourceVertex.Blendshapes[blendshapeIndex].data.Position;
+                    Vector3 actualPosition = roundTripVertex.Blendshapes![blendshapeIndex].data.Position;
+                    Vector3.Distance(actualPosition, expectedPosition).ShouldBeLessThan(blendshapePositionTolerance);
                 }
             }
         }
@@ -432,6 +442,9 @@ public class XRMeshModelingIntegrationTests
     }
 
     private static XRMesh CreateIndexedQuadMeshWithAttributes()
+        => CreateIndexedQuadMeshWithAttributes(out _);
+
+    private static XRMesh CreateIndexedQuadMeshWithAttributes(out List<Vertex> sourceVertices)
     {
         Vector3 normal = new(0f, 0f, 1f);
         Vector3 tangent = new(1f, 0f, 0f);
@@ -445,6 +458,7 @@ public class XRMeshModelingIntegrationTests
         ];
 
         List<ushort> indices = [0, 1, 2, 0, 2, 3];
+        sourceVertices = vertices;
         return new XRMesh(vertices, indices);
     }
 
@@ -501,7 +515,7 @@ public class XRMeshModelingIntegrationTests
 
     private static XRMesh CreateIndexedQuadMeshWithSkinningAndBlendshapes()
     {
-        XRMesh mesh = CreateIndexedQuadMeshWithAttributes();
+        XRMesh mesh = CreateIndexedQuadMeshWithAttributes(out List<Vertex> sourceVertices);
 
         Transform boneA = new() { Name = "BoneA", InverseBindMatrix = Matrix4x4.Identity };
         Transform boneB = new() { Name = "BoneB", InverseBindMatrix = Matrix4x4.CreateTranslation(0f, 0f, -1f) };
@@ -511,9 +525,8 @@ public class XRMeshModelingIntegrationTests
             (boneB, boneB.InverseBindMatrix)
         ];
 
-        for (int i = 0; i < mesh.Vertices.Length; i++)
+        foreach (Vertex vertex in sourceVertices)
         {
-            Vertex vertex = mesh.Vertices[i];
             vertex.Weights = new Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>
             {
                 [boneA] = (0.75f, boneA.InverseBindMatrix),
@@ -535,6 +548,8 @@ public class XRMeshModelingIntegrationTests
         }
 
         mesh.BlendshapeNames = ["Smile"];
+        mesh.RebuildSkinningBuffersFromVertices(sourceVertices);
+        mesh.RebuildBlendshapeBuffersFromVertices(sourceVertices);
         return mesh;
     }
 

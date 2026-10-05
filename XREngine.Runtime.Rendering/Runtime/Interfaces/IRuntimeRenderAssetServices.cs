@@ -111,6 +111,14 @@ public interface IRuntimeRenderAssetServices
     byte[] ReadAllBytes(string filePath);
 
     /// <summary>
+    /// Reads a whole file into an owner whose bytes never live on the managed large object heap.
+    /// The default maps the file read-only; hosts with a faster native read path can override it
+    /// and return native storage. The caller disposes the owner when it has finished parsing.
+    /// </summary>
+    CookedPayloadOwner ReadAllBytesOwned(string filePath)
+        => CookedPayloadOwner.MapFile(filePath);
+
+    /// <summary>
     /// Resolves the authoritative path used to key texture streaming state and cooked caches.
     /// </summary>
     string ResolveTextureStreamingAuthorityPath(string filePath);

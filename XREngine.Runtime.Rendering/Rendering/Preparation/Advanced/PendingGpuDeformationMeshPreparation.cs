@@ -1,30 +1,36 @@
 using System.Numerics;
-using XREngine.Data;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
 
-/// <summary>CPU-only cold mesh payload retained until one atomic static append.</summary>
+/// <summary>
+/// CPU-only cold mesh payload retained until one atomic static append. Every
+/// input is read from the mesh's packed attribute, skinning and blendshape
+/// buffers; the witnesses below detect a buffer replaced mid-preparation.
+/// </summary>
 internal sealed class PendingGpuDeformationMeshPreparation
 {
     internal const int CanonicalMorphCount = -2;
     internal const int CanonicalMorphPack = -1;
-    internal const int Index = 0;
-    internal const int Count = 1;
-    internal const int Pack = 2;
-    internal const int Vertices = 3;
-    internal const int Spill = 4;
-    internal const int Influences = 5;
-    internal const int Commit = 6;
+    internal const int Count = 0;
+    internal const int Pack = 1;
+    internal const int Vertices = 2;
+    internal const int Spill = 3;
+    internal const int Influences = 4;
+    internal const int Commit = 5;
 
     internal required XRMesh Mesh;
     internal required uint TopologyGeneration;
     internal required long GeometryRevision;
     internal required AdvancedGpuDeformationInputWitness InputWitness;
     internal required int VertexCount;
-    internal required Vertex[] SourceVertices;
     internal required string[] Names;
     internal int ActiveBlendshapeCount;
+    /// <summary>Active-list reader of the blendshape buffers the payload was built from.</summary>
+    internal XRMeshBlendshapeActiveListReader Blendshapes;
+    internal ulong BlendshapeCountsRevision;
+    internal ulong BlendshapeIndicesRevision;
+    internal ulong BlendshapeDeltasRevision;
     internal ulong LastOwnerVisitFrame;
     internal int Stage;
     internal int ShapeIndex;
@@ -33,7 +39,6 @@ internal sealed class PendingGpuDeformationMeshPreparation
     internal uint DeltaCount = 1u;
     internal uint PackedRecordCount;
     internal uint PackedDeltaCount = 1u;
-    internal int[] SourceIndices = [];
     internal AdvancedDeformedVertex[] VerticesScratch = [];
     internal AdvancedSkinInfluence[] InfluencesScratch = [];
     internal AdvancedSpillInfluence[] SpillScratch = [];
@@ -52,5 +57,4 @@ internal sealed class PendingGpuDeformationMeshPreparation
     internal ulong SpillEntriesRevision;
     internal uint SpillCount;
     internal bool Unsupported;
-    internal readonly Dictionary<string, int> FirstNameIndices = new(StringComparer.Ordinal);
 }

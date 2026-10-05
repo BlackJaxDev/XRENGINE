@@ -599,6 +599,10 @@ public unsafe partial class OpenXRAPI
             }
 
             ServiceOpenXrEyeResolutionReplacement();
+            ServiceTrackerDiscovery();
+            ServiceTrackerRefreshForCalibration();
+            if (!_sessionBegun)
+                return;
 
             // Inline prep (pre-desktop-render) is the legacy InRenderCallback path.
             if (OpenXrRenderPacingHandling == global::XREngine.Rendering.API.Rendering.OpenXR.OpenXrRenderPacingMode.InRenderCallback)

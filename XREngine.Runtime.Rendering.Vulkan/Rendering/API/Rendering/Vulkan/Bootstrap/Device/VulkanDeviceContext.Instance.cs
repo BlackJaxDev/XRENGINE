@@ -708,7 +708,7 @@ internal sealed partial class VulkanDeviceContext
         out IOpenXrVulkanBootstrapLease? lease)
     {
         lease = OpenXrBootstrapContext;
-        return lease?.InstanceHandle != 0;
+        return lease is not null && lease.InstanceHandle != 0;
     }
 
     public bool InvalidateOpenXrBootstrapInstance(string reason)

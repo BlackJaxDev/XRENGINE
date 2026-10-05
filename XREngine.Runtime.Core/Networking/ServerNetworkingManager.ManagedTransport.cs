@@ -33,7 +33,7 @@ public partial class ServerNetworkingManager
         {
             ManagedUdpMessageKind.Hello => HandleManagedHello(datagram.Span, header, payload, sender),
             ManagedUdpMessageKind.Commit => HandleManagedCommit(datagram.Span, header, payload, sender),
-            ManagedUdpMessageKind.Data => TryUnwrapManagedData(datagram.Span, header, payload, sender, out innerDatagram),
+            ManagedUdpMessageKind.Data => TryUnwrapManagedData(datagram, header, payload, sender, out innerDatagram),
             _ => RejectManagedEnvelope(),
         };
     }
@@ -219,7 +219,7 @@ public partial class ServerNetworkingManager
         }
     }
 
-    private bool TryUnwrapManagedData(ReadOnlySpan<byte> datagram, ManagedUdpEnvelopeHeader header, ReadOnlySpan<byte> payload, IPEndPoint sender, out ReadOnlyMemory<byte> innerDatagram)
+    private bool TryUnwrapManagedData(ReadOnlyMemory<byte> datagram, ManagedUdpEnvelopeHeader header, ReadOnlySpan<byte> payload, IPEndPoint sender, out ReadOnlyMemory<byte> innerDatagram)
     {
         innerDatagram = default;
         if (header.Direction != ManagedUdpDirection.ClientToServer || header.Counter == 0)
@@ -236,7 +236,7 @@ public partial class ServerNetworkingManager
                 RecordBadSourceRejection();
                 return false;
             }
-            if (!ManagedUdpEnvelope.Verify(datagram, association.ReceiveKey))
+            if (!ManagedUdpEnvelope.Verify(datagram.Span, association.ReceiveKey))
             {
                 RecordBadMacRejection();
                 return false;
@@ -250,7 +250,7 @@ public partial class ServerNetworkingManager
                 return RejectManagedEnvelope();
         }
 
-        if (!TryAuthorizeManagedStateChange(association, payload, sender))
+        if (!TryAuthorizeManagedStateChange(association, datagram.Slice(ManagedUdpEnvelopeHeader.UnsignedHeaderLength, payload.Length), sender))
             return RejectManagedEnvelope();
 
         lock (_managedAssociationLock)
@@ -261,36 +261,52 @@ public partial class ServerNetworkingManager
                 RecordReplayRejection();
                 return false;
             }
-            innerDatagram = payload.ToArray();
+            innerDatagram = datagram.Slice(ManagedUdpEnvelopeHeader.UnsignedHeaderLength, payload.Length);
             return true;
         }
     }
 
-    protected override byte[]? ProtectOutboundDatagram(byte[] innerDatagram, IPEndPoint target)
+    protected override bool TryProtectOutboundDatagram(ReadOnlySpan<byte> innerDatagram, IPEndPoint target, Span<byte> destination, out int bytesWritten)
     {
+        if (!RequiresManagedUdpTransport)
+            return base.TryProtectOutboundDatagram(innerDatagram, target, destination, out bytesWritten);
+        bytesWritten = 0;
         lock (_managedAssociationLock)
         {
-            ManagedUdpAssociation? association = _managedAssociations.Values.FirstOrDefault(value => !value.Closed && value.Endpoint.Equals(target));
+            ManagedUdpAssociation? association = null;
+            foreach (ManagedUdpAssociation candidate in _managedAssociations.Values)
+                if (!candidate.Closed && candidate.Endpoint.Equals(target))
+                {
+                    association = candidate;
+                    break;
+                }
             if (association is null || !association.TryNextSendCounter(out ulong counter))
-                return null;
-
-            ManagedUdpMessageKind kind = _managedAcceptPending.Remove(association.AssociationId) ? ManagedUdpMessageKind.Accept : ManagedUdpMessageKind.Data;
-            byte[] envelope = ManagedUdpEnvelope.Create(new ManagedUdpEnvelopeHeader(kind, ManagedUdpDirection.ServerToClient,
+                return false;
+            bool accepting = _managedAcceptPending.Contains(association.AssociationId);
+            ManagedUdpMessageKind kind = accepting ? ManagedUdpMessageKind.Accept : ManagedUdpMessageKind.Data;
+            if (!ManagedUdpEnvelope.TryWrite(destination, new ManagedUdpEnvelopeHeader(kind, ManagedUdpDirection.ServerToClient,
                 association.Identity.SessionId, association.Identity.Generation, association.AssociationId,
-                association.Identity.CredentialEpoch, counter), innerDatagram, association.SendKey);
-            if (kind == ManagedUdpMessageKind.Accept)
+                association.Identity.CredentialEpoch, counter), innerDatagram, association.SendKey, out bytesWritten))
+                return false;
+            if (accepting)
             {
+                _managedAcceptPending.Remove(association.AssociationId);
                 if (_managedAcceptEnvelopes.Remove(association.AssociationId, out byte[]? previous))
                     CryptographicOperations.ZeroMemory(previous);
-                _managedAcceptEnvelopes.Add(association.AssociationId, envelope.ToArray());
+                _managedAcceptEnvelopes.Add(association.AssociationId, destination[..bytesWritten].ToArray());
             }
-            return envelope;
+            return true;
         }
     }
 
     private bool TryResolveManagedVerifier(PlayerJoinRequest request, ManagedUdpEnvelopeHeader header, out ManagedAdmissionVerifier verifier)
     {
         verifier = null!;
+        if (!RealtimeProtocol.IsCompatible(request.WireProtocolVersion))
+        {
+            Debug.NetworkingWarning("[Server] {0}", RealtimeProtocol.DescribeMismatch(request.WireProtocolVersion));
+            return false;
+        }
         if (!RuntimeNetworkingHostServices.Current.TryGetManagedAdmissionVerifier(request, out verifier)
             || verifier.Identity.SessionId != header.SessionId || verifier.Identity.Generation != header.Generation
             || verifier.Identity.CredentialEpoch != header.CredentialEpoch || verifier.ExpiresUtc <= DateTimeOffset.UtcNow)
@@ -345,17 +361,17 @@ public partial class ServerNetworkingManager
         return payload.Length == headerLength + dataLength + ((flags & 1) != 0 ? 0 : guidLength);
     }
 
-    private bool TryAuthorizeManagedStateChange(ManagedUdpAssociation association, ReadOnlySpan<byte> payload, IPEndPoint sender)
+    private bool TryAuthorizeManagedStateChange(ManagedUdpAssociation association, ReadOnlyMemory<byte> frame, IPEndPoint sender)
     {
-        if (!TryDecodeStateChangeFrame(payload, out StateChangeInfo change)
+        if (!TryDecodeStateChangeFrame(frame, out EStateChangeType type, out ReadOnlySpan<byte> payload)
             || !TryGetManagedConnection(association, sender, out NetworkPlayerConnection connection))
         {
             return false;
         }
 
-        return change.Type switch
+        return type switch
         {
-            EStateChangeType.PlayerInputSnapshot => StateChangePayloadSerializer.TryDeserialize<PlayerInputSnapshot>(change.Data, out PlayerInputSnapshot? input)
+            EStateChangeType.PlayerInputSnapshot => StateChangeCodec.TryRead<PlayerInputSnapshot>(payload, out PlayerInputSnapshot? input)
                 && input is not null && input.ServerPlayerIndex == connection.ServerPlayerIndex && input.SessionId == connection.SessionId
                 && input.EntityId == connection.NetworkEntityId
                 && double.IsFinite(input.TimestampUtc) && double.IsFinite(input.ClientSendTimestampUtc)
@@ -368,19 +384,19 @@ public partial class ServerNetworkingManager
             // Character movement is reconstructed from buffered input on the fixed
             // server simulation. Transform proposals never carry authority here.
             EStateChangeType.PlayerTransformUpdate => false,
-            EStateChangeType.Heartbeat => StateChangePayloadSerializer.TryDeserialize<PlayerHeartbeat>(change.Data, out PlayerHeartbeat? heartbeat)
+            EStateChangeType.Heartbeat => StateChangeCodec.TryRead<PlayerHeartbeat>(payload, out PlayerHeartbeat? heartbeat)
                 && heartbeat is not null && heartbeat.ServerPlayerIndex == connection.ServerPlayerIndex && heartbeat.SessionId == connection.SessionId
                 && string.Equals(heartbeat.ClientId, connection.ClientId, StringComparison.Ordinal),
-            EStateChangeType.PlayerLeave => StateChangePayloadSerializer.TryDeserialize<PlayerLeaveNotice>(change.Data, out PlayerLeaveNotice? leave)
+            EStateChangeType.PlayerLeave => StateChangeCodec.TryRead<PlayerLeaveNotice>(payload, out PlayerLeaveNotice? leave)
                 && leave is not null && leave.ServerPlayerIndex == connection.ServerPlayerIndex && leave.SessionId == connection.SessionId
                 && string.Equals(leave.ClientId, connection.ClientId, StringComparison.Ordinal),
-            EStateChangeType.HumanoidPoseFrame => StateChangePayloadSerializer.TryDeserialize<HumanoidPoseFrame>(change.Data, out HumanoidPoseFrame? pose)
-                && pose is not null && TryPreflightManagedHumanoidPoseFrame(connection, pose),
-            EStateChangeType.ReplicationTransferAck => StateChangePayloadSerializer.TryDeserialize<ReplicationTransferAck>(change.Data, out ReplicationTransferAck? ack)
+            EStateChangeType.HumanoidPoseFrame => HumanoidPosePacket.TryRead(payload, out HumanoidPosePacketView pose)
+                && TryPreflightManagedHumanoidPoseFrame(connection, pose),
+            EStateChangeType.ReplicationTransferAck => StateChangeCodec.TryRead<ReplicationTransferAck>(payload, out ReplicationTransferAck? ack)
                 && ack is not null && IsCurrentReplicationControl(connection, ack.SessionId, ack.ConnectionGeneration, ack.CredentialEpoch),
-            EStateChangeType.ReplicationResyncRequest => StateChangePayloadSerializer.TryDeserialize<ReplicationResyncRequest>(change.Data, out ReplicationResyncRequest? resync)
+            EStateChangeType.ReplicationResyncRequest => StateChangeCodec.TryRead<ReplicationResyncRequest>(payload, out ReplicationResyncRequest? resync)
                 && resync is not null && IsCurrentReplicationControl(connection, resync.SessionId, resync.ConnectionGeneration, resync.CredentialEpoch),
-            EStateChangeType.ReplicationSyncComplete => StateChangePayloadSerializer.TryDeserialize<ReplicationSyncComplete>(change.Data, out ReplicationSyncComplete? complete)
+            EStateChangeType.ReplicationSyncComplete => StateChangeCodec.TryRead<ReplicationSyncComplete>(payload, out ReplicationSyncComplete? complete)
                 && complete is not null && IsCurrentReplicationControl(connection, complete.SessionId, complete.ConnectionGeneration, complete.CredentialEpoch),
             _ => false,
         };
@@ -396,10 +412,13 @@ public partial class ServerNetworkingManager
     private bool IsManagedAssociationForConnection(NetworkPlayerConnection connection, IPEndPoint sender)
     {
         lock (_managedAssociationLock)
-            return _managedAssociations.Values.Any(association => !association.Closed && association.Endpoint.Equals(sender)
-                && association.Identity.SessionId == connection.SessionId
-                && association.Identity.ClientId == connection.ClientId
-                && association.Identity.CredentialEpoch == connection.CredentialEpoch);
+            foreach (ManagedUdpAssociation association in _managedAssociations.Values)
+                if (!association.Closed && association.Endpoint.Equals(sender)
+                    && association.Identity.SessionId == connection.SessionId
+                    && association.Identity.ClientId == connection.ClientId
+                    && association.Identity.CredentialEpoch == connection.CredentialEpoch)
+                    return true;
+        return false;
     }
 
     private bool TryGetManagedConnection(ManagedUdpAssociation association, IPEndPoint sender, out NetworkPlayerConnection connection)
@@ -464,6 +483,7 @@ public partial class ServerNetworkingManager
                 timing.FixedUpdate -= AdvanceSimulationTick;
             _simulationTiming = null;
             DisposeServerReplication();
+            DisposePoseQueue();
             ClearCanonicalPoses();
             lock (_managedAssociationLock)
             {

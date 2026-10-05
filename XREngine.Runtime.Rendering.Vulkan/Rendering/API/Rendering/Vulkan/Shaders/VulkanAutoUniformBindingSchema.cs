@@ -254,6 +254,12 @@ internal sealed class VulkanAutoUniformBindingSchema
         if (TryResolveSpecialSource(normalizedName, out _, out _))
             return EVulkanBindingFrequency.Object;
 
+        // Supplemental lighting and occlusion values are captured from each binding callback.
+        // Keep them out of material-owned storage without sharing values across lights.
+        if (UniformRequirementsDetection.GetRequirement(normalizedName) is
+            EUniformRequirements.Lights or EUniformRequirements.AmbientOcclusion)
+            return EVulkanBindingFrequency.RuntimeCallback;
+
         return EVulkanBindingFrequency.Material;
     }
 

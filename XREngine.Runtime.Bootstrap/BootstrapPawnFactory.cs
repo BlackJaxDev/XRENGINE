@@ -2,7 +2,9 @@ using MagicPhysX;
 using System.Numerics;
 using XREngine.Audio;
 using XREngine.Components;
+using XREngine.Components.Animation;
 using XREngine.Components.Movement;
+using XREngine.Components.Lights;
 using XREngine.Components.Physics;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Components.VR;
@@ -69,14 +71,15 @@ public static class BootstrapPawnFactory
 
     /// <summary>
     /// Creates a VR pawn and its complete scene hierarchy for runtime possession.
-    /// The caller owns the returned root and chooses when to possess the pawn.
+    /// The caller owns the supplied parent hierarchy and chooses when to possess the pawn.
+    /// The returned node is the avatar mount for a character pawn.
     /// </summary>
     public static (SceneNode Root, PawnComponent Pawn) CreateVrPawn(SceneNode parentNode)
     {
         if (RuntimeBootstrapState.Settings.Locomotion)
         {
-            _ = CreateCharacterVRPawn(parentNode, out CharacterPawnComponent pawn, out _, out _, out _, out SceneNode root, possessOnCreate: false);
-            return (root, pawn);
+            SceneNode avatarMount = CreateCharacterVRPawn(parentNode, out CharacterPawnComponent pawn, out _, out _, out _, out _, possessOnCreate: false);
+            return (avatarMount, pawn);
         }
 
         SceneNode flyingRoot = CreateFlyingVRPawn(parentNode, out PawnComponent flyingPawn, possessOnCreate: false);
@@ -169,8 +172,114 @@ public static class BootstrapPawnFactory
         var playspaceNode = footNode.NewChild("Playspace Node");
 
         CreateVRDevices(out hmdTfm, out leftTfm, out rightTfm, vrPlayspaceNode, characterComp, vrInput, playspaceNode);
+        var player = vrPlayspaceNode.AddComponent<VRPlayerCharacterComponent>()!;
+        player.CharacterMovementComponent = movementComp;
+        player.PlayspaceRoot = playspaceNode.GetTransformAs<Transform>(true)!;
+        player.Headset = hmdTfm;
+        player.LeftController = leftTfm;
+        player.RightController = rightTfm;
+        player.TrackerCollection = playspaceNode.FindDescendant(x => x.Name == "VRTrackerCollectionNode")?.GetComponent<VRTrackerCollectionComponent>();
+        AddVrSpectator(rootNode, vrPlayspaceNode, characterComp);
+        _ = EngineVrLifecycle.CalibrationSettings;
+        BootstrapVrAvatarFactory.TryCreateConfiguredAvatar(vrPlayspaceNode, footNode);
 
         return footNode;
+    }
+
+    /// <summary>
+    /// Connects an imported humanoid to its local VR pawn. Both editor and runtime bootstrap
+    /// use this entry point after avatar import, when the humanoid bones and solver exist.
+    /// </summary>
+    public static VRPlayerCharacterComponent BindVrAvatar(
+        SceneNode avatarRoot,
+        SceneNode characterNode,
+        SceneNode playspaceNode,
+        HumanoidComponent humanoid,
+        VRHeightScaleComponent heightScale,
+        VRIKSolverComponent? solver)
+    {
+        var movement = characterNode.GetComponent<CharacterMovement3DComponent>()
+            ?? throw new InvalidOperationException("The VR character has no movement component.");
+        var input = characterNode.GetComponent<VRPlayerInputSet>()
+            ?? throw new InvalidOperationException("The VR character has no input set.");
+        var player = characterNode.GetComponent<VRPlayerCharacterComponent>()
+            ?? characterNode.AddComponent<VRPlayerCharacterComponent>()!;
+
+        heightScale.CharacterMovementComponent = movement;
+        heightScale.PlayerSettings = Engine.UserSettings;
+        heightScale.HumanoidComponent = humanoid;
+        player.CharacterMovementComponent = movement;
+        player.HeightScaleComponent = heightScale;
+        player.HumanoidComponent = humanoid;
+        player.IKSolver = solver;
+        player.PlayspaceRoot = playspaceNode.GetTransformAs<Transform>(true)!;
+        player.Headset = playspaceNode.FindDescendant(x => x.Name == "VRHeadsetNode")?.Transform as VRHeadsetTransform;
+        player.LeftController = input.LeftHandTransform;
+        player.RightController = input.RightHandTransform;
+        player.TrackerCollection = playspaceNode.FindDescendant(x => x.Name == "VRTrackerCollectionNode")?.GetComponent<VRTrackerCollectionComponent>();
+        player.EyeLBoneName = "Eye_L";
+        player.EyeRBoneName = "Eye_R";
+        player.EyesModelResolveName = "Face";
+
+        var localAvatarVisibility = characterNode.GetComponent<VrLocalAvatarVisibilityComponent>()
+            ?? characterNode.AddComponent<VrLocalAvatarVisibilityComponent>()!;
+        localAvatarVisibility.BindAvatar(avatarRoot);
+
+        _ = EngineVrLifecycle.CalibrationSettings;
+
+        if (characterNode.FindDescendantByName("VR Spectator Anchor")?.GetComponent<VrSpectatorFollowComponent>() is { } follow)
+        {
+            follow.Player = player;
+            player.Spectator = follow;
+            player.SpectatorEnabled = Engine.UserSettings.VrSpectatorEnabled;
+        }
+
+        if (player.Headset?.SceneNode is { } headsetNode)
+        {
+            var feedback = characterNode.GetComponent<VrCalibrationFeedbackComponent>()
+                ?? characterNode.AddComponent<VrCalibrationFeedbackComponent>()!;
+            feedback.Player = player;
+        }
+
+        player.InitializeRig();
+
+        return player;
+    }
+
+    /// <summary>Creates a local spectator view with an independent captured output.</summary>
+    public static VrSpectatorFollowComponent AddVrSpectator(
+        SceneNode ownerRoot,
+        SceneNode characterNode,
+        CharacterPawnComponent pawn)
+    {
+        if (characterNode.FindDescendantByName("VR Spectator Anchor")?.GetComponent<VrSpectatorFollowComponent>() is { } existing)
+            return existing;
+
+        UserSettings settings = Engine.UserSettings;
+        VRPlayerCharacterComponent? player = characterNode.GetComponent<VRPlayerCharacterComponent>();
+        VrSpectatorFollowComponent follow = BootstrapVrSpectatorFactory.Create(
+            characterNode, characterNode.Transform, player);
+        follow.Settings = new VrSpectatorFollowSettings
+        {
+            Distance = settings.VrSpectatorDistance,
+            Height = 0.5f + settings.VrSpectatorHeight - 1.6f,
+            ShoulderOffset = settings.VrSpectatorShoulderOffset,
+            AimOffset = new Vector3(0f, 0.25f + settings.VrSpectatorAimHeight - 1.4f, 0f),
+            Smoothing = settings.VrSpectatorFollowSpeed,
+            FieldOfView = settings.VrSpectatorFieldOfView,
+        };
+        if (follow.Output is { } output)
+        {
+            output.Width = settings.VrSpectatorWidth;
+            output.Height = settings.VrSpectatorHeightPixels;
+            output.FramesPerSecond = settings.VrSpectatorFramesPerSecond;
+        }
+        if (player is not null)
+        {
+            player.Spectator = follow;
+            player.SpectatorEnabled = settings.VrSpectatorEnabled;
+        }
+        return follow;
     }
 
     private static void CreateVRDevices(
@@ -223,6 +332,7 @@ public static class BootstrapPawnFactory
 
         controllerTfm = controllerNode.SetTransform<VRControllerTransform>();
         controllerTfm.LeftHand = left;
+        controllerTfm.SyntheticPoseEnabled = settings.SceneOnlyVRPawn;
 
         if (settings.SceneOnlyVRPawn)
         {
@@ -247,6 +357,7 @@ public static class BootstrapPawnFactory
         _ = AddTrackerCollectionNode(vrPlayspaceNode);
         _ = pawn?.SceneNode?.AddComponent<VRPlayerInputSet>();
         createdPawn = pawn ?? throw new InvalidOperationException("VR headset hierarchy did not create a pawn.");
+        BootstrapVrAvatarFactory.TryCreateConfiguredAvatar(vrPlayspaceNode, vrPlayspaceNode);
         return vrPlayspaceNode;
     }
 
@@ -271,6 +382,7 @@ public static class BootstrapPawnFactory
         listener.SpeedOfSound = 343.3f;
 
         hmdTfm = vrHeadsetNode.SetTransform<VRHeadsetTransform>()!;
+        hmdTfm.SyntheticPoseEnabled = RuntimeBootstrapState.Settings.SceneOnlyVRPawn;
         hmdComp = vrHeadsetNode.AddComponent<VRHeadsetComponent>()!;
 
         AddVRFirstPersonDesktopView(ref pawn, vrHeadsetNode, possessOnCreate);
@@ -286,6 +398,7 @@ public static class BootstrapPawnFactory
         firstPersonViewTfm.ScaleInterpolationSpeed = null;
         firstPersonViewTfm.QuaternionInterpolationSpeed = FirstPersonDesktopViewSmoothing;
         var firstPersonCam = firstPersonViewNode.AddComponent<CameraComponent>()!;
+        firstPersonCam.Camera.CullingMask = DefaultLayers.FirstPersonVr;
         var persp = firstPersonCam.Camera.Parameters as XRPerspectiveCameraParameters;
         persp!.HorizontalFieldOfView = FirstPersonDesktopHorizontalFieldOfView;
         persp.NearZ = 0.1f;

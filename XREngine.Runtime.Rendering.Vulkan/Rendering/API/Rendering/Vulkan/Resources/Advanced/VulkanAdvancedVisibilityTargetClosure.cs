@@ -15,12 +15,17 @@ internal readonly record struct VulkanAdvancedVisibilityTargetClosure(
     DynamicRenderingFormatSignature DynamicRenderingFormats,
     SampleCountFlags RasterizationSamples,
     bool DepthStencilReadOnly,
-    VulkanAdvancedVisibilityClearPolicy ClearPolicy)
+    VulkanAdvancedVisibilityClearPolicy ClearPolicy,
+    EVulkanAdvancedVisibilityTargetKind Kind = EVulkanAdvancedVisibilityTargetKind.Visibility)
 {
     internal bool IsValid
         => Target is not null && NativeTarget.IsComplete &&
            RasterizationSamples != 0 &&
-           (UsesDynamicRendering
-               ? DynamicRenderingFormats.ColorAttachmentCount is 3u or 4u
-               : RenderPass.Handle != 0);
+           (Kind == EVulkanAdvancedVisibilityTargetKind.DirectionalShadow
+               ? UsesDynamicRendering &&
+                 DynamicRenderingFormats.ColorAttachmentCount == 0u &&
+                 DynamicRenderingFormats.DepthAttachmentFormat != Format.Undefined
+               : UsesDynamicRendering
+                   ? DynamicRenderingFormats.ColorAttachmentCount is 3u or 4u
+                   : RenderPass.Handle != 0);
 }

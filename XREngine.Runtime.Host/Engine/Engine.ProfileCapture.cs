@@ -1102,7 +1102,6 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_consumed_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanConsumedDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_oom_fallback_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanOomFallbackCount, ref first);
             VulkanFrameTelemetryPublication vulkanFrame = RuntimeEngine.Rendering.Stats.Vulkan.LatestVulkanFrameTelemetry;
-#if XRENGINE_STATIC_VULKAN
             RenderBackendPresentNowFailureSnapshot presentNowFailure = default;
             IRenderBackendDiagnosticsCapability? diagnostics = null;
             AbstractRenderer? currentRenderer = AbstractRenderer.Current;
@@ -1170,7 +1169,6 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_replenishment_failures", materialTableCounters.StandbyReplenishmentFailures, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_banks", materialTableCounters.StandbyBanks, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_pending_allocations", materialTableCounters.StandbyPendingAllocations, ref first);
-#endif
             AppendNumberField(s_lineBuilder, "vulkan_frame_total_ms", vulkanFrame.TotalElapsed.TotalMilliseconds, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_gpu_command_buffer_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs, ref first);
             VulkanGpuCommandBufferTimingSnapshot gpuCommandBufferTiming = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferTimingSnapshot;
@@ -1505,6 +1503,7 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_classification_operation", EVulkanCpuStage.PrimaryAdvancedClassificationOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_ambient_occlusion_operation", EVulkanCpuStage.PrimaryAdvancedAmbientOcclusionOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_native_shading_operation", EVulkanCpuStage.PrimaryAdvancedNativeShadingOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_directional_shadow_operation", EVulkanCpuStage.PrimaryAdvancedDirectionalShadowOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_cpu_direct_draw_operation", EVulkanCpuStage.PrimaryAdvancedCpuDirectDrawOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_raster_lowering_operation", EVulkanCpuStage.PrimaryAdvancedRasterLoweringOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_raster_validation_operation", EVulkanCpuStage.PrimaryAdvancedRasterValidationOperation, ref first);

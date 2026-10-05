@@ -724,6 +724,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool ProcessMeshImportsAsynchronously => false;
         public bool AllowSkinning => true;
         public bool CalculateSkinningInComputeShader => false;
+        public EEngineQuality TextureQuality => EEngineQuality.Highest;
         public bool CalculateBlendshapesInComputeShader => false;
         public bool CalculateSkinnedBoundsInComputeShader => false;
         public bool SkinnedBoundsGpuDirectAabbWrite => false;

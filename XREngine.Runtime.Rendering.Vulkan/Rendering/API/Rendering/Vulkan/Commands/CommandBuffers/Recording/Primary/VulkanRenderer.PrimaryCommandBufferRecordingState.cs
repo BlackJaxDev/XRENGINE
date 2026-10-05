@@ -127,6 +127,7 @@ namespace XREngine.Rendering.Vulkan
         public FrameOpContext PlannerContext;
         public bool HasPlannerContext;
         public bool PassIndexLabelActive;
+        public int SelectedGpuPassStartQuery;
         public PrimaryCommandBufferRecordingMetrics Metrics;
     }
 

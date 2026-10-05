@@ -60,6 +60,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (Data is XRTexture2D { RuntimeManagedProgressiveUploadActive: true })
             return;
 
+        // Released streaming pixels have nothing to push. The published image
+        // keeps its contents; a new renderer restores it through the upload
+        // generation ledger, which reloads the chain from the streaming source.
+        if (Data is XRTexture2D { ResidentPixelsReleased: true })
+            return;
+
         if (!TryBeginPushData(out bool allowPostPushCallback))
             return;
 

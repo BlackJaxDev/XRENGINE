@@ -18,6 +18,14 @@ public static partial class RuntimeEngine
                 private static long _latestVulkanFramePublicationSequence;
                 private static long _latestVulkanFrameAuthorityId;
                 private static int _vulkanFrameTelemetryWriterGate;
+                // Cumulative per-outcome counts of published frame roots and of their
+                // command-record stage. A frame whose recording is deferred can still
+                // present (replaying the last complete scene), so presented-frame
+                // counters alone overstate the freshly rendered scene rate.
+                private static readonly long[] _vulkanFrameOutcomeCounts =
+                    new long[(int)EVulkanFrameOutcome.Failed + 1];
+                private static readonly long[] _vulkanCommandRecordOutcomeCounts =
+                    new long[(int)EVulkanFrameOutcome.Failed + 1];
 
                 /// <summary>
                 /// Publishes the single shared Vulkan frame schema and folds its authority-owned
@@ -59,6 +67,8 @@ public static partial class RuntimeEngine
                         Volatile.Write(ref _latestVulkanFrameStartTimestamp, publication.Identity.StartTimestamp);
                         Volatile.Write(ref _latestVulkanFramePublicationSequence, publication.PublicationSequence);
                         Volatile.Write(ref _latestVulkanFrameTelemetryVersion, writingVersion + 1);
+                        CountOutcome(_vulkanFrameOutcomeCounts, publication.Outcome);
+                        CountOutcome(_vulkanCommandRecordOutcomeCounts, publication.CommandRecord.Outcome);
                     }
                     finally
                     {
@@ -82,6 +92,28 @@ public static partial class RuntimeEngine
                         UpdateHighWater(ref _vulkanCpuStageBoundaryAllocationHighWaterBytes[stageIndex], telemetry.BoundaryAllocationHighWaterBytes);
                     }
                 }
+
+                private static void CountOutcome(long[] counts, EVulkanFrameOutcome outcome)
+                {
+                    int index = (int)outcome;
+                    if ((uint)index < (uint)counts.Length)
+                        Interlocked.Increment(ref counts[index]);
+                }
+
+                /// <summary>Cumulative count of published frame roots with the given outcome.</summary>
+                public static long GetVulkanFrameOutcomeCount(EVulkanFrameOutcome outcome)
+                    => (uint)outcome < (uint)_vulkanFrameOutcomeCounts.Length
+                        ? Volatile.Read(ref _vulkanFrameOutcomeCounts[(int)outcome])
+                        : 0L;
+
+                /// <summary>
+                /// Cumulative count of published frame roots whose command-record stage
+                /// ended with the given outcome. Completed counts freshly recorded scenes.
+                /// </summary>
+                public static long GetVulkanCommandRecordOutcomeCount(EVulkanFrameOutcome outcome)
+                    => (uint)outcome < (uint)_vulkanCommandRecordOutcomeCounts.Length
+                        ? Volatile.Read(ref _vulkanCommandRecordOutcomeCounts[(int)outcome])
+                        : 0L;
 
                 /// <summary>Reads the newest complete shared Vulkan frame publication.</summary>
                 public static bool TryGetLatestVulkanFrameTelemetry(out VulkanFrameTelemetryPublication publication)

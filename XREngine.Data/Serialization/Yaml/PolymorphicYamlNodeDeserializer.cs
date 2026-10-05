@@ -6,6 +6,7 @@ using System.Reflection;
 using XREngine.Data;
 using XREngine.Core;
 using XREngine.Core.Files;
+using XREngine.Data.Runtime.AotParity;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
@@ -160,11 +161,21 @@ namespace XREngine
                 return false;
 
             type = ResolveTypeFromLoadedAssemblies(typeName);
-            if (type is not null)
-                return true;
+            if (type is null)
+            {
+                RuntimeAssemblyLoadingServices.Current?.EnsureRuntimeAssembliesLoaded();
+                type = ResolveTypeFromLoadedAssemblies(typeName);
+            }
 
-            RuntimeAssemblyLoadingServices.Current?.EnsureRuntimeAssembliesLoaded();
-            type = ResolveTypeFromLoadedAssemblies(typeName);
+            if (type is not null)
+            {
+                AotParityDiagnostics.Report(
+                    type,
+                    EAotParityCategory.PolymorphicYamlScan,
+                    $"{nameof(PolymorphicYamlNodeDeserializer)}.{nameof(TryResolveType)}",
+                    "Add the type to the published runtime metadata known-type table, or cook the asset so the player never parses YAML for it.");
+            }
+
             return type is not null;
         }
 

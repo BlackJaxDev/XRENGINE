@@ -31,7 +31,7 @@ public partial class TextFile
             read.EnsureCurrent();
             return false;
         }
-        PublishText(read, version, bytes);
+        PublishText(read, path, version, bytes);
         return true;
     }
 
@@ -44,7 +44,7 @@ public partial class TextFile
         using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
         if (!read.Exists(path))
             return false;
-        PublishText(read, version, read.ReadAllBytes(path));
+        PublishText(read, path, version, read.ReadAllBytes(path));
         return true;
     }
 
@@ -54,7 +54,7 @@ public partial class TextFile
         using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
         read.EnsureHostFileAccess("Mapped text read");
         using FileMap map = FileMap.FromFile(path, FileMapProtect.Read);
-        PublishText(read, version, new ReadOnlySpan<byte>((byte*)map.Address, checked((int)map.Length)));
+        PublishText(read, path, version, new ReadOnlySpan<byte>((byte*)map.Address, checked((int)map.Length)));
     }
 
     private long BeginTextLoad()
@@ -68,7 +68,7 @@ public partial class TextFile
         }
     }
 
-    private void PublishText(RuntimeAssetReadLease read, long version, ReadOnlySpan<byte> bytes)
+    private void PublishText(RuntimeAssetReadLease read, string path, long version, ReadOnlySpan<byte> bytes)
     {
         Encoding encoding = GetEncoding(bytes, out int bomLength);
         string text = encoding.GetString(bytes[bomLength..]);
@@ -84,10 +84,7 @@ public partial class TextFile
         try
         {
             // Setters may call user code. Neither the source nor object admission gate is held.
-            read.EnsureCurrent();
-            Encoding = encoding;
-            read.EnsureCurrent();
-            Text = text;
+            ApplyLoadedText(path, text, encoding, read);
         }
         finally
         {
@@ -107,6 +104,8 @@ public partial class TextFile
                 _textLifetimeEnded = false;
                 ++_textLoadVersion;
             }
+            lock (_diskProvenanceLock)
+                _destroyed = false;
         }
     }
 
@@ -119,6 +118,8 @@ public partial class TextFile
             _textLifetimeEnded = true;
             ++_textLoadVersion;
         }
+        lock (_diskProvenanceLock)
+            _destroyed = true;
         base.OnDestroying();
     }
 

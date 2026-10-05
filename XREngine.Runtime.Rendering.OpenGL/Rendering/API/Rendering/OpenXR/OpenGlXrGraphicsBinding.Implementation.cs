@@ -411,7 +411,9 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
             uint width = GetOpenXrSwapchainWidth(viewIndex);
             uint height = GetOpenXrSwapchainHeight(viewIndex);
             EnsureViewportMirrorTargets(renderer, width, height);
-            EnsureOpenXrPreviewTargets(renderer, width, height);
+            bool copyEyePreview = RuntimeEngine.Rendering.Settings.VrCopyEyePreviewTextures;
+            if (copyEyePreview)
+                EnsureOpenXrPreviewTargets(renderer, width, height);
 
             var eyeViewport = GetOpenXrEyeViewport(viewIndex);
             var eyeCamera = GetOpenXrEyeCamera(viewIndex);
@@ -458,7 +460,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
                 if (srcApiTex is null || srcApiTex.BindingId == 0)
                     return;
 
-                XRTexture2D? previewTexture = GetOpenXrPreviewTexture(viewIndex);
+                XRTexture2D? previewTexture = copyEyePreview ? GetOpenXrPreviewTexture(viewIndex) : null;
                 var previewApiTex = previewTexture is null
                     ? null
                     : TryGetValidOpenXrTexture(renderer, previewTexture, "preview", viewIndex);
@@ -516,7 +518,27 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
                 // Attach without assuming the underlying texture target (2D vs 2DMS etc).
                 uint previewTextureId = previewApiTex?.BindingId ?? 0;
                 bool previewTextureValid = previewTextureId != 0 && _gl.IsTexture(previewTextureId);
-                if (previewTextureValid)
+                bool previewStorageReady = false;
+                if (previewTextureValid && previewApiTex is GLTexture2D previewGlTexture)
+                {
+                    try
+                    {
+                        // The raw FBO attach below bypasses the XR framebuffer's storage hook.
+                        if (!previewGlTexture.StorageSet)
+                            previewGlTexture.EnsureStorageAllocated();
+                        previewStorageReady = previewGlTexture.StorageSet;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.OpenGLWarningEvery(
+                            $"OpenXR.OpenGL.PreviewStorage.{viewIndex}",
+                            TimeSpan.FromSeconds(1),
+                            "[OpenXR] Eye preview storage for view {0} could not be committed: {1}.",
+                            viewIndex,
+                            ex.Message);
+                    }
+                }
+                if (previewStorageReady)
                 {
                     _gl.FramebufferTexture(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, previewTextureId, 0);
                     var previewReadStatus = _gl.CheckFramebufferStatus(FramebufferTarget.ReadFramebuffer);
@@ -565,7 +587,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
                     Debug.OpenGLWarningEvery(
                         $"OpenXR.OpenGL.InvalidPreviewTexture.{viewIndex}",
                         TimeSpan.FromSeconds(1),
-                        "[OpenXR] Skipping eye preview blit for view {0}: texture name {1} is not valid in the current GL context.",
+                        "[OpenXR] Skipping eye preview blit for view {0}: texture name {1} is invalid or has no committed storage in the current GL context.",
                         viewIndex,
                         previewTextureId);
                 }
@@ -840,7 +862,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
             EPixelType.UnsignedByte,
             EFrameBufferAttachment.ColorAttachment0);
         texture.SizedInternalFormat = sizedFormat;
-        texture.Resizable = true;
+        texture.Resizable = false;
         texture.MinFilter = ETexMinFilter.Linear;
         texture.MagFilter = ETexMagFilter.Linear;
         texture.UWrap = ETexWrapMode.ClampToEdge;

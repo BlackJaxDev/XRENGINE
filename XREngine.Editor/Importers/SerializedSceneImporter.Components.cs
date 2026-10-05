@@ -922,9 +922,9 @@ internal static partial class SerializedSceneImporter
         if (remap.Count == 0)
             return;
 
+        // Packed influences index UtilizedBones by position, so rebinding the
+        // bone table retargets every vertex without repacking.
         mesh.UtilizedBones = reboundBones;
-        RemapVertexWeights(mesh, remap);
-        mesh.RebuildSkinningBuffersFromVertices();
     }
 
     private static void RemapMeshBonesToTarget(XRMesh mesh, SceneNode sourceRoot, SceneNode targetRoot)
@@ -952,37 +952,9 @@ internal static partial class SerializedSceneImporter
         if (remap.Count == 0)
             return;
 
+        // Packed influences index UtilizedBones by position, so rebinding the
+        // bone table retargets every vertex without repacking.
         mesh.UtilizedBones = reboundBones;
-        RemapVertexWeights(mesh, remap);
-        mesh.RebuildSkinningBuffersFromVertices();
-    }
-
-    private static void RemapVertexWeights(XRMesh mesh, IReadOnlyDictionary<TransformBase, TransformBase> remap)
-    {
-        if (mesh.Vertices is not { Length: > 0 })
-            return;
-
-        for (int vertexIndex = 0; vertexIndex < mesh.Vertices.Length; vertexIndex++)
-        {
-            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = mesh.Vertices[vertexIndex].Weights;
-            if (weights is null || weights.Count == 0)
-                continue;
-
-            var remappedWeights = new Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>(weights.Count, ReferenceEqualityComparer.Instance);
-            foreach ((TransformBase sourceBone, (float weight, Matrix4x4 bindInvWorldMatrix) value) in weights)
-            {
-                TransformBase targetBone = remap.TryGetValue(sourceBone, out TransformBase? mappedBone)
-                    ? mappedBone
-                    : sourceBone;
-
-                if (remappedWeights.TryGetValue(targetBone, out (float weight, Matrix4x4 bindInvWorldMatrix) existing))
-                    remappedWeights[targetBone] = (existing.weight + value.weight, value.bindInvWorldMatrix);
-                else
-                    remappedWeights[targetBone] = value;
-            }
-
-            mesh.Vertices[vertexIndex].Weights = remappedWeights;
-        }
     }
 
     private static TransformBase? MapSourceTransformToTarget(TransformBase? sourceTransform, SceneNode sourceRoot, SceneNode targetRoot)

@@ -5,6 +5,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// One influence beyond the canonical four-inline-influence row.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("SpillInfluence", PreserveMemberCase = true)]
 [StructLayout(LayoutKind.Sequential, Pack = 4, Size = 8)]
 public readonly record struct AdvancedSpillInfluence(
     uint Bone,

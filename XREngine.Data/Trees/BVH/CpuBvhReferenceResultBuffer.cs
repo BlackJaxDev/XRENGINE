@@ -21,8 +21,10 @@ public sealed class CpuBvhReferenceResultBuffer<T> where T : class
         _items = new T?[checked((int)BitOperations.RoundUpToPowerOf2((uint)capacity))];
     }
 
+    /// <summary>Starts a new result set and releases the previous items.</summary>
     public void Begin()
     {
+        Array.Clear(_items, 0, Count);
         Count = 0;
         Overflowed = false;
     }

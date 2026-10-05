@@ -78,6 +78,8 @@ namespace XREngine.Scene.Transforms
         private void OnTargetMatrixChanged(TransformBase @base, Matrix4x4 worldMatrix)
             => MarkWorldModified();
 
+        protected override bool HasCustomWorldMatrix => true;
+
         protected override Matrix4x4 CreateWorldMatrix()
         {
             Vector3 parentPos = Parent?.WorldMatrix.Translation ?? Vector3.Zero;

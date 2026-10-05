@@ -1136,12 +1136,65 @@ internal sealed partial class VulkanFrameLoop
                 scope.CompletePreparation();
             }
 
+            RetireSupersededPlannerAllocators(scope.SupersededAllocators);
             return scope;
         }
         catch
         {
             scope.Dispose();
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Retires the physical resources of planner states that an older resource
+    /// generation left in the active switching table. Physical image groups the
+    /// newly prepared allocator still references stay alive, allocators the
+    /// published table still owns (shared committed states) are left to that
+    /// table, and destruction is deferred through the retirement queue until GPU
+    /// work that recorded the older generation completes. A state that still
+    /// captured a retired allocator (such as an OpenXR planner's outer state)
+    /// treats it as a tombstone and is replaced on its next publication.
+    /// </summary>
+    private void RetireSupersededPlannerAllocators(List<VulkanResourceAllocator>? superseded)
+    {
+        if (superseded is null || superseded.Count == 0)
+            return;
+
+        VulkanBackendObjectContext? backendContext = _resourceRuntime.BackendObjectContext;
+        if (backendContext is null)
+            return;
+
+        FrameOpResourcePlannerSwitchingState switchingState =
+            _resourcePlannerSessions.ResolveActiveSwitchingState();
+        VulkanResourceAllocator currentAllocator =
+            _resourcePlannerSessions.CaptureRuntimeState().ResourceAllocator;
+        HashSet<VulkanPhysicalImageGroup> keptImageGroups = [];
+        foreach (VulkanPhysicalImageGroup group in currentAllocator.EnumeratePhysicalGroups())
+            keptImageGroups.Add(group);
+
+        for (int index = 0; index < superseded.Count; index++)
+        {
+            VulkanResourceAllocator allocator = superseded[index];
+            if (allocator.IsRetired ||
+                ReferenceEquals(allocator, currentAllocator) ||
+                VulkanResourcePlannerSessionService.IsAllocatorOwned(switchingState, allocator) ||
+                _resourcePlannerSessions.IsAllocatorOwnedByPublishedTable(allocator))
+            {
+                continue;
+            }
+
+            try
+            {
+                _ = allocator.TryRetirePhysicalResources(backendContext, exceptImageGroups: keptImageGroups);
+            }
+            catch (Exception ex)
+            {
+                Debug.VulkanWarning(
+                    "[VulkanResourcePlanner] Superseded planner allocator {0} retirement failed: {1}",
+                    allocator.OwnershipId,
+                    ex.Message);
+            }
         }
     }
 

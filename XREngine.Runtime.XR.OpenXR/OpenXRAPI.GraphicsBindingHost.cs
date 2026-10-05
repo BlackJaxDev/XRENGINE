@@ -25,6 +25,8 @@ public unsafe partial class OpenXRAPI
         public IOpenXrGraphicsCalls GraphicsCalls => owner;
         public ulong InstanceHandle => owner._instance.Handle;
         public ulong SessionHandle => owner._session.Handle;
+        public bool IsInstanceExtensionEnabled(string extensionName)
+            => owner.IsInstanceExtensionEnabled(extensionName);
         ReadOnlySpan<OpenXrViewConfiguration> IOpenXrGraphicsHost.ViewConfigurationViews
             => owner._neutralViewConfigViews.AsSpan(0, checked((int)owner._viewCount));
         ReadOnlySpan<ulong> IOpenXrGraphicsHost.Swapchains

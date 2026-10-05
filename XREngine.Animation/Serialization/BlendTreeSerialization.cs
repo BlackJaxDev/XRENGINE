@@ -16,25 +16,47 @@ internal static class BlendTreeCookedBinarySerializer
         => type == typeof(BlendTree1D) || type == typeof(BlendTree2D) || type == typeof(BlendTreeDirect);
 
     public static void Write(CookedBinaryWriter writer, BlendTree blendTree)
-        => SerializedAssetSupport.WriteModel<BlendTree, object>(writer, blendTree, BlendTreeSerialization.CreateModel);
+    {
+        switch (blendTree)
+        {
+            case BlendTree1D tree:
+                SerializedAssetSupport.WriteModel<BlendTree1D, BlendTree1DSerializedModel>(writer, tree, BlendTreeSerialization.CreateModel);
+                break;
+            case BlendTree2D tree:
+                SerializedAssetSupport.WriteModel<BlendTree2D, BlendTree2DSerializedModel>(writer, tree, BlendTreeSerialization.CreateModel);
+                break;
+            case BlendTreeDirect tree:
+                SerializedAssetSupport.WriteModel<BlendTreeDirect, BlendTreeDirectSerializedModel>(writer, tree, BlendTreeSerialization.CreateModel);
+                break;
+            default:
+                throw new NotSupportedException($"Unsupported blend tree type '{blendTree.GetType().FullName}'.");
+        }
+    }
 
     public static BlendTree Read(Type type, CookedBinaryReader reader)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
-        Type modelType = type == typeof(BlendTree1D)
-            ? typeof(BlendTree1DSerializedModel)
+        object? model = type == typeof(BlendTree1D)
+            ? CookedBinarySerializer.ReadTypedMemoryPackModel<BlendTree1DSerializedModel>(reader)
             : type == typeof(BlendTree2D)
-                ? typeof(BlendTree2DSerializedModel)
-                : typeof(BlendTreeDirectSerializedModel);
-        object? model = reader.ReadValue(modelType);
+                ? CookedBinarySerializer.ReadTypedMemoryPackModel<BlendTree2DSerializedModel>(reader)
+                : type == typeof(BlendTreeDirect)
+                    ? CookedBinarySerializer.ReadTypedMemoryPackModel<BlendTreeDirectSerializedModel>(reader)
+                    : throw new NotSupportedException($"Unsupported blend tree type '{type.FullName}'.");
 
         return BlendTreeSerialization.CreateRuntimeBlendTree(type, model)
             ?? throw new InvalidOperationException($"Failed to deserialize blend tree '{type.FullName}'.");
     }
 
     public static long CalculateSize(BlendTree blendTree)
-        => SerializedAssetSupport.CalculateModelSize<BlendTree, object>(blendTree, BlendTreeSerialization.CreateModel);
+        => blendTree switch
+        {
+            BlendTree1D tree => SerializedAssetSupport.CalculateModelSize<BlendTree1D, BlendTree1DSerializedModel>(tree, BlendTreeSerialization.CreateModel),
+            BlendTree2D tree => SerializedAssetSupport.CalculateModelSize<BlendTree2D, BlendTree2DSerializedModel>(tree, BlendTreeSerialization.CreateModel),
+            BlendTreeDirect tree => SerializedAssetSupport.CalculateModelSize<BlendTreeDirect, BlendTreeDirectSerializedModel>(tree, BlendTreeSerialization.CreateModel),
+            _ => throw new NotSupportedException($"Unsupported blend tree type '{blendTree.GetType().FullName}'.")
+        };
 }
 
 internal static class BlendTreeMemoryPackRegistration
@@ -102,24 +124,39 @@ internal static class BlendTreeSerialization
         };
 
     public static BlendTree? CreateRuntimeBlendTree(Type type, object? model)
+        => CreateRuntimeBlendTree(type, model, published: false);
+
+    public static BlendTree CreatePublishedRuntimeBlendTree(Type type, object? model)
+        => model is null
+            ? throw new InvalidDataException($"Published blend tree '{type.FullName}' has an empty model.")
+            : CreateRuntimeBlendTree(type, model, published: true)
+                ?? throw new InvalidDataException($"Published blend tree '{type.FullName}' has an invalid model.");
+
+    private static BlendTree? CreateRuntimeBlendTree(Type type, object? model, bool published)
     {
         if (type == typeof(BlendTree1D) && model is BlendTree1DSerializedModel blendTree1DModel)
-            return CreateRuntimeBlendTree(blendTree1DModel);
+            return CreateRuntimeBlendTree(blendTree1DModel, published);
         if (type == typeof(BlendTree2D) && model is BlendTree2DSerializedModel blendTree2DModel)
-            return CreateRuntimeBlendTree(blendTree2DModel);
+            return CreateRuntimeBlendTree(blendTree2DModel, published);
         if (type == typeof(BlendTreeDirect) && model is BlendTreeDirectSerializedModel blendTreeDirectModel)
-            return CreateRuntimeBlendTree(blendTreeDirectModel);
+            return CreateRuntimeBlendTree(blendTreeDirectModel, published);
         return null;
     }
 
-    private static BlendTree1DSerializedModel CreateModel(BlendTree1D blendTree)
+    internal static BlendTree1DSerializedModel CreateModel(BlendTree1D blendTree)
+        => CreateModel(blendTree, published: false);
+
+    internal static BlendTree1DSerializedModel CreatePublishedModel(BlendTree1D blendTree)
+        => CreateModel(blendTree, published: true);
+
+    private static BlendTree1DSerializedModel CreateModel(BlendTree1D blendTree, bool published)
     {
         List<BlendTree1DChildSerializedModel> children = new(blendTree.Children.Count);
         foreach (BlendTree1D.Child child in blendTree.Children)
         {
             children.Add(new BlendTree1DChildSerializedModel
             {
-                Motion = MotionSerialization.CreateModel(child.Motion),
+                Motion = published ? MotionSerialization.CreatePublishedModel(child.Motion) : MotionSerialization.CreateModel(child.Motion),
                 MotionOccurrenceId = child.MotionOccurrenceId,
                 Speed = child.Speed,
                 CycleOffset = child.CycleOffset,
@@ -138,14 +175,20 @@ internal static class BlendTreeSerialization
         };
     }
 
-    private static BlendTree2DSerializedModel CreateModel(BlendTree2D blendTree)
+    internal static BlendTree2DSerializedModel CreateModel(BlendTree2D blendTree)
+        => CreateModel(blendTree, published: false);
+
+    internal static BlendTree2DSerializedModel CreatePublishedModel(BlendTree2D blendTree)
+        => CreateModel(blendTree, published: true);
+
+    private static BlendTree2DSerializedModel CreateModel(BlendTree2D blendTree, bool published)
     {
         List<BlendTree2DChildSerializedModel> children = new(blendTree.Children.Count);
         foreach (BlendTree2D.Child child in blendTree.Children)
         {
             children.Add(new BlendTree2DChildSerializedModel
             {
-                Motion = MotionSerialization.CreateModel(child.Motion),
+                Motion = published ? MotionSerialization.CreatePublishedModel(child.Motion) : MotionSerialization.CreateModel(child.Motion),
                 MotionOccurrenceId = child.MotionOccurrenceId,
                 PositionX = child.PositionX,
                 PositionY = child.PositionY,
@@ -167,14 +210,20 @@ internal static class BlendTreeSerialization
         };
     }
 
-    private static BlendTreeDirectSerializedModel CreateModel(BlendTreeDirect blendTree)
+    internal static BlendTreeDirectSerializedModel CreateModel(BlendTreeDirect blendTree)
+        => CreateModel(blendTree, published: false);
+
+    internal static BlendTreeDirectSerializedModel CreatePublishedModel(BlendTreeDirect blendTree)
+        => CreateModel(blendTree, published: true);
+
+    private static BlendTreeDirectSerializedModel CreateModel(BlendTreeDirect blendTree, bool published)
     {
         List<BlendTreeDirectChildSerializedModel> children = new(blendTree.Children.Count);
         foreach (BlendTreeDirect.Child child in blendTree.Children)
         {
             children.Add(new BlendTreeDirectChildSerializedModel
             {
-                Motion = MotionSerialization.CreateModel(child.Motion),
+                Motion = published ? MotionSerialization.CreatePublishedModel(child.Motion) : MotionSerialization.CreateModel(child.Motion),
                 MotionOccurrenceId = child.MotionOccurrenceId,
                 WeightParameterName = child.WeightParameterName,
                 Speed = child.Speed,
@@ -193,7 +242,7 @@ internal static class BlendTreeSerialization
         };
     }
 
-    private static BlendTree1D CreateRuntimeBlendTree(BlendTree1DSerializedModel model)
+    private static BlendTree1D CreateRuntimeBlendTree(BlendTree1DSerializedModel model, bool published)
     {
         BlendTree1D blendTree = new()
         {
@@ -210,7 +259,9 @@ internal static class BlendTreeSerialization
             {
                 blendTree.Children.Add(new BlendTree1D.Child
                 {
-                    Motion = MotionSerialization.CreateRuntimeMotion(childModel.Motion),
+                    Motion = published
+                        ? MotionSerialization.CreatePublishedRuntimeMotion(childModel.Motion)
+                        : MotionSerialization.CreateRuntimeMotion(childModel.Motion),
                     MotionOccurrenceId = childModel.MotionOccurrenceId ?? Guid.NewGuid(),
                     Speed = childModel.Speed ?? 1.0f,
                     CycleOffset = childModel.CycleOffset ?? 0.0f,
@@ -223,7 +274,7 @@ internal static class BlendTreeSerialization
         return blendTree;
     }
 
-    private static BlendTree2D CreateRuntimeBlendTree(BlendTree2DSerializedModel model)
+    private static BlendTree2D CreateRuntimeBlendTree(BlendTree2DSerializedModel model, bool published)
     {
         BlendTree2D blendTree = new()
         {
@@ -242,7 +293,9 @@ internal static class BlendTreeSerialization
             {
                 blendTree.Children.Add(new BlendTree2D.Child
                 {
-                    Motion = MotionSerialization.CreateRuntimeMotion(childModel.Motion),
+                    Motion = published
+                        ? MotionSerialization.CreatePublishedRuntimeMotion(childModel.Motion)
+                        : MotionSerialization.CreateRuntimeMotion(childModel.Motion),
                     MotionOccurrenceId = childModel.MotionOccurrenceId ?? Guid.NewGuid(),
                     PositionX = childModel.PositionX,
                     PositionY = childModel.PositionY,
@@ -256,7 +309,7 @@ internal static class BlendTreeSerialization
         return blendTree;
     }
 
-    private static BlendTreeDirect CreateRuntimeBlendTree(BlendTreeDirectSerializedModel model)
+    private static BlendTreeDirect CreateRuntimeBlendTree(BlendTreeDirectSerializedModel model, bool published)
     {
         BlendTreeDirect blendTree = new()
         {
@@ -273,7 +326,9 @@ internal static class BlendTreeSerialization
             {
                 blendTree.Children.Add(new BlendTreeDirect.Child
                 {
-                    Motion = MotionSerialization.CreateRuntimeMotion(childModel.Motion),
+                    Motion = published
+                        ? MotionSerialization.CreatePublishedRuntimeMotion(childModel.Motion)
+                        : MotionSerialization.CreateRuntimeMotion(childModel.Motion),
                     MotionOccurrenceId = childModel.MotionOccurrenceId ?? Guid.NewGuid(),
                     WeightParameterName = childModel.WeightParameterName,
                     Speed = childModel.Speed ?? 1.0f,

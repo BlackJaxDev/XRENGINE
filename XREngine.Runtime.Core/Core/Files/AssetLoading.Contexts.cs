@@ -103,6 +103,11 @@ namespace XREngine
 
             try
             {
+                XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(
+                    assetType,
+                    XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                    $"{nameof(DeferredAssetReferenceContext)}.CreatePlaceholder",
+                    $"Register a runtime factory for the asset type with {nameof(RuntimeCookedBinarySerializer)}.{nameof(RuntimeCookedBinarySerializer.RegisterRuntimeFactory)} so deferred placeholders are constructed without Activator.CreateInstance.");
                 if (Activator.CreateInstance(assetType) is not XRAsset placeholder)
                     return null;
 

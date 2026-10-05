@@ -1,0 +1,33 @@
+{
+  "$schema": "../../../../.vscode/schemas/render-profile-recipe.schema.json",
+  "schema_version": 1,
+  "name": "component-quick",
+  "component": "SecondaryCommandRecording",
+  "execution_mode": "component",
+  "backend": "vulkan",
+  "fixture": "secondary-command-recording",
+  "width": 640,
+  "height": 360,
+  "frame_slots": 3,
+  "warmup_frames": 100,
+  "stability_frames": 30,
+  "capture_frames": 180,
+  "repetitions": 1,
+  "timeout_seconds": 180,
+  "instrumentation": "aggregate_cpu, coarse_gpu",
+  "profile_mode": "clean_profile",
+  "label_policy": "disabled",
+  "validation_mode": "counters_and_hash",
+  "hardware_counter_policy": "disabled",
+  "cpu_sampling_policy": "aggregate_only",
+  "scene": {
+    "scene_identity": "synthetic:immutable-command-chains",
+    "camera_identity": "synthetic:none",
+    "animation_identity": "frozen",
+    "output_identities": ["control-color"]
+  },
+  "mutation": { "policy": "forced_dirty_every_frame" },
+  "workload": { "chain_count": 32, "barrier_count": 258 },
+  "worker_counts": [4],
+  "budgets": { "max_capture_thread_allocated_bytes": 0, "require_output_hash": true }
+}

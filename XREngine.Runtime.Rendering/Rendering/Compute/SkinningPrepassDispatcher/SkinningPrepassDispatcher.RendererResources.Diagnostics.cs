@@ -214,25 +214,22 @@ internal sealed partial class SkinningPrepassDispatcher
                 }
             }
 
-            // Authoritative imported vertex positions (Vertices[].Position). Non-canonical meshes
-            // (like the exploding one) still carry the Vertices[] array. Comparing its bounds to the
-            // cooked PositionsBuffer bounds splits the corruption stage definitively:
-            //   Vertices[] sane + PositionsBuffer exploded -> COOKING corrupts positions (CookedBinary/Core).
-            //   Vertices[] ALSO exploded                   -> IMPORT builds wrong positions (geometryTransform).
+            // Authoritative source positions: the mesh's packed position stream, which is the
+            // only CPU copy of its vertices. Its bounds are the reference span for the skinned
+            // output below.
             float vMinX = float.NaN, vMaxX = float.NaN, vMinY = float.NaN, vMaxY = float.NaN, vMinZ = float.NaN, vMaxZ = float.NaN;
             float vert0x = float.NaN, vert0y = float.NaN, vert0z = float.NaN;
             int vertCountArr = -1;
-            var verts = mesh.Vertices;
-            if (verts is { Length: > 0 })
+            if (mesh.VertexCount > 0 && AdvancedPackedVertexCodec.HasReadableAttributes(mesh))
             {
-                vertCountArr = verts.Length;
+                vertCountArr = mesh.VertexCount;
                 vMinX = vMinY = vMinZ = float.PositiveInfinity;
                 vMaxX = vMaxY = vMaxZ = float.NegativeInfinity;
-                var v0 = verts[0].Position;
+                var v0 = mesh.GetPosition(0u);
                 vert0x = v0.X; vert0y = v0.Y; vert0z = v0.Z;
-                for (int vi = 0; vi < verts.Length; vi++)
+                for (int vi = 0; vi < vertCountArr; vi++)
                 {
-                    var p = verts[vi].Position;
+                    var p = mesh.GetPosition((uint)vi);
                     if (p.X < vMinX) vMinX = p.X; if (p.X > vMaxX) vMaxX = p.X;
                     if (p.Y < vMinY) vMinY = p.Y; if (p.Y > vMaxY) vMaxY = p.Y;
                     if (p.Z < vMinZ) vMinZ = p.Z; if (p.Z > vMaxZ) vMaxZ = p.Z;

@@ -126,11 +126,20 @@ namespace XREngine.Rendering.Commands
             _skinnedCommandCount = 0;
         }
 
+        private volatile bool _destroyed;
+
+        /// <summary>
+        /// True once <see cref="Destroy"/> ran. Caches keyed by scene (such as the
+        /// shared deformation generations) free their entries for a destroyed scene.
+        /// </summary>
+        internal bool IsDestroyed => _destroyed;
+
         /// <summary>
         /// Destroys the GPU scene and releases all resources.
         /// </summary>
         public void Destroy()
         {
+            _destroyed = true;
             ResetMeshSubmissionPublications();
             if (!_advancedScenePublisherDisposed)
             {
