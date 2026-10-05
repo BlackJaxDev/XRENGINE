@@ -1,7 +1,7 @@
 # Vulkan Stall Remediation TODO
 
-Updated: 2026-10-05. Runtime evidence cutoff: 2026-10-02.
-Owner: Rendering, with Profiler, Runtime Core and ImGui Editor owners below.
+Updated: 2026-10-05. Runtime evidence cutoff: 2026-10-05.
+Owner: Rendering, with Profiler, Runtime Core, serialization and ImGui Editor owners below.
 Status: **Cumulative acceptance NOT PASSED. The original CPU/TSR report is open.**
 
 This checklist contains remaining work and conditions for reopening deferred
@@ -25,18 +25,120 @@ Do not close broader contracts from a narrow stall result.
 
 ## Next Work
 
-Start with pool retention across scene unload and submission-contract sealing
-under the cumulative gate below. Preserve the measured allocation improvements.
-Sealed binding snapshots remain the largest measured allocation owner, but
-reuse requires proof of program-borrow lifetime and content identity.
+The active Vulkan/OpenXR hardware regression takes priority. Start with cold
+and post-Play pipeline-admission gaps in the hardware worklist below. Preserve
+Advanced/CpuDirect Sponza and strict SinglePassStereo during isolation.
 
-CPU tails, the unexplained outer-dispatch interval, GPU attribution and visual
-correctness remain separate gates. The original 153-165 ms report lacks its
-original logs; a different fixture cannot prove that report fixed.
+The desktop target is above 100 fresh FPS during camera motion, with one
+directional light and no removed features. The latest interior route measures
+92.09-92.46 FPS with the shadow lane versus 33.65-33.74 generically. The target
+is unmet. Earlier exterior-route results do not close this gate.
+
+After hardware isolation, resolve the invalid OpenGL control, run matched
+shadow/temporal comparisons, and continue allocation/lifetime and CPU/GPU
+attribution. The user waived replay of the unavailable original recording on
+October 3. This is not a fix or a reproduced result; live symptom evidence and
+user confirmation remain required.
+
+## OpenXR Stereo And Desktop Regression Worklist
+
+Owner: Rendering with the editor and runtime owners. Physical Vulkan/OpenXR
+strict stereo is available. The user reports mostly black output, Sponza flicker
+and old-frame jitter; sky-only views mostly work. Startup, bounded teardown,
+desktop UI ownership and Play loop liveness have scoped passes in the
+[hardware record](../../investigations/rendering/2026-10-03-retained-rendering-hardware.md).
+They do not close visual, performance or lifecycle acceptance.
+
+- [ ] **Next slice: admission gaps.** Measure manifest changes and cursor resets
+  through cold/warm startup and Play entry. Fresh Play copies restart a long
+  plateau reporting `No compatible Vulkan render program is available yet`.
+  Preserve bounded preparation, exact compatibility and XR deadlines before
+  changing thread-local admission progress.
+- [ ] Attribute the recorded 24-second `Renderer.RenderWindow` stall on one exit
+  and the solid-magenta Sponza wall in a fresh third-entry eye preview.
+- [ ] Validate interactive border drag-resize and recovery. Programmatic resize
+  and live menu interaction pass; the native drag attempt did not execute.
+  Programmatic checks do not cover the modal drag loop.
+- [ ] Reduce XR memory to the 8 GB ceiling under the
+  [editor memory reduction plan](optimization/editor-memory-reduction-todo.md).
+  October 5 results are 13.5 GB private, 5.52 GB device-local, about 1.6 GB live
+  managed objects and 48 MB/s idle allocation. The target remains unmet; keep
+  process/GPU measures separate. Use that plan's current ordered work and open
+  decisions, rather than repeating completed reductions. Evidence is in the
+  [memory record](../../investigations/rendering/2026-10-04-editor-memory-retention.md).
+- [ ] Remove the roughly 2.5-second startup black period at the stereo generation
+  transition. A commit inside the OpenXR planner scope retires the live eye
+  allocator and loses exposure history. Use the
+  [stereo generation record](../../investigations/rendering/2026-10-04-openxr-stereo-flicker-and-target-duplication.md).
+- [ ] Attribute warmed pacing, black/no-layer output and frame-data-slot refusals.
+  Mixed-workload CPU dispatch is about 237 ms median, with about 39 ms in snapshot
+  copy; these overlap and are not GPU time. Separate CPU, GPU completion,
+  reservation and frame-data-slot ownership. Preview-off isolation removes
+  forced reservation waits but not slot refusals. Do not hide failures with
+  stale output, sequential fallback, disabled features or capacity increases.
+- [ ] Correct the remaining 2-4 uniform-schema fallbacks, including skybox
+  intensity/rotation ownership. Preserve content generation, per-view ownership,
+  bounded storage and fresh output.
+- [ ] Validate both eyes through head motion and Sponza/sky transitions: freshness,
+  eye assignment, orientation, projection, history, exposure, flicker and ghosting.
+  Obtain physical headset and comfort feedback; previews alone are insufficient.
+- [ ] Repeat enable/disable, resize, visibility/focus changes, failure and normal
+  teardown. Prove balanced image ownership, drained retired generations, bounded
+  retention, no device loss and no silent sequential fallback.
+- [ ] Exercise the separate OpenGL/OpenVR hardware path. Record backend-specific
+  results before closing shared XR acceptance.
+
+### S15b. Record Directional Cascade Casters On The Advanced Canonical Lane
+
+Owner: Rendering. The [lane record](../../investigations/rendering/2026-10-03-s15b-directional-shadow-lane.md)
+contains scoped correctness, reload, retry, material, page and Play checks.
+The lane remains **Active**. It reuses desktop sealed bins with a depth-only
+atlas target; it does not use the earlier proposed separate family.
+
+- [ ] Attribute the remaining interior-motion CPU/GPU cost before another
+  performance change. The two failed motion windows stopped the remaining
+  counterbalanced restarts. Obtain detailed CPU stage deltas and GPU history
+  on the same route. A single recording/wait snapshot is not a distribution.
+  The dense directional
+  interval includes dependency stalls and excludes later render-scope closure;
+  it is not exclusive shader cost.
+- [ ] Complete counterbalanced stationary/motion A/B with an idle host, explicit
+  matched shadows and the same accepted fixture. The October 4 interior result
+  misses 100 FPS; SteamVR/Oculus background work limits performance admission.
+  Do not substitute the earlier exterior route or claim the target passed.
+- [ ] Preserve stationary, camera/light/object-motion shadow parity, per-cascade
+  coverage, masked/custom-material eligibility and generic execution when the
+  lane declines. Record all fresh frames and refresh-frame CPU tails. Keep HMD,
+  multiview and unsupported moment encodings within their actual coverage.
+
+### S16a. Black OpenGL Scene On The Measurement Host
+
+Owner: OpenGL rendering. Upload ownership, query order, source reload, sparse
+transitions, exposure, sampling and two-view HDR/depth parity have scoped results
+in the [OpenGL record](../../investigations/rendering/2026-10-03-s16a-opengl-admission.md).
+Matched throughput acceptance remains blocked.
+
+- [ ] Establish a correctly rendering control under the same admission gates.
+  Rebuilt unchanged `9fee4b983` passes 0/100 interior samples and retains stale
+  output after a camera cut, with canonical texture-source rejection. Do not
+  patch its renderer or bypass admission and call it the original baseline.
+  Disclose any replacement control's source delta.
+- [ ] Repeat matched comparisons with corrected readiness and explicit requested
+  shadow dimensions/readback before warmup. Require actual opaque/masked geometry,
+  current reservations, advancing accepted receipts and Vulkan completed frames.
+  Reject sky-only views and retained terminal faults. `NoStabilityGate` is diagnostic
+  and cannot establish performance acceptance. Pin the environment map/lighting.
+- [ ] Validate final display tonemapping, temporal sequences and the full
+  cross-backend matrix. Raw mono depth and HDR parity after resize do not establish
+  display parity. Earlier aborted or non-admitted captures are not valid speedups.
+- [ ] Complete stereo/MSAA source reload, source-object replacement, driver-parallel
+  overlap, sparse cancellation/device-failure and exposure/metering stereo gates.
+  Keep row-major sampling aliasing and diagnostic latency limits explicit.
 
 ## S13i. Prove The Cumulative Fix On The Reported Workload
 
-Owner: Rendering with Profiler. **NOT PASSED** after the October 1 run and
+Owner: Rendering with Profiler. The September desktop fixture passed its scoped
+comparison; that does not supersede **NOT PASSED** after the October 1 run and
 subsequent focused allocation changes. Use the
 [cumulative investigation](../../investigations/rendering/2026-10-01-cumulative-publication-validation.md)
 and [CPU attribution record](../../investigations/rendering/2026-10-01-cpu-stall-attribution.md).
@@ -63,7 +165,8 @@ and [CPU attribution record](../../investigations/rendering/2026-10-01-cpu-stall
   fallbacks, 393 were shadow passes with per-mesh generated programs. Determine
   whether typed shadow data can replace specific dictionary consumers. Preserve
   cascade/face matrices, caster masks, material values, textures and arbitrary
-  callbacks. Existing typed state does not yet replace these consumers.
+  callbacks. Refresh these October 2 counts against the retained directional
+  lane before choosing another dictionary change; they are historical entry evidence.
 - [ ] **Gate each retained increment.** Freeze control and candidate binaries.
   Repeat stationary and uninterrupted-motion comparisons with matched observers.
   Report sampled bytes per completed present and GC tails. Preserve zero-sample
@@ -153,8 +256,9 @@ Owner: Vulkan resource/command preparation.
 - [ ] Exercise window resize and MSAA sample-count changes. Confirm incompatible
   inputs refresh family state, required uploads remain ordered, and lease/native
   counts settle after churn. Count failures and retries separately.
-- [ ] Validate affected production XR hardware paths when available. Emulated
-  three-family results do not establish hardware XR correctness or utilization.
+- [ ] Validate the family mutation/lifetime matrix on available production XR.
+  The later hardware smoke does not establish this full gate, and emulated
+  three-family results do not establish hardware correctness or utilization.
 
 ### Additional Validation Limits
 
@@ -170,7 +274,9 @@ Owner: Vulkan resource/command preparation.
   status. Separate the historical 33 lifecycle/VR source-contract failures and
   five readiness source-text failures from new regressions. The older missing
   `IAdvancedGlobalIlluminationProvider` compile blocker was superseded by a later
-  successful test build; do not report it as a current failure without evidence.
+  successful test build and the October 4 selected run (86/97 passing). The final
+  upload selection passed 31/32. Preserve cohort-specific failure classifications;
+  do not report an old compile failure or combine these counts into one total.
 - [ ] Obtain explicit clearance for any new test work after its live feature
   validation. Prior focused closeout clearance is not blanket approval.
 
@@ -252,7 +358,11 @@ proof. Prior approximate acquisition costs were below 0.10 ms/present.
 
 ## S14. Address The Actual Core Update Owner
 
-Owner: Runtime Core. Start at `RuntimeWorldLifecycle` Normal/Late callbacks.
+Owner: Runtime Core. Tick optimization is **Deferred** under the
+[September 27 measurements](../../investigations/rendering/2026-09-27-s14-core-update-owner.md).
+Reopen when tick cost reaches 0.10 ms/update, pending application reaches 1.0 ms
+within a second, a callback reaches 1.0 ms mean, or registration churn occurs
+outside Play transitions. Run the following only after that trigger.
 
 - [ ] Profile actual callbacks, tick order, pending registration drain and callback
   identity. Do not use the unrelated legacy list or XREvent indices as world IDs.
@@ -269,21 +379,44 @@ Owner: Runtime Core. Start at `RuntimeWorldLifecycle` Normal/Late callbacks.
 Gate: preserve ordering and Play behavior while improving the measured cause.
 Defer tick optimization if GC/descheduling or negligible update cost explains it.
 
+### S14e. Capture The Intermittent Play-Exit Exception
+
+- [ ] If `playmode-transitions.log` records another exit failure, fix the named
+  cause and repeat full probe runs. Recovery and stack logging are retained;
+  about 40 exits without recurrence do not prove the cause fixed. See the
+  [exit record](../../investigations/rendering/2026-09-27-s14e-exit-exception.md).
+
+### S14g. Close The Steady-State Gap After Play Round Trips
+
+- [ ] If short-lived output planner states grow, retire them when their output
+  is destroyed. Current shadow-viewport states hold no textures and remain
+  bounded by the 12-state cap. The superseded-generation resource leak is fixed;
+  this conditional metadata follow-up is separate from the later XR memory gate.
+  [Planner evidence](../../investigations/rendering/2026-10-03-s14g-post-play-cost.md).
+
 ## S15. Preserve Temporal Correctness And Resolve The Original Report
 
 Run affected checks after each frame/view identity, admission or publication change.
+The performance fixture defaults to FXAA; use an explicit TSR fixture for history
+checks. Scoped motion/cut/resize, distinct-camera switching and immutable TAA/TSR
+corrections are recorded in the
+[temporal investigation](../../investigations/rendering/2026-10-03-s15-temporal-checks.md).
 
 - [ ] Baseline and recapture stationary detail, controlled motion, disocclusion,
   camera cut, resize and pipeline/view switches with matching settings.
 - [ ] View saved images/sequences from multiple positions. Correlate history/view/
   frame identity, jitter, previous/current matrices, velocity, depth and resets.
+  Public diagnostics omit the actual temporal key and snapshot frame; separate
+  asynchronous polls cannot certify the first frame after a camera/view switch
+  or rejected-frame publication. Obtain exact post-admission/lifecycle bindings.
 - [ ] Verify deferred TAA/TSR consumes the correct immutable pipeline snapshot.
   A `TsrOutputTexture` label or quiet log does not establish correct history.
 - [ ] Give any isolated temporal defect its own fix and build/live/comparison gate.
   Do not mask it with reduced feedback/quality, disabled picking or hidden warnings.
-- [ ] Record whether the original long-recording trigger reproduces, which exact
-  change explains improvement, and the user's ghosting/performance confirmation.
-  Keep unavailable original evidence unresolved.
+- [ ] Resolve fine-edge TSR concerns and classify pipeline-replacement cold stalls.
+  Attribute improvement on the reproducible live fixture and obtain the user's
+  ghosting/performance confirmation. Original-recording replay is explicitly
+  waived; do not reinstate that requirement or record the waiver as a fix.
 
 Gate: classify each case as validated, failing or unverified. A failing or
 unverified temporal result blocks closure of the original report.
@@ -302,6 +435,19 @@ state and assign a separate owner; they are not proven current stall causes.
 - [ ] Review the bounded 1,024-entry deferred presentation ring retaining the
   prior renderer generation until overwrite.
 - [ ] Track missing replacement-GI contract coverage with its owner and test policy.
+- [ ] Report unsupported canonical command rejection reasons/counts instead of
+  silently committing empty output; inspect `TryGetCanonicalCompatibilityReason`.
+- [ ] Attribute the bounded 320 extra descriptor sets caused by per-frame
+  auto-uniform arena-view identity on masked Sponza cascade casters.
+- [ ] Rename phase-named publication telemetry types, MCP tools and environment
+  variables by responsibility. Update docs and regenerate MCP documentation.
+- [ ] Attribute later Play restore cost of 0.8-1.0 seconds versus the earlier
+  0.25-0.33 seconds; investigate stair-stepped directional shadow boundaries.
+- [ ] Attribute capture sequences to the rendered camera snapshot, not the live
+  transform two frames ahead. Reconcile collect/render `TemporalHistoryValid` flags.
+- [ ] Investigate exposure settling after repeated history resets, black upper
+  sky with `klippad_sunrise_2_4k`, and per-launch environment-lighting variation.
+  Compare only matched maps or an explicit procedural-sky fixture.
 
 ## S16. Integrated Acceptance And Closeout
 
@@ -313,10 +459,14 @@ baselines so cumulative cost transfers remain visible.
   recording, waits, GPU cost and loading time separately.
 - [ ] Complete repeated resize, shader/pipeline reload, mesh/index/texture admission,
   multi-view ownership, affected failure paths and teardown cycles.
+  Preserve scoped root/include/in-memory reload and restoration results in the
+  [shader reload record](../../investigations/rendering/2026-10-04-shader-root-reload.md).
+  Wider source replacement, MSAA/stereo and failure/lifetime coverage remain open.
 - [ ] Validate Play entry/exit, probe refresh, redraw/picking, attachment metadata
   and idle BVH diagnostics. Validate toolbar and camera settings on first/warm use.
-- [ ] Validate affected OpenGL/shared and XR/stereo paths. Missing hardware blocks
-  the corresponding claim. Inspect temporal sequences and obtain user confirmation.
+- [ ] Validate affected OpenGL/shared and XR/stereo paths. Vulkan/OpenXR hardware
+  is available but visual acceptance fails. Complete its worklist above and the
+  separate OpenGL/OpenVR path. Inspect sequences and obtain user confirmation.
 - [ ] Prove no new hot-path allocation, unbounded retention, queue starvation,
   unsafe disposal, silent fallback or missing required draws.
 - [ ] After applicable explicit test clearance, complete focused regression checks

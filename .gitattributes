@@ -5,6 +5,10 @@
 /Tools/Patches/**/*.patch text eol=lf
 # Content-addressed shader payloads must retain the bytes recorded in their hashes.
 /XREngine.Runtime.Rendering.WebGPU/Assets/shaders/** text eol=lf
+# Content-addressed conformance fixtures must match their manifest on Windows.
+/XREngine.UnitTests/TestData/HumanoidConformance/**/*.json text eol=lf
+/XREngine.UnitTests/TestData/HumanoidConformance/**/*.anim text eol=lf
+/XREngine.UnitTests/TestData/HumanoidConformance/**/*.cs text eol=lf
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

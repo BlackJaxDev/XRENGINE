@@ -2,13 +2,13 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// Resource declaration for one sealed bin. Resident-template manifests own
-/// immutable arrays; canonical visibility manifests are views over fixed
+/// immutable arrays; canonical visibility manifests are views over
 /// current-frame stream storage and are reset only when that stream thaws.
 /// </summary>
 internal sealed class VulkanBinResourceManifest
 {
-    private readonly VulkanResidentDrawDependency[] _resources;
-    private readonly VulkanTemplateNativeResourceUse[] _nativeUses;
+    private VulkanResidentDrawDependency[] _resources;
+    private VulkanTemplateNativeResourceUse[] _nativeUses;
     private readonly bool _streamOwned;
     private int _resourceOffset;
     private int _resourceCapacity;
@@ -39,6 +39,26 @@ internal sealed class VulkanBinResourceManifest
         VulkanResidentDrawDependency[] resources,
         VulkanTemplateNativeResourceUse[] nativeUses)
         => new(resources, nativeUses, streamOwned: true);
+
+    /// <summary>
+    /// Points a stream-owned view at its stream's grown aggregate slabs. Growth
+    /// copies the old slab contents, so the bound offsets and counts stay valid.
+    /// Streams grow only while they are mutable, never while a frozen reader
+    /// can observe this view.
+    /// </summary>
+    internal void RebindStreamSlabs(
+        VulkanResidentDrawDependency[] resources,
+        VulkanTemplateNativeResourceUse[] nativeUses)
+    {
+        ArgumentNullException.ThrowIfNull(resources);
+        ArgumentNullException.ThrowIfNull(nativeUses);
+        if (!_streamOwned)
+            throw new InvalidOperationException("Only stream-owned manifest views can be rebound.");
+        if (resources.Length < _resources.Length || nativeUses.Length < _nativeUses.Length)
+            throw new ArgumentException("A stream-owned manifest slab can only grow.");
+        _resources = resources;
+        _nativeUses = nativeUses;
+    }
     internal ReadOnlySpan<VulkanResidentDrawDependency> Resources
         => _resources.AsSpan(_resourceOffset, _resourceCount);
     internal ReadOnlySpan<VulkanTemplateNativeResourceUse> NativeUses

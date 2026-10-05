@@ -44,7 +44,7 @@ public static class RuntimeVRIKCalibrator
     }
 
     /// <summary>Calibrates all humanoid sources from one copied tracking publication.</summary>
-    public static VrCalibrationResult CalibrateSnapshot(object solver, object? settings, VrCalibrationPose[] poses)
+    public static VrCalibrationResult CalibrateSnapshot(object solver, object? settings, VrCalibrationPose[] poses, float headTiltToleranceDegrees)
     {
         if (settings is null)
             return VrCalibrationResult.Failure("Calibration settings are unavailable.");
@@ -54,7 +54,7 @@ public static class RuntimeVRIKCalibrator
             return VrCalibrationResult.Failure("The snapshot calibrator is unavailable.");
         try
         {
-            return method.Invoke(null, [solver, settings, poses]) as VrCalibrationResult
+            return method.Invoke(null, [solver, settings, poses, headTiltToleranceDegrees]) as VrCalibrationResult
                 ?? VrCalibrationResult.Failure("The snapshot calibrator returned no result.");
         }
         catch (TargetInvocationException exception)

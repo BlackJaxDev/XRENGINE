@@ -76,10 +76,13 @@ public partial class XRMesh
         int[] decodedBoneIndices = new int[Math.Max(1, influenceCapacity)];
         float[] decodedWeights = new float[decodedBoneIndices.Length];
 
-        for (int vertexIndex = 0; vertexIndex < Vertices.Length; ++vertexIndex)
+        // Packed buffers are the mesh's only vertex and weight data.
+        int auditVertexCount = Interleaved
+            ? InterleavedVertexBuffer?.ClientSideSource is not null ? VertexCount : 0
+            : PositionsBuffer?.ClientSideSource is not null ? VertexCount : 0;
+        for (int vertexIndex = 0; vertexIndex < auditVertexCount; ++vertexIndex)
         {
-            Vertex vertex = Vertices[vertexIndex];
-            Vector3 sourcePosition = vertex.Position;
+            Vector3 sourcePosition = GetPosition((uint)vertexIndex);
             if (!IsFinite(sourcePosition))
             {
                 ++nonFiniteVertexCount;
@@ -170,48 +173,6 @@ public partial class XRMesh
                     }
                 }
             }
-            else
-            {
-                Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = vertex.Weights;
-                if (weights is not null)
-                {
-                    foreach ((TransformBase bone, (float weight, Matrix4x4 inverseBind) influence) in weights)
-                    {
-                        ++influenceCount;
-                        float weight = influence.weight;
-                        if (!float.IsFinite(weight) || weight < 0.0f)
-                        {
-                            ++invalidInfluenceCount;
-                            bindPositionIsValid = false;
-                            continue;
-                        }
-
-                        TransformBase runtimeBone = RuntimeBoneReferenceRemap is not null &&
-                            RuntimeBoneReferenceRemap.TryGetValue(bone, out TransformBase? remappedBone)
-                                ? remappedBone
-                                : bone;
-                        if (!paletteIndices.TryGetValue(runtimeBone, out int boneIndex))
-                        {
-                            ++missingPaletteBoneCount;
-                            bindPositionIsValid = false;
-                            continue;
-                        }
-
-                        float inverseBindDifference = MaximumElementDifference(
-                            influence.inverseBind,
-                            paletteInverseBinds[runtimeBone]);
-                        if (inverseBindDifference > maximumInfluenceInverseBindDifference)
-                        {
-                            maximumInfluenceInverseBindDifference = inverseBindDifference;
-                            maximumInfluenceInverseBindDifferenceVertexIndex = vertexIndex;
-                        }
-
-                        decodedBoneIndices[decodedInfluenceCount] = boneIndex;
-                        decodedWeights[decodedInfluenceCount] = weight;
-                        ++decodedInfluenceCount;
-                    }
-                }
-            }
 
             if (decodedInfluenceCount == 0)
             {
@@ -277,7 +238,7 @@ public partial class XRMesh
             maximumWeightSum = 0.0f;
         }
 
-        if (Vertices.Length == 0)
+        if (auditVertexCount == 0)
         {
             sourceBoundsMinimum = Vector3.Zero;
             sourceBoundsMaximum = Vector3.Zero;
@@ -287,7 +248,7 @@ public partial class XRMesh
 
         return new SkinningBindPoseAuditResult
         {
-            VertexCount = Vertices.Length,
+            VertexCount = auditVertexCount,
             UsedPackedInfluenceBuffers = usedPackedInfluenceBuffers,
             WeightedVertexCount = weightedVertexCount,
             UnweightedVertexCount = unweightedVertexCount,
@@ -331,7 +292,7 @@ public partial class XRMesh
             return false;
         }
 
-        uint vertexCount = checked((uint)Vertices.Length);
+        uint vertexCount = checked((uint)VertexCount);
         uint coreIndexBytesPerVertex = SkinningCoreIndexFormat == SkinningCoreIndexFormat.Core4x8
             ? 4u
             : 4u * sizeof(ushort);

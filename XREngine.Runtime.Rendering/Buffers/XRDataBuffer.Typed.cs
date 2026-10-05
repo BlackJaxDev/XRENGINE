@@ -27,7 +27,8 @@ public class XRDataBuffer<T> : XRDataBuffer where T : unmanaged
         bool normalize = false,
         bool integral = false,
         bool padEndingToVec4 = false,
-        bool alignClientSourceToPowerOf2 = false)
+        bool alignClientSourceToPowerOf2 = false,
+        bool allocateClientSideSource = true)
         : base(
             bindingName,
             target,
@@ -36,7 +37,8 @@ public class XRDataBuffer<T> : XRDataBuffer where T : unmanaged
             ResolveComponentCount(),
             normalize,
             integral,
-            alignClientSourceToPowerOf2)
+            alignClientSourceToPowerOf2,
+            allocateClientSideSource)
     {
         _typedElementCount = elementCount;
         ConfigureTypedDefaults();

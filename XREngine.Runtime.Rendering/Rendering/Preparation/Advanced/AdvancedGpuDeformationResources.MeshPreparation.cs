@@ -31,7 +31,7 @@ public sealed partial class AdvancedGpuDeformationResources
     {
         ArgumentNullException.ThrowIfNull(mesh);
         if (!mesh.HasSkinning || mesh.VertexCount <= 0 ||
-            mesh.Vertices.Length != mesh.VertexCount)
+            !AdvancedPackedVertexCodec.HasReadableAttributes(mesh))
             return;
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -54,9 +54,10 @@ public sealed partial class AdvancedGpuDeformationResources
         {
             GeometryRevision = pending.GeometryRevision,
             VertexCount = pending.VertexCount,
-            SourceVertices = pending.SourceVertices,
             Names = pending.Names,
             ActiveBlendshapeCount = pending.ActiveBlendshapeCount,
+            BlendshapeIndices = pending.Blendshapes.IsValid ? pending.Blendshapes.Indices : null,
+            BlendshapeIndicesRevision = pending.BlendshapeIndicesRevision,
             Vertices = pending.VerticesScratch,
             Ranges = pending.RangesScratch,
             Records = pending.RecordsScratch,
@@ -118,7 +119,7 @@ public sealed partial class AdvancedGpuDeformationResources
         }
         if (pending is null)
         {
-            if (mesh.VertexCount <= 0 || !CanReadCanonicalVertices(mesh))
+            if (mesh.VertexCount <= 0 || !AdvancedPackedVertexCodec.HasReadableAttributes(mesh))
             {
                 _unsupportedMeshCount++;
                 slice = default;
@@ -165,19 +166,48 @@ public sealed partial class AdvancedGpuDeformationResources
         }
 
         _pendingMeshPreparation = null;
+        ReleaseAdoptedImportedPayload(pending);
         return AdvancedGpuDeformationMeshPreparationStatus.Ready;
+    }
+
+    /// <summary>
+    /// Drops the import-time payload once a commit adopted it. The static
+    /// generation now holds its own copies, so keeping the entry would retain a
+    /// second managed copy of every skinned mesh's packed deformation input for
+    /// the mesh's lifetime. A later re-preparation (content reset or a geometry
+    /// change) packs from the mesh again within the cold budget. A payload from
+    /// a newer import is a different instance and stays.
+    /// </summary>
+    private static void ReleaseAdoptedImportedPayload(PendingGpuDeformationMeshPreparation pending)
+    {
+        lock (ImportedMeshPayloadsSync)
+        {
+            if (ImportedMeshPayloads.TryGetValue(pending.Mesh, out var payload) &&
+                ReferenceEquals(payload.Records, pending.RecordsScratch))
+                ImportedMeshPayloads.Remove(pending.Mesh);
+        }
     }
 
     private static bool MatchesPendingSource(PendingGpuDeformationMeshPreparation pending)
     {
         XRMesh mesh = pending.Mesh;
-        return pending.GeometryRevision == mesh.GeometryRevision &&
-            pending.VertexCount == mesh.VertexCount &&
-            CanReadCanonicalVertices(mesh) &&
-            ReferenceEquals(pending.SourceVertices, mesh.Vertices) &&
-            ReferenceEquals(pending.Names, mesh.BlendshapeNames) &&
-            pending.ActiveBlendshapeCount == (mesh.Vertices.Length == mesh.VertexCount
-                ? mesh.BlendshapeNames.Length : 0);
+        if (pending.GeometryRevision != mesh.GeometryRevision ||
+            pending.VertexCount != mesh.VertexCount ||
+            !AdvancedPackedVertexCodec.HasReadableAttributes(mesh) ||
+            !ReferenceEquals(pending.Names, mesh.BlendshapeNames))
+            return false;
+
+        if (!pending.Blendshapes.IsValid)
+            return pending.ActiveBlendshapeCount == 0 &&
+                   !XRMeshBlendshapeActiveListReader.TryCreate(mesh, out _);
+
+        XRMeshBlendshapeActiveListReader blendshapes = pending.Blendshapes;
+        return ReferenceEquals(blendshapes.Counts, mesh.BlendshapeCounts) &&
+               ReferenceEquals(blendshapes.Indices, mesh.BlendshapeIndices) &&
+               ReferenceEquals(blendshapes.Deltas, mesh.BlendshapeDeltas) &&
+               blendshapes.Counts.Revision == pending.BlendshapeCountsRevision &&
+               blendshapes.Indices.Revision == pending.BlendshapeIndicesRevision &&
+               blendshapes.Deltas.Revision == pending.BlendshapeDeltasRevision;
     }
 
     private static PendingGpuDeformationMeshPreparation CreatePendingMesh(
@@ -186,19 +216,24 @@ public sealed partial class AdvancedGpuDeformationResources
         ulong renderFrame)
     {
         int vertexCount = mesh.VertexCount;
-        int blendshapeCount = mesh.Vertices.Length == vertexCount
-            ? mesh.BlendshapeNames.Length : 0;
+        bool hasBlendshapes = XRMeshBlendshapeActiveListReader.TryCreate(
+            mesh,
+            out XRMeshBlendshapeActiveListReader blendshapes);
+        int blendshapeCount = hasBlendshapes ? blendshapes.ShapeCount : 0;
         return new PendingGpuDeformationMeshPreparation
         {
             Mesh = mesh,
             TopologyGeneration = topologyGeneration,
             GeometryRevision = mesh.GeometryRevision,
             VertexCount = vertexCount,
-            SourceVertices = mesh.Vertices,
             Names = mesh.BlendshapeNames,
             ActiveBlendshapeCount = blendshapeCount,
+            Blendshapes = blendshapes,
+            BlendshapeCountsRevision = hasBlendshapes ? blendshapes.Counts.Revision : 0UL,
+            BlendshapeIndicesRevision = hasBlendshapes ? blendshapes.Indices.Revision : 0UL,
+            BlendshapeDeltasRevision = hasBlendshapes ? blendshapes.Deltas.Revision : 0UL,
             LastOwnerVisitFrame = renderFrame,
-            SourceIndices = new int[checked(vertexCount * blendshapeCount)],
+            Stage = PendingGpuDeformationMeshPreparation.Count,
             VerticesScratch = new AdvancedDeformedVertex[vertexCount],
             RangesScratch = new AdvancedBlendshapeRange[blendshapeCount],
         };
@@ -215,11 +250,15 @@ public sealed partial class AdvancedGpuDeformationResources
             pending = null!;
             return false;
         }
+        bool hasBlendshapes = XRMeshBlendshapeActiveListReader.TryCreate(
+            mesh,
+            out XRMeshBlendshapeActiveListReader blendshapes);
         if (payload.GeometryRevision == mesh.GeometryRevision &&
             payload.VertexCount == mesh.VertexCount &&
-            ReferenceEquals(payload.SourceVertices, mesh.Vertices) &&
             ReferenceEquals(payload.Names, mesh.BlendshapeNames) &&
-            payload.ActiveBlendshapeCount == mesh.BlendshapeNames.Length)
+            payload.ActiveBlendshapeCount == (hasBlendshapes ? blendshapes.ShapeCount : 0) &&
+            ReferenceEquals(payload.BlendshapeIndices, hasBlendshapes ? blendshapes.Indices : null) &&
+            payload.BlendshapeIndicesRevision == (hasBlendshapes ? blendshapes.Indices.Revision : 0UL))
         {
             pending = new PendingGpuDeformationMeshPreparation
             {
@@ -227,9 +266,12 @@ public sealed partial class AdvancedGpuDeformationResources
                 TopologyGeneration = topologyGeneration,
                 GeometryRevision = payload.GeometryRevision,
                 VertexCount = payload.VertexCount,
-                SourceVertices = payload.SourceVertices,
                 Names = payload.Names,
                 ActiveBlendshapeCount = payload.ActiveBlendshapeCount,
+                Blendshapes = blendshapes,
+                BlendshapeCountsRevision = hasBlendshapes ? blendshapes.Counts.Revision : 0UL,
+                BlendshapeIndicesRevision = hasBlendshapes ? blendshapes.Indices.Revision : 0UL,
+                BlendshapeDeltasRevision = hasBlendshapes ? blendshapes.Deltas.Revision : 0UL,
                 LastOwnerVisitFrame = renderFrame,
                 Stage = PendingGpuDeformationMeshPreparation.Spill,
                 RecordCount = checked((uint)payload.Records.Length),
@@ -375,41 +417,23 @@ public sealed partial class AdvancedGpuDeformationResources
         int blendshapeCount = pending.ActiveBlendshapeCount;
         switch (pending.Stage)
         {
-            case PendingGpuDeformationMeshPreparation.Index:
+            case PendingGpuDeformationMeshPreparation.Count:
                 if (blendshapeCount == 0 || pending.VertexIndex >= vertexCount)
                 {
-                    pending.Stage = PendingGpuDeformationMeshPreparation.Count;
-                    pending.VertexIndex = 0;
+                    BeginBlendshapePacking(pending);
                     return;
                 }
-                IndexBlendshapesAtVertex(pending, pending.VertexIndex++);
-                return;
-
-            case PendingGpuDeformationMeshPreparation.Count:
-                if (pending.ShapeIndex >= blendshapeCount)
-                {
-                    pending.RecordsScratch = new AdvancedBlendshapeSparseRecord[
-                        checked((int)pending.RecordCount)];
-                    pending.DeltasScratch = new Vector4[checked((int)pending.DeltaCount)];
-                    pending.Stage = PendingGpuDeformationMeshPreparation.Pack;
-                    pending.ShapeIndex = 0;
-                    pending.VertexIndex = 0;
-                    return;
-                }
-                CountBlendshapeAtVertex(pending, pending.ShapeIndex, pending.VertexIndex);
-                AdvanceShapeVertex(pending, vertexCount);
+                CountBlendshapesAtVertex(pending, pending.VertexIndex++);
                 return;
 
             case PendingGpuDeformationMeshPreparation.Pack:
-                if (pending.ShapeIndex >= blendshapeCount)
+                if (blendshapeCount == 0 || pending.VertexIndex >= vertexCount)
                 {
-                    pending.SourceIndices = [];
                     pending.Stage = PendingGpuDeformationMeshPreparation.Vertices;
                     pending.VertexIndex = 0;
                     return;
                 }
-                PackBlendshapeAtVertex(pending, pending.ShapeIndex, pending.VertexIndex);
-                AdvanceShapeVertex(pending, vertexCount);
+                PackBlendshapesAtVertex(pending, pending.VertexIndex++);
                 return;
 
             case PendingGpuDeformationMeshPreparation.Vertices:
@@ -419,115 +443,85 @@ public sealed partial class AdvancedGpuDeformationResources
                     pending.VertexIndex = 0;
                     return;
                 }
-                int canonicalIndex = pending.VertexIndex++;
-                pending.VerticesScratch[canonicalIndex] = PackCanonicalVertex(
-                    pending.Mesh, checked((uint)canonicalIndex), checked((uint)canonicalIndex));
+                uint canonicalIndex = checked((uint)pending.VertexIndex++);
+                pending.VerticesScratch[canonicalIndex] = AdvancedPackedVertexCodec.Pack(
+                    pending.Mesh, canonicalIndex, canonicalIndex);
                 return;
         }
     }
 
-    private static void AdvanceShapeVertex(
+    /// <summary>
+    /// Counts one vertex's blendshape records per shape. The per-shape counts
+    /// are held in the range scratch until <see cref="BeginBlendshapePacking"/>
+    /// turns them into record offsets.
+    /// </summary>
+    private static void CountBlendshapesAtVertex(
         PendingGpuDeformationMeshPreparation pending,
-        int vertexCount)
+        int vertexIndex)
     {
-        if (++pending.VertexIndex < vertexCount)
-            return;
+        XRMeshBlendshapeActiveListReader reader = pending.Blendshapes;
+        reader.GetVertexEntries(vertexIndex, out int first, out int count);
+        for (int entry = first; entry < first + count; entry++)
+        {
+            reader.ReadEntry(entry, out int shape, out Vector3 position, out Vector3 normal, out Vector3 tangent);
+            if ((uint)shape >= (uint)pending.ActiveBlendshapeCount)
+                continue;
+            bool hasPosition = position.LengthSquared() > DeltaEpsilonSquared;
+            bool hasNormal = normal.LengthSquared() > DeltaEpsilonSquared;
+            bool hasTangent = tangent.LengthSquared() > DeltaEpsilonSquared;
+            if (!hasPosition && !hasNormal && !hasTangent)
+                continue;
+            AdvancedBlendshapeRange range = pending.RangesScratch[shape];
+            pending.RangesScratch[shape] = range with { RecordCount = range.RecordCount + 1u };
+            pending.RecordCount++;
+            pending.DeltaCount += checked((uint)(hasPosition ? 1 : 0) +
+                (uint)(hasNormal ? 1 : 0) + (uint)(hasTangent ? 1 : 0));
+        }
+    }
+
+    /// <summary>
+    /// Converts the per-shape record counts into record offsets, so shapes keep
+    /// their records contiguous and vertex-ordered while vertices are packed in
+    /// one pass, and allocates the record and delta scratch.
+    /// </summary>
+    private static void BeginBlendshapePacking(PendingGpuDeformationMeshPreparation pending)
+    {
+        uint offset = 0u;
+        for (int shape = 0; shape < pending.RangesScratch.Length; shape++)
+        {
+            uint count = pending.RangesScratch[shape].RecordCount;
+            pending.RangesScratch[shape] = new AdvancedBlendshapeRange(offset, 0u, 0u, 0u);
+            offset = checked(offset + count);
+        }
+        pending.RecordsScratch = new AdvancedBlendshapeSparseRecord[checked((int)pending.RecordCount)];
+        pending.DeltasScratch = new Vector4[checked((int)pending.DeltaCount)];
+        pending.Stage = PendingGpuDeformationMeshPreparation.Pack;
         pending.VertexIndex = 0;
-        pending.ShapeIndex++;
     }
 
-    private static void IndexBlendshapesAtVertex(
+    private static void PackBlendshapesAtVertex(
         PendingGpuDeformationMeshPreparation pending,
         int vertexIndex)
     {
-        List<(string name, VertexData data)>? shapes =
-            pending.SourceVertices[vertexIndex].Blendshapes;
-        Dictionary<string, int> first = pending.FirstNameIndices;
-        first.Clear();
-        int firstNull = -1;
-        if (shapes is not null)
+        XRMeshBlendshapeActiveListReader reader = pending.Blendshapes;
+        reader.GetVertexEntries(vertexIndex, out int first, out int count);
+        for (int entry = first; entry < first + count; entry++)
         {
-            first.EnsureCapacity(shapes.Count);
-            for (int i = 0; i < shapes.Count; i++)
-            {
-                string name = shapes[i].name;
-                if (name is null)
-                {
-                    if (firstNull < 0)
-                        firstNull = i;
-                }
-                else
-                    first.TryAdd(name, i);
-            }
-        }
-        int vertexCount = pending.SourceVertices.Length;
-        for (int shapeIndex = 0; shapeIndex < pending.ActiveBlendshapeCount; shapeIndex++)
-        {
-            string name = pending.Names[shapeIndex];
-            int sourceIndex = -1;
-            if (shapes is not null)
-            {
-                if ((uint)shapeIndex < (uint)shapes.Count &&
-                    string.Equals(shapes[shapeIndex].name, name, StringComparison.Ordinal))
-                    sourceIndex = shapeIndex;
-                else if (name is null)
-                    sourceIndex = firstNull;
-                else if (first.TryGetValue(name, out int match))
-                    sourceIndex = match;
-            }
-            pending.SourceIndices[checked(shapeIndex * vertexCount + vertexIndex)] = sourceIndex;
-        }
-    }
-
-    private static void CountBlendshapeAtVertex(
-        PendingGpuDeformationMeshPreparation pending,
-        int shapeIndex,
-        int vertexIndex)
-    {
-        Vertex source = pending.SourceVertices[vertexIndex];
-        int sourceIndex = pending.SourceIndices[
-            checked(shapeIndex * pending.SourceVertices.Length + vertexIndex)];
-        if (!TryGetIndexedBlendshapeData(source, sourceIndex, out VertexData data))
-            return;
-        GetBlendshapeDeltas(source, data, out Vector3 position,
-            out Vector3 normal, out Vector3 tangent);
-        bool hasPosition = position.LengthSquared() > DeltaEpsilonSquared;
-        bool hasNormal = normal.LengthSquared() > DeltaEpsilonSquared;
-        bool hasTangent = tangent.LengthSquared() > DeltaEpsilonSquared;
-        if (!hasPosition && !hasNormal && !hasTangent)
-            return;
-        pending.RecordCount++;
-        pending.DeltaCount += checked((uint)(hasPosition ? 1 : 0) +
-            (uint)(hasNormal ? 1 : 0) + (uint)(hasTangent ? 1 : 0));
-    }
-
-    private static void PackBlendshapeAtVertex(
-        PendingGpuDeformationMeshPreparation pending,
-        int shapeIndex,
-        int vertexIndex)
-    {
-        if (vertexIndex == 0)
-            pending.RangesScratch[shapeIndex] = new AdvancedBlendshapeRange(
-                pending.PackedRecordCount, 0u, 0u, 0u);
-        Vertex source = pending.SourceVertices[vertexIndex];
-        int sourceIndex = pending.SourceIndices[
-            checked(shapeIndex * pending.SourceVertices.Length + vertexIndex)];
-        if (TryGetIndexedBlendshapeData(source, sourceIndex, out VertexData data))
-        {
-            GetBlendshapeDeltas(source, data, out Vector3 position,
-                out Vector3 normal, out Vector3 tangent);
-            AdvancedBlendshapeRange range = pending.RangesScratch[shapeIndex];
+            reader.ReadEntry(entry, out int shape, out Vector3 position, out Vector3 normal, out Vector3 tangent);
+            if ((uint)shape >= (uint)pending.ActiveBlendshapeCount)
+                continue;
+            AdvancedBlendshapeRange range = pending.RangesScratch[shape];
             uint flags = range.AttributeFlags;
             uint p = AppendPendingDelta(pending, position, 1u, ref flags);
             uint n = AppendPendingDelta(pending, normal, 2u, ref flags);
             uint t = AppendPendingDelta(pending, tangent, 4u, ref flags);
-            if ((p | n | t) != 0u)
-            {
-                pending.RecordsScratch[pending.PackedRecordCount++] =
-                    new AdvancedBlendshapeSparseRecord(checked((uint)vertexIndex), p, n, t);
-                pending.RangesScratch[shapeIndex] = new AdvancedBlendshapeRange(
-                    range.RecordOffset, range.RecordCount + 1u, flags, 0u);
-            }
+            if ((p | n | t) == 0u)
+                continue;
+            pending.RecordsScratch[range.RecordOffset + range.RecordCount] =
+                new AdvancedBlendshapeSparseRecord(checked((uint)vertexIndex), p, n, t);
+            pending.RangesScratch[shape] = new AdvancedBlendshapeRange(
+                range.RecordOffset, range.RecordCount + 1u, flags, 0u);
+            pending.PackedRecordCount++;
         }
     }
 

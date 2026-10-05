@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Text;
+using XREngine.Core.Files;
 
 namespace XREngine.Rendering;
 
@@ -19,6 +21,10 @@ internal static class ShaderSourceDependencyIndex
         public ShaderSourceFileChange Change { get; } = change;
         public CancellationTokenSource Cancellation { get; } = cancellation;
     }
+
+    private readonly record struct PreparedRootRefresh(
+        XRShader Shader, TextFile Source, long SourceIdentityRevision, string Path, string BaselineText,
+        long MutationRevision, long RequestRevision, string RefreshedText);
 
     private static readonly object Sync = new();
     private static readonly Dictionary<string, List<WeakReference<XRShader>>> ShadersByPath =
@@ -109,7 +115,36 @@ internal static class ShaderSourceDependencyIndex
 
     public static int InvalidateAll(string reason)
     {
-        XRShader[] shaders;
+        XRShader[] shaders = CollectAllShaders();
+        return PublishInvalidationsAtFrameSwap(shaders, reason);
+    }
+
+    /// <summary>
+    /// Requests a disk refresh for clean root sources and returns the number of selected shaders.
+    /// File reads occur on a worker before the existing frame-swap publication boundary.
+    /// </summary>
+    public static int ReloadAllDiskRoots(string reason)
+    {
+        XRShader[] shaders = CollectAllShaders();
+        if (shaders.Length != 0)
+            _ = Task.Run(() => PrepareManualRootRefreshesAsync(shaders, reason));
+        return shaders.Length;
+    }
+
+    private static async Task PrepareManualRootRefreshesAsync(XRShader[] shaders, string reason)
+    {
+        try
+        {
+            await PrepareAndPublishRootRefreshesAsync(shaders, null, reason, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            RuntimeShaderServices.Current?.LogWarning($"Manual shader root reload failed before publication: {ex.Message}");
+        }
+    }
+
+    private static XRShader[] CollectAllShaders()
+    {
         lock (Sync)
         {
             HashSet<XRShader> unique = new(ReferenceEqualityComparer.Instance);
@@ -124,12 +159,8 @@ internal static class ShaderSourceDependencyIndex
                 }
             }
 
-            shaders = [.. unique];
+            return [.. unique];
         }
-
-        int invalidated = PublishInvalidationsAtFrameSwap(shaders, reason);
-        Interlocked.Add(ref _notificationsPublished, invalidated);
-        return invalidated;
     }
 
     internal static int ProcessFileChangeImmediately(
@@ -143,7 +174,6 @@ internal static class ShaderSourceDependencyIndex
             invalidated += InvalidatePath(change.PreviousPath, publishAtFrameSwap);
         }
 
-        Interlocked.Add(ref _notificationsPublished, invalidated);
         return invalidated;
     }
 
@@ -186,10 +216,17 @@ internal static class ShaderSourceDependencyIndex
                 return;
             }
 
-            ProcessFileChangeImmediately(pending.Change, publishAtFrameSwap: true);
+            XRShader[] shaders = CollectChangedShaders(pending.Change.Path, pending.Change.PreviousPath);
+            await PrepareAndPublishRootRefreshesAsync(
+                shaders, pending.Change.Path, pending.Change.Path, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
+        }
+        catch (Exception ex)
+        {
+            RuntimeShaderServices.Current?.LogWarning(
+                $"Shader source change for '{pending.Change.Path}' failed before publication: {ex.Message}");
         }
         finally
         {
@@ -238,16 +275,35 @@ internal static class ShaderSourceDependencyIndex
         if (normalizedPath.Length == 0)
             return 0;
 
-        XRShader[] shaders;
+        XRShader[] shaders = CollectChangedShaders(normalizedPath, null);
+        return publishAtFrameSwap
+            ? PublishInvalidationsAtFrameSwap(shaders, normalizedPath)
+            : PublishInvalidations(shaders, normalizedPath);
+    }
+
+    private static XRShader[] CollectChangedShaders(string? path, string? previousPath)
+    {
+        string normalizedPath = NormalizePath(path);
+        string normalizedPreviousPath = NormalizePath(previousPath);
         lock (Sync)
         {
             HashSet<XRShader> unique = new(ReferenceEqualityComparer.Instance);
-            Collect(normalizedPath);
-            // Native module search paths also depend on absence: a newly created
-            // higher-priority module must invalidate shaders that imported the old one.
-            for (string? directory = Path.GetDirectoryName(normalizedPath); !string.IsNullOrEmpty(directory); directory = Path.GetDirectoryName(directory))
-                Collect(directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar);
-            shaders = [.. unique];
+            CollectPath(normalizedPath);
+            if (normalizedPreviousPath.Length != 0 &&
+                !string.Equals(normalizedPath, normalizedPreviousPath, StringComparison.OrdinalIgnoreCase))
+                CollectPath(normalizedPreviousPath);
+            return [.. unique];
+
+            void CollectPath(string changedPath)
+            {
+                if (changedPath.Length == 0)
+                    return;
+                Collect(changedPath);
+                // Native module search paths also depend on absence: a newly created
+                // higher-priority module must invalidate shaders that imported the old one.
+                for (string? directory = Path.GetDirectoryName(changedPath); !string.IsNullOrEmpty(directory); directory = Path.GetDirectoryName(directory))
+                    Collect(directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar);
+            }
 
             void Collect(string key)
             {
@@ -264,10 +320,91 @@ internal static class ShaderSourceDependencyIndex
                     ShadersByPath.Remove(key);
             }
         }
+    }
 
-        return publishAtFrameSwap
-            ? PublishInvalidationsAtFrameSwap(shaders, normalizedPath)
-            : PublishInvalidations(shaders, normalizedPath);
+    private static async Task PrepareAndPublishRootRefreshesAsync(
+        XRShader[] shaders, string? changedPath, string reason, CancellationToken cancellationToken)
+    {
+        List<PreparedRootRefresh> prepared = [];
+        for (int i = 0; i < shaders.Length; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            XRShader shader = shaders[i];
+            if (!shader.CanPublishSourceChanges)
+                continue;
+            TextFile source = shader.Source;
+            long sourceIdentityRevision = shader.SourceIdentityRevision;
+            string? path = changedPath ?? source.FilePath;
+            if (string.IsNullOrWhiteSpace(path) ||
+                !source.TryCaptureDiskRefresh(path, out string baselineText,
+                    out long mutationRevision, out long requestRevision, out Encoding encoding))
+                continue;
+
+            try
+            {
+                string refreshedText = await File.ReadAllTextAsync(path, encoding, cancellationToken).ConfigureAwait(false);
+                prepared.Add(new PreparedRootRefresh(
+                    shader, source, sourceIdentityRevision, path, baselineText,
+                    mutationRevision, requestRevision, refreshedText));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                RuntimeShaderServices.Current?.LogWarning(
+                    $"Failed to refresh disk-backed shader root '{path}': {ex.Message}");
+            }
+        }
+
+        PreparedRootRefresh[] refreshes = [.. prepared];
+        PublishPreparedRootRefreshesAtFrameSwap(shaders, refreshes, reason);
+    }
+
+    private static void PublishPreparedRootRefreshesAtFrameSwap(
+        XRShader[] shaders, PreparedRootRefresh[] refreshes, string reason)
+    {
+        if (shaders.Length == 0)
+            return;
+
+        if (!RuntimeRenderingHostServices.HasConcreteHost ||
+            RuntimeRenderingHostServices.Scheduling.IsFrameSwapThread)
+        {
+            PublishPreparedRootRefreshes(shaders, refreshes, reason);
+            return;
+        }
+
+        RuntimeRenderingHostServices.Scheduling.EnqueueFrameSwapTask(
+            () => PublishPreparedRootRefreshes(shaders, refreshes, reason),
+            $"ShaderSourceDependencyIndex.Refresh[{reason}]");
+    }
+
+    private static void PublishPreparedRootRefreshes(
+        XRShader[] shaders, PreparedRootRefresh[] refreshes, string reason)
+    {
+        int published = 0;
+        long[] revisions = new long[shaders.Length];
+        for (int i = 0; i < shaders.Length; i++)
+            revisions[i] = shaders[i].SourceRevision;
+
+        for (int i = 0; i < refreshes.Length; i++)
+        {
+            PreparedRootRefresh refresh = refreshes[i];
+            refresh.Shader.TryApplyDiskRootRefresh(
+                refresh.Source, refresh.SourceIdentityRevision, refresh.Path, refresh.BaselineText,
+                refresh.MutationRevision, refresh.RequestRevision, refresh.RefreshedText);
+        }
+
+        for (int i = 0; i < shaders.Length; i++)
+        {
+            if (!shaders[i].CanPublishSourceChanges)
+                continue;
+            if (shaders[i].SourceRevision == revisions[i])
+                shaders[i].NotifySourceDependencyChanged(reason);
+            published++;
+        }
+        Interlocked.Add(ref _notificationsPublished, published);
     }
 
     /// <summary>
@@ -300,10 +437,17 @@ internal static class ShaderSourceDependencyIndex
 
     private static int PublishInvalidations(XRShader[] shaders, string reason)
     {
+        int published = 0;
         for (int i = 0; i < shaders.Length; i++)
+        {
+            if (!shaders[i].CanPublishSourceChanges)
+                continue;
             shaders[i].NotifySourceDependencyChanged(reason);
+            published++;
+        }
 
-        return shaders.Length;
+        Interlocked.Add(ref _notificationsPublished, published);
+        return published;
     }
 
     private static void RemoveShaderFromPaths(XRShader shader, string[] paths)

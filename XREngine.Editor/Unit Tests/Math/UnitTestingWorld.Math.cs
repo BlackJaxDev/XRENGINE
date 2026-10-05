@@ -1391,7 +1391,7 @@ public static partial class EditorUnitTests
             Name = "PhysicsChainSkinnedPrism"
         };
         mesh.UtilizedBones = utilizedBones;
-        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.RebuildSkinningBuffersFromVertices(vertices);
         return mesh;
     }
 

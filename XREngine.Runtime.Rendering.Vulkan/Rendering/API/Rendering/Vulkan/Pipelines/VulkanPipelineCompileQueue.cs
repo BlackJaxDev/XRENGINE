@@ -903,6 +903,8 @@ internal sealed unsafe partial class VulkanPipelineManager
                     if (retiredHandles.Add(pipeline.Handle))
                         _supersededSharedGraphicsPipelines.Enqueue(pipeline);
                 }
+                if (staleKeys.Length != 0)
+                    Interlocked.Increment(ref _sharedGraphicsPipelineRetirementGeneration);
             }
             Interlocked.Add(ref _stalePipelineDisposalCount, retiredHandles.Count);
         }

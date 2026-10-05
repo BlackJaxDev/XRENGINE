@@ -53,6 +53,7 @@ internal unsafe partial class VkMeshRenderer
 			AddRuntimeDeformationBuffers();
 			CaptureRuntimeDeformationBufferReferences();
 
+			_observedNativeBufferBindingRevision = BackendContext.Resources.NativeBufferBindingRevision;
 			bool structuralBindingsChanged = UpdateBufferStructuralIdentitySnapshot();
 			PublishCachedBufferResourceFingerprint();
 			if (structuralBindingsChanged)
@@ -66,6 +67,31 @@ internal unsafe partial class VkMeshRenderer
 
 			PublishBufferReadinessSnapshot();
 		}
+	}
+
+	/// <summary>
+	/// Re-captures the collected buffers' native identities after any native buffer binding
+	/// changed. A buffer can be recreated (for example when an XRDataBuffer grows) while the
+	/// renderer's buffer collection stays the same, and descriptor reuse trusts the cached
+	/// buffer fingerprint: without this, descriptor sets written before the recreation keep
+	/// binding the retired buffer and draw its old contents. Steady state is one comparison.
+	/// Requires <see cref="_bufferStateSync"/>.
+	/// </summary>
+	private void RefreshBufferIdentitiesAfterNativeReplacementNoLock()
+	{
+		ulong revision = BackendContext.Resources.NativeBufferBindingRevision;
+		if (revision == _observedNativeBufferBindingRevision)
+			return;
+
+		_observedNativeBufferBindingRevision = revision;
+		if (!UpdateBufferStructuralIdentitySnapshot())
+			return;
+
+		PublishCachedBufferResourceFingerprint();
+		BumpPreparationCompatibilityRevision();
+		_descriptorDirty = true;
+		_vertexInputStateDirty = true;
+		CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
 	}
 
 	private BufferStructuralIdentity CaptureBufferStructuralIdentity(VkDataBuffer? buffer)
@@ -329,6 +355,7 @@ internal unsafe partial class VkMeshRenderer
 				ApplyIndexBufferReadyNoLock();
 
 			EnsureRuntimeDeformationBuffersCurrent();
+			RefreshBufferIdentitiesAfterNativeReplacementNoLock();
 
 			if (skipIndexBuffers)
 			{

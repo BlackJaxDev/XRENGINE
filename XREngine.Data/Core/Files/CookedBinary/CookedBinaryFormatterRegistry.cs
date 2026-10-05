@@ -4,11 +4,15 @@ namespace XREngine.Core.Files;
 public static class CookedBinaryFormatterRegistry
 {
     private sealed record Entry(Guid Token, Type Type, Func<object> Create);
+    private sealed record ArrayEntry(Guid Token, Func<int, Array> Create);
+    private sealed record ValueDefaultEntry(Guid Token, Func<object> Create);
     private sealed record HashSetEntry(Guid Token, Type ElementType, Func<int, object> Create, Action<object, object?> Add);
     private sealed record TupleEntry(Guid Token, Type[] Elements, Func<object?[], object> Create);
 
     private static readonly object Sync = new();
     private static readonly Dictionary<Type, Entry> Collections = [];
+    private static readonly Dictionary<Type, ArrayEntry> Arrays = [];
+    private static readonly Dictionary<Type, ValueDefaultEntry> ValueDefaults = [];
     private static readonly Dictionary<Type, HashSetEntry> HashSets = [];
     private static readonly Dictionary<string, TupleEntry> Tuples = new(StringComparer.Ordinal);
     private static readonly Dictionary<Type, Entry> Nullables = [];
@@ -33,7 +37,7 @@ public static class CookedBinaryFormatterRegistry
         });
     }
 
-    public static bool TryResolve(string fullName, out Type? type)
+    public static bool TryResolve(string fullName, out Type? type, bool ignoreCase = false)
     {
         lock (Sync)
         {
@@ -42,6 +46,17 @@ public static class CookedBinaryFormatterRegistry
                 type = entry.Type;
                 return true;
             }
+            if (ignoreCase)
+            {
+                foreach (Entry candidate in KnownTypes.Values)
+                {
+                    if (string.Equals(candidate.Type.FullName, fullName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        type = candidate.Type;
+                        return true;
+                    }
+                }
+            }
         }
         type = null;
         return false;
@@ -49,6 +64,76 @@ public static class CookedBinaryFormatterRegistry
 
     public static IDisposable RegisterList<T>()
         => RegisterCollection(typeof(List<T>), static () => new List<T>());
+
+    /// <summary>Registers construction of one closed vector array, including an array whose element is another array.</summary>
+    public static IDisposable RegisterArray<T>()
+    {
+        Type arrayType = typeof(T[]);
+        ArrayEntry entry = new(Guid.NewGuid(), static length => new T[length]);
+        lock (Sync)
+        {
+            if (Arrays.ContainsKey(arrayType))
+                throw new InvalidOperationException($"Array formatter for '{arrayType}' is already registered.");
+            Arrays.Add(arrayType, entry);
+        }
+        return new Lease(() =>
+        {
+            lock (Sync)
+                if (Arrays.TryGetValue(arrayType, out ArrayEntry? current) && current.Token == entry.Token)
+                    Arrays.Remove(arrayType);
+        });
+    }
+
+    public static bool TryCreateArray(Type arrayType, int length, out Array? array)
+    {
+        ArgumentNullException.ThrowIfNull(arrayType);
+        if (length < 0)
+            throw new ArgumentOutOfRangeException(nameof(length));
+        lock (Sync)
+        {
+            if (Arrays.TryGetValue(arrayType, out ArrayEntry? entry))
+            {
+                array = entry.Create(length);
+                return true;
+            }
+        }
+        array = null;
+        return false;
+    }
+
+    /// <summary>Registers the language default of a closed value type without invoking its constructor.</summary>
+    public static IDisposable RegisterValueDefault<T>() where T : struct
+    {
+        Type type = typeof(T);
+        ValueDefaultEntry entry = new(Guid.NewGuid(), static () => default(T));
+        lock (Sync)
+        {
+            if (ValueDefaults.ContainsKey(type))
+                throw new InvalidOperationException($"Value default for '{type}' is already registered.");
+            ValueDefaults.Add(type, entry);
+        }
+        return new Lease(() =>
+        {
+            lock (Sync)
+                if (ValueDefaults.TryGetValue(type, out ValueDefaultEntry? current) && current.Token == entry.Token)
+                    ValueDefaults.Remove(type);
+        });
+    }
+
+    public static bool TryCreateValueDefault(Type type, out object? value)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        lock (Sync)
+        {
+            if (ValueDefaults.TryGetValue(type, out ValueDefaultEntry? entry))
+            {
+                value = entry.Create();
+                return true;
+            }
+        }
+        value = null;
+        return false;
+    }
 
     public static IDisposable RegisterDictionary<TKey, TValue>() where TKey : notnull
         => RegisterCollection(typeof(Dictionary<TKey, TValue>), static () => new Dictionary<TKey, TValue>());

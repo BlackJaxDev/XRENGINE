@@ -1,6 +1,6 @@
 # Vulkan Stall Remediation Results
 
-Updated: 2026-10-05. Evidence cutoff: 2026-10-02.
+Updated: 2026-10-05. Evidence cutoff: 2026-10-05.
 
 This record consolidates completed work and measured deferrals from the
 [remaining-work checklist](../../todo/rendering/vulkan-stall-remediation-todo.md).
@@ -199,3 +199,223 @@ rules. These historical approvals do not authorize unrelated new tests.
 Separate open issues remain in the remaining-work checklist. The runtime MCP
 documentation generator succeeded on September 26 with one added row and none
 lost; its earlier failed source-parser output was not retained.
+
+## Merged Continuation Results
+
+The following records arrived from the other branch. They extend the earlier
+history without converting a scoped pass into integrated acceptance. Dates and
+fixtures matter: the September desktop comparison does not supersede the
+October 1 failure, and the early exterior shadow route does not establish the
+later interior performance target. This merge resolution runs no editor checks.
+
+The retained design is also documented in [Frame Loop Design](../../../architecture/rendering/frame-loop-design.md),
+[Vulkan Pipeline Compilation](../../../architecture/rendering/vulkan-pipeline-compilation.md),
+and [Play Mode Architecture](../../../architecture/editor/play-mode-architecture.md).
+
+### Earlier Branch Measurements
+
+- [September plan metadata](../../investigations/rendering/2026-09-26-s13f-plan-metadata.md)
+  deferred cross-generation retention because it needs publication-stable geometry
+  identity. The October scan gate remains deferred, not a completed cache design.
+- [September readiness](../../investigations/rendering/2026-09-26-s13g-pipeline-readiness.md)
+  resolved raster programs/pipelines once per coverage, meshlet and cull
+  combination and removed identity-hash allocation. This is distinct from the
+  October indexed-traversal correction and deferred broader readiness reuse.
+- [September critical-section work](../../investigations/rendering/2026-09-26-s13h-critical-section.md)
+  sorted compact stable-bin keys and permuted records once in place. It did not
+  change synchronization; measured acquisition did not justify doing so.
+- [September cumulative validation](../../investigations/rendering/2026-09-26-s13i-cumulative.md)
+  passed its reachable desktop Vulkan scope on September 27. OpenGL and wider
+  coverage remained limited. Keep its fixtures and observer conditions separate
+  from the October cumulative run that did not pass.
+
+### Play Transition Results
+
+| Item | Retained result | Record |
+| --- | --- | --- |
+| Core update attribution | Tick optimization deferred. Reopen at 0.10 ms/update tick cost, 1.0 ms pending application within a second, 1.0 ms mean callback cost, or registration churn outside Play transitions. | [Core update](../../investigations/rendering/2026-09-27-s14-core-update-owner.md) |
+| Play transitions | Scoped transition corrections validated. | [Transitions](../../investigations/rendering/2026-09-27-s14a-play-transitions.md) |
+| Probe spawner restore | Scoped restore correction validated. | [Probe restore](../../investigations/rendering/2026-09-27-s14b-probe-spawner-restore.md) |
+| Component tick timing | Scoped timing work validated. | [Tick timing](../../investigations/rendering/2026-09-27-s14c-component-tick-timing.md) |
+| Post-exit publication | Scoped publication correction validated. | [Post-exit publication](../../investigations/rendering/2026-09-27-s14d-post-exit-publication.md) |
+| Snapshot identity | Scoped identity correction validated. | [Snapshot identity](../../investigations/rendering/2026-09-27-s14f-snapshot-identity.md) |
+| Cooked mesh restoration | Restored CPU vertex arrays; three Play round trips and matching views passed. | [Post-Play cost](../../investigations/rendering/2026-10-03-s14g-post-play-cost.md) |
+| Planner generation retirement | Superseded generations now retire instead of retaining their complete image/buffer sets. Final October 3 motion reached 98% of pre-Play throughput, and device-local memory stayed flat from first to third trip. Earlier memory failure is historical. Short-lived output metadata remains a conditional follow-up. | [Post-Play cost](../../investigations/rendering/2026-10-03-s14g-post-play-cost.md#why-the-old-set-was-never-retired-fixed) |
+| Intermittent exit exception | Live Edit recovery and stack logging retained. Two of seven exits had failed; about 40 later exits did not reproduce it. Cause remains unresolved and waits for recurrence. | [Exit exception](../../investigations/rendering/2026-09-27-s14e-exit-exception.md) |
+
+### Shadow Recording Results
+
+[Packet lowering](../../investigations/rendering/2026-10-03-motion-fps-shadow-recording.md)
+now skips scans that cannot reach the packet minimum. October 3 motion rose
+33.6 to 40.1 fresh FPS, with identical images and bounded first-motion descriptor
+growth. Affected TSR checks passed. Capacity increases, shadow-uniform share
+keys, mapped-arena lease changes and a typed uniform writer were rejected or
+reverted; they are not retained remedies. Retired-pipeline reload handling was
+corrected separately.
+
+The [directional lane](../../investigations/rendering/2026-10-03-s15b-directional-shadow-lane.md)
+reuses desktop sealed bins with a distinct depth-only atlas closure. It preserves
+CastShadow/per-cascade bounds, tile clears, post-deformation ordering and receipts.
+Optional-program readiness no longer changes required-family identity mid-enqueue.
+Failed receipts keep atlas keys dirty for generic retry. Unsupported moment
+encodings, materials and extra pages use the declared generic path.
+
+Generic depth-only pipelines retain authored fragment stages. This corrected
+the floor-view reference: final parity was 0.044/255 mean RGB difference and
+0.064% of pixels above channel difference 16, within 0.5/255 and 0.1% limits.
+Cold/reload readiness, controlled failure/retry, movement, activation, masked
+eligibility, page admission and three Play round trips have scoped evidence.
+
+The early route measured 123.5-128.2 fresh motion FPS. The later viewed interior
+repeat measured 92.09/92.46 with the lane versus 33.74/33.65 generically, with zero
+rejected/failed deltas and matching images. Both windows failed the unchanged
+100 FPS target. Remaining counterbalanced restarts stopped under the failure
+rule. SteamVR/Oculus were active, so final idle-host acceptance also remains open.
+
+Dense directional timing adds two queries per refreshed group: refresh frames
+used 20 queries, ordinary frames 18. All 1,049 completed disabled frames used
+zero. Eighteen exported detailed samples matched completed refresh frame IDs;
+146 history samples averaged 2.923 ms. The interval includes dependencies and
+barrier/clear/raster work, but excludes later render-scope closure. It is partial
+GPU timing, not exclusive shader time or a performance pass. Existing query
+tests passed 21/21; the build had zero warnings/errors.
+
+### Temporal Results And User Scope
+
+The [temporal record](../../investigations/rendering/2026-10-03-s15-temporal-checks.md)
+contains viewed stationary, cut, scale, pan, lit fixed-speed disocclusion and
+actual resize results. Same-camera Default-to-Advanced replacement rendered
+settled Sponza, but retained a cold preparation stall and fine-edge comparison
+limit. The performance fixture uses FXAA; these history checks used explicit TSR.
+
+Distinct-camera possession with matched TSR settings produced different viewed
+positions, valid per-eye history and reset/seed generations 14/14, 2/2 and 17/17.
+The fixed mono channel key correctly stayed unchanged. Exact first-frame
+temporal-key/snapshot-uniform attribution remains open.
+
+Deferred TAA jitter aliasing was corrected by retaining pre-commit resolve
+uniforms and exposure readiness in pipeline-owned TAA/TSR snapshots. Actual
+GPU bindings and motion/cut/resize output were inspected. Later admission,
+rejection, view/lifecycle correlation and user acceptance remain separate gates.
+
+On October 3 the user confirmed that the original recording was unavailable
+and waived its replay. This removes an impossible replay requirement; it is
+not evidence that the original symptoms were reproduced or fixed.
+
+### OpenGL Admission And Comparison Results
+
+The [OpenGL record](../../investigations/rendering/2026-10-03-s16a-opengl-admission.md)
+contains the exact corrections and rejected runs:
+
+| Owner | Scoped result | Remaining limit |
+| --- | --- | --- |
+| Progressive upload | Byte/time-budgeted callbacks and exact two-slot ownership drained all 76 textures by 8.906 s versus controls at 26.6-28.7 s. Up to 256 chunks/callback, 16 MB byte cap and measured 2 ms budget were retained. | Strict complete-texture admission remains; no silent placeholder. |
+| Query publication order | Publish the current renderer before statistics readback. GPU queries now resolve at about 2.6 KB/frame. Off/on/off medians were 36.89/37.05/37.09 ms; no multi-second gap in those corrected windows. | Earlier large observer penalties are historical. Full matched harness acceptance remains open. |
+| Cascade target mask | Publish scoped matrices/mask after material callbacks; all four tiles receive casters. Explicit 1024 shadow dimensions explain the former cross-backend bias difference. | No unsupported shader-bias change or display-tonemapping pass. |
+| Reload | Specialized variants resolve authored dependencies before specialization; stale builds release their claim. Mono include/root/in-memory edits and restoration reached Ready with viewed output. | MSAA/stereo, source replacement and driver-parallel coverage remain open. |
+| Harness admission | Require actual stages, current reservation, advancing accepted receipts and collected opaque/masked geometry. Both backends reject sky-only views. Vulkan also requires completed progress and no retained terminal failure. | Diagnostic bypass cannot establish acceptance; no live terminal fault was injected for the guard. |
+| Harness shadow settings | Named-light selection, requested dimensions and pre/post readback pass 4096/2048/1024 GL and 1024/2048/1024 Vulkan changes. | This sets before-warmup conditions, not bootstrap behavior. |
+| MCP collection reads | Owned summary rows captured under the collection read scope prevent recycled-list enumeration. Both backends passed 120 live polls; existing collection tests passed 13/13. | Other fields remain independently sampled; no per-frame copy was added. |
+| Pinned control | Unchanged `9fee4b983`, with matching submodules, rebuilt without warnings/errors. | Cold/settled/warm checks pass 0/100 interior samples; texture-source rejection and stale camera-cut output block throughput comparison. |
+| Sparse transitions | Respect bindless leases, originating fence ownership, and coherent sparse metadata/content publication. Cold/warm promotion/demotion drained without immutable-parameter errors. | Forced cancellation/device-failure matrix remains open. |
+| Exposure and sample coverage | Mean-relative log floor corrected runaway exposure. Cold/warm predictions matched within 0.002%; three non-average modes in two views matched within 0.001%, at the same fetch budget. | Stereo and row-major spatial aliasing remain outside the scoped correction. |
+| Abandoned Vulkan lane contexts | Exact active handle/generation ownership and abort/reset/free cleanup keep scene dependencies out of reused upload commands. Three resize trips and 12 cuts advanced 11,278 completed frames without terminal failure. | Thirteen transient rejections remain recorded; guards and frame-slot waits were retained. |
+| Raw depth and HDR after resize | Two viewed positions at 1600x900 and 1920x1080 match cascade depth within one occupied texel and 0.00001 depth quantiles. Resident-chain sampler limits and canonical mip rebasing reduce dark HDR mean differences to 0.479%/0.478%; atrium to 0.098%/0.035%, below the unchanged 1% gate. | Failed stale-output and diagnostic-induced captures are excluded. Final display, temporal and performance gates remain open. |
+
+### Shader Root And Family Reload Results
+
+The [reload record](../../investigations/rendering/2026-10-04-shader-root-reload.md)
+documents off-thread disk-root refresh with guarded publication. Clean disk-backed
+roots update; unsaved/generated text is preserved. Root/include/in-memory edits
+and exact restoration were viewed from two positions on Vulkan and mono OpenGL.
+
+Vulkan authors complete required families while executable pipelines are pending.
+Physical capability and reservation identity govern intent; sealed preparation
+uses existing retries and starts stale binding refresh at visibility preparation.
+All twelve Vulkan capture windows advanced fresh output without terminal rejection.
+OpenGL specialized variants share current authored text; all twelve HDR captures
+were viewed and unsaved edits survived watcher/manual reload.
+
+Release builds had zero warnings/errors. Existing tests reported 32/32 for
+dependency/resolver/cache checks, 96/101 for Vulkan focused checks with the same
+five prior failures, and 65/66 for OpenGL with its prior source-string failure.
+No tests changed. Wider source-object, MSAA/stereo and failure/lifetime gates remain.
+
+### Hardware And Desktop Results
+
+The [hardware record](../../investigations/rendering/2026-10-03-retained-rendering-hardware.md)
+establishes available physical SteamVR/OpenXR hardware. Null bootstrap-lease
+success and disabled-extension dispatch checks were corrected. Strict Vulkan
+SinglePassStereo then produced left/right preview frames 489/491 and 695/697.
+One teardown ended at 182 submissions/per-eye publications, zero end-frame
+failures and zero sequential fallback attempts. Both eyes acquired/released
+436 images and drained one retired generation.
+
+That run also had 254 no-layer frames and needed roughly three minutes for its
+first capture. The diagnostic submission ledger was disabled; zero ledger
+counters were not proof of acceptance. The user confirms physical presentation
+but reports black/flickering Sponza and old-frame jitter. Visual acceptance fails.
+
+Preview-off isolation removes forced reservation waits but exposes frame-data-slot
+refusals. Actual CLR contention totaled only 0.1055 ms over 15 seconds; a sampled
+monitor-entry stack did not prove a multi-second lock wait. The redundant-lock
+candidate gave no overall recording benefit and was reverted.
+
+Supplemental lighting/AO declaration ownership and callback storage are retained
+per backend renderer, material and logical draw slot. Captured values still own
+content generation. Viewed eye frames 3553/3555 passed; schema fallbacks fell
+from about 380 to 2-4 and reservations stayed near 2,757-2,764 instead of exhausting
+131,072 entries. Automated 1600x900 and 1920x1080 resize continued submissions.
+
+Desktop ImGui now keeps its explicit viewport canvas independently of the VR
+camera. Live File-menu interaction, panel reflow and eye frames without UI passed.
+Interactive border dragging did not execute and remains unverified.
+
+Play with XR no longer stops the timer through duplicate GPUScene publication
+or torn view IDs. World pre-collect follows the host render session; view-batch
+planning uses call-local storage. Four XR and three desktop trips retained loop
+liveness and restored Edit panels. XR submission after Play still stalls at
+pipeline admission; a 24-second exit stall and magenta third-entry output remain.
+
+### Memory And Overlay Results
+
+The [memory record](../../investigations/rendering/2026-10-04-editor-memory-retention.md)
+and [stereo record](../../investigations/rendering/2026-10-04-openxr-stereo-flicker-and-target-duplication.md)
+separate desktop retained-reference fixes from XR's remaining budget failure.
+Desktop private memory rose 5.98 to 8.79 GB over three trips then plateaued on
+the fourth; live heap was 2.22 GB. Stereo target deduplication reduced device-local
+usage from 12.4 to 7.4 GB rather than holding the 2.3 GB target set three times.
+
+October 5's [memory plan](../../todo/rendering/optimization/editor-memory-reduction-todo.md)
+supersedes the October 4 baseline for the same settings:
+
+| Measure | October 4 | October 5 |
+| --- | --- | --- |
+| Private bytes | 24.7 GB | 13.5 GB; 13.2 GB after full GC |
+| Device-local Vulkan memory | 7.41 GB | 5.52 GB |
+| Live managed estimate | 5.9 GB | 1.6 GB |
+| Idle allocation | 54 MB/s | 48 MB/s |
+| XR submitted/missed per second | 30 / 4.6 | 32.3 / 4.7 |
+
+Private bytes include mapped device-local memory on this driver. Report them
+separately; private minus device-local is still about 7.7-8.0 GB. The 8 GB goal
+and XR pacing remain unmet. The dedicated plan owns its open decisions and work.
+
+Overlay statistics now show window means with a stable layout. Buffer-binding
+revision changes refresh retained descriptors; stale HUD revisits fell from
+68/92 to 0/23. The startup stereo-generation black interval, exposure history
+loss and physical visual failures remain open.
+
+### Continuation Validation Limits
+
+Selected existing tests included 86/97 passing and a narrower final upload
+selection at 31/32. Sparse checks were 52/61, exposure/metering 6/8, hardening
+14/18, final resource checks 4/4 and XR Play checks 39/40. The linked records
+classify source-contract failures, including one from earlier slot ownership.
+These cohorts overlap and are not one combined current failure count. No new
+test clearance or fresh execution is implied by this merge.
+
+Temporary upload/shader probes were removed and authored shaders restored.
+Owned editor sessions were stopped; user-owned SteamVR remained running.
+Ignored capture files are supporting evidence only. Exact durable results and
+rejected hypotheses remain in the linked investigations.

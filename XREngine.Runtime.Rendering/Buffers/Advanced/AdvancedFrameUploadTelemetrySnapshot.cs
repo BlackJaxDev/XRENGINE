@@ -19,4 +19,6 @@ public readonly record struct AdvancedFrameUploadTelemetrySnapshot(
     int GrowthDeferralCount,
     int SlotReuseDeferralCount,
     int PendingOverflowGenerationCount,
-    int RetiredMainGenerationCount);
+    int RetiredMainGenerationCount,
+    int CapacityShrinkCount,
+    ulong CapacityShrinkBytes);

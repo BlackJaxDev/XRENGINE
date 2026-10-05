@@ -5,6 +5,7 @@ using XREngine.Components.Scene.Transforms;
 using XREngine.Input;
 using XREngine.Rendering;
 using XREngine.Scene.Transforms;
+using SpectatorOutput = XREngine.Components.Lights.VrSpectatorOutputComponent;
 
 namespace XREngine.Components.VR;
 
@@ -18,7 +19,7 @@ public sealed class VrSpectatorFollowComponent : XRComponent
     private TransformBase? _playerRoot;
     private CameraComponent? _camera;
     private BoomTransform? _boom;
-    private VrSpectatorOutputComponent? _output;
+    private SpectatorOutput? _output;
     private long _discontinuityVersion = -1;
     private VrSpectatorFollowSettings _settings = new();
     private Quaternion _lastRotation = Quaternion.Identity;
@@ -27,7 +28,7 @@ public sealed class VrSpectatorFollowComponent : XRComponent
     public TransformBase? PlayerRoot { get => _playerRoot; set { if (SetField(ref _playerRoot, value)) ResetFollow(); } }
     public CameraComponent? Camera { get => _camera; set => SetField(ref _camera, value); }
     public BoomTransform? Boom { get => _boom; set => SetField(ref _boom, value); }
-    public VrSpectatorOutputComponent? Output { get => _output; set => SetField(ref _output, value); }
+    public SpectatorOutput? Output { get => _output; set => SetField(ref _output, value); }
     public VrSpectatorFollowSettings Settings { get => _settings; set => SetField(ref _settings, value ?? throw new ArgumentNullException(nameof(value))); }
 
     /// <summary>Transfers ownership of the explicit eye-only visibility scope to this rig.</summary>
@@ -100,6 +101,7 @@ public sealed class VrSpectatorFollowComponent : XRComponent
             _discontinuityVersion = version;
         }
         Matrix4x4? hips = null;
+        Vector3? semanticForward = null;
         UpdateFirstPersonVisibility(Player?.IsCalibrating == true);
         if (_rig is not null)
         {
@@ -108,7 +110,14 @@ public sealed class VrSpectatorFollowComponent : XRComponent
                 && _solver?.GetCalibratedTarget(EHumanoidIKTarget.Hips) is { } calibratedHips)
                 hips = calibratedHips.WorldMatrix;
         }
-        VrSpectatorFollowPose follow = _follow.Evaluate(PlayerRoot.WorldMatrix, hips, Settings, deltaSeconds);
+        if (_rig is not null)
+        {
+            if (hips is Matrix4x4 hipsWorld && _rig.TryGetVrSemanticForwardInHipsBindSpace(out Vector3 hipsForward))
+                semanticForward = Vector3.TransformNormal(hipsForward, hipsWorld);
+            else if (_rig.TryGetVrSemanticForwardInRootBindSpace(out Vector3 rootForward))
+                semanticForward = Vector3.TransformNormal(rootForward, _rig.RootTransform.WorldMatrix);
+        }
+        VrSpectatorFollowPose follow = _follow.Evaluate(PlayerRoot.WorldMatrix, hips, Settings, deltaSeconds, semanticForward);
         VrSpectatorFollowState.ApplyWorldPose(anchor, follow.BoomOrigin);
         Boom.MaxLength = Settings.Distance;
         Boom.Evaluate(deltaSeconds, reset);

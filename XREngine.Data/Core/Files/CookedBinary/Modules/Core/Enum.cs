@@ -40,6 +40,7 @@ public static partial class CookedBinarySerializer
             return true;
         }
 
+#if !XRE_PUBLISHED
         public override CookedBinarySchemaNode? TryBuildValueSchema(CookedBinarySchemaBuilder builder, string name, Type? declaredType, object value, Type runtimeType, bool allowCustom)
         {
             if (!runtimeType.IsEnum)
@@ -66,5 +67,6 @@ public static partial class CookedBinarySerializer
             builder.AddFixedLeaf(node, "rawValue", "payload", sizeof(long), type.GetEnumUnderlyingType().Name);
             return builder.FinalizeNode(node, allowUnknownChildren: true);
         }
+#endif
     }
 }

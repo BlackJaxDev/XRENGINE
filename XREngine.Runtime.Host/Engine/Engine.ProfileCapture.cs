@@ -1499,6 +1499,7 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_classification_operation", EVulkanCpuStage.PrimaryAdvancedClassificationOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_ambient_occlusion_operation", EVulkanCpuStage.PrimaryAdvancedAmbientOcclusionOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_native_shading_operation", EVulkanCpuStage.PrimaryAdvancedNativeShadingOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_directional_shadow_operation", EVulkanCpuStage.PrimaryAdvancedDirectionalShadowOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_cpu_direct_draw_operation", EVulkanCpuStage.PrimaryAdvancedCpuDirectDrawOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_raster_lowering_operation", EVulkanCpuStage.PrimaryAdvancedRasterLoweringOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_raster_validation_operation", EVulkanCpuStage.PrimaryAdvancedRasterValidationOperation, ref first);

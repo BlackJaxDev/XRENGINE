@@ -532,6 +532,34 @@ public class SceneNodeLifecycleTests
     }
 
     [Test]
+    public void RootNodeSnapshot_RemainsStableAcrossRemovalAndDestroy()
+    {
+        RuntimeWorld world = CreateRuntimeWorld(new JitterScene());
+        SceneNode first = new("FirstRoot");
+        SceneNode second = new("SecondRoot");
+        world.RootNodes.Add(first);
+        world.RootNodes.Add(second);
+
+        ReadOnlySpan<SceneNode> original = GetRenderWorld(world).RootNodeSnapshot;
+        Assert.That(original.Length, Is.EqualTo(2));
+        Assert.That(original[0], Is.SameAs(first));
+        Assert.That(original[1], Is.SameAs(second));
+
+        world.RootNodes.Remove(first);
+        ReadOnlySpan<SceneNode> afterRemoval = GetRenderWorld(world).RootNodeSnapshot;
+        Assert.That(afterRemoval.Length, Is.EqualTo(1));
+        Assert.That(afterRemoval[0], Is.SameAs(second));
+        Assert.That(original.Length, Is.EqualTo(2));
+        Assert.That(original[0], Is.SameAs(first));
+
+        second.Destroy();
+        XRObjectBase.ProcessPendingDestructions();
+
+        Assert.That(GetRenderWorld(world).RootNodeSnapshot.Length, Is.Zero);
+        Assert.That(afterRemoval[0], Is.SameAs(second));
+    }
+
+    [Test]
     public void AddingRootNodeToEditWorld_RegistersChildDirectionalLightsImmediately()
     {
         RuntimeWorld world = CreateRuntimeWorld(new JitterScene());

@@ -23,6 +23,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
 - [Vulkan Scene Preparation And Publication](architecture/rendering/vulkan-scene-preparation-and-publication.md)
 - [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)
+- [Vulkan Pipeline Compilation, Readiness And Depth-Only Coverage](architecture/rendering/vulkan-pipeline-compilation.md)
 - [CPU Scene BVH](architecture/rendering/cpu-scene-bvh.md)
 - [GPU Scene BVH](architecture/rendering/gpu-scene-bvh.md)
 - [Scene Architecture](architecture/scene/overview.md)
@@ -63,6 +64,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Profiler](developer-guides/diagnostics/profiler.md)
 - [Dedicated Vulkan RenderBench](developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench)
 - [Runtime Data Layout Measurements](developer-guides/diagnostics/runtime-data-layout-measurements.md)
+- [Runtime Regression And NativeAOT Hardening](work/todo/runtime-regression-and-nativeaot-hardening-todo.md): current software regression and strict packaged-player acceptance, with an active [progress ledger](work/progress/runtime/runtime-regression-and-nativeaot-hardening-progress.md).
 - [Self-Iterating Rendering Performance Loop](developer-guides/diagnostics/self-iterating-performance-loop.md)
 - [Skinning](developer-guides/rendering/skinning.md)
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
@@ -90,6 +92,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Physics](user-guide/physics.md)
 - [Rendering](user-guide/rendering.md)
 - [VR Development](user-guide/vr-development.md)
+- [Full-body VR calibration](user-guide/vr/full-body-calibration.md)
 - [Shader Editor](user-guide/editor/shader-editor.md)
 - [Prefab Workflow](user-guide/prefab-workflow.md)
 - [Job System](user-guide/job-system.md)
@@ -97,9 +100,10 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Work Docs
 
 - [Work Docs Index](work/README.md)
-- [Shadow and Pipeline Validation Failures TODO](work/todo/rendering/shadow-and-pipeline-validation-failures-todo.md)
+- [Shadow and Pipeline Validation — Completed](work/todo/rendering/shadow-and-pipeline-validation-failures-todo.md)
 - [Editor OpenXR Toggle, Rendering, And Import Responsiveness Todo](work/todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md)
 - [Six-Device VR Calibration Baseline](work/investigations/avatar/vr-calibration-baseline-2026-09-24.md)
+- [OpenXR Full-body Implementation Record](work/progress/avatar/openxr-full-body-calibration-spectator-implementation.md)
 - [OpenXR Calibration and Spectator Implementation](work/progress/avatar/openxr-calibration-spectator-implementation-2026-09-30.md)
 - [OpenXR Calibration and Spectator Acceptance](work/testing/avatar/openxr-calibration-spectator-validation.md)
 - [Windows Calibration and Spectator Validation](work/investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md)

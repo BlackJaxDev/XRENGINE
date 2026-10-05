@@ -94,7 +94,7 @@ public sealed class NativeFbxImporterTests
 
             lod.Mesh!.Bounds.Max.X.ShouldBe(1.0f);
             lod.Mesh.Bounds.Max.Y.ShouldBe(1.0f);
-            lod.Mesh.Vertices.Length.ShouldBe(4);
+            lod.Mesh.VertexCount.ShouldBe(4);
             lod.Mesh.GetIndices()?.Length.ShouldBe(6);
 
             lod.Material!.Name.ShouldBe("Stone");
@@ -201,11 +201,11 @@ public sealed class NativeFbxImporterTests
                 GenerateMeshRenderersAsync = false,
             });
 
-            flippedMesh.Vertices[0].TextureCoordinateSets.ShouldNotBeNull();
-            flippedMesh.Vertices[0].TextureCoordinateSets![0].X.ShouldBe(0.0f, 0.0001f);
-            flippedMesh.Vertices[0].TextureCoordinateSets![0].Y.ShouldBe(1.0f, 0.0001f);
-            flippedMesh.Vertices[2].TextureCoordinateSets![0].X.ShouldBe(1.0f, 0.0001f);
-            flippedMesh.Vertices[2].TextureCoordinateSets![0].Y.ShouldBe(0.0f, 0.0001f);
+            flippedMesh.TexCoordCount.ShouldBeGreaterThan(0u);
+            flippedMesh.GetTexCoord(0u, 0u).X.ShouldBe(0.0f, 0.0001f);
+            flippedMesh.GetTexCoord(0u, 0u).Y.ShouldBe(1.0f, 0.0001f);
+            flippedMesh.GetTexCoord(2u, 0u).X.ShouldBe(1.0f, 0.0001f);
+            flippedMesh.GetTexCoord(2u, 0u).Y.ShouldBe(0.0f, 0.0001f);
 
             XRMesh unflippedMesh = ImportMesh(fbxPath, new ModelImportOptions
             {
@@ -213,11 +213,11 @@ public sealed class NativeFbxImporterTests
                 LegacyPostProcessSteps = ModelImportSteps.None,
             });
 
-            unflippedMesh.Vertices[0].TextureCoordinateSets.ShouldNotBeNull();
-            unflippedMesh.Vertices[0].TextureCoordinateSets![0].X.ShouldBe(0.0f, 0.0001f);
-            unflippedMesh.Vertices[0].TextureCoordinateSets![0].Y.ShouldBe(0.0f, 0.0001f);
-            unflippedMesh.Vertices[2].TextureCoordinateSets![0].X.ShouldBe(1.0f, 0.0001f);
-            unflippedMesh.Vertices[2].TextureCoordinateSets![0].Y.ShouldBe(1.0f, 0.0001f);
+            unflippedMesh.TexCoordCount.ShouldBeGreaterThan(0u);
+            unflippedMesh.GetTexCoord(0u, 0u).X.ShouldBe(0.0f, 0.0001f);
+            unflippedMesh.GetTexCoord(0u, 0u).Y.ShouldBe(0.0f, 0.0001f);
+            unflippedMesh.GetTexCoord(2u, 0u).X.ShouldBe(1.0f, 0.0001f);
+            unflippedMesh.GetTexCoord(2u, 0u).Y.ShouldBe(1.0f, 0.0001f);
         }
         finally
         {
@@ -337,14 +337,16 @@ public sealed class NativeFbxImporterTests
             mesh.UtilizedBones.Select(static entry => entry.tfm.Name).ShouldContain("BoneB");
             mesh.BlendshapeNames.ShouldContain("Smile");
 
-            Vertex weightedVertex = mesh.Vertices[2];
+            using XRMeshVertexView view = XRMeshVertexView.Open(mesh);
+
+            Vertex weightedVertex = view.Vertices[2];
             weightedVertex.Weights.ShouldNotBeNull();
             weightedVertex.Weights!.Count.ShouldBe(2);
             weightedVertex.Weights.Keys.Select(static bone => bone.Name).ShouldContain("BoneA");
             weightedVertex.Weights.Keys.Select(static bone => bone.Name).ShouldContain("BoneB");
             weightedVertex.Weights.Values.Sum(static weight => weight.weight).ShouldBe(1.0f, 0.0001f);
 
-            Vertex morphedVertex = mesh.Vertices[0];
+            Vertex morphedVertex = view.Vertices[0];
             morphedVertex.Blendshapes.ShouldNotBeNull();
             morphedVertex.Blendshapes!.Count.ShouldBe(1);
             morphedVertex.Blendshapes[0].name.ShouldBe("Smile");
@@ -419,8 +421,9 @@ public sealed class NativeFbxImporterTests
             mesh.UtilizedBones.Length.ShouldBe(2);
             mesh.UtilizedBones.Select(static entry => entry.tfm.Name).ShouldContain("BoneA");
             mesh.UtilizedBones.Select(static entry => entry.tfm.Name).ShouldContain("BoneB");
-            mesh.Vertices[2].Weights.ShouldNotBeNull();
-            mesh.Vertices[2].Weights!.Count.ShouldBe(2);
+            using XRMeshVertexView view = XRMeshVertexView.Open(mesh, EXRMeshVertexViewContent.Weights);
+            view.Vertices[2].Weights.ShouldNotBeNull();
+            view.Vertices[2].Weights!.Count.ShouldBe(2);
         }
         finally
         {
@@ -461,7 +464,7 @@ public sealed class NativeFbxImporterTests
             BlendshapeNames = ["Smile", "Blink"],
         };
 
-        Should.NotThrow(() => mesh.RebuildBlendshapeBuffersFromVertices());
+        Should.NotThrow(() => mesh.RebuildBlendshapeBuffersFromVertices(vertices));
         mesh.HasBlendshapes.ShouldBeTrue();
         mesh.BlendshapeCounts.ShouldNotBeNull();
         mesh.BlendshapeCounts!.ElementCount.ShouldBe((uint)vertices.Length);
@@ -614,7 +617,7 @@ public sealed class NativeFbxImporterTests
         ];
 
         XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
-        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.RebuildSkinningBuffersFromVertices(vertices);
         mesh.HasSkinning.ShouldBeTrue();
 
         SubMesh subMesh = new(new SubMeshLOD(new XRMaterial(), mesh, 0.0f))
@@ -676,7 +679,7 @@ public sealed class NativeFbxImporterTests
         ];
 
         XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
-        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.RebuildSkinningBuffersFromVertices(vertices);
         mesh.SkinningShaderConvention.ShouldBe(ESkinningShaderConvention.ExplicitRowMajorRowVector);
 
         string source = GenerateDirectSkinningShader(mesh);
@@ -729,7 +732,7 @@ public sealed class NativeFbxImporterTests
         ];
 
         XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
-        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.RebuildSkinningBuffersFromVertices(vertices);
         mesh.SkinningShaderConvention = ESkinningShaderConvention.LegacyImplicitTranspose;
 
         string source = GenerateDirectSkinningShader(mesh);

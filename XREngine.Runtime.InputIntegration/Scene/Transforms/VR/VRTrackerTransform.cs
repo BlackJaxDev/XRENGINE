@@ -11,7 +11,15 @@ namespace XREngine.Data.Components.Scene
         public VRTrackerTransform() { }
         public VRTrackerTransform(TransformBase parent) : base(parent) { }
 
-        private RuntimeVrDeviceInfo? _tracker = null;
+        private RuntimeVrDeviceInfo? _tracker;
+        private string? _syntheticIdentity;
+
+        /// <summary>Explicit session identity for a manually supplied tracker pose.</summary>
+        public string? SyntheticIdentity
+        {
+            get => _syntheticIdentity;
+            set => SetField(ref _syntheticIdentity, value);
+        }
         public RuntimeVrDeviceInfo? Tracker
         {
             get => _tracker;
@@ -19,6 +27,19 @@ namespace XREngine.Data.Components.Scene
         }
 
         public override RuntimeVrDeviceInfo? Device => Tracker;
+
+        /// <summary>Session-scoped physical path used to keep a binding with the same tracker after reconnection.</summary>
+        public string? SessionIdentity
+        {
+            get
+            {
+                if (RuntimeVrStateServices.IsOpenXRActive)
+                    return SyntheticPoseEnabled ? SyntheticIdentity : OpenXrTrackerPersistentPath;
+                if (SyntheticPoseEnabled)
+                    return SyntheticIdentity;
+                return Tracker?.PersistentIdentity;
+            }
+        }
 
         private string? _openXrTrackerUserPath;
         /// <summary>
@@ -60,7 +81,7 @@ namespace XREngine.Data.Components.Scene
 
         public void ApplyOpenXrTrackerInfo(RuntimeVrTrackerInfo tracker)
         {
-            OpenXrTrackerUserPath = tracker.UserPath;
+            OpenXrTrackerUserPath = tracker.PersistentPath ?? tracker.UserPath;
             OpenXrTrackerPersistentPath = tracker.PersistentPath;
             OpenXrTrackerRolePath = tracker.RolePath;
             OpenXrTrackerRoleName = tracker.RoleName;

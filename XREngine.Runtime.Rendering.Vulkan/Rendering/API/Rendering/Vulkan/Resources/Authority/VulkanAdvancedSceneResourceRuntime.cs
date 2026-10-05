@@ -1086,6 +1086,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             }
             failure =
                 EVulkanAdvancedSceneResourceFailure.DescriptorUpdateFailed;
+            reason += $" Scene slot={frameSlot} slotGeneration={slot.FrameGeneration} requestedGeneration={frameGeneration} entries={slot.EntryCount} activeUses={slot.ActiveUseCount} globalSet=0x{globalDescriptorSet.Handle:X} resourceSet=0x{slot.ResourceDescriptorSet.Handle:X}.";
             return false;
         }
 

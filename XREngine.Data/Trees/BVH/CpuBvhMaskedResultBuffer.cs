@@ -19,8 +19,13 @@ public sealed class CpuBvhMaskedResultBuffer<T> where T : class
     public int Capacity => _items.Length;
     public bool Overflowed { get; private set; }
 
+    /// <summary>
+    /// Starts a new result set and releases the previous items, so a buffer kept by an idle
+    /// cache entry does not keep removed scene items alive.
+    /// </summary>
     public void BeginFrame()
     {
+        Array.Clear(_items, 0, _count);
         _count = 0;
         Overflowed = false;
     }

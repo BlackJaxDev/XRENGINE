@@ -13,7 +13,7 @@ namespace XREngine.UnitTests.Animation;
 public sealed class VRPlayerCalibrationFlowTests
 {
     [Test]
-    public void LostHips_UsesCurrentHeadForRoomScaleMovement()
+    public void LostHips_DoesNotTurnHeadLeanIntoRoomScaleMovement()
     {
         using var rig = new VrPlayerCalibrationTestRig();
         rig.Open();
@@ -30,7 +30,7 @@ public sealed class VRPlayerCalibrationFlowTests
         rig.State.Snapshot = rig.State.Snapshot with { HeadPose = head };
         rig.Advance();
         rig.Avatar.Solver.GetCalibratedTarget(EHumanoidIKTarget.Hips).ShouldNotBeNull();
-        movement.LastInput.X.ShouldBe(0.25f, 0.001f);
+        movement.LastInput.X.ShouldBe(0f, 0.001f);
     }
 
     [Test]

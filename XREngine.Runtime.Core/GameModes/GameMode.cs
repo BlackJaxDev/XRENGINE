@@ -51,7 +51,15 @@ public abstract class GameMode : XRAsset
         IsActive = true;
         IRuntimeGameModeHostServices? host = RuntimeGameModeHostServices.Current;
         if (host?.AutoSpawnPlayer == true)
-            SpawnDefaultPlayerPawn(host.DefaultPlayerIndex);
+        {
+            XRComponent? possessedPawn = RuntimePlayerControllerServices.Current?
+                .GetLocalPlayer(host.DefaultPlayerIndex)?.ControlledPawnComponent;
+            // World begin-play callbacks can possess an authored pawn before the game mode
+            // starts. Automatic spawning fills an empty slot without replacing that choice.
+            if (possessedPawn is null || possessedPawn.IsDestroyed
+                || !ReferenceEquals(possessedPawn.World, WorldInstance))
+                SpawnDefaultPlayerPawn(host.DefaultPlayerIndex);
+        }
 
         Debug.Out($"GameMode.OnBeginPlay - World: {host?.GetWorldName(WorldInstance) ?? "null"}");
     }

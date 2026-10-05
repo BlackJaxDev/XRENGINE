@@ -9,7 +9,8 @@ internal readonly record struct VulkanPreparedStableBinHeader(
     VulkanSealedBinSubmissionPlan? SubmissionPlan = null,
     AdvancedIndirectRange IndirectRange = default,
     VulkanVisibilityRasterPipeline RasterPipeline = default,
-    VulkanResidentDrawTemplateNativeState NativeState = default)
+    VulkanResidentDrawTemplateNativeState NativeState = default,
+    VulkanVisibilityRasterPipeline ShadowRasterPipeline = default)
 {
     /// <summary>
     /// A bin is recordable by the advanced visibility raster lane only after
@@ -20,4 +21,9 @@ internal readonly record struct VulkanPreparedStableBinHeader(
     internal bool HasSealedSubmission => SubmissionPlan is not null;
     internal bool IsRasterReady => HasSealedSubmission && RasterPipeline.IsValid &&
         NativeState.IsValid;
+    /// <summary>
+    /// The directional shadow lane reuses this bin's geometry with its own
+    /// depth-only pipeline for the atlas-page closure.
+    /// </summary>
+    internal bool IsDirectionalShadowReady => IsRasterReady && ShadowRasterPipeline.IsValid;
 }

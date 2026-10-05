@@ -435,6 +435,24 @@ public partial class HumanoidComponent
         if (path.Count == 0)
             return;
 
+        if (AliasScore(path[^1].Name, "spine", "chest", "upperchest", "neck") >= 0.9f
+            && FindTorsoAliasIndex(path, 0, path.Count, "head") < 0)
+        {
+            int spineIndex = FindTorsoAliasIndex(path, 0, path.Count, "spine");
+            AssignTopologyRole(EHumanoidAvatarBoneRole.Spine, path[spineIndex >= 0 ? spineIndex : 0], 0.92f, "First stable joint on the ascending torso chain.", assigned);
+            for (int i = 1; i < path.Count; i++)
+            {
+                SceneNode node = path[i];
+                if (AliasScore(node.Name, "upperchest") >= 0.9f)
+                    AssignTopologyRole(EHumanoidAvatarBoneRole.UpperChest, node, 0.86f, "Named upper torso joint on a partial skeleton.", assigned);
+                else if (AliasScore(node.Name, "chest") >= 0.9f)
+                    AssignTopologyRole(EHumanoidAvatarBoneRole.Chest, node, 0.88f, "Named torso joint on a partial skeleton.", assigned);
+                else if (AliasScore(node.Name, "neck") >= 0.9f)
+                    AssignTopologyRole(EHumanoidAvatarBoneRole.Neck, node, 0.76f, "Named terminal neck joint on a partial skeleton.", assigned);
+            }
+            return;
+        }
+
         int headIndex = SelectHeadIndex(path, byNode, bodyUp);
         SceneNode head = path[headIndex];
         SceneNode spine = path[0];
@@ -785,7 +803,12 @@ public partial class HumanoidComponent
         SceneNode? branchRoot = selection.Candidate?.Node;
         if (branchRoot is null)
             return;
-        Vector3 lateral = isLeft ? -bodyRight : bodyRight;
+        float branchSide = branchRoot.Parent is SceneNode parent && byNode.TryGetValue(parent, out HumanoidAvatarAutoMapCandidate? parentCandidate)
+            ? Vector3.Dot(byNode[branchRoot].Position - parentCandidate.Position, bodyRight)
+            : 0.0f;
+        Vector3 lateral = MathF.Abs(branchSide) > 1e-4f
+            ? (branchSide < 0.0f ? -bodyRight : bodyRight)
+            : (isLeft ? -bodyRight : bodyRight);
         List<SceneNode> path = BuildExtremeDescendantPath(branchRoot, byNode, lateral, positiveDirection: true, maximumNodes: 16);
         path.Insert(0, branchRoot);
         RemoveRepeatedPathNodes(path);
@@ -864,8 +887,18 @@ public partial class HumanoidComponent
             SceneNode? child = childTransform.SceneNode;
             if (child is null || assigned.Contains(child))
                 continue;
-            List<SceneNode> chain = BuildLongestSingleBranchChain(child, byNode, maximumNodes: 6);
-            if (chain.Count >= 3)
+            List<SceneNode> rawChain = BuildLongestSingleBranchChain(child, byNode, maximumNodes: 6);
+            List<SceneNode> chain = [];
+            bool namedFinger = false;
+            for (int i = 0; i < rawChain.Count; i++)
+            {
+                SceneNode node = rawChain[i];
+                if (NameContainsAny(node.Name, FingerBoneMismatch))
+                    continue;
+                chain.Add(node);
+                namedFinger |= AliasScore(node.Name, "thumb", "index", "middle", "ring", "little", "pinky", "pinkie") > 0.0f;
+            }
+            if (chain.Count >= 3 || namedFinger && chain.Count > 0)
                 chains.Add(chain);
         }
         if (chains.Count == 0)
@@ -889,7 +922,7 @@ public partial class HumanoidComponent
         int semanticIndex = 0;
         for (int i = 0; i < chains.Count && semanticIndex < 5; i++)
         {
-            if (used[i])
+            if (used[i] || chains[i].Count < 3)
                 continue;
             while (semanticIndex < 5 && IsFingerSemanticMapped(isLeft, semanticIndex))
                 semanticIndex++;
@@ -913,10 +946,14 @@ public partial class HumanoidComponent
         {
             if (used[i])
                 continue;
-            string? name = chains[i][0].Name;
-            float score = AliasScore(name, primaryAlias);
-            for (int j = 0; j < additionalAliases.Length; j++)
-                score = MathF.Max(score, AliasScore(name, additionalAliases[j]));
+            float score = 0.0f;
+            for (int nodeIndex = 0; nodeIndex < chains[i].Count; nodeIndex++)
+            {
+                string? name = chains[i][nodeIndex].Name;
+                score = MathF.Max(score, AliasScore(name, primaryAlias));
+                for (int j = 0; j < additionalAliases.Length; j++)
+                    score = MathF.Max(score, AliasScore(name, additionalAliases[j]));
+            }
             if (score <= 0.0f)
                 continue;
             used[i] = true;
@@ -937,9 +974,13 @@ public partial class HumanoidComponent
             ? (int)EHumanoidAvatarBoneRole.LeftThumbProximal
             : (int)EHumanoidAvatarBoneRole.RightThumbProximal;
         int start = Math.Max(0, chain.Count - 3);
-        for (int segment = 0; segment < 3; segment++)
+        for (int segment = 0; segment < Math.Min(chain.Count, 3); segment++)
         {
-            EHumanoidAvatarBoneRole role = (EHumanoidAvatarBoneRole)(baseRole + semanticIndex * 3 + segment);
+            int roleSegment = chain.Count == 2 && segment == 1
+                && GetFingerSegmentSortIndex(chain[1].Name) >= 3
+                && GetFingerSegmentSortIndex(chain[1].Name) != int.MaxValue
+                ? 2 : segment;
+            EHumanoidAvatarBoneRole role = (EHumanoidAvatarBoneRole)(baseRole + semanticIndex * 3 + roleSegment);
             AssignTopologyRole(role, chain[start + segment], confidence, summary, assigned);
         }
     }
@@ -1074,6 +1115,8 @@ public partial class HumanoidComponent
         int maximumNodes)
     {
         List<SceneNode> semanticPath = FindSemanticallyAnchoredTorsoPath(hips, byNode, maximumNodes);
+        if (semanticPath.Count == 0)
+            semanticPath = FindPartialTorsoPath(hips, byNode, bodyUp, maximumNodes);
         return semanticPath.Count > 0
             ? semanticPath
             : BuildExtremeDescendantPath(
@@ -1082,6 +1125,101 @@ public partial class HumanoidComponent
                 bodyUp,
                 positiveDirection: true,
                 maximumNodes);
+    }
+
+    private static List<SceneNode> FindPartialTorsoPath(
+        SceneNode hips,
+        Dictionary<SceneNode, HumanoidAvatarAutoMapCandidate> byNode,
+        Vector3 bodyUp,
+        int maximumNodes)
+    {
+        List<SceneNode>? bestPath = null;
+        int bestRank = -1;
+        int bestTraversalIndex = int.MaxValue;
+        foreach (HumanoidAvatarAutoMapCandidate candidate in byNode.Values)
+        {
+            int endpointRank = PartialTorsoRank(candidate.Node.Name);
+            if (endpointRank < 0 || !IsStrictDescendant(hips, candidate.Node)
+                || HasPlausibleCentralTorsoContinuation(candidate, byNode, bodyUp))
+                continue;
+
+            var reversePath = new List<SceneNode>(maximumNodes);
+            SceneNode? current = candidate.Node;
+            while (current is not null && !ReferenceEquals(current, hips) && reversePath.Count < maximumNodes)
+            {
+                if (!byNode.ContainsKey(current))
+                    break;
+                reversePath.Add(current);
+                current = current.Parent;
+            }
+            if (!ReferenceEquals(current, hips) || reversePath.Count == 0)
+                continue;
+
+            reversePath.Reverse();
+            int previousRank = -1;
+            bool hasSpine = false;
+            bool ordered = true;
+            for (int i = 0; i < reversePath.Count; i++)
+            {
+                SceneNode node = reversePath[i];
+                if (AliasScore(node.Name, "shoulder", "clavicle", "arm", "elbow", "hand", "wrist") >= 0.9f)
+                {
+                    ordered = false;
+                    break;
+                }
+                int rank = PartialTorsoRank(node.Name);
+                if (rank < 0)
+                    continue;
+                if (rank < previousRank)
+                {
+                    ordered = false;
+                    break;
+                }
+                hasSpine |= rank == 0;
+                previousRank = rank;
+            }
+            if (!ordered || !hasSpine || previousRank != endpointRank)
+                continue;
+            if (endpointRank > bestRank
+                || endpointRank == bestRank && reversePath.Count > (bestPath?.Count ?? 0)
+                || endpointRank == bestRank && reversePath.Count == bestPath?.Count && candidate.TraversalIndex < bestTraversalIndex)
+            {
+                bestPath = reversePath;
+                bestRank = endpointRank;
+                bestTraversalIndex = candidate.TraversalIndex;
+            }
+        }
+        return bestPath ?? [];
+    }
+
+    private static bool HasPlausibleCentralTorsoContinuation(
+        HumanoidAvatarAutoMapCandidate candidate,
+        Dictionary<SceneNode, HumanoidAvatarAutoMapCandidate> byNode,
+        Vector3 bodyUp)
+    {
+        foreach (var childTransform in candidate.Node.Transform.Children)
+        {
+            SceneNode? child = childTransform.SceneNode;
+            if (child is null || !byNode.TryGetValue(child, out HumanoidAvatarAutoMapCandidate? childCandidate)
+                || AliasScore(child.Name, "shoulder", "clavicle", "arm", "elbow", "hand", "wrist") >= 0.9f)
+                continue;
+            Vector3 offset = childCandidate.Position - candidate.Position;
+            float ascent = Vector3.Dot(offset, bodyUp);
+            if (ascent > 1e-4f && ascent >= (offset - bodyUp * ascent).Length() * 0.5f)
+                return true;
+        }
+        return false;
+    }
+
+    private static int PartialTorsoRank(string? name)
+    {
+        if (AliasScore(name, "neck") >= 0.9f)
+            return 3;
+        if (AliasScore(name, "upperchest") >= 0.9f)
+            return 2;
+        if (AliasScore(name, "chest") >= 0.9f)
+            return 1;
+        return AliasScore(name, "spine") >= 0.9f ? 0 : -1;
     }
 
     private static List<SceneNode> FindSemanticallyAnchoredTorsoPath(
@@ -1520,6 +1658,8 @@ public partial class HumanoidComponent
     {
         SceneNode? best = null;
         float bestScore = float.NegativeInfinity;
+        bool bestIsSemanticAnchor = false;
+        bool isLeft = sideSign < 0.0f;
         for (int i = 0; i < descendants.Count; i++)
         {
             HumanoidAvatarAutoMapCandidate candidate = descendants[i];
@@ -1529,13 +1669,15 @@ public partial class HumanoidComponent
             float height = Vector3.Dot(candidate.Position, bodyUp);
             float forward = Vector3.Dot(candidate.Position, bodyForward);
             float alias = AliasScore(candidate.Node.Name, "eye", "eyeball");
+            bool isSemanticAnchor = SideAliasScore(candidate.Node.Name, isLeft, "eye", "eyeball") >= 0.9f;
             float geometry = Math.Clamp(side / (skeletonHeight * 0.02f), 0.0f, 1.0f)
                 + Math.Clamp(MathF.Abs(height) + MathF.Abs(forward), 0.0f, 1.0f) * 0.01f;
             float score = alias * 0.75f + geometry * 0.25f;
-            if (score > bestScore)
+            if (isSemanticAnchor != bestIsSemanticAnchor ? isSemanticAnchor : score > bestScore)
             {
                 bestScore = score;
                 best = candidate.Node;
+                bestIsSemanticAnchor = isSemanticAnchor;
             }
         }
         return bestScore >= 0.35f ? best : null;

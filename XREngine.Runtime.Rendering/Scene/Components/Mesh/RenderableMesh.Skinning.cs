@@ -22,13 +22,81 @@ namespace XREngine.Components.Scene.Mesh
     {
         #region Skinned bounds and BVH state
 
+        /// <summary>
+        /// Immutable inputs of one CPU skinned-bounds refresh. The skinning source
+        /// is a packed copy owned by the renderable mesh, so the worker never reads
+        /// mesh buffers that a skinning rebuild could replace and free meanwhile.
+        /// </summary>
         private readonly record struct SkinnedBoundsCpuSnapshot(
-            Vertex[] Vertices,
-            Dictionary<TransformBase, Matrix4x4> SkinMatrices,
-            IReadOnlyDictionary<TransformBase, TransformBase>? BoneReferenceRemap,
-            Matrix4x4 BindRootMatrix,
+            SkinnedBoundsCpuSource Source,
+            Matrix4x4[] PaletteMatrices,
             Matrix4x4 FallbackMatrix,
             Matrix4x4 Basis);
+
+        /// <summary>
+        /// Positions and packed Core4 + spill influences of one mesh skinning
+        /// generation, copied from the mesh buffers once and reused by every CPU
+        /// bounds refresh until the mesh, its geometry or its skinning changes.
+        /// </summary>
+        private sealed class SkinnedBoundsCpuSource
+        {
+            internal required XRMesh Mesh;
+            internal required long GeometryRevision;
+            internal required XRMeshSkinningBufferState SkinningState;
+            internal required Vector3[] Positions;
+            internal required int[] InfluenceOffsets;
+            internal required int[] InfluenceBones;
+            internal required float[] InfluenceWeights;
+
+            internal bool Matches(XRMesh mesh)
+                => ReferenceEquals(Mesh, mesh) &&
+                   GeometryRevision == mesh.GeometryRevision &&
+                   ReferenceEquals(SkinningState, mesh.GetSkinningBufferStateSnapshot());
+
+            internal static SkinnedBoundsCpuSource? TryCreate(XRMesh mesh)
+            {
+                int vertexCount = mesh.VertexCount;
+                if (vertexCount <= 0 || !AdvancedPackedVertexCodec.HasReadableAttributes(mesh))
+                    return null;
+
+                Vector3[] positions = new Vector3[vertexCount];
+                for (uint i = 0u; i < (uint)vertexCount; i++)
+                    positions[i] = mesh.GetPosition(i);
+
+                int[] offsets = new int[vertexCount + 1];
+                List<int> bones = [];
+                List<float> weights = [];
+                if (XRMeshSkinningInfluenceReader.TryCreate(mesh, out XRMeshSkinningInfluenceReader reader))
+                {
+                    Span<int> boneScratch = stackalloc int[reader.MaxInfluenceCount];
+                    Span<float> weightScratch = stackalloc float[reader.MaxInfluenceCount];
+                    for (int vertex = 0; vertex < vertexCount; vertex++)
+                    {
+                        offsets[vertex] = bones.Count;
+                        int count = reader.ReadInfluences(vertex, boneScratch, weightScratch);
+                        for (int influence = 0; influence < count; influence++)
+                        {
+                            bones.Add(boneScratch[influence]);
+                            weights.Add(weightScratch[influence]);
+                        }
+                    }
+                }
+                offsets[vertexCount] = bones.Count;
+
+                return new SkinnedBoundsCpuSource
+                {
+                    Mesh = mesh,
+                    GeometryRevision = mesh.GeometryRevision,
+                    SkinningState = mesh.GetSkinningBufferStateSnapshot(),
+                    Positions = positions,
+                    InfluenceOffsets = offsets,
+                    InfluenceBones = [.. bones],
+                    InfluenceWeights = [.. weights],
+                };
+            }
+        }
+
+        private SkinnedBoundsCpuSource? _skinnedBoundsCpuSource;
 
         internal readonly record struct SkinnedBoneCullingVolume(
             TransformBase Transform,
@@ -761,73 +829,62 @@ namespace XREngine.Components.Scene.Mesh
             return volumes.Length > 0;
         }
 
+        /// <summary>
+        /// Builds one bone-local box per influencing bone from the mesh's packed
+        /// positions and Core4 + spill influences. A vertex without a usable
+        /// influence is bounded in <paramref name="fallbackTransform"/>.
+        /// </summary>
         internal static SkinnedBoneCullingVolume[] BuildSkinnedBoneCullingVolumes(XRMesh mesh, TransformBase fallbackTransform)
         {
-            Vertex[]? vertices = mesh.Vertices;
-            if (vertices is not { Length: > 0 })
+            int vertexCount = mesh.VertexCount;
+            if (vertexCount <= 0 || !AdvancedPackedVertexCodec.HasReadableAttributes(mesh))
                 return [];
 
             Dictionary<TransformBase, SkinnedBoneBoundsBuilder> builders =
                 new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
             IReadOnlyDictionary<TransformBase, TransformBase>? boneReferenceRemap = mesh.RuntimeBoneReferenceRemap;
             Matrix4x4 bindRootMatrix = mesh.BindRootMatrix ?? Matrix4x4.Identity;
-            bool usePackedInfluences = mesh.TryReadPackedSkinningData(
-                out byte[] packedCoreIndices,
-                out byte[] packedCoreWeights,
-                out byte[] packedSpillHeaders,
-                out byte[] packedSpillEntries);
+            bool skinned = XRMeshSkinningInfluenceReader.TryCreate(mesh, out XRMeshSkinningInfluenceReader reader);
             TransformBase[] packedBones = [];
             Matrix4x4[] packedSourceToBoneMatrices = [];
-            if (usePackedInfluences)
+            if (skinned)
             {
-                packedBones = new TransformBase[mesh.UtilizedBones.Length];
-                packedSourceToBoneMatrices = new Matrix4x4[mesh.UtilizedBones.Length];
-                for (int boneIndex = 0; boneIndex < mesh.UtilizedBones.Length; boneIndex++)
+                (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] utilizedBones = mesh.UtilizedBones;
+                packedBones = new TransformBase[utilizedBones.Length];
+                packedSourceToBoneMatrices = new Matrix4x4[utilizedBones.Length];
+                for (int boneIndex = 0; boneIndex < utilizedBones.Length; boneIndex++)
                 {
-                    (TransformBase bone, Matrix4x4 inverseBind) = mesh.UtilizedBones[boneIndex];
+                    (TransformBase bone, Matrix4x4 inverseBind) = utilizedBones[boneIndex];
                     packedBones[boneIndex] = ResolveRuntimeBoneReference(bone, boneReferenceRemap);
+                    // The renderer's skin palette uses BindRoot * inverseBind * currentBone. Preserve
+                    // that same convention here before reducing vertices into bone-local culling boxes.
+                    // Omitting BindRoot rotates imported FBX/Unity bounds around the scene origin even
+                    // though the GPU-skinned geometry itself is upright.
                     packedSourceToBoneMatrices[boneIndex] = bindRootMatrix * inverseBind;
                 }
             }
 
-            for (int vertexIndex = 0; vertexIndex < vertices.Length; vertexIndex++)
+            Span<int> boneScratch = stackalloc int[skinned ? reader.MaxInfluenceCount : 1];
+            Span<float> weightScratch = stackalloc float[skinned ? reader.MaxInfluenceCount : 1];
+            for (int vertexIndex = 0; vertexIndex < vertexCount; vertexIndex++)
             {
-                Vertex vertex = vertices[vertexIndex];
-                bool includedWeightedBone = usePackedInfluences && IncludePackedSkinnedBoneCullingPoints(
-                    builders,
-                    vertex.Position,
-                    vertexIndex,
-                    mesh.SkinningCoreIndexFormat,
-                    mesh.HasSpillInfluences,
-                    mesh.MaxSpillInfluenceCount,
-                    packedBones,
-                    packedSourceToBoneMatrices,
-                    packedCoreIndices,
-                    packedCoreWeights,
-                    packedSpillHeaders,
-                    packedSpillEntries);
-
-                if (!usePackedInfluences && vertex.Weights is { Count: > 0 } weights)
+                Vector3 position = mesh.GetPosition((uint)vertexIndex);
+                int influenceCount = skinned
+                    ? reader.ReadInfluences(vertexIndex, boneScratch, weightScratch)
+                    : 0;
+                bool includedWeightedBone = false;
+                for (int influence = 0; influence < influenceCount; influence++)
                 {
-                    foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) data) in weights)
-                    {
-                        if (!(data.weight > 0.0f))
-                            continue;
-
-                        TransformBase resolvedBone = ResolveRuntimeBoneReference(bone, boneReferenceRemap);
-                        // The renderer's skin palette uses BindRoot * inverseBind * currentBone. Preserve
-                        // that same convention here before reducing vertices into bone-local culling boxes.
-                        // Omitting BindRoot rotates imported FBX/Unity bounds around the scene origin even
-                        // though the GPU-skinned geometry itself is upright.
-                        Matrix4x4 sourceToBone = bindRootMatrix * data.bindInvWorldMatrix;
-                        Vector3 localPosition = TransformPosition(vertex.Position, sourceToBone);
-                        IncludeSkinnedBoneCullingPoint(builders, resolvedBone, localPosition);
-                        includedWeightedBone = true;
-                    }
+                    int boneIndex = boneScratch[influence];
+                    if (packedBones[boneIndex] is not { } bone)
+                        continue;
+                    Vector3 localPosition = TransformPosition(position, packedSourceToBoneMatrices[boneIndex]);
+                    IncludeSkinnedBoneCullingPoint(builders, bone, localPosition);
+                    includedWeightedBone = true;
                 }
 
                 if (!includedWeightedBone)
-                    IncludeSkinnedBoneCullingPoint(builders, fallbackTransform, vertex.Position);
+                    IncludeSkinnedBoneCullingPoint(builders, fallbackTransform, position);
             }
 
             if (builders.Count == 0)
@@ -849,87 +906,6 @@ namespace XREngine.Components.Scene.Mesh
 
             Array.Resize(ref volumes, volumeIndex);
             return volumes;
-        }
-
-        private static bool IncludePackedSkinnedBoneCullingPoints(
-            Dictionary<TransformBase, SkinnedBoneBoundsBuilder> builders,
-            Vector3 sourcePosition,
-            int vertexIndex,
-            SkinningCoreIndexFormat coreIndexFormat,
-            bool hasSpillInfluences,
-            int maxSpillInfluenceCount,
-            TransformBase[] bones,
-            Matrix4x4[] sourceToBoneMatrices,
-            byte[] coreIndices,
-            byte[] coreWeights,
-            byte[] spillHeaders,
-            byte[] spillEntries)
-        {
-            bool included = false;
-            int coreBase = checked(vertexIndex * 4);
-            for (int coreIndex = 0; coreIndex < 4; coreIndex++)
-            {
-                uint packedBoneIndex = coreIndexFormat == SkinningCoreIndexFormat.Core4x8
-                    ? coreIndices[coreBase + coreIndex]
-                    : BitConverter.ToUInt16(coreIndices, checked((coreBase + coreIndex) * sizeof(ushort)));
-                included |= IncludePackedSkinnedBoneCullingPoint(
-                    builders,
-                    sourcePosition,
-                    packedBoneIndex,
-                    coreWeights[coreBase + coreIndex],
-                    bones,
-                    sourceToBoneMatrices);
-            }
-
-            if (!hasSpillInfluences)
-                return included;
-
-            uint header = BitConverter.ToUInt32(spillHeaders, checked(vertexIndex * sizeof(uint)));
-            int spillOffset = checked((int)(header & 0x00FF_FFFFu));
-            int spillCount = checked((int)(header >> 24));
-            int spillEntryCount = spillEntries.Length / sizeof(uint);
-            if (spillCount > maxSpillInfluenceCount || spillOffset + spillCount > spillEntryCount)
-                return included;
-
-            for (int spillIndex = 0; spillIndex < spillCount; spillIndex++)
-            {
-                uint entry = BitConverter.ToUInt32(
-                    spillEntries,
-                    checked((spillOffset + spillIndex) * sizeof(uint)));
-                included |= IncludePackedSkinnedBoneCullingPoint(
-                    builders,
-                    sourcePosition,
-                    entry & 0xFFFFu,
-                    (byte)((entry >> 16) & 0xFFu),
-                    bones,
-                    sourceToBoneMatrices);
-            }
-
-            return included;
-        }
-
-        private static bool IncludePackedSkinnedBoneCullingPoint(
-            Dictionary<TransformBase, SkinnedBoneBoundsBuilder> builders,
-            Vector3 sourcePosition,
-            uint packedBoneIndex,
-            byte packedWeight,
-            TransformBase[] bones,
-            Matrix4x4[] sourceToBoneMatrices)
-        {
-            if (!XRMesh.TryDecodePackedInfluence(
-                    packedBoneIndex,
-                    packedWeight,
-                    bones.Length,
-                    out int boneIndex,
-                    out _,
-                    out _))
-            {
-                return false;
-            }
-
-            Vector3 localPosition = TransformPosition(sourcePosition, sourceToBoneMatrices[boneIndex]);
-            IncludeSkinnedBoneCullingPoint(builders, bones[boneIndex], localPosition);
-            return true;
         }
 
         private static void IncludeSkinnedBoneCullingPoint(
@@ -1152,36 +1128,44 @@ namespace XREngine.Components.Scene.Mesh
 
         private static bool TryComputeSkinnedBoundsOnCpu(SkinnedBoundsCpuSnapshot snapshot, out SkinnedMeshBoundsCalculator.Result result)
         {
-            Vertex[] vertices = snapshot.Vertices;
-            if (vertices.Length == 0)
+            SkinnedBoundsCpuSource source = snapshot.Source;
+            Vector3[] positions = source.Positions;
+            if (positions.Length == 0)
             {
                 result = default;
                 return false;
             }
 
-            bool initialized = false;
             Vector3 min = Vector3.Zero;
             Vector3 max = Vector3.Zero;
             Matrix4x4 fallbackMatrix = snapshot.FallbackMatrix;
             Matrix4x4 basis = snapshot.Basis;
             Matrix4x4 invBasis = Matrix4x4.Invert(basis, out var basisInv) ? basisInv : Matrix4x4.Identity;
-            var localPositions = new Vector3[vertices.Length];
+            Matrix4x4[] palette = snapshot.PaletteMatrices;
+            var localPositions = new Vector3[positions.Length];
 
-            for (int i = 0; i < vertices.Length; i++)
+            for (int i = 0; i < positions.Length; i++)
             {
-                Vector3 worldPos = ComputeSkinnedPosition(
-                    vertices[i],
-                    fallbackMatrix,
-                    snapshot.SkinMatrices,
-                    snapshot.BoneReferenceRemap,
-                    snapshot.BindRootMatrix);
+                int first = source.InfluenceOffsets[i];
+                int end = source.InfluenceOffsets[i + 1];
+                Vector3 worldPos;
+                if (first == end)
+                {
+                    worldPos = TransformPosition(positions[i], fallbackMatrix);
+                }
+                else
+                {
+                    worldPos = Vector3.Zero;
+                    for (int influence = first; influence < end; influence++)
+                        worldPos += TransformPosition(positions[i], palette[source.InfluenceBones[influence]]) *
+                            source.InfluenceWeights[influence];
+                }
+
                 Vector3 localPos = TransformPosition(worldPos, invBasis);
                 localPositions[i] = localPos;
-
-                if (!initialized)
+                if (i == 0)
                 {
                     min = max = localPos;
-                    initialized = true;
                 }
                 else
                 {
@@ -1190,39 +1174,9 @@ namespace XREngine.Components.Scene.Mesh
                 }
             }
 
-            if (!initialized)
-            {
-                result = default;
-                return false;
-            }
-
             var localBounds = new AABB(min, max);
             result = new SkinnedMeshBoundsCalculator.Result(localPositions, localBounds, basis);
             return true;
-        }
-
-        private static Vector3 ComputeSkinnedPosition(
-            Vertex vertex,
-            Matrix4x4 fallbackMatrix,
-            IReadOnlyDictionary<TransformBase, Matrix4x4> skinMatrices,
-            IReadOnlyDictionary<TransformBase, TransformBase>? boneReferenceRemap,
-            Matrix4x4 bindRootMatrix)
-        {
-            if (vertex.Weights is not { Count: > 0 })
-                return TransformPosition(vertex.Position, fallbackMatrix);
-
-            Vector3 result = Vector3.Zero;
-            foreach (var (bone, data) in vertex.Weights)
-            {
-                TransformBase resolvedBone = boneReferenceRemap is not null && boneReferenceRemap.TryGetValue(bone, out TransformBase? reboundBone)
-                    ? reboundBone
-                    : bone;
-
-                if (!skinMatrices.TryGetValue(resolvedBone, out Matrix4x4 boneMatrix))
-                    boneMatrix = bindRootMatrix * data.bindInvWorldMatrix * resolvedBone.RenderMatrix;
-                result += TransformPosition(vertex.Position, boneMatrix) * data.weight;
-            }
-            return result;
         }
 
         private bool TryFinalizeSkinnedBoundsRefreshLocked()
@@ -1283,24 +1237,32 @@ namespace XREngine.Components.Scene.Mesh
         private SkinnedBoundsCpuSnapshot? CreateSkinnedBoundsCpuSnapshotLocked()
         {
             XRMesh? mesh = CurrentLODRenderer?.Mesh;
-            Vertex[]? vertices = mesh?.Vertices;
-            if (mesh is null || vertices is null || vertices.Length == 0)
+            if (mesh is null || mesh.VertexCount <= 0)
                 return null;
 
-            var skinMatrices = new Dictionary<TransformBase, Matrix4x4>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+            SkinnedBoundsCpuSource? source = _skinnedBoundsCpuSource;
+            if (source is null || !source.Matches(mesh))
+                _skinnedBoundsCpuSource = source = SkinnedBoundsCpuSource.TryCreate(mesh);
+            if (source is null)
+                return null;
+
+            // One palette entry per utilized bone: BindRoot * inverseBind * the
+            // (runtime-rebound) bone's render matrix, the GPU skinning convention.
+            (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] utilizedBones = mesh.UtilizedBones;
+            IReadOnlyDictionary<TransformBase, TransformBase>? boneReferenceRemap = mesh.RuntimeBoneReferenceRemap;
             Matrix4x4 bindRootMatrix = mesh.BindRootMatrix ?? Matrix4x4.Identity;
-            foreach (var (bone, invBind) in mesh.UtilizedBones)
+            Matrix4x4[] palette = new Matrix4x4[utilizedBones.Length];
+            for (int boneIndex = 0; boneIndex < utilizedBones.Length; boneIndex++)
             {
-                if (bone is null)
-                    continue;
-                skinMatrices[bone] = bindRootMatrix * invBind * bone.RenderMatrix;
+                (TransformBase bone, Matrix4x4 invBind) = utilizedBones[boneIndex];
+                palette[boneIndex] = bone is null
+                    ? Matrix4x4.Identity
+                    : bindRootMatrix * invBind * ResolveRuntimeBoneReference(bone, boneReferenceRemap).RenderMatrix;
             }
 
             return new SkinnedBoundsCpuSnapshot(
-                vertices,
-                skinMatrices,
-                mesh.RuntimeBoneReferenceRemap,
-                bindRootMatrix,
+                source,
+                palette,
                 Component.Transform.RenderMatrix,
                 GetSkinnedBasisMatrix());
         }

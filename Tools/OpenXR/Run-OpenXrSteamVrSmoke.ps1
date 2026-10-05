@@ -355,7 +355,8 @@ public static class OpenXrLoaderPreflight
         public IntPtr next;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
         public string layerName;
-        public uint specVersion;
+        // XrVersion is uint64_t. A 32-bit field under-allocates each native array element.
+        public ulong specVersion;
         public uint layerVersion;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
         public string description;
@@ -385,6 +386,9 @@ public static class OpenXrLoaderPreflight
 
     public static string[] EnumerateApiLayers()
     {
+        if (IntPtr.Size != 8 || Marshal.SizeOf(typeof(XrApiLayerProperties)) != 544)
+            throw new PlatformNotSupportedException("OpenXR smoke loader preflight requires the Windows x64 property layout.");
+
         uint count;
         int result = EnumerateApiLayerPropertiesCount(0, out count, IntPtr.Zero);
         if (result != 0)

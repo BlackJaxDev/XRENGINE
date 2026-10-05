@@ -233,6 +233,12 @@ From `Bootstrap/VulkanRenderer.Instance.cs`:
   presentationless/component and OpenXR device-core initialization
 - When validation layers are enabled, adds `VK_EXT_debug_utils` for validation layer reporting
 
+OpenXR instance adoption requires a non-null renderer-owned bootstrap lease with
+a nonzero instance handle. Without that lease, OpenXR creates its own instance
+through the normal runtime path. Session setup resolves Vulkan graphics
+entrypoints only for extensions enabled on that instance; an enabled extension
+with an unavailable required entrypoint remains an initialization error.
+
 ### Validation & Debug Messenger
 
 From `Validation.cs`:
@@ -242,6 +248,11 @@ From `Validation.cs`:
 - Filters by severity (verbose, info, warning, error)
 
 Vulkan messages appear in the Console's **Vulkan** tab and `log_vulkan.log`.
+With `XRE_VULKAN_RECORDING_DIAG=1`, failed OpenXR mirror/stereo recording also
+writes `openxr-render-failures.log` in Release builds. This auxiliary diagnostic
+includes rejection stage, frame/image identity and any caught exception, bounded
+to 64 records per renderer and one record per second. Use it to attribute
+missing layers; diagnostic runs do not establish clean performance results.
 Routine `[Vulkan][FrameTree]` and `[Vulkan][PresentNow] readiness=ready` messages
 require `XRE_VULKAN_RECORDING_DIAG`, `XRE_VK_TRACE_DRAW`, or
 `XRE_VK_TRACE_SWAPDRAW`. Without those diagnostic flags, frame telemetry still
@@ -541,6 +552,7 @@ Additional diagnostic flags are:
 | `XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP=1` | Diagnostic mode that records secondary mesh chains without draw payloads. |
 | `XRE_VULKAN_COMMAND_CHAIN_BENCHMARK_FORCE_RERECORD=1` | Benchmark-only mode that forces every scheduled mesh-chain secondary to rerecord each frame. Use only for controlled serial/parallel dirty-recording comparisons. |
 | `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1` | Builds and validates queue-schedule sidecar metadata; execution still falls back to the graphics queue. |
+| `XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE=0` | Keeps directional cascade casters on the generic per-renderer shadow path instead of the Advanced directional shadow raster lane (see [frame loop design](frame-loop-design.md#shadow-casters-are-the-dominant-motion-cost)). |
 
 `XRE_VULKAN_RESIDENT_TEMPLATE_DEVICE_LOSS_INJECT=1` is a destructive,
 one-shot validation hook for the resident draw-template lifetime contract. It
@@ -919,6 +931,14 @@ Multiple files handle descriptor set management:
 - **Per-swapchain descriptor pools/sets** — Allocated in `CreateAllSwapChainObjects()`, rebuilt on swapchain recreation
 
 Compute auto-uniform and unresolved fallback uniform buffers are cached per program/image/set/binding. They are updated in place and destroyed with the program instead of being allocated as one-frame transient buffers.
+
+Unannotated supplemental lighting and ambient-occlusion uniforms use `RuntimeCallback` blocks rather
+than material-owned blocks. Explicit shader frequency annotations and core
+engine camera/time classifications take precedence. Callback storage is owned
+by the backend mesh-renderer instance, material, and assigned frame-wide draw
+slot; captured uniform names and values determine content generation. This keeps
+different light/view draws isolated without allocating persistent storage for
+each new snapshot object. Frame-slot completion checks still govern reuse.
 
 ### Bindless Material Texture Table
 

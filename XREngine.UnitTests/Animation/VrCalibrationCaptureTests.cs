@@ -62,9 +62,16 @@ public sealed class VrCalibrationCaptureTests
     {
         using var rig = new SyntheticVrCalibrationRig();
         rig.Head.SetPose(new(0, 1.7f, 0), Quaternion.CreateFromYawPitchRoll(yaw, tilt, 0));
-        var result = RuntimeVRIKCalibrator.Calibrate(rig.Solver, rig.Settings, rig.Head);
+        rig.Head.RecalculateMatrices(true);
+        VrCalibrationPose[] poses =
+        [
+            new(rig.Head, rig.Head.WorldMatrix), new(rig.Hips, rig.Hips.WorldMatrix),
+            new(rig.LeftHand, rig.LeftHand.WorldMatrix), new(rig.RightHand, rig.RightHand.WorldMatrix),
+            new(rig.LeftFoot, rig.LeftFoot.WorldMatrix), new(rig.RightFoot, rig.RightFoot.WorldMatrix),
+        ];
+        var result = RuntimeVRIKCalibrator.CalibrateSnapshot(rig.Solver, rig.Settings, poses, rig.Settings.HeadTiltToleranceDegrees);
         result.Success.ShouldBe(accepted, result.Message);
-        rig.CountTargetNodes().ShouldBe(accepted ? 1 : 0);
+        rig.CountTargetNodes().ShouldBe(accepted ? 6 : 0);
     }
 
     [Test]

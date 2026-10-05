@@ -85,6 +85,27 @@ public sealed partial class ShadowAtlasManager
         return true;
     }
 
+    /// <summary>
+    /// Reopens submission tracking for atlas writers recorded after the
+    /// scheduled-tile pass of the same render frame (the Advanced directional
+    /// shadow lane records its groups from the viewport's command chain). The
+    /// caller must balance it with <see cref="EndSubmissionTracking"/>, which
+    /// binds a separate receipt for this cohort.
+    /// </summary>
+    private bool ResumeSubmissionTrackingForDeferredWork()
+    {
+        if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend !=
+            RuntimeGraphicsApiKind.Vulkan)
+        {
+            return false;
+        }
+
+        _submissionCandidateCount = 0;
+        _submissionCandidateKeySet.Clear();
+        _trackingSubmissionCandidates = true;
+        return true;
+    }
+
     private void ResolvePendingSubmissionReceipts()
     {
         if (_pendingSubmissionReceiptCount == 0)

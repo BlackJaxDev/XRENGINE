@@ -1,3 +1,4 @@
+using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.DLSS;
@@ -14,20 +15,54 @@ internal sealed partial class VulkanFrameLoop
     private VulkanAdvancedVisibilityBackendPackageSnapshot _advancedVisibilityAdmissionPackage;
     private bool _advancedVisibilityAdmissionAccepted;
     private string _advancedVisibilityAdmissionReason = string.Empty;
+    // Lane groups accepted this frame live in a ring: at most four groups per
+    // frame and three frames in flight, each slot validated by render frame id.
+    private const int DirectionalShadowLaneRingCapacity = 16;
+    private readonly VulkanAdvancedDirectionalShadowLaneStorage[] _directionalShadowLaneRing =
+        CreateDirectionalShadowLaneRing();
+    private int _directionalShadowLaneRingCursor;
 
     internal bool SupportsAdvancedVisibilityStage(EAdvancedRenderStage stage)
         => stage is (EAdvancedRenderStage.VisibilityPreparation or
                EAdvancedRenderStage.VisibilityRaster or
                EAdvancedRenderStage.DepthPyramidAndLateVisibility or
+               EAdvancedRenderStage.DirectionalShadowRaster or
                EAdvancedRenderStage.AmbientOcclusion or
                EAdvancedRenderStage.WorkClassification or
                EAdvancedRenderStage.NativeOpaqueShading) &&
-           _commandRuntime.IsAdvancedVisibilityProductionPromoted &&
-           _deviceContext.IsOperational &&
-           _resourceRuntime.AdvancedVisibilityResources.IsReady &&
-           _resourceRuntime.AdvancedSceneResources.IsReady &&
-           _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount) &&
-           _commandRuntime.CanAdmitAdvancedVisibilityFamily();
+           _commandRuntime.HasAdvancedVisibilityReservationGeneration &&
+           _commandRuntime.GetAdvancedVisibilityPhysicalReadiness(out _) ==
+               VulkanAdvancedVisibilityPipelineReadiness.Ready &&
+           (stage != EAdvancedRenderStage.DirectionalShadowRaster ||
+            _resourceRuntime.AdvancedVisibilityPipelines.GetDirectionalShadowLaneReadiness(out _) ==
+                VulkanAdvancedVisibilityPipelineReadiness.Ready);
+
+    private static VulkanAdvancedDirectionalShadowLaneStorage[] CreateDirectionalShadowLaneRing()
+    {
+        VulkanAdvancedDirectionalShadowLaneStorage[] ring =
+            new VulkanAdvancedDirectionalShadowLaneStorage[DirectionalShadowLaneRingCapacity];
+        for (int index = 0; index < ring.Length; index++)
+            ring[index] = new VulkanAdvancedDirectionalShadowLaneStorage();
+        return ring;
+    }
+
+    private bool TryCaptureDirectionalShadowLane(
+        in AdvancedVisibilityStageBackendRequest request,
+        out VulkanAdvancedDirectionalShadowLaneStorage storage,
+        out string failureReason)
+    {
+        storage = _directionalShadowLaneRing[_directionalShadowLaneRingCursor];
+        _directionalShadowLaneRingCursor =
+            (_directionalShadowLaneRingCursor + 1) % DirectionalShadowLaneRingCapacity;
+        if (request.DirectionalShadowLane is not { } lane)
+        {
+            failureReason = "The directional shadow stage carries no cascade group.";
+            return false;
+        }
+
+        Extent2D pageExtent = VulkanCommandRuntime.ResolveFrameBufferDrawExtent(request.Target);
+        return storage.TryCapture(lane, request.RenderFrameId, pageExtent, out failureReason);
+    }
 
     internal bool TryEnqueueAdvancedVisibilityStage(
         in AdvancedVisibilityStageBackendRequest request,
@@ -56,15 +91,20 @@ internal sealed partial class VulkanFrameLoop
                 failureReason = "Advanced layered Vulkan requires unique contiguous output layers in frozen view order.";
                 return false;
             }
-        VulkanAdvancedVisibilityPipelineReadiness pipelineReadiness =
-            _commandRuntime.GetAdvancedVisibilityPipelineReadiness(out string pipelineReason);
-        if (!SupportsAdvancedVisibilityStage(request.Stage) ||
-            pipelineReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+        // Author the complete immutable family while shaders compile. The sealed
+        // frame checks pipeline readiness before recording native commands.
+        if (!SupportsAdvancedVisibilityStage(request.Stage))
         {
-            failureReason = pipelineReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
-                VulkanAdvancedVisibilityPipelineReadiness.Missing
-                ? $"The Vulkan zero-readback visibility lane is waiting for {pipelineReadiness} pipeline admission: {pipelineReason}"
-                : $"The Vulkan zero-readback visibility lane is unavailable on this device or resource generation: {pipelineReason}";
+            if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster &&
+                _resourceRuntime.AdvancedVisibilityPipelines.GetDirectionalShadowLaneReadiness(out string laneReason) !=
+                    VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            {
+                failureReason = $"The Vulkan directional shadow lane is unavailable: {laneReason}";
+                return false;
+            }
+
+            _commandRuntime.GetAdvancedVisibilityPhysicalReadiness(out string availabilityReason);
+            failureReason = $"The Vulkan zero-readback visibility lane is unavailable on this device or resource generation: {availabilityReason}";
             return false;
         }
 
@@ -132,6 +172,17 @@ internal sealed partial class VulkanFrameLoop
             request.RequiresMaterialSurfaceExports,
             request.MsaaSampleCount,
             request.HasAuthoredBackground);
+        if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster)
+        {
+            if (!TryCaptureDirectionalShadowLane(
+                    in request,
+                    out VulkanAdvancedDirectionalShadowLaneStorage laneStorage,
+                    out failureReason))
+            {
+                return false;
+            }
+            vulkanRequest = vulkanRequest with { DirectionalShadowLane = laneStorage };
+        }
         if (!_frameOperationQueue.TryAcquireAdvancedVisibilityInput(
                 in vulkanRequest,
                 out VulkanAdvancedVisibilityInputLease inputLease,

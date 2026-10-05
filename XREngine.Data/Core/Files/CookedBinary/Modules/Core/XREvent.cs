@@ -51,6 +51,7 @@ public static partial class CookedBinarySerializer
             return calculator.TryAddGenericXREventSize(value);
         }
 
+#if !XRE_PUBLISHED
         public override CookedBinarySchemaNode? TryBuildValueSchema(CookedBinarySchemaBuilder builder, string name, Type? declaredType, object value, Type runtimeType, bool allowCustom)
         {
             if (value is XREvent xrEvent)
@@ -97,5 +98,6 @@ public static partial class CookedBinarySerializer
             builder.AddUnknownLeaf(genericNode, "persistentCalls", "sequence", "4 + serialized call entries");
             return builder.FinalizeNode(genericNode, allowUnknownChildren: true);
         }
+#endif
     }
 }

@@ -270,6 +270,11 @@ internal sealed partial class VulkanCommandRuntime
                     ref state,
                     in payload,
                     in info),
+            (EAdvancedRenderStage.DirectionalShadowRaster, EAdvancedVisibilityStageBackendPhase.Complete) =>
+                RecordAdvancedDirectionalShadowRasterPayload(
+                    ref state,
+                    in payload,
+                    in info),
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateCompute) =>
                 RecordAdvancedVisibilityLateComputePayload(ref state, in payload, in info),
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster) =>
@@ -314,6 +319,9 @@ internal sealed partial class VulkanCommandRuntime
             (EAdvancedRenderStage.NativeOpaqueShading,
                 EAdvancedVisibilityStageBackendPhase.Complete) =>
                 EVulkanCpuStage.PrimaryAdvancedNativeShadingOperation,
+            (EAdvancedRenderStage.DirectionalShadowRaster,
+                EAdvancedVisibilityStageBackendPhase.Complete) =>
+                EVulkanCpuStage.PrimaryAdvancedDirectionalShadowOperation,
             _ => EVulkanCpuStage.PrimaryOtherOperation,
         };
 

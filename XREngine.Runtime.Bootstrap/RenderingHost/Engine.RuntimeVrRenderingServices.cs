@@ -3,6 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Colors;
 using XREngine.Data.Components.Scene;
 using XREngine.Data.Rendering;
@@ -27,6 +28,10 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
     {
         XRCamera? leftCamera = (leftEyeCamera as EngineRuntimeVrEyeCamera)?.Camera;
         XRCamera? rightCamera = (rightEyeCamera as EngineRuntimeVrEyeCamera)?.Camera;
+        if (leftCamera is not null)
+            leftCamera.CullingMask = DefaultLayers.FirstPersonVr;
+        if (rightCamera is not null)
+            rightCamera.CullingMask = DefaultLayers.FirstPersonVr;
         IRuntimeRenderWorld? renderWorld = RuntimeRenderWorldRegistry.Get(world);
         EngineVrLifecycle.ViewInformation = (leftCamera, rightCamera, renderWorld, hmdNode);
     }

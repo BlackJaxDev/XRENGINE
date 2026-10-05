@@ -5,6 +5,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Scene.Physics.Jitter2;
 using XREngine.Scene.Physics.Physx;
@@ -19,12 +20,14 @@ public sealed class ModelComponentTests
 {
     private static XRMesh CreateSkinnedMesh(Transform bone, string meshName)
     {
-        XRMesh mesh = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
+        XRMesh mesh = XRMesh.Create([new VertexTriangle(Vector3.Zero, Vector3.UnitX, Vector3.UnitY)], out Vertex[] sourceVertices);
         mesh.Name = meshName;
         mesh.UtilizedBones =
         [
             (bone, Matrix4x4.Identity)
         ];
+        // Skinning buffers are never packed lazily; pack the unweighted source vertices against UtilizedBones.
+        mesh.RebuildSkinningBuffersFromVertices(sourceVertices);
 
         return mesh;
     }

@@ -32,9 +32,12 @@ the spectator camera history, and each independently owned capture history.
 ## Output ownership and cadence
 
 `Output.Width`, `Output.Height`, and `Output.FramesPerSecond` configure the render
-texture. Two `SpectatorTextureCaptureComponent` slots reuse the existing Advanced
-offscreen rendering implementation. Each has its own camera, viewport, output
-identity, pipeline instance, resources, and temporal history. Each request is
+texture. Two `SpectatorTextureCaptureComponent` slots reuse the completion-gated
+offscreen implementation with the Default GPU pipeline. Each has its own camera,
+viewport, output identity, pipeline instance, and resources. Captures use clean
+linear HDR without debug overlays, post-processing, or temporal accumulation.
+Each rebuilt slot initially draws without frustum culling to establish imported
+skinned bounds, then enables culling after its first completed capture. Each request is
 background/deferrable, never an XR-critical dependency. GPU completion is polled;
 refresh does not wait for a fence or a consumer. A held slot lease prevents writes
 and retirement of that exact texture.
@@ -44,8 +47,8 @@ Draw from `lease.Texture`, then release the lease only after the consumer's own
 GPU read completion. Reuse this output for multiple previews rather than requesting
 another scene capture. A consumer that never releases its leases stalls spectator
 refresh, not headset submission. There is no video encoder or audio capture bus.
-The render texture is a float color target; applications must match the declared
-post-processing/color policy when presenting or encoding it.
+The render texture is a float color target; applications must apply the intended
+tone mapping and force opaque alpha when presenting or encoding opaque video.
 
 `RouteDesktop(viewport, camera)` switches only the chosen desktop viewport. Pass
 the first-person preview, spectator camera, or editor camera explicitly. A direct

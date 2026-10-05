@@ -816,6 +816,10 @@ namespace XREngine.Scene.Transforms
                         child.Parent = this;
                 }
             }
+
+            // Authored transform setters ran without notifications. Cached matrices must
+            // be rebuilt from those values before hierarchy attachment or physics uses them.
+            MarkLocalModified(forceDefer: true);
         }
 
         #endregion

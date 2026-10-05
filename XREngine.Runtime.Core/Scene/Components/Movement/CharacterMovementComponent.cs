@@ -943,18 +943,28 @@ namespace XREngine.Components.Movement
                 MinMoveDistance,
                 dt));
 
-            if (ActiveController.IsGrounded)
+            ReconcileGroundSupport(ActiveController.IsGrounded);
+
+            LastVelocity = Velocity;
+        }
+
+        /// <summary>Keeps the movement mode and producer tick aligned with controller support.</summary>
+        internal void ReconcileGroundSupport(bool grounded)
+        {
+            if (grounded)
             {
-                if (_subUpdateTick == AirMovementTick)
+                if (MovementMode == EMovementMode.Falling)
+                    MovementMode = EMovementMode.Walking;
+                else if (MovementMode == EMovementMode.Walking && _subUpdateTick == AirMovementTick)
                     _subUpdateTick = GroundMovementTick;
             }
             else
             {
-                if (_subUpdateTick == GroundMovementTick)
+                if (MovementMode == EMovementMode.Walking)
+                    MovementMode = EMovementMode.Falling;
+                else if (MovementMode == EMovementMode.Falling && _subUpdateTick == GroundMovementTick)
                     _subUpdateTick = AirMovementTick;
             }
-            
-            LastVelocity = Velocity;
         }
 
         private Vector3 _acceleration;
@@ -1254,7 +1264,7 @@ namespace XREngine.Components.Movement
                 Vector3 tangentialVelocity = newVelocity - up * verticalSpeed;
                 newVelocity = tangentialVelocity * frictionFactor + up * verticalSpeed;
                 Velocity = newVelocity;
-                _subUpdateTick = GroundMovementTick;
+                ReconcileGroundSupport(true);
             }
 
             return IsFinite(newVelocity) ? newVelocity : Vector3.Zero;

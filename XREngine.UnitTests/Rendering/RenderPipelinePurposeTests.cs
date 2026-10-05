@@ -31,7 +31,18 @@ public sealed class RenderPipelinePurposeTests
             capabilities,
             ERvcPipelineMode.Full,
             useDebugOpaquePipeline: true);
-        capture.ShouldBeOfType<AdvancedRenderPipeline>();
+        capture.ShouldBeOfType<DefaultRenderPipeline>();
+
+        RenderPipeline advancedCapture = EngineRenderingSettingsApplication.NewRenderPipeline(
+            RenderPipelineRequest.AdvancedOffscreenCapture(RenderPipelineOffscreenIntent.Thumbnail()),
+            EAdvancedRenderPipelineMode.Available,
+            capabilities,
+            ERvcPipelineMode.Full,
+            useDebugOpaquePipeline: true);
+        advancedCapture.ShouldBeOfType<DefaultRenderPipeline>();
+        Should.Throw<InvalidOperationException>(() => RuntimeEngine.Rendering.NewRenderPipeline(
+                RenderPipelineRequest.AdvancedOffscreenCapture(RenderPipelineOffscreenIntent.Thumbnail())))
+            .Message.ShouldContain("Advanced offscreen capture is unavailable");
 
         RvcRenderPipeline monoEye =
             EngineRenderingSettingsApplication.NewRenderPipeline(

@@ -249,7 +249,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         _sparseLogicalHeight = 0;
         _sparseLogicalMipCount = 0;
         _sparseNumSparseLevels = 0;
-        Data.ClearSparseTextureStreamingState();
+        Data.RetireSparseTextureStreamingStorage();
         base.PostGenerated();
     }
 
@@ -279,7 +279,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         _sparseLogicalHeight = 0;
         _sparseLogicalMipCount = 0;
         _sparseNumSparseLevels = 0;
-        Data.ClearSparseTextureStreamingState();
+        Data.RetireSparseTextureStreamingStorage();
         base.PostDeleted();
     }
 }

@@ -1,8 +1,10 @@
 using System;
 using System.IO;
+using System.Linq;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
+using XREngine.Rendering.PostProcessing;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -26,20 +28,39 @@ public sealed class AmbientOcclusionVisibilityBitmaskTests
         settings.GroundTruth.VisibilityBitmaskThickness.ShouldBe(0.22f, 0.0001f);
     }
 
-    [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs")]
-    [TestCase("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs")]
-    public void GtaoVisibilityBitmask_IsExposedInPostProcessSchema(string relativePath)
+    [TestCase(typeof(DefaultRenderPipeline))]
+    [TestCase(typeof(AdvancedRenderPipeline))]
+    public void GtaoVisibilityBitmask_IsExposedInPostProcessSchema(Type pipelineType)
     {
-        string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
+        var pipeline = (RenderPipeline)Activator.CreateInstance(pipelineType)!;
+        pipeline.PostProcessSchema.TryGetStage(CommonPostProcessStages.AmbientOcclusionStageKey, out var stage).ShouldBeTrue();
+        stage.ShouldNotBeNull();
 
-        source.ShouldContain("bool UsesGtaoVisibilityBitmask(object o) => IsGTAO(o) && ((AmbientOcclusionSettings)o).GroundTruth.UseVisibilityBitmask;");
-        source.ShouldContain("bool UsesClassicGtaoHorizon(object o) => IsGTAO(o) && !((AmbientOcclusionSettings)o).GroundTruth.UseVisibilityBitmask;");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.UseVisibilityBitmask)");
-        source.ShouldContain("displayName: \"Use Visibility Bitmask\"");
-        source.ShouldContain("nameof(GroundTruthAmbientOcclusionSettings.VisibilityBitmaskThickness)");
-        source.ShouldContain("displayName: \"Visibility Bitmask Thickness\"");
-        source.ShouldContain("visibilityCondition: UsesGtaoVisibilityBitmask");
-        source.ShouldContain("visibilityCondition: UsesClassicGtaoHorizon");
+        var bitmask = stage!.Parameters.Single(parameter => parameter.Name == "GroundTruth.UseVisibilityBitmask");
+        bitmask.Kind.ShouldBe(PostProcessParameterKind.Bool);
+        bitmask.DisplayName.ShouldBe("Use Visibility Bitmask");
+        bitmask.DefaultValue.ShouldBe(GroundTruthAmbientOcclusionSettings.DefaultUseVisibilityBitmask);
+
+        var thickness = stage.Parameters.Single(parameter => parameter.Name == "GroundTruth.VisibilityBitmaskThickness");
+        thickness.Kind.ShouldBe(PostProcessParameterKind.Float);
+        thickness.DisplayName.ShouldBe("Visibility Bitmask Thickness");
+        thickness.DefaultValue.ShouldBe(GroundTruthAmbientOcclusionSettings.DefaultVisibilityBitmaskThickness);
+        thickness.VisibilityCondition.ShouldNotBeNull();
+
+        var classicFalloff = stage.Parameters.Single(parameter => parameter.Name == "GroundTruth.FalloffStartRatio");
+        classicFalloff.VisibilityCondition.ShouldNotBeNull();
+
+        AmbientOcclusionSettings settings = new();
+        thickness.VisibilityCondition!(settings).ShouldBeTrue();
+        classicFalloff.VisibilityCondition!(settings).ShouldBeFalse();
+
+        settings.GroundTruth.UseVisibilityBitmask = false;
+        thickness.VisibilityCondition(settings).ShouldBeFalse();
+        classicFalloff.VisibilityCondition(settings).ShouldBeTrue();
+
+        settings.Type = AmbientOcclusionSettings.EType.ScreenSpace;
+        thickness.VisibilityCondition(settings).ShouldBeFalse();
+        classicFalloff.VisibilityCondition(settings).ShouldBeFalse();
     }
 
     [Test]

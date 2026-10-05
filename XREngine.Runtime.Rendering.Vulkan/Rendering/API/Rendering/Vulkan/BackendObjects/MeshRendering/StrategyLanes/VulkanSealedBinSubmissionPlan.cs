@@ -135,24 +135,32 @@ internal sealed class VulkanSealedBinSubmissionPlan
 }
 
 /// <summary>
-/// One preallocated immutable-for-seal exception image shared by every bin plan
-/// in a prepared stream.
+/// One immutable-for-seal exception image shared by every bin plan in a
+/// prepared stream. Storage grows to the largest image sealed so far, up to the
+/// declared capacity; a reset happens only while the owning stream seals, before
+/// any recording worker reads the image.
 /// </summary>
 internal sealed class VulkanSealedBinExceptionSnapshot
 {
-    private readonly VulkanBinOrderedException[] _entries;
+    private readonly int _maximumCapacity;
+    private VulkanBinOrderedException[] _entries = [];
     private int _count;
 
     internal VulkanSealedBinExceptionSnapshot(int capacity)
-        => _entries = new VulkanBinOrderedException[capacity];
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(capacity);
+        _maximumCapacity = capacity;
+    }
 
     internal ReadOnlySpan<VulkanBinOrderedException> Entries
         => _entries.AsSpan(0, _count);
 
     internal bool TryReset(ReadOnlySpan<VulkanBinOrderedException> source)
     {
-        if (source.Length > _entries.Length)
+        if (source.Length > _maximumCapacity)
             return false;
+        if (source.Length > _entries.Length)
+            Array.Resize(ref _entries, Math.Min(_maximumCapacity, Math.Max(source.Length, _entries.Length * 2)));
         source.CopyTo(_entries);
         _count = source.Length;
         return true;

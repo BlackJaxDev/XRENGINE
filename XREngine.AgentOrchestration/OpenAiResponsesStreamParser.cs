@@ -61,6 +61,18 @@ public sealed class OpenAiResponsesStreamParser
                 throw new AgentModelException(AgentFailureCategory.ProviderError, message);
             }
 
+            if (string.Equals(eventType, "response.failed", StringComparison.OrdinalIgnoreCase))
+            {
+                if (root.TryGetProperty("response", out JsonElement failedResponse)
+                    && failedResponse.ValueKind == JsonValueKind.Object)
+                {
+                    CaptureTerminalResponse(failedResponse, eventType);
+                }
+
+                string message = ExtractErrorMessage(root) ?? "The Responses API response failed.";
+                throw new AgentModelException(AgentFailureCategory.ProviderError, message);
+            }
+
             if (string.Equals(eventType, "response.created", StringComparison.OrdinalIgnoreCase)
                 && root.TryGetProperty("response", out JsonElement createdResponse))
             {

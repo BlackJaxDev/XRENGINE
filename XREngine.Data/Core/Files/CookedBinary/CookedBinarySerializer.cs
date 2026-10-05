@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -46,6 +47,17 @@ public sealed class CookedBinarySerializationCallbacks
     public Func<object?, object?>? OnSerializingValue { get; init; }
 
     public Func<object?, object?>? OnDeserializedValue { get; init; }
+
+    /// <summary>
+    /// Selects values that one serialization writes once. The first complete occurrence of a
+    /// selected value is written in full with an identity and later occurrences as references
+    /// to it, so the deserialized graph shares the value as the serialized one did. An
+    /// occurrence met while the value itself is still being written, a cycle, is written by
+    /// value as when this is null. Applies to <see cref="CookedBinarySerializer.Serialize"/>,
+    /// <see cref="CookedBinarySerializer.CalculateSize"/> and
+    /// <see cref="CookedBinarySerializer.Deserialize"/>; null writes every value by value.
+    /// </summary>
+    public Func<object, bool>? ShareReference { get; init; }
 }
 
 public sealed unsafe class CookedBinaryWriter : IDisposable
@@ -77,6 +89,12 @@ public sealed unsafe class CookedBinaryWriter : IDisposable
     }
 
     public long Capacity => _end - _start;
+
+    /// <summary>
+    /// The shared values written so far, present when the serialization enables
+    /// <see cref="CookedBinarySerializationCallbacks.ShareReference"/>.
+    /// </summary>
+    internal CookedBinarySharedValueTracker? SharedValues { get; init; }
 
     public void Dispose()
         => _map?.Dispose();
@@ -201,6 +219,12 @@ public sealed unsafe class CookedBinaryReader : IDisposable
             throw new ArgumentOutOfRangeException(nameof(offset));
         return new ReadOnlySpan<byte>(target, length);
     }
+
+    /// <summary>
+    /// The shared values read so far, present when the deserialization enables
+    /// <see cref="CookedBinarySerializationCallbacks.ShareReference"/>.
+    /// </summary>
+    internal CookedBinarySharedValueTable? SharedValues { get; init; }
 
     public void Dispose()
         => _map?.Dispose();
@@ -393,7 +417,10 @@ public static partial class CookedBinarySerializer
         {
             fixed (byte* ptr = buffer)
             {
-                using var writer = new CookedBinaryWriter(ptr, buffer.Length);
+                using var writer = new CookedBinaryWriter(ptr, buffer.Length)
+                {
+                    SharedValues = callbacks?.ShareReference is null ? null : new CookedBinarySharedValueTracker()
+                };
                 WriteValue(writer, value, allowCustom: true, callbacks);
             }
         }
@@ -409,7 +436,10 @@ public static partial class CookedBinarySerializer
         {
             fixed (byte* ptr = data)
             {
-                using var reader = new CookedBinaryReader(ptr, data.Length);
+                using var reader = new CookedBinaryReader(ptr, data.Length)
+                {
+                    SharedValues = callbacks?.ShareReference is null ? null : new CookedBinarySharedValueTable(callbacks)
+                };
                 object? value = ReadValue(reader, expectedType, callbacks);
                 return ConvertValue(value, expectedType);
             }
@@ -528,6 +558,36 @@ public static partial class CookedBinarySerializer
             return;
         }
 
+        // Custom serializers write through callback-free entry points and size their payloads
+        // the same way, so sharing is gated on the callbacks rather than on the writer alone.
+        if (writer.SharedValues is { } sharedValues &&
+            callbacks?.ShareReference is { } shareReference &&
+            shareReference(value))
+        {
+            if (sharedValues.TryGetCompleted(value, out int identity))
+            {
+                writer.Write((byte)CookedBinaryTypeMarker.SharedReference);
+                writer.Write7BitEncodedInt(identity);
+                return;
+            }
+
+            if (sharedValues.TryBegin(value, out identity))
+            {
+                writer.Write((byte)CookedBinaryTypeMarker.SharedDefinition);
+                writer.Write7BitEncodedInt(identity);
+                WriteModuleValue(writer, value, runtimeType, allowCustom, callbacks);
+                sharedValues.Complete(value, identity);
+                return;
+            }
+        }
+
+        WriteModuleValue(writer, value, runtimeType, allowCustom, callbacks);
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static void WriteModuleValue(CookedBinaryWriter writer, object value, Type runtimeType, bool allowCustom, CookedBinarySerializationCallbacks? callbacks)
+    {
         foreach (var module in SerializationModules)
         {
             if (module.TryWrite(writer, value, runtimeType, allowCustom, callbacks))
@@ -542,15 +602,51 @@ public static partial class CookedBinarySerializer
     internal static object? ReadValue(CookedBinaryReader reader, Type? expectedType, CookedBinarySerializationCallbacks? callbacks)
     {
         var marker = (CookedBinaryTypeMarker)reader.ReadByte();
-        object? value = null;
+        return marker switch
+        {
+            CookedBinaryTypeMarker.SharedReference => GetSharedValues(reader).Resolve(reader.Read7BitEncodedInt()),
+            CookedBinaryTypeMarker.SharedDefinition => ReadSharedDefinition(reader, expectedType, callbacks),
+            _ => ReadModuleValue(marker, reader, expectedType, callbacks)
+        };
+    }
+
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static object? ReadModuleValue(CookedBinaryTypeMarker marker, CookedBinaryReader reader, Type? expectedType, CookedBinarySerializationCallbacks? callbacks)
+    {
         foreach (var module in SerializationModules)
         {
-            if (module.TryRead(marker, reader, expectedType, callbacks, out value))
+            if (module.TryRead(marker, reader, expectedType, callbacks, out object? value))
                 return callbacks?.OnDeserializedValue?.Invoke(value) ?? value;
         }
 
         throw new NotSupportedException($"Unknown cooked binary marker '{marker}'.");
     }
+
+    /// <summary>
+    /// Reads a shared definition whose marker has been consumed: its identity, then the value
+    /// in its own encoding. References resolve to the value as returned here, after the
+    /// deserialized-value callback, so every occurrence reads as the same object.
+    /// </summary>
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static object? ReadSharedDefinition(CookedBinaryReader reader, Type? expectedType, CookedBinarySerializationCallbacks? callbacks)
+    {
+        CookedBinarySharedValueTable sharedValues = GetSharedValues(reader);
+        int identity = reader.Read7BitEncodedInt();
+        sharedValues.Begin(identity);
+        var marker = (CookedBinaryTypeMarker)reader.ReadByte();
+        if (marker is CookedBinaryTypeMarker.SharedDefinition or CookedBinaryTypeMarker.SharedReference)
+            throw new InvalidDataException($"Cooked shared value {identity} wraps another shared marker.");
+
+        object? value = ReadModuleValue(marker, reader, expectedType, callbacks);
+        sharedValues.Complete(identity, value);
+        return value;
+    }
+
+    private static CookedBinarySharedValueTable GetSharedValues(CookedBinaryReader reader)
+        => reader.SharedValues ?? throw new InvalidDataException(
+            $"Cooked data contains shared values; deserialize it with the {nameof(CookedBinarySerializationCallbacks.ShareReference)} option it was written with.");
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
@@ -630,6 +726,17 @@ public static partial class CookedBinarySerializer
         {
             case CookedBinaryTypeMarker.Null:
                 return;
+            case CookedBinaryTypeMarker.SharedReference:
+                reader.Read7BitEncodedInt();
+                return;
+            case CookedBinaryTypeMarker.SharedDefinition:
+            {
+                // Later references need the value, so a definition is read in full even where
+                // its own occurrence is skipped.
+                CookedBinarySharedValueTable sharedValues = GetSharedValues(reader);
+                _ = ReadSharedDefinition(reader, expectedType: null, sharedValues.Callbacks);
+                return;
+            }
             case CookedBinaryTypeMarker.Boolean:
                 reader.ReadBoolean();
                 return;
@@ -971,6 +1078,9 @@ public static partial class CookedBinarySerializer
     {
         string listTypeName = reader.ReadString();
         Type listType = ResolveType(listTypeName) ?? typeof(List<object?>);
+        if (TryGetImmutableArrayElementType(listType, out Type? immutableElementType))
+            return ReadImmutableArray(reader, immutableElementType, callbacks);
+
         IList list = (IList)(CookedBinaryFormatterRegistry.TryCreateCollection(listType, out object? generated)
             ? generated! : CreateInstance(listType) ?? new List<object?>());
         int count = reader.ReadInt32();
@@ -982,6 +1092,55 @@ public static partial class CookedBinarySerializer
 
         return list;
     }
+
+    /// <summary>
+    /// Rebuilds an <see cref="ImmutableArray{T}"/>. The struct cannot be filled through
+    /// <see cref="IList.Add"/>, and constructing it without items would yield the default
+    /// (uninitialized) array, a distinct state that throws when enumerated.
+    /// </summary>
+    [RequiresUnreferencedCode(ReflectionWarningMessage)]
+    [RequiresDynamicCode(ReflectionWarningMessage)]
+    private static IList ReadImmutableArray(CookedBinaryReader reader, Type elementType, CookedBinarySerializationCallbacks? callbacks)
+    {
+        AotParityDiagnostics.Report(
+            elementType,
+            EAotParityCategory.ReflectiveFactory,
+            $"{nameof(CookedBinarySerializer)}.{nameof(ReadImmutableArray)}",
+            "Register a published cooked codec for the owning asset type to construct immutable arrays without reflection.");
+        int count = reader.ReadInt32();
+        Array items = Array.CreateInstance(elementType, count);
+        for (int i = 0; i < count; i++)
+        {
+            object? value = ReadValue(reader, elementType, callbacks);
+            items.SetValue(ConvertValue(value, elementType), i);
+        }
+
+        // The array is private to this call, so it is wrapped without a copy.
+        return (IList)AsImmutableArrayMethod.MakeGenericMethod(elementType).Invoke(null, [items])!;
+    }
+
+    private static readonly MethodInfo AsImmutableArrayMethod =
+        typeof(ImmutableCollectionsMarshal).GetMethod(nameof(ImmutableCollectionsMarshal.AsImmutableArray))!;
+
+    private static bool TryGetImmutableArrayElementType(Type type, [NotNullWhen(true)] out Type? elementType)
+    {
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(ImmutableArray<>))
+        {
+            elementType = type.GetGenericArguments()[0];
+            return true;
+        }
+
+        elementType = null;
+        return false;
+    }
+
+    /// <summary>
+    /// A default <see cref="ImmutableArray{T}"/> has no backing array and throws when
+    /// counted or enumerated; it is written as null, which reads back as the default array.
+    /// </summary>
+    private static bool IsDefaultImmutableArray(object value, Type runtimeType)
+        => TryGetImmutableArrayElementType(runtimeType, out _)
+            && runtimeType.GetProperty(nameof(ImmutableArray<int>.IsDefault))!.GetValue(value) is true;
 
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
@@ -1878,11 +2037,72 @@ public static partial class CookedBinarySerializer
         Reflection = 1
     }
 
+    /// <summary>Writes a generated MemoryPack model using the ordinary cooked object envelope.</summary>
+    public static void WriteTypedMemoryPackModel<TModel>(CookedBinaryWriter writer, TModel model)
+        where TModel : class
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(model);
+
+        byte[] payload = MemoryPackSerializer.Serialize(model);
+        writer.Write((byte)CookedBinaryTypeMarker.Object);
+        WriteTypeName(writer, typeof(TModel));
+        writer.Write((byte)CookedBinaryObjectEncoding.MemoryPack);
+        writer.Write(payload.Length);
+        writer.Write(payload);
+    }
+
+    /// <summary>Reads a generated MemoryPack model while accepting older reflection-encoded authoring data.</summary>
+    public static TModel? ReadTypedMemoryPackModel<TModel>(CookedBinaryReader reader)
+        where TModel : class
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+
+        long start = reader.Position;
+        CookedBinaryTypeMarker marker = (CookedBinaryTypeMarker)reader.ReadByte();
+        if (marker == CookedBinaryTypeMarker.Null)
+            return null;
+        if (marker != CookedBinaryTypeMarker.Object)
+            throw new InvalidDataException($"Expected a cooked object model, got '{marker}'.");
+
+        string typeName = reader.ReadString();
+        string expectedTypeName = typeof(TModel).AssemblyQualifiedName ?? typeof(TModel).FullName ?? typeof(TModel).Name;
+        if (!string.Equals(typeName, expectedTypeName, StringComparison.Ordinal))
+            throw new InvalidDataException($"Expected cooked model '{expectedTypeName}', got '{typeName}'.");
+
+        CookedBinaryObjectEncoding encoding = (CookedBinaryObjectEncoding)reader.ReadByte();
+        if (encoding == CookedBinaryObjectEncoding.MemoryPack)
+        {
+            int length = reader.ReadInt32();
+            byte[] payload = reader.ReadBytes(length);
+            return MemoryPackSerializer.Deserialize<TModel>(payload);
+        }
+
+#if !XRE_PUBLISHED
+        if (encoding == CookedBinaryObjectEncoding.Reflection)
+        {
+            reader.Position = start;
+            return reader.ReadValue<TModel>();
+        }
+#endif
+        throw new InvalidDataException($"Unsupported cooked model encoding '{encoding}'.");
+    }
+
+    /// <summary>Returns the exact cooked object envelope and generated MemoryPack payload size.</summary>
+    public static long CalculateTypedMemoryPackModelSize<TModel>(TModel model)
+        where TModel : class
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        byte[] payload = MemoryPackSerializer.Serialize(model);
+        return checked(1 + SizeOfTypeName(typeof(TModel)) + 1 + sizeof(int) + payload.Length);
+    }
+
     [RequiresUnreferencedCode(ReflectionWarningMessage)]
     [RequiresDynamicCode(ReflectionWarningMessage)]
     private sealed class CookedBinarySizeCalculator
     {
         private readonly CookedBinarySerializationCallbacks? _callbacks;
+        private readonly CookedBinarySharedValueTracker? _sharedValues;
         private long _length;
 
         public long Length => _length;
@@ -1890,6 +2110,8 @@ public static partial class CookedBinarySerializer
         public CookedBinarySizeCalculator(CookedBinarySerializationCallbacks? callbacks)
         {
             _callbacks = callbacks;
+            if (callbacks?.ShareReference is not null)
+                _sharedValues = new CookedBinarySharedValueTracker();
         }
 
         public void AddValue(object? value, bool allowCustom)
@@ -1903,6 +2125,30 @@ public static partial class CookedBinarySerializer
                 return;
 
             Type runtimeType = value.GetType();
+
+            // Mirrors the shared-value decisions of WriteValue.
+            if (_sharedValues is not null && _callbacks!.ShareReference!(value))
+            {
+                if (_sharedValues.TryGetCompleted(value, out int identity))
+                {
+                    AddBytes(SizeOf7BitEncodedInt(identity));
+                    return;
+                }
+
+                if (_sharedValues.TryBegin(value, out identity))
+                {
+                    AddBytes(SizeOf7BitEncodedInt(identity) + 1); // identity, then the value's own marker
+                    AddModuleSize(value, runtimeType, allowCustom);
+                    _sharedValues.Complete(value, identity);
+                    return;
+                }
+            }
+
+            AddModuleSize(value, runtimeType, allowCustom);
+        }
+
+        private void AddModuleSize(object value, Type runtimeType, bool allowCustom)
+        {
             foreach (var module in SerializationModules)
             {
                 if (module.TryAddSize(this, value, runtimeType, allowCustom))

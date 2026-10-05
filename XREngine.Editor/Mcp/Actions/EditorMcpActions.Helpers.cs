@@ -98,6 +98,38 @@ namespace XREngine.Editor.Mcp
             return null;
         }
 
+        private static XRObjectBase? FindObjectInWorld(RuntimeWorld world, Guid objectId)
+        {
+            if (world.TargetWorld is not null)
+            {
+                foreach (var scene in world.TargetWorld.Scenes)
+                    foreach (var root in scene.RootNodes)
+                        if (root is not null && FindObjectInHierarchy(root, objectId) is { } found)
+                            return found;
+            }
+
+            foreach (var root in world.RootNodes)
+                if (root is not null && FindObjectInHierarchy(root, objectId) is { } found)
+                    return found;
+
+            return null;
+        }
+
+        private static XRObjectBase? FindObjectInHierarchy(SceneNode root, Guid objectId)
+        {
+            foreach (var node in EnumerateHierarchy(root))
+            {
+                if (node.ID == objectId)
+                    return node;
+                if (node.Transform.ID == objectId)
+                    return node.Transform;
+                foreach (var component in node.Components)
+                    if (component.ID == objectId)
+                        return component;
+            }
+            return null;
+        }
+
         internal static XRComponent? FindComponent(SceneNode node, string? componentId, string? componentName, string? componentTypeName, out string? error)
         {
             error = null;

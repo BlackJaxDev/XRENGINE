@@ -81,6 +81,12 @@ public interface IRuntimeRenderSettingsServices
     bool CalculateSkinningInComputeShader { get; }
 
     /// <summary>
+    /// Gets the user's texture quality preference, which caps the resident size of
+    /// streamed textures.
+    /// </summary>
+    EEngineQuality TextureQuality { get; }
+
+    /// <summary>
     /// Gets whether blendshapes should be evaluated by the compute pre-pass.
     /// </summary>
     bool CalculateBlendshapesInComputeShader { get; }

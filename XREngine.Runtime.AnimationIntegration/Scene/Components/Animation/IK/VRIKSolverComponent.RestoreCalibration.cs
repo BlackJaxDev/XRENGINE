@@ -11,7 +11,8 @@ public partial class VRIKSolverComponent
         for (int i = 0; i < targets.Length; i++)
         {
             var target = targets[i];
-            if (!IsLive(target.Source) || !VrCalibrationMath.IsFinite(target.Offset) || !Matrix4x4.Invert(target.Offset, out _))
+            if ((uint)target.Slot >= 11u || !IsLive(target.Source) ||
+                !VrCalibrationMath.TryGetRigidPose(target.Offset, out _) || !Matrix4x4.Invert(target.Offset, out _))
                 return VrCalibrationResult.Failure("Stored calibration contains an invalid source or offset.");
             for (int j = 0; j < i; j++)
                 if (targets[j].Slot == target.Slot || ReferenceEquals(targets[j].Source, target.Source))

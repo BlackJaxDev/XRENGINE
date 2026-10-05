@@ -497,7 +497,7 @@ public partial class AdvancedRenderPipeline
         TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
         bool temporalHistoryAllowed = !DisableHistoryBasedVrEffects();
         if (temporalHistoryAllowed && CurrentRenderingPipeline is { } pipeline &&
-            VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(pipeline, out var temporalData))
+            VPRC_TemporalAccumulationPass.TryGetTemporalResolveUniformData(pipeline, out var temporalData))
         {
             float width = Math.Max(1u, temporalData.Width);
             float height = Math.Max(1u, temporalData.Height);

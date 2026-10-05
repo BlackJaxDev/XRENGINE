@@ -28,13 +28,14 @@ namespace XREngine.Data.Core
         public Guid ID
         {
             get => _id;
-            internal set => SetObjectID(value, publishNotifications: true);
+            internal set => SetObjectID(value, publishNotifications: true, persistentIdentity: true);
         }
 
         private static ConcurrentDictionary<Guid, XRObjectBase> ObjectsCacheInternal { get; } = [];
         public static IReadOnlyDictionary<Guid, XRObjectBase> ObjectsCache => ObjectsCacheInternal;
         private bool _isRegisteredInObjectCache;
         private bool _constructorObjectCachePublicationDeferred;
+        private bool _hasPersistentIdentity;
 
         internal static ObjectCachePublicationScope? CurrentObjectCachePublicationScope
         {
@@ -68,6 +69,16 @@ namespace XREngine.Data.Core
         public XRObjectBase() => Generate();
 
         /// <summary>
+        /// False for objects that are reached only through their owner and never resolved by ID,
+        /// such as internal collections. They stay out of the global object cache, which holds
+        /// every registered object strongly until it is destroyed: an owner discarded without
+        /// destroying them would otherwise leave them, and everything their handlers reference,
+        /// reachable for the rest of the process. Overrides must return a constant because the
+        /// base constructor reads this before derived construction runs.
+        /// </summary>
+        protected virtual bool ParticipatesInObjectCache => true;
+
+        /// <summary>
         /// Initializes an object without exposing it through the global cache. The most-derived
         /// constructor must enlist it in a publication scope or explicitly publish it.
         /// </summary>
@@ -97,7 +108,7 @@ namespace XREngine.Data.Core
             ClearDestroyQueuedFlag();
             _constructorObjectCachePublicationDeferred = false;
 
-            if (_suppressObjectCacheRegistrationDepth > 0)
+            if (_suppressObjectCacheRegistrationDepth > 0 || !ParticipatesInObjectCache)
             {
                 _isRegisteredInObjectCache = false;
                 return;
@@ -158,6 +169,15 @@ namespace XREngine.Data.Core
             while (ObjectsCacheInternal.TryGetValue(ID, out existing) &&
                    !ReferenceEquals(existing, this))
             {
+                // Reloaded assets and scene snapshots may coexist with an older instance.
+                // Preserve their serialized references without replacing the cache owner.
+                if (_hasPersistentIdentity)
+                {
+                    _isRegisteredInObjectCache = false;
+                    _constructorObjectCachePublicationDeferred = false;
+                    return;
+                }
+
                 // Collision, update ID and try again.
                 SetObjectID(Guid.NewGuid(), publishNotifications: false);
                 if (tries++ > 10)
@@ -268,12 +288,19 @@ namespace XREngine.Data.Core
             ID = persistentID;
         }
 
-        private void SetObjectID(Guid value, bool publishNotifications)
+        private void SetObjectID(Guid value, bool publishNotifications, bool persistentIdentity = false)
         {
             Guid previous = _id;
             bool wasRegistered = _isRegisteredInObjectCache;
+            if (previous == value)
+            {
+                SetField(ref _hasPersistentIdentity, persistentIdentity, publishNotifications: false);
+                return;
+            }
             if (!SetField(ref _id, value, publishNotifications, nameof(ID)))
                 return;
+
+            SetField(ref _hasPersistentIdentity, persistentIdentity, publishNotifications: false);
 
             if (!wasRegistered)
                 return;

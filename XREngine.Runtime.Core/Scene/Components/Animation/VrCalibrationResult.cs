@@ -1,8 +1,9 @@
 namespace XREngine.Components.Animation;
 
-/// <summary>The explicit outcome of a calibration transaction. Failure never authorizes enabling IK.</summary>
-public sealed record VrCalibrationResult(bool Success, string Message, object? Data = null)
+/// <summary>Outcome of an atomic rig capture, including a player-facing failure reason.</summary>
+public sealed record VrCalibrationResult(bool Success, string Message = "", object? Data = null)
 {
-    public static VrCalibrationResult Failure(string message) => new(false, message);
-    public static VrCalibrationResult Completed(object data) => new(true, string.Empty, data);
+    public static VrCalibrationResult Failed(string error) => new(false, error);
+    public static VrCalibrationResult Failure(string message) => Failed(message);
+    public static VrCalibrationResult Completed(object? data = null) => new(true, Data: data);
 }

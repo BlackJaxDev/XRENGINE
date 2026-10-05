@@ -101,6 +101,11 @@ Compare minimal-observer and instrumented conditions. A change to observation
 requires fresh overhead and retention admission before later speedup claims.
 Record all-frame counts, p50/p95/p99/max, successful presents, missing GPU
 samples, dropped/suppressed events, queue delay, loading time and backlogs.
+Count fresh frames from `frame_lifecycle.outcome_counts.completed`; advancing
+render IDs can include rejected attempts that replay previous output. Pin
+environment lighting and shadow dimensions, and view the actual scene route
+before timing. Stable resident counts or sky-only admission are insufficient.
+Follow the [frame-loop measurement contract](../../../architecture/rendering/frame-loop-design.md#measuring-the-frame-loop).
 Use actual allocation-owner/thread evidence; one thread counter is not a
 cross-worker total.
 

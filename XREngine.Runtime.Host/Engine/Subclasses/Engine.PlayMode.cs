@@ -1,6 +1,7 @@
 using System.Threading;
 using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Data.Runtime.AotParity;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XRWorld = XREngine.Scene.XRWorld;
@@ -13,7 +14,7 @@ namespace XREngine
         /// Manages play mode state and transitions for the engine.
         /// Handles entering/exiting play mode, physics control, and state management.
         /// </summary>
-        public static class PlayMode
+        public static partial class PlayMode
         {
             private static RuntimePlayModeController Controller => RuntimePlayModeController.Current;
             private static WorldStateSnapshot? _editModeSnapshot;
@@ -244,6 +245,13 @@ namespace XREngine
                     return Task.CompletedTask;
                 }
 
+                // The step in progress names a failure. Until the snapshot restore begins the
+                // world is untouched, so a failure only returns the state to Edit; after that,
+                // recovery restarts every world in edit mode, restoring the edit snapshot again
+                // once play has started on the restored copy.
+                string step = "start";
+                bool worldChanged = false;
+                bool playStarted = false;
                 try
                 {
                     // Ensure the engine loop is running before we flip into play so updates/physics/input advance
@@ -259,22 +267,38 @@ namespace XREngine
                     // Ensure the timer is unpaused so update/fixed threads run when play starts
                     Time.Timer.Paused = false;
                     LogTransitionContext("EnterPlay", "BeforePreEnterPlay", targetWorld);
+                    step = "pre-enter-play handlers";
                     Controller.RaisePreEnterPlay();
                     LogTransitionContext("EnterPlay", "AfterPreEnterPlay", targetWorld);
 
                     // Step 1: Capture world state for restoration
                     if (Configuration.StateRestorationMode == EStateRestorationMode.SerializeAndRestore)
                     {
-                        _editModeSnapshot = WorldStateSnapshot.Capture(targetWorld);
+                        step = "snapshot capture";
+                        WorldStateSnapshot? snapshot = WorldStateSnapshot.Capture(targetWorld);
                         LogTransitionContext("EnterPlay", "AfterSnapshotCapture", targetWorld);
+                        if (snapshot is { IsValid: false })
+                        {
+                            // Without a complete snapshot, exiting could not return the world to
+                            // its edit state, so play does not start and the world is left as it is.
+                            ReportTransitionFailure("enter", step, $"Play was not started because the world could not be captured: {snapshot.CaptureFailure}");
+                            State = EPlayModeState.Edit;
+                            return Task.CompletedTask;
+                        }
+
+                        _editModeSnapshot = snapshot;
 
                         // IMPORTANT: play mode should run from a deserialized copy of the world state.
                         // This forces a clean object graph and ensures physics bodies are constructed from deserialized scene data.
-                        _editModeSnapshot?.Restore();
+                        step = "snapshot restore";
+                        worldChanged = true;
+                        if (snapshot is not null && !snapshot.Restore())
+                            throw new InvalidOperationException("The play copy of the world could not be fully restored from the snapshot; see playmode-snapshot-diagnostics.log.");
                         LogTransitionContext("EnterPlay", "AfterSnapshotRestore", targetWorld);
                         if (targetWorld is not null)
                         {
                             var restoredTarget = targetWorld;
+                            step = "post-snapshot-restore handlers";
                             Controller.RaisePostSnapshotRestore(restoredTarget);
                             LogTransitionContext("EnterPlay", "AfterPostSnapshotRestore", restoredTarget);
                         }
@@ -284,22 +308,27 @@ namespace XREngine
                     if (Configuration.ReloadGameplayAssemblies)
                     {
                         LogTransitionContext("EnterPlay", "BeforeReloadGameplayAssemblies", targetWorld);
+                        step = "gameplay assembly reload";
                         ReloadGameplayAssembliesAsync().GetAwaiter().GetResult();
                         LogTransitionContext("EnterPlay", "AfterReloadGameplayAssemblies", targetWorld);
                     }
 
                     // Step 3: Resolve and initialize GameMode
+                    step = "game mode resolution";
+                    worldChanged = true;
+                    playStarted = true;
                     Controller.SetActiveGameMode(ResolveGameMode(targetWorld));
                     LogTransitionContext("EnterPlay", "AfterResolveGameMode", targetWorld);
-                    
+
                     // Step 4: Begin play on all world instances
+                    step = "world begin play";
                     foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
                     {
                         LogWorldInstanceState("EnterPlay", "BeforeBeginPlay", worldInstance);
 
                         // Enable physics if configured
                         worldInstance.PhysicsEnabled = Configuration.SimulatePhysics;
-                        
+
                         // Set the game mode
                         worldInstance.GameMode = Controller.ActiveGameMode;
                         // Begin play
@@ -309,11 +338,14 @@ namespace XREngine
                     }
 
                     // Step 5: Call GameMode.OnBeginPlay
-                    Controller.ActiveGameMode?.OnBeginPlay();
+                    step = "game mode begin play";
+                    using (AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode))
+                        Controller.ActiveGameMode?.OnBeginPlay();
                     LogTransitionContext("EnterPlay", "AfterGameModeBeginPlay", targetWorld);
 
                     State = EPlayModeState.Play;
                     LogTransitionContext("EnterPlay", "StateSetPlay", targetWorld);
+                    step = "post-enter-play handlers";
                     Controller.RaisePostEnterPlay();
                     LogTransitionContext("EnterPlay", "AfterPostEnterPlay", targetWorld);
 
@@ -322,9 +354,16 @@ namespace XREngine
                 catch (Exception ex)
                 {
                     LogTransitionContext("EnterPlay", "Exception", targetWorld);
-                    Debug.LogException(ex, "Failed to enter play mode");
-                    // Attempt recovery
-                    State = EPlayModeState.Edit;
+                    ReportTransitionFailure("enter", step, ex);
+                    if (worldChanged)
+                    {
+                        RecoverToEditMode("enter", restoreSnapshot: playStarted);
+                    }
+                    else
+                    {
+                        _editModeSnapshot = null;
+                        State = EPlayModeState.Edit;
+                    }
                 }
 
                 return Task.CompletedTask;
@@ -354,18 +393,27 @@ namespace XREngine
                     return Task.CompletedTask;
                 }
 
+                // The step in progress names a failure; recovery restores the edit snapshot
+                // unless this exit already attempted it, and restarts every world in edit mode,
+                // since ending play unlinks each world's timer callbacks.
+                string step = "start";
+                bool restoreAttempted = false;
                 try
                 {
                     State = EPlayModeState.ExitingPlay;
+                    step = "pre-exit-play handlers";
                     Controller.RaisePreExitPlay();
 
                     // Make sure we leave the editor with the timer unpaused
                     Time.Timer.Paused = false;
 
                     // Step 1: Call GameMode.OnEndPlay
-                    Controller.ActiveGameMode?.OnEndPlay();
+                    step = "game mode end play";
+                    using (AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode))
+                        Controller.ActiveGameMode?.OnEndPlay();
 
                     // Step 2: End play on all world instances
+                    step = "world end play";
                     foreach (RuntimeWorld worldInstance in Engine.WorldInstances)
                     {
                         // Disable physics
@@ -382,6 +430,7 @@ namespace XREngine
                     }
 
                     // Step 3: Clear active game mode
+                    step = "game mode release";
                     if (Controller.ActiveGameMode is { } activeGameMode)
                     {
                         activeGameMode.WorldInstance = null;
@@ -391,15 +440,19 @@ namespace XREngine
                     // Step 4: Unload gameplay assemblies if they were loaded
                     if (Configuration.ReloadGameplayAssemblies)
                     {
+                        step = "gameplay assembly unload";
                         UnloadGameplayAssembliesAsync().GetAwaiter().GetResult();
                     }
 
                     // Step 5: Restore world state based on configuration
+                    step = "world state restore";
+                    restoreAttempted = true;
                     XRWorld? restoredWorld = null;
                     switch (Configuration.StateRestorationMode)
                     {
                         case EStateRestorationMode.SerializeAndRestore:
-                            _editModeSnapshot?.Restore();
+                            if (_editModeSnapshot is { } snapshot && !snapshot.Restore())
+                                ReportTransitionFailure("exit", step, "The edit snapshot was only partly restored; parts that failed keep their play state. See playmode-snapshot-diagnostics.log.");
                             restoredWorld = ResolveStartupWorld();
                             break;
                         case EStateRestorationMode.ReloadFromAsset:
@@ -417,6 +470,7 @@ namespace XREngine
                     if (restoredWorld is not null)
                     {
                         var restoredTarget = restoredWorld;
+                        step = "post-snapshot-restore handlers";
                         Controller.RaisePostSnapshotRestore(restoredTarget);
                     }
 
@@ -424,6 +478,7 @@ namespace XREngine
                     // transform propagation, and visible collection all use the world host's
                     // timer callbacks. EndPlay unlinks those callbacks, so explicitly restart
                     // every current world after restoration while keeping gameplay and physics off.
+                    step = "world edit mode start";
                     foreach (RuntimeWorld worldInstance in Engine.WorldInstances.ToArray())
                     {
                         LogWorldInstanceState("ExitPlay", "BeforeBeginEditMode", worldInstance);
@@ -433,19 +488,37 @@ namespace XREngine
                     }
 
                     State = EPlayModeState.Edit;
+                    step = "post-exit-play handlers";
                     Controller.RaisePostExitPlay();
 
                     Debug.Out("Exited play mode");
+                    ScheduleExitPlayMaintenanceGc();
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogException(ex, "Failed to exit play mode");
-                    // Force back to edit mode
-                    State = EPlayModeState.Edit;
+                    ReportTransitionFailure("exit", step, ex);
+                    RecoverToEditMode("exit", restoreSnapshot: !restoreAttempted);
                 }
 
                 return Task.CompletedTask;
             }
+
+            /// <summary>
+            /// Reclaims a play session's garbage once edit mode runs again. A round trip discards a
+            /// whole world copy and its snapshot buffers, much of it on the large object heap, and
+            /// background collections neither compact nor release that memory, so committed memory
+            /// would otherwise climb with every trip. The collection runs as an app-thread job,
+            /// which executes only between render frames.
+            /// </summary>
+            private static void ScheduleExitPlayMaintenanceGc()
+                => Engine.EnqueueAppThreadTask(
+                    static () => Engine.RequestMaintenanceGarbageCollection(new EngineMaintenanceGcRequest(
+                        EngineMaintenanceGcReason.EditorExitedPlayMode,
+                        "Play session world copy released.",
+                        Generation: GC.MaxGeneration,
+                        CompactLargeObjectHeap: true,
+                        WaitForPendingFinalizers: true)),
+                    "PlayMode.ExitMaintenanceGc");
 
             /// <summary>
             /// Toggles between edit and play mode.
@@ -629,7 +702,8 @@ namespace XREngine
                         ?? worldInstance.BeginPlayAsync());
                 }
 
-                Controller.ActiveGameMode?.OnBeginPlay();
+                using (AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode))
+                    Controller.ActiveGameMode?.OnBeginPlay();
 
                 State = EPlayModeState.Play;
                 _editModeSimulationActive = true;
@@ -687,7 +761,8 @@ namespace XREngine
                         ?? worldInstance.BeginPlayAsync()).GetAwaiter().GetResult();
                 }
 
-                Controller.ActiveGameMode?.OnBeginPlay();
+                using (AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode))
+                    Controller.ActiveGameMode?.OnBeginPlay();
 
                 State = EPlayModeState.Play;
                 _editModeSimulationActive = true;

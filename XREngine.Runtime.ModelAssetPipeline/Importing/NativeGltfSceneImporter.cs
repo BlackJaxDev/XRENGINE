@@ -45,40 +45,195 @@ internal static class NativeGltfSceneImporter
         bool HasEmissiveTexture,
         MaterialSurfaceTextureBinding[] SurfaceTextureBindings);
 
-    private sealed record PrimitiveChunk(IReadOnlyList<Vertex> Vertices, List<ushort> Indices, int ChunkIndex);
+    private sealed record PrimitiveChunk(XRMeshPackedSource Source, List<int> Indices, int ChunkIndex);
 
-    private sealed class PrimitiveChunkBuilder(int chunkIndex)
+    /// <summary>
+    /// Decoded accessor streams of one glTF primitive, shared by every chunk the
+    /// primitive is split into. Chunks copy the vertices they reference straight
+    /// into packed mesh sources; no per-vertex objects are created.
+    /// </summary>
+    private sealed class PrimitiveStreams
     {
-        private readonly Dictionary<int, ushort> _vertexRemap = [];
+        public required Vector3[] Positions { get; init; }
+        public Vector3[]? Normals { get; init; }
+        public Vector4[]? Tangents { get; init; }
+        public required Vector2[][] TexCoordSets { get; init; }
+        public required Vector4[][] ColorSets { get; init; }
+        public UInt4[]? Joints0 { get; init; }
+        public Vector4[]? Weights0 { get; init; }
+        public UInt4[]? Joints1 { get; init; }
+        public Vector4[]? Weights1 { get; init; }
+        public required List<MorphTargetVertexData> MorphTargets { get; init; }
+        public required IReadOnlyList<string> BlendshapeNames { get; init; }
+        public SkinInfo? Skin { get; init; }
+        public int VertexCount => Positions.Length;
+    }
 
-        public int ChunkIndex { get; } = chunkIndex;
-        public List<Vertex> Vertices { get; } = [];
-        public List<ushort> Indices { get; } = [];
+    private sealed class PrimitiveChunkBuilder
+    {
+        private readonly Dictionary<int, int> _vertexRemap = [];
+        private readonly PrimitiveStreams _streams;
+        private readonly Vector2[] _texCoordScratch;
+        private readonly Vector4[] _colorScratch;
+
+        public PrimitiveChunkBuilder(PrimitiveStreams streams, int chunkIndex)
+        {
+            _streams = streams;
+            ChunkIndex = chunkIndex;
+            _texCoordScratch = new Vector2[streams.TexCoordSets.Length];
+            _colorScratch = new Vector4[streams.ColorSets.Length];
+            Source = new XRMeshPackedSource(
+                streams.Normals is not null,
+                streams.Tangents is not null,
+                streams.TexCoordSets.Length,
+                streams.ColorSets.Length)
+            {
+                BlendshapeNames = streams.BlendshapeNames.Count > 0 ? [.. streams.BlendshapeNames] : null,
+            };
+        }
+
+        public int ChunkIndex { get; }
+        public XRMeshPackedSource Source { get; }
+        public List<int> Indices { get; } = [];
 
         public bool CanAppendTriangle(int index0, int index1, int index2)
         {
             int additionalVertices = (!_vertexRemap.ContainsKey(index0) ? 1 : 0)
                 + (!_vertexRemap.ContainsKey(index1) ? 1 : 0)
                 + (!_vertexRemap.ContainsKey(index2) ? 1 : 0);
-            return Vertices.Count + additionalVertices <= ushort.MaxValue + 1;
+            return Source.VertexCount + additionalVertices <= ushort.MaxValue + 1;
         }
 
-        public void AppendTriangle(Vertex[] sourceVertices, int index0, int index1, int index2)
+        public void AppendTriangle(int index0, int index1, int index2)
         {
-            Indices.Add(MapVertex(sourceVertices, index0));
-            Indices.Add(MapVertex(sourceVertices, index1));
-            Indices.Add(MapVertex(sourceVertices, index2));
+            Indices.Add(MapVertex(index0));
+            Indices.Add(MapVertex(index1));
+            Indices.Add(MapVertex(index2));
         }
 
-        private ushort MapVertex(Vertex[] sourceVertices, int sourceIndex)
+        private int MapVertex(int sourceIndex)
         {
-            if (_vertexRemap.TryGetValue(sourceIndex, out ushort remappedIndex))
+            if (_vertexRemap.TryGetValue(sourceIndex, out int remappedIndex))
                 return remappedIndex;
 
-            remappedIndex = checked((ushort)Vertices.Count);
+            remappedIndex = AppendSourceVertex(sourceIndex);
             _vertexRemap.Add(sourceIndex, remappedIndex);
-            Vertices.Add(sourceVertices[sourceIndex].HardCopy());
             return remappedIndex;
+        }
+
+        private int AppendSourceVertex(int sourceIndex)
+        {
+            PrimitiveStreams streams = _streams;
+            Vector3 position = streams.Positions[sourceIndex];
+            Vector3? baseNormal = streams.Normals is { } normals && sourceIndex < normals.Length ? normals[sourceIndex] : null;
+            Vector4 tangent = Vector4.Zero;
+            Vector3? baseTangent = null;
+            if (streams.Tangents is { } tangents && sourceIndex < tangents.Length)
+            {
+                tangent = tangents[sourceIndex];
+                tangent.W = tangent.W < 0.0f ? -1.0f : 1.0f;
+                baseTangent = new Vector3(tangent.X, tangent.Y, tangent.Z);
+            }
+            for (int set = 0; set < _texCoordScratch.Length; set++)
+                _texCoordScratch[set] = streams.TexCoordSets[set][sourceIndex];
+            for (int set = 0; set < _colorScratch.Length; set++)
+                _colorScratch[set] = streams.ColorSets[set][sourceIndex];
+
+            int vertex = Source.AddVertex(position, baseNormal ?? Vector3.Zero, tangent, _texCoordScratch, _colorScratch);
+            if (streams.Skin is { } skin)
+                AppendSkinInfluences(sourceIndex, skin);
+            if (streams.MorphTargets.Count > 0)
+                AppendMorphTargetDeltas(sourceIndex, baseNormal, baseTangent);
+            return vertex;
+        }
+
+        private void AppendSkinInfluences(int sourceIndex, SkinInfo skin)
+        {
+            Span<int> bones = stackalloc int[8];
+            Span<float> weights = stackalloc float[8];
+            int count = 0;
+            PrimitiveStreams streams = _streams;
+            if (streams.Joints0 is { } joints0 && streams.Weights0 is { } weights0 && sourceIndex < joints0.Length && sourceIndex < weights0.Length)
+                count = AddWeightSet(joints0[sourceIndex], weights0[sourceIndex], skin, bones, weights, count);
+            if (streams.Joints1 is { } joints1 && streams.Weights1 is { } weights1 && sourceIndex < joints1.Length && sourceIndex < weights1.Length)
+                count = AddWeightSet(joints1[sourceIndex], weights1[sourceIndex], skin, bones, weights, count);
+            for (int influence = 0; influence < count; influence++)
+                Source.AddInfluence(bones[influence], weights[influence]);
+        }
+
+        private int AddWeightSet(UInt4 joints, Vector4 values, SkinInfo skin, Span<int> bones, Span<float> weights, int count)
+        {
+            count = AddWeight(joints.X, values.X, skin, bones, weights, count);
+            count = AddWeight(joints.Y, values.Y, skin, bones, weights, count);
+            count = AddWeight(joints.Z, values.Z, skin, bones, weights, count);
+            return AddWeight(joints.W, values.W, skin, bones, weights, count);
+        }
+
+        /// <summary>Adds one joint weight to the palette, merging repeats of the same joint.</summary>
+        private int AddWeight(uint jointIndex, float value, SkinInfo skin, Span<int> bones, Span<float> weights, int count)
+        {
+            if (value <= 0.0f || jointIndex >= skin.JointTransforms.Length)
+                return count;
+
+            TransformBase? joint = skin.JointTransforms[jointIndex];
+            if (joint is null)
+                return count;
+
+            Matrix4x4 inverseBind = jointIndex < skin.InverseBindMatrices.Length ? skin.InverseBindMatrices[jointIndex] : Matrix4x4.Identity;
+            int bone = Source.AddBone(joint, inverseBind);
+            for (int existing = 0; existing < count; existing++)
+            {
+                if (bones[existing] != bone)
+                    continue;
+                weights[existing] += value;
+                return count;
+            }
+            bones[count] = bone;
+            weights[count] = value;
+            return count + 1;
+        }
+
+        /// <summary>
+        /// Adds the vertex's morph-target deltas. Normal and tangent targets are
+        /// renormalized against the base attribute as authored glTF morphs are
+        /// applied, and the stored delta is the difference to the base.
+        /// </summary>
+        private void AppendMorphTargetDeltas(int sourceIndex, Vector3? baseNormal, Vector3? baseTangent)
+        {
+            IReadOnlyList<string> names = _streams.BlendshapeNames;
+            List<MorphTargetVertexData> morphTargets = _streams.MorphTargets;
+            for (int targetIndex = 0; targetIndex < morphTargets.Count && targetIndex < names.Count; targetIndex++)
+            {
+                if (string.IsNullOrEmpty(names[targetIndex]))
+                    continue;
+
+                MorphTargetVertexData morphTarget = morphTargets[targetIndex];
+                if (morphTarget.Positions is null && morphTarget.Normals is null && morphTarget.Tangents is null)
+                    continue;
+
+                Vector3 positionDelta = morphTarget.Positions is { Length: > 0 } positions && sourceIndex < positions.Length
+                    ? positions[sourceIndex]
+                    : Vector3.Zero;
+
+                Vector3 normalDelta = Vector3.Zero;
+                if (morphTarget.Normals is { Length: > 0 } normals && sourceIndex < normals.Length)
+                {
+                    Vector3 normal = baseNormal ?? Vector3.UnitY;
+                    Vector3 combined = normal + normals[sourceIndex];
+                    Vector3 target = combined.LengthSquared() > 0.0f ? Vector3.Normalize(combined) : normal;
+                    normalDelta = target - (baseNormal ?? Vector3.Zero);
+                }
+
+                Vector3 tangentDelta = Vector3.Zero;
+                if (morphTarget.Tangents is { Length: > 0 } tangentTargets && sourceIndex < tangentTargets.Length && baseTangent is Vector3 tangent)
+                {
+                    Vector3 combined = tangent + tangentTargets[sourceIndex];
+                    Vector3 target = combined.LengthSquared() > 0.0f ? Vector3.Normalize(combined) : tangent;
+                    tangentDelta = target - tangent;
+                }
+
+                Source.AddBlendshapeDelta(targetIndex, positionDelta, normalDelta, tangentDelta);
+            }
         }
     }
 
@@ -411,29 +566,21 @@ internal static class NativeGltfSceneImporter
             cancellationToken.ThrowIfCancellationRequested();
 
             GltfPrimitive primitive = gltfMesh.Primitives[primitiveIndex];
-            Vertex[] vertices = CreateVertices(document, gltfMesh, primitive, blendshapeNames, skin);
-            if (vertices.Length == 0)
+            PrimitiveStreams? streams = ReadPrimitiveStreams(document, primitive, blendshapeNames, skin);
+            if (streams is null || streams.VertexCount == 0)
                 continue;
 
-            List<int> triangleIndices = BuildTriangleIndices(document, primitive, vertices.Length, sourceFilePath, primitiveIndex);
+            List<int> triangleIndices = BuildTriangleIndices(document, primitive, streams.VertexCount, sourceFilePath, primitiveIndex);
             if (triangleIndices.Count == 0)
                 continue;
 
-            List<PrimitiveChunk> chunks = SplitPrimitiveIntoChunks(vertices, triangleIndices);
+            List<PrimitiveChunk> chunks = SplitPrimitiveIntoChunks(streams, triangleIndices);
             XRMaterial material = ResolveMaterial(importer, sourceFilePath, document, primitive.Material, importOptions, materialCache, textureCache, createdMaterials);
 
             for (int chunkIndex = 0; chunkIndex < chunks.Count; chunkIndex++)
             {
                 PrimitiveChunk chunk = chunks[chunkIndex];
-                XRMesh xrMesh = new(chunk.Vertices, chunk.Indices);
-
-                if (chunk.Vertices.Any(static vertex => vertex.Weights is { Count: > 0 }))
-                    xrMesh.RebuildSkinningBuffersFromVertices();
-                if (blendshapeNames.Count > 0)
-                {
-                    xrMesh.BlendshapeNames = [.. blendshapeNames];
-                    xrMesh.RebuildBlendshapeBuffersFromVertices();
-                }
+                XRMesh xrMesh = new(chunk.Source, chunk.Indices);
 
                 SubMesh subMesh = new(new SubMeshLOD(material, xrMesh, 0.0f)
                 {
@@ -464,75 +611,36 @@ internal static class NativeGltfSceneImporter
         return mesh.Primitives.Count <= 1 ? meshName : $"{meshName} Primitive {primitiveIndex}";
     }
 
-    private static Vertex[] CreateVertices(
+    /// <summary>
+    /// Reads one primitive's accessor streams. Returns null when the primitive
+    /// has no positions.
+    /// </summary>
+    private static PrimitiveStreams? ReadPrimitiveStreams(
         GltfAssetDocument document,
-        GltfMesh mesh,
         GltfPrimitive primitive,
         IReadOnlyList<string> blendshapeNames,
         SkinInfo? skin)
     {
         if (!primitive.TryGetAttributeAccessor("POSITION", out int positionAccessorIndex))
-            return [];
+            return null;
 
-        Vector3[] positions = document.ReadVector3Accessor(positionAccessorIndex);
-        int vertexCount = positions.Length;
-        Vertex[] vertices = new Vertex[vertexCount];
-
-        Vector3[]? normals = TryReadVector3Accessor(document, primitive, "NORMAL");
-        Vector4[]? tangents = TryReadVector4Accessor(document, primitive, "TANGENT");
         Dictionary<int, Vector2[]> texCoordSets = ReadIndexedVector2Sets(document, primitive, "TEXCOORD_");
         Dictionary<int, Vector4[]> colorSets = ReadColorSets(document, primitive);
-
-        UInt4[]? joints0 = TryReadUInt4Accessor(document, primitive, "JOINTS_0");
-        Vector4[]? weights0 = TryReadVector4Accessor(document, primitive, "WEIGHTS_0");
-        UInt4[]? joints1 = TryReadUInt4Accessor(document, primitive, "JOINTS_1");
-        Vector4[]? weights1 = TryReadVector4Accessor(document, primitive, "WEIGHTS_1");
-
-        List<MorphTargetVertexData> morphTargets = ReadMorphTargets(document, primitive, blendshapeNames);
-
-        List<KeyValuePair<int, Vector2[]>> orderedTexCoords = [.. texCoordSets.OrderBy(static pair => pair.Key)];
-        List<KeyValuePair<int, Vector4[]>> orderedColors = [.. colorSets.OrderBy(static pair => pair.Key)];
-
-        for (int vertexIndex = 0; vertexIndex < vertexCount; vertexIndex++)
+        return new PrimitiveStreams
         {
-            Vertex vertex = new(positions[vertexIndex]);
-
-            if (normals is not null && vertexIndex < normals.Length)
-                vertex.Normal = normals[vertexIndex];
-
-            if (tangents is not null && vertexIndex < tangents.Length)
-            {
-                Vector4 tangent = tangents[vertexIndex];
-                vertex.Tangent = new Vector3(tangent.X, tangent.Y, tangent.Z);
-                vertex.BitangentSign = tangent.W < 0.0f ? -1.0f : 1.0f;
-            }
-
-            if (orderedTexCoords.Count > 0)
-            {
-                List<Vector2> textureCoordinates = new(orderedTexCoords.Count);
-                for (int texCoordIndex = 0; texCoordIndex < orderedTexCoords.Count; texCoordIndex++)
-                    textureCoordinates.Add(orderedTexCoords[texCoordIndex].Value[vertexIndex]);
-                vertex.TextureCoordinateSets = textureCoordinates;
-            }
-
-            if (orderedColors.Count > 0)
-            {
-                List<Vector4> colors = new(orderedColors.Count);
-                for (int colorIndex = 0; colorIndex < orderedColors.Count; colorIndex++)
-                    colors.Add(orderedColors[colorIndex].Value[vertexIndex]);
-                vertex.ColorSets = colors;
-            }
-
-            if (skin is not null)
-                ApplySkinWeights(vertex, vertexIndex, joints0, weights0, joints1, weights1, skin);
-
-            if (morphTargets.Count > 0)
-                ApplyMorphTargets(vertex, vertexIndex, morphTargets, blendshapeNames);
-
-            vertices[vertexIndex] = vertex;
-        }
-
-        return vertices;
+            Positions = document.ReadVector3Accessor(positionAccessorIndex),
+            Normals = TryReadVector3Accessor(document, primitive, "NORMAL"),
+            Tangents = TryReadVector4Accessor(document, primitive, "TANGENT"),
+            TexCoordSets = [.. texCoordSets.OrderBy(static pair => pair.Key).Select(static pair => pair.Value)],
+            ColorSets = [.. colorSets.OrderBy(static pair => pair.Key).Select(static pair => pair.Value)],
+            Joints0 = skin is null ? null : TryReadUInt4Accessor(document, primitive, "JOINTS_0"),
+            Weights0 = skin is null ? null : TryReadVector4Accessor(document, primitive, "WEIGHTS_0"),
+            Joints1 = skin is null ? null : TryReadUInt4Accessor(document, primitive, "JOINTS_1"),
+            Weights1 = skin is null ? null : TryReadVector4Accessor(document, primitive, "WEIGHTS_1"),
+            MorphTargets = ReadMorphTargets(document, primitive, blendshapeNames),
+            BlendshapeNames = blendshapeNames,
+            Skin = skin,
+        };
     }
 
     private static Vector3[]? TryReadVector3Accessor(GltfAssetDocument document, GltfPrimitive primitive, string attributeName)
@@ -611,119 +719,6 @@ internal static class NativeGltfSceneImporter
         return morphTargets;
     }
 
-    private static void ApplySkinWeights(
-        Vertex vertex,
-        int vertexIndex,
-        UInt4[]? joints0,
-        Vector4[]? weights0,
-        UInt4[]? joints1,
-        Vector4[]? weights1,
-        SkinInfo skin)
-    {
-        Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = null;
-
-        if (joints0 is not null && weights0 is not null && vertexIndex < joints0.Length && vertexIndex < weights0.Length)
-            AddWeightSet(ref weights, joints0[vertexIndex], weights0[vertexIndex], skin);
-
-        if (joints1 is not null && weights1 is not null && vertexIndex < joints1.Length && vertexIndex < weights1.Length)
-            AddWeightSet(ref weights, joints1[vertexIndex], weights1[vertexIndex], skin);
-
-        if (weights is null || weights.Count == 0)
-            return;
-
-        float totalWeight = 0.0f;
-        foreach ((_, (float weight, _)) in weights)
-            totalWeight += weight;
-
-        if (totalWeight > 0.0f)
-        {
-            TransformBase[] bones = [.. weights.Keys];
-            for (int boneIndex = 0; boneIndex < bones.Length; boneIndex++)
-            {
-                TransformBase bone = bones[boneIndex];
-                (float weight, Matrix4x4 bindInvWorldMatrix) data = weights[bone];
-                weights[bone] = (data.weight / totalWeight, data.bindInvWorldMatrix);
-            }
-        }
-
-        vertex.Weights = weights;
-    }
-
-    private static void AddWeightSet(
-        ref Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights,
-        UInt4 joints,
-        Vector4 values,
-        SkinInfo skin)
-    {
-        AddWeight(ref weights, joints.X, values.X, skin);
-        AddWeight(ref weights, joints.Y, values.Y, skin);
-        AddWeight(ref weights, joints.Z, values.Z, skin);
-        AddWeight(ref weights, joints.W, values.W, skin);
-    }
-
-    private static void AddWeight(
-        ref Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights,
-        uint jointIndex,
-        float value,
-        SkinInfo skin)
-    {
-        if (value <= 0.0f || jointIndex >= skin.JointTransforms.Length)
-            return;
-
-        TransformBase? joint = skin.JointTransforms[jointIndex];
-        if (joint is null)
-            return;
-
-        weights ??= [];
-        Matrix4x4 inverseBind = jointIndex < skin.InverseBindMatrices.Length ? skin.InverseBindMatrices[jointIndex] : Matrix4x4.Identity;
-        if (weights.TryGetValue(joint, out (float weight, Matrix4x4 bindInvWorldMatrix) existing))
-            weights[joint] = (existing.weight + value, existing.bindInvWorldMatrix);
-        else
-            weights[joint] = (value, inverseBind);
-    }
-
-    private static void ApplyMorphTargets(Vertex vertex, int vertexIndex, IReadOnlyList<MorphTargetVertexData> morphTargets, IReadOnlyList<string> blendshapeNames)
-    {
-        for (int targetIndex = 0; targetIndex < morphTargets.Count; targetIndex++)
-        {
-            MorphTargetVertexData morphTarget = morphTargets[targetIndex];
-            if (morphTarget.Positions is null && morphTarget.Normals is null && morphTarget.Tangents is null)
-                continue;
-
-            string blendshapeName = targetIndex < blendshapeNames.Count && !string.IsNullOrWhiteSpace(blendshapeNames[targetIndex])
-                ? blendshapeNames[targetIndex]
-                : $"MorphTarget {targetIndex}";
-
-            Vector3 absolutePosition = vertex.Position;
-            if (morphTarget.Positions is { Length: > 0 } positions && vertexIndex < positions.Length)
-                absolutePosition += positions[vertexIndex];
-
-            Vector3? absoluteNormal = vertex.Normal;
-            if (morphTarget.Normals is { Length: > 0 } normals && vertexIndex < normals.Length)
-            {
-                Vector3 baseNormal = vertex.Normal ?? Vector3.UnitY;
-                Vector3 combined = baseNormal + normals[vertexIndex];
-                absoluteNormal = combined.LengthSquared() > 0.0f ? Vector3.Normalize(combined) : baseNormal;
-            }
-
-            Vector3? absoluteTangent = vertex.Tangent;
-            if (morphTarget.Tangents is { Length: > 0 } tangents && vertexIndex < tangents.Length && vertex.Tangent is Vector3 baseTangent)
-            {
-                Vector3 combined = baseTangent + tangents[vertexIndex];
-                absoluteTangent = combined.LengthSquared() > 0.0f ? Vector3.Normalize(combined) : baseTangent;
-            }
-
-            vertex.Blendshapes ??= [];
-            vertex.Blendshapes.Add((blendshapeName, new VertexData
-            {
-                Position = absolutePosition,
-                Normal = absoluteNormal,
-                Tangent = absoluteTangent,
-                BitangentSign = vertex.BitangentSign,
-            }));
-        }
-    }
-
     private static List<int> BuildTriangleIndices(GltfAssetDocument document, GltfPrimitive primitive, int vertexCount, string sourceFilePath, int primitiveIndex)
     {
         uint[] sourceIndices = primitive.Indices is int indexAccessor
@@ -784,10 +779,10 @@ internal static class NativeGltfSceneImporter
         return indices;
     }
 
-    private static List<PrimitiveChunk> SplitPrimitiveIntoChunks(Vertex[] sourceVertices, IReadOnlyList<int> triangleIndices)
+    private static List<PrimitiveChunk> SplitPrimitiveIntoChunks(PrimitiveStreams streams, IReadOnlyList<int> triangleIndices)
     {
         List<PrimitiveChunk> chunks = [];
-        PrimitiveChunkBuilder builder = new(0);
+        PrimitiveChunkBuilder builder = new(streams, 0);
 
         for (int triangleIndex = 0; triangleIndex + 2 < triangleIndices.Count; triangleIndex += 3)
         {
@@ -795,17 +790,17 @@ internal static class NativeGltfSceneImporter
             int index1 = triangleIndices[triangleIndex + 1];
             int index2 = triangleIndices[triangleIndex + 2];
 
-            if (!builder.CanAppendTriangle(index0, index1, index2) && builder.Vertices.Count > 0)
+            if (!builder.CanAppendTriangle(index0, index1, index2) && builder.Source.VertexCount > 0)
             {
-                chunks.Add(new PrimitiveChunk(builder.Vertices, builder.Indices, builder.ChunkIndex));
-                builder = new PrimitiveChunkBuilder(builder.ChunkIndex + 1);
+                chunks.Add(new PrimitiveChunk(builder.Source, builder.Indices, builder.ChunkIndex));
+                builder = new PrimitiveChunkBuilder(streams, builder.ChunkIndex + 1);
             }
 
-            builder.AppendTriangle(sourceVertices, index0, index1, index2);
+            builder.AppendTriangle(index0, index1, index2);
         }
 
-        if (builder.Vertices.Count > 0)
-            chunks.Add(new PrimitiveChunk(builder.Vertices, builder.Indices, builder.ChunkIndex));
+        if (builder.Source.VertexCount > 0)
+            chunks.Add(new PrimitiveChunk(builder.Source, builder.Indices, builder.ChunkIndex));
 
         return chunks;
     }

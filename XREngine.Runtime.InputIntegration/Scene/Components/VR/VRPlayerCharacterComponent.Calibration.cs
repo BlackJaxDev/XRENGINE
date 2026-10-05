@@ -126,6 +126,7 @@ public partial class VRPlayerCharacterComponent
     }
     private void RestoreCalibrationState(IHumanoidVrCalibrationRig humanoid, IVRIKSolverHandle solver)
     {
+        solver.EndCalibrationPose();
         humanoid.PosePreviewMode = _previousPreviewMode;
         foreach (var saved in _savedPose)
             if (!saved.Transform.IsDestroyed)

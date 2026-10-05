@@ -1,5 +1,6 @@
 using System;
 using XREngine.Core.Files;
+using XREngine.Data.Runtime.AotParity;
 using XREngine.Diagnostics;
 using XREngine.Serialization;
 
@@ -31,25 +32,47 @@ internal sealed class SnapshotAssetReference
         return reference;
     }
 
+    /// <summary>
+    /// Finds the referenced asset: the loaded asset with its identity, else the one loaded at
+    /// its path, else a fresh load. A loaded asset is accepted only when it is of the
+    /// referenced type; different asset types can share a path (a shader and its source file).
+    /// </summary>
     public XRAsset? Resolve()
     {
         SnapshotDiagnostics.LogAssetResolveStart(this);
+        Type? targetType = ResolveAssetType();
+        if (targetType is null)
+        {
+            SnapshotDiagnostics.LogAssetResolveFailure(this, "asset type could not be resolved");
+            return null;
+        }
 
         if (AssetId != Guid.Empty && Engine.Assets.GetAssetByID(AssetId) is XRAsset byId)
         {
-            SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-id", byId);
-            return byId;
-        }
+            if (targetType.IsInstanceOfType(byId))
+            {
+                SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-id", byId);
+                return byId;
+            }
 
-        if (AssetId != Guid.Empty)
+            SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-id", null, $"type mismatch: {byId.GetType().FullName}");
+        }
+        else if (AssetId != Guid.Empty)
             SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-id", null);
 
         if (!string.IsNullOrWhiteSpace(AssetPath)
             && Engine.Assets.TryGetAssetByPath(AssetPath, out XRAsset? byPath)
             && byPath is not null)
         {
-            SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-path", byPath);
-            return byPath;
+            if (targetType.IsInstanceOfType(byPath))
+            {
+                SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-path", byPath);
+                return byPath;
+            }
+
+            // Loading the path as the referenced type would evict the asset loaded there.
+            SnapshotDiagnostics.LogAssetResolveAttempt(this, "loaded-by-path", null, $"type mismatch: {byPath.GetType().FullName}");
+            return LoadAsset(targetType);
         }
 
         if (!string.IsNullOrWhiteSpace(AssetPath))
@@ -58,13 +81,6 @@ internal sealed class SnapshotAssetReference
         if (string.IsNullOrWhiteSpace(AssetPath))
         {
             SnapshotDiagnostics.LogAssetResolveFailure(this, "reference has no asset path");
-            return null;
-        }
-
-        var targetType = ResolveAssetType();
-        if (targetType is null)
-        {
-            SnapshotDiagnostics.LogAssetResolveFailure(this, "asset type could not be resolved");
             return null;
         }
 
@@ -80,7 +96,7 @@ internal sealed class SnapshotAssetReference
         {
             return AotRuntimeMetadataStore.ResolveType(AssetType);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not AotParityViolationException)
         {
             Debug.LogWarning($"Snapshot asset reference failed to resolve type '{AssetType}': {ex.Message}");
             SnapshotDiagnostics.LogAssetResolveFailure(this, $"type resolution threw {ex.GetType().Name}: {ex.Message}");
@@ -94,7 +110,23 @@ internal sealed class SnapshotAssetReference
         {
             try
             {
-                if (Engine.Assets.Load(candidatePath, targetType) is XRAsset asset)
+                // One source path can represent distinct assets, such as shader source text
+                // and the shader that owns it. A path-cache hit must retain the saved type.
+                XRAsset? asset = null;
+                try
+                {
+                    bool pathHasAnotherType = Engine.Assets.TryGetAssetByPath(candidatePath, out XRAsset? loaded)
+                        && loaded is not null && !targetType.IsInstanceOfType(loaded);
+                    if (!pathHasAnotherType)
+                        asset = Engine.Assets.Load(candidatePath, targetType) as XRAsset;
+                }
+                catch (Exception ex) when (ex is not AotParityViolationException)
+                {
+                    SnapshotDiagnostics.LogAssetResolveFailure(this,
+                        $"typed loader for '{candidatePath}' threw {ex.GetType().Name}: {ex.Message}");
+                }
+
+                if (asset is not null && targetType.IsInstanceOfType(asset))
                 {
                     SnapshotDiagnostics.LogAssetResolveAttempt(
                         this,
@@ -107,6 +139,7 @@ internal sealed class SnapshotAssetReference
                 if (Activator.CreateInstance(targetType) is XRAsset directAsset
                     && directAsset.Load3rdParty(candidatePath))
                 {
+                    directAsset.FilePath = candidatePath;
                     directAsset.OriginalPath = candidatePath;
                     SnapshotDiagnostics.LogAssetResolveAttempt(
                         this,
@@ -122,7 +155,7 @@ internal sealed class SnapshotAssetReference
                     null,
                     $"loader returned non-asset for {targetType.FullName ?? targetType.Name} at '{candidatePath}'");
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not AotParityViolationException)
             {
                 string displayName = string.IsNullOrEmpty(AssetName) ? AssetPath ?? AssetType ?? "unknown" : AssetName!;
                 Debug.LogWarning($"Snapshot asset reference failed to load '{displayName}' from '{candidatePath}': {ex.Message}");
@@ -131,6 +164,19 @@ internal sealed class SnapshotAssetReference
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Whether a reference with this path could load the asset from a file: the rooted path
+    /// exists, or a relative path exists under the engine, shader or game asset roots.
+    /// </summary>
+    public static bool HasLoadableFile(string assetPath)
+    {
+        foreach (string candidatePath in EnumerateCandidatePaths(assetPath))
+            if (File.Exists(candidatePath))
+                return true;
+
+        return false;
     }
 
     private static IEnumerable<string> EnumerateCandidatePaths(string assetPath)

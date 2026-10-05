@@ -127,14 +127,20 @@ internal sealed class VulkanResourceAllocator
             if (request.Descriptor.Lifetime == RenderResourceLifetime.External)
                 continue;
 
-            VulkanBufferAliasGroupKey key = VulkanBufferAliasGroupKey.FromRequest(request);
+            // Alias groups key on descriptor shape only, with no lifetime check and
+            // no handoff barrier between aliases, so buffers stay dedicated like images.
+            VulkanBufferAllocationRequest dedicatedRequest = request with
+            {
+                Descriptor = request.Descriptor with { SupportsAliasing = false },
+            };
+            VulkanBufferAliasGroupKey key = VulkanBufferAliasGroupKey.FromRequest(dedicatedRequest);
             if (!_bufferAliasGroups.TryGetValue(key, out VulkanBufferAliasGroup? group))
             {
                 group = new VulkanBufferAliasGroup(key);
                 _bufferAliasGroups.Add(key, group);
             }
 
-            VulkanBufferAllocation allocation = group.Add(request);
+            VulkanBufferAllocation allocation = group.Add(dedicatedRequest);
             _logicalBufferAllocations[request.Name] = allocation;
         }
     }
@@ -510,16 +516,50 @@ internal sealed class VulkanResourceAllocator
         if (Interlocked.Exchange(ref _retired, 1) != 0)
             return false;
 
-        if (immediate)
+        Exception? firstFailure = null;
+        foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
         {
-            DestroyPhysicalImagesImmediate(backendContext, exceptImageGroups);
-            DestroyPhysicalBuffersImmediate(backendContext);
+            if (ReferenceEquals(group, exceptImageGroup) || exceptImageGroups?.Contains(group) == true)
+                continue;
+
+            ulong handle = group.Image.Handle;
+            try
+            {
+                if (immediate)
+                    group.DestroyImmediate(backendContext);
+                else
+                    group.Destroy(backendContext);
+            }
+            catch (Exception exception)
+            {
+                backendContext.Resources.QuarantineRetirementFailure(
+                    EVulkanRetirementWorkClass.Image, handle, exception, group);
+                firstFailure ??= exception;
+            }
         }
-        else
+
+        foreach (VulkanPhysicalBufferGroup group in _physicalBufferGroups.Values)
         {
-            DestroyPhysicalImages(backendContext, exceptImageGroup, exceptImageGroups);
-            DestroyPhysicalBuffers(backendContext);
+            ulong handle = group.Buffer.Handle;
+            try
+            {
+                if (immediate)
+                    group.DestroyImmediate(backendContext);
+                else
+                    group.Destroy(backendContext);
+            }
+            catch (Exception exception)
+            {
+                backendContext.Resources.QuarantineRetirementFailure(
+                    EVulkanRetirementWorkClass.Buffer, handle, exception, group);
+                firstFailure ??= exception;
+            }
         }
+
+        if (firstFailure is not null)
+            throw new InvalidOperationException(
+                $"Vulkan physical resource retirement failed; affected groups are quarantined: {firstFailure.Message}",
+                firstFailure);
 
         return true;
     }

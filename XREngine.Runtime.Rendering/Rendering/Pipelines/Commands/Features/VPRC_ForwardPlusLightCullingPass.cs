@@ -322,18 +322,23 @@ namespace XREngine.Rendering.Pipelines.Commands
         public static XRDataBuffer CreateDeclaredLocalLightsBuffer()
             => CreateDeclaredBuffer(LocalLightsBufferName, MaxLocalLights, EComponentType.Struct, LocalLightStride, EBufferUsage.StreamDraw, integral: false);
 
+        /// <summary>
+        /// Per-tile light index lists, written only by the culling compute pass and
+        /// read up to each tile's count, so the buffer keeps no CPU copy.
+        /// </summary>
         public static XRDataBuffer CreateDeclaredVisibleIndicesBuffer(uint elementCount)
-            => CreateDeclaredBuffer(VisibleIndicesBufferName, elementCount, EComponentType.Int, 1u, EBufferUsage.StaticCopy, integral: true);
+            => CreateDeclaredBuffer(VisibleIndicesBufferName, elementCount, EComponentType.Int, 1u, EBufferUsage.StaticCopy, integral: true, gpuProduced: true);
 
         public static XRDataBuffer CreateDeclaredTileLightCountsBuffer(uint elementCount)
             => CreateDeclaredBuffer(TileLightCountsBufferName, elementCount, EComponentType.UInt, 1u, EBufferUsage.StaticCopy, integral: true);
 
-        private static XRDataBuffer CreateDeclaredBuffer(string name, uint elementCount, EComponentType componentType, uint componentCount, EBufferUsage usage, bool integral)
+        private static XRDataBuffer CreateDeclaredBuffer(string name, uint elementCount, EComponentType componentType, uint componentCount, EBufferUsage usage, bool integral, bool gpuProduced = false)
         {
-            var buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, componentType, componentCount, normalize: false, integral: integral)
+            var buffer = new XRDataBuffer(name, EBufferTarget.ShaderStorageBuffer, elementCount, componentType, componentCount, normalize: false, integral: integral, allocateClientSideSource: !gpuProduced)
             {
                 Usage = usage,
                 PadEndingToVec4 = true,
+                GpuProduced = gpuProduced,
             };
             buffer.PushData();
             return buffer;

@@ -18,15 +18,16 @@ namespace XREngine.Components.Animation
         public static VrCalibrationResult TryCalibrate(VRIKSolverComponent ik, VRIKCalibrationSettings? settings,
             TransformBase? headTracker, TransformBase? bodyTracker = null, TransformBase? leftHandTracker = null,
             TransformBase? rightHandTracker = null, TransformBase? leftFootTracker = null, TransformBase? rightFootTracker = null)
-            => CalibrateCore(ik, settings, headTracker, bodyTracker, leftHandTracker, rightHandTracker, leftFootTracker, rightFootTracker, null);
+            => CalibrateCore(ik, settings, headTracker, bodyTracker, leftHandTracker, rightHandTracker, leftFootTracker, rightFootTracker, null, null);
 
-        public static VrCalibrationResult TryCalibrateSnapshot(VRIKSolverComponent ik, VRIKCalibrationSettings? settings, VrCalibrationPose[] poses)
+        public static VrCalibrationResult TryCalibrateSnapshot(VRIKSolverComponent ik, VRIKCalibrationSettings? settings, VrCalibrationPose[] poses, float headTiltToleranceDegrees)
             => CalibrateCore(ik, settings, ik.HeadTarget.tfm, ik.HipsTarget.tfm, ik.LeftHandTarget.tfm,
-                ik.RightHandTarget.tfm, ik.LeftFootTarget.tfm, ik.RightFootTarget.tfm, poses);
+                ik.RightHandTarget.tfm, ik.LeftFootTarget.tfm, ik.RightFootTarget.tfm, poses, headTiltToleranceDegrees);
 
         private static VrCalibrationResult CalibrateCore(VRIKSolverComponent ik, VRIKCalibrationSettings? settings,
             TransformBase? headTracker, TransformBase? bodyTracker, TransformBase? leftHandTracker,
-            TransformBase? rightHandTracker, TransformBase? leftFootTracker, TransformBase? rightFootTracker, VrCalibrationPose[]? poses)
+            TransformBase? rightHandTracker, TransformBase? leftFootTracker, TransformBase? rightFootTracker, VrCalibrationPose[]? poses,
+            float? headTiltToleranceDegrees)
         {
             if (settings is null)
                 return VrCalibrationResult.Failure("Calibration settings are unavailable.");
@@ -75,13 +76,16 @@ namespace XREngine.Components.Animation
                 }
                 if (!VrCalibrationMath.TryGetRigidPose(deviceWorld, out _))
                     return VrCalibrationResult.Failure(slot + " has an invalid tracking pose.");
-                if (slot == EHumanoidIKTarget.Head && !VrCalibrationMath.IsHeadLevel(deviceWorld, settings.HeadTiltToleranceDegrees))
+                if (poses is not null && slot == EHumanoidIKTarget.Head && !VrCalibrationMath.IsHeadLevel(deviceWorld, headTiltToleranceDegrees ?? settings.HeadTiltToleranceDegrees))
                     return VrCalibrationResult.Failure("Look straight ahead and keep your head level, then pull both triggers again.");
                 Matrix4x4 targetWorld;
                 if (slot == EHumanoidIKTarget.Head)
                 {
-                    // The player supplies the eye-to-head geometry offset; it is independent of capture orientation.
-                    targetWorld = ik.GetFixedCalibrationOffset(slot, source, Matrix4x4.Identity) * deviceWorld;
+                    // Prefer a measured eye-to-head offset; otherwise use the avatar's bind anatomy.
+                    Matrix4x4 fixedOffset = ik.GetFixedCalibrationOffset(slot, source, Matrix4x4.Identity);
+                    if (fixedOffset == Matrix4x4.Identity && !TryGetBindHeadOffset(ik.Humanoid, out fixedOffset))
+                        return VrCalibrationResult.Failure("The avatar head bind pose or body facing basis is unavailable.");
+                    targetWorld = fixedOffset * deviceWorld;
                 }
                 else if (slot is EHumanoidIKTarget.LeftHand or EHumanoidIKTarget.RightHand)
                 {
@@ -110,21 +114,27 @@ namespace XREngine.Components.Animation
             try
             {
                 ik.CommitCalibrationTargets(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(proposals), () => ApplyWeights(ik, settings));
-                var spine = ik.Solver.Spine;
-                return VrCalibrationResult.Completed(new CalibrationData
-                {
-                    Scale = ik.Root.Scale.Y,
-                    Head = new(spine.HeadTarget), Hips = new(spine.HipsTarget),
-                    LeftHand = new(ik.Solver.LeftArm.Target), RightHand = new(ik.Solver.RightArm.Target),
-                    LeftFoot = new(ik.Solver.LeftLeg.Target), RightFoot = new(ik.Solver.RightLeg.Target),
-                    LeftLegGoal = new(ik.Solver.LeftLeg.KneeTarget), RightLegGoal = new(ik.Solver.RightLeg.KneeTarget),
-                    HipsPositionWeight = spine.HipsPositionWeight, HipsRotationWeight = spine.HipsRotationWeight,
-                });
             }
             catch (Exception exception)
             {
                 return VrCalibrationResult.Failure("Calibration could not be committed: " + exception.Message);
             }
+            if (poses is not null)
+            {
+                // The standing pose becomes the solver's reset pose only after a successful capture.
+                try { ik.Solver.StoreDefaultLocalState(); }
+                catch (Exception exception) { Debug.Animation("Calibration reset pose could not be stored: " + exception.Message); }
+            }
+            var spine = ik.Solver.Spine;
+            return VrCalibrationResult.Completed(new CalibrationData
+            {
+                Scale = ik.Root.Scale.Y,
+                Head = new(spine.HeadTarget), Hips = new(spine.HipsTarget),
+                LeftHand = new(ik.Solver.LeftArm.Target), RightHand = new(ik.Solver.RightArm.Target),
+                LeftFoot = new(ik.Solver.LeftLeg.Target), RightFoot = new(ik.Solver.RightLeg.Target),
+                LeftLegGoal = new(ik.Solver.LeftLeg.KneeTarget), RightLegGoal = new(ik.Solver.RightLeg.KneeTarget),
+                HipsPositionWeight = spine.HipsPositionWeight, HipsRotationWeight = spine.HipsRotationWeight,
+            });
         }
 
         private static TransformBase? GetSlotBone(HumanoidComponent human, EHumanoidIKTarget slot)
@@ -140,6 +150,24 @@ namespace XREngine.Components.Animation
                 EHumanoidIKTarget.RightKnee => human.Right.Knee.Node?.Transform,
                 _ => null,
             };
+
+        private static bool TryGetBindHeadOffset(HumanoidComponent human, out Matrix4x4 offset)
+        {
+            offset = Matrix4x4.Identity;
+            if (human.Head.Node is null || !human.TryGetVrBindBodyToEngine(out Matrix4x4 bodyToEngine))
+                return false;
+            Matrix4x4 headInRoot = human.Head.Node.Transform.BindMatrix * human.Transform.InverseBindMatrix;
+            if (!Matrix4x4.Decompose(headInRoot, out _, out Quaternion headRotation, out Vector3 headPosition))
+                return false;
+            TransformBase eyes = human.EyesTarget.Node?.Transform ?? human.Head.Node.Transform;
+            Matrix4x4 eyesInRoot = eyes.BindMatrix * human.Transform.InverseBindMatrix;
+            if (!Matrix4x4.Decompose(human.Transform.WorldMatrix, out Vector3 rootScale, out _, out _))
+                return false;
+            Vector3 eyeToHead = Vector3.Multiply(headPosition - eyesInRoot.Translation, rootScale);
+            offset = Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(headRotation)) * bodyToEngine;
+            offset.Translation = Vector3.TransformNormal(eyeToHead, bodyToEngine);
+            return VrCalibrationMath.TryGetRigidPose(offset, out _);
+        }
 
         internal static void ApplyWeights(VRIKSolverComponent ik, VRIKCalibrationSettings settings)
         {
@@ -178,7 +206,7 @@ namespace XREngine.Components.Animation
 
         public static Vector3 GuessPalmToThumbAxis(Transform? hand, Transform? forearm)
         {
-            if (hand is null || forearm is null) 
+            if (hand is null || forearm is null)
                 return Vector3.Zero;
 
             if (hand.ChildCount == 0)

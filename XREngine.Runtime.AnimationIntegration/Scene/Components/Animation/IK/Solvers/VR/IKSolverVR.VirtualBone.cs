@@ -215,27 +215,31 @@ namespace XREngine.Components.Animation
                 Vector3 bendNormal)
             {
                 Vector3 dir = targetPosition - bones[first].SolverPosition;
-                if (dir == Vector3.Zero)
-                    return Vector3.Zero;
-
-                // Distance between the first and the last transform solver positions
                 float sqrMag = dir.LengthSquared();
-                if (sqrMag < float.Epsilon)
-                    return Vector3.Zero;
+                Vector3 firstToSecond = bones[second].SolverPosition - bones[first].SolverPosition;
+                if (sqrMag < 1e-12f)
+                    return firstToSecond;
 
                 float dirMag = MathF.Sqrt(sqrMag);
-                // Some callers solve across omitted joints (shoulder/elbow/hand,
-                // spine/chest/head). Length fields describe adjacent bones only.
-                float sqrMag1 = Vector3.DistanceSquared(bones[first].SolverPosition, bones[second].SolverPosition);
+                Vector3 direction = dir / dirMag;
+                float sqrMag1 = firstToSecond.LengthSquared();
                 float sqrMag2 = Vector3.DistanceSquared(bones[second].SolverPosition, bones[third].SolverPosition);
+                if (sqrMag1 < 1e-12f || sqrMag2 < 1e-12f)
+                    return firstToSecond;
 
                 float x = ((dirMag * dirMag) + (sqrMag1 - sqrMag2)) / 2.0f / dirMag;
-                float y = (float)Math.Sqrt((sqrMag1 - x * x).ClampMin(0.0f));
-
-                //Vector3 yDirection = Vector3.Cross(bendNormal, dir / dirMag);
-                Vector3 lookRot = Vector3.Cross(bendNormal, dir);
-                // LookRotation maps local +Z onto dir; the analytic reach must point toward the target.
-                return XRMath.LookRotation(dir, lookRot).Rotate(new Vector3(0.0f, y, x));
+                float y = MathF.Sqrt(MathF.Max(0f, sqrMag1 - x * x));
+                Vector3 perpendicular = Vector3.Cross(bendNormal, direction);
+                if (perpendicular.LengthSquared() < 1e-12f)
+                {
+                    perpendicular = firstToSecond - direction * Vector3.Dot(firstToSecond, direction);
+                    if (perpendicular.LengthSquared() < 1e-12f)
+                    {
+                        Vector3 fallback = MathF.Abs(direction.Y) < 0.9f ? Vector3.UnitY : Vector3.UnitX;
+                        perpendicular = Vector3.Cross(fallback, direction);
+                    }
+                }
+                return direction * x + Vector3.Normalize(perpendicular) * y;
             }
 
             // TODO Move to IKSolverFABRIK

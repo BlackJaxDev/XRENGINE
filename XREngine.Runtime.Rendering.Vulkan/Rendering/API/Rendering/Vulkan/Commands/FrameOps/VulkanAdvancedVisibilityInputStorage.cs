@@ -10,7 +10,17 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanAdvancedVisibilityInputStorage
 {
+    /// <summary>
+    /// Initial rows for fixed-capacity frame-slot storage. The declared draw
+    /// and range capacities remain the admission maximum, but each slot and
+    /// output bank holds a copy of the prepared columns, so starting at the
+    /// maximum reserved megabytes per bank that typical scenes never use.
+    /// </summary>
+    internal const int InitialFixedRowCapacity = 4096;
+
     private readonly bool _fixedCapacity;
+    private readonly int _maximumDrawCapacity;
+    private readonly int _maximumIndirectRangeCapacity;
     private readonly EVulkanAcceptedFrameLane _lane;
     private readonly VulkanAdvancedVisibilityInputCopyTelemetry? _copyTelemetry;
     private AdvancedVisibilityPayload[] _payloads;
@@ -40,12 +50,16 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         _fixedCapacity = fixedCapacity;
         _lane = lane;
         _copyTelemetry = copyTelemetry;
-        _payloads = new AdvancedVisibilityPayload[drawCapacity];
-        _candidates = new AdvancedVisibilityCandidate[drawCapacity];
-        _producers = new EAdvancedGeometryProducer[drawCapacity];
-        _indirectRanges = new AdvancedIndirectRange[indirectRangeCapacity];
-        _indirectPayloadIndices = new int[drawCapacity];
-        _deformationSlices = new AdvancedDeformedArenaSlice[drawCapacity];
+        _maximumDrawCapacity = drawCapacity;
+        _maximumIndirectRangeCapacity = indirectRangeCapacity;
+        int initialDraws = fixedCapacity ? Math.Min(drawCapacity, InitialFixedRowCapacity) : drawCapacity;
+        int initialRanges = fixedCapacity ? Math.Min(indirectRangeCapacity, InitialFixedRowCapacity) : indirectRangeCapacity;
+        _payloads = new AdvancedVisibilityPayload[initialDraws];
+        _candidates = new AdvancedVisibilityCandidate[initialDraws];
+        _producers = new EAdvancedGeometryProducer[initialDraws];
+        _indirectRanges = new AdvancedIndirectRange[initialRanges];
+        _indirectPayloadIndices = new int[initialDraws];
+        _deformationSlices = new AdvancedDeformedArenaSlice[initialDraws];
     }
 
     internal bool IsValid
@@ -127,7 +141,8 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         EnsureCapacity(
             ref _indirectRanges,
             indirectRangeCount,
-            "indirect-range");
+            "indirect-range",
+            _maximumIndirectRangeCapacity);
         EnsureCapacity(
             ref _indirectPayloadIndices,
             payloadCount,
@@ -227,7 +242,8 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             EnsureCapacity(
                 ref _indirectRanges,
                 indirectRanges.Length,
-                "indirect-range");
+                "indirect-range",
+                _maximumIndirectRangeCapacity);
             EnsureCapacity(
                 ref _indirectPayloadIndices,
                 indirectPayloadIndices.Length,
@@ -291,25 +307,34 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         => IsValid && Publication.Equals(publication) &&
            Indirect.Equals(indirect);
 
+    /// <summary>
+    /// Grows a column to hold <paramref name="required"/> rows. Fixed-capacity
+    /// storage grows only up to its declared maximum, and only when a frame
+    /// exceeds the previous high-water mark; the slot is captured during
+    /// lowering, before any worker or recorder reads it, and only after its
+    /// previous frame retired. Exceeding the maximum still rejects the frame.
+    /// </summary>
     private void EnsureCapacity<T>(
         ref T[] values,
         int required,
-        string column)
+        string column,
+        int maximum = -1)
     {
         if (values.Length >= required)
             return;
-        if (_fixedCapacity)
+        if (maximum < 0)
+            maximum = _maximumDrawCapacity;
+        if (_fixedCapacity && required > maximum)
         {
             throw new VulkanAcceptedFramePlanCapacityException(
                 _lane,
-                values.Length,
+                maximum,
                 required,
                 $"Advanced visibility {column} capacity was exhausted.");
         }
 
-        Array.Resize(
-            ref values,
-            Math.Max(required, values.Length == 0 ? 4 : values.Length * 2));
+        int grown = Math.Max(required, values.Length == 0 ? 4 : values.Length * 2);
+        Array.Resize(ref values, _fixedCapacity ? Math.Min(grown, maximum) : grown);
     }
 
     private static long ComputeCopyByteCount(int payloadCount, int indirectRangeCount)

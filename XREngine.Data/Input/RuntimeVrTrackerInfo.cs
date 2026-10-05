@@ -20,11 +20,18 @@ public readonly record struct RuntimeVrTrackerInfo(
     public bool PositionValid { get; init; }
     public bool OrientationValid { get; init; }
     public bool EverTracked { get; init; }
+    public bool HasLastValidPose { get; init; }
+    public long LastValidSnapshotId { get; init; }
     public long LastValidSampleTime { get; init; }
     public Matrix4x4 LastValidPose { get; init; }
     public bool RequiresInputRebuild { get; init; }
     public bool Bound { get; init; }
     public bool IsStale { get; init; }
+    public RuntimeVrTrackerStatus Status => !Connected ? RuntimeVrTrackerStatus.DisabledOrNotReported :
+        !Bound ? RuntimeVrTrackerStatus.DiscoveredUnbound :
+        !ActionActive ? RuntimeVrTrackerStatus.BoundInactive :
+        !PositionValid || !OrientationValid ? RuntimeVrTrackerStatus.TrackingLost :
+        !PoseAvailable ? RuntimeVrTrackerStatus.Stale : RuntimeVrTrackerStatus.Usable;
     public bool PoseCurrentlyUsable => Connected && Bound && ActionActive && PositionValid && OrientationValid && PoseAvailable && !IsStale && !RequiresInputRebuild;
     /// <summary>OpenXR cannot distinguish a powered-off tracker from one hidden/disabled by the runtime.</summary>
     public string DiagnosticState => !RuntimeReported ? "Not discovered" :

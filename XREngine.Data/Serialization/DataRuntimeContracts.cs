@@ -1,4 +1,4 @@
-[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.UserSettings), "xre.settings.user", 1)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.UserSettings), "xre.settings.user", 2)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.BuildSettings), "xre.settings.build", 1)]
 [assembly: XREngine.RuntimeCookedAsset(typeof(XREngine.UserSettings), XREngine.ERuntimeCookedAssetCodec.MemoryPack)]
 [assembly: XREngine.RuntimeCookedAsset(typeof(XREngine.BuildSettings), XREngine.ERuntimeCookedAssetCodec.MemoryPack)]
@@ -8,3 +8,5 @@
 [assembly: XREngine.RuntimeClosedFormatter(typeof(System.Collections.Generic.HashSet<string>))]
 [assembly: XREngine.RuntimeClosedFormatter(typeof(System.DateTime?))]
 [assembly: XREngine.RuntimeClosedFormatter(typeof(System.ValueTuple<int, int>))]
+[assembly: XREngine.RuntimeClosedFormatter(typeof(int[]))]
+[assembly: XREngine.RuntimeClosedFormatter(typeof(long[]))]

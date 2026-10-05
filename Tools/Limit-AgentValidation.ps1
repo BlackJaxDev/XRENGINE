@@ -27,7 +27,12 @@ function Test-OwnedProcess($Manifest) {
     }
 
     $expectedStart = [DateTime]::MinValue
-    if (-not [DateTime]::TryParse(
+    # PowerShell 7 can deserialize ISO timestamps as DateTime. Stringifying that
+    # value with the current culture drops subsecond precision and loses ownership.
+    if ($Manifest.processStartTimeUtc -is [DateTime]) {
+        $expectedStart = $Manifest.processStartTimeUtc.ToUniversalTime()
+    }
+    elseif (-not [DateTime]::TryParse(
             [string]$Manifest.processStartTimeUtc,
             [Globalization.CultureInfo]::InvariantCulture,
             [Globalization.DateTimeStyles]::RoundtripKind,

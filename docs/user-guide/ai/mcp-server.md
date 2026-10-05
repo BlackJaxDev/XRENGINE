@@ -213,6 +213,10 @@ companions) to inspect its native HDR/depth resources. It cannot be combined
 with a camera, VR, or non-default window/viewport selector.
 `list_render_pipeline_resources` and `get_advanced_profile_diagnostics` accept
 the same owner selector, including minimal depth/visibility profiles.
+`get_advanced_profile_diagnostics` also reports `directionalShadowLane`: the
+hand-off counters between the shadow atlas and the Advanced directional shadow
+raster stage (deferred, accepted, rejected, unconsumed and generic cascade
+groups, whether the stage reported itself ready, and the last decline reason).
 
 `clear_render_pipeline_cache` rebuilds resources for one selected viewport's
 pipeline instance. Select it with `camera_node_id`, `vr_eye`, or window/viewport
@@ -323,6 +327,15 @@ which identifies the submitted render frame, sample sequence, image slot, age
 and elapsed nanoseconds. Count each completed sequence once and reject samples
 whose source frame precedes the workload change. The legacy
 `gpu_command_buffer_ms` scalar alone does not identify the measured frame.
+
+For frame-rate measurements, count fresh scene frames with
+`get_render_profiler_stats.vulkan.frame_lifecycle.outcome_counts`. These are
+cumulative per-outcome counts of published Vulkan frame roots (`completed`,
+`deferred`, `skipped`, `rejected`, `failed`) plus the command-record stage
+outcome counts. A rejected frame can still present by replaying the last
+complete scene, so `render_frame_number` deltas and presentation counters
+overstate the rendered rate whenever frames are rejected. Divide the
+`completed` delta by the window length instead.
 
 `get_render_profiler_stats.vulkan.frame_lifecycle.detail` separates
 `wait_current_frame_slot_ms` from `wait_next_frame_slot_before_collect_ms`.

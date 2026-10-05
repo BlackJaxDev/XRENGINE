@@ -124,6 +124,12 @@ internal sealed partial class VulkanFrameLoop
             failureReason = "Texture has no resident mip data to upload.";
             return false;
         }
+        if (texture.ResidentPixelsReleased)
+        {
+            // Streaming restores a released chain through its own rehydration.
+            failureReason = "Texture pixels were released after upload; streaming rehydration restores this texture.";
+            return false;
+        }
 
         Mipmap2D? firstMip = null;
         for (int index = 0; index < mipmaps.Length; index++)

@@ -13,6 +13,11 @@ namespace XREngine.Animation
         private DelGetValue<Quaternion> _getValue;
         private BakedValueStore<Quaternion>? _baked = null;
 
+        internal Quaternion[] CapturePublishedBakedValues() => _baked?.CaptureValues() ?? [];
+
+        internal void RestorePublishedBakedValues(Quaternion[] values, EAnimationValueCompressionAlgorithm encodedCompression)
+            => _baked = BakedValueStore<Quaternion>.EncodeUnmanaged(values, encodedCompression);
+
         private Quaternion _defaultValue = Quaternion.Identity;
         /// <summary>
         /// The default value to return when no keyframes are set.

@@ -14,7 +14,7 @@ namespace XREngine.Input.Devices
 
         public ButtonManager(int index, string name)
         {
-            _actions = new Dictionary<EButtonInputType, List<Action?>?>(4)
+            _actions = new Dictionary<EButtonInputType, Action[]?>(4)
             {
                 [EButtonInputType.Pressed] = null,
                 [EButtonInputType.Released] = null,
@@ -34,8 +34,8 @@ namespace XREngine.Input.Devices
         public bool IsHeld { get; protected set; }
         public bool IsDoublePressed { get; protected set; }
 
-        protected List<DelButtonState?> _onStateChanged = [];
-        protected Dictionary<EButtonInputType, List<Action?>?> _actions;
+        private DelButtonState[] _onStateChanged = [];
+        protected Dictionary<EButtonInputType, Action[]?> _actions;
         protected HashSet<EButtonInputType> _usedTypes;
         private Lock _actionsLock = new();
 
@@ -44,34 +44,42 @@ namespace XREngine.Input.Devices
         protected float _timer;
 
         #region Registration
-        public virtual bool IsEmpty() => _usedTypes.Count == 0 && _onStateChanged.All(x => x is null);
+        public virtual bool IsEmpty()
+        {
+            using var scope = _actionsLock.EnterScope();
+            return _usedTypes.Count == 0 && _onStateChanged.Length == 0;
+        }
         public void Register(Action func, EButtonInputType type, bool unregister)
         {
             using var scope = _actionsLock.EnterScope();
 
-            List<Action?>? list = _actions[type];
+            Action[] current = _actions[type] ?? [];
 
             if (unregister)
             {
-                if (list is null)
+                int index = Array.IndexOf(current, func);
+                if (index < 0)
                     return;
-
-                list.Remove(func);
-                if (list.Count == 0)
+                if (current.Length == 1)
                 {
                     _actions[type] = null;
                     _usedTypes.Remove(type);
                 }
+                else
+                {
+                    Action[] next = new Action[current.Length - 1];
+                    Array.Copy(current, 0, next, 0, index);
+                    Array.Copy(current, index + 1, next, index, current.Length - index - 1);
+                    _actions[type] = next;
+                }
             }
             else
             {
-                if (list is null)
-                {
-                    _actions[type] = [func];
-                    _usedTypes.Add(type);
-                }
-                else
-                    _actions[type]?.Add(func);
+                Action[] next = new Action[current.Length + 1];
+                Array.Copy(current, next, current.Length);
+                next[current.Length] = func;
+                _actions[type] = next;
+                _usedTypes.Add(type);
             }
         }
 
@@ -87,10 +95,25 @@ namespace XREngine.Input.Devices
 
         public void RegisterPressedState(DelButtonState func, bool unregister)
         {
+            using var scope = _actionsLock.EnterScope();
+            DelButtonState[] current = _onStateChanged;
             if (unregister)
-                _onStateChanged.Remove(func);
+            {
+                int index = Array.IndexOf(current, func);
+                if (index < 0)
+                    return;
+                DelButtonState[] next = new DelButtonState[current.Length - 1];
+                Array.Copy(current, 0, next, 0, index);
+                Array.Copy(current, index + 1, next, index, current.Length - index - 1);
+                _onStateChanged = next;
+            }
             else
-                _onStateChanged.Add(func);
+            {
+                DelButtonState[] next = new DelButtonState[current.Length + 1];
+                Array.Copy(current, next, current.Length);
+                next[current.Length] = func;
+                _onStateChanged = next;
+            }
         }
         public virtual void UnregisterAll()
         {
@@ -99,8 +122,7 @@ namespace XREngine.Input.Devices
             foreach (var type in _usedTypes)
                 _actions[type] = null;
             _usedTypes.Clear();
-            for (int i = 0; i < 3; ++i)
-                _onStateChanged[i] = null;
+            _onStateChanged = [];
         }
         #endregion
 
@@ -156,11 +178,10 @@ namespace XREngine.Input.Devices
         }
         private void ExecuteActionList(EButtonInputType type)
         {
-            using var scope = _actionsLock.EnterScope();
-
-            List<Action?>? list = _actions[type];
-            if (list is null)
-                return;
+            Action[]? list;
+            using (var scope = _actionsLock.EnterScope())
+                list = _actions[type];
+            if (list is null) return;
 
             //Inform the server of the input
             ActionExecuted?.Invoke(Index, type);
@@ -168,7 +189,7 @@ namespace XREngine.Input.Devices
             //Run the input locally
             try
             {
-                for (int i = 0; i < list.Count; i++)
+                for (int i = 0; i < list.Length; i++)
                 {
                     try
                     {
@@ -187,15 +208,18 @@ namespace XREngine.Input.Devices
         }
         private void ExecutePressedStateList(bool pressed)
         {
+            DelButtonState[] callbacks;
+            using (var scope = _actionsLock.EnterScope())
+                callbacks = _onStateChanged;
             //Inform the server of the input
             StatePressed?.Invoke(Index, EButtonInputType.Pressed, pressed);
 
             //Run the input locally
-            foreach (DelButtonState? action in _onStateChanged)
+            foreach (DelButtonState action in callbacks)
             {
                 try
                 {
-                    action?.Invoke(pressed);
+                    action.Invoke(pressed);
                 }
                 catch (Exception e)
                 {

@@ -140,6 +140,8 @@ For a world instance this currently means:
 
 This phase is used for scene-owned housekeeping that must complete before viewports start collecting. In 3D, `VisualScene3D.GlobalCollectVisible()` flushes pending renderable add/remove operations. In CPU-dispatch mode it also swaps the active CPU spatial tree (`Octree` by default, or `Bvh` when selected) needed for subsequent tree walks.
 
+Pre-collect publication is open only while the owning `RuntimeWorldHost` render session is live. The host opens it after initializing the visual scene and activating roots, and closes it before deactivating roots and tearing the scene down; closing waits for any in-flight call. OpenXR also calls `GlobalPreCollectVisible()` directly to republish late transforms before stereo collection, so this gate, not the timer subscription alone, keeps play-mode transitions from mutating a torn-down GPU scene. While closed, renderable and matrix changes stay queued for the next session.
+
 ### 3. CollectVisible
 
 After `PreCollectVisible`, `EngineTimer.DispatchCollectVisible()` invokes `CollectVisible` asynchronously across subscribers.

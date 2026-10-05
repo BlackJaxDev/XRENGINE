@@ -30,8 +30,12 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     uint NativeViewIndex = 0u,
     bool RequiresMaterialSurfaceExports = false,
     uint MsaaSampleCount = 1u,
-    bool HasAuthoredBackground = false)
+    bool HasAuthoredBackground = false,
+    VulkanAdvancedDirectionalShadowLaneStorage? DirectionalShadowLane = null)
 {
+    /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
+    internal bool IsDirectionalShadowStage => Stage == EAdvancedRenderStage.DirectionalShadowRaster;
+
     /// <summary>
     /// Native-compute closure capture is required only by stages that consume
     /// reconstruction, classification, or shading resources. Visibility-only
@@ -47,6 +51,8 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
             (EAdvancedRenderStage.VisibilityPreparation,
                 EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.VisibilityRaster,
+                EAdvancedVisibilityStageBackendPhase.Complete) or
+            (EAdvancedRenderStage.DirectionalShadowRaster,
                 EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
                 EAdvancedVisibilityStageBackendPhase.LateCompute) or
@@ -79,7 +85,9 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            !string.IsNullOrWhiteSpace(DepthTargetName) &&
            !string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName) &&
            (!RequiresNativeComputeClosure ||
-            !string.IsNullOrWhiteSpace(AmbientOcclusionTargetName));
+            !string.IsNullOrWhiteSpace(AmbientOcclusionTargetName)) &&
+           (!IsDirectionalShadowStage ||
+            DirectionalShadowLane is { CascadeCount: > 0 });
 
     /// <summary>
     /// Verifies that two authored stages are members of one visibility family.
@@ -110,6 +118,10 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
 
     private bool MatchesVisibilityTargets(in VulkanAdvancedVisibilityStageRequest other)
     {
+        // The directional shadow lane targets a light-owned atlas page; it shares
+        // the family's publication and views, never its visibility targets.
+        if (IsDirectionalShadowStage || other.IsDirectionalShadowStage)
+            return true;
         bool raw = UsesRawMultisampleTargets;
         bool otherRaw = other.UsesRawMultisampleTargets;
         if (!HasExpectedVisibilityTargetNames(raw) || !other.HasExpectedVisibilityTargetNames(otherRaw))

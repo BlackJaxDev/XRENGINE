@@ -27,6 +27,10 @@ cache or publication service needs a measured cause and an ownership contract.
 See the [frame lifecycle](frame-lifecycle-and-dispatch-paths.md),
 [mesh submission contracts](mesh-submission-strategies.md), and
 [command recording architecture](vulkan-command-recording.md).
+The [frame-loop design](frame-loop-design.md) also covers OpenGL admission,
+shadow recording and reconstruction after Play transitions. The
+[Play architecture](../editor/play-mode-architecture.md) owns snapshot and
+runtime-world restoration contracts.
 
 ## Publication Identity And Scene Mutation
 
@@ -172,8 +176,12 @@ telemetry. Their measurements did not justify new queue or worker-count policy.
 
 Warmed shader identity traversal uses a fixed-count indexed loop to avoid
 boxed `EventList` enumeration. Every revision and currentness check remains.
-No generation cache or memoized readiness result was introduced. Pending work
-must still progress to Ready or an observable failure when the plan is unchanged.
+Raster preparation resolves programs and prepared pipelines once for each
+coverage, meshlet and cull combination within its preparation work. This does
+not authorize memoizing general readiness across dependency generations.
+Pending work must still progress to Ready or an observable failure when the
+plan is unchanged. [Pipeline compilation](vulkan-pipeline-compilation.md)
+describes required-family and optional directional-shadow readiness separately.
 
 ## Resource And Mesh Preparation
 

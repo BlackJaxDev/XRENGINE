@@ -118,6 +118,8 @@ public static class XREngineEnvironmentVariables
     public const string ProfilerPort = "XRE_PROFILER_PORT";
     public const string MemoryProfile = "XRE_MEMORY_PROFILE";
     public const string MemoryDiagnostics = "XRE_MEMORY_DIAGNOSTICS";
+    /// <summary>Set to 1 before launch to count world tick dispatch, pending registration and per-callback cost.</summary>
+    public const string WorldTickTelemetry = "XRE_WORLD_TICK_TELEMETRY";
     public const string GcLatencyMode = "XRE_GC_LATENCY_MODE";
     public const string DisableMaintenanceGc = "XRE_DISABLE_MAINTENANCE_GC";
     public const string BenchmarkNoGcRegion = "XRE_BENCHMARK_NOGC_REGION";
@@ -288,6 +290,11 @@ public static class XREngineEnvironmentVariables
     public const string VulkanResidentTemplateDeviceLossInject =
         "XRE_VULKAN_RESIDENT_TEMPLATE_DEVICE_LOSS_INJECT";
     public const string VulkanRecordingProfileDetail = "XRE_VULKAN_RECORDING_PROFILE_DETAIL";
+    /// <summary>
+    /// Set to <c>0</c> to keep directional cascade casters on the generic
+    /// per-renderer path instead of the Advanced directional shadow raster lane.
+    /// </summary>
+    public const string AdvancedDirectionalShadowLane = "XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE";
     public const string VulkanCommandBufferLabels = "XRE_VULKAN_COMMAND_BUFFER_LABELS";
     public const string VulkanCommandChains = "XRE_VULKAN_COMMAND_CHAINS";
     public const string VulkanCommandChainsSingleThread = "XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD";

@@ -380,7 +380,10 @@ internal sealed partial class VulkanFrameLoop
         injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
+        {
+            RecordOpenXrRenderFailure(in renderRequest, "submission-reservation");
             return false;
+        }
         OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
         OpenXrRecordedEyeCommandBuffer recorded = default;
         CommandBuffer publishCommandBuffer = default;
@@ -430,7 +433,10 @@ internal sealed partial class VulkanFrameLoop
             }
 
             if (renderPipelineInstance?.SkippedResizeCatchUpThisFrame == true)
+            {
+                RecordOpenXrRenderFailure(in renderRequest, "resize-catch-up");
                 return false;
+            }
 
             if (!TryPrepareStereoLayerBlit(
                     sourceTexture,
@@ -446,6 +452,7 @@ internal sealed partial class VulkanFrameLoop
                     flipY,
                     out OpenXrStereoLayerBlitPlan plan))
             {
+                RecordOpenXrRenderFailure(in renderRequest, "stereo-blit-plan");
                 return false;
             }
 
@@ -454,7 +461,10 @@ internal sealed partial class VulkanFrameLoop
                 recorded.CommandBuffer,
                 out publishCommandBuffer);
             if (!hasPublish)
+            {
+                RecordOpenXrRenderFailure(in renderRequest, "stereo-blit-record");
                 return false;
+            }
 
             VulkanOpenXrSubmissionResult submission = SubmitTrackedOpenXrMirrorSubmission(
                 admissionTicket!.Value, ref trackerOwnsSubmission, renderRequest.SubmissionMetadata, in recorded, hasFirst: true, secondRecorded: default,
@@ -507,6 +517,7 @@ internal sealed partial class VulkanFrameLoop
         }
         catch (Exception ex)
         {
+            RecordOpenXrRenderFailure(in renderRequest, "stereo-render-publish", exception: ex);
             Debug.VulkanWarningEvery(
                 $"OpenXR.Vulkan.TrueStereo.RenderPublishBatchFailed.{GetHashCode()}",
                 TimeSpan.FromSeconds(2),
@@ -641,6 +652,7 @@ internal sealed partial class VulkanFrameLoop
                     "eye mirror render",
                     out bool frameDataSlotCompletionProven))
             {
+                RecordOpenXrRenderFailure(in request, "frame-data-slot");
                 return false;
             }
             DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
@@ -663,6 +675,7 @@ internal sealed partial class VulkanFrameLoop
                 FrameOp[] ops = VulkanCommandRuntime.FilterDiagnosticSkippedFrameOps(capturedOps);
                 if (ops.Length == 0)
                 {
+                    RecordOpenXrRenderFailure(in request, "empty-frame-operations");
                     Debug.VulkanWarningEvery(
                         $"OpenXR.Vulkan.NoEyeMirrorFrameOps.{GetHashCode()}",
                         TimeSpan.FromSeconds(1),
@@ -685,6 +698,7 @@ internal sealed partial class VulkanFrameLoop
                     RentPipelineResourcePlannerScope(in plannerContext);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
+                    RecordOpenXrRenderFailure(in request, "resource-allocation", prePlanFailureReason);
                     Debug.VulkanWarningEvery(
                         $"OpenXR.Vulkan.EyeMirrorFrameOpPlanDeferred.{GetHashCode()}.{request.OpenXrViewIndex}",
                         TimeSpan.FromSeconds(1),
@@ -702,6 +716,7 @@ internal sealed partial class VulkanFrameLoop
 
                     out string refreshFailureReason))
                 {
+                    RecordOpenXrRenderFailure(in request, "resource-refresh", refreshFailureReason);
                     Debug.VulkanWarningEvery(
                         $"OpenXR.Vulkan.EyeMirrorFrameOpRefreshDeferred.{GetHashCode()}.{request.OpenXrViewIndex}",
                         TimeSpan.FromSeconds(1),
@@ -717,6 +732,7 @@ internal sealed partial class VulkanFrameLoop
                         recordImageIndex,
                         sealFrameManifest: true))
                 {
+                    RecordOpenXrRenderFailure(in request, "resource-prewarm");
                     return false;
                 }
                 _commandRuntime.ReconcileResourcePlannerImageLayouts(
@@ -927,6 +943,7 @@ internal sealed partial class VulkanFrameLoop
                         out recorded,
                         out VulkanImportedTexturePendingUpload[] uploads))
                 {
+                    RecordOpenXrRenderFailure(in request, "primary-record");
                     return false;
                 }
 
@@ -944,6 +961,7 @@ internal sealed partial class VulkanFrameLoop
             if (IsOpenXrStrictExtentFailure(ex))
                 throw;
 
+            RecordOpenXrRenderFailure(in request, "mirror-record", exception: ex);
             Debug.VulkanWarningEvery(
                 $"OpenXR.Vulkan.RenderEyeMirrorFailed.{GetHashCode()}",
 

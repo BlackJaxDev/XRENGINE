@@ -32,7 +32,6 @@ internal sealed partial class ImportedTextureStreamingManager
     private const int TextureSummaryIntervalFrames = 60;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
     private const double VulkanDenseNonPressureDemotionPreserveBudgetFillRatio = 0.75;
-    private const double VulkanAllocatorStreamingBudgetRatio = 0.84;
     private const long VulkanAllocatorStreamingReserveBytes = 768L * 1024L * 1024L;
     private const string VulkanImportedTextureStreamingTodoPath = "docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md";
     private const string VulkanImportedTexturePreviewFreezeEnvVar = XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze;
@@ -245,6 +244,8 @@ internal sealed partial class ImportedTextureStreamingManager
         TextureStreamingResidentData residentData;
         bool includeMipChain;
         uint targetDimension;
+        ITextureStreamingSource? releasedPixelSource = null;
+        int releasedMipCount = 0;
         long frameId = Volatile.Read(ref _collectFrameId);
         lock (record.Sync)
         {
@@ -270,68 +271,134 @@ internal sealed partial class ImportedTextureStreamingManager
                 return false;
             }
 
-            Mipmap2D[] frozenMips = new Mipmap2D[retainedMips.Length];
-            for (int mipIndex = 0; mipIndex < retainedMips.Length; mipIndex++)
+            if (texture.ResidentPixelsReleased)
             {
-                Mipmap2D? mip = retainedMips[mipIndex];
-                if (mip is null || !mip.HasData() || mip.Width == 0 || mip.Height == 0)
+                // The published pixels were freed after upload; the mips keep their
+                // dimensions. Claim the transition now and reload the chain from the
+                // streaming source on a worker.
+                if (record.Source is not { } releasedSource || record.Format != ESizedInternalFormat.Rgba8)
                 {
                     cts.Dispose();
-                    failureReason = $"Published texture mip {mipIndex} has no resident data.";
+                    failureReason = "Published texture pixels were released but no RGBA8 streaming source can reload them.";
                     return false;
                 }
-                frozenMips[mipIndex] = mip;
-            }
 
-            // A canceled native upload may already have prepared a larger CPU
-            // mip payload without advancing the published resident dimension.
-            targetDimension = Math.Max(frozenMips[0].Width, frozenMips[0].Height);
-            residentData = new TextureStreamingResidentData(
-                frozenMips,
-                record.SourceWidth,
-                record.SourceHeight,
-                targetDimension);
-            if (residentData.SizedInternalFormat != record.Format)
+                uint releasedTarget = Math.Max(retainedMips[0].Width, retainedMips[0].Height);
+                bool releasedIncludesMipChain = retainedMips.Length > 1;
+                if (!_transitionQueue.TryBeginTransition(
+                        record,
+                        cts,
+                        releasedTarget,
+                        SparseTextureStreamingPageSelection.Full,
+                        frameId,
+                        pressureDemotion: false,
+                        previousResidentSize: record.ResidentMaxDimension,
+                        previousCommittedBytes: 0L,
+                        targetCommittedBytes: EstimateReleasedResidentBytes(retainedMips),
+                        backendName: VulkanDenseBackend.Name,
+                        reason: "restore published native Vulkan residency from source",
+                        priority: JobPriority.High,
+                        uploadPriorityClass: TextureUploadPriorityClass.VisibleNow,
+                        out CancellationTokenSource? previousReleasedLoad))
+                {
+                    cts.Dispose();
+                    failureReason = "Published texture rehydration transition could not be claimed.";
+                    return false;
+                }
+
+                if (previousReleasedLoad is not null)
+                    throw new InvalidOperationException("Texture rehydration replaced a pending transition.");
+                scheduledGeneration = record.UploadGeneration;
+                record.Backend = VulkanDenseBackend;
+                record.PublicationEligibleGeneration = scheduledGeneration;
+                releasedPixelSource = releasedSource;
+                releasedMipCount = retainedMips.Length;
+                residentData = default;
+                includeMipChain = releasedIncludesMipChain;
+                targetDimension = releasedTarget;
+            }
+            else
             {
-                cts.Dispose();
-                failureReason = "Published texture mip format differs from its retained streaming format.";
-                return false;
-            }
+                Mipmap2D[] frozenMips = new Mipmap2D[retainedMips.Length];
+                for (int mipIndex = 0; mipIndex < retainedMips.Length; mipIndex++)
+                {
+                    Mipmap2D? mip = retainedMips[mipIndex];
+                    if (mip is null || !mip.HasData() || mip.Width == 0 || mip.Height == 0)
+                    {
+                        cts.Dispose();
+                        failureReason = $"Published texture mip {mipIndex} has no resident data.";
+                        return false;
+                    }
+                    frozenMips[mipIndex] = mip;
+                }
 
-            includeMipChain = frozenMips.Length > 1;
-            long residentBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
-            if (!_transitionQueue.TryBeginTransition(
-                    record,
-                    cts,
-                    targetDimension,
-                    SparseTextureStreamingPageSelection.Full,
-                    frameId,
-                    pressureDemotion: false,
-                    previousResidentSize: record.ResidentMaxDimension,
-                    previousCommittedBytes: 0L,
-                    targetCommittedBytes: residentBytes,
-                    backendName: VulkanDenseBackend.Name,
-                    reason: "restore published native Vulkan residency",
-                    priority: JobPriority.High,
-                    uploadPriorityClass: TextureUploadPriorityClass.VisibleNow,
-                    out CancellationTokenSource? previousPendingLoad))
-            {
-                cts.Dispose();
-                failureReason = "Published texture rehydration transition could not be claimed.";
-                return false;
-            }
+                // A canceled native upload may already have prepared a larger CPU
+                // mip payload without advancing the published resident dimension.
+                targetDimension = Math.Max(frozenMips[0].Width, frozenMips[0].Height);
+                residentData = new TextureStreamingResidentData(
+                    frozenMips,
+                    record.SourceWidth,
+                    record.SourceHeight,
+                    targetDimension);
+                if (residentData.SizedInternalFormat != record.Format)
+                {
+                    cts.Dispose();
+                    failureReason = "Published texture mip format differs from its retained streaming format.";
+                    return false;
+                }
 
-            if (previousPendingLoad is not null)
-                throw new InvalidOperationException("Texture rehydration replaced a pending transition.");
-            scheduledGeneration = record.UploadGeneration;
-            record.Backend = VulkanDenseBackend;
-            record.PublicationEligibleGeneration = scheduledGeneration;
+                includeMipChain = frozenMips.Length > 1;
+                long residentBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
+                if (!_transitionQueue.TryBeginTransition(
+                        record,
+                        cts,
+                        targetDimension,
+                        SparseTextureStreamingPageSelection.Full,
+                        frameId,
+                        pressureDemotion: false,
+                        previousResidentSize: record.ResidentMaxDimension,
+                        previousCommittedBytes: 0L,
+                        targetCommittedBytes: residentBytes,
+                        backendName: VulkanDenseBackend.Name,
+                        reason: "restore published native Vulkan residency",
+                        priority: JobPriority.High,
+                        uploadPriorityClass: TextureUploadPriorityClass.VisibleNow,
+                        out CancellationTokenSource? previousPendingLoad))
+                {
+                    cts.Dispose();
+                    failureReason = "Published texture rehydration transition could not be claimed.";
+                    return false;
+                }
+
+                if (previousPendingLoad is not null)
+                    throw new InvalidOperationException("Texture rehydration replaced a pending transition.");
+                scheduledGeneration = record.UploadGeneration;
+                record.Backend = VulkanDenseBackend;
+                record.PublicationEligibleGeneration = scheduledGeneration;
+            }
         }
 
         bool IsCurrentTransition()
         {
             lock (record.Sync)
                 return ReferenceEquals(record.PendingLoadCts, cts) && !cts.IsCancellationRequested;
+        }
+
+        if (releasedPixelSource is not null)
+        {
+            ScheduleReleasedPixelRehydration(
+                record,
+                releasedPixelSource,
+                cts,
+                targetDimension,
+                includeMipChain,
+                releasedMipCount,
+                ESizedInternalFormat.Rgba8,
+                scheduledGeneration,
+                frameId,
+                IsCurrentTransition,
+                scheduleUpload);
+            return true;
         }
 
         bool queued;
@@ -1082,6 +1149,8 @@ internal sealed partial class ImportedTextureStreamingManager
             || frameId - _lastCompactionFrameId >= RecordRefCompactionIntervalFrames)
         {
             CompactRecordRefs(frameId);
+            // Expired decode clones would otherwise wait for the next cache access.
+            TextureStreamingResidentDataReuseCache.ExpireStale();
         }
 
         List<ImportedTextureStreamingSnapshot> snapshots = _evaluateSnapshotScratch;
@@ -1125,14 +1194,13 @@ internal sealed partial class ImportedTextureStreamingManager
             if (!globalStuckRecoveryAllowed)
                 continue;
 
-            Debug.TexturesWarning(
-                $"[TextureStreaming] Clearing stuck pending transition for '{snapshot.Record.FilePath}' "
-                + $"(pending={snapshot.Record.PendingMaxDimension}, resident={snapshot.Record.ResidentMaxDimension}, "
-                + $"staleFrames={framesSincePending}, globalIdle={globalStuckRecoveryAllowed})");
-
             if (!_transitionQueue.TryForceClearStuckTransition(snapshot.Record, frameId, out CancellationTokenSource? pendingLoadCts))
                 continue;
 
+            Debug.TexturesWarning(
+                $"[TextureStreaming] Clearing stuck pending transition for '{snapshot.Record.FilePath}' "
+                + $"(pending={snapshot.PendingMaxDimension}, resident={snapshot.ResidentMaxDimension}, "
+                + $"staleFrames={framesSincePending}, globalIdle={globalStuckRecoveryAllowed})");
             CancelPendingLoad(pendingLoadCts);
         }
 
@@ -1141,10 +1209,20 @@ internal sealed partial class ImportedTextureStreamingManager
         long nonManagedBytes = Math.Max(0L, trackedVramBytes - currentManagedBytes);
         bool usingVulkanAllocatorBudget = TryGetVulkanAllocatorStreamingPressure(
             out bool vulkanAllocatorPressure,
-            out string vulkanAllocatorBudgetReason);
+            out string vulkanAllocatorBudgetReason,
+            out long vulkanAllocatorBytes,
+            out long vulkanAllocatorBudgetBytes);
         long availableManagedBytes = trackedBudgetBytes == long.MaxValue
             ? long.MaxValue
             : Math.Max(0L, trackedBudgetBytes - nonManagedBytes);
+        if (usingVulkanAllocatorBudget)
+        {
+            // Streamed textures get what the device-local heap budget leaves after
+            // every other Vulkan allocation, so dense residency demotes before the
+            // driver starts paging instead of only pausing promotions.
+            long otherAllocatorBytes = Math.Max(0L, vulkanAllocatorBytes - currentManagedBytes);
+            availableManagedBytes = Math.Min(availableManagedBytes, Math.Max(0L, vulkanAllocatorBudgetBytes - otherAllocatorBytes));
+        }
         bool suppressPromotionsForVulkanPressure = usingVulkanAllocatorBudget && vulkanAllocatorPressure;
         if (availableManagedBytes < currentManagedBytes)
             allowPromotions = false;
@@ -1342,6 +1420,10 @@ internal sealed partial class ImportedTextureStreamingManager
                 frameId,
                 allowPromotions,
                 snapshot.Backend.PreviewMaxDimension);
+            desiredResidentSize = TextureResidencyPolicy.ApplyTextureQuality(
+                desiredResidentSize,
+                snapshot.Backend.PreviewMaxDimension,
+                RuntimeRenderingHostServices.Settings.TextureQuality);
             bool freezeResidentSizeForVulkan = ShouldFreezeVulkanImportedTextureResidency(snapshot);
             desiredResidentSize = ResolveVulkanSafeResidentSize(snapshot, desiredResidentSize);
             if (IsFailedPromotionCoolingDown(snapshot, desiredResidentSize, frameId))
@@ -1417,6 +1499,16 @@ internal sealed partial class ImportedTextureStreamingManager
                 pressureDemotion ? "vram pressure fit" : importsActive ? "import-era policy" : "visibility policy");
 
             assignedManagedBytes += targetCommittedBytes;
+
+            // A texture without its preview that the policy only holds (it was
+            // not visible or bound this frame) keeps what it has. The budget fit
+            // raises that hold to the minimum size, which used to queue a 1-pixel
+            // load that canceled the preview load in flight; when visibility
+            // flickered the two loads canceled each other forever, each one
+            // re-reading and decoding the full source image.
+            if (!snapshot.PreviewReady && desiredResidentSize <= snapshot.ResidentMaxDimension)
+                continue;
+
             if (!Monitor.TryEnter(snapshot.Record.Sync))
                 continue;
 
@@ -1586,10 +1678,14 @@ internal sealed partial class ImportedTextureStreamingManager
 
     private static bool TryGetVulkanAllocatorStreamingPressure(
         out bool pressure,
-        out string reason)
+        out string reason,
+        out long allocatorBytes,
+        out long allocatorBudgetBytes)
     {
         pressure = false;
         reason = string.Empty;
+        allocatorBytes = 0L;
+        allocatorBudgetBytes = 0L;
         if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
             return false;
 
@@ -1600,11 +1696,13 @@ internal sealed partial class ImportedTextureStreamingManager
             capability is null)
             return false;
 
+        // The heap budget comes from VK_EXT_memory_budget through VMA; the share of
+        // it that Vulkan allocations may use is a user-tunable engine setting.
         if (!capability.TryGetAllocatorBudgetSnapshot(
-                VulkanAllocatorStreamingBudgetRatio,
+                RuntimeEngine.Rendering.Settings.VramBudgetHeapFraction,
                 VulkanAllocatorStreamingReserveBytes,
-                out long allocatorBytes,
-                out long allocatorBudgetBytes,
+                out allocatorBytes,
+                out allocatorBudgetBytes,
                 out long largestHeapBytes,
                 out int activeAllocationCount))
         {
@@ -1847,7 +1945,8 @@ internal sealed partial class ImportedTextureStreamingManager
                         null,
                         completedResidentSize: 0,
                         frameId,
-                        cancelReason: $"Vulkan allocator pressure deferred retry: {ex.Message}");
+                        cancelReason: $"Vulkan allocator pressure deferred retry: {ex.Message}",
+                        allocationDeferred: true);
                     return;
                 }
 
@@ -2019,7 +2118,8 @@ internal sealed partial class ImportedTextureStreamingManager
         uint completedResidentSize,
         long frameId,
         bool failed = false,
-        string? cancelReason = null)
+        string? cancelReason = null,
+        bool allocationDeferred = false)
     {
         float targetLodBias = 0.0f;
         bool shouldApplyLodBias = false;
@@ -2038,6 +2138,7 @@ internal sealed partial class ImportedTextureStreamingManager
         double lifecycleMilliseconds = 0.0;
         string? textureName = texture?.Name;
         string? filePath;
+        bool releaseResidentPixels = false;
         lock (record.Sync)
         {
             if (!ReferenceEquals(record.PendingLoadCts, cts))
@@ -2134,16 +2235,35 @@ internal sealed partial class ImportedTextureStreamingManager
             }
             else if (failed)
             {
-                RecordFailedTransitionAfterLock(record, frameId, previousResidentSize, pendingResidentSize);
+                // Cool down from completion, not from when the transition was queued:
+                // a decode that waited behind a long queue would otherwise come back
+                // with its cooldown already spent and retry (and decode) immediately.
+                RecordFailedTransitionAfterLock(record, CurrentCompletionFrameId(frameId), previousResidentSize, pendingResidentSize);
+            }
+            else if (allocationDeferred && pendingResidentSize > previousResidentSize)
+            {
+                // Allocator pressure is not a failure, but retrying the promotion at
+                // once re-decodes the source for an allocation that just failed.
+                // Hold promotions to this size (visible or not) for one cooldown;
+                // smaller promotions stay allowed.
+                record.FailedTransitionTargetMaxDimension = pendingResidentSize;
+                record.FailedTransitionCooldownUntilFrameId = Math.Max(
+                    record.FailedTransitionCooldownUntilFrameId,
+                    CurrentCompletionFrameId(frameId) + FailedPromotionCooldownFrames);
             }
 
             if (texture is not null)
                 record.SparseNumLevels = sparseNumLevels;
 
+            releaseResidentPixels = completedResidentSize > 0 && CanReleasePublishedResidentPixels(record);
+
             TextureTransitionQueue.ClearPendingStateAfterLock(record);
             record.PublicationEligibleGeneration = 0L;
             record.LastTransitionFrameId = frameId;
         }
+
+        if (releaseResidentPixels && texture is not null)
+            RecordResidentPixelRelease(texture.ReleaseStreamingResidentPixels());
 
         if (texture is not null && shouldApplyLodBias && !NearlyEquals(texture.LodBias, targetLodBias))
             texture.LodBias = targetLodBias;
@@ -2196,6 +2316,13 @@ internal sealed partial class ImportedTextureStreamingManager
 
         cts.Dispose();
     }
+
+    /// <summary>
+    /// The later of the frame a transition was queued in and the current collect
+    /// frame, so cooldowns are measured from when a transition actually ended.
+    /// </summary>
+    private static long CurrentCompletionFrameId(long queuedFrameId)
+        => Math.Max(queuedFrameId, Volatile.Read(ref Instance._collectFrameId));
 
     private static void RecordFailedTransitionAfterLock(
         ImportedTextureStreamingRecord record,

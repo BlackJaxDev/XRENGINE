@@ -352,6 +352,22 @@ namespace XREngine.Components.Animation
                 set => SetField(ref _bendGoal, value);
 			}
 
+            private Transform? _upperArmGoal;
+            /// <summary>Tracked upper-arm/elbow position. The hand target retains final wrist priority.</summary>
+            public Transform? UpperArmGoal
+            {
+                get => _upperArmGoal;
+                set => SetField(ref _upperArmGoal, value);
+            }
+
+            /// <summary>Contribution of the upper-arm tracker to shoulder elevation and elbow direction.</summary>
+            private float _upperArmGoalWeight;
+            public float UpperArmGoalWeight
+            {
+                get => _upperArmGoalWeight;
+                set => SetField(ref _upperArmGoalWeight, value);
+            }
+
 			private Vector3 _wristToPalmAxis = Vector3.Zero;
 			/// <summary>
 			/// Local axis of the hand bone that points from the wrist towards the palm.
@@ -644,9 +660,39 @@ namespace XREngine.Components.Animation
                 //RuntimeAnimationHostServices.Current.RenderLine(Shoulder.SolverPosition, Shoulder.SolverPosition + _chestUp, ColorF4.Green);
 
                 Vector3 bendNormal = SolveTrigonometric();
+                if (ApplyTrackedUpperArm())
+                {
+                    // Keep the tracked shoulder influence, then restore the controller's wrist target.
+                    bendNormal = GetBendNormal();
+                    int upperArmIndex = _hasShoulder ? 1 : 0;
+                    VirtualBone.SolveTrigonometric(
+                        _bones,
+                        upperArmIndex,
+                        upperArmIndex + 1,
+                        upperArmIndex + 2,
+                        TargetPosition,
+                        bendNormal,
+                        Settings.PositionWeight);
+                }
                 //FixShoulderTwist();
                 FixUpperArmTwist(bendNormal);
                 SetHandRotation();
+            }
+
+            private bool ApplyTrackedUpperArm()
+            {
+                if (_upperArmGoal is null || UpperArmGoalWeight <= 0f)
+                    return false;
+                int pivotIndex = 0;
+                Vector3 pivot = _bones[pivotIndex].SolverPosition;
+                Vector3 current = Forearm.SolverPosition - pivot;
+                Vector3 desired = _upperArmGoal.WorldTranslation - pivot;
+                if (current.LengthSquared() < 1e-8f || desired.LengthSquared() < 1e-8f)
+                    return false;
+                Quaternion alignment = XRMath.RotationBetweenVectors(current, desired);
+                Quaternion weighted = Quaternion.Slerp(Quaternion.Identity, alignment, Math.Clamp(UpperArmGoalWeight, 0f, 0.5f));
+                VirtualBone.RotateAroundPoint(_bones, pivotIndex, pivot, weighted);
+                return true;
             }
 
             private void SetHandRotation()

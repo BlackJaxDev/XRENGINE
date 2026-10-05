@@ -1,12 +1,60 @@
 # Advanced pipeline (Vulkan): directional light casts no shadows on Sponza
 
-Status: **Re-enable recovery passed bounded Vulkan runtime validation; automated
-suites still have failures**, October 2, 2026. The isolated editor build passed
-with zero warnings and errors. Five long off/on cycles and three camera views
-were checked with `XRE_AOT_PARITY=off`; the normal unit-world parity mode remains
-blocked by a separate shader-loading exception (see below).
+Status: **Closed — strict-parity Vulkan shadow recovery and automated validation
+passed**, October 2, 2026. The isolated editor build passed with zero warnings
+and errors. The current validation no longer needs the parity override used in
+the original investigation.
 
-## Problem
+## Current checkout validation
+
+Work resumed from `79ab16f8f` on October 2, 2026. Both recorded test filters and
+two strict-parity import checks pass together: **342 passed, zero failures or
+skips**. All 50 originally listed failing methods also pass in separate test
+processes. Test updates followed live validation and explicit user clearance.
+The [completed failure checklist](../../todo/rendering/shadow-and-pipeline-validation-failures-todo.md)
+records each resolution. No user confirmation of visual quality was supplied;
+the runtime results below are agent-observed checks.
+
+- The validation machine initially had SDK 10.0.100; this checkout pins
+  10.0.401 and workload manifest 10.0.401.1. Both were provisioned under the
+  ignored shared validation tooling directory without changing `global.json`.
+- The isolated `shadow-closeout` editor build passed with zero warnings/errors.
+  Its first launch exited before rendering because the configured Steam Audio
+  native library was unavailable. The temporary fixture used passthrough audio;
+  original ignored world settings were restored after validation.
+- Sponza is available under the shared engine assets. The temporary fixture
+  enables its import, Vulkan, Advanced rendering, and directional shadows.
+- Third-party imports now honor registered runtime factories
+  and register `XRShader`, while preserving diagnostics for unregistered types.
+  Another fix retains camera-owned AO resource requirements during a resize
+  callback that temporarily has no camera; its existing regression test passes.
+- Strict parity also exposed reflective creation of the editor transform gizmo.
+  It and its child model components now use explicit factories, with model setup
+  deferred until scene-node attachment. Live node selection and clearing passed.
+- Vulkan generation publication now commits ownership before retiring old
+  allocators. Each failed physical-group retirement retains its owner in the
+  existing quarantine while retirement continues for the remaining groups.
+- The local broker deployment was missing. Setup and reconnect restored all five
+  tools. A bounded Astra review confirmed the publication boundary fix and
+  identified the need to continue retirement after individual failures.
+- With `XRE_AOT_PARITY=error`, Advanced execution remained admitted after three
+  shadow off/on cycles lasting 64, 109, and 153 seconds. Property readback confirmed
+  the disabled control. Normal and shadow-mask PNGs were viewed from courtyard,
+  gallery, and ground positions; occluded surfaces darkened again after recovery.
+  Sponza's merged mesh is translated 10 units along Z, which must be included in
+  camera positioning. Sky synchronization was disabled during manual light tests
+  because it otherwise restores `CastsShadows` every update.
+- The final strict-parity session completed without AOT parity exceptions,
+  grouped/sequential shadow failures, or retirement-quarantine diagnostics in its
+  logs. Vulkan validation layers were disabled. This is bounded live validation,
+  not certification of a published NativeAOT executable or every lighting setup.
+- The isolated session was stopped and the original ignored world settings were
+  restored byte-for-byte. No user editor was stopped.
+
+New disposable evidence is under
+`Build/_AgentValidation/20261002-183000-shadow-closeout/`.
+
+## Original problem
 
 Vulkan + `AdvancedRenderPipeline` + Unit Testing World Sponza with `DirLight` and
 `DirLightCastsShadows` enabled rendered no directional shadows. Every surface
@@ -115,7 +163,7 @@ settings events. The request now reports acceptance so the rejected candidate
 is destroyed outside the transition lock. `XRE_DIRECTIONAL_SHADOW_AUDIT=1` adds
 per-frame atlas state.
 
-### Resumed validation
+### Earlier validation before strict-parity repair
 
 The first resumed build was blocked by seven errors in the concurrent networking
 refactor. A later retry completed successfully with zero warnings and errors in
@@ -164,22 +212,23 @@ they do not validate NativeAOT parity or the default strict unit-world startup.
 lines up with present-now frame retries while Sponza meshes are cold. The manager
 retries the requests and the atlas renders once meshes are warm. No change needed.
 
-## Follow-ups
+## Validation scope
 
-- Capture light probes (or provide ambient) for the Advanced Sponza scene so
-  shadowed regions are not pure black.
-- Fix the strict unit-world `XRShader` factory/parity blocker in the separately
-  owned asset-loading work, then repeat validation without the parity override.
-- Triage the recorded automated test failures using the
-  [complete failure checklist](../../todo/rendering/shadow-and-pipeline-validation-failures-todo.md)
-  before treating the broader renderer/resource lifecycle as validated.
-- `DirectionalShadowAtlasFallbackTests` and
-  `CascadedShadowDefaultsAndForwardShaderTests` contain source-shape assertions
-  (`TryRenderDirectionalCascadeGroupSequentially(plan, light, entry, collectVisibleNow)`
-  and the single-line sequential tile call) that already fail at `HEAD`. They need
-  updating with explicit clearance.
+The missing-shadow and re-enable defects are resolved for the tested fixture.
+Without captured probes or ambient light, fully occluded Sponza surfaces remain
+black. Lighting authoring and acceptance across other materials/light settings
+are separate from these shadow-recovery checks. The strict factory blocker and
+the recorded automated failures are resolved above.
 
 ## Evidence locations (disposable)
+
+The closeout run is `Build/_AgentValidation/20261002-183000-shadow-closeout/`.
+Its `reports/tests/validation-complete.trx` contains 342 passing cases;
+`reports/isolated-summary.json` records the 50 isolated original methods.
+Viewed captures are in `mcp-captures/`. The final runtime log directory is
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20261002-194419-shadow-closeout/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-10-02_20-22-33_pid38936/`.
+
+The following locations describe the earlier investigation.
 
 `Build/_AgentValidation/20261002-090000-dirlight-shadows/` contains `mcp-captures/`
 (`fix/`, `sweep/`, `tune/`, `default-arch/`, `diag/`) and `renderdoc/`

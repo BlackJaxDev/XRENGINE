@@ -40,7 +40,8 @@ public sealed partial class VulkanRenderer :
     IStreamlinePresentationBackendCapability,
     IPhysicsChainComputeBackendFactoryCapability,
     IAdvancedVisibilityStageBackendCapability,
-    IGpuBufferContentReuseCapability{
+    IGpuBufferContentReuseCapability,
+    IVulkanAllocatorStreamingBackendCapability{
     internal override bool AdvancedPickingSourceRequiresSubmissionAcceptance => true;
 
     /// <summary>
@@ -595,6 +596,13 @@ public sealed partial class VulkanRenderer :
         // unlike OpenGL there is no thread-local error queue to drain here.
     }
     object IRenderBackendDiagnosticsCapability.GetLiveImageAllocationDiagnostics(int limit) => _resourceRuntime.GetLiveImageAllocationDiagnostics(limit);
+    string? IRenderBackendDiagnosticsCapability.GetMemoryAllocatorStatistics(bool detailedMap)
+        => _resourceRuntime.Allocations.Buffers.MemoryAllocator is VulkanVmaAllocator vma
+            ? vma.BuildStatsString(detailedMap)
+            : null;
+
+    object? IRenderBackendDiagnosticsCapability.GetResourcePlannerStateDiagnostics()
+        => _frameLoop.CaptureResourcePlannerStateDiagnostics();
     object IRenderBackendDiagnosticsCapability.GetLiveResourceOwnerDiagnostics(int top, bool collapseOwnerSuffix, out int groupCount)
     {
         IReadOnlyList<VulkanLiveResourceOwnerCount> groups = CaptureLiveResourceOwners(top, collapseOwnerSuffix);
@@ -849,6 +857,14 @@ public sealed partial class VulkanRenderer :
     public ERendererComputeEnqueueStatus TryCompleteOrderedComputePass(EMemoryBarrierMask mask, string label) => _frameLoop.TryCompleteOrderedComputePass(mask, label);
     public override ERendererComputeEnqueueStatus TryMemoryBarrier(EMemoryBarrierMask mask)
         => _frameLoop.TryCompleteOrderedComputePass(mask, "AdvancedDeformation.ConsumerBarrier");
+    /// <summary>
+    /// Device-local heap usage and budget from VMA (VK_EXT_memory_budget when the
+    /// device supports it), for texture streaming's residency budget.
+    /// </summary>
+    public bool TryGetAllocatorBudgetSnapshot(double budgetRatio, long reserveBytes, out long allocatedBytes, out long budgetBytes, out long largestHeapBytes, out int activeAllocationCount)
+        => _resourceRuntime.TryGetAllocatorBudgetSnapshot(VulkanApi, _deviceContext, budgetRatio, reserveBytes, out allocatedBytes, out budgetBytes, out largestHeapBytes, out activeAllocationCount);
+    /// <summary>No Vulkan image allocation is deferred by throwing, so no exception is an expected deferral.</summary>
+    public bool IsExpectedImageAllocationDeferral(Exception exception) => false;
     public EGpuBufferContentReuseStatus QueryBufferContentReuse(XRDataBuffer buffer)
         => _resourceRuntime.QueryBufferContentReuse(buffer);    public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
     public bool TryEnsureComputeBufferReady(XRDataBuffer buffer) => _commandRuntime.TryEnsureComputeBufferReady(_resourceRuntime.WrapperLookup, buffer, _frameLoop.AllowSynchronousResourceUploads);

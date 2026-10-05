@@ -112,5 +112,7 @@ TargetFramesPerSecondOverride:
 UnfocusedTargetFramesPerSecondOverride:
   HasOverride: false
   Value: 0
+StandingHeightToEyeHeightRatio: 0.936
+HeightCalibrationWarningToleranceMeters: 0.12
 ID: 353617f0-aadd-40fe-9289-f0b4d9e6a7f4
 Name: User Settings

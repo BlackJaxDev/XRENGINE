@@ -37,6 +37,8 @@ public sealed class RuntimeVrState
     public IOpenXrRuntime? OpenXRApi { get; set; }
     public object? CalibrationSettings { get; set; }
     public event Action<bool>? OpenXRSessionRunningChanged;
+    public event Action? TrackingBasisChanged;
+    public event Action? SessionGenerationChanged;
     public event Action<RuntimeVrPoseTiming>? RecalcMatrixOnDraw;
     public event Action<float>? IPDScalarChanged;
     public event Action<float>? RealWorldHeightChanged;
@@ -239,6 +241,12 @@ public sealed class RuntimeVrState
 
     public void NotifyOpenXRSessionRunningChanged(bool running)
         => OpenXRSessionRunningChanged?.Invoke(running);
+
+    public void NotifyTrackingBasisChanged()
+        => TrackingBasisChanged?.Invoke();
+
+    public void NotifySessionGenerationChanged()
+        => SessionGenerationChanged?.Invoke();
 
     private void ApplyViewInformation(XRViewport? viewport, XRCamera? camera)
     {

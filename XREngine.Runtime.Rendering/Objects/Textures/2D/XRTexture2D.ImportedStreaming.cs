@@ -276,22 +276,24 @@ public partial class XRTexture2D
         uint sourceWidth = image.Width;
         uint sourceHeight = image.Height;
 
-        cancellationToken.ThrowIfCancellationRequested();
-        long cloneStartTimestamp = StartImportedTextureTiming();
-        using RuntimeImage residentImage = new(image.Width, image.Height, image.Format, image.Type,
-            image.Pixels.ToArray(), image.RowStrideBytes, image.Origin);
-        double cloneMilliseconds = CompleteImportedTextureTiming(cloneStartTimestamp);
-
+        // The decoded image is only read: the resize produces a new image and the
+        // mips copy rows out of their source, so the full-size source is neither
+        // cloned nor copied again when it already fits the resident size.
+        const double cloneMilliseconds = 0.0;
         cancellationToken.ThrowIfCancellationRequested();
         long resizeStartTimestamp = StartImportedTextureTiming();
-        using RuntimeImage resizedImage = ResizePreviewIfNeeded(residentImage, Math.Max(1u, maxResidentDimension));
+        uint residentLimit = Math.Max(1u, maxResidentDimension);
+        using RuntimeImage? resizedImage = Math.Max(image.Width, image.Height) > residentLimit
+            ? ResizePreviewIfNeeded(image, residentLimit)
+            : null;
+        RuntimeImage residentSource = resizedImage ?? image;
         double resizeMilliseconds = CompleteImportedTextureTiming(resizeStartTimestamp);
 
         cancellationToken.ThrowIfCancellationRequested();
         long mipBuildStartTimestamp = StartImportedTextureTiming();
         Mipmap2D[] mipmaps = includeMipChain
-            ? GetMipmapsFromImage(resizedImage)
-            : [new Mipmap2D(resizedImage)];
+            ? GetMipmapsFromImage(residentSource)
+            : [new Mipmap2D(residentSource)];
         double mipBuildMilliseconds = CompleteImportedTextureTiming(mipBuildStartTimestamp);
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -370,6 +372,7 @@ public partial class XRTexture2D
         texture.ClearSparseTextureStreamingState();
 
         texture.Mipmaps = residentData.Mipmaps;
+        texture.TrackStreamingResidentMipmaps(residentData.Mipmaps);
         texture.AutoGenerateMipmaps = false;
         texture.Resizable = false;
         texture.SizedInternalFormat = residentData.SizedInternalFormat;
@@ -440,6 +443,7 @@ public partial class XRTexture2D
         texture.ClearSparseTextureStreamingState();
         texture.StreamingLockMipLevel = lockMipLevel;
         texture.Mipmaps = residentData.Mipmaps;
+        texture.TrackStreamingResidentMipmaps(residentData.Mipmaps);
         texture.Resizable = false;
         texture.SizedInternalFormat = residentData.SizedInternalFormat;
         texture.ApplyImportedTextureStreamingMipRangeMetadata(

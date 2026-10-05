@@ -23,9 +23,11 @@ public interface ICookedBinaryFeatureCodec
 
     long CalculateSize(object value);
 
+#if !XRE_PUBLISHED
     object CreateSchemaModel(object value);
 
     Type GetSchemaModelType(Type runtimeType);
+#endif
 }
 
 public static partial class CookedBinarySerializer
@@ -166,6 +168,7 @@ public static partial class CookedBinarySerializer
             return true;
         }
 
+#if !XRE_PUBLISHED
         public override CookedBinarySchemaNode? TryBuildValueSchema(
             CookedBinarySchemaBuilder builder,
             string name,
@@ -185,7 +188,7 @@ public static partial class CookedBinarySerializer
                 runtimeType,
                 model,
                 model.GetType(),
-                $"{codec.Info.Name} feature codec writes its serialized model via WriteValue");
+                $"{codec.Info.Description} {codec.Info.Name} feature codec writes its serialized model via WriteValue");
             return builder.FinalizeNode(node);
         }
 
@@ -204,9 +207,10 @@ public static partial class CookedBinarySerializer
                 node,
                 type,
                 codec.GetSchemaModelType(type),
-                $"{codec.Info.Name} feature codec writes its serialized model via WriteValue");
+                $"{codec.Info.Description} {codec.Info.Name} feature codec writes its serialized model via WriteValue");
             return builder.FinalizeNode(node, allowUnknownChildren: true);
         }
+#endif
     }
 
     private sealed class FeatureModuleLease(CookedBinaryModule module) : IDisposable
@@ -264,10 +268,12 @@ public static partial class CookedBinarySerializer
         public virtual bool TryAddSize(CookedBinarySizeCalculator calculator, object value, Type runtimeType, bool allowCustom)
             => false;
 
+#if !XRE_PUBLISHED
         public virtual CookedBinarySchemaNode? TryBuildValueSchema(CookedBinarySchemaBuilder builder, string name, Type? declaredType, object value, Type runtimeType, bool allowCustom)
             => null;
 
         public virtual CookedBinarySchemaNode? TryBuildTypeSchema(CookedBinarySchemaBuilder builder, string name, Type type, bool allowCustom)
             => null;
+#endif
     }
 }
