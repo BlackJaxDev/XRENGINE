@@ -9,7 +9,7 @@ public sealed partial class WebGpuMaterial
     private void ValidateCoverageRasterState(in StandardLitColorSurface surface)
         => ValidateCoverageRasterState(surface.TransparencyMode);
 
-    private void ValidateCoverageRasterState(ETransparencyMode mode)
+    private void ValidateCoverageRasterState(ETransparencyMode mode, bool allowStraightAlphaSource = false)
     {
         WebGpuRasterState state = Renderer.RasterState;
         if (_litAuxiliaryPass != EStandardLitColorAuxiliaryPass.None &&
@@ -29,7 +29,10 @@ public sealed partial class WebGpuMaterial
             ? EBlendingFactor.One : EBlendingFactor.SrcAlpha;
         EBlendingFactor destination = mode == ETransparencyMode.Additive
             ? EBlendingFactor.One : EBlendingFactor.OneMinusSrcAlpha;
-        if (state.SourceRgb != source || state.SourceAlpha != source ||
+        // Canonical unlit source-over may preserve alpha with One while RGB remains straight alpha.
+        bool alphaSourceMatches = state.SourceAlpha == source ||
+            allowStraightAlphaSource && mode == ETransparencyMode.AlphaBlend && state.SourceAlpha == EBlendingFactor.One;
+        if (state.SourceRgb != source || !alphaSourceMatches ||
             state.DestinationRgb != destination || state.DestinationAlpha != destination ||
             state.RgbEquation != EBlendEquationMode.FuncAdd || state.AlphaEquation != EBlendEquationMode.FuncAdd)
             throw new NotSupportedException("WebGPU.Material.CoverageBlendUnsupported: the raster state does not match the authored sorted-alpha mode.");

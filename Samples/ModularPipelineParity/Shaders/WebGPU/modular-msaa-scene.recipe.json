@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 3,
+  "name": "custom-msaa-scene",
+  "pass": "msaa-scene",
+  "source": "CustomMsaaScene.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "customMsaaSceneVertex",
+    "fragment": "customMsaaSceneFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 2,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 24,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 2,
+    "maxUniformBufferBindingSize": 128,
+    "maxDynamicUniformBuffersPerPipelineLayout": 3,
+    "maxUniformBuffersPerShaderStage": 3
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.sample.custom-msaa-scene.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 24,
+        "stepMode": "vertex",
+        "attributes": [
+          { "location": 0, "offset": 0, "format": "float32x3", "semantic": "position" },
+          { "location": 1, "offset": 12, "format": "float32x3", "semantic": "normal" }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "View",
+        "physicalName": "view_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": ["vertex"],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 64,
+        "dynamic": true,
+        "members": [
+          { "name": "viewProjection_0", "provider": "ViewProjection", "offset": 0, "bytes": 64, "type": "mat4x4<f32>" }
+        ]
+      },
+      {
+        "name": "Object",
+        "physicalName": "object_0",
+        "group": 0,
+        "binding": 1,
+        "kind": "uniform",
+        "visibility": ["vertex"],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 128,
+        "dynamic": true,
+        "members": [
+          { "name": "modelMatrix_0", "provider": "ModelMatrix", "offset": 0, "bytes": 64, "type": "mat4x4<f32>" },
+          { "name": "normalMatrix_0", "provider": "NormalMatrix", "offset": 64, "bytes": 64, "type": "mat4x4<f32>" }
+        ]
+      },
+      {
+        "name": "Material",
+        "physicalName": "material_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": ["fragment"],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          { "name": "matColor_0", "provider": "MatColor", "offset": 0, "bytes": 16, "type": "vec4<f32>" }
+        ]
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": { "scope": "custom", "pass": "msaa-scene" }
+}

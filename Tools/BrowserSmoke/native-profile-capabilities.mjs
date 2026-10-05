@@ -10,6 +10,7 @@ const maxBytes = 64 * 1024;
 const versions = [14, 15, 16, 17, 18, 19, 20, 21];
 const fields = ['Pid', 'PPid', 'TracerPid', 'Uid', 'Gid', 'CapInh', 'CapPrm', 'CapEff',
     'CapBnd', 'CapAmb', 'NoNewPrivs', 'Seccomp', 'Seccomp_filters'];
+const capabilityGrant = /^(?:cap_[a-z0-9_]+|\d{1,3})(?:,(?:cap_[a-z0-9_]+|\d{1,3}))*[=+-][eip]+$/;
 
 function reason(error) {
     return ['ENOENT', 'EACCES', 'EPERM', 'EIO', 'ENOTDIR', 'Budget', 'ByteLimit', 'NotRegularFile']
@@ -30,15 +31,27 @@ export function summarizeNativeProfileElf(output) {
     };
 }
 
+/** Only the offset-zero basename is a debuglink; other strings can be checksum bytes. */
+export function readNativeProfileDebugLink(output) {
+    const sections = output.split("String dump of section '.gnu_debuglink':");
+    if (sections.length !== 2) return { status: 'unavailable', reason: 'DebugLinkDumpUnavailableOrAmbiguous' };
+    const matches = [...sections[1].matchAll(/^\s*\[\s*0+\]\s+([^\r\n]+)$/gm)];
+    const name = matches.length === 1 ? matches[0][1].trim() : '';
+    if (!/^[A-Za-z0-9._+-]{1,255}$/.test(name) || name === '.' || name === '..' || path.basename(name) !== name)
+        return { status: 'unavailable', reason: 'DebugLinkFilenameRejected' };
+    return { status: 'available', filename: name };
+}
+
 /** Read-only inventory before the existing compile watchdog starts; never establishes permission to attach. */
 export async function captureNativeProfileCapabilities(processes) {
     const started = performance.now(), deadline = started + budgetMs;
     const result = { status: 'collecting', platform: process.platform, startedUtc: new Date().toISOString(),
         budgetMs, commandBudgetMs, maxCommandStreamBytes: maxBytes, maxFileBytes: maxBytes,
-        maxPathDirectories: 32, maxToolPaths: 8, maxPackageRecords: 96,
-        tools: Object.fromEntries(['perf', 'lldb', 'gdb', 'readelf', 'symbolizer', 'addr2line']
+        maxPathDirectories: 32, maxToolPaths: 8, maxPackageRecords: 96, maxDebugFileCandidates: 3,
+        tools: Object.fromEntries(['perf', 'lldb', 'gdb', 'readelf', 'symbolizer', 'addr2line', 'getcap']
             .map(name => [name, { status: 'unavailable', reason: 'NotCollected', paths: [] }])),
         packages: { status: 'unavailable', reason: 'NotCollected' },
+        perfFileCapabilities: { status: 'unavailable', reason: 'NotCollected', executables: [] },
         controls: Object.fromEntries(['perfEventParanoid', 'ptraceScope']
             .map(name => [name, { status: 'unavailable', reason: 'NotCollected' }])), processes: [], binaries: [],
         interpretation: 'Executable/package presence and read-only kernel policy values do not establish usable profiling, debugger attachment permission, symbol resolution or a compiler bottleneck. No profiler, debugger or symbolizer is started; no attachment, sampling, installation, network lookup or security change is attempted. SwiftShader candidates are adjacent installed files, not proof of loaded mappings.' };
@@ -95,7 +108,7 @@ export async function captureNativeProfileCapabilities(processes) {
             `/usr/lib/linux-tools/${os.release()}`, `/usr/lib/linux-tools-${os.release()}`, ...inherited])];
         const directories = allDirectories.slice(0, result.maxPathDirectories);
         result.toolSearch = { directories, truncated: allDirectories.length > directories.length,
-            scope: 'Bounded PATH plus standard LLVM/kernel tool directories; no recursive search or tool execution during discovery. Only system readelf and dpkg-query are used for subsequent static metadata.' };
+            scope: 'Bounded PATH plus standard LLVM/kernel tool directories; no recursive search or tool execution during discovery. Only system readelf, dpkg-query and getcap are used for subsequent static metadata.' };
         const families = { perf: ['perf'], lldb: ['lldb', ...versions.map(value => `lldb-${value}`)],
             gdb: ['gdb'], readelf: ['readelf', 'llvm-readelf', ...versions.map(value => `llvm-readelf-${value}`)],
             symbolizer: ['llvm-symbolizer', ...versions.map(value => `llvm-symbolizer-${value}`)],
@@ -108,6 +121,40 @@ export async function captureNativeProfileCapabilities(processes) {
                 if (entry && !found.paths.some(value => value.resolvedPath === entry.resolvedPath)) found.paths.push(entry);
             }
             if (found.paths.length) { found.status = 'executable-found'; found.reason = null; }
+        }
+    }
+    async function perfCapabilitiesInventory() {
+        let getcap;
+        for (const file of ['/usr/sbin/getcap', '/sbin/getcap', '/usr/bin/getcap', '/bin/getcap']) {
+            getcap = await executable(file);
+            if (getcap) break;
+        }
+        result.tools.getcap = getcap ? { status: 'executable-found', reason: null, paths: [getcap] }
+            : { status: 'unavailable', reason: 'SystemGetcapNotFound', paths: [] };
+        const data = result.perfFileCapabilities;
+        data.interpretation = 'File capability metadata only; no perf execution or permission test. Grants do not establish effective profiling access.';
+        if (!getcap) { data.reason = 'SystemGetcapNotFound'; return; }
+        if (!result.tools.perf.paths.length) { data.reason = 'NoDiscoveredPerfExecutable'; return; }
+        data.status = 'collected'; data.reason = null;
+        for (const perf of result.tools.perf.paths) {
+            const entry = { path: perf.path, resolvedPath: perf.resolvedPath, status: 'unavailable' };
+            data.executables.push(entry);
+            // Inspect the resolved regular file; getcap does not follow executable symlinks.
+            const value = await command(getcap.path, ['-n', '-v', '--', perf.resolvedPath]);
+            entry.reason = value.reason;
+            if (value.status !== 'available') continue;
+            const output = value.output.trimEnd();
+            if (output === perf.resolvedPath) {
+                entry.status = 'available'; entry.capabilities = null; entry.namespaceRootId = null; continue;
+            }
+            const text = output.startsWith(`${perf.resolvedPath} `) ? output.slice(perf.resolvedPath.length + 1) : '';
+            const match = text.match(/^(.{1,1024}?)(?: \[rootid=(\d{1,10})\])?$/);
+            if (!match || !match[1].split(' ').every((group, index) => capabilityGrant.test(group)
+                || index === 0 && /^=[eip]*$/.test(group))) {
+                entry.reason = 'UnexpectedCapabilityMetadata'; continue;
+            }
+            entry.status = 'available'; entry.capabilities = match[1];
+            entry.namespaceRootId = match[2] === undefined ? null : Number(match[2]);
         }
     }
     async function packageInventory() {
@@ -184,17 +231,55 @@ export async function captureNativeProfileCapabilities(processes) {
                 if (!stat.isFile()) throw Object.assign(new Error(), { code: 'NotRegularFile' });
                 entry.byteLength = stat.size;
                 if (!readelf) { entry.reason = 'SystemReadelfNotFound'; continue; }
-                const value = await command(readelf.path, ['--wide', '--section-headers', '--notes', '--', candidate.path]);
+                const value = await command(readelf.path, ['--wide', '--section-headers', '--notes',
+                    '--debug-dump=no-follow-links', '--string-dump=.gnu_debuglink', '--', candidate.path]);
                 entry.status = value.status; entry.reason = value.reason;
-                if (value.status === 'available') entry.elf = summarizeNativeProfileElf(value.output);
+                if (value.status === 'available') {
+                    entry.elf = summarizeNativeProfileElf(value.output);
+                    entry.debugLink = entry.elf.debugSections.includes('.gnu_debuglink') ? readNativeProfileDebugLink(value.output)
+                        : { status: 'unavailable', reason: 'DebugLinkSectionAbsent' };
+                    await debugFileInventory(entry, readelf.path);
+                }
             } catch (error) { entry.reason = reason(error); }
         }
+    }
+    async function debugFileInventory(binary, readelf) {
+        const data = binary.debugFiles = { status: 'collecting', candidates: [],
+            interpretation: 'Only standard adjacent, adjacent .debug and build-ID paths are inspected. Build-ID equality is checked; debuglink CRC and symbol resolution are not tested. No recursive search or debug-link following.' };
+        const expectedId = binary.elf.buildIds.length === 1 ? binary.elf.buildIds[0] : null;
+        const candidates = [];
+        if (binary.debugLink.status === 'available') {
+            const directory = path.dirname(binary.path), filename = binary.debugLink.filename;
+            candidates.push(path.join(directory, filename), path.join(directory, '.debug', filename));
+        }
+        if (expectedId) candidates.push(`/usr/lib/debug/.build-id/${expectedId.slice(0, 2)}/${expectedId.slice(2)}.debug`);
+        for (const file of [...new Set(candidates)].slice(0, result.maxDebugFileCandidates)) {
+            const entry = { path: file, status: 'unavailable', buildIdMatch: 'unavailable' };
+            data.candidates.push(entry);
+            try {
+                check();
+                if (file === binary.path) { entry.reason = 'CandidateIsBinary'; continue; }
+                const stat = await fs.stat(file);
+                if (!stat.isFile()) throw Object.assign(new Error(), { code: 'NotRegularFile' });
+                entry.byteLength = stat.size;
+                const value = await command(readelf, ['--wide', '--section-headers', '--notes',
+                    '--debug-dump=no-follow-links', '--', file]);
+                entry.status = value.status; entry.reason = value.reason;
+                if (value.status !== 'available') continue;
+                entry.elf = summarizeNativeProfileElf(value.output);
+                if (!expectedId || entry.elf.buildIds.length !== 1) { entry.reason = 'BuildIdUnavailableOrAmbiguous'; continue; }
+                entry.buildIdMatch = entry.elf.buildIds[0] === expectedId ? 'matched' : 'mismatch';
+            } catch (error) { entry.reason = reason(error); }
+        }
+        data.status = candidates.length ? 'collected' : 'unavailable';
+        if (!candidates.length) data.reason = 'NoSafeDebugLinkOrUniqueBuildId';
     }
     try {
         await Promise.race([(async () => {
             await controlsInventory();
             await processInventory();
             await toolsInventory();
+            await perfCapabilitiesInventory();
             await packageInventory();
             await binaryInventory();
             result.status = 'collected';

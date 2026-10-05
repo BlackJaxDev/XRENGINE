@@ -240,14 +240,40 @@ internal sealed partial class EngineMeshDiagnosticFixture
             resourceGeneration = instance.ResourceGeneration,
             pipelineInstanceId = instance.InstanceId,
             renderDraws = _renderer.LastEngineMeshDrawCount,
+            witnessState = _unlitProfile.BlendedWitness ? new
+            {
+                rear = DescribeUnlitWitnessMaterial(_unlitMaterials[11]),
+                front = DescribeUnlitWitnessMaterial(_unlitMaterials[10]),
+            } : null,
             pipelineDecline = instance.LastRenderDeclineReason,
             resourceFailure = instance.LastResourceGenerationFailure,
         });
         return observed[..^1] + ",\"indexedCache\":" +
             (_unlitProfile.SubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback
                 ? _renderer.GetAuthoredIndexedCacheDiagnostics() : "null") +
-            ",\"witness\":" + (_unlitProfile.SampleCount > 1 ? UnlitWitnessMetadata : "null") + "," +
+            ",\"witness\":" + (_unlitProfile.SampleCount > 1
+                ? _unlitProfile.BlendedWitness ? UnlitBlendedWitnessMetadata : UnlitWitnessMetadata : "null") + "," +
             UnlitCaseMetadata[index][1..];
+    }
+
+    private static object DescribeUnlitWitnessMaterial(XRMaterial material)
+    {
+        BlendMode? blend = material.RenderOptions.BlendModeAllDrawBuffers;
+        return new
+        {
+            name = material.Name,
+            semantic = material.EngineSemantic.ToString(),
+            transparency = material.TransparencyMode.ToString(),
+            renderPass = material.RenderPass,
+            blendEnabled = blend?.Enabled.ToString(),
+            rgbSrc = blend?.RgbSrcFactor.ToString(),
+            rgbDst = blend?.RgbDstFactor.ToString(),
+            alphaSrc = blend?.AlphaSrcFactor.ToString(),
+            alphaDst = blend?.AlphaDstFactor.ToString(),
+            depthTest = material.RenderOptions.DepthTest?.Enabled.ToString(),
+            depthWrite = material.RenderOptions.DepthTest?.UpdateDepth,
+            excludeIndirect = material.RenderOptions.ExcludeFromGpuIndirect,
+        };
     }
 
     private static EngineMaterialSemanticIdentity CaseSemantic(int index) => index switch

@@ -19,6 +19,7 @@ public sealed class ModularPipelineParityGameBootstrap : IGameLaunchBootstrap
         if (world.DefaultGameMode is not ModularPipelineParityGameMode { FixtureMarker: "modular-clear-quad-v1" })
             throw new InvalidOperationException("The saved modular pipeline game mode did not hydrate.");
         ModularPipelineParityWorldContract.Validate(world);
+        ModularPipelineParityWorldContract.ValidateSceneParts(world);
         cookedSettings.StartupWindows =
         [
             new GameWindowStartupSettings

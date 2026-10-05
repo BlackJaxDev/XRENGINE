@@ -4,7 +4,7 @@ namespace XREngine.Browser.Diagnostics;
 
 /// <summary>Explicit startup inputs for the ordinary-unlit Default pipeline diagnostic.</summary>
 internal sealed record EngineUnlitDiagnosticProfile(string Name, uint SampleCount, bool AmbientOcclusion,
-    EMeshSubmissionStrategy SubmissionStrategy)
+    EMeshSubmissionStrategy SubmissionStrategy, bool BlendedWitness = false)
 {
     public static EngineUnlitDiagnosticProfile Baseline { get; } = new("cpu-x1", 1, false, EMeshSubmissionStrategy.CpuDirect);
 
@@ -12,9 +12,12 @@ internal sealed record EngineUnlitDiagnosticProfile(string Name, uint SampleCoun
     {
         "cpu-x1" => Baseline,
         "cpu-x4" => new(name, 4, false, EMeshSubmissionStrategy.CpuDirect),
+        "cpu-x4-blended" => new(name, 4, false, EMeshSubmissionStrategy.CpuDirect, true),
         "cpu-x4-ao" => new(name, 4, true, EMeshSubmissionStrategy.CpuDirect),
         "gpu-indirect-x1" => new(name, 1, false, EMeshSubmissionStrategy.GpuIndirectZeroReadback),
         "gpu-indirect-x4" => new(name, 4, false, EMeshSubmissionStrategy.GpuIndirectZeroReadback),
-        _ => throw new ArgumentException("EngineMeshDiagnostic.UnlitProfileUnsupported: select cpu-x1, cpu-x4, cpu-x4-ao, gpu-indirect-x1, or gpu-indirect-x4.", nameof(name)),
+        "gpu-indirect-x4-blended" => new(name, 4, false, EMeshSubmissionStrategy.GpuIndirectZeroReadback, true),
+        "gpu-indirect-x4-ao" => new(name, 4, true, EMeshSubmissionStrategy.GpuIndirectZeroReadback),
+        _ => throw new ArgumentException("EngineMeshDiagnostic.UnlitProfileUnsupported: select cpu-x1, cpu-x4, cpu-x4-blended, cpu-x4-ao, gpu-indirect-x1, gpu-indirect-x4, gpu-indirect-x4-blended, or gpu-indirect-x4-ao.", nameof(name)),
     };
 }

@@ -83,12 +83,16 @@ public sealed class EngineUnlitSurfaceBinding(XRMaterial material)
         RenderingParameters options = material.RenderOptions;
         bool sorted = mode is ETransparencyMode.AlphaBlend or ETransparencyMode.PremultipliedAlpha or ETransparencyMode.Additive;
         BlendMode? blend = options.BlendModeAllDrawBuffers;
+        // Straight-alpha RGB may use One for alpha to preserve source-over alpha on an HDR target.
+        bool alphaSourceMatches = blend is not null &&
+            (blend.AlphaSrcFactor == (mode == ETransparencyMode.PremultipliedAlpha ? EBlendingFactor.One : EBlendingFactor.SrcAlpha) ||
+             mode == ETransparencyMode.AlphaBlend && blend.AlphaSrcFactor == EBlendingFactor.One);
         if (options.DepthTest.Enabled != ERenderParamUsage.Enabled || options.DepthTest.Function != EComparison.Lequal ||
             options.DepthTest.UpdateDepth == sorted || options.AlphaToCoverage == ERenderParamUsage.Enabled ||
             options.BlendModesPerDrawBuffer is not null || (blend?.Enabled == ERenderParamUsage.Enabled) != sorted ||
             sorted && (blend!.RgbEquation != EBlendEquationMode.FuncAdd || blend.AlphaEquation != EBlendEquationMode.FuncAdd ||
                 blend.RgbSrcFactor != (mode == ETransparencyMode.PremultipliedAlpha ? EBlendingFactor.One : EBlendingFactor.SrcAlpha) ||
-                blend.AlphaSrcFactor != (mode == ETransparencyMode.PremultipliedAlpha ? EBlendingFactor.One : EBlendingFactor.SrcAlpha) ||
+                !alphaSourceMatches ||
                 blend.RgbDstFactor != (mode == ETransparencyMode.Additive ? EBlendingFactor.One : EBlendingFactor.OneMinusSrcAlpha) ||
                 blend.AlphaDstFactor != (mode == ETransparencyMode.Additive ? EBlendingFactor.One : EBlendingFactor.OneMinusSrcAlpha)))
         {

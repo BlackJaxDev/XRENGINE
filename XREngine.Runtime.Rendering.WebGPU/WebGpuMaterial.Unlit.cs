@@ -86,7 +86,7 @@ public sealed partial class WebGpuMaterial
         WebGpuFrameBuffer? target = Renderer.GetBoundEngineFrameBuffer();
         if (target is null || !target.HasDepth || target.SampleCount is not (1 or 4))
             throw new NotSupportedException("WebGPU.Unlit.OutputUnsupported: unlit raster replay requires one or four matching color/depth samples.");
-        ValidateCoverageRasterState(surface.TransparencyMode);
+        ValidateCoverageRasterState(surface.TransparencyMode, allowStraightAlphaSource: true);
         if (surface.Semantic == EngineMaterialSemanticIdentity.UnlitColorV1)
             Program.SetVector4("MatColor", surface.Color);
         else

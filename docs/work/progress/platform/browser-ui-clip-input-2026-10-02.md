@@ -576,3 +576,53 @@ is installed, so no C# execution or build result is claimed; no tests or
 JavaScript substitute for managed execution were added. The next genuine
 Editor publication and browser run must establish the restored projection and
 the unchanged 17-control, pixel and input requirements.
+
+## Published frame-clock stall before initial capture
+
+Exact `6fea26f9` run `37248918555`, UI job `111577820160`, captures all 17
+engine controls and native proxies, including `Offscreen Action` with the
+expected projected rectangle. Both the control-count and checked-toggle
+predicates succeed. Artifact `11320713829` has SHA-256
+`a0bc1bc25b89d631d448cd4fe01d9dd7cd3ea9af85681d89e020dc4c7556dbb7`.
+The first checkpoint then times out in `scrollIntoViewIfNeeded` while waiting
+for a stable element. Its ordinary screenshot and pixel assertions are never
+reached, so this establishes restored traversal rather than UI acceptance.
+
+The bounded failure read succeeds 180,045 ms after the startup snapshot.
+Both snapshots have shared frame 143, browser frame timestamp 12,708.1 ms,
+two submissions, two pending combined receipts, 141 completed receipts and
+identical engine-frame counters. The canvas remains 1280 x 720 at CSS position
+(104.5, 178.875), with surface generation 1, visible, focused and attached.
+The retained lifecycle/status records are unchanged. There is no admission
+deferral, failure event or device-loss warning. The failure screenshot reaches
+font readiness but times out after five seconds. JavaScript observation can
+therefore still run while the frame clock makes no observed progress; moving
+geometry or a blocked managed call is not established by this artifact.
+
+Source inspection finds no silent normal host-loop exit consistent with that
+state. It schedules another animation frame even after denied admission, and
+two pending receipts do not exhaust the 64-slot capacity. Playwright's geometry
+stability wait also requires browser animation frames. Each combined receipt
+waits for two error scopes and queue completion, so the pending count alone
+cannot identify which promises stopped progressing. Removing the stability
+wait would not explain the unchanged clock or the failed full-page capture.
+
+The harness now runs its existing five-second animation-frame witness before
+checkpoint scrolling, preserving the subsequent scroll, input-sync wait,
+ordinary screenshot and every pixel/input assertion. A stalled frame clock
+will fail at its own bounded witness instead of spending the full capture
+timeout waiting for element stability. Cold snapshots additionally report the
+existing host request/session/lifecycle flags, completed queue sequence and
+up to 64 active receipt records with remaining-count and owner/device identity
+comparisons. These are direct field reads; they create no GPU work, completion
+promise, receipt gate or shipping scheduling change.
+
+Independent exact-diff source review approves this bounded evidence change.
+JavaScript syntax and whitespace checks pass. Executing the production
+qualification function with mocked page operations confirms pre-scroll and
+post-scroll frame-witness failures retain the original error, bounded failure
+capture and cleanup. Those checks validate harness ordering only; no local
+browser or managed execution is claimed. The shipping frame/compositor stall
+has no proven root cause yet. The next genuine run must distinguish the host's
+retained request from browser RAF progress and queue completion from unresolved
+error scopes, then qualify actual UI pixels and delivered inputs.
