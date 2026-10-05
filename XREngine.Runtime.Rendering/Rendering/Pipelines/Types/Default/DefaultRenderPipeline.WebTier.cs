@@ -9,6 +9,7 @@ using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Scene;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering;
@@ -240,6 +241,7 @@ public partial class DefaultRenderPipeline
             AppendWebGtaoCommands(aoCommands);
             aoChoice.TrueCommands = aoCommands;
 
+            commands.Add<VPRC_Manual>().ManualAction = SetWebSceneClearColor;
             using (commands.AddUsing<VPRC_BindFBOByName>(command =>
             {
                 command.SetOptions(ForwardPassFBOName, clearColor: true, clearDepth: false, clearStencil: false);
@@ -275,6 +277,7 @@ public partial class DefaultRenderPipeline
             commands.Add<VPRC_RenderDebugShapes>().DepthTested = true;
             }
 
+            commands.Add<VPRC_SetClears>().Set(ColorF4.Transparent, null, null);
             AppendWebColorResolveCommands(commands);
 
             VPRC_IfElse bloomChoice = commands.Add<VPRC_IfElse>();
@@ -327,6 +330,15 @@ public partial class DefaultRenderPipeline
         postRender.SetOptions((int)EDefaultRenderPass.PostRender, EMeshSubmissionStrategy.CpuDirect);
         postRender.PreserveMeshSubmissionStrategy = true;
         return commands;
+    }
+
+    /// <summary>Restores the authored scene clear after nested producers have applied their own clear state.</summary>
+    private static void SetWebSceneClearColor()
+    {
+        ColorF4 color = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.RenderingWorld?.TargetWorldObject is XRWorld world
+            ? world.Settings.ClearColor
+            : ColorF4.Transparent;
+        RuntimeEngine.Rendering.State.ClearColor(color);
     }
 
     private static void DescribeWebRenderPasses(RenderPassMetadataCollection metadata)

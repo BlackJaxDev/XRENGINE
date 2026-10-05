@@ -651,3 +651,61 @@ No production scheduling or receipt policy was changed on this evidence.
 Artifact `11336718549` has ZIP SHA-256
 `0723fcfb6d7463039d4f1790994756e58c078ab451a77797ef2938da8e4ad4c9`,
 independently verified after download. UI pixel/input acceptance remains open.
+
+## Hardware UI background diagnosis and scene clear correction
+
+The physical run of exact source `a7f3dadf334bee75af2792055175bc687e14491b`
+uses shipping UI artifact `11347222425`, ZIP size 57,175,166 bytes and SHA-256
+`8046d836712b77874d07ac8865f1874a8d5d9fc71d4a8bebb308fa80a03f25df`.
+It runs on Intel Arc Xe-LPG driver `32.0.101.8132` in Edge `154.0.4258.53`,
+with adapter fallback false and the sandbox enabled. Seventeen controls and
+advancing frames are observed. Keyboard activation, single-line editing,
+readonly behavior, resize and reload have scoped passing evidence.
+
+The 1281 x 721 capture has opaque black at `(721,304)` and `(1249,304)`.
+These are the existing witness's scaled positions for the world-canvas
+transparent gap and scene background, respectively. The outside-canvas
+sample is not covered by either canvas. The authored world clear is linear
+RGB `(0.125,0.25,0.375)` with alpha 1; exposure 1, Mobius transition 0.6 and
+gamma 1 imply presented RGB near `(70,120,157)`.
+
+Source tracing finds that `DefaultRenderPipeline.CreateWebOutputCommands`
+sets transparent black, runs the nested offscreen producer, and clears the
+scene HDR framebuffer without applying `WorldSettings.ClearColor`.
+`VPRC_SetClears` applies its supplied constant directly. The owned UI target
+also correctly clears to transparent black; changing that clear would break
+premultiplied composition rather than supply the missing scene background.
+The published packet's clear binding and the GPU intermediate target were
+not captured, so the hardware screenshot alone does not distinguish renderer
+output from browser presentation.
+
+The browser Default chain now resolves its invocation-selected rendering
+world's `TargetWorldObject` as `XRWorld` and applies its authored clear
+immediately before the scene HDR framebuffer bind, after nested `PreRender`
+and optional AO work. `XRViewport` passes the already selected
+`worldOverride ?? World` through the existing internal pipeline entry into
+the main-attribute scope. Public/direct pipeline routes retain the
+`viewport?.World` default. The scope stores the prior world reference in its
+existing state stack and restores it on normal or exceptional exit; no
+scene-owner lookup or global viewport-derived world change is introduced.
+A static callback avoids per-frame closure allocation. A missing authored
+world retains the previous transparent clear. After the scene framebuffer
+scope, a color-only command restores transparent clear for later callbacks
+and `PostRender`, without changing depth or stencil. Owned UI clears,
+explicit clear commands, desktop command chains, GLSL, fixture colors and
+browser alpha mode are unchanged.
+
+Pointer presses at reconstructed control centers did not deliver button
+actions; a later multiline-focus wait also failed. Source ordering exposes a
+previous-frame hit-target hazard, especially when moving from a native
+textbox because canvas-only mouse-move publication requires canvas focus.
+The observed repeated button failures do not yet establish that hazard as
+their complete cause. A focused-canvas retry with advancing frames before
+press, plus final event coordinates, button state and engine-focused-control
+observations after both edges, remains required. Pointer behavior is unchanged.
+
+Whitespace validation covers this source correction. No local managed build
+or browser execution was performed, and no tests or harness changes were
+added. Fresh publication, decoded scene/UI clear records, both background
+pixel witnesses, premultiplied overlap pixels and delivered input acceptance
+remain pending independent review and the authorized CI/physical retest.

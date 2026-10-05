@@ -537,6 +537,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             camera,
             stereoRightEyeCamera,
             viewport,
+            viewport?.World,
             targetFBO,
             userInterface,
             shadowPass,
@@ -558,6 +559,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         XRCamera? camera,
         XRCamera? stereoRightEyeCamera,
         XRViewport? viewport,
+        IRuntimeRenderWorld? renderingWorld,
         XRFrameBuffer? targetFBO,
         IRuntimeScreenSpaceUserInterface? userInterface,
         bool shadowPass,
@@ -584,6 +586,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 camera,
                 stereoRightEyeCamera,
                 viewport,
+                renderingWorld,
                 targetFBO,
                 userInterface,
                 shadowPass,
@@ -613,6 +616,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         XRCamera? camera,
         XRCamera? stereoRightEyeCamera,
         XRViewport? viewport,
+        IRuntimeRenderWorld? renderingWorld,
         XRFrameBuffer? targetFBO,
         IRuntimeScreenSpaceUserInterface? userInterface,
         bool shadowPass,
@@ -669,7 +673,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         using (RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(this))
         {
-            using (RenderState.PushMainAttributesWithFrozenDesktopHistory(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands, viewHistorySequenceId: viewHistorySequenceId, viewHistoryPipelineIdentity: TemporalHistoryPipelineIdentity, viewHistoryAuthoring: viewHistorySequenceId != 0UL, viewHistorySourceFrame: frozenHistoryCandidate.SourceFrame, viewHistoryOutputRequest: viewHistoryOutputRequest, frozenDesktopView: frozenDesktopView, frozenHistoryCandidate: frozenHistoryCandidate))
+            using (RenderState.PushMainAttributesWithFrozenDesktopHistory(viewport, renderingWorld, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands, viewHistorySequenceId: viewHistorySequenceId, viewHistoryPipelineIdentity: TemporalHistoryPipelineIdentity, viewHistoryAuthoring: viewHistorySequenceId != 0UL, viewHistorySourceFrame: frozenHistoryCandidate.SourceFrame, viewHistoryOutputRequest: viewHistoryOutputRequest, frozenDesktopView: frozenDesktopView, frozenHistoryCandidate: frozenHistoryCandidate))
             {
                 // Resource factories and transactional backend preparation consume the active
                 // pipeline, camera, viewport, and frame-output state. Keep that state installed,

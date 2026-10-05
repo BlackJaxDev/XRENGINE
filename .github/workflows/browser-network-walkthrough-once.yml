@@ -29,8 +29,6 @@ jobs:
     if: github.run_attempt == 1
     runs-on: windows-latest
     timeout-minutes: 75
-    env:
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/xr-network-playwright
     steps:
       - name: Checkout immutable invocation helpers
         uses: actions/checkout@v7
@@ -102,6 +100,8 @@ jobs:
         if: steps.request.outputs.candidate == 'true'
         shell: pwsh
         working-directory: engine/Tools/BrowserSmoke
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/xr-network-playwright
         run: |
           $package = Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json
           if ($package.devDependencies.'@playwright/test' -ne '1.63.0') { throw 'Unexpected Playwright dependency.' }
@@ -117,6 +117,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/xr-network-playwright
         run: |
           $run = Join-Path $env:GITHUB_WORKSPACE "engine/Build/_AgentValidation/20261005-170000-network-walkthrough-$env:GITHUB_RUN_ID"
           ./workflow/Tools/BrowserSmoke/network-walkthrough/Invoke-NetworkWalkthrough.ps1 -Mode Prepare `
@@ -162,6 +163,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           XRE_NETWORK_PREREQUISITE_ARTIFACT_ID: ${{ steps.prerequisites.outputs.artifact-id }}
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/xr-network-playwright
         run: |
           $run = Join-Path $env:GITHUB_WORKSPACE "engine/Build/_AgentValidation/20261005-170000-network-walkthrough-$env:GITHUB_RUN_ID"
           ./workflow/Tools/BrowserSmoke/network-walkthrough/Invoke-NetworkWalkthrough.ps1 -Mode Run `
