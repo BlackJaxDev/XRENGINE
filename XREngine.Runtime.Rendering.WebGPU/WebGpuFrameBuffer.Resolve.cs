@@ -30,10 +30,12 @@ public sealed partial class WebGpuFrameBuffer
         var source = GetColorAttachment(sourceSlot);
         var target = destination.GetColorAttachment(destinationSlot);
         if (WebGpuTextureFormat.IsInteger(source.Format) || source.Format is "r32float" or "rg32float" or "rgba32float")
-            throw Unsupported("Resolve", "the exact source format does not support WebGPU color resolve");
+            throw Unsupported("Resolve", $"source format '{source.Format}' does not support WebGPU color resolve");
+        if (source.Format != target.Format)
+            throw Unsupported("Resolve", $"source format '{source.Format}' and destination format '{target.Format}' must match for WebGPU color resolve");
         if (SampleCount != 4 || destination.SampleCount != 1 || Width != destination.Width ||
-            Height != destination.Height || source.Format != target.Format || ReferenceEquals(source.Owner, target.Owner))
-            throw Unsupported("Resolve", "distinct same-format, same-extent color attachments with four source samples and one destination sample are required");
+            Height != destination.Height || ReferenceEquals(source.Owner, target.Owner))
+            throw Unsupported("Resolve", "distinct same-extent color attachments with four source samples and one destination sample are required");
 
         for (int i = 0; i < _colorResolves.Count; i++)
         {

@@ -577,13 +577,7 @@ jobs:
           $compilers = @(Get-ChildItem -LiteralPath (Join-Path $env:VALIDATION_ROOT 'toolchain/slang-windows') -Filter 'slangc.exe' -File -Recurse)
           if ($compilers.Count -ne 1) { throw 'Expected the already verified pinned Slang compiler.' }
           $env:XRE_SLANGC = $compilers[0].FullName
-          dotnet run --project Tools/ShaderCooker/ShaderCooker.csproj --configuration Release -- `
-            --recipe Samples/ModularPipelineParity/Shaders/WebGPU/modular-gradient.recipe.json `
-            --recipe Samples/ModularPipelineParity/Shaders/WebGPU/modular-msaa-scene.recipe.json `
-            --recipe Samples/ModularPipelineParity/Shaders/WebGPU/modular-msaa-present.recipe.json `
-            --source-root Samples/ModularPipelineParity/Shaders/WebGPU `
-            --output (Join-Path $project 'Assets/Shaders/WebGPU')
-          if ($LASTEXITCODE -ne 0) { throw 'The modular authored programs failed normal shader cooking.' }
+          & ./Samples/ModularPipelineParity/Prepare-BrowserShaders.ps1 -OutputDirectory (Join-Path $project 'Assets/Shaders/WebGPU')
 
       - name: Publish modular pipeline through the Editor CLI
         shell: pwsh

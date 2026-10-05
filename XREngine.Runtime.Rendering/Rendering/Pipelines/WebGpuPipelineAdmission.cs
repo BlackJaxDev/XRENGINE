@@ -17,6 +17,10 @@ public static class WebGpuPipelineAdmission
         "advanced-stage-execution" or "gpu-meshlet-meshes" or "native-authored-decals" => null,
         "stencil" => "Stencil operations have no installed WebGPU route.",
         "depth-resolve" => "Depth/stencil multisample resolve has no installed WebGPU route.",
+        "framebuffer-blit-empty" => "A framebuffer blit must select a supported color resolve; an empty blit has no WebGPU route.",
+        "color-resolve-framebuffer-identity" => "Color resolve requires two named, distinct engine framebuffers.",
+        "color-resolve-read-buffer" => "Color resolve requires a read attachment from ColorAttachment0 through ColorAttachment7.",
+        "color-resolve-linear-filter" => "Filtered color blits have no WebGPU route; color resolve requires nearest filtering.",
         _ => $"Operation '{operation}' has no declared WebGPU capability. Declare the command's actual operations and dependencies.",
     };
 

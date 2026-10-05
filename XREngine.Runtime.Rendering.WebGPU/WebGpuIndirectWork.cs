@@ -39,30 +39,36 @@ internal sealed class WebGpuIndirectWork(WebGpuRendererHost renderer) : IDisposa
             throw new NotSupportedException("WebGPU.Indirect.IndexPublicationChanged: original index ownership or contents changed after publication.");
         Arguments.EnsureCapacity(checked((int)WebGpuIndirectProgramContract.ArgumentByteSize));
         WebGpuFrameBuffer? framebuffer = renderer.GetBoundEngineFrameBuffer();
+        WebGpuRasterState raster = renderer.RasterState;
+        ulong attachmentRevision = framebuffer?.Revision ?? 0;
         if (_draw is null || !ReferenceEquals(_mesh, record.Mesh) || !ReferenceEquals(_indices, indices) ||
-            !ReferenceEquals(_material, prepared.Material) || _raster != renderer.RasterState ||
-            !ReferenceEquals(_framebuffer, framebuffer) || _attachmentRevision != (framebuffer?.Revision ?? 0) ||
+            !ReferenceEquals(_material, prepared.Material) || _raster != raster ||
+            !ReferenceEquals(_framebuffer, framebuffer) || _attachmentRevision != attachmentRevision ||
             _outputGeneration != output.TargetGeneration || !ReferenceEquals(_streamOwner, record.Renderer) ||
             !ReferenceEquals(_deformation, prepared.Deformation) || _geometryRevision != record.GeometryRevision ||
             _meshBufferRevision != record.SourceBindings.MeshBufferRevision ||
             _rendererBufferRevision != record.SourceBindings.RendererBufferRevision)
         {
+            // Original raster buffers may still be awaiting their physical receipts.
+            // Publish the replacement and its keys only after construction succeeds.
+            WebGpuMeshDraw replacement = new(renderer, prepared.Material.Program, record.Mesh, indices, indexSize, raster,
+                in output, framebuffer, null, null, 0, prepared.Deformation,
+                sources: record.SourceBindings, indirectFirstInstanceFeature: false);
+            _orderedRaster?.InvalidateRaster();
             _draw?.Dispose();
+            _draw = replacement;
             _mesh = record.Mesh;
             _indices = indices;
             _material = prepared.Material;
-            _raster = renderer.RasterState;
+            _raster = raster;
             _framebuffer = framebuffer;
-            _attachmentRevision = framebuffer?.Revision ?? 0;
+            _attachmentRevision = attachmentRevision;
             _outputGeneration = output.TargetGeneration;
             _streamOwner = record.Renderer;
             _deformation = prepared.Deformation;
             _geometryRevision = record.GeometryRevision;
             _meshBufferRevision = record.SourceBindings.MeshBufferRevision;
             _rendererBufferRevision = record.SourceBindings.RendererBufferRevision;
-            _draw = new(renderer, prepared.Material.Program, record.Mesh, indices, indexSize, _raster,
-                in output, framebuffer, null, null, 0, prepared.Deformation,
-                sources: record.SourceBindings, indirectFirstInstanceFeature: false);
         }
         if (!_draw.IsReady) return false;
         RenderFrameViewSelection view = renderer.RequireFrozenView();
