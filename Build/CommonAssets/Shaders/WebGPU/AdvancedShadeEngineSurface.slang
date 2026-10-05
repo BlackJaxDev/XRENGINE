@@ -153,21 +153,36 @@ bool XR_ADV_TryLoadEngineSurface(XRAdvancedMaterialRecord material,
         XR_ADV_IsFinite(XR_ADV_EngineSurfaceVector(word + 8u));
 }
 
-float4 XR_ADV_SampleEngineSurfaceRole(uint word, uint role, XRAdvancedSurface surface)
+// Return the array-sampling choice after the same binding resolution used by
+// full sampling. Validation-only consumers must retain all resolver failures.
+bool XR_ADV_ResolveEngineSurfaceRole(uint word, uint role, out XRAdvancedEncodedTextureReference textureReference)
 {
-    XRAdvancedEncodedTextureReference textureReference;
     XRAdvancedMaterialTextureBinding binding = ReadXRAdvancedMaterialTextureBinding(word + 12u + role * 16u);
     XRAdvancedTextureRecord record;
     ResolveTexturePairWithSampling(binding.textureReference.handle, binding.samplerReference.handle,
         binding.textureReference.fallback, SceneArena[word + 112u + role], record, textureReference);
+    return SceneArena[word + 2u] == XR_ADV_ENGINE_SURFACE_UNLIT_ARRAY_SLICE && role == XR_ADV_ENGINE_SURFACE_BASE_COLOR_ROLE;
+}
+void XR_ADV_ValidateEngineSurfaceRole(uint word, uint role)
+{
+    XRAdvancedEncodedTextureReference textureReference;
+    if (XR_ADV_ResolveEngineSurfaceRole(word, role, textureReference))
+        XR_ADV_ValidateTexture2DArrayGradReference(textureReference);
+    else
+        XR_ADV_ValidateTexture2DGradReference(textureReference);
+}
+float4 XR_ADV_SampleEngineSurfaceRole(uint word, uint role, XRAdvancedSurface surface)
+{
+    XRAdvancedEncodedTextureReference textureReference;
+    bool arraySlice = XR_ADV_ResolveEngineSurfaceRole(word, role, textureReference);
     // Authored GPU texture formats own color decoding. The frozen metadata
     // never applies another sRGB conversion to hardware-decoded samples.
-    if (SceneArena[word + 2u] == XR_ADV_ENGINE_SURFACE_UNLIT_ARRAY_SLICE && role == XR_ADV_ENGINE_SURFACE_BASE_COLOR_ROLE)
+    if (arraySlice)
     {
         if ((textureReference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
             return XR_ADV_TextureFallback(textureReference.payload2);
-        if (textureReference.payload0 != 11u)
-        { textureFailure |= 1u << 19u; return float4(1.0, 0.0, 1.0, 1.0); }
+        if (!XR_ADV_ValidateTexture2DArrayGradReference(textureReference))
+            return float4(1.0, 0.0, 1.0, 1.0);
         return NativeTexture11.SampleGrad(NativeSampler11, float3(surface.texCoord0, 0.0),
             surface.texCoord0Dx, surface.texCoord0Dy);
     }
@@ -294,6 +309,60 @@ bool XR_ADV_TryEvaluateEngineSurface(XRAdvancedMaterialRecord material, XRAdvanc
     }
     rmse.xy = saturate(rmse.xy);
     rmse.z = max(rmse.z, 0.0);
+    return true;
+}
+
+// Shadow receiver decals consume only opacity and the projected normal. Keep
+// the full evaluator's admission, sampling order and failures without pulling
+// its unused color/RMS/emission sampling into the receiver-helper call graph.
+bool XR_ADV_TryEvaluateEngineSurfaceOpacityNormal(XRAdvancedMaterialRecord material, XRAdvancedSurface surface,
+    out float opacity, out float3 normal)
+{
+    opacity = 0.0;
+    normal = surface.shadingNormal * rsqrt(max(dot(surface.shadingNormal, surface.shadingNormal), 1e-20));
+    uint word, kind, roleFlags;
+    if (!XR_ADV_TryLoadEngineSurface(material, word, kind, roleFlags))
+        return false;
+    opacity = XR_ADV_EngineSurfaceVector(word + 4u).a;
+    if (kind >= XR_ADV_ENGINE_SURFACE_UNLIT_COLOR && kind <= XR_ADV_ENGINE_SURFACE_UNLIT_ARRAY_SLICE)
+    {
+        if (kind != XR_ADV_ENGINE_SURFACE_UNLIT_COLOR)
+            opacity = XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_BASE_COLOR_ROLE, surface).a;
+        if (kind == XR_ADV_ENGINE_SURFACE_UNLIT_OPAQUE_TEXTURE) opacity = 1.0;
+        return true;
+    }
+    if (kind != XR_ADV_ENGINE_SURFACE_COLOR)
+    {
+        float sampledAlpha = 0.0;
+        if (kind == XR_ADV_ENGINE_SURFACE_AUTHORED_TEXTURED || kind == XR_ADV_ENGINE_SURFACE_TEXTURE_ALPHA)
+            sampledAlpha = XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_BASE_COLOR_ROLE, surface).a;
+        else
+            XR_ADV_ValidateEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_BASE_COLOR_ROLE);
+        if (kind == XR_ADV_ENGINE_SURFACE_AUTHORED_TEXTURED)
+        {
+            opacity = sampledAlpha;
+            if ((roleFlags & (1u << XR_ADV_ENGINE_SURFACE_OPACITY_ROLE)) != 0u)
+                opacity *= XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_OPACITY_ROLE, surface).r;
+            if ((roleFlags & (1u << XR_ADV_ENGINE_SURFACE_SPECULAR_ROLE)) != 0u)
+                XR_ADV_ValidateEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_SPECULAR_ROLE);
+            if ((roleFlags & (1u << XR_ADV_ENGINE_SURFACE_NORMAL_ROLE)) != 0u)
+                normal = XR_ADV_AuthoredTexturedNormal(word, surface);
+            else
+                normal = normalize(surface.shadingNormal);
+        }
+        else if (kind == XR_ADV_ENGINE_SURFACE_TEXTURE_ALPHA)
+            opacity = sampledAlpha * XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_OPACITY_ROLE, surface).r;
+        if ((roleFlags & (1u << XR_ADV_ENGINE_SURFACE_METALLIC_ROLE)) != 0u)
+            XR_ADV_ValidateEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_METALLIC_ROLE);
+        if ((roleFlags & (1u << XR_ADV_ENGINE_SURFACE_ROUGHNESS_ROLE)) != 0u)
+            XR_ADV_ValidateEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_ROUGHNESS_ROLE);
+        if (kind == XR_ADV_ENGINE_SURFACE_TEXTURE_NORMAL)
+        {
+            if (!XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT)) return false;
+            normal = XR_ADV_EngineSurfaceMappedNormal(
+                XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_NORMAL_ROLE, surface).rgb, surface);
+        }
+    }
     return true;
 }
 

@@ -709,3 +709,73 @@ or browser execution was performed, and no tests or harness changes were
 added. Fresh publication, decoded scene/UI clear records, both background
 pixel witnesses, premultiplied overlap pixels and delivered input acceptance
 remain pending independent review and the authorized CI/physical retest.
+
+## Physical pointer evidence and shared input correction
+
+Further physical checks use the same exact `a7f3dadf` shipping artifact and
+Intel Arc/Edge configuration. A Count press focuses the correct managed
+control with Actions still 0; its single trusted release changes Actions to
+2. Offscreen then changes 2 to 3. Single Line focuses and accepts text; in
+that sequence Actions becomes 4 while the press settles, with no Enter and
+Submits/Cancels both 0. The later Multiline press leaves managed focus on
+Single Line and DOM focus on the canvas; its release changes Actions to 5.
+The extra actions' callback targets were not observed.
+
+The Multiline pointer center is canvas-local `(308,288)` in the browser's
+top-left convention. Its trusted down/up reaches the actual canvas, and its
+projected bounds do not overlap another control. A fresh Multiline-first
+run focuses the managed target and native textarea on down, accepts matching
+native/managed edits and leaves Actions 0. A separate fresh Single-to-Multiline
+run fails the focus switch with Actions 0 throughout, without any preceding
+Count, Offscreen or Enter interaction. Native multiline construction works;
+the focus-switch failure is independent of the previous world-canvas hit.
+
+Source tracing finds duplicate screen mappings: the pawn host registers
+`UserInterfaceInput`, while the same pawn-owned canvas independently
+subscribes its registration method. Both reach `ButtonManager`, whose
+ordinary append semantics produce two screen release callbacks. Offscreen
+only uses the self-owned route. The canvas mapping boundary now retains
+exact `InputInterface` identities and installs or removes its mappings once
+per interface. Both caller routes remain. The normal unregister/register
+rebuild and device replacement still remove old mappings before adding new
+ones; an `OwningPawn` transition to null retains the host fallback during
+the existing rebuild. Host and global button-registration behavior are
+unchanged, as are separate focused-control subscriptions.
+
+The browser drops canvas mouse moves while a native textbox owns focus.
+The shared mouse tick updates coordinates before dispatching button edges,
+but the previous implementation selected its target from a later
+collect/swap hover publication. Button down/up now reuse the existing
+bounded contact hit resolver at the current device position, retaining its
+canvas bounds, clipping, blockers and input ordering. The touch branch and
+virtual-control capture route remain in place. An outside world-canvas
+coordinate returns no action target instead of using an earlier hover hit.
+
+Each canvas now records an accepted press target with its exact input and
+mouse identities, stable mouse registration revision and existing contact
+source owner/generation. Release consumes that record before callbacks and
+requires the same current hit, press target and focused target. Input
+unregistration, focus loss, deactivation, consumed virtual input and touch
+cancellation discard pending delivery. Null hits only clear player focus
+owned by that canvas; a valid focus transfer releases the actual previous
+focused target before installing the new one. Down-triggered controls,
+drag-out cancellation and same-target reentry retain their action rules.
+Private runtime-only fields hold the identities; no public API, serialized
+member/format or recurring allocation is added.
+
+Independent source review passed, including the shared active/visible
+canvas-and-target predicate at both press and release. Disabling only the
+canvas between the edges therefore discards activation even when its input
+component and children remain active. The candidate was then applied to the
+reviewed master integration tree. All eight candidate base files were identical
+before that application. Independent review confirmed the merged input and
+canvas contracts. A Release build of `XREngine.Runtime.InputIntegration` and its
+dependencies passed with zero warnings and zero errors. Whitespace checks also
+passed. No tests or harness changes were added. Browser execution of this
+candidate is still pending. Fresh publication must establish exactly one Count action,
+Single-to-Multiline delivery, absence of unrelated actions, current world
+hits, release without a valid press, drag-out/reentry and cancellation.
+The mouse snapshot still carries the latest pointer position rather than
+separate coordinates on each button transition. Arbitrary multi-position
+gestures between frames, full activation lifecycle, physical IME and all
+input parity remain outside this evidence.

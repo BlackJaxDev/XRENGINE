@@ -132,9 +132,41 @@ uint2 XR_ADV_Texture2DDimensions(XRAdvancedEncodedTextureReference reference)
     }
     return uint2(width, height);
 }
+// Sampling and consumers that discard the texel share the same failure effects.
+// A fallback bypasses bank selection, including the depth and Uber exclusions.
+bool XR_ADV_ValidateTexture2DGradReference(XRAdvancedEncodedTextureReference reference)
+{
+    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u) return true;
+    switch (reference.payload0)
+    {
+        case 0u: return true;
+        case 1u: return true;
+        case 2u: return true;
+        case 3u: return true;
+        case 4u: return true;
+        case 5u: return true;
+        case 6u: return true;
+        case 7u: return true;
+#if !defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
+        case 8u: return true;
+#endif
+#if !defined(XR_ADV_DEPTH_COMPARISON_BANK)
+        case 9u: return true;
+#endif
+    }
+    textureFailure |= 1u << 19u;
+    return false;
+}
+bool XR_ADV_ValidateTexture2DArrayGradReference(XRAdvancedEncodedTextureReference reference)
+{
+    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u || reference.payload0 == 11u) return true;
+    textureFailure |= 1u << 19u;
+    return false;
+}
 float4 XR_ADV_SampleTexture2DGrad(XRAdvancedEncodedTextureReference reference, float2 uv, float2 dx, float2 dy)
 {
     if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u) return XR_ADV_TextureFallback(reference.payload2);
+    if (!XR_ADV_ValidateTexture2DGradReference(reference)) return float4(1.0, 0.0, 1.0, 1.0);
     switch (reference.payload0)
     {
         case 0u: return NativeTexture0.SampleGrad(NativeSampler0, uv, dx, dy);
@@ -152,7 +184,6 @@ float4 XR_ADV_SampleTexture2DGrad(XRAdvancedEncodedTextureReference reference, f
         case 9u: return NativeTexture9.SampleGrad(NativeSampler9, uv, dx, dy);
 #endif
     }
-    textureFailure |= 1u << 19u;
     return float4(1.0, 0.0, 1.0, 1.0);
 }
 float4 XR_ADV_SampleTexture2DLod(XRAdvancedEncodedTextureReference reference, float2 uv, float lod)
