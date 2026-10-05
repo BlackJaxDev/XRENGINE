@@ -592,3 +592,44 @@ pending on exact-commit CI. In particular, CI must confirm the cold managed and
 JavaScript inventories agree if a spare pipeline finishes asynchronous
 preparation near the sampling boundary. Physical-device acceptance remains a
 separate requirement.
+
+## Explicit validity for transparent source distances
+
+Linux job `111593483025` in run `37256129926`, at exact commit
+`08822920aca51af3a26328ede27471a69a669370`, reaches the new
+`gpu-indirect-x4-blended` profile and rejects
+`engine-authored-rank-sources:32:20`: `value nan cannot be represented as 'f32'`.
+The shader constructs a constant NaN with `bitcast<f32>(0x7fc00000u)` when an
+AABB, fallback position or camera component is NaN. This is an explicit WGSL
+recipe and source, not Slang-generated output. The browser rejects the module
+before any draw submission; shader validation correctly exposes the defect.
+
+The distance helper now returns a function-local `SourceDistance` containing
+the squared value and a validity bit. Unknown inputs and runtime NaN distance
+results return finite zero with validity false. The comparator handles validity
+before comparing numeric distances, preserving .NET `Single.CompareTo` NaN
+placement: first for near-to-far, last for far-to-near. Two unknown distances
+still use the exact insertion/source-index ties. Signed priority, numeric
+distance arithmetic (including infinity ordering), the 64-bit insertion token,
+dispatch bounds and buffer-capacity guards remain unchanged.
+
+Distance validity is ordering information, not visibility. Every admitted
+source still receives a rank; the existing candidate culling, LOD selection,
+zero-count indirect arguments and rank masking remain authoritative. The new
+structure does not cross a resource binding, so the source/rank/uniform ABI and
+recipe are unchanged. An audit of the seven authored-ordering, indirect and
+meshlet WGSL companions found no other constructed constant NaN or infinity.
+
+`git diff --check` and independent source review pass. A disposable JavaScript
+witness executes the extracted old and new comparator bodies and confirms
+874,800 pair comparisons plus 3,456 source ranks across all three sort policies,
+priority enabled/disabled, finite/nonfinite distances, signed-priority extrema,
+64-bit token boundaries and duplicate-token source-index ties. Each bounded
+64-source cohort still produces a unique rank permutation. The witness also
+checks unchanged resource declarations, dispatch guards and the tie-breaking
+tail. Its report is
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/authored-rank-validity-witness.json`.
+This is source/logic evidence only. No local .NET shader cook, WGSL frontend or
+browser/GPU execution was available; exact-commit CI must still qualify module
+creation and transparent pixels through resize and restart. No tests or
+validation suppression were added to the production tree.

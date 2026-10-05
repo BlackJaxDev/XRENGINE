@@ -19,17 +19,23 @@ fn isNan(value: f32) -> bool {
     return (bits & 0x7f800000u) == 0x7f800000u && (bits & 0x007fffffu) != 0u;
 }
 
-fn distanceSquared(sourceIndex: u32) -> f32 {
+struct SourceDistance {
+    squared: f32,
+    valid: bool,
+};
+
+fn distanceSquared(sourceIndex: u32) -> SourceDistance {
     let camera = parameters.cameraPosition.xyz;
     var delta = vec3<f32>(0.0);
     if (sources[sourceIndex * 16u + 3u] != 0u) {
         let lower = vec3<f32>(sourceFloat(sourceIndex, 0u), sourceFloat(sourceIndex, 1u), sourceFloat(sourceIndex, 2u));
         let upper = vec3<f32>(sourceFloat(sourceIndex, 4u), sourceFloat(sourceIndex, 5u), sourceFloat(sourceIndex, 6u));
-        // A NaN bound is an unknown distance, ordered like .NET Single.CompareTo.
+        // Keep unknown distance separate from its numeric value: WGSL rejects
+        // constant NaN construction. This is ordering state, not draw eligibility.
         if (any(vec3<bool>(isNan(lower.x) || isNan(upper.x) || isNan(camera.x),
                            isNan(lower.y) || isNan(upper.y) || isNan(camera.y),
                            isNan(lower.z) || isNan(upper.z) || isNan(camera.z)))) {
-            return bitcast<f32>(0x7fc00000u);
+            return SourceDistance(0.0, false);
         }
         delta = max(max(lower - camera, camera - upper), vec3<f32>(0.0));
     } else {
@@ -37,11 +43,13 @@ fn distanceSquared(sourceIndex: u32) -> f32 {
         if (any(vec3<bool>(isNan(position.x) || isNan(camera.x),
                            isNan(position.y) || isNan(camera.y),
                            isNan(position.z) || isNan(camera.z)))) {
-            return bitcast<f32>(0x7fc00000u);
+            return SourceDistance(0.0, false);
         }
         delta = position - camera;
     }
-    return dot(delta, delta);
+    let squared = dot(delta, delta);
+    if (isNan(squared)) { return SourceDistance(0.0, false); }
+    return SourceDistance(squared, true);
 }
 
 fn before(left: u32, right: u32) -> bool {
@@ -55,14 +63,12 @@ fn before(left: u32, right: u32) -> bool {
     if (parameters.sortPolicy == 1u || parameters.sortPolicy == 2u) {
         let leftDistance = distanceSquared(left);
         let rightDistance = distanceSquared(right);
-        let leftNan = isNan(leftDistance);
-        let rightNan = isNan(rightDistance);
-        if (leftNan != rightNan) {
+        if (leftDistance.valid != rightDistance.valid) {
             // Single.CompareTo orders NaN before all other values. Sort direction reverses it.
-            return select(leftNan, rightNan, parameters.sortPolicy == 2u);
+            return select(!leftDistance.valid, !rightDistance.valid, parameters.sortPolicy == 2u);
         }
-        if (!leftNan && leftDistance != rightDistance) {
-            return select((leftDistance < rightDistance), (leftDistance > rightDistance), parameters.sortPolicy == 2u);
+        if (leftDistance.valid && leftDistance.squared != rightDistance.squared) {
+            return select((leftDistance.squared < rightDistance.squared), (leftDistance.squared > rightDistance.squared), parameters.sortPolicy == 2u);
         }
     }
     let leftHigh = sources[leftBase + 13u];

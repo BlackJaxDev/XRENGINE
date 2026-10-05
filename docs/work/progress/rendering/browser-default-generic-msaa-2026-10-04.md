@@ -276,3 +276,35 @@ rendering. The same run's normal custom shader cook rejected the new recipes'
 `xrengine.engine.*` ABI namespace while retaining their `custom` pipeline scope.
 JSON/schema-shape and syntax checks pass; genuine cooking and new pixels still
 require the repaired exact-commit run.
+
+## CPU blended execution and remaining GPU admission
+
+Exact commit `08822920aca51af3a26328ede27471a69a669370` advances the new
+profiles in [run 37256129926](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37256129926).
+The Linux artifact `11322779048` has SHA-256
+`1734f371a5f90fc4ac2f69e950ab06551402c734bd75fd374823e6c01709162d`.
+The CPU x4 blended profile completes two fresh lifecycles, each at 512 x 512,
+640 x 384 and restored 512 x 512. All 54 original material-center comparisons
+pass, with maximum HDR component error 0.0002297794 and zero display-byte
+error. The independent blended gutter witness contains 319 or 402 fractional
+pixels with zero coverage/composition mismatches. Its full-coverage far color
+is (0.21875, 0.4375, 0.65625, 1) and near-over-far color is
+(0.734375, 0.34375, 0.390625, 1), as required by the authored straight-alpha
+factors. Recorded color commands place both transparent draws after opaque
+geometry and resolve before presentation. Initial and non-square second-start
+screenshots were inspected. Both teardown records report zero live/retiring
+resources, readback tickets and estimated logical GPU memory.
+
+The same run passes CPU x4 opaque and GTAO profiles and ordinary GPU x1/x4
+profiles. GPU blended startup reaches the authored ranking module and fails
+WGSL validation because its constant NaN sentinel is not a representable f32
+constant. The later GPU AO profile is therefore not reached. This is a shader
+admission defect, not a failed pixel comparison or permission failure. The
+ranking repair retains explicit invalid-distance ordering without manufacturing
+a NaN constant; live GPU blended and AO results remain pending.
+
+The Windows Editor now cooks all three custom modular recipes. The subsequent
+game assembly build identifies the missing `XREngine` namespace import for
+`EAntiAliasingMode` in `ModularMsaaRenderPipeline`; that import is restored.
+Custom x4 publication and pixels remain unqualified. These bounded results do
+not close the wider custom, blended and unsupported-profile acceptance item.
