@@ -676,6 +676,56 @@ trace checks plus CPU delta/zero, replaced or missing/ambiguous GPU, invalid dat
 decreasing counters, failed/hung/late reads, cleanup overlap, early completion,
 missed pre-deadline window and attempts to start after cleanup/finish. These use
 mocked CDP and do not demonstrate actual process activity. Pinned CI CPU evidence
-remains pending. No new profiler, dependency, runner, security setting or CPU
+is recorded below. No new profiler, dependency, runner, security setting or CPU
 sampling is introduced; native stack profiling remains a separate capability
 boundary requiring verified runner tooling, access and symbols.
+
+### Native profiling capability inventory
+
+Exact commit `c8bf98f6`,
+[run 37245259916](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37245259916),
+produced artifact `11319268571` (archive SHA-256
+`f45f77799b5977e6fdb59073c6074be8db97f8b6b09912c47155d684e3c43cee`).
+The same GPU process, PID `3389`, accumulated 45.09 CPU seconds between the two
+reads, whose wall interval is bounded by 44.015912767 and 44.018709432 seconds.
+The reads took 1.654 and 1.142 ms and completed before the scheduled deadline.
+Shader preparation completes in approximately 275 ms, while the native
+initialization span remains unmatched. This demonstrates process activity,
+not a particular worker, stack or SwiftShader stage; page-device cleanup overlap
+still cannot be fully excluded. Native and Uber compilation both still reach
+the unchanged 45-second deadline. Further shader restructuring is not justified
+by this evidence.
+
+The existing opt-in Advanced native trace path now collects a read-only Linux
+capability inventory after its owned browser/GPU metadata snapshot and before
+isolated compilation starts. It adds no browser run. The whole inventory has an
+eight-second budget; each direct metadata command has a two-second timeout and
+a 64-KiB limit per output stream. File reads also stop at 64 KiB. A bounded search
+of up to 32 standard/PATH directories retains at most eight distinct executable
+paths per tool family for perf, LLDB, GDB, readelf, symbolizers and addr2line.
+Discovery never launches these tools. Subsequent commands are limited to the
+installed system `dpkg-query` and `readelf`, without a shell or Python.
+
+The report retains up to 96 installed package/version records, the readable
+`perf_event_paranoid` and `ptrace_scope` values, and selected capability,
+no-new-privileges, seccomp, identity and tracer fields from the runner and the
+existing owned browser/GPU process IDs. Missing or ambiguous IDs cannot trigger
+process discovery. The Chrome executable comes from those owned process IDs;
+only it and the two known adjacent SwiftShader library locations are inspected.
+`readelf --wide --section-headers --notes` provides build IDs and names of symbol,
+debug and unwind sections without dumping symbol entries. Adjacent library
+presence does not prove that library is mapped, and section presence does not
+establish successful symbol resolution. Missing files/tools, failed commands,
+partial package metadata and the overall deadline are explicit report outcomes.
+
+The inventory is diagnostic only. Executable presence and kernel policy values
+do not establish attachment permission or working native profiling. No debugger
+initialization, attachment, sampling, dependency installation, network lookup or
+security change occurs. The compile watchdog, shader artifacts and application
+acceptance assertions remain unchanged. Twelve bounded mocked scenarios cover
+allowed command arguments, owned-process scope, installed/missing tools,
+package partial results, invalid/oversized reads, command failures, unsupported
+platforms, total timeout and late completions. A real safe metadata read against
+the local check process completed in approximately 111 ms and exercised the
+installed readelf parser; it is neither Chrome profiling nor runner evidence.
+The existing CI run must establish the hosted runner's actual capabilities.

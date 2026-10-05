@@ -525,3 +525,54 @@ removal and preserves deferred arming. No local C# execution was performed;
 the authored BrowserUiParity world contains no context menu. Reentrant IsOpen
 observers and additional same-post-update edge cases have no new runtime
 qualification from this correction.
+
+## Published control traversal and orthographic restoration
+
+The exact `c8bf98f6` run `37245259916`, UI job `111566397709`, confirms the
+observer now captures the shipping input before startup completes. Artifact
+`11319188909` has SHA-256
+`3498bf93bf2db8f192a8ca53cefe9c70e7e654eb49146f4a56166289ffafd8cf`.
+Its startup snapshot reports all 16 screen controls and native proxies, with
+only `Offscreen Action` absent. At shared frame 134 the offscreen canvas has
+matching collect/swap generations, a published seven-command package, matching
+512 x 512 target identity and a completed nested command chain. The outer frame
+has 41 draws and 43 commands with no pending preparation. Three frames have
+been submitted; three receipt scopes remain pending, 131 have completed, and
+validation errors, memory errors and admission deferrals are zero. These values
+describe that startup snapshot, not the later timeout state or pixel correctness.
+
+Source tracing identifies a shared orthographic-camera restoration defect.
+Cooked reflection hydration constructs the default lens, then assigns its
+properties with notifications suppressed. Width/height setters still apply the
+default inherited aspect ratio to their companion dimension before the saved
+aspect policy necessarily arrives. With width, height, then policy restored,
+1280 x 720 becomes 720 x 720. Restoring the fixed policy first instead leaves
+the derived clipping planes at their constructor extent because their rebuild
+depends on property notifications. The source-derived 720-wide case clips the
+entire button at world X [896, 1136]; the actual live lens values were not
+recorded. Screen controls use their separate canvas mapping. The fixed lens
+also bypasses viewport aspect updates, so attachment does not repair it.
+
+The shared lens now preserves independently restored dimensions while
+notifications are suppressed and uses the existing post-cooked-deserialization
+hook to rebuild all four planes and the origin. The same rebuild invalidates
+the projection, inverse projection and frustum caches and advances the
+projection version. Ordinary constructor/default behavior and unsuppressed
+desktop setters retain their aspect coupling; an inherited lens still accepts
+the viewport's aspect update. No serialized members or format change is added.
+
+The control-count wait subsequently reached its existing 180-second limit;
+both the five-second state read and full-page capture also timed out, so this
+run has no captured UI image. The bounded startup records show stable final
+bounds, visibility and surface generation, and no failure event. The console
+contains no device-loss warning. Neither the lens defect nor these earlier
+observations prove the later unresponsive-page cause. Pixel, delivered-input,
+resize, restart and continued-frame acceptance remain open.
+
+Independent exact-diff source review approves the bounded lens correction,
+including fixed/inherited aspect, nested suppression and cache invalidation.
+Whitespace checks pass. No local C# compiler/runtime or PowerShell executable
+is installed, so no C# execution or build result is claimed; no tests or
+JavaScript substitute for managed execution were added. The next genuine
+Editor publication and browser run must establish the restored projection and
+the unchanged 17-control, pixel and input requirements.

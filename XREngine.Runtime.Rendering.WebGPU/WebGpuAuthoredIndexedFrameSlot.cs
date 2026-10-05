@@ -1,3 +1,4 @@
+using System.Text;
 using XREngine.Rendering.Commands;
 
 namespace XREngine.Rendering.WebGPU;
@@ -5,8 +6,8 @@ namespace XREngine.Rendering.WebGPU;
 /// <summary>Completion-retained publication and bounded indirect or generated-index work for one atomic frame.</summary>
 internal sealed class WebGpuAuthoredIndexedFrameSlot(WebGpuRendererHost renderer) : IDisposable
 {
-    private const int MaximumSources = 256;
-    private const int MaximumDraws = 256;
+    internal const int MaximumSources = 256;
+    internal const int MaximumDraws = 256;
     private readonly List<WebGpuMeshletWork> _work = new(32);
     private readonly List<WebGpuIndirectWork> _indirectWork = new(32);
     private readonly List<WebGpuAuthoredIndexedLodSelection> _lodSelections = new(32);
@@ -24,6 +25,34 @@ internal sealed class WebGpuAuthoredIndexedFrameSlot(WebGpuRendererHost renderer
     internal bool IsAvailable => RecordingSequence == 0 && SubmittedSequence == 0 && !_lease.IsValid;
     internal GPUScene? Scene { get; private set; }
     internal GpuMeshSubmissionPublication Publication => _lease.Publication;
+
+    /// <summary>Appends retained indexed owners for an explicit between-frame diagnostic capture.</summary>
+    internal void AppendCacheDiagnostics(StringBuilder output, int slot)
+    {
+        output.Append("{\"slot\":").Append(slot).Append(",\"selections\":[");
+        for (int i = 0; i < _lodSelections.Count; i++)
+        {
+            if (i != 0) output.Append(',');
+            WebGpuOwnedStorageBuffer selected = _lodSelections[i].Selected;
+            output.Append("{\"index\":").Append(i)
+                .Append(",\"handle\":").Append(selected.ResourceHandle)
+                .Append(",\"pendingHandle\":").Append(selected.PendingResourceHandle)
+                .Append('}');
+        }
+        output.Append("],\"works\":[");
+        for (int i = 0; i < _indirectWork.Count; i++)
+        {
+            if (i != 0) output.Append(',');
+            WebGpuIndirectWork work = _indirectWork[i];
+            output.Append("{\"index\":").Append(i)
+                .Append(",\"arguments\":").Append(work.Arguments.ResourceHandle)
+                .Append(",\"pendingArguments\":").Append(work.Arguments.PendingResourceHandle)
+                .Append(",\"pipeline\":").Append(work.DiagnosticPipelineHandle)
+                .Append(",\"outputGeneration\":").Append(work.DiagnosticOutputGeneration)
+                .Append('}');
+        }
+        output.Append("]}");
+    }
 
     internal void Begin(GPUScene scene, GpuMeshSubmissionPublicationLease lease, uint sequence)
     {

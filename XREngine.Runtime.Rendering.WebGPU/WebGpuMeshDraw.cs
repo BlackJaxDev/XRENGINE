@@ -32,6 +32,7 @@ internal sealed partial class WebGpuMeshDraw : IDisposable
     private uint _commandInstanceLimit;
     internal WebGpuMeshDeformation? Deformation { get; }
     private int _pipeline;
+    internal int DiagnosticPipelineHandle => _pipeline;
     private readonly Dictionary<WebGpuBindingSet, int> _commands = [];
     private bool _disposed;
 

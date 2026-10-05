@@ -243,7 +243,10 @@ internal sealed partial class EngineMeshDiagnosticFixture
             pipelineDecline = instance.LastRenderDeclineReason,
             resourceFailure = instance.LastResourceGenerationFailure,
         });
-        return observed[..^1] + ",\"witness\":" + (_unlitProfile.SampleCount > 1 ? UnlitWitnessMetadata : "null") + "," +
+        return observed[..^1] + ",\"indexedCache\":" +
+            (_unlitProfile.SubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback
+                ? _renderer.GetAuthoredIndexedCacheDiagnostics() : "null") +
+            ",\"witness\":" + (_unlitProfile.SampleCount > 1 ? UnlitWitnessMetadata : "null") + "," +
             UnlitCaseMetadata[index][1..];
     }
 
