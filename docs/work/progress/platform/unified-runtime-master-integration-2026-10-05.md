@@ -107,3 +107,24 @@ Independent source review passed for both repairs. The desktop platform and
 shared dependencies built with zero warnings and zero errors. The browser
 fixture migration remains subject to the next browser build and live run.
 These findings do not establish new rendering, performance or device acceptance.
+
+## Transform publication before canvas activation
+
+The exact `e06c98a8` shared-UI bundle failed at startup in two fresh physical
+Edge sessions, including one without observer hooks. The artifact size and hash
+matched the Windows publisher. Intel Arc hardware was selected with no fallback,
+and the browser sandbox remained enabled. No UI input or pixel result was reached.
+The exception reported stale transform handle `0:0` during canvas layout.
+
+`TransformBase` published its `World` property change before updating the dense
+hierarchy store. A `SceneNode` observer synchronously updated its world and
+activated `UICanvasComponent`. Layout then marked the unregistered transform
+dirty. The former object-based dirty queue did not require a dense handle at
+that point.
+
+The transform now updates its hierarchy store before publishing the world
+notification. Callbacks see the attached, transferred or detached storage state.
+Handle generation checks and stale-handle rejection remain unchanged. This is a
+shared lifecycle fix; no UI test, scene, assertion or deadline is changed.
+The Core, Rendering and desktop platform Release build passed with zero warnings
+and zero errors. Fresh browser startup and UI interaction checks remain required.

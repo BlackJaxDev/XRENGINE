@@ -1529,6 +1529,11 @@ namespace XREngine.Scene.Transforms
         }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            // World observers can activate components and mark this transform dirty.
+            // Bind its matrix storage before those observers run.
+            if (propName == nameof(World))
+                UpdateHierarchyStore();
+
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
@@ -1551,7 +1556,6 @@ namespace XREngine.Scene.Transforms
                         World = w;
                     break;
                 case nameof(World):
-                    UpdateHierarchyStore();
                     _debugHandle?.UpdateWorld(World);
                     MarkWorldModified();
                     if (SceneNode is not null)
