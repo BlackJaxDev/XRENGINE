@@ -23,7 +23,7 @@
     "maxSamplersPerShaderStage": 1
   },
   "matrixLayout": "column-major",
-  "semanticSchemaIdentity": "xrengine.sample.modular-msaa-present.v1",
+  "semanticSchemaIdentity": "xrengine.engine.modular-msaa-present.v1",
   "coordinates": "xrengine.webgpu.coordinates.v1",
   "layout": {
     "vertexBuffers": [

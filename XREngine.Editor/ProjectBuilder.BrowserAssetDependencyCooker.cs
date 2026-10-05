@@ -1,6 +1,9 @@
 using System.Reflection;
 using XREngine.Core.Files;
 using XREngine.Components.Scripting;
+using XREngine.Rendering;
+using XREngine.Rendering.Meshlets;
+using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Rendering.Shaders.Compilation;
 
@@ -17,7 +20,12 @@ internal static partial class ProjectBuilder
         private readonly Dictionary<string, (string TypeName, string Source, string[] Dependencies)> _entries = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Type> _assetTypes = new(StringComparer.Ordinal);
         private readonly HashSet<string> _visiting = new(StringComparer.Ordinal);
+        private readonly Dictionary<XRMesh, (MeshletGenerationSettings Meshlets, MeshLodGenerationSettings Lods,
+            MeshletGenerationSettingsSnapshot MeshletSnapshot, MeshLodGenerationSettingsSnapshot LodSnapshot)> _meshletPolicies = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<XRMesh, MeshletPayload> _cookedMeshletPayloads = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<SubMesh, bool> _plannedSubMeshes = new(ReferenceEqualityComparer.Instance);
         private int _nextSourceOrdinal;
+        private bool _meshletBackendVerified;
         private readonly Publishing.BrowserMaterialCookProjection _materialProjection = new(engineRoot, resolver as Publishing.BrowserShaderArtifactSource);
         private readonly Assembly _gameAssembly = GameCSProjLoader.GetLoadedAssembly("GAME")
             ?? throw new InvalidOperationException("BrowserCook.GameAssemblyMissing: the compiled game must be loaded before cooking.");
@@ -69,7 +77,7 @@ internal static partial class ProjectBuilder
             if (!declared.SequenceEqual(existing.Dependencies, StringComparer.Ordinal))
                 throw new InvalidDataException($"BrowserCook.StreamedSceneDependencyChanged: '{catalogPath}'.");
             _materialProjection.PrepareMaterialConsumers(scene, catalogPath, cancellationToken);
-            WriteCookedAsset(scene, Path.Combine(sourceDirectory, existing.Source), callbacks: CookCallbacks);
+            WriteMeshletCookedAsset(scene, Path.Combine(sourceDirectory, existing.Source));
             return existing.Source;
         }
 
@@ -159,7 +167,7 @@ internal static partial class ProjectBuilder
 
                 string typeName = asset.GetType().AssemblyQualifiedName
                     ?? throw new InvalidOperationException($"Browser asset '{catalogPath}' has no stable runtime type identity.");
-                WriteCookedAsset(asset, Path.Combine(sourceDirectory, sourceName), callbacks: CookCallbacks);
+                WriteMeshletCookedAsset(asset, Path.Combine(sourceDirectory, sourceName));
                 _entries.Add(catalogPath, (typeName, sourceName, [.. references.Keys]));
                 _assetTypes.Add(catalogPath, asset.GetType());
                 return catalogPath;
@@ -175,10 +183,177 @@ internal static partial class ProjectBuilder
             OnSerializingValue = ValidateAndProject,
         };
 
+        private void WriteMeshletCookedAsset(XRAsset asset, string destination)
+        {
+            _meshletPolicies.Clear();
+            _cookedMeshletPayloads.Clear();
+            _plannedSubMeshes.Clear();
+            try
+            {
+                PrepareMeshletPayloads(asset);
+                WriteCookedAsset(asset, destination, callbacks: CookCallbacks);
+            }
+            finally
+            {
+                _meshletPolicies.Clear();
+                _cookedMeshletPayloads.Clear();
+                _plannedSubMeshes.Clear();
+            }
+        }
+
+        private void PrepareMeshletPayloads(XRAsset asset)
+        {
+            // Registered serializers own their separate graph. This prepass follows
+            // the same ordinary cooked-binary members as the subsequent write.
+            if (PublishedCookedAssetRegistry.IsRegistered(asset.GetType()))
+                return;
+            CookedBinarySerializationCallbacks callbacks = new()
+            {
+                OnSerializingValue = value =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    ValidateGameObjectOwnership(value);
+                    if (value is SubMesh subMesh)
+                        CollectEnabledMeshletRequests(subMesh);
+                    return value;
+                },
+            };
+            _ = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() =>
+                CookedBinarySerializer.CalculateSize(asset, callbacks));
+
+            foreach (var (mesh, policy) in _meshletPolicies)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                CookPlannedMeshlet(mesh, policy.Meshlets, policy.Lods);
+            }
+        }
+
+        private void CollectEnabledMeshletRequests(SubMesh subMesh)
+        {
+            MeshOptimizerSubMeshSettings settings = subMesh.MeshOptimizer;
+            if (_plannedSubMeshes.TryGetValue(subMesh, out bool enabled))
+            {
+                if (enabled != settings.Meshlets.Enabled)
+                    throw new InvalidDataException($"BrowserCook.MeshletRequestChanged: submesh '{subMesh.Name}' ({subMesh.ID}) changed its enabled state during request planning.");
+            }
+            else
+                _plannedSubMeshes.Add(subMesh, settings.Meshlets.Enabled);
+            if (!settings.Meshlets.Enabled)
+                return;
+            MeshletGenerationSettingsSnapshot meshletSnapshot = MeshletGenerationSettingsSnapshot.From(settings.Meshlets);
+            MeshLodGenerationSettingsSnapshot lodSnapshot = MeshLodGenerationSettingsSnapshot.From(settings.Lods);
+            foreach (SubMeshLOD lod in subMesh.LODs)
+            {
+                if (lod.Mesh is not { } mesh)
+                    continue;
+                if (_meshletPolicies.TryGetValue(mesh, out var previous))
+                {
+                    if (previous.MeshletSnapshot != meshletSnapshot || previous.LodSnapshot != lodSnapshot)
+                        throw new InvalidDataException($"BrowserCook.MeshletSharedMeshPolicyConflict: mesh '{mesh.Name}' ({mesh.ID}) has conflicting enabled meshlet or LOD cook settings.");
+                }
+                else
+                    _meshletPolicies.Add(mesh, (settings.Meshlets, settings.Lods, meshletSnapshot, lodSnapshot));
+            }
+        }
+
+        private void CookPlannedMeshlet(XRMesh mesh, MeshletGenerationSettings settings,
+            MeshLodGenerationSettings lodSettings)
+        {
+            try
+            {
+                // Keep valid import provenance; otherwise use the persistent ID
+                // instead of a source path or mutable display name.
+                string sourceIdentity = mesh.MeshletPayload is { } existing &&
+                    existing.IsFreshForSourceMesh(mesh) &&
+                    IsPortableMeshletIdentity(existing.SourceMeshIdentity, mesh.ID)
+                        ? existing.SourceMeshIdentity : $"mesh:{mesh.ID:N}";
+                if (MeshOptimizerBackendServices.Current is null)
+                    throw new NotSupportedException("BrowserCook.MeshletBackendUnavailable: the desktop meshoptimizer backend is not registered in the Editor cook host.");
+                if (!mesh.TryGetFreshMeshletPayload(settings, lodSettings, sourceIdentity,
+                        out MeshletPayload payload))
+                {
+                    if ((mesh.Triangles?.Count ?? 0) > 0)
+                        EnsureMeshletBackend();
+                    payload = mesh.GetOrCreateMeshletPayload(settings, lodSettings, sourceIdentity);
+                }
+                payload.ValidateForMesh(mesh, sourceIdentity);
+                if ((mesh.Triangles?.Count ?? 0) > 0 && !payload.HasMeshlets)
+                    throw new InvalidDataException($"BrowserCook.MeshletPayloadEmpty: mesh '{mesh.Name}' ({mesh.ID}) has triangles but its enabled native cook produced no meshlets.");
+                _cookedMeshletPayloads.Add(mesh, payload);
+            }
+            catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+            {
+                throw new NotSupportedException($"BrowserCook.MeshletBackendUnavailable: the desktop meshoptimizer native backend could not cook mesh '{mesh.Name}' ({mesh.ID}).", error);
+            }
+        }
+
         private object? ValidateAndProject(object? value)
         {
             ValidateGameObjectOwnership(value);
+            if (value is SubMesh subMesh)
+            {
+                if (!_plannedSubMeshes.TryGetValue(subMesh, out bool enabled) ||
+                    enabled != subMesh.MeshOptimizer.Meshlets.Enabled)
+                    throw new InvalidDataException($"BrowserCook.MeshletRequestChanged: submesh '{subMesh.Name}' ({subMesh.ID}) changed its enabled state during serialization.");
+                if (enabled)
+                {
+                    MeshletGenerationSettingsSnapshot meshletSnapshot = MeshletGenerationSettingsSnapshot.From(subMesh.MeshOptimizer.Meshlets);
+                    MeshLodGenerationSettingsSnapshot lodSnapshot = MeshLodGenerationSettingsSnapshot.From(subMesh.MeshOptimizer.Lods);
+                    foreach (SubMeshLOD lod in subMesh.LODs)
+                        if (lod.Mesh is { } mesh && (!_meshletPolicies.TryGetValue(mesh, out var planned) ||
+                            planned.MeshletSnapshot != meshletSnapshot || planned.LodSnapshot != lodSnapshot))
+                            throw new InvalidDataException($"BrowserCook.MeshletRequestChanged: mesh '{mesh.Name}' ({mesh.ID}) changed its enabled cook policy during serialization.");
+                }
+            }
+            if (value is XRMesh source && _cookedMeshletPayloads.TryGetValue(source, out MeshletPayload? payload))
+            {
+                var policy = _meshletPolicies[source];
+                if (!ReferenceEquals(source.MeshletPayload, payload) ||
+                    !payload.IsFreshFor(source, policy.Meshlets, policy.Lods, payload.SourceMeshIdentity))
+                    throw new InvalidDataException($"BrowserCook.MeshletSourceChanged: mesh '{source.Name}' ({source.ID}) changed during browser serialization.");
+                payload.ValidateForMesh(source, payload.SourceMeshIdentity);
+            }
             return _materialProjection.Callbacks.OnSerializingValue?.Invoke(value) ?? value;
+        }
+
+        private void EnsureMeshletBackend()
+        {
+            if (_meshletBackendVerified)
+                return;
+            IMeshOptimizerBackend? backend = MeshOptimizerBackendServices.Current;
+            if (backend is null)
+                throw new NotSupportedException("BrowserCook.MeshletBackendUnavailable: the desktop meshoptimizer backend is not registered in the Editor cook host.");
+            try
+            {
+                if (backend.BuildMeshletsBound(3, MeshletPayload.PortableMaxVertices,
+                        MeshletPayload.PortableMaxTriangles) == 0)
+                    throw new InvalidDataException("BrowserCook.MeshletBackendInvalid: the desktop meshoptimizer backend returned no bound for one triangle.");
+            }
+            catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+            {
+                throw new NotSupportedException("BrowserCook.MeshletBackendUnavailable: the desktop meshoptimizer native library or required export is missing.", error);
+            }
+            _meshletBackendVerified = true;
+        }
+
+        private static bool IsPortableMeshletIdentity(string identity, Guid meshId)
+        {
+            if (identity == $"mesh:{meshId:N}")
+                return true;
+            // Model import identities start with the source's SHA-256 identity,
+            // followed by the imported entity and resident LOD key.
+            if (identity.Length < 66 || identity[64] != '/')
+                return false;
+            for (int index = 0; index < 64; index++)
+                if (!char.IsAsciiHexDigit(identity[index]))
+                    return false;
+            if (identity.Contains('\\') || identity.Contains(":/", StringComparison.Ordinal) ||
+                identity.Contains("//", StringComparison.Ordinal))
+                return false;
+            foreach (string segment in identity[65..].Split('/'))
+                if (segment is "" or "." or "..")
+                    return false;
+            return true;
         }
 
         private void ValidateGameObjectOwnership(object? value)
