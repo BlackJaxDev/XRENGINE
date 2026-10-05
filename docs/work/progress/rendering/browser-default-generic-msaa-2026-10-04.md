@@ -184,3 +184,79 @@ The current opaque/masked source does not select transparent rank/mask work,
 so no source/primitive-order result is inferred. Independent source review,
 JavaScript syntax and diff checks pass; live execution of this added check is
 still pending.
+
+## GPU-indirect color and lifetime acceptance
+
+The Linux qualification job `111572327221` of
+[run 37248918555](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37248918555)
+passes on exact commit `6fea26f99f5066950642215fbfd998d0cd1db969`.
+Artifact `11320856846` has archive SHA-256
+`995986b21afec9d87bb1de7e184d2b86bef617ce7703740dcc7d0cfde6d7ee4f`.
+Chromium 153.0.8010.12 uses the explicitly selected SwiftShader software adapter.
+The genuine Default source selects `GpuIndirectZeroReadback` throughout x1 and
+x4, with matching authored camera, committed sample count and resource extents.
+
+Both profiles complete two fresh starts, each at 512 x 512, then 640 x 384,
+then restored 512 x 512. The twelve captures pass 108 HDR/display center
+comparisons: maximum HDR component error is 0.0002297794 and display-byte error
+is zero. The x4 diagonal contains 319 or 402 fractional pixels, including all
+quarter-coverage steps, with zero mismatches. The initial x4 image and the
+non-square second-start image were inspected. Captured command records include
+real GPU LOD selection and culling, ten x1 or twelve x4 indexed-indirect color
+draw calls, and x4 color resolve before presentation. Geometric rejection is
+conservatively disabled for these undeclared vertex bounds; this does not
+establish frustum-culling efficacy, GPU-selected count values or primitive
+ordering for transparent sources.
+
+Ordinary frame and resize intervals add no READ maps. Each paused diagnostic
+interval accounts for exactly nine x1 or ten x4 pixel-copy maps. Native module
+and pipeline identities remain stable, with eight module cache entries and
+thirty pipeline cache entries. The exact managed slot roots and retained
+command dependency graph account for partial spare-slot warming: non-slot
+inventories remain 105 resources for x1 and 125 for x4 across every resize and
+restart. No stale output attachment, unowned pipeline or unexplained resource
+is accepted. All four teardown records report zero live/retiring resources,
+readback tickets and estimated logical GPU memory. This is bounded descriptor
+and ownership evidence, not a driver-memory or long-duration allocation budget.
+
+These GPU profiles have GTAO disabled. They qualify the ordinary x1/x4 material,
+color resolve, selected-mode, pixel-copy accounting and retained-resource subset.
+The GPU x4 depth/normal sidecars and enabled GTAO path still require execution;
+the complete Default GPU x4 acceptance leaf remains open. Custom x4 graphs,
+blended transparent coverage and unavailable-profile rejection also remain open.
+
+## Additional authored AO and blended profiles
+
+The same diagnostic now includes `gpu-indirect-x4-ao`. Its accepted-frame
+contract requires twelve indexed depth/normal draws and twelve indexed color
+draws, each with its own GPU selection/cull work. The exact cold owner map
+therefore admits twenty-four selection/work entries in a completed slot, within the unchanged
+production capacities. Closest-covered depth/normal resolution, three ordered
+GTAO operations and the existing independent numeric witnesses are mandatory.
+Twenty-two READ maps belong only to paused diagnostic copies; ordinary frames
+retain the zero-readback requirement.
+
+The separate CPU and GPU x4 blended profiles preserve the original nine tile
+cases. Only the sloped gutter pair changes: the rear has alpha 0.75 and the
+front alpha 0.5, over the opaque clear/background color. The fixture inserts
+front before rear, so the expected rear-over-background then front-over-rear
+result cannot pass by retaining insertion order. RGB uses SrcAlpha and
+OneMinusSrcAlpha; alpha uses One and OneMinusSrcAlpha. The independent HDR
+oracle includes fractional geometry coverage in quarter steps. GPU evidence
+must include source ranking, argument masking, retained raster input copies
+and indexed-indirect replay; direct scene substitution and ordinary READ maps
+remain failures.
+
+Connecting this authored state exposed two production admission gaps: the
+canonical unlit surface reader and WebGPU coverage check previously required
+SrcAlpha for the alpha channel as well as RGB. Both now also admit One for the
+alpha source of unlit AlphaBlend. Existing SrcAlpha, premultiplied and additive
+behavior is preserved, and the native pipeline still lowers the actual authored
+factors. No desktop GLSL, default material state or serialized format changes.
+
+Independent source reviews found no remaining static blocker after those gate
+fixes. JavaScript syntax, diff checks and replay of the previously accepted
+opaque/AO CPU and ordinary indexed captures pass. A synthetic blended witness
+checks the oracle only. New profile pixels, C# compilation and browser behavior
+remain pending on a fresh exact-commit run. These source and replay checks do
+not close either wider MSAA acceptance leaf.

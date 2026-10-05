@@ -30,11 +30,15 @@ public sealed class ModularPipelineParityPawnComponent : PawnComponent
         input.RegisterKeyEvent(EKey.Number1, EButtonInputType.Pressed, SelectClearA);
         input.RegisterKeyEvent(EKey.Number2, EButtonInputType.Pressed, SelectClearB);
         input.RegisterKeyEvent(EKey.Number3, EButtonInputType.Pressed, SelectQuad);
+        input.RegisterKeyEvent(EKey.Number4, EButtonInputType.Pressed, SelectMsaaCpu);
+        input.RegisterKeyEvent(EKey.Number5, EButtonInputType.Pressed, SelectMsaaGpu);
     }
 
     private void SelectClearA() => SelectProfile(0);
     private void SelectClearB() => SelectProfile(1);
     private void SelectQuad() => SelectProfile(2);
+    private void SelectMsaaCpu() => SelectProfile(3);
+    private void SelectMsaaGpu() => SelectProfile(4);
 
     private void SelectProfile(int index)
     {

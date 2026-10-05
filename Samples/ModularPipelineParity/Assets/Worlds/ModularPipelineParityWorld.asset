@@ -91,6 +91,98 @@ Scenes:
         Translation: 0 1 6
       ID: 2382f7b2-4497-4dde-b23b-5be20c47d43d
       Name: Authored Gradient Quad Camera
+    - Components:
+      - &msaaCpuCamera
+        __type: XREngine.Components.CameraComponent
+        RenderPipelineSource:
+          __type: ModularPipelineParity.ModularMsaaRenderPipeline
+          __assetType: ModularPipelineParity.ModularMsaaRenderPipeline
+          MeshSubmissionStrategy: CpuDirect
+          DeclaredRequirements:
+            Backend: webgpu
+            Programs:
+              "custom::msaa-scene":
+              "custom::msaa-present":
+          ID: 2edcc7a6-710e-43d4-8d6f-f8474a7e35f1
+          Name: Authored MSAA CPU Pipeline
+        AntiAliasingModeOverride: Msaa
+        MsaaSampleCountOverride: 4
+        CameraParameters:
+          __type: XREngine.Rendering.XRPerspectiveCameraParameters
+          VerticalFieldOfView: 48
+          HorizontalFieldOfView: 48
+          AspectRatio: 1
+          InheritAspectRatio: true
+          NearZ: 0.1
+          FarZ: 100
+        ID: 77c14a89-73e6-498b-adcc-e6938cad4374
+      - __type: ModularPipelineParity.ModularPipelineParityPawnComponent
+        ProfileKey: msaa-cpu
+        CameraComponent: *msaaCpuCamera
+        ID: c7fc9087-2ee7-43d9-a4a6-c2837e8a1055
+      Transform:
+        ID: 8e9c2f53-284b-45db-a11c-cd6a706e94ec
+        Translation: 0 0 6
+      ID: 39ac3934-e8f7-41ca-a8f1-1d662df08c8c
+      Name: Authored MSAA CPU Camera
+    - Components:
+      - &msaaGpuCamera
+        __type: XREngine.Components.CameraComponent
+        RenderPipelineSource:
+          __type: ModularPipelineParity.ModularMsaaRenderPipeline
+          __assetType: ModularPipelineParity.ModularMsaaRenderPipeline
+          MeshSubmissionStrategy: GpuIndirectZeroReadback
+          DeclaredRequirements:
+            Backend: webgpu
+            Programs:
+              "custom::msaa-scene":
+              "custom::msaa-present":
+          ID: 1929e9c7-6702-4d6c-8d95-8369e286bf66
+          Name: Authored MSAA GPU Indirect Pipeline
+        AntiAliasingModeOverride: Msaa
+        MsaaSampleCountOverride: 4
+        CameraParameters:
+          __type: XREngine.Rendering.XRPerspectiveCameraParameters
+          VerticalFieldOfView: 48
+          HorizontalFieldOfView: 48
+          AspectRatio: 1
+          InheritAspectRatio: true
+          NearZ: 0.1
+          FarZ: 100
+        ID: 0a9f116e-b84b-4d70-b21d-f8b5225fd0a5
+      - __type: ModularPipelineParity.ModularPipelineParityPawnComponent
+        ProfileKey: msaa-gpu
+        CameraComponent: *msaaGpuCamera
+        ID: b27dbf6c-8d0f-40ad-af51-3311d86ba0b3
+      Transform:
+        ID: 642c633a-5b4e-4f7b-a66a-b74bc236b76d
+        Translation: 0 0 6
+      ID: 5511e17e-1bb8-44c7-9dc5-51c61f48b673
+      Name: Authored MSAA GPU Indirect Camera
+    - Components:
+      - __type: ModularPipelineParity.CustomMsaaSceneComponent
+        ScenePart: OpaqueSlope
+        ID: 63b34ea2-df8c-48ce-8dc5-3d5bcc494c34
+      Transform:
+        ID: d3c62ed9-5997-470f-a4c3-6650fdcc29d8
+      ID: 58a5a377-e416-48b6-bf30-56c010151cb1
+      Name: MSAA Opaque Slope
+    - Components:
+      - __type: ModularPipelineParity.CustomMsaaSceneComponent
+        ScenePart: FarAlpha
+        ID: bcbb4edf-d295-4949-ab93-76f094a82aa6
+      Transform:
+        ID: 502f6686-72df-4686-9b47-e61b6c2dfa57
+      ID: 915e3ea8-e54c-4e3f-8073-281ce07342ac
+      Name: MSAA Far Alpha
+    - Components:
+      - __type: ModularPipelineParity.CustomMsaaSceneComponent
+        ScenePart: NearAlpha
+        ID: fa1834df-7c8d-4a57-a169-544543e06565
+      Transform:
+        ID: d4a77127-6b5e-48de-b711-2d0f0f107be1
+      ID: b7879eb1-34ce-4c1b-8fe8-7566ec8c76db
+      Name: MSAA Near Alpha
   ID: 82fd77ee-d938-4cc1-8292-2392c0fa4532
   Name: Modular Pipeline Inspection Scene
 DefaultGameMode:

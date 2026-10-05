@@ -25,6 +25,8 @@ public static class ModularPipelineParityRuntimeRegistration
                 RuntimeCookedBinarySerializer.RegisterRuntimeFactory(static () => new ModularPipelineParityPawnComponent()),
                 RuntimeCookedBinarySerializer.RegisterRuntimeFactory(static () => new ModularClearRenderPipeline()),
                 RuntimeCookedBinarySerializer.RegisterRuntimeFactory(static () => new ModularQuadRenderPipeline()),
+                RuntimeCookedBinarySerializer.RegisterRuntimeFactory(static () => new ModularMsaaRenderPipeline()),
+                RuntimeCookedBinarySerializer.RegisterRuntimeFactory(static () => new CustomMsaaSceneComponent()),
             ];
         }
     }

@@ -32,6 +32,12 @@ const witnessInputs = {
     diagonal: { left: [-0.86, 0.285], right: [0.86, 0.375] },
     roi: { left: 0.09, top: 0.312, right: 0.91, bottom: 0.358 },
 };
+const blendedWitnessInputs = {
+    background: [0.125, 0.25, 0.375, 1],
+    far: { hdr: [0.25, 0.5, 0.75, 0.75], depth: 0.625 },
+    near: { hdr: [1.25, 0.25, 0.125, 0.5], depth: 0.375 },
+    roi: witnessInputs.roi,
+};
 const aoNames = ['WebGtaoRawTexture', 'WebGtaoHorizontalTexture', 'WebGtaoFinalTexture'];
 const sidecarNames = ['DepthStencil', 'WebNormalTexture', 'WebMsaaNormalTexture', ...aoNames];
 
@@ -109,10 +115,10 @@ async function sampleStage(page, stage, config, capturePixels) {
             stage.centers.push({ index, expectedHdr: cases[index].hdr,
                 expectedDisplay: samples[index].expected, hdr, display: stage.display.samples[index] });
         }
-        stage.witness = stage.profile.endsWith('x4') || stage.profile === 'cpu-x4-ao'
+        stage.witness = stage.profile.includes('x4')
             ? await page.evaluate(() => window.engineMeshDiagnostic.readUnlitWitness()) : null;
         stage.ao = {};
-        if (stage.profile === 'cpu-x4-ao') {
+        if (stage.profile.endsWith('-ao')) {
             for (const name of aoNames) {
                 stage.ao[name] = {};
                 for (const [site, u, v] of [['near', 0.5, 0.317], ['edge', 0.5, 0.335], ['far', 0.5, 0.353]])
@@ -241,7 +247,8 @@ function analyzeWitness(witness, aoEnabled) {
 }
 
 function assertWitness(stage) {
-    const witness = stage.witness, aoEnabled = stage.profile === 'cpu-x4-ao';
+    if (stage.profile.endsWith('-blended')) return assertBlendedWitness(stage);
+    const witness = stage.witness, aoEnabled = stage.profile.endsWith('-ao');
     const { region } = witness;
     const state = stage.states[0];
     assert(witness.session === stage.pause.session && witness.executionProfile === stage.profile &&
@@ -306,6 +313,91 @@ function assertWitness(stage) {
     }
     assert(analysis.aoMinimum < 0.995 && analysis.aoMaximum - analysis.aoMinimum > 0.001,
         'BrowserSmoke.UnlitMsaaAoSignal: the resolved-depth witness produced only neutral or constant AO.');
+}
+
+function assertBlendedWitness(stage) {
+    const witness = stage.witness, state = stage.states[0], { region } = witness;
+    const inputs = blendedWitnessInputs;
+    assert(witness.session === stage.pause.session && witness.executionProfile === stage.profile &&
+        witness.resourceGeneration === state.resourceGeneration && witness.frameSequence === state.submittedFrame.sequence &&
+        same(witness.metadata, state.witness) && same(witness.metadata.roi, inputs.roi) &&
+        same(witness.metadata.background, { color: inputs.background, worldZ: -3 }) &&
+        same(witness.metadata.rear.color, inputs.far.hdr) && same(witness.metadata.front.color, inputs.near.hdr) &&
+        witness.metadata.rear.worldZ === -2.5 && witness.metadata.front.worldZ === -1.5 &&
+        witness.metadata.rear.normalDepth === inputs.far.depth &&
+        witness.metadata.front.normalDepth === inputs.near.depth &&
+        same(witness.metadata.rear.vertices, [[-.86,.26],[.86,.26],[.86,.4],[-.86,.4]]) &&
+        same(witness.metadata.front.vertices, [[-.86,.285],[.86,.375],[.86,.4],[-.86,.4]]) &&
+        same(witness.metadata.insertionOrder, ['front', 'rear']) &&
+        witness.metadata.coverageDenominator === 4 && witness.metadata.cameraNear === 0 &&
+        witness.metadata.cameraFar === 4 && witness.metadata.semantic === 'UnlitColorV1' &&
+        witness.metadata.factory === 'CreateUnlitColorMaterialForward',
+    'BrowserSmoke.UnlitBlendInputs: the authored gutter, depth order, or frame owner changed.');
+    const expectedBlend = { rgbSrc: 'SrcAlpha', rgbDst: 'OneMinusSrcAlpha',
+        alphaSrc: 'One', alphaDst: 'OneMinusSrcAlpha', depthTest: true,
+        depthWrite: false, pass: 'TransparentForward' };
+    assert(same(witness.metadata.blend, expectedBlend) &&
+        ['rear', 'front'].every(key => { const surface = state.witnessState?.[key]; return surface &&
+            surface.name === (key === 'rear' ? 'Unlit gutter rear surface' : 'Unlit gutter front edge') &&
+            surface.transparency === 'AlphaBlend' && surface.renderPass === 5 &&
+            surface.blendEnabled === 'Enabled' && surface.rgbSrc === expectedBlend.rgbSrc &&
+            surface.rgbDst === expectedBlend.rgbDst && surface.alphaSrc === expectedBlend.alphaSrc &&
+            surface.alphaDst === expectedBlend.alphaDst && surface.depthTest === 'Enabled' &&
+            surface.depthWrite === false && surface.excludeIndirect === false; }),
+    'BrowserSmoke.UnlitBlendMaterial: the live gutter materials lost canonical ordered straight-alpha state.');
+    assert(region && region.targetWidth === stage.width && region.targetHeight === stage.height &&
+        Number.isInteger(region.x) && Number.isInteger(region.y) && Number.isInteger(region.width) &&
+        Number.isInteger(region.height) && region.width > 0 && region.height > 0 &&
+        region.width * region.height <= 65536 && same(witness.metadata.roi, inputs.roi),
+    'BrowserSmoke.UnlitBlendRegion: the paused resolved gutter is missing or oversized.');
+    for (const [actual, expected] of [[region.x, inputs.roi.left * stage.width],
+        [region.y, inputs.roi.top * stage.height],
+        [region.x + region.width, inputs.roi.right * stage.width],
+        [region.y + region.height, inputs.roi.bottom * stage.height]])
+        assert(Math.abs(actual - expected) <= 1, 'BrowserSmoke.UnlitBlendExtent: the ROI left its fixed gutter.');
+    const target = state.targets.find(item => item.label === 'HDRSceneTex');
+    assert(witness.hdr?.label === 'HDRSceneTex' && witness.hdr.format === 'rgba16float' &&
+        witness.hdr.slot === target?.slot && witness.hdr.generation === target?.generation &&
+        witness.hdr.sampleCount === 1 && witness.hdr.nativeSampleCount === 1 &&
+        witness.hdr.width === stage.width && witness.hdr.height === stage.height &&
+        witness.hdr.channels === 4 && same(witness.hdr.region,
+            { x: region.x, y: region.y, width: region.width, height: region.height }) &&
+        witness.hdr.pixels.length === region.width * region.height * 4 &&
+        witness.depth === null && witness.normal === null && witness.ao === null &&
+        Object.keys(stage.ao).length === 0,
+    'BrowserSmoke.UnlitBlendTarget: the readback did not come from this frame’s resolved HDR target.');
+    const over = (front, rear) => front.map((value, channel) => channel === 3 ?
+        value + rear[channel] * (1 - value) : value * front[3] + rear[channel] * (1 - front[3]));
+    const far = over(inputs.far.hdr, inputs.background);
+    const near = over(inputs.near.hdr, far);
+    const analysis = { expectedFar: far, expectedNear: near, coverageCounts: [0, 0, 0, 0, 0],
+        fractionalPixels: 0, fullyNearPixels: 0, fullyFarPixels: 0, mismatchCount: 0, mismatches: [] };
+    const line = x => 0.285 + (x + 0.86) * 0.09 / 1.72;
+    for (let y = 0; y < region.height; y++) for (let x = 0; x < region.width; x++) {
+        const offset = (y * region.width + x) * 4, hdr = witness.hdr.pixels.slice(offset, offset + 4);
+        const coverage = (hdr[0] - far[0]) / (near[0] - far[0]);
+        const count = Math.round(coverage * 4);
+        const fail = (reason, expected) => { analysis.mismatchCount++;
+            if (analysis.mismatches.length < 16) analysis.mismatches.push({ x, y, reason, hdr, expected }); };
+        if (!Number.isFinite(coverage) || count < 0 || count > 4) { fail('coverage', 'finite quarter coverage'); continue; }
+        analysis.coverageCounts[count]++;
+        if (count > 0 && count < 4) analysis.fractionalPixels++;
+        const expected = far.map((value, channel) => value + (near[channel] - value) * count / 4);
+        if (!hdr.every((value, channel) => Number.isFinite(value) && Math.abs(value - expected[channel]) <= 0.004))
+            fail('source-over-resolve', expected);
+        const px = region.x + x, py = region.y + y;
+        const left = 2 * px / region.targetWidth - 1, right = 2 * (px + 1) / region.targetWidth - 1;
+        const top = 1 - 2 * py / region.targetHeight, bottom = 1 - 2 * (py + 1) / region.targetHeight;
+        if (bottom > line(right) + 0.000001) { analysis.fullyNearPixels++;
+            if (count !== 4) fail('near-interior', near); }
+        else if (top < line(left) - 0.000001) { analysis.fullyFarPixels++;
+            if (count !== 0) fail('far-interior', far); }
+    }
+    stage.witnessAnalysis = analysis;
+    assert(analysis.mismatchCount === 0, `BrowserSmoke.UnlitBlendPixels: ${stage.label}: ${JSON.stringify(analysis.mismatches)}`);
+    assert(analysis.fractionalPixels > 0 && analysis.coverageCounts[0] > 0 && analysis.coverageCounts[4] > 0 &&
+        analysis.fullyNearPixels > 0 && analysis.fullyFarPixels > 0,
+    'BrowserSmoke.UnlitBlendCoverage: require both interiors and fractional x4 silhouette coverage.');
 }
 
 
@@ -443,6 +535,21 @@ function assertStatistics(stage) {
     'BrowserSmoke.UnlitMsaaNativeCache: live shader and pipeline cache counters are absent.');
 }
 
+function assertBlendedCpuOrder(stage) {
+    const operations = stage.states[0].submittedFrame.operations;
+    const color = operations.filter(operation => operation.type === 'render' &&
+        operation.attachments.some(binding => binding.label === 'WebMsaaHdrTexture') &&
+        operation.drawEvidence.some(draw => draw.effective === true));
+    assert(color.length === 12 && color.slice(-2).every(operation =>
+        operation.pipeline === 'engine-unlit-color' && operation.sampleCount === 4 &&
+        operation.drawEvidence.every(draw => draw.issued && draw.effective === true &&
+            ['draw', 'drawIndexed'].includes(draw.type))) &&
+        color.slice(0, -2).every(operation => operation.record < color[10].record),
+    'BrowserSmoke.UnlitBlendCpuOrder: both transparent gutter draws must follow opaque/masked x4 color.');
+    stage.blendOrder = { opaqueAndMasked: color.slice(0, -2).map(operation => operation.record),
+        transparent: color.slice(-2).map(operation => operation.record) };
+}
+
 function compareWarmStage(stage, initial, previous) {
     stage.reuse = { expectedCache: initial.cache, actualCache: stage.cache,
         expectedPrograms: initial.nativePrograms, actualPrograms: stage.nativePrograms,
@@ -464,7 +571,7 @@ function compareWarmStage(stage, initial, previous) {
     'BrowserSmoke.UnlitMsaaResizeSource: resize replaced the authored source or physical output owner.');
     for (const label of stage.profile === 'gpu-indirect-x1' ? ['HDRSceneTex', 'DepthStencil'] :
         ['HDRSceneTex', 'WebMsaaHdrTexture', 'WebMsaaDepthTexture',
-            ...(stage.profile === 'cpu-x4-ao' ? sidecarNames : [])]) {
+            ...(stage.profile.endsWith('-ao') ? sidecarNames : [])]) {
         const oldTarget = previous.states[0].targets.find(target => target.label === label);
         const target = stage.states[0].targets.find(target => target.label === label);
         assert(oldTarget.slot !== target.slot || oldTarget.generation !== target.generation,
@@ -472,20 +579,22 @@ function compareWarmStage(stage, initial, previous) {
     }
     assert(stage.reuse.generation > stage.reuse.previousGeneration,
         'BrowserSmoke.UnlitMsaaResizeGeneration: resize did not commit a replacement resource generation.');
-    assert(indexed ? same(stage.cacheOwnership.residual, initial.cacheOwnership.residual) :
-        stage.postReadbackStatistics.resources.live <= initial.postReadbackStatistics.resources.live,
+    if (!stage.profile.endsWith('-blended'))
+        assert(indexed ? same(stage.cacheOwnership.residual, initial.cacheOwnership.residual) :
+            stage.postReadbackStatistics.resources.live <= initial.postReadbackStatistics.resources.live,
         'BrowserSmoke.UnlitMsaaResizeRetention: resize retained additional GPU resources.');
 }
 
 export async function unlitMsaaCheck(browser, origin, report, config, instrumentedPage, capturePixels, assertNoBrowserErrors) {
     const { page, context, events } = await instrumentedPage(browser, origin, report, 'engine-unlit-msaa', config);
-    report.unlitMsaa = { scope: 'DefaultRenderPipeline CpuDirect x4 only', profiles: [], expectedWitness: witnessInputs };
+    report.unlitMsaa = { scope: 'DefaultRenderPipeline CpuDirect x4 opaque, blended and GTAO',
+        profiles: [], expectedWitness: witnessInputs, expectedBlend: blendedWitnessInputs };
     try {
         await page.goto(`${origin}/diagnostics/engine-mesh.html?probe=unlit&assets=${encodeURIComponent(`${origin}${config.engineManifest}`)}`,
             { waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => window.engineMeshDiagnostic !== undefined);
         let catalog;
-        for (const profile of ['cpu-x4', 'cpu-x4-ao']) {
+        for (const profile of ['cpu-x4', 'cpu-x4-blended', 'cpu-x4-ao']) {
             await page.locator('#execution-profile').selectOption(profile);
             const qualification = { profile, lifecycles: [] };
             report.unlitMsaa.profiles.push(qualification);
@@ -507,6 +616,7 @@ export async function unlitMsaaCheck(browser, origin, report, config, instrument
                     await sampleStage(page, stage, config, capturePixels);
                     assertCenters(stage);
                     assertProfile(stage);
+                    if (profile.endsWith('-blended')) assertBlendedCpuOrder(stage);
                     assertWitness(stage);
                     assertStatistics(stage);
                     if (index > 0) compareWarmStage(stage, record.stages[0], record.stages[index - 1]);
@@ -573,13 +683,17 @@ function installIndirectEvidence() {
 }
 
 function assertIndirectProfile(stage) {
-    const state = stage.states[0], x4 = stage.profile === 'gpu-indirect-x4';
+    const state = stage.states[0], x4 = stage.profile !== 'gpu-indirect-x1';
+    const aoEnabled = stage.profile === 'gpu-indirect-x4-ao';
     const sampleCount = x4 ? 4 : 1;
     const requiredTargets = [['HDRSceneTex', 'rgba16float', 1],
         ...(x4 ? [['WebMsaaHdrTexture', 'rgba16float', 4], ['WebMsaaDepthTexture', 'depth32float', 4]] :
-            [['DepthStencil', 'depth32float', 1]])];
+            [['DepthStencil', 'depth32float', 1]]),
+        ...(aoEnabled ? [['WebMsaaNormalTexture', 'rgba16float', 4],
+            ['DepthStencil', 'depth32float', 1], ['WebNormalTexture', 'rgba16float', 1],
+            ...aoNames.map(name => [name, 'rgba16float', 1])] : [])];
     stage.profileComparison = { expected: { executionProfile: stage.profile,
-        submission: 'GpuIndirectZeroReadback', sampleCount, width: stage.width, height: stage.height,
+        submission: 'GpuIndirectZeroReadback', sampleCount, aoEnabled, width: stage.width, height: stage.height,
         targets: requiredTargets }, actual: { executionProfile: state.executionProfile,
         submission: state.submission, indexedSubmission: state.indexedSubmission,
         source: state.source, camera: state.camera, committed: state.committed,
@@ -594,13 +708,16 @@ function assertIndirectProfile(stage) {
         !state.pipelineDecline && !state.resourceFailure,
     'BrowserSmoke.UnlitIndirectSelection: the live Default source did not select successful GPU indexed submission.');
     assert(state.camera?.antiAliasing === (x4 ? 'Msaa' : 'None') &&
-        state.camera.sampleCount === sampleCount && state.camera.aoEnabled === false &&
+        state.camera.sampleCount === sampleCount && state.camera.aoEnabled === aoEnabled &&
+        state.camera.aoQualityEnabled === true && state.camera.aoType === 'GroundTruthAmbientOcclusion' &&
+        state.camera.aoResolution === 'Full' &&
         state.camera.reversedDepth === false && state.committed?.pipeline === 'DefaultRenderPipeline' &&
         state.committed.antiAliasing === (x4 ? 'Msaa' : 'None') &&
         state.committed.sampleCount === sampleCount && state.committed.width === stage.width &&
         state.committed.height === stage.height && state.committed.displayWidth === stage.width &&
         state.committed.displayHeight === stage.height && state.committed.outputHdr === false &&
         state.committed.stereo === false &&
+        (!aoEnabled || state.committed.featureMask === 2 ** 31 + 2 ** 32 + 2 ** 6) &&
         Number.isSafeInteger(state.resourceGeneration) && state.resourceGeneration > 0,
     'BrowserSmoke.UnlitIndirectGeneration: the committed output does not match the selected profile and extent.');
     for (const [label, format, samples] of requiredTargets) {
@@ -611,7 +728,7 @@ function assertIndirectProfile(stage) {
         `BrowserSmoke.UnlitIndirectTarget: ${label} has the wrong native profile.`);
     }
     assert(!state.targets.some(target => sidecarNames.includes(target.label) &&
-            (x4 || target.label !== 'DepthStencil')) &&
+            !requiredTargets.some(([label]) => label === target.label)) &&
         (x4 || !state.targets.some(target => target.label.startsWith('WebMsaa'))) &&
         state.shaders.length >= 6 && state.pipelines.length >= 6 &&
         [...state.shaders, ...state.pipelines].every(program => Number.isInteger(program.nativeId) && program.nativeId > 0),
@@ -625,7 +742,16 @@ function assertIndirectProfile(stage) {
             same(other.targets, state.targets) && other.resourceGeneration === state.resourceGeneration &&
             same(other.submittedFrame, state.submittedFrame),
         'BrowserSmoke.UnlitIndirectMetadataMutation: selecting a tile changed the submitted frame.');
+    if (stage.profile.endsWith('-blended')) return assertBlendedIndirectOperations(stage);
     const frame = state.submittedFrame, operations = frame?.operations ?? [];
+    const targetProfiles = new Map(requiredTargets.map(([label, format, samples]) => [label, { format, samples }]));
+    for (const operation of operations) for (const binding of [...operation.attachments, ...operation.sampledTextures]) {
+        const expected = targetProfiles.get(binding.label);
+        if (!expected) continue;
+        assert(binding.format === expected.format && binding.sampleCount === expected.samples &&
+            binding.nativeSampleCount === expected.samples,
+        `BrowserSmoke.UnlitIndirectSubmittedSamples: ${binding.label} used a different native or descriptor sample count.`);
+    }
     const attached = (operation, label, key = 'view') => operation.attachments.some(binding =>
         binding.key === key && binding.label === label);
     const sampled = (operation, label) => operation.sampledTextures.some(binding => binding.label === label);
@@ -636,6 +762,10 @@ function assertIndirectProfile(stage) {
     const sceneRasters = operations.filter(operation => operation.type === 'render' &&
         attached(operation, colorTarget) && operation.drawEvidence.length > 0);
     const color = sceneRasters.filter(indirect);
+    const prepassRasters = operations.filter(operation => operation.type === 'render' &&
+        attached(operation, 'WebMsaaNormalTexture') && operation.drawEvidence.length > 0);
+    const prepass = prepassRasters.filter(indirect);
+    const sceneDraws = operations.filter(operation => color.includes(operation) || prepass.includes(operation));
     const select = operations.filter(operation => operation.type === 'compute' &&
         operation.label === 'engine-meshlets-select-lod 0 compute' &&
         operation.pipeline === 'engine-meshlets-select-lod');
@@ -643,6 +773,8 @@ function assertIndirectProfile(stage) {
         operation.label === 'engine-indirect-cull-primitive 0 compute' &&
         operation.pipeline === 'engine-indirect-cull-primitive');
     const resolve = operations.filter(operation => attached(operation, 'HDRSceneTex', 'resolveTarget'));
+    const closest = operations.filter(operation => attached(operation, 'WebNormalTexture'));
+    const aoStages = aoNames.map(name => operations.filter(operation => attached(operation, name)));
     const presentation = operations.filter(operation => operation.type === 'render' &&
         attached(operation, 'canvas') && sampled(operation, 'HDRSceneTex') &&
         operation.raster?.rasterAreaEmpty === false && operation.drawEvidence.length > 0 &&
@@ -651,16 +783,23 @@ function assertIndirectProfile(stage) {
             item.geometryCount > 0 && item.instanceCount > 0));
     const issuedColorCalls = color.reduce((sum, operation) => sum + operation.drawEvidence.reduce((count, item) =>
         count + (item.type === 'drawIndexedIndirect' && item.issued ? item.issuedCalls : 0), 0), 0);
+    const issuedPrepassCalls = prepass.reduce((sum, operation) => sum + operation.drawEvidence.reduce((count, item) =>
+        count + (item.type === 'drawIndexedIndirect' && item.issued ? item.issuedCalls : 0), 0), 0);
     stage.execution = { sequence: frame?.sequence, records: frame?.records,
         select: select.map(operation => operation.record), cull: cull.map(operation => operation.record),
-        color: color.map(operation => operation.record), resolve: resolve.map(operation => operation.record),
-        presentation: presentation.map(operation => operation.record), issuedColorCalls };
+        prepass: prepass.map(operation => operation.record), color: color.map(operation => operation.record),
+        closest: closest.map(operation => operation.record),
+        aoStages: aoStages.map(stages => stages.map(operation => operation.record)),
+        resolve: resolve.map(operation => operation.record),
+        presentation: presentation.map(operation => operation.record), issuedPrepassCalls, issuedColorCalls };
     assert(Number.isSafeInteger(frame?.sequence) && frame.sequence > 0 && frame.records === operations.length &&
-        select.length > 0 && cull.length > 0 && color.length > 0 &&
-        color.length === sceneRasters.length && issuedColorCalls >= 10 && presentation.length > 0 &&
-        Math.min(...color.map(operation => operation.record)) > Math.min(...select.map(operation => operation.record)) &&
-        Math.min(...color.map(operation => operation.record)) > Math.min(...cull.map(operation => operation.record)) &&
-        color.every(operation => operation.sampleCount === sampleCount &&
+        color.length === (x4 ? 12 : 10) && color.length === sceneRasters.length &&
+        prepass.length === (aoEnabled ? 12 : 0) && prepass.length === prepassRasters.length &&
+        issuedColorCalls === color.length && issuedPrepassCalls === prepass.length &&
+        select.length === sceneDraws.length && cull.length === sceneDraws.length &&
+        select.every((operation, index) => operation.record < cull[index].record &&
+            cull[index].record < sceneDraws[index].record) && presentation.length > 0 &&
+        sceneDraws.every(operation => operation.sampleCount === sampleCount &&
             attached(operation, x4 ? 'WebMsaaDepthTexture' : 'DepthStencil') &&
             operation.drawEvidence.every(item => item.type === 'drawIndexedIndirect' && item.issued &&
                 item.issuedCalls > 0 && item.effective === null && item.geometryCount === null &&
@@ -670,6 +809,32 @@ function assertIndirectProfile(stage) {
             !operation.label?.startsWith('engine-authored-rank-sources ') &&
             !operation.label?.startsWith('engine-authored-mask-ranked-arguments ')),
     'BrowserSmoke.UnlitIndirectPacket: require GPU LOD/cull and indexed-indirect scene draws without opaque-pass ordering work.');
+    if (!aoEnabled)
+        assert(closest.length === 0 && aoStages.every(stages => stages.length === 0) &&
+            operations.every(operation => [...operation.attachments, ...operation.sampledTextures]
+                .every(binding => !sidecarNames.includes(binding.label) || !x4 && binding.label === 'DepthStencil')),
+        'BrowserSmoke.UnlitIndirectDisabledAo: disabled AO still executed or sampled depth/normal sidecars.');
+    else {
+        assert(prepass.every(operation => operation.pipeline?.startsWith('engine-unlit-') &&
+            operation.pipeline.endsWith('-depth-normal')) &&
+            Math.max(...prepass.map(operation => operation.record)) < Math.min(...color.map(operation => operation.record)) &&
+            closest.length === 1 && closest[0].sampleCount === 1 &&
+            attached(closest[0], 'DepthStencil') && sampled(closest[0], 'WebMsaaDepthTexture') &&
+            sampled(closest[0], 'WebMsaaNormalTexture') &&
+            Math.max(...prepass.map(operation => operation.record)) < closest[0].record,
+        'BrowserSmoke.UnlitIndirectClosestRoute: indexed depth/normal draws did not feed the x1 closest-sample resolve.');
+        let preceding = closest[0].record;
+        for (let index = 0; index < aoStages.length; index++) {
+            const stages = aoStages[index];
+            assert(stages.length === 1 && stages[0].sampleCount === 1 && stages[0].record > preceding &&
+                sampled(stages[0], 'DepthStencil') && sampled(stages[0], 'WebNormalTexture') &&
+                (index === 0 || sampled(stages[0], aoNames[index - 1])),
+            `BrowserSmoke.UnlitIndirectAoRoute: ${aoNames[index]} did not consume the resolved depth/normal chain.`);
+            preceding = stages[0].record;
+        }
+        assert(Math.min(...color.map(operation => operation.record)) > preceding,
+            'BrowserSmoke.UnlitIndirectAoOrder: indexed forward color ran before GTAO was produced.');
+    }
     if (x4)
         assert(resolve.length === 1 && resolve[0].sampleCount === 4 &&
             attached(resolve[0], 'WebMsaaHdrTexture') &&
@@ -683,11 +848,81 @@ function assertIndirectProfile(stage) {
     stage.cacheOwnership = inspectIndirectCacheOwnership(stage);
 }
 
+function assertBlendedIndirectOperations(stage) {
+    const frame = stage.states[0].submittedFrame, operations = frame?.operations ?? [];
+    const attached = (operation, label, key = 'view') => operation.attachments.some(binding =>
+        binding.key === key && binding.label === label);
+    const color = operations.filter(operation => operation.type === 'render' &&
+        attached(operation, 'WebMsaaHdrTexture') && operation.drawEvidence.length > 0);
+    const select = operations.filter(operation => operation.type === 'compute' &&
+        operation.pipeline === 'engine-meshlets-select-lod');
+    const cull = operations.filter(operation => operation.type === 'compute' &&
+        operation.pipeline === 'engine-indirect-cull-primitive');
+    const rank = operations.filter(operation => operation.type === 'compute' &&
+        operation.pipeline === 'engine-authored-rank-sources');
+    const mask = operations.filter(operation => operation.type === 'compute' &&
+        operation.pipeline === 'engine-authored-mask-ranked-arguments');
+    const resolve = operations.filter(operation => attached(operation, 'HDRSceneTex', 'resolveTarget'));
+    const presentation = operations.filter(operation => operation.type === 'render' &&
+        attached(operation, 'canvas') && operation.sampledTextures.some(binding => binding.label === 'HDRSceneTex') &&
+        operation.drawEvidence.some(draw => draw.effective === true && draw.issued));
+    const copied = operations.filter(operation => operation.type === 'copyBuffer');
+    stage.execution = { sequence: frame?.sequence, records: frame?.records,
+        select: select.map(operation => operation.record), cull: cull.map(operation => operation.record),
+        rank: rank.map(operation => operation.record), mask: mask.map(operation => operation.record),
+        copied: copied.map(operation => operation.record), color: color.map(operation => operation.record),
+        resolve: resolve.map(operation => operation.record),
+        presentation: presentation.map(operation => operation.record) };
+    assert(Number.isSafeInteger(frame?.sequence) && frame.sequence > 0 && frame.records === operations.length &&
+        color.length === 14 && select.length === 12 && cull.length === 12 &&
+        rank.length === 1 && mask.length === 2 && copied.length >= 4 &&
+        color.every(operation => operation.sampleCount === 4 && attached(operation, 'WebMsaaDepthTexture') &&
+            operation.drawEvidence.every(draw => draw.type === 'drawIndexedIndirect' && draw.issued &&
+                draw.issuedCalls === 1 && draw.effective === null && draw.geometryCount === null &&
+                draw.instanceCount === null)) &&
+        color.slice(-4).every(operation => operation.pipeline === 'engine-unlit-color') &&
+        color.slice(0, -4).every(operation => operation.record < rank[0].record) &&
+        rank[0].record < Math.min(...mask.map(operation => operation.record)) &&
+        Math.max(...mask.map(operation => operation.record)) < color[10].record &&
+        Math.max(...cull.map(operation => operation.record)) < color[10].record &&
+        resolve.length === 1 && attached(resolve[0], 'WebMsaaHdrTexture') &&
+        resolve[0].sampleCount === 4 && resolve[0].record > color[13].record &&
+        presentation.length > 0 && presentation.every(operation => operation.record > resolve[0].record &&
+            operation.sampleCount === 1) &&
+        !operations.some(operation => attached(operation, 'WebMsaaNormalTexture') ||
+            attached(operation, 'WebNormalTexture') || aoNames.some(name => attached(operation, name))),
+    'BrowserSmoke.UnlitBlendGpuOrder: GPU rank/mask, copied source inputs, x4 indexed replay and resolve are incomplete.');
+    stage.cacheOwnership = inspectBlendedIndirectOwnership(stage);
+}
+
+function inspectBlendedIndirectOwnership(stage) {
+    const state = stage.states[0], inventory = state.resourceOwnership, cache = state.indexedCache;
+    assert(inventory && cache && inventory.owner === stage.pause.session && cache.owner === inventory.owner &&
+        inventory.generation === cache.outputGeneration && cache.frameSequence === state.submittedFrame.sequence &&
+        cache.slotCapacity === 3 && cache.sourceCapacity === 256 && cache.drawCapacity === 256 &&
+        cache.slots.length === 3 && cache.slots.some(slot => slot.selections.length === 12 && slot.works.length === 12),
+    'BrowserSmoke.UnlitBlendOwner: indexed selections and arguments lost their accepted frame owner.');
+    const nodes = new Map(inventory.resources.map(node => [node.handle, node]));
+    assert(nodes.size === inventory.resources.length && nodes.size === stage.statistics.resources.live &&
+        nodes.size === stage.postReadbackStatistics.resources.live &&
+        [...nodes.values()].every(node => !node.retired && node.dependencies.every(handle => nodes.has(handle))) &&
+        [...nodes.values()].some(node => node.label === 'Authored GPU source ranks') &&
+        [...nodes.values()].filter(node => node.label === 'Authored ranked indexed arguments').length >= 2 &&
+        [...nodes.values()].filter(node => node.label === 'Authored ordered raster input').length >= 4,
+    'BrowserSmoke.UnlitBlendOwnerGraph: ranked arguments or copied candidate inputs lack live resource ownership.');
+    const residual = [...nodes.values()].map(node => JSON.stringify({ kind: node.kind,
+        label: node.label, size: node.size, usage: node.usage })).sort();
+    const nativePrograms = [...new Set([...nodes.values()].filter(node => node.nativeId !== null).map(node =>
+        JSON.stringify({ kind: node.kind, label: node.label, nativeId: node.nativeId })))].sort();
+    return { live: nodes.size, residual, nativePrograms };
+}
+
 function assertIndirectStatistics(stage, normalStart) {
     const before = stage.pause.nativeEvidence, after = stage.sampling.nativeEvidence;
     const statistics = stage.postReadbackStatistics;
     stage.mapAccounting = { normalStart: normalStart.readMaps, beforeCopies: before?.readMaps,
-        afterCopies: after?.readMaps, expectedCopies: stage.profile === 'gpu-indirect-x4' ? 10 : 9 };
+        afterCopies: after?.readMaps, expectedCopies: stage.profile === 'gpu-indirect-x4-ao' ? 22 :
+            stage.profile !== 'gpu-indirect-x1' ? 10 : 9 };
     assert(before && after && before.readMaps === normalStart.readMaps &&
         before.computeDispatches > normalStart.computeDispatches &&
         before.indexedIndirectDraws > normalStart.indexedIndirectDraws &&
@@ -698,7 +933,9 @@ function assertIndirectStatistics(stage, normalStart) {
         stage.sampling.readyFramesDelta === 0 && stage.sampling.frameSubmitCallsDelta === 0,
     'BrowserSmoke.UnlitIndirectReadMaps: ordinary frames mapped GPU reads or paused diagnostic copies were misattributed.');
     assert(statistics.frameSubmitCalls > 0 && statistics.engineFrame.submittedFrames > 0 &&
-        statistics.engineFrame.draws >= 10 && statistics.packets === 0 &&
+        statistics.engineFrame.draws >= (stage.profile === 'gpu-indirect-x4-ao' ? 24 :
+            stage.profile.endsWith('-blended') ? 14 : stage.profile === 'gpu-indirect-x4' ? 12 : 10) &&
+        statistics.packets === 0 &&
         statistics.focusedPipeline === null && !statistics.lastPacketFailure &&
         statistics.resources.retiring === 0 && statistics.resources.readbackTickets === 0 &&
         statistics.resources.readbackResidentBytes === 0,
@@ -712,8 +949,8 @@ function assertIndirectStatistics(stage, normalStart) {
 }
 
 export async function unlitIndirectCheck(browser, origin, report, config, instrumentedPage, capturePixels, assertNoBrowserErrors) {
-    report.unlitIndirect = { scope: 'DefaultRenderPipeline GpuIndirectZeroReadback indexed x1/x4', profiles: [] };
-    for (const profile of ['gpu-indirect-x1', 'gpu-indirect-x4']) {
+    report.unlitIndirect = { scope: 'DefaultRenderPipeline GpuIndirectZeroReadback indexed x1/x4 opaque, blended and GTAO', profiles: [] };
+    for (const profile of ['gpu-indirect-x1', 'gpu-indirect-x4', 'gpu-indirect-x4-blended', 'gpu-indirect-x4-ao']) {
         const qualification = { profile, lifecycles: [] };
         report.unlitIndirect.profiles.push(qualification);
         let catalog, startupResidual;
@@ -746,16 +983,18 @@ export async function unlitIndirectCheck(browser, origin, report, config, instru
                     await sampleStage(page, stage, config, capturePixels);
                     assertCenters(stage, 'GpuIndirectZeroReadback');
                     assertIndirectProfile(stage);
-                    if (profile === 'gpu-indirect-x4') assertWitness(stage);
+                    if (profile !== 'gpu-indirect-x1') assertWitness(stage);
                     else assert(stage.witness === null && stage.states[0].witness === null,
                         'BrowserSmoke.UnlitIndirectX1Witness: single-sample profile unexpectedly has a gutter witness.');
                     assertIndirectStatistics(stage, normalStart);
                     if (index > 0) compareWarmStage(stage, record.stages[0], record.stages[index - 1]);
                     else {
-                        assert((startupResidual === undefined || same(stage.cacheOwnership.residual, startupResidual)) &&
+                        assert((startupResidual === undefined || (profile.endsWith('-blended')
+                            ? same(stage.cacheOwnership.nativePrograms, startupResidual.nativePrograms)
+                            : same(stage.cacheOwnership.residual, startupResidual.residual))) &&
                             (catalog === undefined || same(catalog, stage.catalogIdentities)),
                         'BrowserSmoke.UnlitIndirectRestart: startup retained resources or changed cooked variants.');
-                        startupResidual ??= stage.cacheOwnership.residual;
+                        startupResidual ??= stage.cacheOwnership;
                         catalog ??= stage.catalogIdentities;
                     }
                     await waitReady(page, stage.pause.readyFrames, config.timeout, stage);

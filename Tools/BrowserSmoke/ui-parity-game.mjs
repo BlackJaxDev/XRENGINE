@@ -153,14 +153,33 @@ async function installObservation(page) {
                 let managed;
                 try { managed = host.engine.GetCanvasRenderingStatus(); }
                 catch (error) { managed = String(error); }
+                const renderer = host.renderer, scopes = renderer?.commands?.engineFrame?.scopes;
+                const receipts = [];
+                for (let index = 0; index < Math.min(scopes?.receipts?.length ?? 0, 64); index++) {
+                    const receipt = scopes.receipts[index];
+                    if (!receipt.active) continue;
+                    receipts.push({ sequence: receipt.context.sequence, owner: receipt.context.owner,
+                        generation: receipt.context.generation, remaining: receipt.remaining,
+                        closed: receipt.closed, submitted: receipt.submitted, scopeCount: receipt.scopeCount,
+                        deviceMatches: receipt.device === renderer.device,
+                        ownerMatches: receipt.context.owner === renderer._owner,
+                        generationMatches: receipt.context.generation === renderer._generation });
+                }
                 return { time: Date.now(), frameTimestamp: host.previousFrame, now: performance.now(),
                     managed, hidden: document.hidden, focused: document.hasFocus(),
                     attached: host.canvas.isConnected, canvas: rect(host.canvas),
                     bitmapWidth: host.canvas.width, bitmapHeight: host.canvas.height,
                     drawable: host.drawable, presented: host.presented, surfaceGeneration: host.surfaceGeneration,
+                    request: host.request, session: host.session, epoch: host.epoch,
+                    controllerAborted: host.controller?.signal.aborted ?? null,
+                    frozen: Boolean(host.frozen), pageHidden: Boolean(host.pageHidden),
+                    validatingRecoveryFrame: Boolean(host.validatingRecoveryFrame),
                     rendererReady: host.rendererReady, recovering: host.recovering, failed: host.failed,
                     firstFrameSeconds: host.firstFrameSeconds, admissionWaitSeconds: host.admissionWaitSeconds,
                     deferredFrameSeconds: host.deferredFrameSeconds,
+                    receipts: scopes ? { capacity: scopes.receipts.length, disposed: scopes.disposed,
+                        completedSequence: scopes.completedSequence, trackCompletion: scopes.trackCompletion,
+                        active: receipts } : null,
                     renderer: host.renderer?.getStatistics(), failure: host.renderer?.getFailureDiagnostics() };
             };
             return originalStart.apply(this, args);
@@ -352,7 +371,7 @@ async function waitRunning(page) {
 export async function uiParityGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors) {
     report.uiParityIterations = [];
     report.uiParityQualification = {
-        instrumentation: 'Read-only input-sync and host-start observers installed before the unchanged player entry script and restored on first invocation or cleanup. Existing getters, renderer statistics and native DOM only; no managed action/input export is invoked.',
+        instrumentation: 'Read-only input-sync and host-start observers installed before the unchanged player entry script and restored on first invocation or cleanup. Existing getters, host/receipt fields, renderer statistics and native DOM only; no managed action/input export is invoked.',
         input: 'Browser-delivered mouse/keyboard and Chromium touch protocol events target the actual canvas or native keyboard proxy.',
         composition: 'Synthetic DOM composition routing only; physical OS IME acceptance remains pending.',
         lifecycle: 'Two independent fresh browser contexts. Resource retirement and physical desktop/device captures require separate live evidence.',
@@ -367,6 +386,9 @@ export async function uiParityGameCheck(browser, origin, report, config, instrum
             const record = { name, capture: `ui-parity-${iteration}-${name}.png` };
             result.steps.push(record);
             // Publish partial evidence before any capture/expectation can throw.
+            // Require the existing frame-clock witness before Playwright's stable-element
+            // wait, which itself cannot finish while browser animation frames are stalled.
+            await frames(page, 2);
             record.geometry = await canvasGeometry(page, surface);
             // scrollIntoView may move the CSS rectangle; let the normal input sync reposition proxies.
             await frames(page, 2);

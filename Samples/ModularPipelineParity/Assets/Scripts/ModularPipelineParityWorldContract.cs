@@ -32,21 +32,28 @@ public static class ModularPipelineParityWorldContract
         ModularPipelineParityPawnComponent? first = null;
         ModularPipelineParityPawnComponent? second = null;
         ModularPipelineParityPawnComponent? quadPawn = null;
+        ModularPipelineParityPawnComponent? msaaCpuPawn = null;
+        ModularPipelineParityPawnComponent? msaaGpuPawn = null;
         foreach (ModularPipelineParityPawnComponent pawn in pawns)
             switch (pawn.ProfileKey)
             {
                 case "clear-a" when first is null: first = pawn; break;
                 case "clear-b" when second is null: second = pawn; break;
                 case "quad" when quadPawn is null: quadPawn = pawn; break;
+                case "msaa-cpu" when msaaCpuPawn is null: msaaCpuPawn = pawn; break;
+                case "msaa-gpu" when msaaGpuPawn is null: msaaGpuPawn = pawn; break;
                 default: throw new InvalidOperationException($"Unexpected or repeated modular camera profile '{pawn.ProfileKey}'.");
             }
 
-        if (pawns.Count != 3 || first is null || second is null || quadPawn is null)
-            throw new InvalidOperationException("The saved modular world must contain its three authored camera pawns.");
+        if (pawns.Count != 5 || first is null || second is null || quadPawn is null ||
+            msaaCpuPawn is null || msaaGpuPawn is null)
+            throw new InvalidOperationException("The saved modular world must contain its five authored camera pawns.");
 
         CameraComponent a = RequireCamera(first);
         CameraComponent b = RequireCamera(second);
         CameraComponent c = RequireCamera(quadPawn);
+        CameraComponent d = RequireCamera(msaaCpuPawn);
+        CameraComponent e = RequireCamera(msaaGpuPawn);
         if (a.RenderPipelineSource is not ModularClearRenderPipeline clear ||
             !ReferenceEquals(clear, b.RenderPipelineSource) ||
             clear.ID != Guid.Parse("a09559ee-79e9-4bcc-9adf-43cf250bc1db") ||
@@ -61,7 +68,59 @@ public static class ModularPipelineParityWorldContract
             b.AntiAliasingModeOverride != EAntiAliasingMode.None ||
             c.AntiAliasingModeOverride != EAntiAliasingMode.None)
             throw new InvalidOperationException("The saved first-stage cameras must request AA None explicitly.");
-        return [first, second, quadPawn];
+        if (d.RenderPipelineSource is not ModularMsaaRenderPipeline cpu ||
+            e.RenderPipelineSource is not ModularMsaaRenderPipeline gpu ||
+            ReferenceEquals(cpu, gpu) ||
+            cpu.ID != Guid.Parse("2edcc7a6-710e-43d4-8d6f-f8474a7e35f1") ||
+            gpu.ID != Guid.Parse("1929e9c7-6702-4d6c-8d95-8369e286bf66") ||
+            cpu.MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect ||
+            gpu.MeshSubmissionStrategy != EMeshSubmissionStrategy.GpuIndirectZeroReadback ||
+            !HasMsaaPrograms(cpu) || !HasMsaaPrograms(gpu))
+            throw new InvalidOperationException("The saved MSAA cameras lost their distinct authored source, strategy, or scoped programs.");
+        if (d.AntiAliasingModeOverride != EAntiAliasingMode.Msaa ||
+            e.AntiAliasingModeOverride != EAntiAliasingMode.Msaa ||
+            d.MsaaSampleCountOverride != 4 || e.MsaaSampleCountOverride != 4)
+            throw new InvalidOperationException("The saved MSAA cameras must request four samples explicitly.");
+        return [first, second, quadPawn, msaaCpuPawn, msaaGpuPawn];
+    }
+
+    private static bool HasMsaaPrograms(ModularMsaaRenderPipeline pipeline)
+        => pipeline.DeclaredRequirements?.Programs.ContainsKey(ModularMsaaRenderPipeline.SceneBindingKey) == true &&
+            pipeline.DeclaredRequirements.Programs.ContainsKey(ModularMsaaRenderPipeline.PresentBindingKey);
+
+    public static CustomMsaaSceneComponent[] ValidateSceneParts(XRWorld world)
+    {
+        List<CustomMsaaSceneComponent> parts = [];
+        foreach (XRScene scene in world.Scenes)
+            foreach (SceneNode root in scene.RootNodes)
+                parts.AddRange(root.FindAllDescendantComponents<CustomMsaaSceneComponent>());
+        return ValidateParts(parts);
+    }
+
+    public static CustomMsaaSceneComponent[] ValidateSceneParts(RuntimeWorld world)
+    {
+        List<CustomMsaaSceneComponent> parts = [];
+        foreach (SceneNode root in world.RootNodes)
+            parts.AddRange(root.FindAllDescendantComponents<CustomMsaaSceneComponent>());
+        return ValidateParts(parts);
+    }
+
+    private static CustomMsaaSceneComponent[] ValidateParts(List<CustomMsaaSceneComponent> parts)
+    {
+        CustomMsaaSceneComponent? opaque = null;
+        CustomMsaaSceneComponent? far = null;
+        CustomMsaaSceneComponent? near = null;
+        foreach (CustomMsaaSceneComponent part in parts)
+            switch (part.ScenePart)
+            {
+                case ECustomMsaaScenePart.OpaqueSlope when opaque is null: opaque = part; break;
+                case ECustomMsaaScenePart.FarAlpha when far is null: far = part; break;
+                case ECustomMsaaScenePart.NearAlpha when near is null: near = part; break;
+                default: throw new InvalidOperationException($"Unexpected or repeated modular scene part '{part.ScenePart}'.");
+            }
+        if (parts.Count != 3 || opaque is null || far is null || near is null)
+            throw new InvalidOperationException("The saved modular MSAA scene must contain all three authored mesh parts.");
+        return [opaque, far, near];
     }
 
     private static CameraComponent RequireCamera(ModularPipelineParityPawnComponent pawn)

@@ -71,7 +71,8 @@ resized and restored captures across two start/stop cycles per profile, includin
 coherent depth/normal resolution and GTAO. The earlier comparison-argument parse
 error is fixed without changing the selected depth sample.
 
-The same diagnostic page also exposes `gpu-indirect-x1` and `gpu-indirect-x4`
+The same diagnostic page also exposes `gpu-indirect-x1`, `gpu-indirect-x4` and
+`gpu-indirect-x4-ao`
 for the ordinary authored indexed route. These select managed
 `GpuIndirectZeroReadback` before pipeline construction and bind the verified
 primitive-cull, LOD-select and source-order companions. Select the profile before
@@ -87,9 +88,21 @@ extents. Managed strategy, actual LOD/cull compute operations, indirect scene
 draw issuance and direct canvas presentation are checked independently. Native
 READ-map counters remain cumulative: ordinary startup/render/resize intervals
 must add zero maps, while paused diagnostic sampling must account for exactly
-nine maps at x1 or ten at x4. Source-ranked transparency and GPU-visible argument
-counts are not inferred from this opaque/masked scene. Existing CPU assertions
-remain unchanged. This newly reviewed check awaits live execution.
+nine maps at x1, ten at x4 without AO, or twenty-two for the x4 AO profile.
+The latter requires indexed depth/normal and color draws, matching GPU producers,
+coherent closest-sample sidecar resolution and three ordered GTAO stages. The
+ordinary x1/x4 profiles pass twelve captures on `6fea26f9`; the new GPU AO profile
+still awaits live execution. GPU-visible effective argument counts remain opaque.
+
+The additional `cpu-x4-blended` and `gpu-indirect-x4-blended` profiles keep the
+nine original tile cases and give the two gutter surfaces explicit source-over
+blending. Front-before-rear insertion makes the expected rear-then-front result
+depend on correct sorting. Independent HDR expectations include quarter-sample
+coverage, RGB SrcAlpha/OneMinusSrcAlpha and alpha One/OneMinusSrcAlpha over the
+opaque background. The GPU check requires source ranks, argument masking,
+retained raster-input copies and real indexed-indirect replay. Ordinary frames
+must still add no READ maps. These new profiles require fresh runtime acceptance;
+synthetic oracle checks and replay of older captures do not establish their pixels.
 
 The `engine-shared-gtao-bloom` check runs the static effects diagnostic through
 the real WebGPU default pipeline. It reads prepass depth and normal, GTAO stages,

@@ -704,14 +704,15 @@ a 64-KiB limit per output stream. File reads also stop at 64 KiB. A bounded sear
 of up to 32 standard/PATH directories retains at most eight distinct executable
 paths per tool family for perf, LLDB, GDB, readelf, symbolizers and addr2line.
 Discovery never launches these tools. Subsequent commands are limited to the
-installed system `dpkg-query` and `readelf`, without a shell or Python.
+installed system `dpkg-query`, `readelf` and `getcap`, without a shell or Python.
 
 The report retains up to 96 installed package/version records, the readable
 `perf_event_paranoid` and `ptrace_scope` values, and selected capability,
 no-new-privileges, seccomp, identity and tracer fields from the runner and the
 existing owned browser/GPU process IDs. Missing or ambiguous IDs cannot trigger
 process discovery. The Chrome executable comes from those owned process IDs;
-only it and the two known adjacent SwiftShader library locations are inspected.
+primary binary candidates are that executable and the two known adjacent
+SwiftShader library locations.
 `readelf --wide --section-headers --notes` provides build IDs and names of symbol,
 debug and unwind sections without dumping symbol entries. Adjacent library
 presence does not prove that library is mapped, and section presence does not
@@ -728,4 +729,46 @@ package partial results, invalid/oversized reads, command failures, unsupported
 platforms, total timeout and late completions. A real safe metadata read against
 the local check process completed in approximately 111 ms and exercised the
 installed readelf parser; it is neither Chrome profiling nor runner evidence.
-The existing CI run must establish the hosted runner's actual capabilities.
+
+The exact `6fea26f9` Advanced report collected the hosted-runner inventory in
+228.266 ms. It found the perf wrapper and matching kernel perf binary, LLDB 18,
+LLVM symbolizers and readelf, but no GDB within the bounded search. The runner,
+browser and GPU processes had zero effective/permitted capabilities;
+`perf_event_paranoid` was 4 and `ptrace_scope` was 1. This did not inspect
+executable capability grants or establish permission to sample or attach. Chrome
+build ID `801e223ae2df0c3aa4d000dd388ed8048a864b9e` and SwiftShader build ID
+`037c1449572f92188953a4b0fee33677ea0cc09d` each had `.dynsym`, `.gnu_debuglink` and
+unwind sections, without `.symtab` or embedded full debug sections. Their separate
+debug files had not yet been checked. Evidence is in
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/ci-6fea26f9-advanced/smoke-report.json`.
+
+The follow-on inventory closes only those two read-only gaps, under the same
+eight-second total budget and existing per-command limits. It locates `getcap`
+in four fixed system paths and uses `getcap -n -v` on at most eight previously
+discovered perf executables' resolved paths. It records missing readers, no
+capability grants, named grants, namespace root IDs and unavailable metadata
+without executing perf. A discovered LLDB remains discovery-only; its startup
+can initialize Python before command-line flags are processed.
+
+The binary readelf call also reads `.gnu_debuglink` as a string section, with
+debug-link following explicitly disabled. Only one offset-zero filename is
+accepted: an ASCII basename of at most 255 characters, with separators,
+traversal names and unsupported characters rejected. At most three explicit
+locations per binary are inspected: beside the binary, in its adjacent `.debug`
+directory, and the standard `/usr/lib/debug/.build-id/` path derived from one
+unique build ID. Any found file is inspected with readelf section/note metadata
+only, and its build ID is reported as matching, mismatched or unavailable against
+the binary. There is no recursive search, linked-file following, download, symbol
+dump or symbol resolution. Build-ID equality does not validate the debuglink CRC
+or demonstrate usable stack symbols.
+
+Twenty-nine bounded mocked inventory scenarios now pass, including missing
+getcap, empty/namespaced capability grants, invalid metadata, traversal and long
+debuglink names, all three debug-file locations, mismatched/missing build IDs and
+the existing read/timeout cases. A safe real-tool check completed in approximately
+85 ms: getcap inspected the local check executable through a temporary discovered
+perf-named symlink, while readelf inspected the local executable and parsed the
+installed libc's debuglink. No perf, debugger or symbolizer was executed. These
+checks validate metadata handling; the next existing CI must establish actual
+runner file grants and matching debug-file availability. The compile deadline
+and rendering acceptance remain unchanged.
