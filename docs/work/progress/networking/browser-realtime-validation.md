@@ -148,3 +148,25 @@ environment has no .NET SDK, so compile and real-network execution remain
 pending; this record does not close browser networking acceptance. No browser
 certificate was installed or trusted. Production gateway TLS/origin/authentication
 checks are retained for the eventual real-server run.
+
+The correction source at `b0af163766b5f50e3ffbf318750cddae51e17c3a`
+subsequently passed the portable build, browser WebAssembly publish, and Windows
+Editor build/publication stages in
+[run 37297750717](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37297750717).
+Those compile/publication results do not exercise a network connection.
+
+An opt-in `NetworkKinematicPawnComponent` now captures W/A/S/D through the
+existing shared input interface; W maps to world -Z. The existing automatic
+snapshot sender and managed server simulator own movement. Unregister,
+deactivation, controller replacement, and local/global UI capture clear held
+movement. Each captured snapshot is distinct because prediction retains it.
+The server package generator's `--network-kinematic` option selects that pawn
+and includes a plain replicated landmark. The ordinary generator is unchanged.
+A browser query exposes only current ready-client assignment/ack/pose status.
+
+The Windows publisher lane creates this real native package, stages the exact
+world bytes into a browser project, invokes the normal Editor CLI, and checks
+retained native identity and world bytes. Its execution is pending for this new
+source. It does not start a server, trust a certificate, relax TLS, or qualify
+browser networking. The native package inspector's existing mesh/read-converter
+and shader-path restrictions remain intact; the landmark has no visual mesh.

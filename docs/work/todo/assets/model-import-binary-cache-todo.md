@@ -107,7 +107,7 @@ The following decisions must remain true unless the design and this tracker are 
 - `XREngine.Runtime.Rendering/Rendering/Meshlets/MeshOptimizerSettings.cs` — per-submesh authored overrides.
 - `XREngine.Runtime.Rendering/Rendering/Meshlets/MeshOptimizerIntegration.cs` — existing LOD and meshlet cook implementation.
 - `XREngine.Runtime.Rendering/Rendering/Models/Meshes/SubMeshLOD.cs` — runtime LOD representation.
-- `XREngine.Runtime.Rendering/Objects/Meshes/MeshletPayloadDiskCache.cs` — secondary repair-cache precedence.
+- `XREngine.Runtime.MeshProcessing.Meshoptimizer/Rendering/MeshletPayloadDiskCache.cs` — currently dormant secondary repair cache; model-cache hits retain precedence.
 - `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/` — cached meshlet upload path and counters.
 - `XREngine.Editor/` — cache status, reason, rebuild, and reimport UX.
 - `XREngine.UnitTests/` — deterministic format, safety, integration, and concurrency coverage.

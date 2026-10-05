@@ -25,6 +25,30 @@ internal sealed partial class BrowserEngineSession
         }
     }
 
+    /// <summary>Samples non-secret client acknowledgement and matching local pawn pose on demand.</summary>
+    public string GetNetworkSimulationStatus()
+    {
+        if (_disposed || !_running || !_engineInitialized || _networkClient is not { } client
+            || !ReferenceEquals(Engine.Networking, client))
+            return "network=inactive";
+
+        string state = NetworkState;
+        if (state != "ready")
+            return $"network={state}";
+
+        bool ownsAssignment = _localPlayer?.PlayerInfo is { } player
+            && player.SessionId == client.AssignedSessionId
+            && player.ServerIndex == client.PrimaryAssignedServerPlayerIndex
+            && player.NetworkEntityId == client.PrimaryAssignedEntityId;
+        XREngine.Scene.Transforms.TransformBase? transform = ownsAssignment
+            ? _localPlayer?.ControlledPawnComponent?.SceneNode?.Transform : null;
+        if (transform is null)
+            return FormattableString.Invariant($"network=ready; player={client.PrimaryAssignedServerPlayerIndex}; clientAcknowledged={client.LastProcessedInputSequence}; pose=unavailable");
+
+        System.Numerics.Vector3 position = transform.WorldTranslation;
+        return FormattableString.Invariant($"network=ready; player={client.PrimaryAssignedServerPlayerIndex}; clientAcknowledged={client.LastProcessedInputSequence}; pose=({position.X:R},{position.Y:R},{position.Z:R})");
+    }
+
     /// <summary>Joins only the loaded verified world; the caller obtains fresh admission from its trusted control plane.</summary>
     public async Task<string> ConnectNetworkAsync(RealtimeJoinHandoffPayload handoff)
     {
