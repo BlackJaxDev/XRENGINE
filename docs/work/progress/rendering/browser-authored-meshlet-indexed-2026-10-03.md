@@ -497,3 +497,73 @@ under
 and `reports/ci-996101db-linux/` within that same task evidence root. Corrected
 full x1/x4 selection, resize and restart acceptance remains pending on physical
 exact-commit browser CI.
+
+## Bounded partial-cache ownership during resize qualification
+
+Linux job `111561772594` in run `37245259916`, at exact commit
+`c8bf98f6cca664aaade0e3706dbdfb9ceccd2681`, confirms the synchronized pause works.
+The initial 512×512 and resized 640×384 x1 stages both report `Ready`, eleven
+recorded mesh draws, valid indexed execution and read-map accounting, and all
+nine HDR/display centers pass. This is actual Chromium browser execution using
+the explicitly selected software adapter, not physical-hardware acceptance.
+
+The subsequent reuse assertion incorrectly equated a fixed logical pipeline
+alias count with warmed native-object reuse. The initial sample contains 187
+live resources, 32 buffers and eleven render-pipeline aliases. Before resize,
+the resumed sample already contains 189 resources and 33 buffers, adding 32
+logical buffer bytes. After resize there are 192 resources and twelve pipeline
+aliases. Only `engine-unlit-color` gains a pipeline alias; its shader alias
+count remains two, and the total shader count remains thirteen. All native
+identities are reused, with eight shader-module cache entries and thirty
+pipeline-cache entries unchanged. No initial pipeline handle survives resize.
+
+The existing three-slot authored pool prepares work lazily and searches the
+first available slot. A short overlap can begin preparing a spare slot's first
+source before the frequently reused slot becomes available again. Its
+completion-reclaimed work objects deliberately retain argument buffers and
+prepared commands for reuse. A twenty-byte indexed argument record reserves
+32 bytes, matching the observed buffer increment. Framebuffer retirement already
+invalidates dependent draws in every slot, including partial draws, and a late
+pipeline preparation retires its result when its draw was disposed. These
+findings establish an invalid warmup assumption in the diagnostic; they do not
+establish a production resource leak. Production selection, allocation and cache
+retention are unchanged.
+
+Cold diagnostics now report the existing slot/selection/work owners, including
+published and ready-unclaimed buffer handles, zero handles for unfinished work,
+each retained pipeline handle and its captured output generation. The getter
+requires a between-frame boundary and does not generate or select resources.
+Only the indexed Unlit diagnostic observes resource publication: a weak map
+references the executor's existing dependency arrays, which normal release
+clears. The cold inventory resolves their exact logical handles, including a
+command's actual pipeline alias and each attachment's owning texture. It adds
+no production observer or separate GPU-resource lease.
+
+Qualification now accounts explicitly for all three slots, bounded by this
+fixture's ten x1 or twelve x4 sources per slot and the existing production
+capacity limits. Fixed-size selection/argument owners cannot retain two physical
+generations. Each compute group must belong to the exact slot and source;
+command fanout is bounded, every raster alias has one managed work owner, and
+every retained attachment must reference a current target. Partial owners are
+reported even before their first command exists. The union of those resources
+is separated from the remaining inventory, which must remain identical across
+resize and restart. No arbitrary resource-count allowance is used. Full logical
+alias lists remain in the report; native identity sets, cache-entry counts,
+ordinary zero-readback checks, pixels and teardown checks remain strict.
+
+All four affected JavaScript modules pass syntax checks and `git diff --check`
+passes. Independent review found no blocking source or lifetime issue; its
+fixed-buffer-generation and same-source-ordinal tightenings are included. A
+disposable witness exercises the actual JavaScript resource table, command
+publication and diagnostic inventory, plus nineteen positive/negative ownership
+checks. It covers partial unclaimed buffers, pipelines without commands,
+distinct aliases of one native pipeline, orphan/multiple owners, stale outputs,
+retired or missing dependencies, duplicate commands, capacity limits, unrelated
+retention, changed native identities and observer teardown. Evidence is under
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/indirect-cache-ownership-witness.json`;
+the prior browser artifacts are under `reports/ci-c8bf98f6-linux/` in that task
+root. Managed compilation and the corrected complete x1/x4 browser matrix remain
+pending on exact-commit CI. In particular, CI must confirm the cold managed and
+JavaScript inventories agree if a spare pipeline finishes asynchronous
+preparation near the sampling boundary. Physical-device acceptance remains a
+separate requirement.

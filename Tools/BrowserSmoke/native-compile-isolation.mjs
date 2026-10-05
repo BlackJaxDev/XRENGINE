@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { browserLaunchOptions } from './smoke.config.mjs';
 import { captureGpuProcessState } from './gpu-diagnostics.mjs';
 import { startNativeCompileTrace } from './native-compile-trace.mjs';
+import { captureNativeProfileCapabilities } from './native-profile-capabilities.mjs';
 
 /** Passive capture: return every original WebGPU object/promise unchanged. Never retain WGSL in evidence. */
 export function installNativeCompileCapture() {
@@ -423,6 +424,8 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
         result.browser = browser.version();
         if (result.browser !== report.browser) throw new Error('Isolation browser version differs from the application.');
         await captureGpuProcessState(browser, result, comparison ? 'before-isolated-uber-native-compile' : 'before-isolated-native-compile');
+        if (config.nativeCompileTrace && !comparison)
+            result.nativeProfileCapabilities = await captureNativeProfileCapabilities(result.gpuProcessSnapshots[0]?.processes);
         const backend = snapshot => {
             if (!snapshot?.gpu) return null;
             const gpu = snapshot.gpu;

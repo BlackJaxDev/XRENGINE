@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { canvasGeometry } from './canvas-capture.mjs';
+import { inspectIndirectCacheOwnership } from './indirect-cache-ownership.mjs';
 
 // Independent authored-input expectations: all nine original centers remain qualified.
 const coordinates = [0.175, 0.5, 0.825];
@@ -448,7 +449,11 @@ function compareWarmStage(stage, initial, previous) {
         expectedCatalog: initial.catalogIdentities, actualCatalog: stage.catalogIdentities,
         previousGeneration: previous.states[0].resourceGeneration,
         generation: stage.states[0].resourceGeneration };
-    assert(same(stage.nativePrograms, initial.nativePrograms) && same(stage.catalogIdentities, initial.catalogIdentities),
+    const indexed = stage.profile.startsWith('gpu-indirect-');
+    stage.reuse.expectedOwnership = initial.cacheOwnership ?? null;
+    stage.reuse.actualOwnership = stage.cacheOwnership ?? null;
+    assert(same(indexed ? stage.cacheOwnership.nativePrograms : stage.nativePrograms,
+        indexed ? initial.cacheOwnership.nativePrograms : initial.nativePrograms) && same(stage.catalogIdentities, initial.catalogIdentities),
         'BrowserSmoke.UnlitMsaaNativeReuse: a warmed profile resize replaced native shader/pipeline or catalog identity.');
     for (const key of ['shaderModuleCacheEntries', 'shaderModuleCacheKeyBytes', 'shaderModuleCacheMisses', 'pipelineCacheEntries'])
         assert(stage.cache[key] === initial.cache[key], `BrowserSmoke.UnlitMsaaCacheGrowth: resize changed ${key}.`);
@@ -467,7 +472,8 @@ function compareWarmStage(stage, initial, previous) {
     }
     assert(stage.reuse.generation > stage.reuse.previousGeneration,
         'BrowserSmoke.UnlitMsaaResizeGeneration: resize did not commit a replacement resource generation.');
-    assert(stage.postReadbackStatistics.resources.live <= initial.postReadbackStatistics.resources.live,
+    assert(indexed ? same(stage.cacheOwnership.residual, initial.cacheOwnership.residual) :
+        stage.postReadbackStatistics.resources.live <= initial.postReadbackStatistics.resources.live,
         'BrowserSmoke.UnlitMsaaResizeRetention: resize retained additional GPU resources.');
 }
 
@@ -614,6 +620,7 @@ function assertIndirectProfile(stage) {
         assert(other.executionProfile === state.executionProfile && same(other.source, state.source) &&
             same(other.camera, state.camera) && same(other.committed, state.committed) &&
             same(other.indexedSubmission, state.indexedSubmission) &&
+            same(other.indexedCache, state.indexedCache) && same(other.resourceOwnership, state.resourceOwnership) &&
             other.pipelineInstanceId === state.pipelineInstanceId &&
             same(other.targets, state.targets) && other.resourceGeneration === state.resourceGeneration &&
             same(other.submittedFrame, state.submittedFrame),
@@ -673,6 +680,7 @@ function assertIndirectProfile(stage) {
         assert(resolve.length === 0 && presentation.every(operation => operation.sampleCount === 1 &&
             operation.record > Math.max(...color.map(item => item.record))),
         'BrowserSmoke.UnlitIndirectX1Route: x1 scene output did not feed presentation.');
+    stage.cacheOwnership = inspectIndirectCacheOwnership(stage);
 }
 
 function assertIndirectStatistics(stage, normalStart) {
@@ -708,7 +716,7 @@ export async function unlitIndirectCheck(browser, origin, report, config, instru
     for (const profile of ['gpu-indirect-x1', 'gpu-indirect-x4']) {
         const qualification = { profile, lifecycles: [] };
         report.unlitIndirect.profiles.push(qualification);
-        let catalog, startupLive;
+        let catalog, startupResidual;
         for (let lifecycle = 0; lifecycle < 2; lifecycle++) {
             const { page, context, events } = await instrumentedPage(browser, origin, report,
                 `engine-unlit-${profile}-${lifecycle}`, config);
@@ -744,11 +752,10 @@ export async function unlitIndirectCheck(browser, origin, report, config, instru
                     assertIndirectStatistics(stage, normalStart);
                     if (index > 0) compareWarmStage(stage, record.stages[0], record.stages[index - 1]);
                     else {
-                        assert(stage.postReadbackStatistics.resources.live <=
-                            (startupLive ?? stage.postReadbackStatistics.resources.live) &&
+                        assert((startupResidual === undefined || same(stage.cacheOwnership.residual, startupResidual)) &&
                             (catalog === undefined || same(catalog, stage.catalogIdentities)),
                         'BrowserSmoke.UnlitIndirectRestart: startup retained resources or changed cooked variants.');
-                        startupLive ??= stage.postReadbackStatistics.resources.live;
+                        startupResidual ??= stage.cacheOwnership.residual;
                         catalog ??= stage.catalogIdentities;
                     }
                     await waitReady(page, stage.pause.readyFrames, config.timeout, stage);

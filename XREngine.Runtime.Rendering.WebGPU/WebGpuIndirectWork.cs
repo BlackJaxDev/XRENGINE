@@ -22,6 +22,8 @@ internal sealed class WebGpuIndirectWork(WebGpuRendererHost renderer) : IDisposa
     private WebGpuAuthoredRasterSnapshot? _orderedRaster;
     internal WebGpuOwnedStorageBuffer Arguments { get; } = new(renderer,
         "Authored whole-primitive indexed arguments", BrowserBufferUsage.Indirect);
+    internal int DiagnosticPipelineHandle => _draw?.DiagnosticPipelineHandle ?? 0;
+    internal ulong DiagnosticOutputGeneration => _outputGeneration;
 
     internal bool TryRecord(in GpuMeshSubmissionRecord record, in WebGpuPreparedMeshDraw prepared,
         WebGpuAuthoredIndexedLodSelection selection, WebGpuRenderProgram cull, ref bool cullEnabled, float expansion,

@@ -1,5 +1,6 @@
 import { WebGpuCanvasRenderer } from '../webgpu/webgpu-renderer.js';
 import { retainSubmittedEngineFrameEvidence, readEngineDiagnosticRegion, requireEngineDiagnosticTarget } from './engine-mesh-readback.js';
+import { retainEngineResourceOwnership } from './engine-resource-ownership.js';
 
 /** Isolated renderer/component qualification; this host never starts a production world or physics backend. */
 export class EngineMeshDiagnosticHost {
@@ -23,6 +24,7 @@ export class EngineMeshDiagnosticHost {
         this.settleFrames = 0;
         this.lastReadySession = 0;
         this.unlitFrameEvidence = null;
+        this.unlitResourceOwnership = null;
         this.unlitNativeIds = new WeakMap();
         this.nextUnlitNativeId = 0;
         this.previousUnlitNatives = new WeakSet();
@@ -124,6 +126,8 @@ export class EngineMeshDiagnosticHost {
                 if (controller.signal.aborted || epoch !== this.epoch) { renderer.dispose(); return; }
                 renderer.setOwner(this.session);
                 if (this.kind === 'unlit') this.unlitFrameEvidence = retainSubmittedEngineFrameEvidence(renderer, this.session);
+                if (this.kind === 'unlit' && executionProfile.startsWith('gpu-indirect-'))
+                    this.unlitResourceOwnership = retainEngineResourceOwnership(renderer, this.session);
                 this.renderers.set(this.session, renderer);
                 this.stage = 'resizing-canvas';
                 const generation = renderer.resize(512, 512);
@@ -291,7 +295,8 @@ export class EngineMeshDiagnosticHost {
             }
         });
         return { ...JSON.parse(this.exports.GetUnlitState(this.session)), shaders, pipelines, hdrTargets, targets,
-            submittedFrame: this.unlitFrameEvidence.capture() };
+            submittedFrame: this.unlitFrameEvidence.capture(),
+            resourceOwnership: this.unlitResourceOwnership?.capture(nativeId) ?? null };
     }
 
     /** Reads only a canonical x1 texture owned by the current ordinary-unlit generation. */
@@ -628,6 +633,8 @@ export class EngineMeshDiagnosticHost {
         const session = this.session;
         this.unlitFrameEvidence?.dispose();
         this.unlitFrameEvidence = null;
+        this.unlitResourceOwnership?.dispose();
+        this.unlitResourceOwnership = null;
         if (session && this.kind === 'unlit' && this.renderer) {
             this.previousUnlitNatives = new WeakSet();
             for (const entry of this.renderer._resources.slots)
