@@ -633,3 +633,37 @@ This is source/logic evidence only. No local .NET shader cook, WGSL frontend or
 browser/GPU execution was available; exact-commit CI must still qualify module
 creation and transparent pixels through resize and restart. No tests or
 validation suppression were added to the production tree.
+
+## Buffer-backed positions during meshlet cooking
+
+The first `StaticMeshletParity` publication at commit
+`0ed9f0a601760b8537f14b42019f665e5c5fecf0` reaches the actual native meshlet
+builder and terminates with access violation `0xC0000005` in
+`NativeMeshOptimizer.MeshoptBuildMeshlets`. Windows job `111618308672` in
+[run 37264491996](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37264491996)
+had already published the other five game bundles. The static meshlet bundle
+was not produced, so its browser comparison did not run.
+
+Source inspection identifies a position-pointer/count mismatch. Modern cooked
+mesh hydration restores `VertexCount`, topology and render buffers without
+rebuilding the optional authoring `Vertices` array. The meshlet stream reads
+those buffers through `GetPosition`, but native clustering previously packed
+`Vertices` while passing the independent nonzero `VertexCount`. That can pin
+an empty array and pass a null position pointer to the native builder. The
+existing package's builder signature agrees with the managed declaration.
+
+Position packing now reads the current render buffers for exactly
+`VertexCount` entries, and the same packed array supplies clustering and bounds.
+The native boundary rejects null or mismatched position/count inputs before
+pinning, including a nonempty index stream with zero vertices. This keeps the
+existing meshlet algorithm, source topology, native dependency and cooked
+format. It does not force reconstruction of every cooked mesh's authoring
+objects. The separate LOD-generation path that copies authoring vertices is
+outside this repair and is not called by the browser dependency cooker.
+
+The diff passes whitespace checks and independent source review. A local .NET
+SDK is unavailable; managed compilation, native cooking and the real
+same-world CPU/GPU browser comparison remain pending. No meshlet runtime
+acceptance checkbox is closed by this source repair. Windows failure evidence
+has SHA-256
+`4f94fbfe3b1ca97974f27634ec7a867c98d1342fb2cae89a21c440d426fb7649`.

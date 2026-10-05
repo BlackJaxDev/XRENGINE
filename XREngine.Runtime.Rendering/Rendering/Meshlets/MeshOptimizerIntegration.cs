@@ -138,6 +138,7 @@ public static class MeshOptimizerIntegration
         MeshOptimizerMeshlet[] meshoptMeshlets = new MeshOptimizerMeshlet[CheckedMeshletCount(maxMeshlets)];
         uint[] meshletVertices = new uint[CheckedScratchElementCount(maxMeshlets, settings.MaxVertices, "meshletVertices")];
         byte[] meshletTriangles = new byte[CheckedTriangleScratchByteCount(maxMeshlets, settings.MaxTriangles)];
+        float[] positionArray = GetPositionArray(mesh);
 
         // Count at the only real meshoptimizer builder entry. Import and
         // cache-repair callers must not infer this from payload outcomes.
@@ -149,7 +150,7 @@ public static class MeshOptimizerIntegration
             meshletVertices,
             meshletTriangles,
             sourceIndices,
-            GetPositionArray(mesh),
+            positionArray,
             (nuint)mesh.VertexCount,
             settings.MaxVertices,
             minTriangles,
@@ -218,7 +219,6 @@ public static class MeshOptimizerIntegration
         int encodedByteCount = 0;
         Meshlet[] results = new Meshlet[finalMeshletCount];
         CpuMeshletDescriptor[] descriptors = new CpuMeshletDescriptor[finalMeshletCount];
-        float[] positionArray = GetPositionArray(mesh);
         for (int i = 0; i < finalMeshletCount; i++)
         {
             MeshOptimizerMeshlet meshlet = meshoptMeshlets[i];
@@ -730,7 +730,20 @@ public static class MeshOptimizerIntegration
            ((uint)(byte)cutoff << 24);
 
     private static float[] GetPositionArray(XRMesh mesh)
-        => GetPositionArray(mesh.Vertices);
+    {
+        // Cooked meshes retain their render buffers without rebuilding the optional
+        // authoring Vertex array. Use the same current positions as the meshlet stream.
+        float[] positions = new float[checked(mesh.VertexCount * 3)];
+        for (int i = 0; i < mesh.VertexCount; i++)
+        {
+            Vector3 position = mesh.GetPosition((uint)i);
+            positions[i * 3 + 0] = position.X;
+            positions[i * 3 + 1] = position.Y;
+            positions[i * 3 + 2] = position.Z;
+        }
+
+        return positions;
+    }
 
     private static float[] GetPositionArray(Vertex[] vertices)
     {
