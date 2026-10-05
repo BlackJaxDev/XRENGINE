@@ -166,8 +166,8 @@ A browser query exposes only current ready-client assignment/ack/pose status.
 
 The Windows publisher lane creates this real native package, stages the exact
 world bytes into a browser project, invokes the normal Editor CLI, and checks
-retained native identity and world bytes. Its execution is pending for this new
-source. It does not start a server, trust a certificate, relax TLS, or qualify
+retained native identity and world bytes. Its successful execution is recorded
+below. It does not start a server, trust a certificate, relax TLS, or qualify
 browser networking. The native package inspector's existing mesh/read-converter
 and shader-path restrictions remain intact; the landmark has no visual mesh.
 
@@ -196,8 +196,7 @@ incorrect comparison. It reuses that shipping canonical validator, retains the
 stable native world/package/schema/build/bootstrap identifiers and metadata,
 compares the actual native world bytes, and checks every declared published
 file's length/hash and the complete file inventory. The new admission identity
-must bind the expanded package. Its full file checks await the next genuine
-publisher run. Generated output is now preserved for inspection even if a
+must bind the expanded package. Generated output is now preserved for inspection even if a
 subsequent verification fails; consuming it still requires a successful
 producer job and verification.
 
@@ -207,3 +206,25 @@ shipping canonical hash, world-binding, complete file-byte and inventory
 checks and explicitly reports `nativeInputCompared: false`. The producer lane
 continues to pass both native input and published site, so its retained-native
 identity and exact-byte comparisons are not optional there.
+
+On `b64f65a7fd7d619e47ec3defdfaa6733a35bbb4b`,
+[Windows job 111754237186](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37307383257/job/111754237186)
+passed the genuine native-world generation, Editor browser publication and full
+verification. The result records `nativeInputCompared: true`, 310 declared
+content files totaling 11,359,301 bytes, and the unchanged 2,025-byte world with
+SHA-256 `3f1853781ba028be21670fea376080e2b210e8aaebc0284ba4f4f15cf42c040c`.
+The expanded package identity is
+`sha256:7594d13009b22812d5cc575c2add80114bc2afc5d146821fe8a761ac21006f9a`.
+World identity is generated per fixture run, so a new run is not expected to
+have the same world hash as the earlier `97f75841` fixture.
+
+The complete `windows-editor-network-kinematic-bundle` artifact is
+[`11346111752`](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37307383257/artifacts/11346111752),
+55,824,360 ZIP bytes, with GitHub-reported archive SHA-256
+`9278a05d81f94c48d3c2c224f184ec5b41db9d2fa0b229580bbccb1be6884562`.
+The producer checked every content file before upload; this archive digest has
+not yet been independently checked after download. The Linux portable/runtime
+job also passed on this commit. These results qualify the native/browser
+publication boundary, not browser connection, locomotion, reconnection or TLS
+certificate-store behavior. The proposed bounded real-server walkthrough still
+awaits authorization and execution.
