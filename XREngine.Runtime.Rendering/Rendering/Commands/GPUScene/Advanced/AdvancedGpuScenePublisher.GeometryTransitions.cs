@@ -33,7 +33,7 @@ public sealed partial class AdvancedGpuScenePublisher
            registration.TemporalVertexCount == plan.MeshVertexCount &&
            registration.TemporalIndexCount == plan.MeshIndexCount &&
            registration.TemporalPrimitiveTopology == plan.MeshPrimitiveTopology &&
-           mesh.Vertices.Length == plan.MeshVertexCount &&
+           mesh.VertexCount == plan.MeshVertexCount &&
            mesh.Triangles is { } triangles &&
            (long)triangles.Count * 3 == plan.MeshIndexCount;
 
@@ -47,9 +47,12 @@ public sealed partial class AdvancedGpuScenePublisher
             return false;
         }
 
-        Vertex[] vertices = mesh.Vertices;
+        // The canonical record is packed from the attribute buffers, so they
+        // must hold client-side data for every vertex the triangles address.
+        int vertexCount = mesh.VertexCount;
         List<IndexTriangle>? triangles = mesh.Triangles;
-        if (vertices.Length == 0 || vertices.Length != mesh.VertexCount ||
+        if (vertexCount <= 0 ||
+            !AdvancedPackedVertexCodec.HasReadableAttributes(mesh) ||
             triangles is null || triangles.Count == 0)
         {
             reason = EAdvancedCanonicalCompatibilityReason.InvalidGeometrySource;
@@ -59,9 +62,9 @@ public sealed partial class AdvancedGpuScenePublisher
         for (int triangleIndex = 0; triangleIndex < triangles.Count; ++triangleIndex)
         {
             IndexTriangle triangle = triangles[triangleIndex];
-            if ((uint)triangle.Point0 >= (uint)vertices.Length ||
-                (uint)triangle.Point1 >= (uint)vertices.Length ||
-                (uint)triangle.Point2 >= (uint)vertices.Length)
+            if ((uint)triangle.Point0 >= (uint)vertexCount ||
+                (uint)triangle.Point1 >= (uint)vertexCount ||
+                (uint)triangle.Point2 >= (uint)vertexCount)
             {
                 reason = EAdvancedCanonicalCompatibilityReason.InvalidGeometrySource;
                 return false;
@@ -82,21 +85,22 @@ public sealed partial class AdvancedGpuScenePublisher
         if (!TryValidateCanonicalGeometry(mesh, out _))
             return false;
 
-        // Validation establishes non-null mesh and source streams above.
-        Vertex[] sourceVertices = mesh!.Vertices;
+        // Validation establishes non-null mesh and readable attribute streams above.
+        int vertexCount = mesh!.VertexCount;
         List<IndexTriangle> sourceTriangles = mesh.Triangles!;
         if (!HasGeometryScratchCapacity(
-                sourceVertices.Length,
+                vertexCount,
                 checked(sourceTriangles.Count * 3),
                 mesh.MeshletPayload))
         {
             return false;
         }
 
-        for (int vertexIndex = 0; vertexIndex < sourceVertices.Length; ++vertexIndex)
+        for (uint vertexIndex = 0u; vertexIndex < (uint)vertexCount; ++vertexIndex)
             _packedGeometryVertices[vertexIndex] = AdvancedPackedVertexCodec.Pack(
-                sourceVertices[vertexIndex],
-                checked((uint)vertexIndex));
+                mesh,
+                vertexIndex,
+                vertexIndex);
 
         int indexCursor = 0;
         for (int triangleIndex = 0; triangleIndex < sourceTriangles.Count; ++triangleIndex)
@@ -108,7 +112,7 @@ public sealed partial class AdvancedGpuScenePublisher
         }
 
         AdvancedGeometryRegistration registration = AdvancedGeometryRegistration.Create(
-            checked((uint)sourceVertices.Length),
+            checked((uint)vertexCount),
             checked((uint)indexCursor),
             checked((uint)Unsafe.SizeOf<AdvancedDeformedVertex>()),
             EPrimitiveType.Triangles,
@@ -119,7 +123,7 @@ public sealed partial class AdvancedGpuScenePublisher
             command.SubmeshID,
             1u);
         ReadOnlySpan<byte> vertexBytes = MemoryMarshal.AsBytes(
-            _packedGeometryVertices.AsSpan(0, sourceVertices.Length));
+            _packedGeometryVertices.AsSpan(0, vertexCount));
         ReadOnlySpan<uint> indices = _packedGeometryIndices.AsSpan(0, indexCursor);
 
         MeshletPayload? payload = mesh.MeshletPayload;
@@ -199,7 +203,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 return false;
 
             XRMesh mesh = plan.Mesh!;
-            int vertexCount = mesh.Vertices.Length;
+            int vertexCount = mesh.VertexCount;
             int indexCount = checked(mesh.Triangles!.Count * 3);
             maximumVertexCount = Math.Max(maximumVertexCount, vertexCount);
             maximumIndexCount = Math.Max(maximumIndexCount, indexCount);

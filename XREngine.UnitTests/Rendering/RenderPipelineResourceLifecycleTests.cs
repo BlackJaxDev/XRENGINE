@@ -1101,17 +1101,24 @@ public sealed class RenderPipelineResourceLifecycleTests
     [Test]
     public void DefaultRenderPipeline_GtaoScratchResources_FollowResolutionFeatureMask()
     {
+        // GTAO scratch targets exist only while the encoded AO mode is GTAO.
+        const ulong gtaoResources = (1UL << 13) | (8UL << 26);
         DefaultRenderPipeline pipeline = new();
 
         AssertGtaoScratchScale(
-            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: 1UL << 13)),
+            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: gtaoResources)),
             0.5f);
         AssertGtaoScratchScale(
-            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: (1UL << 13) | (1UL << 6))),
+            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: gtaoResources | (1UL << 6))),
             1.0f);
         AssertGtaoScratchScale(
-            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: (1UL << 13) | (1UL << 7))),
+            pipeline.BuildResourceLayout(CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: gtaoResources | (1UL << 7))),
             0.25f);
+
+        RenderPipelineResourceLayout disabledMode = pipeline.BuildResourceLayout(
+            CreateProfile(EAntiAliasingMode.Fxaa, msaaSamples: 1u, featureMask: 1UL << 13));
+        disabledMode.ResourcesByName.ContainsKey(DefaultRenderPipeline.GTAORawTextureName).ShouldBeFalse();
+        disabledMode.ResourcesByName.ContainsKey(DefaultRenderPipeline.GTAOBlurIntermediateTextureName).ShouldBeFalse();
     }
 
     [Test]

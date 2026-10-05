@@ -446,6 +446,14 @@ public abstract partial class GenericRenderObject : XRAsset
             try { wrapper.Retire(); } catch { }
         }
 
+        // A wrapper's identity owner may be a backend-generation context rather than the
+        // renderer that cached it, so also evict the renderer caches; otherwise each
+        // destroyed object, its retired wrapper and everything they reference stay cached.
+        if (wrappersSnapshot.Length > 0)
+        {
+            try { _apiWrapperCreationOwner?.RemoveAPIRenderObject(this); } catch { }
+            try { RuntimeRenderObjectServices.Current?.RemoveObjectFromAllOwners(this); } catch { }
+        }
     }
 
     public void AddWrapper(AbstractRenderAPIObject apiRO)

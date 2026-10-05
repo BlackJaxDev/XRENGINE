@@ -35,7 +35,10 @@ public partial class GLTexture2D
         => !Data.RuntimeManagedProgressiveUploadActive
             && !Data.RuntimeManagedProgressiveFinalizePending
             && !TextureUploadScheduler.Instance.HasPendingUpload(Data)
-            && _progressiveVisibleBaseLevel < 0;
+            && _progressiveVisibleBaseLevel < 0
+            && !HasInFlightNativeOperation
+            && (!ImportedTextureStreamingManager.Instance.TryGetGenerationState(
+                Data, out _, out _, out _, out bool hasPendingTransition) || !hasPendingTransition);
 
     private void ResetUnpackStateForTextureUpload()
         => ResetUnpackStateForTextureUpload(Api);
@@ -248,8 +251,8 @@ public partial class GLTexture2D
     }
 
     /// <summary>
-    /// Schedules a render-thread coroutine that uploads one mipmap level per tick,
-    /// preventing large imported textures from stalling the render frame.
+    /// Schedules a render-thread coroutine that uploads mipmap rows within the
+    /// shared frame budget, preventing large imported textures from stalling a frame.
     /// </summary>
     private void ScheduleProgressiveMipUpload(GLEnum glTarget, EPixelInternalFormat? internalFormatForce, bool allowPostPushCallback)
     {
@@ -262,7 +265,13 @@ public partial class GLTexture2D
 
         // Upload the smallest mip synchronously so the texture is never fully black
         // for an entire frame while the coroutine queues. A 1Ã¢â‚¬â€œ4 px mip is negligible.
+        long seedUploadStart = TextureRuntimeDiagnostics.StartTiming();
         PushMipmap(glTarget, smallestResidentMip + mipLevelOffset, Mipmaps[smallestResidentMip], internalFormatForce);
+        TextureUploadScheduler.Instance.RegisterBytesForCurrentFrame(Mipmaps[smallestResidentMip].Mipmap.Data?.Length ?? 0L);
+        double seedUploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(seedUploadStart);
+        Data.RecordTextureUploadDuration(seedUploadMilliseconds);
+        TextureRuntimeDiagnostics.RecordUploadDuration(seedUploadMilliseconds);
+        RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, seedUploadMilliseconds);
         if (!IsMultisampleTarget)
         {
             int seedBase = smallestResidentMip + mipLevelOffset;
@@ -309,7 +318,7 @@ public partial class GLTexture2D
             if (schedulerSlotAcquired)
             {
                 schedulerSlotAcquired = false;
-                uploadScheduler.ReleaseUploadSlot();
+                uploadScheduler.ReleaseUploadSlot(Data, workItem);
             }
 
             _ = uploadScheduler.TryRemove(Data, workItem);
@@ -329,7 +338,7 @@ public partial class GLTexture2D
                 if (uploadScheduler.HasHigherPriorityUpload(Data, workItem))
                     return false;
 
-                if (!uploadScheduler.TryAcquireUploadSlot())
+                if (!uploadScheduler.TryAcquireUploadSlot(Data, workItem))
                     return false;
 
                 schedulerSlotAcquired = true;
@@ -402,30 +411,10 @@ public partial class GLTexture2D
                 // Clamp sampling to fully uploaded mips until the current mip is complete.
                 // The persistent visible-range override keeps partial scanline uploads
                 // invisible even if this texture is rebound later in the same frame.
-                long nextMipBytes = Mipmaps[nextMip].Mipmap.Data?.Length ?? 0L;
-                if (uploadScheduler.WouldExceedFrameByteBudget(nextMipBytes)
-                    || !RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, 0.25))
-                {
-                    return false;
-                }
-
-                uploadScheduler.RegisterBytesForCurrentFrame(nextMipBytes);
-                long uploadStart = TextureRuntimeDiagnostics.StartTiming();
-                if (!TryPushProgressiveMipChunk(glTarget, nextMip + mipLevelOffset, Mipmaps[nextMip], internalFormatForce, ref nextMipRow))
-                {
-                    PushMipmap(glTarget, nextMip + mipLevelOffset, Mipmaps[nextMip], internalFormatForce);
-                    nextMip--;
-                    nextMipRow = 0;
-                }
-                else if (nextMipRow <= 0)
+                if (PushBudgetedMipLevel(glTarget, nextMip + mipLevelOffset, Mipmaps[nextMip], internalFormatForce, ref nextMipRow))
                 {
                     nextMip--;
                 }
-
-                double uploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(uploadStart);
-                Data.RecordTextureUploadDuration(uploadMilliseconds);
-                TextureRuntimeDiagnostics.RecordUploadDuration(uploadMilliseconds);
-                RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, uploadMilliseconds);
                 Unbind();
                 return false; // Continue; more mips to upload.
             }
@@ -438,6 +427,76 @@ public partial class GLTexture2D
             CleanupSchedulerRegistration();
             return true; // Done.
         }, progressiveUploadLabel, RenderThreadJobKind.TextureUpload);
+    }
+
+    /// <summary>
+    /// Advances one mip until its rows finish or the shared byte or measured-time
+    /// budget declines the next native upload. A full-mip fallback is indivisible.
+    /// </summary>
+    private bool PushBudgetedMipLevel(
+        GLEnum glTarget,
+        int mipLevel,
+        MipmapInfo info,
+        EPixelInternalFormat? internalFormatForce,
+        ref int nextRow,
+        bool allowChunks = true,
+        bool recordTextureDuration = true)
+    {
+        Mipmap2D mip = info.Mipmap;
+        DataSource? data = mip.Data;
+        while (true)
+        {
+            long chunkBytes = 0L;
+            bool canChunk = allowChunks && TryGetProgressiveChunkSize(mipLevel, mip, data, nextRow, out chunkBytes);
+            long uploadBytes = canChunk ? chunkBytes : data?.Length ?? 0L;
+            TextureUploadScheduler scheduler = TextureUploadScheduler.Instance;
+            if (scheduler.WouldExceedFrameByteBudget(uploadBytes)
+                || !RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, 0.25))
+                return false;
+
+            long uploadStart = TextureRuntimeDiagnostics.StartTiming();
+            bool chunked = canChunk && TryPushProgressiveMipChunk(glTarget, mipLevel, info, internalFormatForce, ref nextRow);
+            if (!chunked)
+            {
+                PushMipmap(glTarget, mipLevel, info, internalFormatForce);
+                nextRow = 0;
+            }
+
+            scheduler.RegisterBytesForCurrentFrame(uploadBytes);
+            double uploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(uploadStart);
+            if (recordTextureDuration)
+                Data.RecordTextureUploadDuration(uploadMilliseconds);
+            TextureRuntimeDiagnostics.RecordUploadDuration(uploadMilliseconds);
+            RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, uploadMilliseconds);
+
+            if (!chunked || nextRow == 0)
+                return true;
+        }
+    }
+
+    private bool TryGetProgressiveChunkSize(int mipLevel, Mipmap2D mip, DataSource? data, int nextRow, out long chunkBytes)
+    {
+        chunkBytes = 0L;
+        if (!IsMipLevelInAllocatedRange(mipLevel)
+            || data is null
+            || data.Length <= 0
+            || mip.StreamingPBO is not null
+            || Data.MultiSample
+            || mip.Height == 0)
+            return false;
+
+        long rowBytes = data.Length / (long)mip.Height;
+        if (rowBytes <= 0 || rowBytes * mip.Height != data.Length)
+            return false;
+
+        int remainingRows = (int)mip.Height - nextRow;
+        if (remainingRows <= 0
+            || !CanUseProgressiveChunkUpload(ToGLEnum(mip.PixelFormat), ToGLEnum(mip.PixelType)))
+            return false;
+
+        int rowsPerChunk = Math.Clamp((int)(ProgressiveMipUploadChunkBytes / rowBytes), 1, remainingRows);
+        chunkBytes = rowBytes * rowsPerChunk;
+        return true;
     }
 
     private unsafe bool TryPushProgressiveMipChunk(
@@ -593,7 +652,7 @@ public partial class GLTexture2D
                 && !Data.MultiSample
                 && mip.Height > 0;
 
-            bool completed = true;
+            bool completed;
             if (shouldChunk)
             {
                 if (_preparedMipChunkMipIndex != mipIndex)
@@ -602,15 +661,14 @@ public partial class GLTexture2D
                     _preparedMipChunkNextRow = 0;
                 }
 
-                int beforeRow = _preparedMipChunkNextRow;
-                bool chunked = TryPushProgressiveMipChunk(
+                completed = PushBudgetedMipLevel(
                     ToGLEnum(TextureTarget),
                     actualMipIndex,
                     mipInfo,
                     internalFormatForce,
-                    ref _preparedMipChunkNextRow);
-                completed = !chunked || _preparedMipChunkNextRow <= 0;
-                if (chunked && !completed && !IsMultisampleTarget)
+                    ref _preparedMipChunkNextRow,
+                    recordTextureDuration: false);
+                if (!completed && _preparedMipChunkNextRow > 0 && !IsMultisampleTarget)
                 {
                     int hiddenBase = Math.Min(actualMipIndex + 1, actualMipIndex + Math.Max(0, Mipmaps.Length - mipIndex - 1));
                     int hiddenMax = Math.Max(hiddenBase, SparseTextureResidentBaseMipLevelOrZero + Mipmaps.Length - 1);
@@ -618,13 +676,13 @@ public partial class GLTexture2D
                     Api.TextureParameterI(BindingId, GLEnum.TextureBaseLevel, in hiddenBase);
                     Api.TextureParameterI(BindingId, GLEnum.TextureMaxLevel, in hiddenMax);
                 }
-
-                if (!chunked && beforeRow == 0)
-                    PushMipmap(ToGLEnum(TextureTarget), actualMipIndex, mipInfo, internalFormatForce);
             }
             else
             {
-                PushMipmap(ToGLEnum(TextureTarget), actualMipIndex, mipInfo, internalFormatForce);
+                int nextRow = 0;
+                completed = PushBudgetedMipLevel(
+                    ToGLEnum(TextureTarget), actualMipIndex, mipInfo, internalFormatForce, ref nextRow,
+                    allowChunks: false, recordTextureDuration: false);
             }
 
             if (completed)

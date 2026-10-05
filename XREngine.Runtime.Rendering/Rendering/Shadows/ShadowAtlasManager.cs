@@ -2072,6 +2072,32 @@ public sealed partial class ShadowAtlasManager
             ? Math.Max(tileCost, SequentialDirectionalCascadeBudgetCost)
             : tileCost;
 
+    private bool TryRenderScheduledDirectionalCascadeGroup(
+        ShadowAtlasRenderPlan plan,
+        int renderPlanIndex,
+        in ShadowAtlasRenderPlanEntry entry,
+        bool collectVisibleNow,
+        bool usedCriticalBypass)
+    {
+        if (!TryRenderDirectionalCascadeGroup(
+                plan,
+                renderPlanIndex,
+                in entry,
+                collectVisibleNow,
+                allowAdvancedLane: true,
+                usedCriticalBypass,
+                out double groupedElapsedMs,
+                out bool usedSequentialFallback,
+                out bool deferredToAdvancedLane))
+        {
+            return false;
+        }
+
+        // A deferred group records its event when the lane consumer completes it.
+        return deferredToAdvancedLane ||
+            RecordDirectionalGroupedRenderEventAndReturnSuccess(entry, groupedElapsedMs, usedSequentialFallback, usedCriticalBypass);
+    }
+
     private bool RecordDirectionalGroupedRenderEventAndReturnSuccess(
         in ShadowAtlasRenderPlanEntry entry,
         double elapsedMs,
@@ -2145,6 +2171,12 @@ public sealed partial class ShadowAtlasManager
 
         ShadowAtlasRenderPlan plan = SelectRenderPlanForExecution(renderPlanIndex);
         ReadOnlySpan<ShadowAtlasRenderPlanEntry> entries = plan.Entries;
+        FailUnconsumedAdvancedLaneGroups();
+        if (_advancedLaneTargetFrameId != SubmissionTrackingRenderFrameId)
+        {
+            _advancedLaneTargetFrameId = SubmissionTrackingRenderFrameId;
+            _advancedLaneTargetFrameBuffer = null;
+        }
 
         for (int i = 0; i < entries.Length; i++)
         {
@@ -2203,8 +2235,7 @@ public sealed partial class ShadowAtlasManager
             scheduledBudgetCost += budgetCost;
             bool rendered = entry.Kind switch
             {
-                ShadowAtlasRenderPlanEntryKind.DirectionalCascadeGroup => TryRenderDirectionalCascadeGroup(plan, entry, collectVisibleNow, out double groupedElapsedMs, out bool usedSequentialFallback) &&
-                    RecordDirectionalGroupedRenderEventAndReturnSuccess(entry, groupedElapsedMs, usedSequentialFallback, usedCriticalBypass),
+                ShadowAtlasRenderPlanEntryKind.DirectionalCascadeGroup => TryRenderScheduledDirectionalCascadeGroup(plan, renderPlanIndex, in entry, collectVisibleNow, usedCriticalBypass),
                 ShadowAtlasRenderPlanEntryKind.PointFaceGroup => TryRenderPointFaceGroup(plan, entry, collectVisibleNow),
                 _ => TryRenderTile(entry.Request, entry.Allocation, collectVisibleNow, out double tileElapsedMs) &&
                     RecordTileRenderEventAndReturnSuccess(plan, entry, tileElapsedMs, usedCriticalBypass),
@@ -3741,11 +3772,39 @@ public sealed partial class ShadowAtlasManager
         bool collectVisibleNow,
         out double elapsedMs,
         out bool usedSequentialFallback)
+        => TryRenderDirectionalCascadeGroup(
+            plan,
+            planIndex: -1,
+            in entry,
+            collectVisibleNow,
+            allowAdvancedLane: false,
+            criticalBypass: false,
+            out elapsedMs,
+            out usedSequentialFallback,
+            out _);
+
+    /// <summary>
+    /// Renders one directional cascade group, preferring the Advanced lane when
+    /// the scheduled-tile pass allows it, then the grouped layered pass, then
+    /// sequential tiles. A deferred group is complete only once the lane's
+    /// consumer accepts it, so the caller must not record its render event.
+    /// </summary>
+    private bool TryRenderDirectionalCascadeGroup(
+        ShadowAtlasRenderPlan plan,
+        int planIndex,
+        in ShadowAtlasRenderPlanEntry entry,
+        bool collectVisibleNow,
+        bool allowAdvancedLane,
+        bool criticalBypass,
+        out double elapsedMs,
+        out bool usedSequentialFallback,
+        out bool deferredToAdvancedLane)
     {
         using var sample = RuntimeEngine.Profiler.Start("ShadowAtlas.Directional.GroupRender");
         long start = Stopwatch.GetTimestamp();
         elapsedMs = 0.0;
         usedSequentialFallback = false;
+        deferredToAdvancedLane = false;
         ShadowMapRequest seedRequest = entry.Request;
         ShadowAtlasGroupedDirectionalCascadeAllocation group = entry.DirectionalGroup;
         if (seedRequest.Light is not DirectionalLightComponent light ||
@@ -3763,6 +3822,26 @@ public sealed partial class ShadowAtlasManager
 
         bool canRenderFullGroup = entry.MemberCount == group.CascadeCount;
         bool canRenderGrouped = CanRenderDirectionalCascadeGroup(seedRequest, group);
+        if (allowAdvancedLane && canRenderFullGroup && canRenderGrouped)
+        {
+            if (TryDeferDirectionalCascadeGroupToAdvancedLane(
+                    plan,
+                    planIndex,
+                    in entry,
+                    light,
+                    in group,
+                    criticalBypass,
+                    out string? laneDeclineReason))
+            {
+                deferredToAdvancedLane = true;
+                elapsedMs = ElapsedMilliseconds(start);
+                return true;
+            }
+
+            _advancedLaneLastDeclineReason = laneDeclineReason;
+            _advancedLaneGenericGroups++;
+        }
+
         string? groupedDeclineReason = !canRenderFullGroup
             ? "The render plan holds only part of the cascade group."
             : !canRenderGrouped

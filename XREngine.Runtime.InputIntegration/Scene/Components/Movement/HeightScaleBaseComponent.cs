@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Scene.Transforms;
 
@@ -269,18 +270,6 @@ namespace XREngine.Components
             return any;
         }
 
-        protected static float AtomicAdd(ref float target, float value)
-        {
-            float initialValue, computedValue;
-            do
-            {
-                initialValue = target;
-                computedValue = initialValue + value;
-            }
-            while (Interlocked.CompareExchange(ref target, computedValue, initialValue) != initialValue);
-            return computedValue;
-        }
-
         protected static bool SumEyeVertexPositions(SubMeshLOD? lod, out Vector3 eyePosWorldAvg, string? eyeLBoneName, string? eyeRBoneName)
         {
             if (lod is null)
@@ -297,27 +286,44 @@ namespace XREngine.Components
 
             eyePosWorldAvg = Vector3.Zero;
 
-            float sumX = 0f, sumY = 0f, sumZ = 0f;
+            // Weights are read from the mesh's packed skinning buffers; bind
+            // matrices come from its utilized-bone table.
+            if (!XRMeshSkinningInfluenceReader.TryCreate(mesh, out XRMeshSkinningInfluenceReader reader))
+                return false;
+
+            (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] bones = mesh.UtilizedBones;
+            bool[] eyeBones = new bool[bones.Length];
+            bool anyEyeBone = false;
+            for (int boneIndex = 0; boneIndex < bones.Length; boneIndex++)
+                anyEyeBone |= eyeBones[boneIndex] = bones[boneIndex].tfm is { } bone && IsEyeBone(bone, eyeLBoneName, eyeRBoneName);
+            if (!anyEyeBone)
+                return false;
+
+            Span<int> boneIndices = stackalloc int[reader.MaxInfluenceCount];
+            Span<float> weights = stackalloc float[reader.MaxInfluenceCount];
+            Vector3 sum = Vector3.Zero;
             int counted = 0;
-
-            Parallel.ForEach(mesh.Vertices, vertex =>
+            for (int vertexIndex = 0; vertexIndex < mesh.VertexCount; vertexIndex++)
             {
-                var weights = vertex.Weights;
-                if (weights is null)
-                    return;
-
-                bool hasEyeBone = weights.Any(w => IsEyeBone(w.Key, eyeLBoneName, eyeRBoneName));
+                int influenceCount = reader.ReadInfluences(vertexIndex, boneIndices, weights);
+                bool hasEyeBone = false;
+                for (int influence = 0; influence < influenceCount && !hasEyeBone; influence++)
+                    hasEyeBone = eyeBones[boneIndices[influence]];
                 if (!hasEyeBone)
-                    return;
+                    continue;
 
-                Vector3 pos = vertex.GetWorldBindPosition();
-                AtomicAdd(ref sumX, pos.X);
-                AtomicAdd(ref sumY, pos.Y);
-                AtomicAdd(ref sumZ, pos.Z);
-                Interlocked.Increment(ref counted);
-            });
+                Vector3 position = mesh.GetPosition((uint)vertexIndex);
+                Vector3 bindPosition = Vector3.Zero;
+                for (int influence = 0; influence < influenceCount; influence++)
+                {
+                    (TransformBase bone, Matrix4x4 inverseBind) = bones[boneIndices[influence]];
+                    bindPosition += Vector3.Transform(position, inverseBind * bone.BindMatrix) * weights[influence];
+                }
+                sum += bindPosition;
+                counted++;
+            }
 
-            eyePosWorldAvg = new Vector3(sumX, sumY, sumZ);
+            eyePosWorldAvg = sum;
             bool any = counted > 0;
             if (any)
                 eyePosWorldAvg /= counted;

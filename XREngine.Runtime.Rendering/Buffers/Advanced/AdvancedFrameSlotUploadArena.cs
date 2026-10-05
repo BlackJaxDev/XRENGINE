@@ -24,6 +24,10 @@ public sealed class AdvancedFrameSlotUploadArena : IDisposable
     private int _overflowAllocationCount;
     private int _overflowExhaustionCount;
     private int _capacityGrowthCount;
+    private AdvancedFrameUploadCapacityProfile _shrinkWindowPeak;
+    private int _underusedFrameCount;
+    private int _capacityShrinkCount;
+    private ulong _capacityShrinkBytes;
     private int _retiredGenerationCount;
     private int _growthDeferralCount;
     private int _slotReuseDeferralCount;
@@ -303,7 +307,9 @@ public sealed class AdvancedFrameSlotUploadArena : IDisposable
             _growthDeferralCount,
             _slotReuseDeferralCount,
             PendingOverflowGenerationCount,
-            RetiredMainGenerationCount);
+            RetiredMainGenerationCount,
+            _capacityShrinkCount,
+            _capacityShrinkBytes);
     }
 
     public void Dispose()
@@ -416,11 +422,73 @@ public sealed class AdvancedFrameSlotUploadArena : IDisposable
         _pendingCapacity = AdvancedFrameUploadCapacityProfile.Max(
             _pendingCapacity,
             target);
+        ScheduleShrinkFromRecentPeak();
+    }
+
+    /// <summary>
+    /// Frames a stream must stay at a quarter of its grown capacity or less before
+    /// the arena shrinks it back toward recent demand.
+    /// </summary>
+    internal const int ShrinkWindowFrames = 600;
+
+    /// <summary>
+    /// Brings grown streams back down once a burst (such as a full-scene upload
+    /// during a Play transition) has passed: after <see cref="ShrinkWindowFrames"/>
+    /// frames in which a grown stream used a quarter of its capacity or less, it is
+    /// resized to twice its peak in that window, never below its initial capacity.
+    /// The resize itself happens at the next frame boundary, like growth.
+    /// </summary>
+    private void ScheduleShrinkFromRecentPeak()
+    {
+        AdvancedFrameUploadCapacityProfile active = _activeGeneration.Capacity;
+        if (_pendingCapacity.AnyGreaterThan(active))
+        {
+            ResetShrinkWindow();
+            return;
+        }
+
+        _shrinkWindowPeak = AdvancedFrameUploadCapacityProfile.Max(_shrinkWindowPeak, _frameRequiredCapacity);
+        AdvancedFrameUploadCapacityProfile target = active;
+        bool shrink = false;
+        for (int i = 0; i < AdvancedFrameUploadCapacityProfile.StreamCount; i++)
+        {
+            EAdvancedFrameUploadStream stream = (EAdvancedFrameUploadStream)i;
+            uint capacity = active.Get(stream);
+            uint initial = _options.InitialCapacity.Get(stream);
+            uint peak = _shrinkWindowPeak.Get(stream);
+            if (capacity <= initial || (ulong)peak * 4UL > capacity)
+                continue;
+
+            uint reduced = Math.Max(initial, NextPowerOfTwo(Math.Max(1u, peak) * 2u));
+            if (reduced < capacity)
+            {
+                target = target.With(stream, reduced);
+                shrink = true;
+            }
+        }
+
+        if (!shrink)
+        {
+            ResetShrinkWindow();
+            return;
+        }
+
+        if (++_underusedFrameCount < ShrinkWindowFrames)
+            return;
+
+        _pendingCapacity = target;
+        ResetShrinkWindow();
+    }
+
+    private void ResetShrinkWindow()
+    {
+        _underusedFrameCount = 0;
+        _shrinkWindowPeak = default;
     }
 
     private void ApplyPendingGrowthAtFrameBoundary(ulong completedValue)
     {
-        if (!_pendingCapacity.AnyGreaterThan(_activeGeneration.Capacity))
+        if (_pendingCapacity == _activeGeneration.Capacity)
             return;
 
         ulong retireAfter = 0UL;
@@ -456,9 +524,18 @@ public sealed class AdvancedFrameSlotUploadArena : IDisposable
             _retiredGenerationCount++;
         }
 
-        _capacityGrowthCount++;
-        _capacityGrowthBytes +=
-            replacement.MappedByteCapacity - previous.MappedByteCapacity;
+        if (replacement.MappedByteCapacity >= previous.MappedByteCapacity)
+        {
+            _capacityGrowthCount++;
+            _capacityGrowthBytes +=
+                replacement.MappedByteCapacity - previous.MappedByteCapacity;
+        }
+        else
+        {
+            _capacityShrinkCount++;
+            _capacityShrinkBytes +=
+                previous.MappedByteCapacity - replacement.MappedByteCapacity;
+        }
         _pendingCapacity = replacement.Capacity;
     }
 

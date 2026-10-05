@@ -218,13 +218,15 @@ public partial class AdvancedRenderPipeline
            (HasRenderPassCommands((int)EDefaultRenderPass.PerPixelLinkedListForward)
             || HasRenderPassCommands((int)EDefaultRenderPass.DepthPeelingForward));
 
+    // Fragment shaders append the nodes; the CPU never reads or writes them.
     private XRDataBuffer CreatePpllNodeBuffer()
-        => new(PpllNodeBufferName, EBufferTarget.ShaderStorageBuffer, ComputePpllNodeCapacity(), EComponentType.Struct, PpllNodeStrideBytes, false, false)
+        => new(PpllNodeBufferName, EBufferTarget.ShaderStorageBuffer, ComputePpllNodeCapacity(), EComponentType.Struct, PpllNodeStrideBytes, false, false, allocateClientSideSource: false)
         {
             Usage = EBufferUsage.DynamicCopy,
             BindingIndexOverride = 24u,
             DisposeOnPush = false,
             PadEndingToVec4 = true,
+            GpuProduced = true,
         };
 
     private static XRDataBuffer CreatePpllCounterBuffer()

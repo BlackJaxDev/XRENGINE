@@ -100,7 +100,7 @@ internal sealed class VulkanResourceGenerationTransactionService
         return true;
     }
 
-    private (FrameOpResourcePlannerSwitchingState SwitchingState, List<VulkanResourceAllocator> RetiredAllocators) Publish(
+    private (FrameOpResourcePlannerSwitchingState SwitchingState, List<VulkanResourceAllocator> RetiredAllocators, List<VulkanResourceAllocator> SupersededAllocators) Publish(
         VulkanBackendObjectContext backendContext,
         ref ResourcePlannerRuntimeState state,
         in VulkanFrameOpPlannerStateKey key,
@@ -124,6 +124,7 @@ internal sealed class VulkanResourceGenerationTransactionService
         }
 
         List<VulkanResourceAllocator> retiredAllocators = [];
+        List<VulkanResourceAllocator> supersededAllocators = [];
         FrameOpResourcePlannerSwitchingState switchingState;
         lock (_planner.PlannerReadbackGate)
         {
@@ -136,6 +137,11 @@ internal sealed class VulkanResourceGenerationTransactionService
             state.PreparedGenerationManifest = manifest;
             switchingState.States[key] = state;
             VulkanResourcePlannerSessionService.MarkStateUsed(switchingState, key);
+            VulkanResourcePlannerSessionService.RemoveSupersededGenerationStates(
+                switchingState,
+                key,
+                state.ResourceAllocator,
+                supersededAllocators);
             CollectEvictedAllocators(switchingState, retiredAllocators);
 
             ResourcePlannerRuntimeGeneration publication = new(state);
@@ -144,7 +150,7 @@ internal sealed class VulkanResourceGenerationTransactionService
             _planner.PublishPlan(state.RenderGraphPlan);
         }
 
-        return (switchingState, retiredAllocators);
+        return (switchingState, retiredAllocators, supersededAllocators);
     }
 
     private void RestoreFramebufferWrappers(
@@ -218,23 +224,9 @@ internal sealed class VulkanResourceGenerationTransactionService
                 break;
 
             switchingState.LastUsedSerials.Remove(oldestKey);
-            if (!IsAllocatorOwned(switchingState, removed.ResourceAllocator))
+            if (!VulkanResourcePlannerSessionService.IsAllocatorOwned(switchingState, removed.ResourceAllocator))
                 retiredAllocators.Add(removed.ResourceAllocator);
         }
-    }
-
-    private static bool IsAllocatorOwned(
-        FrameOpResourcePlannerSwitchingState switchingState,
-        VulkanResourceAllocator allocator)
-    {
-        foreach (ResourcePlannerRuntimeState state in switchingState.States.Values)
-        {
-            if (ReferenceEquals(state.ResourceAllocator, allocator))
-                return true;
-        }
-
-        return switchingState.HasPreparationState &&
-            ReferenceEquals(switchingState.PreparationState.ResourceAllocator, allocator);
     }
 
     private sealed class Transaction(
@@ -269,7 +261,8 @@ internal sealed class VulkanResourceGenerationTransactionService
             }
 
             (FrameOpResourcePlannerSwitchingState switchingState,
-                List<VulkanResourceAllocator> retiredAllocators) =
+                List<VulkanResourceAllocator> retiredAllocators,
+                List<VulkanResourceAllocator> supersededAllocators) =
                 owner.Publish(
                     backendContext,
                     ref pendingState,
@@ -282,10 +275,29 @@ internal sealed class VulkanResourceGenerationTransactionService
                 TryRetireAllocator(retiredAllocators[index], backendContext, pendingKey.ResourceGeneration);
 
             if (!ReferenceEquals(previousState.ResourceAllocator, pendingState.ResourceAllocator) &&
-                !IsAllocatorOwned(switchingState, previousState.ResourceAllocator))
+                !VulkanResourcePlannerSessionService.IsAllocatorOwned(switchingState, previousState.ResourceAllocator))
             {
                 TryRetireAllocator(
                     previousState.ResourceAllocator,
+                    backendContext,
+                    pendingKey.ResourceGeneration,
+                    reusedImageGroups);
+            }
+
+            // Superseded generations of this output may have reached the new
+            // generation through reused physical image groups; keep those alive.
+            for (int index = 0; index < supersededAllocators.Count; index++)
+            {
+                VulkanResourceAllocator allocator = supersededAllocators[index];
+                if (allocator.IsRetired ||
+                    ReferenceEquals(allocator, previousState.ResourceAllocator) ||
+                    VulkanResourcePlannerSessionService.IsAllocatorOwned(switchingState, allocator))
+                {
+                    continue;
+                }
+
+                TryRetireAllocator(
+                    allocator,
                     backendContext,
                     pendingKey.ResourceGeneration,
                     reusedImageGroups);

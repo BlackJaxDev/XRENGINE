@@ -1013,6 +1013,14 @@ public partial class XRMaterial
             return fragmentShader;
         }
 
+        // A live generated variant knows the canonical shader it came from; a
+        // Play snapshot restore that shares the cached variant lands here.
+        if (UberShaderVariantBuilder.TryGetCanonicalShader(fragmentShader, out XRShader? cachedCanonical))
+        {
+            _uberCanonicalFragmentShader = cachedCanonical;
+            return cachedCanonical;
+        }
+
         // Native material serialization embeds generated variant text but does
         // not persist the canonical engine shader's FilePath. Rehydrate that
         // canonical identity explicitly so a reloaded material is still

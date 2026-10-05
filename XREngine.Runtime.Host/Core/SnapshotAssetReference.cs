@@ -166,6 +166,19 @@ internal sealed class SnapshotAssetReference
         return null;
     }
 
+    /// <summary>
+    /// Whether a reference with this path could load the asset from a file: the rooted path
+    /// exists, or a relative path exists under the engine, shader or game asset roots.
+    /// </summary>
+    public static bool HasLoadableFile(string assetPath)
+    {
+        foreach (string candidatePath in EnumerateCandidatePaths(assetPath))
+            if (File.Exists(candidatePath))
+                return true;
+
+        return false;
+    }
+
     private static IEnumerable<string> EnumerateCandidatePaths(string assetPath)
     {
         if (Path.IsPathRooted(assetPath))

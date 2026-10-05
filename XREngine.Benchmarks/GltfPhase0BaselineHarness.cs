@@ -328,13 +328,13 @@ public static class GltfPhase0BaselineHarness
                         continue;
 
                     meshCount++;
-                    totalVertices += mesh.Vertices.LongLength;
+                    totalVertices += mesh.VertexCount;
 
                     int[]? indices = mesh.GetIndices();
                     if (indices is not null)
                         totalTriangles += indices.LongLength / 3;
                     else
-                        totalTriangles += mesh.Vertices.LongLength / 3;
+                        totalTriangles += mesh.VertexCount / 3;
 
                     if (mesh.HasSkinning)
                         skinCount++;
@@ -345,14 +345,11 @@ public static class GltfPhase0BaselineHarness
                             blendshapeNames.Add(blendshapeName);
                     }
 
-                    foreach (Vertex vertex in mesh.Vertices)
-                    {
-                        if (vertex.Weights is null)
-                            continue;
-
-                        foreach (TransformBase bone in vertex.Weights.Keys)
+                    // Packed influences address UtilizedBones, so the bone table is
+                    // the set of bones the mesh's weights reference.
+                    foreach ((TransformBase bone, _) in mesh.UtilizedBones)
+                        if (bone is not null)
                             bones.Add(bone);
-                    }
                 }
             }
 

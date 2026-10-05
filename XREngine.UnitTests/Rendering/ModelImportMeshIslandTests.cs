@@ -149,11 +149,24 @@ public sealed class ModelImportMeshIslandTests
         IReadOnlyList<XRMesh> partitions = mesh.PartitionTrianglesSpatially(maxTrianglesPerPartition: 8);
 
         partitions.Count.ShouldBe(2);
-        partitions.ShouldAllBe(static partition =>
-            partition.Vertices.Any(static vertex => vertex.BitangentSign > 0.0f) &&
-            partition.Vertices.Any(static vertex => vertex.BitangentSign < 0.0f));
+        foreach (XRMesh partition in partitions)
+        {
+            bool hasPositiveSign = false;
+            bool hasNegativeSign = false;
+            for (uint vertexIndex = 0u; vertexIndex < (uint)partition.VertexCount; vertexIndex++)
+            {
+                float bitangentSign = partition.GetTangentWithSign(vertexIndex).W;
+                hasPositiveSign |= bitangentSign > 0.0f;
+                hasNegativeSign |= bitangentSign < 0.0f;
+            }
 
-        Vertex positive = mesh.Vertices[0];
+            hasPositiveSign.ShouldBeTrue();
+            hasNegativeSign.ShouldBeTrue();
+        }
+
+        Vertex positive;
+        using (XRMeshVertexView view = XRMeshVertexView.Open(mesh, EXRMeshVertexViewContent.Attributes, firstVertex: 0, count: 1))
+            positive = view.Vertices[0];
         Vertex negative = positive.HardCopy();
         negative.BitangentSign = -1.0f;
         positive.Equals(negative).ShouldBeFalse();

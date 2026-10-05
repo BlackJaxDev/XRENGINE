@@ -29,6 +29,22 @@ public interface IRenderBackendDiagnosticsCapability
         return new { returned_live = 0, groups = Array.Empty<object>() };
     }
 
+    /// <summary>
+    /// Returns the backend memory allocator's statistics document (JSON for VMA), or null when
+    /// the active allocator does not provide one. <paramref name="detailedMap"/> adds every block
+    /// and allocation, which can be large.
+    /// </summary>
+    string? GetMemoryAllocatorStatistics(bool detailedMap)
+        => null;
+
+    /// <summary>
+    /// Describes the backend's retained resource-planner states and the physical image memory each
+    /// state's allocator holds, or returns null when the backend has no planner. Call it on the render
+    /// thread between frames, because frame recording mutates the planner tables.
+    /// </summary>
+    object? GetResourcePlannerStateDiagnostics()
+        => null;
+
     object? GetPresentNowTerminalDiagnostics()
         => null;
 

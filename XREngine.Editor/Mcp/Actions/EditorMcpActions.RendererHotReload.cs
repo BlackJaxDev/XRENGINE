@@ -54,13 +54,18 @@ public sealed partial class EditorMcpActions
 
     [XRMcp(Name = "reload_renderer_shaders", Permission = McpPermissionLevel.Mutate)]
     [McpThreadAffinity(McpThreadAffinity.Caller)]
-    [Description("Invalidate all loaded shader dependency roots while retaining each backend's last-good programs and pipelines.")]
+    [Description("Queue loaded shader reloads, refreshing clean disk-backed roots while preserving unsaved and generated sources and each backend's last-good programs.")]
     public static Task<McpToolResponse> ReloadRendererShadersAsync()
     {
         int count = RendererHotReloadService.Current.ReloadShaders();
         return Task.FromResult(new McpToolResponse(
-            $"Invalidated {count} loaded renderer shader source(s).",
-            new { invalidated_shader_count = count }));
+            $"Requested reload of {count} loaded renderer shader source(s); await backend readiness for completion.",
+            new
+            {
+                requested_shader_count = count,
+                invalidated_shader_count = count,
+                count_semantics = "Selected reload targets; the legacy invalidated count does not certify publication or compilation completion."
+            }));
     }
 
     [XRMcp(

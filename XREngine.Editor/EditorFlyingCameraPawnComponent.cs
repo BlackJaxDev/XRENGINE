@@ -685,7 +685,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// </summary>
     private bool _selectAfterForcedPick;
     private bool _selectOnCurrentPickCompletion;
-    private AdvancedPickingResult _lastAdvancedPickingResult;
     private readonly Lock _pickDispatchLock = new();
     private bool _octreePickInFlight;
     private bool _pendingPickAfterCurrent;
@@ -1449,7 +1448,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         bool canApplyHover = CanApplyCurrentWorldPickHover();
         CompleteWorldPickDispatch();
-        _lastAdvancedPickingResult = result;
         SceneNode? node = ResolveAdvancedPickingSceneNode(in result);
         if (node is not null && !ReferenceEquals(node.World, World))
             node = null;

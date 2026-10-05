@@ -17,7 +17,14 @@ internal sealed class DDGIMaterialTextureEntry : IDisposable
     public long PendingRevision { get; set; }
     public bool PendingWhileStreaming { get; set; }
     public long Revision => Volatile.Read(ref _revision);
-    public bool IsGpuAuthored => Source.IsGpuWritable || Source.Mipmaps.Length == 0 || Source.Mipmaps[0].Data is null;
+    /// <summary>
+    /// True for textures whose texels exist only on the GPU, which must be
+    /// recopied every refresh. A streamed texture whose CPU pixels were released
+    /// after upload is not GPU-authored; its GPU image is unchanged until the next
+    /// streaming publication raises a property change.
+    /// </summary>
+    public bool IsGpuAuthored => Source.IsGpuWritable || Source.Mipmaps.Length == 0 ||
+        (Source.Mipmaps[0].Data is null && !Source.ResidentPixelsReleased);
     public bool IsStreaming => Source.RuntimeManagedProgressiveUploadActive || Source.RuntimeManagedProgressiveFinalizePending;
 
     public DDGIMaterialTextureEntry(XRTexture2D source, int layer)

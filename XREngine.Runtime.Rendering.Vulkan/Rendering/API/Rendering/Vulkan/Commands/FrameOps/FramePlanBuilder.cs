@@ -12,6 +12,12 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class FramePlanBuilder
 {
     private const int RetiredSlotCapacity = 4;
+    // Spare workspaces replace an active slot whose plan an in-flight frame
+    // still pins. Measured OpenXR and desktop sessions use at most one at a
+    // time (VulkanFramePlanSlotTelemetry), so one is provisioned up front and
+    // further spares are created on first need, up to RetiredSlotCapacity, at
+    // the cost of one allocation on that frame.
+    private const int InitialSpareSlotCount = 1;
     private const int StaticOperationCapacity = VulkanAcceptedFramePlan.StaticCapacity;
     private const int DynamicOperationCapacity = VulkanAcceptedFramePlan.UiCapacity;
     private const int TextureUploadOperationCapacity = VulkanAcceptedFramePlan.UploadCapacity;
@@ -120,7 +126,7 @@ internal sealed class FramePlanBuilder
     private readonly bool[] _provisionedAdvancedFamilies = new bool[VulkanAdvancedVisibilityOutputCapacity.Maximum];
     private readonly object _provisioningGate = new();
     private int _provisionedSlotCount;
-    private int _retiredSlotCount = RetiredSlotCapacity;
+    private int _retiredSlotCount;
     private readonly RenderOutputGraphPlanner _outputGraphPlanner = new();
     private long _nextGeneration;
     internal VulkanFrameOperationScheduler FrameScheduler => _frameScheduler;
@@ -129,12 +135,9 @@ internal sealed class FramePlanBuilder
 
     internal FramePlanBuilder(int frameSlotCount)
     {
-        _retiredSlots = [
-            new(_advancedVisibilityInputCopyTelemetry),
-            new(_advancedVisibilityInputCopyTelemetry),
-            new(_advancedVisibilityInputCopyTelemetry),
-            new(_advancedVisibilityInputCopyTelemetry),
-        ];
+        _retiredSlots = new Slot[RetiredSlotCapacity];
+        for (int index = 0; index < InitialSpareSlotCount; index++)
+            _retiredSlots[_retiredSlotCount++] = new(_advancedVisibilityInputCopyTelemetry);
         ProvisionFrameSlots(frameSlotCount);
     }
 
@@ -206,7 +209,8 @@ internal sealed class FramePlanBuilder
         ERenderOutputWorkClass? desktopWorkClassOverride = null,
         ReadOnlySpan<RenderFrameViewHistoryBackendReservation> historyReservations = default,
         RenderFrameViewSetPublicationSnapshot? publicationSnapshot = null,
-        int? logicalFrameSlot = null)
+        int? logicalFrameSlot = null,
+        bool borrowedLogicalOperations = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(frameSlot);
         int publishedFrameSlot = logicalFrameSlot ?? frameSlot;
@@ -242,7 +246,12 @@ internal sealed class FramePlanBuilder
         EVrOutputViewKind? openXrViewKind = ResolveOpenXrViewKind(
             slot.ViewSet,
             openXrViewIndex);
-        slot.StaticIngress.Populate(operations, authoringOperationCount);
+        // A borrowed logical cohort (OpenXR eye plans) is lowered without its
+        // native output framebuffers and without consuming the caller's leases.
+        slot.StaticIngress.Populate(
+            operations,
+            authoringOperationCount,
+            borrowedLogicalOperations);
         slot.DynamicIngress.Populate(
             dynamicOverlayOperations,
             authoringDynamicOverlayOperationCount);
@@ -661,6 +670,7 @@ internal sealed class FramePlanBuilder
                 EVulkanAcceptedFrameLane.FrameSlot,
                 slotCount,
                 frameSlot + 1);
+        VulkanFramePlanSlotTelemetry.RecordBuild();
         Slot active = _slots[frameSlot];
         if (!active.Plan.IsPinned)
             return active;
@@ -672,15 +682,36 @@ internal sealed class FramePlanBuilder
             active = _slots[frameSlot];
             if (!active.Plan.IsPinned)
                 return active;
-            Slot replacement = TakeUnpinnedRetiredSlot() ??
-                throw new VulkanAcceptedFramePlanCapacityException(
-                    EVulkanAcceptedFrameLane.FrameSlot,
-                    slotCount + _retiredSlots.Length,
-                    slotCount + _retiredSlots.Length + 1);
+            Slot replacement = TakeUnpinnedRetiredSlot() ?? CreateSpareSlot(slotCount);
             _slots[frameSlot] = replacement;
             RetireSlot(active);
+            int availableSpares = 0;
+            for (int index = 0; index < _retiredSlotCount; index++)
+                if (!_retiredSlots[index].Plan.IsPinned)
+                    availableSpares++;
+            VulkanFramePlanSlotTelemetry.RecordReplacement(availableSpares);
             return replacement;
         }
+    }
+
+    /// <summary>
+    /// Creates a spare workspace when every retired slot is still pinned. The
+    /// pinned active slot joins the retired list, so the list must have room.
+    /// </summary>
+    private Slot CreateSpareSlot(int slotCount)
+    {
+        if (_retiredSlotCount >= RetiredSlotCapacity)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.FrameSlot,
+                slotCount + RetiredSlotCapacity,
+                slotCount + RetiredSlotCapacity + 1);
+
+        Slot slot = new(_advancedVisibilityInputCopyTelemetry);
+        for (int bankIndex = 0; bankIndex < _provisionedAdvancedFamilies.Length; bankIndex++)
+            if (_provisionedAdvancedFamilies[bankIndex])
+                slot.Plan.ProvisionAdvancedVisibilityFamily(bankIndex);
+        VulkanFramePlanSlotTelemetry.RecordSpareCreated();
+        return slot;
     }
 
     private Slot? TakeUnpinnedRetiredSlot()

@@ -101,6 +101,7 @@ internal readonly ref struct VulkanCpuStageScope
             EVulkanCpuStage.PrimaryAdvancedClassificationOperation or
             EVulkanCpuStage.PrimaryAdvancedAmbientOcclusionOperation or
             EVulkanCpuStage.PrimaryAdvancedNativeShadingOperation or
+            EVulkanCpuStage.PrimaryAdvancedDirectionalShadowOperation or
             EVulkanCpuStage.PrimaryAdvancedCpuDirectDrawOperation or
             EVulkanCpuStage.PrimaryAdvancedRasterLoweringOperation or
             EVulkanCpuStage.PrimaryAdvancedRasterValidationOperation or

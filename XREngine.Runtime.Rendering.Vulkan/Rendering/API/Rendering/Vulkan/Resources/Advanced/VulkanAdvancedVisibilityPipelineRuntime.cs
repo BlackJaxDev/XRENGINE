@@ -24,6 +24,8 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private XRRenderProgram? _maskedMultiviewRasterProgram;
     private XRRenderProgram? _opaqueMultiviewMeshRasterProgram;
     private XRRenderProgram? _maskedMultiviewMeshRasterProgram;
+    private XRRenderProgram? _directionalShadowOpaqueProgram;
+    private XRRenderProgram? _directionalShadowMaskedProgram;
     private readonly List<GeneratedShaderSource> _generatedShaderSources = [];
 
     internal VulkanAdvancedVisibilityPipelineRuntime(VulkanResourceRuntime resources)
@@ -225,6 +227,80 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 
+    /// <summary>
+    /// Returns the linked depth-only program the directional shadow lane uses
+    /// for one coverage mode. Its readiness is tracked apart from the
+    /// visibility family so a shadow program failure never blocks canonical
+    /// visibility admission.
+    /// </summary>
+    internal VulkanAdvancedVisibilityPipelineReadiness TryGetDirectionalShadowProgram(
+        EAdvancedMaterialCoverageMode coverage,
+        out VkRenderProgram program,
+        out string reason)
+    {
+        program = null!;
+        VulkanAdvancedVisibilityPipelineReadiness readiness =
+            GetDirectionalShadowLaneReadiness(out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        XRRenderProgram? source = coverage switch
+        {
+            EAdvancedMaterialCoverageMode.Opaque => _directionalShadowOpaqueProgram,
+            EAdvancedMaterialCoverageMode.Masked => _directionalShadowMaskedProgram,
+            _ => null,
+        };
+        if (source is null ||
+            _resources.WrapperLookup.GetOrCreate(source, generateNow: false) is not VkRenderProgram linked)
+        {
+            reason = $"Prepared directional shadow program for coverage '{coverage}' is unavailable.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+        program = linked;
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+    }
+
+    private VulkanAdvancedVisibilityPipelineReadiness PrepareDirectionalShadowProgram(
+        EAdvancedMaterialCoverageMode coverage,
+        out string reason)
+    {
+        reason = "Ready";
+        if (!_resources.AdvancedSceneResources.IsReady ||
+            !_resources.AdvancedVisibilityResources.IsReady)
+        {
+            reason = !_resources.AdvancedSceneResources.IsReady
+                ? _resources.AdvancedSceneResources.AvailabilityReason
+                : _resources.AdvancedVisibilityResources.AvailabilityReason;
+            return VulkanAdvancedVisibilityPipelineReadiness.Missing;
+        }
+
+        try
+        {
+            bool opaque = coverage == EAdvancedMaterialCoverageMode.Opaque;
+            ref XRRenderProgram? retainedProgram = ref opaque
+                ? ref _directionalShadowOpaqueProgram
+                : ref _directionalShadowMaskedProgram;
+            retainedProgram ??= CreateVertexFragmentProgram(
+                AdvancedVisibilityShaderLibrary.DirectionalShadowVertex,
+                opaque
+                    ? AdvancedVisibilityShaderLibrary.DirectionalShadowOpaqueFragment
+                    : AdvancedVisibilityShaderLibrary.DirectionalShadowMaskedFragment,
+                opaque
+                    ? "VulkanAdvancedDirectionalShadowOpaque"
+                    : "VulkanAdvancedDirectionalShadowMasked",
+                multiview: false);
+            return TryPrepareProgram(
+                retainedProgram,
+                out _,
+                out reason,
+                "directional shadow program did not link a Vulkan pipeline layout");
+        }
+        catch (Exception exception)
+        {
+            reason = exception.Message;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+    }
+
     private VulkanAdvancedVisibilityPipelineReadiness PrepareRasterProgram(
         EAdvancedMaterialCoverageMode coverage,
         bool meshlet,
@@ -341,9 +417,20 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     }
 
     private XRRenderProgram CreateRasterProgram(string fragmentPath, string name, bool multiview)
+        => CreateVertexFragmentProgram(
+            AdvancedVisibilityShaderLibrary.Vertex,
+            fragmentPath,
+            name,
+            multiview);
+
+    private XRRenderProgram CreateVertexFragmentProgram(
+        string vertexPath,
+        string fragmentPath,
+        string name,
+        bool multiview)
     {
         XRShader vertexAsset = XRShader.EngineShader(
-            AdvancedVisibilityShaderLibrary.Vertex,
+            vertexPath,
             EShaderType.Vertex);
         XRShader fragmentAsset = XRShader.EngineShader(
             fragmentPath,

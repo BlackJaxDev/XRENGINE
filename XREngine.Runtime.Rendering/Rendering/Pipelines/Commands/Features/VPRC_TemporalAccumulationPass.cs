@@ -797,7 +797,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         lock (state.MutationSync)
         {
             state.HistoryExposureReady = ready;
-            PublishTemporalUniformData(state);
+            // Deferred resolves must see exposure readiness without observing
+            // the previous-frame matrices and jitter advanced by CPU commit.
+            PublishTemporalUniformData(state, captureResolve: true);
         }
     }
 
@@ -835,7 +837,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     }
 
     /// <summary>
-    /// Reads the values captured at temporal Begin for the current resolve.
+    /// Reads the values captured before enqueueing the current temporal resolve.
     /// Commit advances previous matrices and jitter for the next frame, but a
     /// deferred draw can bind its uniforms after that CPU-side commit.
     /// </summary>
@@ -955,7 +957,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                     generation.RejectCurrentMatrices(effectiveExpectedLayerMask);
                     ResetHistoryStorage(state);
                     state.ResetReasonThisFrame |= EOpenXrSmokeTemporalResetReason.MissingSnapshot;
-                    PublishTemporalUniformData(state, captureTsrResolve: true);
+                    PublishTemporalUniformData(state, captureResolve: true);
                     invalidatedExistingState = true;
                 }
             }
@@ -1031,12 +1033,12 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         };
     }
 
-    private static void PublishTemporalUniformData(TemporalState state, bool captureTsrResolve = false)
+    private static void PublishTemporalUniformData(TemporalState state, bool captureResolve = false)
     {
         TemporalViewKey key = state.Key;
         TemporalUniformData data = CreateTemporalUniformData(key, state);
         state.UniformSnapshot.Publish(data);
-        if (captureTsrResolve)
+        if (captureResolve)
             state.ResolveUniformSnapshot.Publish(data);
     }
 
@@ -1064,7 +1066,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         {
             state.ResetReasonThisFrame |= EOpenXrSmokeTemporalResetReason.ExplicitReset;
             ResetHistory(state);
-            PublishTemporalUniformData(state, captureTsrResolve: true);
+            PublishTemporalUniformData(state, captureResolve: true);
         }
     }
 
@@ -1245,7 +1247,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             state.HistoryReady = false;
             state.ResetReasonThisFrame |= EOpenXrSmokeTemporalResetReason.MissingCamera;
             LogTemporalReseedPending(instance, state, "missing primary camera");
-            PublishTemporalUniformData(state, captureTsrResolve: true);
+            PublishTemporalUniformData(state, captureResolve: true);
             return;
         }
 
@@ -1266,6 +1268,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             state.CameraCutLayerMaskThisFrame |= 0b10u;
             state.ResetReasonThisFrame |= EOpenXrSmokeTemporalResetReason.CameraCut;
         }
+
+        InvalidateDiscontinuousDesktopHistory(instance, state, camera);
 
         bool jitterEnabled = ShouldUseTemporalJitter(antiAliasingMode);
         Vector2 jitter = jitterEnabled ? GenerateJitter(state, antiAliasingMode) : Vector2.Zero;
@@ -1346,13 +1350,39 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             LogTemporalReseedPending(instance, state, reason);
         }
 
-        PublishTemporalUniformData(state, captureTsrResolve: true);
+        PublishTemporalUniformData(state, captureResolve: true);
         if (instance.Pipeline is IAdvancedRenderStageFamilyHost &&
             instance.RenderState.FrameViewSet is { } logicalViews)
         {
             TemporalUniformData data = CreateTemporalUniformData(state.Key, state);
             instance.RenderState.TemporalAuthoringViewSet =
                 RenderFrameTemporalViews.Create(logicalViews, data);
+        }
+    }
+
+    /// <summary>
+    /// Aligns desktop accumulation with history from accepted submissions.
+    /// CPU authoring can finish a frame whose native submission is later rejected.
+    /// </summary>
+    private static void InvalidateDiscontinuousDesktopHistory(
+        XRRenderPipelineInstance instance, TemporalState state, XRCamera camera)
+    {
+        var renderState = instance.RenderState;
+        if (renderState.StereoPass || !renderState.ViewHistoryAuthoring ||
+            renderState.ViewHistorySequenceId == 0UL ||
+            !state.HistoryGeneration.LeftEyeHistoryReady ||
+            renderState.FrameViewSet is not { } views)
+            return;
+
+        for (int i = 0; i < views.ViewCount; i++)
+        {
+            RenderFrameViewDescriptor view = views.GetView(i);
+            if (view.SourceCameraIdentity != camera.RenderIdentity || view.HasValidTemporalHistory)
+                continue;
+
+            ResetEyeHistory(state, 0);
+            state.ResetReasonThisFrame |= EOpenXrSmokeTemporalResetReason.LogicalHistoryInvalid;
+            return;
         }
     }
 

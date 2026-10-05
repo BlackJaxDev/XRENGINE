@@ -50,6 +50,9 @@ namespace XREngine.Components.Scene.Mesh
         #region LOD and component state
 
         private readonly object _lodsLock = new();
+        // Source LODs belong to the model asset, which can outlive this renderable and be
+        // shared by other components; Dispose must remove these handlers.
+        private readonly List<(SubMeshLOD Lod, XRPropertyChangedEventHandler Handler)> _sourceLodSubscriptions = [];
         private int _lodCount;
         private int _lodRegistrationVersion;
         private XRMeshRenderer? _currentLODRenderer;
@@ -188,7 +191,9 @@ namespace XREngine.Components.Scene.Mesh
                             _rc?.MarkDirty();
                         }
                     }
-                    lod.PropertyChanged += UpdateReferences;
+                    XRPropertyChangedEventHandler sourceLodHandler = UpdateReferences;
+                    lod.PropertyChanged += sourceLodHandler;
+                    _sourceLodSubscriptions.Add((lod, sourceLodHandler));
                     LODs.AddLast(new RenderableLOD(renderer, lod.MaxVisibleDistance, lod.MinProjectedScreenRadiusPixels));
                     TrackBones(renderer.Mesh, true);
                 }
@@ -558,6 +563,10 @@ namespace XREngine.Components.Scene.Mesh
             RenderableLOD[] lods;
             lock (_lodsLock)
             {
+                foreach ((SubMeshLOD sourceLod, XRPropertyChangedEventHandler handler) in _sourceLodSubscriptions)
+                    sourceLod.PropertyChanged -= handler;
+                _sourceLodSubscriptions.Clear();
+
                 Volatile.Write(ref _lodCount, 0);
                 lods = [.. LODs];
                 CurrentLOD = null;

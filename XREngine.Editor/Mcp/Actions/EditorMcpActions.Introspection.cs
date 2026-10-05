@@ -537,7 +537,9 @@ namespace XREngine.Editor.Mcp
                 index = viewport.Index,
                 isVrLeftEyeViewport = ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport),
                 isVrRightEyeViewport = ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport),
+                isVrStereoViewport = ReferenceEquals(viewport, RuntimeEngine.VRState.StereoViewport),
                 isWindowViewport = RuntimeEngine.Windows.Any(window => window.Viewports.Contains(viewport)),
+                hasScreenSpaceUiOverride = viewport.ScreenSpaceUserInterfaceOverride is not null,
                 width = viewport.Width,
                 height = viewport.Height,
                 internalWidth = viewport.InternalWidth,
@@ -590,57 +592,20 @@ namespace XREngine.Editor.Mcp
             if (commands is null)
                 return null;
 
-            return commands.PassMetadata
-                .OrderBy(static pair => pair.Key)
-                .Select(pair =>
+            return commands.CaptureRenderingPassDiagnostics()
+                .OrderBy(static row => row.PassIndex)
+                .Select(static row => new
                 {
-                    int commandCount = 0;
-                    int meshCommandCount = 0;
-                    int enabledCommandCount = 0;
-                    int enabledMeshCommandCount = 0;
-                    string? firstCommandType = null;
-                    string? firstMeshName = null;
-                    string? firstMaterialName = null;
-
-                    if (commands.TryGetRenderingPassCommands(pair.Key, out IReadOnlyCollection<RenderCommand>? passCommands) &&
-                        passCommands is not null)
-                    {
-                        commandCount = passCommands.Count;
-                        foreach (RenderCommand command in passCommands)
-                        {
-                            if (command is null)
-                                continue;
-
-                            firstCommandType ??= command.GetType().Name;
-
-                            if (command.RenderEnabled)
-                                enabledCommandCount++;
-
-                            if (command is IRenderCommandMesh meshCommand)
-                            {
-                                meshCommandCount++;
-                                if (command.RenderEnabled)
-                                    enabledMeshCommandCount++;
-
-                                firstMeshName ??= meshCommand.Mesh?.Mesh?.Name;
-                                firstMaterialName ??= (meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material)?.Name;
-                            }
-                        }
-                    }
-
-                    return new
-                    {
-                        passIndex = pair.Key,
-                        passName = pair.Value.Name,
-                        stage = pair.Value.Stage.ToString(),
-                        commandCount,
-                        meshCommandCount,
-                        enabledCommandCount,
-                        enabledMeshCommandCount,
-                        firstCommandType,
-                        firstMeshName,
-                        firstMaterialName
-                    };
+                    passIndex = row.PassIndex,
+                    passName = row.PassName,
+                    stage = row.Stage.ToString(),
+                    commandCount = row.CommandCount,
+                    meshCommandCount = row.MeshCommandCount,
+                    enabledCommandCount = row.EnabledCommandCount,
+                    enabledMeshCommandCount = row.EnabledMeshCommandCount,
+                    firstCommandType = row.FirstCommandType,
+                    firstMeshName = row.FirstMeshName,
+                    firstMaterialName = row.FirstMaterialName
                 })
                 .Cast<object>()
                 .ToArray();

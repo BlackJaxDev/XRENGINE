@@ -16,6 +16,8 @@ namespace XREngine.Rendering
     public partial class XRShader : GenericRenderObject, IPostCookedBinaryDeserialize
     {
         private readonly object _resolvedSourceCacheLock = new();
+        [NonSerialized]
+        private readonly Func<string, string>? _resolvedSourceTransform;
         private string? _resolvedSourceCache;
         private string? _resolvedSourceCachePath;
         private string? _resolvedSourceCacheText;
@@ -28,6 +30,8 @@ namespace XREngine.Rendering
         private string? _uiManifestCachePath;
         private string? _uiManifestCacheText;
         private long _sourceRevision;
+        private long _sourceIdentityRevision;
+        private volatile bool _destroyed;
 
         public event Action<XRShader>? SourceChanged;
 
@@ -35,6 +39,9 @@ namespace XREngine.Rendering
         /// Monotonic logical source revision used to reject stale asynchronous compile results.
         /// </summary>
         public long SourceRevision => Interlocked.Read(ref _sourceRevision);
+
+        internal long SourceIdentityRevision => Interlocked.Read(ref _sourceIdentityRevision);
+        internal bool CanPublishSourceChanges => !_destroyed;
 
         internal EShaderType _type = EShaderType.Fragment;
         public EShaderType Type
@@ -79,6 +86,16 @@ namespace XREngine.Rendering
             Type = type;
             Source = source;
             //Debug.Out($"Loaded shader of type {type} from {source.FilePath}{Environment.NewLine}{source.Text}");
+        }
+
+        /// <summary>
+        /// Creates a runtime shader whose resolved GLSL is transformed before compilation.
+        /// The transform is immutable and is not part of serialized shader assets.
+        /// </summary>
+        public XRShader(EShaderType type, TextFile source, Func<string, string> resolvedSourceTransform)
+            : this(type, source)
+        {
+            _resolvedSourceTransform = resolvedSourceTransform ?? throw new ArgumentNullException(nameof(resolvedSourceTransform));
         }
 
         public static EShaderType ResolveType(string extension)
@@ -200,6 +217,7 @@ namespace XREngine.Rendering
                     SourceChanged?.Invoke(this);
                     break;
                 case nameof(Source):
+                    Interlocked.Increment(ref _sourceIdentityRevision);
                     InvalidateResolvedSourceCache();
                     SetSourceSubscription(field as TextFile);
                     OnSourceTextChanged();
@@ -228,6 +246,7 @@ namespace XREngine.Rendering
 
         protected override void OnDestroying()
         {
+            _destroyed = true;
             SetSourceSubscription(null);
             base.OnDestroying();
         }
@@ -250,6 +269,16 @@ namespace XREngine.Rendering
                 $"Shader dependency changed for '{Name ?? FilePath ?? "UnnamedShader"}': {reason}");
             SourceChanged?.Invoke(this);
         }
+
+        /// <summary>
+        /// Applies a prepared root read only while this shader still owns the captured source.
+        /// A changed root publishes its normal TextChanged notification instead of a second dependency event.
+        /// </summary>
+        internal bool TryApplyDiskRootRefresh(TextFile source, long sourceIdentityRevision,
+            string path, string baselineText, long mutationRevision, long requestRevision, string refreshedText)
+            => CanPublishSourceChanges && ReferenceEquals(Source, source) &&
+               SourceIdentityRevision == sourceIdentityRevision && source.TryApplyDiskRefresh(
+                path, baselineText, mutationRevision, requestRevision, refreshedText);
 
         private void InvalidateResolvedSourceCache()
         {
@@ -363,6 +392,19 @@ namespace XREngine.Rendering
                     sourceText,
                     sourcePath,
                     annotateIncludes: annotateIncludes);
+                if (_resolvedSourceTransform is not null)
+                {
+                    string transformed = _resolvedSourceTransform(resolvedPayload.ResolvedSource);
+                    if (string.IsNullOrWhiteSpace(transformed))
+                        throw new InvalidOperationException("The resolved shader source transform produced no GLSL source.");
+                    resolvedPayload = new ResolvedShaderSource(
+                        resolvedPayload.OriginalPath,
+                        resolvedPayload.OriginalSource,
+                        transformed,
+                        resolvedPayload.ResolvedPaths,
+                        resolvedPayload.FileDependencies,
+                        ShaderSourceMacroSummary.Scan(transformed));
+                }
                 resolvedSource = resolvedPayload;
 
                 if (!annotateIncludes)

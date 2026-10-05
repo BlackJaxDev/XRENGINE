@@ -615,8 +615,12 @@ namespace XREngine.Rendering.OpenGL
                             CompleteUberBackendTracking(true, compileMilliseconds: compileResult.CompileMilliseconds, linkMilliseconds: compileResult.LinkMilliseconds);
                             if (ShouldLogRenderingShaderLinkVerbose())
                                 Debug.OpenGL($"[ShaderCache] READY hash={Hash}, shared-context compileMs={compileResult.CompileMilliseconds:F2}, linkMs={compileResult.LinkMilliseconds:F2}.");
+                            ulong completedHash = Hash;
                             if (!AdoptLinkedBuildProgram(pendingId2))
+                            {
+                                ReleaseCompletedCompilationClaim(completedHash, pendingId2);
                                 return IsLinked;
+                            }
                             IsLinked = true;
                             long reflectionStart = Stopwatch.GetTimestamp();
                             using var uniformsProf = RuntimeEngine.Profiler.Start("GLRenderProgram.Link.CacheActiveUniforms", ProfilerScopeKind.OneOffInvoke);
@@ -1068,7 +1072,7 @@ namespace XREngine.Rendering.OpenGL
                 // If another GLRenderProgram with the same hash is already compiling,
                 // defer until its binary lands in the cache.
                 bool waitingForCompileQueue = _asyncCompileLinkQueueWaitPending;
-                if (!waitingForCompileQueue && !InFlightCompilations.TryAdd(Hash, 0))
+                if (!waitingForCompileQueue && !InFlightCompilations.TryAdd(Hash, bindingId))
                 {
                     bool alreadyWaitingForDuplicateHash = _asyncCompileDuplicateHashWaitPending;
                     _asyncCompileDuplicateHashWaitPending = true;
@@ -1572,8 +1576,14 @@ namespace XREngine.Rendering.OpenGL
                         }
                         else
                         {
+                            ulong completedHash = Hash;
                             if (!AdoptLinkedBuildProgram(bindingId))
+                            {
+                                ReleaseCompletedCompilationClaim(completedHash, bindingId);
+                                DetachShaders(bindingId, [.. attachedShaderIds]);
+                                _shaderCache.ForEach(x => x.Value.Destroy());
                                 return IsLinked;
+                            }
                             IsLinked = true;
                             SynchronousSourceRetryHashes.TryRemove(Hash, out _);
                             DriverParallelSourceTimeouts.TryRemove(Hash, out _);

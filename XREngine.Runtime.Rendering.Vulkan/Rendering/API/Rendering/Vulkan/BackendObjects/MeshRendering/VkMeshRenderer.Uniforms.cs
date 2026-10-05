@@ -1766,12 +1766,11 @@ internal unsafe partial class VkMeshRenderer
 				hash.Add(drawUniformSlot);
 				break;
 			case EVulkanBindingFrequency.RuntimeCallback:
-				hash.Add(
-					draw.ProgramBindingSnapshot is null
-						? 0
-						: RuntimeHelpers.GetHashCode(
-							draw.ProgramBindingSnapshot));
+				// The manifest separates draw slots across view and pass families.
+				// Snapshot values determine content generation, not persistent storage ownership.
+				hash.Add(RuntimeHelpers.GetHashCode(this));
 				hash.Add(RuntimeHelpers.GetHashCode(material));
+				hash.Add(drawUniformSlot);
 				break;
 			default:
 				return 0;

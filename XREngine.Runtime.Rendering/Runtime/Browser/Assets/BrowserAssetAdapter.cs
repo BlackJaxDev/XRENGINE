@@ -9,11 +9,10 @@ public static class BrowserAssetAdapter
     public static BrowserMeshData FromXRMesh(XRMesh mesh)
     {
         ArgumentNullException.ThrowIfNull(mesh);
+        // Packed skinning and blendshape buffers are the only deformation data a
+        // mesh carries, so the mesh-level flags cover every vertex.
         if (mesh.HasSkinning || mesh.HasBlendshapes)
             throw new NotSupportedException("Browser mesh export does not support skinning or blendshapes.");
-        foreach (Vertex vertex in mesh.Vertices)
-            if (vertex.Weights is { Count: > 0 } || vertex.Blendshapes is { Count: > 0 })
-                throw new NotSupportedException("Browser mesh export does not support per-vertex skinning or blendshapes.");
         return CopyGeometry(mesh);
     }
 

@@ -10,6 +10,7 @@ public enum EAdvancedRenderStage
     VisibilityPreparation,
     VisibilityRaster,
     DepthPyramidAndLateVisibility,
+    DirectionalShadowRaster,
     AmbientOcclusion,
     WorkClassification,
     NativeOpaqueShading,

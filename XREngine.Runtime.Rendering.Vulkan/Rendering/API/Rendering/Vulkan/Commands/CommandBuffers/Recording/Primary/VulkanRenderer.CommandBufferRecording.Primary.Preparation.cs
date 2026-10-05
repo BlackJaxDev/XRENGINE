@@ -670,6 +670,7 @@ namespace XREngine.Rendering.Vulkan
             int ambientOcclusionStageCount = 0;
             int classificationStageCount = 0;
             int nativeOpaqueStageCount = 0;
+            int directionalShadowStageCount = 0;
             bool observe = S13aPublicationTelemetry.Enabled;
             int observedStages = 0;
             int observedPrepareCalls = 0;
@@ -712,7 +713,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
                 if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + multisampleResolveStageCount + ambientOcclusionStageCount +
-                    classificationStageCount + nativeOpaqueStageCount == 0)
+                    classificationStageCount + nativeOpaqueStageCount + directionalShadowStageCount == 0)
                 {
                     familyRequest = request;
                     familyInput = input;
@@ -764,13 +765,17 @@ namespace XREngine.Rendering.Vulkan
                     case (EAdvancedRenderStage.NativeOpaqueShading, EAdvancedVisibilityStageBackendPhase.Complete):
                         nativeOpaqueStageCount++;
                         break;
+                    case (EAdvancedRenderStage.DirectionalShadowRaster, EAdvancedVisibilityStageBackendPhase.Complete):
+                        directionalShadowStageCount++;
+                        break;
                 }
                 if (preparationStageCount > 1 || rasterStageCount > 1 ||
                     lateComputeStageCount > 1 || lateRasterStageCount > 1 ||
                     multisampleResolveStageCount > 1 ||
                     ambientOcclusionStageCount > request.Views.ViewCount ||
                     classificationStageCount > request.Views.ViewCount ||
-                    nativeOpaqueStageCount > request.Views.ViewCount)
+                    nativeOpaqueStageCount > request.Views.ViewCount ||
+                    directionalShadowStageCount > VulkanAdvancedDirectionalShadowLaneStorage.MaxCascadeCount)
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: one frame plan contains duplicate stages for a single set-1 family.";
@@ -798,8 +803,11 @@ namespace XREngine.Rendering.Vulkan
                 VulkanAdvancedVisibilityTargetClosure targetClosure = default;
                 int operationPassIndex =
                     recordingState.Ops.GetHeader(operationIndex).PassIndex;
+                bool directionalShadowStage =
+                    request.Stage == EAdvancedRenderStage.DirectionalShadowRaster;
                 bool requiresGraphicsTargetClosure =
                     request.Stage == EAdvancedRenderStage.VisibilityRaster ||
+                    directionalShadowStage ||
                     request.Phase is EAdvancedVisibilityStageBackendPhase.LateRaster or
                         EAdvancedVisibilityStageBackendPhase.MultisampleResolve;
                 VkFrameBuffer? targetWrapper = null;
@@ -813,10 +821,12 @@ namespace XREngine.Rendering.Vulkan
                         .RecoverAfterStateChange;
                     return false;
                 }
-                if (requiresGraphicsTargetClosure && !TryValidateAdvancedVisibilityTarget(
-                        in request,
-                        targetWrapper!,
-                        out string targetShapeReason))
+                string targetShapeReason = string.Empty;
+                bool targetShapeValid = !requiresGraphicsTargetClosure ||
+                    (directionalShadowStage
+                        ? TryValidateAdvancedDirectionalShadowTarget(in request, targetWrapper!, out targetShapeReason)
+                        : TryValidateAdvancedVisibilityTarget(in request, targetWrapper!, out targetShapeReason));
+                if (!targetShapeValid)
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: target closure is incomplete: {targetShapeReason}";
@@ -861,11 +871,11 @@ namespace XREngine.Rendering.Vulkan
                         .RecoverAfterStateChange;
                     return false;
                 }
-                if (!TryValidateAdvancedVisibilityTargetFormats(
-                        in request,
-                        in targetFormats,
-                        rasterizationSamples,
-                        out string targetFormatReason))
+                string targetFormatReason = string.Empty;
+                bool targetFormatsValid = directionalShadowStage
+                    ? TryValidateAdvancedDirectionalShadowTargetFormats(in targetFormats, rasterizationSamples, out targetFormatReason)
+                    : TryValidateAdvancedVisibilityTargetFormats(in request, in targetFormats, rasterizationSamples, out targetFormatReason);
+                if (!targetFormatsValid)
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: target format contract failed: {targetFormatReason}";
@@ -874,15 +884,22 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
                 RenderFrameViewSet visibilityViews = request.Views;
-                if (!VulkanAdvancedVisibilityClearPolicy.TryCreate(
-                        in visibilityViews, out VulkanAdvancedVisibilityClearPolicy clearPolicy))
+                VulkanAdvancedVisibilityClearPolicy clearPolicy;
+                if (directionalShadowStage)
+                {
+                    // Cascade projections carry their own depth convention; the
+                    // family's views do not drive the atlas page.
+                    clearPolicy = new(request.DirectionalShadowLane!.ReversedDepth);
+                }
+                else if (!VulkanAdvancedVisibilityClearPolicy.TryCreate(
+                        in visibilityViews, out clearPolicy))
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: layered target has mixed depth directions.";
                     recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
                     return false;
                 }
-                uint expectedViewMask = request.Views.ViewCount > 1
+                uint expectedViewMask = !directionalShadowStage && request.Views.ViewCount > 1
                     ? (1u << request.Views.ViewCount) - 1u : 0u;
                 if (!usesDynamicRendering || targetFormats.ViewMask != expectedViewMask)
                 {
@@ -898,7 +915,10 @@ namespace XREngine.Rendering.Vulkan
                     targetFormats,
                     rasterizationSamples,
                     depthStencilReadOnly,
-                    clearPolicy);
+                    clearPolicy,
+                    directionalShadowStage
+                        ? EVulkanAdvancedVisibilityTargetKind.DirectionalShadow
+                        : EVulkanAdvancedVisibilityTargetKind.Visibility);
                 if (request.Stage == EAdvancedRenderStage.VisibilityRaster)
                     rasterTargetClosure = targetClosure;
                 else if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster)
@@ -1069,6 +1089,9 @@ namespace XREngine.Rendering.Vulkan
                         : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
                     return false;
                 }
+                if (directionalShadowStage &&
+                    !TryPrepareDirectionalShadowLane(ref recordingState, familyBins, input, in request, in targetClosure))
+                    return false;
                 S13aPublicationTelemetry.StepProbe associationProbe =
                     S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                 if (requiresGraphicsTargetClosure &&
@@ -1191,7 +1214,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + multisampleResolveStageCount + ambientOcclusionStageCount +
-                classificationStageCount + nativeOpaqueStageCount == 0)
+                classificationStageCount + nativeOpaqueStageCount + directionalShadowStageCount == 0)
                 return true;
             bool hasMinimalProducerStages =
                 familyRequest.IsMinimalVisibilityOutput &&
@@ -1210,7 +1233,7 @@ namespace XREngine.Rendering.Vulkan
                 !familyState.IsValid)
             {
                 recordingState.RecordingDeferredReason =
-                    "Advanced visibility operation is Unsupported: the frame plan must seal exactly one visibility and late stage, plus either no native-compute stages for a minimal depth/visibility output or one complete native-compute stage family.";
+                    $"Advanced visibility operation is Unsupported: the frame plan must seal exactly one visibility and late stage, plus either no native-compute stages for a minimal depth/visibility output or one complete native-compute stage family. Counts: preparation={preparationStageCount}, raster={rasterStageCount}, lateCompute={lateComputeStageCount}, lateRaster={lateRasterStageCount}, resolve={multisampleResolveStageCount}/{expectedResolveStageCount}, ao={ambientOcclusionStageCount}, classification={classificationStageCount}, opaque={nativeOpaqueStageCount}, shadow={directionalShadowStageCount}, views={familyRequest.Views.ViewCount}, minimal={familyRequest.IsMinimalVisibilityOutput}, stateValid={familyState.IsValid}.";
                 recordingState.FailureKind =
                     EVulkanCommandRecordingFailureKind.RendererTerminal;
                 return false;
@@ -1879,6 +1902,99 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
             reason = string.Empty;
+            return true;
+        }
+
+        /// <summary>
+        /// Prepares one deferred cascade group for recording: the family's sealed
+        /// bins receive depth-only pipelines for the atlas-page closure and the
+        /// lane derives per-record cascade masks. An unprepared group rejects
+        /// this fresh frame before recording so its atlas submission receipt
+        /// cannot acknowledge unwritten tiles. The fault hold lets the next
+        /// frame retry those tiles through the generic path.
+        /// </summary>
+        private bool TryPrepareDirectionalShadowLane(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            VulkanPreparedStableBinStream familyBins,
+            VulkanAdvancedVisibilityInputStorage input,
+            in VulkanAdvancedVisibilityStageRequest request,
+            in VulkanAdvancedVisibilityTargetClosure targetClosure)
+        {
+            VulkanAdvancedDirectionalShadowLaneStorage lane = request.DirectionalShadowLane
+                ?? throw new VulkanPlanPreconditionException(
+                    "The directional shadow stage reached preparation without its cascade group.");
+            string shadowReason;
+            if (!familyBins.HasSealedSubmissionPlans)
+            {
+                shadowReason = "the family sealed no visibility bins before the directional shadow stage";
+            }
+            else
+            {
+                S13aPublicationTelemetry.StepProbe shadowProbe =
+                    S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+                VulkanAdvancedVisibilityPipelineReadiness shadowReadiness =
+                    familyBins.TryPrepareDirectionalShadowRasterPipelines(
+                        ResourceRuntime.AdvancedVisibilityPipelines,
+                        in targetClosure,
+                        out shadowReason);
+                shadowProbe.End(S13aAdvancedFamilyStep.RasterPipelines);
+                if (shadowReadiness == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                {
+                    VulkanDirectionalShadowLaneCulling.ComputeRecordMasks(
+                        familyBins.Records,
+                        input.Candidates,
+                        lane.ViewProjections,
+                        lane.AcquireRecordMasks(familyBins.RecordCount));
+                    return true;
+                }
+            }
+
+            ResourceRuntime.AdvancedVisibilityPipelines.RecordDirectionalShadowLaneFault(shadowReason);
+            recordingState.RecordingDeferredReason =
+                $"Advanced directional shadow preparation requires a fresh-frame retry: {shadowReason}";
+            recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+            return false;
+        }
+
+        private static bool TryValidateAdvancedDirectionalShadowTarget(
+            in VulkanAdvancedVisibilityStageRequest request,
+            VkFrameBuffer target,
+            out string reason)
+        {
+            if (request.Target.Targets is not { Length: 1 } attachments ||
+                attachments[0].Attachment is not (EFrameBufferAttachment.DepthAttachment or
+                    EFrameBufferAttachment.DepthStencilAttachment))
+            {
+                reason = "the directional shadow lane requires a depth-only atlas page framebuffer";
+                return false;
+            }
+            if (target.FramebufferWidth == 0u || target.FramebufferHeight == 0u)
+            {
+                reason = "the native framebuffer extent is empty";
+                return false;
+            }
+            reason = string.Empty;
+            return true;
+        }
+
+        private static bool TryValidateAdvancedDirectionalShadowTargetFormats(
+            in DynamicRenderingFormatSignature formats,
+            SampleCountFlags samples,
+            out string reason)
+        {
+            bool valid = samples == SampleCountFlags.Count1Bit &&
+                formats.ColorAttachmentCount == 0u &&
+                formats.ViewMask == 0u &&
+                formats.DepthAttachmentFormat is Format.X8D24UnormPack32 or
+                    Format.D24UnormS8Uint or Format.D32Sfloat or
+                    Format.D32SfloatS8Uint or Format.D16Unorm;
+            if (!valid)
+            {
+                reason = $"expected a single-sample depth-only atlas page without multiview; received samples={samples}, colors={formats.DescribeColorFormats()}, depth={formats.DepthAttachmentFormat}, viewMask={formats.ViewMask}";
+                return false;
+            }
+
+            reason = "Ready";
             return true;
         }
 

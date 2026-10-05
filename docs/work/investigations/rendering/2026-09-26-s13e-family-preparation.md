@@ -4,7 +4,7 @@ Status: Validated for reachable scope (September 26, 2026): the family
 preparation runs the scene publication once per compatible key, verified on
 one and three families per frame, across the incompatible-mutation cases,
 restart and the full S13b matrix; limits recorded below. Gate record for
-[S13e](../../todo/rendering/vulkan-stall-remediation-todo.md#s13e-prepare-shared-advanced-scene-state-once-per-compatible-family)
+[S13e](../../todo/rendering/vulkan-stall-remediation-todo.md#evidence-index)
 under the todo document's one-by-one protocol. Evidence root:
 `Build/_AgentValidation/20260926-162532-s13e-family-preparation/` (ignored,
 disposable; findings are copied here). Fixture, camera and session type are

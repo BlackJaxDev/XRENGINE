@@ -17,4 +17,9 @@ internal readonly record struct VulkanPreparedStableBinRecord(
     uint VisibilityMaterialIndex = 0u,
     uint VisibilityObjectIndex = 0u,
     VulkanResidentDrawTemplateNativeState VisibilityNativeState = default,
-    VulkanVisibilityGeometryRecordClosure VisibilityGeometryClosure = default);
+    VulkanVisibilityGeometryRecordClosure VisibilityGeometryClosure = default,
+    /// <summary>
+    /// Canonical draw flags (<c>GPUIndirectRenderFlags</c>) of the visibility
+    /// payload, so secondary lanes can filter casters without a draw lookup.
+    /// </summary>
+    uint VisibilityDrawFlags = 0u);

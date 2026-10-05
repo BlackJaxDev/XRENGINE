@@ -127,14 +127,20 @@ internal sealed class VulkanResourceAllocator
             if (request.Descriptor.Lifetime == RenderResourceLifetime.External)
                 continue;
 
-            VulkanBufferAliasGroupKey key = VulkanBufferAliasGroupKey.FromRequest(request);
+            // Alias groups key on descriptor shape only, with no lifetime check and
+            // no handoff barrier between aliases, so buffers stay dedicated like images.
+            VulkanBufferAllocationRequest dedicatedRequest = request with
+            {
+                Descriptor = request.Descriptor with { SupportsAliasing = false },
+            };
+            VulkanBufferAliasGroupKey key = VulkanBufferAliasGroupKey.FromRequest(dedicatedRequest);
             if (!_bufferAliasGroups.TryGetValue(key, out VulkanBufferAliasGroup? group))
             {
                 group = new VulkanBufferAliasGroup(key);
                 _bufferAliasGroups.Add(key, group);
             }
 
-            VulkanBufferAllocation allocation = group.Add(request);
+            VulkanBufferAllocation allocation = group.Add(dedicatedRequest);
             _logicalBufferAllocations[request.Name] = allocation;
         }
     }

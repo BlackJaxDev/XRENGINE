@@ -4,7 +4,7 @@ Status: Validated for reachable scope (September 26, 2026): four owners
 validated (per-update struct equality, unchanged-row rewrites on the update
 path, transparency-stream publication, material-state row rewrites) and the
 per-dependency mutation matrix run; limits recorded below. Gate record for
-[S13d](../../todo/rendering/vulkan-stall-remediation-todo.md#s13d-update-materialdraw-auxiliary-state-only-when-its-inputs-change)
+[S13d](../../todo/rendering/vulkan-stall-remediation-todo.md#evidence-index)
 under the todo document's one-by-one protocol. Evidence root:
 `Build/_AgentValidation/20260926-094453-s13c-registration-retention/` (shared
 with S13c; ignored, disposable; findings are copied here).

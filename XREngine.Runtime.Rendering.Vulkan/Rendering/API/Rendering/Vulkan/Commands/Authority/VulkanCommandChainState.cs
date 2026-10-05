@@ -13,6 +13,8 @@ internal sealed class VulkanCommandChainState
     internal List<RenderPacketPayloadArena> PacketPayloadArenas { get; } = [];
     internal RenderPacketPayloadArena? ActivePacketPayloadArena;
     internal DrawPacket[] DrawPacketScratch { get; } = new DrawPacket[64];
+    /// <summary>Per-operation identity demand for the stream being lowered; grows with the stream.</summary>
+    internal MeshPacketIdentityDemand[] MeshPacketIdentityDemandScratch = [];
     internal int PacketPoolCursor;
     internal List<RenderPassChainGroup> GroupScratch { get; } = [];
     internal List<CommandChainKey> GroupKeyScratch { get; } = [];

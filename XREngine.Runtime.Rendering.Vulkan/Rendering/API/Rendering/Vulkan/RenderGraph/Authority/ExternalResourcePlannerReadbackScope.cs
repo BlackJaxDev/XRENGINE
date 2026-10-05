@@ -77,10 +77,28 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
             return;
         }
 
+        if (sessions.TryFindCommittedGenerationState(
+                switchingState,
+                context,
+                out ResourcePlannerRuntimeState committedState))
+        {
+            committedState.LastActiveFrameOpContext = context;
+            sessions.RestoreRuntimeState(committedState);
+            PublishPreparedState(switchingState, committedState);
+            return;
+        }
+
         sessions.RestoreRuntimeState(ResourcePlannerRuntimeState.CreateEmpty());
     }
 
     internal bool RequiresPreparation => _active && !_preparationCompleted;
+
+    /// <summary>
+    /// Allocators of older resource generations that publishing this scope's
+    /// state removed from the active switching table. The caller retires those no
+    /// remaining state owns; null when nothing was superseded.
+    /// </summary>
+    internal List<VulkanResourceAllocator>? SupersededAllocators { get; private set; }
 
     internal void CompletePreparation()
     {
@@ -90,10 +108,27 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
         ResourcePlannerRuntimeState preparedState =
             _sessions.CaptureRuntimeState();
         preparedState.LastActiveFrameOpContext = _context;
-        FrameOpResourcePlannerSwitchingState switchingState =
-            _sessions.ResolveActiveSwitchingState();
+        PublishPreparedState(_sessions.ResolveActiveSwitchingState(), preparedState);
+    }
+
+    private void PublishPreparedState(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        in ResourcePlannerRuntimeState preparedState)
+    {
         switchingState.States[_key] = preparedState;
         VulkanResourcePlannerSessionService.MarkStateUsed(switchingState, _key);
+
+        // Generation commits publish into the shared table, so tables that only
+        // render-time preparation fills (OpenXR eye and mirror planners) would
+        // otherwise keep every earlier generation's full image set.
+        List<VulkanResourceAllocator> superseded = [];
+        VulkanResourcePlannerSessionService.RemoveSupersededGenerationStates(
+            switchingState,
+            _key,
+            preparedState.ResourceAllocator,
+            superseded);
+        if (superseded.Count != 0)
+            SupersededAllocators = superseded;
         _preparationCompleted = true;
     }
 
@@ -120,6 +155,9 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
                 switchingState.States[_key] = currentState;
                 VulkanResourcePlannerSessionService.MarkStateUsed(switchingState, _key);
             }
+
+            // A state shared from the published table stays recently used there.
+            _sessions.TouchPublishedOwner(currentState.ResourceAllocator);
         }
 
         ResourcePlannerRuntimeState restoreState =

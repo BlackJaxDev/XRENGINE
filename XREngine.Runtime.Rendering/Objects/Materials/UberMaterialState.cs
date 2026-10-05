@@ -68,18 +68,44 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
     public UberMaterialFeatureState[] Features { get; init; } = [];
     public UberMaterialPropertyState[] Properties { get; init; } = [];
 
+    // Render-time lookups (culling bounds, binding capture) call these every
+    // frame, so they scan with plain loops instead of capturing lambdas.
     public UberMaterialFeatureState? GetFeature(string featureId)
-        => Array.Find(Features, x => string.Equals(x.Id, featureId, StringComparison.Ordinal));
+    {
+        int index = IndexOfFeature(featureId);
+        return index >= 0 ? Features[index] : null;
+    }
 
     public UberMaterialPropertyState? GetProperty(string propertyName)
-        => Array.Find(Properties, x => string.Equals(x.Name, propertyName, StringComparison.Ordinal));
+    {
+        int index = IndexOfProperty(propertyName);
+        return index >= 0 ? Properties[index] : null;
+    }
+
+    private int IndexOfFeature(string featureId)
+    {
+        UberMaterialFeatureState[] features = Features;
+        for (int index = 0; index < features.Length; index++)
+            if (string.Equals(features[index].Id, featureId, StringComparison.Ordinal))
+                return index;
+        return -1;
+    }
+
+    private int IndexOfProperty(string propertyName)
+    {
+        UberMaterialPropertyState[] properties = Properties;
+        for (int index = 0; index < properties.Length; index++)
+            if (string.Equals(properties[index].Name, propertyName, StringComparison.Ordinal))
+                return index;
+        return -1;
+    }
 
     public UberMaterialAuthoredState SetFeature(string featureId, bool enabled)
     {
         if (string.IsNullOrWhiteSpace(featureId))
             return this;
 
-        int index = Array.FindIndex(Features, x => string.Equals(x.Id, featureId, StringComparison.Ordinal));
+        int index = IndexOfFeature(featureId);
         if (index >= 0)
         {
             UberMaterialFeatureState current = Features[index];
@@ -101,7 +127,7 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
         if (string.IsNullOrWhiteSpace(featureId))
             return this;
 
-        int index = Array.FindIndex(Features, x => string.Equals(x.Id, featureId, StringComparison.Ordinal));
+        int index = IndexOfFeature(featureId);
         if (index >= 0)
             return this;
 
@@ -114,7 +140,7 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
         if (string.IsNullOrWhiteSpace(featureId))
             return this;
 
-        int index = Array.FindIndex(Features, x => string.Equals(x.Id, featureId, StringComparison.Ordinal));
+        int index = IndexOfFeature(featureId);
         if (index < 0)
             return this;
 
@@ -129,7 +155,7 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
         if (string.IsNullOrWhiteSpace(propertyName))
             return this;
 
-        int index = Array.FindIndex(Properties, x => string.Equals(x.Name, propertyName, StringComparison.Ordinal));
+        int index = IndexOfProperty(propertyName);
         if (index >= 0)
         {
             UberMaterialPropertyState current = Properties[index];
@@ -206,7 +232,7 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
         if (string.IsNullOrWhiteSpace(propertyName))
             return this;
 
-        int index = Array.FindIndex(Properties, x => string.Equals(x.Name, propertyName, StringComparison.Ordinal));
+        int index = IndexOfProperty(propertyName);
         if (index >= 0)
             return this;
 
@@ -219,7 +245,7 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
         if (string.IsNullOrWhiteSpace(propertyName))
             return this;
 
-        int index = Array.FindIndex(Properties, x => string.Equals(x.Name, propertyName, StringComparison.Ordinal));
+        int index = IndexOfProperty(propertyName);
         if (index < 0)
             return this;
 
@@ -234,7 +260,7 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
         if (string.IsNullOrWhiteSpace(propertyName))
             return this;
 
-        int index = Array.FindIndex(Properties, x => string.Equals(x.Name, propertyName, StringComparison.Ordinal));
+        int index = IndexOfProperty(propertyName);
         if (index >= 0)
         {
             UberMaterialPropertyState current = Properties[index];

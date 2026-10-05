@@ -39,11 +39,7 @@ public partial class XRMesh
             _blendshapeDeltaEncoding = BlendshapeDeltaEncoding,
             _blendshapeAffectedVertexCount = BlendshapeAffectedVertexCount,
             _blendshapeSparseRecordCount = BlendshapeSparseRecordCount,
-            _vertices = new Vertex[Vertices.Length]
         };
-
-        for (int i = 0; i < Vertices.Length; i++)
-            clone._vertices[i] = Vertices[i].HardCopy();
 
         if (_points != null) clone._points = [.. _points];
         if (_lines != null) clone._lines = [.. _lines];
@@ -130,7 +126,6 @@ public partial class XRMesh
             _blendshapeDeltaEncoding = BlendshapeDeltaEncoding,
             _blendshapeAffectedVertexCount = BlendshapeAffectedVertexCount,
             _blendshapeSparseRecordCount = BlendshapeSparseRecordCount,
-            _vertices = Vertices,
             _points = _points,
             _lines = _lines,
             _triangles = _triangles,

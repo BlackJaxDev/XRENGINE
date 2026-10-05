@@ -22,6 +22,9 @@ internal readonly struct PersistentProgramBindingArtifactSlotKey :
         _meshRenderer = meshRenderer;
     }
 
+    internal bool IsOwnedBy(XRMeshRenderer meshRenderer)
+        => ReferenceEquals(_meshRenderer, meshRenderer);
+
     public bool Equals(PersistentProgramBindingArtifactSlotKey other)
         => ReferenceEquals(_material, other._material) &&
             ReferenceEquals(_meshRenderer, other._meshRenderer);

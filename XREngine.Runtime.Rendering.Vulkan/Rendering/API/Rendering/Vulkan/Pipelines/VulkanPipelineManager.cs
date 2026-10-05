@@ -72,6 +72,7 @@ internal sealed unsafe partial class VulkanPipelineManager
     private readonly HashSet<VulkanGraphicsPipelineLibraryKey>
         _sharedGraphicsPipelineLibraryCreations = [];
     private ulong _sharedGraphicsPipelineGeneration;
+    private long _sharedGraphicsPipelineRetirementGeneration;
     private VulkanPipelinePrewarmDatabase? _prewarmDatabase;
     private string? _prewarmDatabaseFilePath;
     private bool _prewarmCaptureEnabled;
@@ -611,6 +612,17 @@ internal sealed unsafe partial class VulkanPipelineManager
         DynamicRenderingFormatSignature formats)
         => $"Dynamic:Colors={formats.DescribeColorFormats()};Depth={formats.DepthAttachmentFormat};Stencil={formats.StencilAttachmentFormat};ViewMask=0x{formats.ViewMask:X8};Layers={formats.LayerCount}";
 
+    /// <summary>
+    /// Advances whenever shared graphics pipelines leave the cache to be retired. Mesh
+    /// renderers keep a local lookup keyed partly by native pipeline-layout handles;
+    /// once a retired pipeline's layout is destroyed the driver may hand the same
+    /// handle value to a replacement layout, so a stale local entry could match a new
+    /// key and bind a destroyed pipeline. Renderers drop their local lookup when this
+    /// value changes.
+    /// </summary>
+    internal long SharedGraphicsPipelineRetirementGeneration
+        => Volatile.Read(ref _sharedGraphicsPipelineRetirementGeneration);
+
     internal ulong SharedGraphicsPipelineGeneration
     {
         get
@@ -873,6 +885,7 @@ internal sealed unsafe partial class VulkanPipelineManager
 
             Pipeline[] pipelines = [.. _sharedGraphicsPipelines.Values];
             _sharedGraphicsPipelines.Clear();
+            Interlocked.Increment(ref _sharedGraphicsPipelineRetirementGeneration);
             return pipelines;
         }
     }

@@ -585,10 +585,11 @@ function Remove-RebuildableSessionDirectory([string]$Path) {
         try {
             Remove-Item -LiteralPath $fullPath -Recurse -Force
         }
-        catch [System.IO.IOException] {
+        catch [System.IO.IOException], [System.UnauthorizedAccessException] {
             # Retention is best-effort. A compiler or editor from another session may
-            # still hold one rebuildable artifact briefly; that must not block creation
-            # of an otherwise isolated named session.
+            # still hold one rebuildable artifact; Windows reports a loaded native
+            # library as access denied rather than as an I/O error. Neither may block
+            # creation of an otherwise isolated named session.
             Write-Warning "Deferred cleanup of locked session data '$fullPath': $($_.Exception.Message)"
         }
     }
