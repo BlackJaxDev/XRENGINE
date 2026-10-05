@@ -12,6 +12,13 @@ XRENGINE is a pre-v1, Windows-first C# XR engine/editor: Windows 10/11, .NET 10,
 - Explicit user requests override this file; note deviations. Use simple imperative commit messages when asked to commit. PRs explain what changed, why, validation, risks, and follow-ups.
 - Never put local machine paths or user profile names in code, comments, docstrings, tracked docs, or their links. Use repository-relative paths or placeholders such as `<repo-root>`, `<user-profile>`, `<desktop>`, `<downloads>`, or `%LOCALAPPDATA%`.
 
+## Language And Writing
+
+- Use ASD-STE100 Simplified Technical English (STE) for all agent-written responses to the user. This includes progress updates, explanations, and final summaries of prompt results.
+- Use STE for code comments and code member summaries, including XML documentation comments.
+- Use STE for documentation. This includes design documents, todo lists, architecture documents, developer guides, and user help documents.
+- Use short, clear sentences, active voice, and consistent technical terms. Give each instruction a clear action. Keep technical names, code identifiers, commands, and quoted source text exact.
+
 ## Read On Demand
 
 These linked guides remain required instructions for their respective tasks; read them before acting:

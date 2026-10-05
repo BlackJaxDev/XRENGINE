@@ -2,6 +2,7 @@
 # Set default behavior to automatically normalize line endings.
 ###############################################################################
 * text=auto
+/Tools/Patches/**/*.patch text eol=lf
 # Content-addressed shader payloads must retain the bytes recorded in their hashes.
 /XREngine.Runtime.Rendering.WebGPU/Assets/shaders/** text eol=lf
 ###############################################################################

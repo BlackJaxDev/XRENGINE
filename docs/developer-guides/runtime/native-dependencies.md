@@ -112,6 +112,8 @@ dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulk
 
 The Vulkan module builds the native bridge automatically on Windows before preparing build output. Debug and Release outputs stay in separate ignored build directories and are copied beside the managed output as `VulkanMemoryAllocatorBridge.Native.dll` for P/Invoke loading. Normal managed builds do not modify the packaged runtime DLL.
 
+When the native compiler or Vulkan SDK is unavailable, managed builds can reuse the packaged DLL. Its generated PDB is optional: symbols are collected after native preparation and copied to build and publish outputs only when present. Reusing the packaged DLL removes stale generated symbols from a previous native build. Design-time evaluation and `--no-build` publishing do not trigger native compilation.
+
 The Vulkan project maps managed configurations ending in `Debug` or `Release` (for example, `Development Debug`) to the native bridge's `Debug` or `Release` configuration. Set `VmaBridgeNativeConfiguration=Debug` or `VmaBridgeNativeConfiguration=Release` explicitly when using another managed configuration; the bridge build rejects values outside those two native configurations. The mapped value also selects the generated bridge directory and its build-state stamp.
 
 If you are changing the native bridge and want to rebuild it directly:
@@ -167,10 +169,18 @@ Or:
 ```
 
 This requires Visual Studio or Build Tools with the Desktop development with C++ workload.
+The build script uses `vswhere` to locate MSBuild and C++ targets from the same installed Visual Studio instance, including Enterprise and standalone Build Tools editions, before trying tools on `PATH`.
 If that native C++ workload is missing, the script builds the managed `RiveSharp.dll`
 without native project references so the engine, editor, settings generator, and docs
 can still compile. In that fallback state, Rive UI components log a warning and remain
 disabled at runtime until the native `rive.dll` is built and staged.
+
+Before the native build, the script applies the repository-managed
+[RiveSharp build patch](../../../Tools/Patches/rive-sharp/README.md).
+The patch fixes two unused scene pointers in the pinned wrapper source.
+The script accepts an already applied patch. It stops if the source does not
+match either state. It does not change the pinned submodule revision or reset
+local source changes. The patched file remains modified in the submodule.
 
 ### FFmpeg
 
