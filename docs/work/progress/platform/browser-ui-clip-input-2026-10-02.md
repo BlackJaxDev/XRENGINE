@@ -626,3 +626,28 @@ browser or managed execution is claimed. The shipping frame/compositor stall
 has no proven root cause yet. The next genuine run must distinguish the host's
 retained request from browser RAF progress and queue completion from unresolved
 error scopes, then qualify actual UI pixels and delivered inputs.
+
+## Independent frame witness on the published UI bundle
+
+Exact source `2b97bda4075563efc9f2558832c6fbcf57611f31`,
+[run 37290314776, UI job 111708082326](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37290314776/job/111708082326),
+fails at the first independent five-second animation-frame witness. At startup
+and the failure read 5.03 seconds later, the host timestamp remains 9543.4 ms,
+its pending request remains 720, the managed frame remains 136, submissions
+remain two, and the completed receipt sequence remains 134. JavaScript timers
+and page evaluation still execute. The screenshot waits for fonts and then
+times out; Chromium requires forced closure during cleanup.
+
+The page remains visible, focused and attached, the canvas drawable, and the
+session healthy. Receipt 135 awaits one completion and receipt 136 awaits three;
+both retain current owner/device identity. Two pending receipts do not exhaust
+the 64-slot pool. There are no admission deferrals, GPU validation errors,
+device-loss events or reported engine failures. Together with the independent
+RAF witness, the unchanged retained request points to stopped browser frame or
+presentation progress. It does not establish a host-loop exit, receipt-capacity
+failure, a specific unfinished promise, or the Advanced compiler stall's cause.
+No production scheduling or receipt policy was changed on this evidence.
+
+Artifact `11336718549` has ZIP SHA-256
+`0723fcfb6d7463039d4f1790994756e58c078ab451a77797ef2938da8e4ad4c9`,
+independently verified after download. UI pixel/input acceptance remains open.

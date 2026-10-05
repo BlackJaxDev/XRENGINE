@@ -729,26 +729,16 @@ jobs:
             --build-project (Join-Path $projectRoot 'NetworkKinematic.xrproj') --build-configuration Release --build-platform BrowserWebGPU `
             --output-subfolder browser-game 2>&1 | Tee-Object -FilePath (Join-Path $root 'editor-cli.log')
           if ($LASTEXITCODE -ne 0) { throw 'The shared native network browser publisher failed.' }
-          $content = Join-Path $projectRoot 'Build/browser-game/content'
-          $catalog = Get-Content -LiteralPath (Join-Path $content 'manifest.json') -Raw | ConvertFrom-Json
-          $shared = Get-Content -LiteralPath (Join-Path $content 'world-package.json') -Raw | ConvertFrom-Json
-          $original = Get-Content -LiteralPath (Join-Path $native 'world-package.json') -Raw | ConvertFrom-Json
-          if ($catalog.startupWorld -ne '/game/World.asset' -or
-              $shared.metadata.browserStartupWorld -ne '/game/World.asset' -or
-              $shared.asset.worldId -ne $original.asset.worldId -or
-              $shared.asset.revisionId -ne $original.asset.revisionId -or
-              $shared.asset.contentHash -ne $original.asset.contentHash -or
-              (Get-FileHash -LiteralPath (Join-Path $content 'World.asset') -Algorithm SHA256).Hash -ne
-              (Get-FileHash -LiteralPath (Join-Path $native 'World.asset') -Algorithm SHA256).Hash) {
-            throw 'The browser fixture did not preserve its native world bytes and identity.'
-          }
+          node Tools/BrowserSmoke/verify-network-kinematic-publication.mjs $native (Join-Path $projectRoot 'Build/browser-game')
+          if ($LASTEXITCODE -ne 0) { throw 'The shared native world publication failed canonical identity or byte verification.' }
 
       - name: Preserve the shared native networking fixture
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-network-kinematic-bundle
           path: ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/project/Build/browser-game
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Preserve Windows Editor CLI evidence

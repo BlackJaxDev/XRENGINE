@@ -170,3 +170,40 @@ retained native identity and world bytes. Its execution is pending for this new
 source. It does not start a server, trust a certificate, relax TLS, or qualify
 browser networking. The native package inspector's existing mesh/read-converter
 and shader-path restrictions remain intact; the landmark has no visual mesh.
+
+On `97f75841beb84b5d2dadf358da4d93fb509b61a9`,
+[Windows job 111735025939](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37301461684/job/111735025939)
+builds the Server, creates the 2,025-byte native world, stages it unchanged, and
+completes the real Editor browser publish. The added verification then fails
+because it incorrectly compares the native-only input content hash with the
+expanded package's hash. The shared-package contract deliberately recomputes
+that hash over the browser catalog and all added payloads. This is a validation
+error, not evidence that the publisher changed the retained world.
+
+The preserved published descriptor's World.asset SHA-256
+`7bd0d87571ba6f26485eed6d967f1967da659aa1dc9983e76f541dc96cd88836`
+and length match the native staging result. The shipping browser
+`validateSharedWorldPackage` function accepts the actual 310-file manifest and
+its canonical hash
+`02e189868fbbc8fbd9a3f6b103765ae04267fa5ac7bd3aba247c3db6c441966f`
+in a local Node invocation. This validates the manifest calculation, not the
+unavailable complete payload or a browser session. Evidence artifact
+`11343327945` has independently verified ZIP SHA-256
+`abe074bbaf38999b7e5a801d1745f76df2a4e7eae4e115cfc20b2b71353284b7`.
+
+`Tools/BrowserSmoke/verify-network-kinematic-publication.mjs` replaces the
+incorrect comparison. It reuses that shipping canonical validator, retains the
+stable native world/package/schema/build/bootstrap identifiers and metadata,
+compares the actual native world bytes, and checks every declared published
+file's length/hash and the complete file inventory. The new admission identity
+must bind the expanded package. Its full file checks await the next genuine
+publisher run. Generated output is now preserved for inspection even if a
+subsequent verification fails; consuming it still requires a successful
+producer job and verification.
+
+The verifier also accepts `--published-only <site>` when consuming a qualified
+artifact without its original native input directory. That mode retains the
+shipping canonical hash, world-binding, complete file-byte and inventory
+checks and explicitly reports `nativeInputCompared: false`. The producer lane
+continues to pass both native input and published site, so its retained-native
+identity and exact-byte comparisons are not optional there.
