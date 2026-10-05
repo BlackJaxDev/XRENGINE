@@ -453,12 +453,26 @@ Primary tool references: [Playwright browser selection](https://playwright.dev/d
 [Chromium SwiftShader modes](https://github.com/chromium/chromium/blob/main/docs/gpu/swiftshader.md),
 and [Chrome headless WebGPU qualification](https://developer.chrome.com/blog/supercharge-web-ai-testing).
 
-## One approved native GPU capture
+## Consumed native GPU capture
+
+The single attempt on October 5 is complete. Run
+[`37283428635`](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37283428635)
+reported `NativeCommandUnavailable` before collector launch and produced no
+samples. Its authorization marker was consumed and raw deletion was verified.
+The request, activation and one-shot workflow are removed. The
+[investigation record](../../docs/work/investigations/rendering/browser-native-compiler-stall-2026-10-05.md)
+preserves the exact provenance and limits; this result does not diagnose a
+compiler region or qualify Advanced rendering.
+
+Normal Linux CI records bounded, unprivileged package-query and FIFO-creation
+outcomes in `native-profile-prerequisites.json`. This informational check runs
+no collector, privileged command or browser attachment and does not reactivate
+the consumed attempt.
 
 `--native-owned-profile-once` is an inactive-by-default diagnostic for the
 Advanced software game-only route. It does not enable profiling in ordinary
-push CI or on a developer's computer. The dedicated one-shot workflow first
-verifies its immutable request and existing published bundle. A separate
+push CI or on a developer's computer. The former one-shot workflow first
+verified its immutable request and existing published bundle. A separate
 activation must bind that request to the exact checked-out commit and Actions
 run ID; a different run, rerun or changed request is rejected. Only the first
 attempt can consume the exclusive runner marker.
@@ -481,6 +495,5 @@ comparison arm and forces process exit 86. The original application verdict and
 evidence, not performance acceptance. Stripped binaries may identify only
 modules or code regions.
 
-After the single result, remove the request, activation and one-shot workflow.
 Any later capture requires a new explicit scope decision; editing or re-adding
 the request is not an automatic retry.

@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Meshlets;
 internal static class NativeMeshOptimizer
 {
     private const string NativeLibraryName = "meshoptimizer";
-    private const int InteropVersion = 2;
+    private const int InteropVersion = 3;
     private const uint SimplifyPermissiveWithSeamsMask = (uint)MeshOptimizerSimplifyOptions.Permissive;
     private static readonly Lazy<nint> s_nativeLibraryHandle = new(LoadNativeLibraryHandle, LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<MeshoptVersionDelegate?> s_version = new(() => TryLoadExport<MeshoptVersionDelegate>("meshopt_version"), LazyThreadSafetyMode.ExecutionAndPublication);

@@ -661,9 +661,48 @@ format. It does not force reconstruction of every cooked mesh's authoring
 objects. The separate LOD-generation path that copies authoring vertices is
 outside this repair and is not called by the browser dependency cooker.
 
-The diff passes whitespace checks and independent source review. A local .NET
-SDK is unavailable; managed compilation, native cooking and the real
-same-world CPU/GPU browser comparison remain pending. No meshlet runtime
-acceptance checkbox is closed by this source repair. Windows failure evidence
-has SHA-256
+Native cook provenance advances from `interop:2` to `interop:3`. A mesh with a
+nonempty but stale authoring array could previously record the current buffer
+hash while deriving cluster bounds from older positions. Existing validation
+checks finite bounds and source identity, not whether those bounds enclose the
+current positions. The provenance change invalidates such derived cook-cache
+entries and makes publication rebuild them from the corrected source. Payload
+layout, codec version, runtime compatibility and readers are unchanged; old
+published bundles remain readable and need recooking to repair affected bounds.
+Authored YAML is not automatically rewritten.
+
+The position repair at `4dbec0d42fb2992fed6402a816476445b912439c` passes the
+Linux build/pixel/physics job and Windows Editor job in
+[run 37283823423](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37283823423).
+Both static meshlet GPU and CPU worlds now cook and publish through the actual
+native builder. Their bundle ZIP hashes are
+`332cf6422d9e8511462b921f936c9f898c4ae9ee2f77078a61f1cb41e0b3f19f`
+and `3475d165e9d137796777ee643c84bb186fe23f77e67655b8066919655cd031fc`.
+
+Browser job `111689332709` executes the real meshlet selection, expansion and
+finalization dispatches and indirect depth/color draws with zero read maps.
+The initial GPU and CPU PNGs are byte-identical, SHA-256
+`c04e0316e85eec5bbf3b108fd4e3a81b4c3e2db864444f3dbdf6d92544805149`;
+visual inspection confirms the mapped lit checker panel. The job subsequently
+fails its strategy assertion because it samples the next frame while raster
+resources are preparing, after fifteen frames had been submitted. This is not
+complete meshlet acceptance: GPU resize and the second startup were not reached.
+The follow-up observer freezes its host and GPU evidence only when a real
+submitted-frame counter advances with a ready meshlet result. Shader hashing
+uses the frozen raster entries; after hashing, the observer rechecks the
+selected renderer's current ownership, host health, session, epoch, surface
+generation, extent and cumulative readback/direct-draw guards. A newer accepted
+frame cannot replace the selected renderer identity during that check. Resize
+requires a new submitted frame, surface generation and extent. Pixel, original
+shader, requested-mode, two-startup and teardown assertions are retained.
+Partial comparisons are saved before later assertions. Independent source
+review, Node syntax checks and disposable frozen-raster/host-frame/owner-race
+witnesses pass; exact-commit browser acceptance remains pending.
+
+The provenance correction passes independent source review and whitespace
+checks; its exact-commit compilation and cook-cache behavior remain pending.
+No meshlet runtime acceptance checkbox is closed by these partial results.
+The original Windows failure evidence ZIP has SHA-256
 `4f94fbfe3b1ca97974f27634ec7a867c98d1342fb2cae89a21c440d426fb7649`.
+The new browser evidence ZIP (artifact `11334932655`) has SHA-256
+`9603b735a768d9e145ea444544ea6e0ce3c6c994abda5a431483cdf099ae5056`.
