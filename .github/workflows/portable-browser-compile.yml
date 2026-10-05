@@ -609,6 +609,96 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Stage identical static meshlet GPU and CPU worlds
+        shell: pwsh
+        run: |
+          $original = Get-Content -LiteralPath 'Samples/RenderingParity/Assets/Worlds/RenderingParityWorld.asset' -Raw
+          $derivative = Get-Content -LiteralPath 'Samples/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Raw
+          foreach ($pattern in @('(?s)              Mesh:\r?\n.*?(?=              MinProjectedScreenRadiusPixels:)',
+              '(?s)                SurfaceTextureBindings:\r?\n.*?(?=                TransmissionColor:)')) {
+            $a = [regex]::Match($original, $pattern)
+            $b = [regex]::Match($derivative, $pattern)
+            if (!$a.Success -or !$b.Success -or $a.Value.Replace("`r", '') -ne $b.Value.Replace("`r", '')) {
+              throw 'The static meshlet source changed its original mapped panel geometry or texture bindings.'
+            }
+          }
+          foreach ($profile in @('gpu', 'cpu')) {
+            $project = Join-Path $env:VALIDATION_ROOT "static-meshlet-$profile-cli/project"
+            if (Test-Path -LiteralPath $project) { throw "The static meshlet $profile CLI project must start empty." }
+            New-Item -ItemType Directory -Path $project -Force | Out-Null
+            foreach ($name in @('StaticMeshletParity.xrproj', 'Assets')) {
+              Copy-Item -LiteralPath (Join-Path 'Samples/StaticMeshletParity' $name) -Destination $project -Recurse
+            }
+            New-Item -ItemType Directory -Path (Join-Path $project 'Config'), (Join-Path $project 'Assets/Shaders') -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU') `
+              -Destination (Join-Path $project 'Assets/Shaders') -Recurse
+            if ($profile -eq 'cpu') {
+              $startup = Join-Path $project 'Assets/startup.asset'
+              $source = Get-Content -LiteralPath $startup -Raw
+              $pattern = '(?m)(GPURenderDispatchOverride:\r?\n    HasOverride: true\r?\n    Value: )true'
+              if ([regex]::Matches($source, $pattern).Count -ne 1) { throw 'The saved GPU override was not unique.' }
+              [IO.File]::WriteAllText($startup, ([regex]::new($pattern)).Replace($source, '${1}false', 1))
+            }
+          }
+          $sourceWorld = (Get-FileHash -LiteralPath 'Samples/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Algorithm SHA256).Hash
+          foreach ($profile in @('gpu', 'cpu')) {
+            $stagedWorld = Join-Path $env:VALIDATION_ROOT "static-meshlet-$profile-cli/project/Assets/Worlds/StaticMeshletParityWorld.asset"
+            if ((Get-FileHash -LiteralPath $stagedWorld -Algorithm SHA256).Hash -ne $sourceWorld) {
+              throw "The staged static meshlet $profile world is not the exact saved source world."
+            }
+          }
+
+      - name: Publish static meshlet GPU and CPU worlds through the Editor CLI
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          foreach ($profile in @('gpu', 'cpu')) {
+            $projectRoot = Join-Path $env:VALIDATION_ROOT "static-meshlet-$profile-cli/project"
+            $project = Join-Path $projectRoot 'StaticMeshletParity.xrproj'
+            $log = Join-Path $env:VALIDATION_ROOT "static-meshlet-$profile-cli/editor-cli.log"
+            dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+              --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+              --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+            if ($LASTEXITCODE -ne 0) { throw "The static meshlet $profile Editor CLI publisher failed; inspect $log for BrowserCook.MeshletBackendUnavailable or its inner DLL/export error." }
+            $site = Join-Path $projectRoot 'Build/browser-game'
+            $manifest = Get-Content -LiteralPath (Join-Path $site 'content/manifest.json') -Raw | ConvertFrom-Json
+            if (!(Test-Path -LiteralPath (Join-Path $site 'index.html')) -or
+                $manifest.startupWorld -ne '/game/Worlds/StaticMeshletParityWorld.asset' -or
+                !($manifest.materialVariants | Where-Object { $_.semantic -eq 'StandardLitTexture' -and $_.semanticVersion -eq 1 })) {
+              throw "The Editor did not publish the saved static meshlet $profile world and mapped material."
+            }
+            foreach ($pass in @('select-lod', 'cull-expand', 'finalize-indexed', 'refit-bounds')) {
+              if (!($manifest.pipelineArtifacts | Where-Object { $_.scope -eq 'meshlets' -and $_.pass -eq $pass })) {
+                throw "Missing published static meshlet $profile program: $pass"
+              }
+            }
+            $stagedWorld = Join-Path $projectRoot 'Assets/Worlds/StaticMeshletParityWorld.asset'
+            if ((Get-FileHash -LiteralPath $stagedWorld -Algorithm SHA256).Hash -ne
+                (Get-FileHash -LiteralPath 'Samples/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Algorithm SHA256).Hash) {
+              throw "The static meshlet $profile source world changed during Editor publishing."
+            }
+          }
+          git diff --exit-code -- Samples/StaticMeshletParity
+          if ($LASTEXITCODE -ne 0) { throw 'Authored static meshlet sample inputs changed during CLI publishing.' }
+
+      - name: Preserve exact Editor-published static meshlet GPU bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-static-meshlet-parity-bundle
+          path: ${{ env.VALIDATION_ROOT }}/static-meshlet-gpu-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve exact Editor-published static meshlet CPU reference
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-static-meshlet-parity-cpu-bundle
+          path: ${{ env.VALIDATION_ROOT }}/static-meshlet-cpu-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Preserve Windows Editor CLI evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -618,6 +708,10 @@ jobs:
             ${{ env.VALIDATION_ROOT }}/rollingball-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/rendering-parity-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/advanced-rendering-parity-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/static-meshlet-gpu-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/static-meshlet-cpu-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/static-meshlet-gpu-cli/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/static-meshlet-cpu-cli/project/Build/browser-game/content/manifest.json
             ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/project/Build/browser-game/browser-publish.json
             ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/project/Build/browser-game/content/manifest.json
@@ -641,7 +735,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kind: [rollingball, rendering-parity, advanced-rendering-parity, ui-parity, modular-pipeline-parity]
+        kind: [rollingball, rendering-parity, advanced-rendering-parity, ui-parity, modular-pipeline-parity, static-meshlet-parity]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -651,6 +745,13 @@ jobs:
         with:
           name: windows-editor-${{ matrix.kind }}-bundle
           path: ${{ env.VALIDATION_ROOT }}/published-game
+
+      - name: Download exact same-world CPU reference
+        if: matrix.kind == 'static-meshlet-parity'
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-editor-static-meshlet-parity-cpu-bundle
+          path: ${{ env.VALIDATION_ROOT }}/published-cpu-baseline
 
       - name: Set up browser qualification tools
         uses: actions/setup-node@v6
@@ -674,6 +775,9 @@ jobs:
           trace_args=()
           if [[ "$GAME_KIND" == "advanced-rendering-parity" ]]; then
             trace_args+=(--native-compile-trace)
+          fi
+          if [[ "$GAME_KIND" == "static-meshlet-parity" ]]; then
+            trace_args+=(--baseline-publish "$VALIDATION_ROOT/published-cpu-baseline")
           fi
           node Tools/BrowserSmoke/run.mjs --game-only --game-kind "$GAME_KIND" --game-publish "$VALIDATION_ROOT/published-game" --gpu-mode software --output "$VALIDATION_ROOT/game-evidence" "${trace_args[@]}" > >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stdout.log") 2> >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stderr.log" >&2)
 
