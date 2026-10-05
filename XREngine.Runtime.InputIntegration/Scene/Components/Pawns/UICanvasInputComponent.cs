@@ -12,6 +12,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.UI;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components
 {
@@ -38,6 +39,25 @@ namespace XREngine.Components
             get => _canvas;
             set => SetField(ref _canvas, value);
         }
+
+        [RuntimeOnly, YamlIgnore]
+        private readonly HashSet<InputInterface> _registeredInputs = new(ReferenceEqualityComparer.Instance);
+        [RuntimeOnly, YamlIgnore]
+        private UIInteractableComponent? _pressedTarget;
+        [RuntimeOnly, YamlIgnore]
+        private InputInterface? _pressedInput;
+        [RuntimeOnly, YamlIgnore]
+        private BaseMouse? _pressedMouse;
+        [RuntimeOnly, YamlIgnore]
+        private ulong _pressedMouseRegistrationRevision;
+        [RuntimeOnly, YamlIgnore]
+        private IRuntimePointerContactSource? _pressedPointerSource;
+        [RuntimeOnly, YamlIgnore]
+        private object? _pressedPointerOwner;
+        [RuntimeOnly, YamlIgnore]
+        private ulong _pressedPointerGeneration;
+        [RuntimeOnly, YamlIgnore]
+        private bool _pressedWasTouch;
 
         private UIInteractableComponent? _focusedComponent;
         /// <summary>
@@ -103,6 +123,7 @@ namespace XREngine.Components
                         UnlinkOwningPawn();
                         break;
                     case nameof(FocusedComponent):
+                        ClearPointerPress();
                         if (_focusedComponent is not null)
                         {
                             //_focusedComponent.IsFocused = false;
@@ -150,7 +171,8 @@ namespace XREngine.Components
                         }
                     }
                     var controller = _owningPawn?.Controller;
-                    if (controller is not null)
+                    if (controller is not null && (_focusedComponent is not null ||
+                        ReferenceEquals(controller.FocusedInteractable, prev)))
                         controller.FocusedInteractable = _focusedComponent;
                     break;
             }
@@ -263,6 +285,18 @@ namespace XREngine.Components
 
         public void RegisterInput(InputInterface input)
         {
+            // The pawn host and this canvas's owner subscription can both request the
+            // same mappings. Retain both routes while installing each interface once.
+            if (input.Unregister)
+            {
+                if (ReferenceEquals(_pressedInput, input))
+                    ClearPointerPress();
+                if (!_registeredInputs.Remove(input))
+                    return;
+            }
+            else if (!_registeredInputs.Add(input))
+                return;
+
             input.RegisterMouseMove(MouseMove, EMouseMoveType.Absolute);
             input.RegisterMouseScroll(OnMouseScroll);
             input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Pressed, OnMouseInteractButtonDown);
@@ -569,24 +603,113 @@ namespace XREngine.Components
 
         private void OnMouseInteractButtonDown()
         {
+            ClearPointerPress();
             if (IsVirtualMouseConsumed)
                 return;
-            UIInteractableComponent? target = TryGetTouchMouseTarget(out UIInteractableComponent? touchTarget)
-                ? touchTarget : TopMostInteractable;
-            FocusedComponent = target;
+            LocalInputInterface? input = GetOwningInput() as LocalInputInterface;
+            BaseMouse? mouse = input?.Mouse;
+            IRuntimePointerContactSource? source = OwningPawn?.Viewport as IRuntimePointerContactSource;
+            object? sourceOwner = source?.PointerContactOwner;
+            ulong sourceGeneration = source?.PointerContactGeneration ?? 0UL;
+            bool wasTouch = OwningLocalPlayer?.IsTouchMouseDispatch == true;
+            UIInteractableComponent? target = FindMouseInteractTarget();
+            FocusMouseTarget(target);
+            // Focus may legitimately change mappings. Later callback changes must
+            // not transfer this press to a replacement input owner or binding.
+            ulong registrationRevision = mouse?.InputRegistrationRevision ?? 0UL;
             LeftClickDown?.Invoke(target);
 
-            if (FocusedComponent is not null && FocusedComponent.InteractOnButtonDown)
-                FocusedComponent.OnInteract();
+            if (target is not null && TryRecordPointerPress(target, input, mouse, registrationRevision,
+                source, sourceOwner, sourceGeneration, wasTouch) && target.InteractOnButtonDown)
+                target.OnInteract();
         }
         private void OnMouseInteractButtonUp()
         {
-            if (IsVirtualMouseConsumed || IsTouchMouseCancelled)
+            UIInteractableComponent? pressed = _pressedTarget;
+            bool validOwner = HasCurrentPointerPressOwner();
+            ClearPointerPress();
+            if (!validOwner || pressed is null || IsVirtualMouseConsumed || IsTouchMouseCancelled)
                 return;
-            UIInteractableComponent? target = TryGetTouchMouseTarget(out UIInteractableComponent? touchTarget)
-                ? touchTarget : TopMostInteractable;
-            if (FocusedComponent is not null && target == FocusedComponent && !FocusedComponent.InteractOnButtonDown)
+            UIInteractableComponent? target = FindMouseInteractTarget();
+            if (IsPointerTargetEligible(pressed) && ReferenceEquals(target, pressed) && ReferenceEquals(FocusedComponent, pressed) &&
+                ReferenceEquals(OwningPawn?.Controller?.FocusedInteractable, pressed) && !pressed.InteractOnButtonDown)
                 OnInteract();
+        }
+
+        private void FocusMouseTarget(UIInteractableComponent? target)
+        {
+            var controller = OwningPawn?.Controller;
+            if (target is not null && controller?.FocusedInteractable is UIInteractableComponent previous &&
+                !ReferenceEquals(previous, target))
+                previous.IsFocused = false;
+
+            if (!ReferenceEquals(controller, OwningPawn?.Controller))
+                return;
+            if (target is not null && ReferenceEquals(FocusedComponent, target) &&
+                !ReferenceEquals(controller?.FocusedInteractable, target))
+                FocusedComponent = null;
+            FocusedComponent = target;
+        }
+
+        private bool IsPointerTargetEligible(UIInteractableComponent target)
+            => IsActiveInHierarchy && target.IsActiveInHierarchy && target.UITransform.IsVisibleInHierarchy &&
+               GetCameraCanvas() is { IsActiveInHierarchy: true } canvas && canvas.CanvasTransform.IsVisibleInHierarchy &&
+               ReferenceEquals(target.UserInterfaceCanvas, canvas);
+
+        private bool TryRecordPointerPress(UIInteractableComponent target, LocalInputInterface? input,
+            BaseMouse? mouse, ulong registrationRevision, IRuntimePointerContactSource? source,
+            object? sourceOwner, ulong sourceGeneration, bool wasTouch)
+        {
+            if (!IsPointerTargetEligible(target) ||
+                !ReferenceEquals(FocusedComponent, target) ||
+                !ReferenceEquals(OwningPawn?.Controller?.FocusedInteractable, target) ||
+                input is null || mouse is null || !ReferenceEquals(GetOwningInput(), input) ||
+                !ReferenceEquals(input.Mouse, mouse) || mouse.InputRegistrationRevision != registrationRevision ||
+                !_registeredInputs.Contains(input) ||
+                !ReferenceEquals(OwningPawn?.Viewport as IRuntimePointerContactSource, source) ||
+                source is not null && (!ReferenceEquals(source.PointerContactOwner, sourceOwner) ||
+                    source.PointerContactGeneration != sourceGeneration) ||
+                wasTouch != (OwningLocalPlayer?.IsTouchMouseDispatch == true))
+                return false;
+
+            SetField(ref _pressedTarget, target, publishNotifications: false);
+            SetField(ref _pressedInput, input, publishNotifications: false);
+            SetField(ref _pressedMouse, mouse, publishNotifications: false);
+            SetField(ref _pressedMouseRegistrationRevision, registrationRevision, publishNotifications: false);
+            SetField(ref _pressedPointerSource, source, publishNotifications: false);
+            SetField(ref _pressedPointerOwner, sourceOwner, publishNotifications: false);
+            SetField(ref _pressedPointerGeneration, sourceGeneration, publishNotifications: false);
+            SetField(ref _pressedWasTouch, wasTouch, publishNotifications: false);
+            return true;
+        }
+
+        private bool HasCurrentPointerPressOwner()
+        {
+            // Dispatch revisions change on every snapshot; registration and source
+            // generations instead describe the lifetime of this accepted press.
+            if (_pressedTarget is not { } target || !IsPointerTargetEligible(target) ||
+                GetOwningInput() is not LocalInputInterface { Mouse: { } mouse } input ||
+                !ReferenceEquals(input, _pressedInput) || !_registeredInputs.Contains(input) ||
+                !ReferenceEquals(mouse, _pressedMouse) || mouse.InputRegistrationRevision != _pressedMouseRegistrationRevision ||
+                _pressedWasTouch != (OwningLocalPlayer?.IsTouchMouseDispatch == true))
+                return false;
+
+            IRuntimePointerContactSource? source = OwningPawn?.Viewport as IRuntimePointerContactSource;
+            return ReferenceEquals(source, _pressedPointerSource) &&
+                (source is null || ReferenceEquals(source.PointerContactOwner, _pressedPointerOwner) &&
+                    source.PointerContactGeneration == _pressedPointerGeneration);
+        }
+
+        private void ClearPointerPress()
+        {
+            SetField(ref _pressedTarget, null, publishNotifications: false);
+            SetField(ref _pressedInput, null, publishNotifications: false);
+            SetField(ref _pressedMouse, null, publishNotifications: false);
+            SetField(ref _pressedMouseRegistrationRevision, 0UL, publishNotifications: false);
+            SetField(ref _pressedPointerSource, null, publishNotifications: false);
+            SetField(ref _pressedPointerOwner, null, publishNotifications: false);
+            SetField(ref _pressedPointerGeneration, 0UL, publishNotifications: false);
+            SetField(ref _pressedWasTouch, false, publishNotifications: false);
         }
 
         private void OnMouseRightButtonDown()
@@ -665,6 +788,7 @@ namespace XREngine.Components
         }
         protected override void OnComponentDeactivated()
         {
+            ClearPointerPress();
             base.OnComponentDeactivated();
             if (_subscribedToTimer)
             {

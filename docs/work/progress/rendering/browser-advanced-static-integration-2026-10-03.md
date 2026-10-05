@@ -772,3 +772,112 @@ installed libc's debuglink. No perf, debugger or symbolizer was executed. These
 checks validate metadata handling; the next existing CI must establish actual
 runner file grants and matching debug-file availability. The compile deadline
 and rendering acceptance remain unchanged.
+
+## Physical dependency isolation and receiver-normal specialization
+
+The October 5 physical QA continuation exercises the exact `a7f3dadf` native
+shader on Intel Arc (xe-lpg), driver `32.0.101.8132`, Edge `154.0.4258.53`, with
+fallback false and the browser sandbox enabled. Its unchanged native source is
+381,715 bytes, SHA-256
+`2bc58ce18a4c0122b5edce3152215f67440fb3204fcb19db3607d9b60bac436d`.
+The ordinary Advanced application misses its first-frame deadline. Independently
+isolated native and Uber pipeline creation also remain pending at 45 seconds,
+despite clean module compilation information. The failure is therefore not
+established as software-adapter-only.
+
+Two diagnostic ablations use separate fresh browser/device instances, the
+unchanged native descriptor and limits, verified original/derived hashes, and
+the same 45-second native creation deadline. The unchanged control still times
+out. Replacing only `XR_WEB_ShadowPlaneBias_0` with zero compiles in 30,154.3 ms;
+its source hash is
+`581af0ccd04e275fdf1df8df48b98c73db3639c4dcbe9a8b7ad88e443485c99e`.
+Replacing only `XR_ADV_ApplySelectedDecals_0` with an immediate return compiles
+in 20,025.6 ms; its hash is
+`3650ae5f3ac736bb11363131eb115b2fde1704adab87d7d69cc9cf0cd0ddd2e6`.
+Neither arm dispatches GPU work, reports validation errors, changes the timeout,
+or qualifies rendering. These observations justify investigating the reachable
+receiver-helper/decal dependency cost. They do not identify a compiler pass,
+prove a driver hang, establish additive subtree costs, or authorize shipping an
+ablation. The earlier unsuccessful loop restructurings remain rejected.
+
+The browser-only source candidate gives the shadow receiver a dedicated
+opacity/normal decal evaluator. The full decal evaluator, its main-shading
+traversal, and the full EngineSurface evaluator remain unchanged. The helper
+still reconstructs its own same-primitive position, basis, gradients and normal
+at the original lazy receiver-plane-bias call. Its ordered decal normal blend
+uses the same projection, admission checks, opacity, mask and normal arithmetic.
+No reconstruction cache, desktop GLSL change, resource/binding/dispatch change,
+readback, fallback, or reduced material profile is introduced.
+
+### Preserved outputs and diagnostic effects
+
+The old helper passed dummy albedo, roughness, metallic, specular and emission
+accumulators through the full decal evaluator. None feeds its normal blend or
+the next decal's normal. Their texture resolution and bank-selection failures
+remain observable, however. Shared two-dimensional gradient and array-gradient
+reference validators now serve full sampling and validation-only accesses.
+They preserve the fallback bypass, invalid-slot failure bit, depth slot-nine
+exclusion, and Uber slot-eight exclusion. EngineSurface full and specialized
+consumers also share the exact logical texture/sampler/sampling-key resolver.
+
+- Standard decals retain base alpha, optional base-map alpha, normal sampling,
+  mask alpha, the box-edge weight and the ordered normalized normal blend. A
+  discarded RMS texel still executes the original absent-slot checks, logical
+  reference resolution and sample-bank validation at the same point.
+- Engine color and ordinary texture decals preserve constant opacity. Ordinary
+  texture and texture-normal kinds validate the discarded base-color access;
+  optional metallic and roughness accesses retain their validation order.
+  Texture-normal sampling and its tangent requirement remain unchanged.
+- Authored textured decals retain sampled base alpha, optional opacity red,
+  the original RGB/Sobel normal function, and its exact explicit gradients.
+  A discarded specular texel retains resolution/bank validation before normal
+  evaluation. The source's no-normal branch still normalizes the same basis.
+- Generated alpha-texture and unlit families retain their existing sampled
+  alpha or constant-opacity behavior and early return. Array-slice sampling
+  uses the same slot-eleven and fallback validation as the full evaluator.
+- Authored albedo-only decals do not modify receiver normals. They retain
+  their original mask resolution and, when the mask resolved, sample-bank
+  validation before returning. Only the unconsumed texel/color blend is omitted.
+- Generic traversal order, authored-list order, duplicate entries, and the
+  timing of authored-range validation remain unchanged. No decal is filtered
+  merely because it cannot change the normal: it may still contribute a
+  diagnostic. Missing tangent or malformed material early returns continue
+  to occur after the same preceding logical accesses.
+
+### Candidate verification boundary
+
+Local source checks confirm byte-identical bodies for the full decal evaluator
+and traversal, EngineSurface metadata validators and full evaluator, authored
+RGB/Sobel normal evaluation, and logical texture-pair resolver. The receiver's
+projection/admission prefix is token-identical to the full evaluator; owned
+binding declarations are unchanged. `git diff --check` passes. Independent
+source review passed for the four changed Slang files and their integration
+with the merged master contracts.
+
+The existing pinned Slang 2026.8 toolchain was restored from its official
+release. Its archive matched the checksum in CI. The production ShaderCooker
+built with zero warnings and zero errors. It then packaged all sixteen native
+and surface-export companions, including Uber, depth and MSAA variants, without
+errors. This run used the canonical include layout and the existing reflection
+and WGSL physical-layout checks.
+
+All sixteen cooked descriptors match the retained shipping descriptors in
+seventeen ABI and recipe fields. These include binding layouts, entry points,
+features, limits, workgroup sizes and semantic schema identity. Source and
+dependency hashes changed as expected. Both cooks used Slang 2026.8, but the
+shipping Windows compiler and local Linux compiler are different binaries.
+
+Inspection of all sixteen generated WGSL call graphs confirms that the receiver
+helper reaches the opacity/normal evaluator and receiver-normal decal traversal.
+It no longer reaches the full EngineSurface evaluator or full decal traversal.
+This does not prove a reduction in compilation cost. The native module grew
+from 381,715 to 410,012 bytes, and its receiver call graph grew from 136 to 145
+named functions. Frontend compilation and ABI checks passed; numerical
+equivalence, browser validation and native driver compilation remain open.
+
+Live qualification is pending. It must retain the unchanged native compilation
+and application deadlines on physical hardware and the CI software adapter,
+then exercise filtered directional/spot shadows with mapped normals, ordered
+overlapping decals, alpha/mask variation, mirrored/nonuniform transforms,
+triangle edges, MSAA samples and invalid-resource diagnostic behavior. A faster
+native compile alone cannot establish image parity or production acceptance.

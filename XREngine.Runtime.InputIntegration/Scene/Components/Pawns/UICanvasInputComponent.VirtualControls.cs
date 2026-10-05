@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.UI;
@@ -64,6 +65,20 @@ public partial class UICanvasInputComponent
         if (target is UIVirtualInputComponent)
             target = null;
         return true;
+    }
+
+    /// <summary>Resolves button delivery from current device coordinates without waiting for hover publication.</summary>
+    private UIInteractableComponent? FindMouseInteractTarget()
+    {
+        if (TryGetTouchMouseTarget(out UIInteractableComponent? target))
+            return target;
+        if (GetOwningInput() is not LocalInputInterface { Mouse: { } mouse })
+            return null;
+
+        Vector2 position = mouse.CursorPosition;
+        if (TryGetContactCoordinate(position, true, out Vector2 canvasPosition))
+            CursorPositionWorld2D = canvasPosition;
+        return FindContactInteractable(position, out _, out _, out _);
     }
 
     private UIInteractableComponent? FindContactInteractable(Vector2 screenPosition, out Vector2 localPosition, out bool overflow, out bool hasUiHit)
