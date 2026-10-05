@@ -51,6 +51,9 @@ jobs:
           cd Tools/BrowserSmoke
           npx playwright install --with-deps chromium
 
+      - name: Inspect installed diagnostic prerequisites without profiling
+        run: node Tools/BrowserSmoke/native-profile-prerequisites.mjs "$VALIDATION_ROOT/evidence/native-profile-prerequisites.json"
+
       - name: Install pinned Slang compiler
         shell: bash
         run: |

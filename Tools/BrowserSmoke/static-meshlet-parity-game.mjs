@@ -66,22 +66,53 @@ async function installHostObservation(page) {
         const { EngineCanvasHost } = await import('./engine-canvas-host.js');
         const original = EngineCanvasHost.prototype.start;
         const createRenderer = EngineCanvasHost.prototype.createRenderer;
-        let host, renderer;
+        const frame = EngineCanvasHost.prototype.frame;
+        let host, renderer, accepted;
+        const hostSnapshot = () => {
+            const frameStats = host.renderer?.getStatistics()?.engineFrame;
+            return Object.freeze({
+                status: host.engine.GetCanvasRenderingStatus(),
+                frame: frameStats ? Object.freeze({ ...frameStats,
+                    errorScopes: frameStats.errorScopes && Object.freeze({ ...frameStats.errorScopes }) }) : null,
+                rendererReady: host.rendererReady, failed: host.failed,
+                preparationState: host.engine.GetCanvasPreparationState(),
+                session: host.session, epoch: host.epoch, surfaceGeneration: host.surfaceGeneration,
+                canvasExtent: Object.freeze([host.canvas.width, host.canvas.height]),
+            });
+        };
         const restore = () => {
             EngineCanvasHost.prototype.start = original;
             EngineCanvasHost.prototype.createRenderer = createRenderer;
+            EngineCanvasHost.prototype.frame = frame;
             globalThis.staticMeshletRestoreGpuObservation?.();
         };
         function observeStart(...args) {
             host = this;
-            globalThis.staticMeshletHostSnapshot = () => ({
-                status: host.engine.GetCanvasRenderingStatus(),
-                frame: host.renderer?.getStatistics()?.engineFrame ?? null,
-                rendererReady: host.rendererReady, failed: host.failed,
-            });
+            accepted = null;
+            globalThis.staticMeshletHostSnapshot = hostSnapshot;
             return original.apply(this, args);
         }
         EngineCanvasHost.prototype.start = observeStart;
+        // The constructor binds this method, so install the wrapper before the player creates its host.
+        EngineCanvasHost.prototype.frame = function (...args) {
+            const submittedBefore = this.renderer?.getStatistics()?.engineFrame?.submittedFrames ?? 0;
+            const result = frame.apply(this, args);
+            const submittedAfter = this.renderer?.getStatistics()?.engineFrame?.submittedFrames ?? 0;
+            if (this === host && submittedAfter > submittedBefore && this.rendererReady && !this.failed) {
+                const snapshot = hostSnapshot();
+                if (snapshot.preparationState > 0 &&
+                    /indexed strategy=GpuMeshletZeroReadback; indexed reason=Ready(?:;|$)/.test(snapshot.status))
+                    accepted = Object.freeze({ host: snapshot, renderer: this.renderer,
+                        gpu: globalThis.staticMeshletGpuRawSnapshot?.() });
+            }
+            return result;
+        };
+        globalThis.staticMeshletAcceptedFrameSnapshot = () => {
+            if (!accepted) return null;
+            const selected = accepted;
+            return { host: selected.host, gpu: selected.gpu,
+                isOwnerCurrent: () => selected.renderer === host.renderer };
+        };
         EngineCanvasHost.prototype.createRenderer = function (...args) {
             renderer = createRenderer.apply(this, args);
             return renderer;
@@ -198,30 +229,52 @@ function installGpuObservation(expectedArtifact) {
         counts.queueSubmits++;
         return result;
     };
-    globalThis.staticMeshletGpuCounts = () => ({ ...counts, compute: { ...counts.compute } });
-    globalThis.staticMeshletGpuSnapshot = async () => {
-        const digestCache = new Map();
-        const stage = async input => {
-            const module = modules.get(input.module);
-            if (!module) return null;
-            let sha256 = digestCache.get(module.code);
-            if (!sha256) {
-                const bytes = new TextEncoder().encode(module.code);
-                sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
-                    .map(value => value.toString(16).padStart(2, '0')).join('');
-                digestCache.set(module.code, sha256);
-            }
-            return { label: module.label, sha256, entryPoint: input.entryPoint };
-        };
+    globalThis.staticMeshletGpuCounts = () => ({ ...counts, compute: { ...counts.compute },
+        readMapLabels: [...counts.readMapLabels] });
+    const frozenStage = input => {
+        const module = modules.get(input.module);
+        return module ? Object.freeze({ label: module.label, code: module.code, entryPoint: input.entryPoint }) : null;
+    };
+    globalThis.staticMeshletGpuRawSnapshot = () => {
         const raster = [];
         for (const [pipeline, draws] of rasterDraws) {
             const description = pipelines.get(pipeline);
-            raster.push({ label: description?.label ?? String(pipeline?.label ?? ''), ...draws,
+            raster.push(Object.freeze({ label: description?.label ?? String(pipeline?.label ?? ''),
+                direct: draws.direct, indirect: draws.indirect,
                 sharedModule: description?.sharedModule ?? false,
-                vertex: description?.label === expectedArtifact.name ? await stage(description.vertex) : null,
-                fragment: description?.label === expectedArtifact.name ? await stage(description.fragment) : null });
+                vertex: description?.label === expectedArtifact.name ? frozenStage(description.vertex) : null,
+                fragment: description?.label === expectedArtifact.name ? frozenStage(description.fragment) : null }));
         }
-        return { ...globalThis.staticMeshletGpuCounts(), raster };
+        const observed = globalThis.staticMeshletGpuCounts();
+        Object.freeze(observed.compute);
+        Object.freeze(observed.readMapLabels);
+        return Object.freeze({ ...observed, raster: Object.freeze(raster) });
+    };
+    globalThis.staticMeshletGpuProofCounts = () => ({
+        readMaps: counts.readMaps, rasterOverflow: counts.rasterOverflow,
+        mappedDirect: [...rasterDraws].reduce((total, [pipeline, draws]) =>
+            total + (pipelines.get(pipeline)?.label === expectedArtifact.name ? draws.direct : 0), 0),
+    });
+    globalThis.staticMeshletGpuSnapshot = async (frozen = globalThis.staticMeshletGpuRawSnapshot()) => {
+        const digestCache = new Map();
+        const stage = async input => {
+            if (!input) return null;
+            let sha256 = digestCache.get(input.code);
+            if (!sha256) {
+                const bytes = new TextEncoder().encode(input.code);
+                sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+                    .map(value => value.toString(16).padStart(2, '0')).join('');
+                digestCache.set(input.code, sha256);
+            }
+            return { label: input.label, sha256, entryPoint: input.entryPoint };
+        };
+        const raster = [];
+        for (const draw of frozen.raster) {
+            raster.push({ label: draw.label, direct: draw.direct, indirect: draw.indirect,
+                sharedModule: draw.sharedModule,
+                vertex: await stage(draw.vertex), fragment: await stage(draw.fragment) });
+        }
+        return { ...frozen, raster };
     };
     globalThis.staticMeshletRestoreGpuObservation = () => {
         GPUComputePassEncoder.prototype.setPipeline = setPipeline;
@@ -256,20 +309,38 @@ async function start(page, origin, prefix, observe) {
 }
 
 function ready(snapshot, expectedArtifact) {
-    return snapshot?.host?.rendererReady && !snapshot.host.failed &&
-        /indexed strategy=GpuMeshletZeroReadback;/.test(snapshot.host.status) &&
-        /indexed reason=Ready(?:;|$)/.test(snapshot.host.status) &&
-        snapshot.host.frame?.submittedFrames > 0 &&
-        stages.every(stage => snapshot.gpu.compute[stage] > 0) &&
-        mappedDraw(snapshot.gpu, 'indirect', expectedArtifact) > 0 &&
-        mappedDraw(snapshot.gpu, 'direct', expectedArtifact) === 0 &&
-        snapshot.gpu.readMaps === 0 &&
-        snapshot.gpu.rasterOverflow === 0;
+    const current = snapshot?.host, accepted = snapshot?.accepted;
+    const frame = accepted?.host, gpu = accepted?.gpu;
+    return current?.rendererReady && !current.failed && current.preparationState >= 0 &&
+        /indexed strategy=GpuMeshletZeroReadback;/.test(current.status) &&
+        frame?.rendererReady && !frame.failed && frame.preparationState > 0 && frame.ownerCurrent &&
+        /indexed strategy=GpuMeshletZeroReadback; indexed reason=Ready(?:;|$)/.test(frame.status) &&
+        frame.session > 0 && frame.session === current.session &&
+        frame.epoch > 0 && frame.epoch === current.epoch &&
+        frame.surfaceGeneration != null && frame.surfaceGeneration === current.surfaceGeneration &&
+        frame.canvasExtent[0] > 0 && frame.canvasExtent[1] > 0 &&
+        frame.canvasExtent[0] === current.canvasExtent[0] &&
+        frame.canvasExtent[1] === current.canvasExtent[1] &&
+        frame.frame?.submittedFrames > 0 &&
+        stages.every(stage => gpu?.compute[stage] > 0) &&
+        mappedDraw(gpu, 'indirect', expectedArtifact) > 0 &&
+        mappedDraw(gpu, 'direct', expectedArtifact) === 0 &&
+        gpu.readMaps === 0 && gpu.rasterOverflow === 0 &&
+        snapshot.currentProof?.readMaps === 0 && snapshot.currentProof?.rasterOverflow === 0 &&
+        snapshot.currentProof?.mappedDirect === 0;
 }
 
 async function gpuSnapshot(page) {
-    return page.evaluate(async () => ({ host: globalThis.staticMeshletHostSnapshot?.(),
-        gpu: await globalThis.staticMeshletGpuSnapshot?.() }));
+    return page.evaluate(async () => {
+        const accepted = globalThis.staticMeshletAcceptedFrameSnapshot?.();
+        const currentGpu = globalThis.staticMeshletGpuRawSnapshot?.();
+        const gpu = await globalThis.staticMeshletGpuSnapshot?.(currentGpu);
+        const acceptedGpu = accepted && await globalThis.staticMeshletGpuSnapshot?.(accepted.gpu);
+        return { host: globalThis.staticMeshletHostSnapshot?.(), gpu,
+            currentProof: globalThis.staticMeshletGpuProofCounts?.(),
+            accepted: accepted && { host: { ...accepted.host, ownerCurrent: accepted.isOwnerCurrent() },
+                gpu: acceptedGpu } };
+    });
 }
 
 function mappedDraw(gpu, kind, expectedArtifact) {
@@ -473,28 +544,35 @@ export async function staticMeshletParityGameCheck(browser, origin, report, conf
     for (let iteration = 0; iteration < 2; iteration++) {
         const { page, context, events } = await instrumentedPage(browser, origin, report,
             `static-meshlet-gpu-${iteration}`, config);
+        const iterationReport = { iteration };
+        report.staticMeshletIterations.push(iterationReport);
         try {
             await page.addInitScript(installGpuObservation, gpuArtifact);
             const detail = await start(page, origin, '__game', true);
+            iterationReport.detail = detail;
             assert(events.some(event => event.text?.includes('StaticMeshletParity requested=GpuMeshletZeroReadback ')),
                 'BrowserSmoke.StaticMeshletGpuRequested: the explicit GPU startup marker was absent.');
             await page.waitForFunction(() => {
-                const host = globalThis.staticMeshletHostSnapshot?.();
-                const gpu = globalThis.staticMeshletGpuCounts?.();
-                return host?.rendererReady && /indexed strategy=GpuMeshletZeroReadback; indexed reason=Ready(?:;|$)/.test(host.status) &&
-                    host.frame?.submittedFrames > 0 && gpu?.indirectIndexed > 0 &&
+                const accepted = globalThis.staticMeshletAcceptedFrameSnapshot?.();
+                const gpu = accepted?.gpu;
+                return accepted?.host?.frame?.submittedFrames > 0 && gpu?.indirectIndexed > 0 &&
                     ['engine-meshlets-select-lod', 'engine-meshlets-cull-expand', 'engine-meshlets-finalize-indexed']
                         .every(stage => gpu.compute[stage] > 0);
             }, null, { timeout: config.timeout });
             const playing = await captureSettled(page, config, `static-meshlet-gpu-${iteration}-playing`);
             const comparison = await comparePanels(page, baseline.image, playing.image);
+            iterationReport.playing = playing.pixels;
+            iterationReport.comparison = comparison;
             assertParity(comparison, 'initial');
-            const before = await gpuSnapshot(page);
-            assert(ready(before, gpuArtifact), `BrowserSmoke.StaticMeshletStrategy: ${JSON.stringify(before)}`);
+            const beforeEvidence = await gpuSnapshot(page);
+            iterationReport.before = beforeEvidence;
+            assert(ready(beforeEvidence, gpuArtifact), `BrowserSmoke.StaticMeshletStrategy: ${JSON.stringify(beforeEvidence)}`);
+            const before = beforeEvidence.accepted;
             const raster = mappedRaster(before.gpu, 'indirect', gpuArtifact);
             assertSameRaster(baselineRaster, raster);
             const canvas = page.locator('#input-surface');
             const beforeSize = await canvas.evaluate(element => [element.width, element.height]);
+            iterationReport.canvasSizes = { before: beforeSize };
             await page.setViewportSize({ width: resizedExtents[iteration], height: 780 });
             await page.waitForFunction(([width, height]) => {
                 const canvas = document.querySelector('#input-surface');
@@ -502,28 +580,33 @@ export async function staticMeshletParityGameCheck(browser, origin, report, conf
             }, beforeSize);
             const resized = await captureSettled(page, config, `static-meshlet-gpu-${iteration}-resized`);
             const resizedComparison = await comparePanels(page, baselineResized[iteration].image, resized.image);
+            iterationReport.resized = resized.pixels;
+            iterationReport.resizedComparison = resizedComparison;
             assertParity(resizedComparison, 'resized');
-            const after = await gpuSnapshot(page);
-            assert(ready(after, gpuArtifact) &&
+            const afterEvidence = await gpuSnapshot(page);
+            iterationReport.after = afterEvidence;
+            const after = afterEvidence.accepted;
+            assert(ready(afterEvidence, gpuArtifact) &&
                 mappedDraw(after.gpu, 'indirect', gpuArtifact) >
                     mappedDraw(before.gpu, 'indirect', gpuArtifact) &&
-                after.host.frame.submittedFrames > before.host.frame.submittedFrames,
-                `BrowserSmoke.StaticMeshletResizeSubmission: ${JSON.stringify({ before, after })}`);
+                after.host.frame.submittedFrames > before.host.frame.submittedFrames &&
+                after.host.surfaceGeneration !== before.host.surfaceGeneration &&
+                (after.host.canvasExtent[0] !== before.host.canvasExtent[0] ||
+                    after.host.canvasExtent[1] !== before.host.canvasExtent[1]),
+                `BrowserSmoke.StaticMeshletResizeSubmission: ${JSON.stringify({ beforeEvidence, afterEvidence })}`);
             assertSameRaster(baselineRaster, mappedRaster(after.gpu, 'indirect', gpuArtifact));
             assertNoBrowserErrors(events);
-            report.staticMeshletIterations.push({ iteration, detail, comparison, resizedComparison,
-                playing: playing.pixels, resized: resized.pixels, before, after,
-                canvasSizes: { before: beforeSize, after: await canvas.evaluate(element => [element.width, element.height]) } });
+            iterationReport.canvasSizes.after = await canvas.evaluate(element => [element.width, element.height]);
         } catch (error) {
             const evidence = await gpuSnapshot(page).catch(() => null);
-            report.staticMeshletIterations.push({ iteration, error: String(error), evidence });
+            iterationReport.error = String(error);
+            iterationReport.evidence = evidence;
             await page.screenshot({ path: path.join(config.output, `static-meshlet-gpu-${iteration}-failure.png`), fullPage: true }).catch(() => {});
             throw error;
         } finally {
             try {
                 const disposal = await stopObserved(page);
-                report.staticMeshletIterations[iteration] ??= { iteration };
-                report.staticMeshletIterations[iteration].disposal = disposal;
+                iterationReport.disposal = disposal;
                 assertDisposed(disposal);
                 assertNoBrowserErrors(events);
             } finally { await context.close(); }
