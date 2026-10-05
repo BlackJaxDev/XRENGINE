@@ -40,7 +40,10 @@ jobs:
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: "10.0.x"
+          global-json-file: global.json
+
+      - name: Restore pinned .NET workloads
+        run: dotnet workload restore XRENGINE.slnx
 
       - name: Build managed and native submodules
         shell: cmd
@@ -103,7 +106,10 @@ jobs:
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: "10.0.x"
+          global-json-file: global.json
+
+      - name: Restore pinned .NET workloads
+        run: dotnet workload restore XRENGINE.slnx
 
       - name: Build managed and native submodules
         shell: cmd

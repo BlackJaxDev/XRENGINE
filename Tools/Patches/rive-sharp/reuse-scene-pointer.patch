@@ -1,0 +1,20 @@
+--- a/native/RiveSharpInterop.cpp
++++ b/native/RiveSharpInterop.cpp
+@@ -779,7 +779,7 @@
+ {
+     if (Scene* scene = reinterpret_cast<NativeScene*>(ref)->scene())
+     {
+-        return (int)reinterpret_cast<NativeScene*>(ref)->scene()->loop();
++        return (int)scene->loop();
+     }
+     return 0;
+ }
+@@ -788,7 +788,7 @@
+ {
+     if (Scene* scene = reinterpret_cast<NativeScene*>(ref)->scene())
+     {
+-        return reinterpret_cast<NativeScene*>(ref)->scene()->isTranslucent();
++        return scene->isTranslucent();
+     }
+     return 0;
+ }

@@ -1,7 +1,7 @@
 # Dependency Inventory
 
-Generated: 2026-10-02T15:19:25-07:00
-Commit: 5f92754694473983f97b2c0eabe8fbecb2212411
+Generated: 2026-10-05T11:25:00-07:00
+Commit: 79ab16f8f98778b92624e238a261aa558c1c684d
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
 

@@ -21,6 +21,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Advanced TSR Sampling, History, And Diagnostics](architecture/rendering/default-render-pipeline-notes.md#advanced-tsr-sample-and-history-contract)
 - [Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
+- [Vulkan Scene Preparation And Publication](architecture/rendering/vulkan-scene-preparation-and-publication.md)
 - [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)
 - [CPU Scene BVH](architecture/rendering/cpu-scene-bvh.md)
 - [GPU Scene BVH](architecture/rendering/gpu-scene-bvh.md)
@@ -33,11 +34,13 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Modeling XRMesh Editing](architecture/modeling/xrmesh-editing.md)
 - [Play Mode Architecture](architecture/editor/play-mode-architecture.md)
 - [Editor Undo System](architecture/editor/undo-system.md)
+- [Editor Background Preparation](architecture/editor/background-preparation.md)
 
 ## Developer Guides
 
 - [Software Vulkan Correctness Validation](developer-guides/testing/software-vulkan-validation.md)
 - [Continuous Integration And Releases](developer-guides/ci-cd.md)
+- [Windows CI Build Preparation Investigation](work/investigations/platform/windows-ci-build-preparation-2026-10-05.md)
 - [MCP Server Implementation](developer-guides/ai/mcp-server.md)
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
 - [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
@@ -104,6 +107,9 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Tracked Body Solver Validation](work/investigations/avatar/tracked-body-solver-2026-09-30.md)
 - [Spectator and Calibration Feedback Validation](work/investigations/avatar/spectator-validation-2026-09-30.md)
 - [Vulkan Lifecycle Evidence Harness](work/testing/rendering/vulkan-lifecycle-evidence-harness.md)
+- [Vulkan Stall Remediation: Remaining Tasks](work/todo/rendering/vulkan-stall-remediation-todo.md)
+- [Vulkan Stall Remediation Results](work/progress/rendering/vulkan-stall-remediation-results.md)
+- [Vulkan Stall Validation Protocol](work/testing/rendering/vulkan-stall-validation.md)
 - [Control Plane Managed Server Instances and Client Synchronization Todo](work/todo/networking/control-plane-managed-server-instances-todo.md)
 - [Apple Platform and MoltenVK Support Design](work/design/platform/apple-platform-moltenvk-support-design.md)
 - [Runtime Modularization Plan](work/design/runtime-modularization-plan.md)

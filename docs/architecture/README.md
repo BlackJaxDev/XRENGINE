@@ -63,3 +63,4 @@ Shared managed feature libraries, `Runtime.Core`, `Runtime.Rendering`, and the i
 - [Downloadable Content Execution Policy](runtime/downloadable-content-execution-policy.md)
 - [Networking Developer Guide](../developer-guides/networking/networking.md)
 - [Editor Undo System](editor/undo-system.md)
+- [Editor Background Preparation](editor/background-preparation.md)
