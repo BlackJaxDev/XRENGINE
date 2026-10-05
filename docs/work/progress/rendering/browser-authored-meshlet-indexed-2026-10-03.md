@@ -43,6 +43,31 @@ The initial bounded implementation retains three scene-publication slots and at 
 
 ## Validation boundary
 
+The Editor browser dependency cooker first inventories enabled meshlet requests
+through the ordinary cooked serializer's graph, then prepares each existing
+resident mesh before the first binary write. It reuses a canonically fresh
+payload or builds and validates one through `XRMesh.GetOrCreateMeshletPayload`;
+no LOD generation or source raster/material replacement is involved. Disabled
+submesh references place no restriction on a shared mesh. Conflicting enabled
+requests for the same mesh fail before serialization, rather than allowing
+traversal order to choose a payload. A stale request probes the Editor's desktop
+meshoptimizer backend before native generation; a missing library or export
+reports a browser cook error. This generic prepass does not reinterpret a
+registered asset's custom serializer graph. The source change still needs an
+Editor build and real Windows native cook/hydration check before it can
+establish payload publication.
+
+The smallest live meshlet check is a saved, static-only derivative of the
+RenderingParity mapped panel with its one authored resident LOD and original
+mapped material. Enable that submesh's meshlet setting, publish it through the
+ordinary Windows Editor browser route, and request
+`GpuMeshletZeroReadback` with a saved Default pipeline. Hydrate the emitted
+world to verify a present owner-validated payload and unchanged source mesh,
+LOD and material identity; then inspect the browser's actual meshlet selection,
+GPU cull/finalize, indexed-indirect raster, pixels and ordinary read-map count.
+The original RenderingParity world also contains a skinned ribbon, so it does
+not by itself constitute this static-only acceptance fixture.
+
 The integrated WebGPU, Editor and native Browser builds pass with zero warnings or errors. The original three companions passed the shared production cooker within its earlier 87-artifact inventory; the LOD addition below records all four current companions. Independent source review covered routing, conservative bounds, frozen ownership, primitive/corner preservation, fault-zeroed arguments and completion retention. These compile/cook and source checks do not establish browser output: live strategy, ordering, deformation and recovery acceptance remains open.
 
 The exact submesh ownership extension passes the WebGPU build with zero warnings/errors and a disposable managed probe with 337 checks. The probe covers independent bone and morph ordering, bind-root and shape-generation replacement, aggregate pose offsets, frozen-source invalidation, removed live-asset retirement, explicit GPU authority with a retained CPU seed mirror, stale external-generation rejection/republication, identical-order palette reuse, primary pose-settle timing and disabled desktop morph parity. Two hundred warmed source preparations allocate zero managed bytes. This is source/managed producer evidence; live browser raster, multi-frame queue completion and temporal-output acceptance remain separate validation requirements.

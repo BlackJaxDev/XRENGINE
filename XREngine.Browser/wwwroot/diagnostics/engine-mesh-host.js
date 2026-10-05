@@ -36,7 +36,8 @@ export class EngineMeshDiagnosticHost {
             'engine-standard-lit-color-directional-shadow', 'engine-standard-lit-color-debug',
             'engine-standard-lit-color-effects', 'engine-unlit-materials'].includes(artifactName))
             throw new Error('Select an admitted engine raster diagnostic artifact.');
-        if (!['cpu-x1', 'cpu-x4', 'cpu-x4-ao', 'gpu-indirect-x1', 'gpu-indirect-x4'].includes(executionProfile) ||
+        if (!['cpu-x1', 'cpu-x4', 'cpu-x4-blended', 'cpu-x4-ao',
+            'gpu-indirect-x1', 'gpu-indirect-x4', 'gpu-indirect-x4-blended', 'gpu-indirect-x4-ao'].includes(executionProfile) ||
             artifactName !== 'engine-unlit-materials' && executionProfile !== 'cpu-x1')
             throw new Error('Select a supported CPU or indexed-indirect profile for the engine Unlit diagnostic.');
         const epoch = ++this.epoch;

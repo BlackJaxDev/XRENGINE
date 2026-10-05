@@ -260,3 +260,19 @@ opaque/AO CPU and ordinary indexed captures pass. A synthetic blended witness
 checks the oracle only. New profile pixels, C# compilation and browser behavior
 remain pending on a fresh exact-commit run. These source and replay checks do
 not close either wider MSAA acceptance leaf.
+
+The first `03c19bf4` run (`37252729733`) compiled the managed changes and
+published the browser host, but the added profiles stopped at the JavaScript
+host's older profile allowlist before managed creation. The CPU loop completed
+its ordinary x4 captures before reaching the rejected blended profile; the GPU
+loop completed ordinary x1/x4 before reaching its rejected blended profile.
+Neither new blended profile nor the subsequent GPU AO profile executed. The
+host now admits the same eight explicit names as the managed parser and page
+selector, while invalid names and non-Unlit use remain rejected before changing
+the running host. Ten bounded checks execute the actual host start method with
+mocked managed creation and verify that dispatch boundary; they do not qualify
+rendering. The same run's normal custom shader cook rejected the new recipes'
+`xrengine.sample.*` schema prefix. Both now use the existing versioned
+`xrengine.engine.*` ABI namespace while retaining their `custom` pipeline scope.
+JSON/schema-shape and syntax checks pass; genuine cooking and new pixels still
+require the repaired exact-commit run.

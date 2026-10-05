@@ -24,7 +24,7 @@
     "maxUniformBuffersPerShaderStage": 3
   },
   "matrixLayout": "column-major",
-  "semanticSchemaIdentity": "xrengine.sample.custom-msaa-scene.v1",
+  "semanticSchemaIdentity": "xrengine.engine.custom-msaa-scene.v1",
   "coordinates": "xrengine.webgpu.coordinates.v1",
   "layout": {
     "vertexBuffers": [
