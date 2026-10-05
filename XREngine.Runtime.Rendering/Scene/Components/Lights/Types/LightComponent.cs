@@ -881,10 +881,10 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private void ApplyShadowMapResolution(uint width, uint height)
         {
-            // Browser assets are configured before activation. Defer runtime targets until
-            // the authored shadow settings have been restored and can be validated.
+            // A factory can bind the scene node before the constructor and object initializer
+            // finish. Defer browser targets until the authored settings and world are ready.
             if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
-                (!IsActiveInHierarchy || !CastsShadows))
+                (World is null || !IsActiveInHierarchy || !CastsShadows))
                 return;
 
             ResizeShadowMapResources(width, height);

@@ -2836,7 +2836,7 @@ namespace XREngine.Components.Lights
         {
             if (UsesCookedWebGpuShadowMaterial)
             {
-                if (IsActiveInHierarchy)
+                if (ShouldValidateCookedWebGpuShadowConfiguration)
                     ValidateCookedWebGpuShadowConfiguration();
                 return;
             }
@@ -2850,7 +2850,7 @@ namespace XREngine.Components.Lights
         {
             if (UsesCookedWebGpuShadowMaterial)
             {
-                if (IsActiveInHierarchy)
+                if (ShouldValidateCookedWebGpuShadowConfiguration)
                     ValidateCookedWebGpuShadowConfiguration();
                 return;
             }

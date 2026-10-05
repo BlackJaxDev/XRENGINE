@@ -54,6 +54,9 @@ namespace XREngine.Components.Lights
         private static bool UsesCookedWebGpuShadowMaterial
             => RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked;
 
+        private bool ShouldValidateCookedWebGpuShadowConfiguration
+            => UsesCookedWebGpuShadowMaterial && World is not null && IsActiveInHierarchy;
+
         private void ValidateCookedWebGpuShadowConfiguration()
         {
             if (!UsesCookedWebGpuShadowMaterial || !CastsShadows)
@@ -647,7 +650,7 @@ namespace XREngine.Components.Lights
         /// <param name="field">The new value of the property.</param>
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
-            if (UsesCookedWebGpuShadowMaterial && IsActiveInHierarchy && propName is (
+            if (ShouldValidateCookedWebGpuShadowConfiguration && propName is (
                 nameof(CastsShadows) or nameof(UseShadowAtlas) or nameof(EnableCascadedShadows) or
                 nameof(ShadowMapEncoding) or nameof(ShadowMapStorageFormat)))
                 ValidateCookedWebGpuShadowConfiguration();
