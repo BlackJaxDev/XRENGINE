@@ -11,6 +11,26 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_BlitFrameBuffer : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            if (BlitDepth || BlitStencil)
+                requirements.RequireOperation("depth-resolve");
+            if (!BlitColor)
+            {
+                if (!BlitDepth && !BlitStencil)
+                    requirements.RequireOperation("framebuffer-blit-empty");
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(SourceFBOName) || string.IsNullOrWhiteSpace(DestinationFBOName) ||
+                string.Equals(SourceFBOName, DestinationFBOName, StringComparison.Ordinal))
+                requirements.RequireOperation("color-resolve-framebuffer-identity");
+            if (ReadBuffer is < EReadBufferMode.ColorAttachment0 or > EReadBufferMode.ColorAttachment7)
+                requirements.RequireOperation("color-resolve-read-buffer");
+            if (LinearFilter)
+                requirements.RequireOperation("color-resolve-linear-filter");
+            requirements.RequireOperation("color-resolve");
+        }
+
         public string? SourceFBOName { get; set; }
         public string? DestinationFBOName { get; set; }
         public EReadBufferMode ReadBuffer { get; set; } = EReadBufferMode.ColorAttachment0;

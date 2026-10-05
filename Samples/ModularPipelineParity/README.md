@@ -43,7 +43,12 @@ distinct selection must be established from those checks and the switch logs.
 One browser player has one physical viewport; this sample does not establish
 simultaneous multi-viewport isolation.
 
-Prepare the three sample-owned Slang recipes with the existing C# shader cooker:
+Prepare the three sample-owned Slang recipes and four canonical GPU indirect
+compute companions with the existing C# shader cooker. The script stages the
+recipes together and produces one manifest so the custom programs remain
+available alongside `indirect::cull-primitive`, `meshlets::select-lod`,
+`authored-indexed::rank-sources` and
+`authored-indexed::mask-ranked-arguments`:
 
 ```powershell
 pwsh Samples/ModularPipelineParity/Prepare-BrowserShaders.ps1

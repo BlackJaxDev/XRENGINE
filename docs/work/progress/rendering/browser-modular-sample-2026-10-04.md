@@ -88,3 +88,15 @@ This is software-adapter API/shader evidence with AA None and sequential use of
 one player viewport. It does not establish physical-device performance,
 simultaneous output isolation, custom x4/indirect/blended coverage or the complete
 Advanced acceptance matrix.
+
+The later x4 CPU/GPU camera extension reached normal Editor publication in
+Windows CI run `37258776047`, job `111601331047`, but capability audit blocked
+both sources because `VPRC_BlitFrameBuffer` had no WebGPU declaration. The GPU
+source additionally lacked the canonical `indirect::cull-primitive`,
+`meshlets::select-lod`, `authored-indexed::rank-sources`, and
+`authored-indexed::mask-ranked-arguments` companions in its project manifest.
+The shared command now declares the color resolve and reports unsupported
+depth/stencil, filtered and malformed blits explicitly. Sample preparation
+stages the three custom and four canonical recipes in one cooker invocation.
+The x4 Editor publication and live browser checks remain pending after this
+repair; source inspection alone does not qualify them.

@@ -47,33 +47,40 @@ internal sealed class WebGpuMeshletWork : IDisposable
         State.EnsureCapacity(32);
         Bounds.EnsureCapacity(checked((int)Math.Max(geometry.MeshletCount * 16u, 16u)));
         WebGpuFrameBuffer? framebuffer = _renderer.GetBoundEngineFrameBuffer();
+        WebGpuRasterState raster = _renderer.RasterState;
+        ulong attachmentRevision = framebuffer?.Revision ?? 0;
+        int indexHandle = Indices.ResourceHandle;
         bool geometryChanged = !ReferenceEquals(_geometry, geometry);
-        if (geometryChanged)
-        {
-            if (_geometry is not null) _geometry.LeaseCount--;
-            _geometry = geometry;
-            geometry.LeaseCount++;
-        }
         if (_draw is null || geometryChanged || !ReferenceEquals(_material, prepared.Material) ||
-            _raster != _renderer.RasterState || !ReferenceEquals(_framebuffer, framebuffer) ||
-            _attachmentRevision != (framebuffer?.Revision ?? 0) || _outputGeneration != output.TargetGeneration ||
+            _raster != raster || !ReferenceEquals(_framebuffer, framebuffer) ||
+            _attachmentRevision != attachmentRevision || _outputGeneration != output.TargetGeneration ||
             !ReferenceEquals(_streamOwner, record.Renderer) || !ReferenceEquals(_deformation, prepared.Deformation) ||
-            _indexHandle != Indices.ResourceHandle || _meshBufferRevision != record.SourceBindings.MeshBufferRevision ||
+            _indexHandle != indexHandle || _meshBufferRevision != record.SourceBindings.MeshBufferRevision ||
             _rendererBufferRevision != record.SourceBindings.RendererBufferRevision)
         {
+            // A pending original vertex buffer must not publish new cache keys or
+            // transfer the geometry lease while the previous draw is still retained.
+            WebGpuMeshDraw replacement = new(_renderer, prepared.Material.Program, record.Mesh, Indices, raster,
+                in output, framebuffer, prepared.Deformation, record.SourceBindings);
+            _orderedRaster?.InvalidateRaster();
             _draw?.Dispose();
+            _draw = replacement;
+            if (geometryChanged)
+            {
+                if (_geometry is not null) _geometry.LeaseCount--;
+                _geometry = geometry;
+                geometry.LeaseCount++;
+            }
             _material = prepared.Material;
-            _raster = _renderer.RasterState;
+            _raster = raster;
             _framebuffer = framebuffer;
-            _attachmentRevision = framebuffer?.Revision ?? 0;
+            _attachmentRevision = attachmentRevision;
             _outputGeneration = output.TargetGeneration;
             _streamOwner = record.Renderer;
             _deformation = prepared.Deformation;
-            _indexHandle = Indices.ResourceHandle;
+            _indexHandle = indexHandle;
             _meshBufferRevision = record.SourceBindings.MeshBufferRevision;
             _rendererBufferRevision = record.SourceBindings.RendererBufferRevision;
-            _draw = new(_renderer, prepared.Material.Program, record.Mesh, Indices, _raster,
-                in output, framebuffer, prepared.Deformation, record.SourceBindings);
         }
         if (!_draw.IsReady) return false;
         Span<byte> clearedState = stackalloc byte[32];
