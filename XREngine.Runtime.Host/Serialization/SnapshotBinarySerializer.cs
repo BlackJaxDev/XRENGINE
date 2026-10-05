@@ -1,4 +1,7 @@
+using XREngine.Data.Runtime.AotParity;
 using XREngine.Core.Files;
+using XREngine.Rendering;
+using XREngine.Rendering.Models;
 using XREngine.Scene;
 
 namespace XREngine;
@@ -6,6 +9,9 @@ namespace XREngine;
 /// <summary>
 /// Wraps the cooked binary serializer with snapshot-specific filtering so play-mode
 /// captures stay compact and never duplicate heavyweight asset data like meshes or textures.
+/// File-backed assets are written as references to the loaded instance; every other asset is
+/// written once per capture and shared by its later occurrences, so a restore keeps the
+/// sharing of the captured graph (materials shared by many submeshes stay shared).
 /// </summary>
 internal static class SnapshotBinarySerializer
 {
@@ -14,56 +20,135 @@ internal static class SnapshotBinarySerializer
         OnSerializingValue = value => value switch
         {
             null => null,
-            SnapshotAssetReference => value,
+            SnapshotAssetReference or SnapshotTextFile => value,
             XRAsset asset => PrepareAssetForSnapshot(asset),
             _ => value
         },
-        OnDeserializedValue = value => ResolveAssetReference(value)
+        OnDeserializedValue = RestoreSnapshotValue,
+        ShareReference = static value => value is XRAsset or SnapshotAssetReference or SnapshotTextFile
     };
+
+    /// <summary>
+    /// What each asset became in the capture in progress on this thread. The size and write
+    /// passes and every occurrence of an asset then see the same reference or record, which the
+    /// cooked format writes once and shares.
+    /// </summary>
+    [ThreadStatic]
+    private static Dictionary<XRAsset, object>? t_preparedAssets;
+
+    /// <summary>
+    /// Receives the render assets the read in progress on this thread creates, when its caller
+    /// asked for them.
+    /// </summary>
+    [ThreadStatic]
+    private static List<XRAsset>? t_createdRenderAssets;
 
     public static byte[]? Serialize<T>(T instance)
     {
         if (instance is null)
             return null;
 
-        return CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
-            () => CookedBinarySerializer.Serialize(instance, Callbacks));
+        Dictionary<XRAsset, object>? outerPreparedAssets = t_preparedAssets;
+        t_preparedAssets = new Dictionary<XRAsset, object>(ReferenceEqualityComparer.Instance);
+        try
+        {
+            using var authoringScope = AotParityDiagnostics.EnterSynchronousAuthoringPath();
+            return CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
+                () => CookedBinarySerializer.Serialize(instance, Callbacks));
+        }
+        finally
+        {
+            t_preparedAssets = outerPreparedAssets;
+        }
     }
 
-    public static T? Deserialize<T>(byte[]? payload) where T : class
+    /// <param name="payload">A payload written by <see cref="Serialize{T}(T)"/>.</param>
+    /// <param name="createdRenderAssets">
+    /// Receives, in creation order, the assets the read creates that hold renderer resources:
+    /// render objects, meshes with the buffers they own, and models with their submesh lists.
+    /// Assets resolved from references are loaded instances with other owners and are not included.
+    /// </param>
+    public static T? Deserialize<T>(byte[]? payload, List<XRAsset>? createdRenderAssets = null) where T : class
     {
         if (payload is null || payload.Length == 0)
             return null;
 
-        T? restored = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
-            () => CookedBinarySerializer.Deserialize(typeof(T), payload, Callbacks) as T);
-        if (restored is XRScene scene)
-            SnapshotSceneReferenceResolver.Repair(scene);
-        return restored;
+        List<XRAsset>? outerCreatedRenderAssets = t_createdRenderAssets;
+        t_createdRenderAssets = createdRenderAssets;
+        try
+        {
+            T? restored;
+            using (AotParityDiagnostics.EnterSynchronousAuthoringPath())
+                restored = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
+                    () => CookedBinarySerializer.Deserialize(typeof(T), payload, Callbacks) as T);
+            if (restored is XRScene scene)
+                SnapshotSceneReferenceResolver.Repair(scene);
+            return restored;
+        }
+        finally
+        {
+            t_createdRenderAssets = outerCreatedRenderAssets;
+        }
     }
 
-    private static object? PrepareAssetForSnapshot(XRAsset asset)
+    private static object PrepareAssetForSnapshot(XRAsset asset)
+    {
+        Dictionary<XRAsset, object>? preparedAssets = t_preparedAssets;
+        if (preparedAssets is not null && preparedAssets.TryGetValue(asset, out object? prepared))
+            return prepared;
+
+        prepared = DecideAssetForSnapshot(asset);
+        preparedAssets?.Add(asset, prepared);
+        return prepared;
+    }
+
+    private static object DecideAssetForSnapshot(XRAsset asset)
     {
         if (ShouldInlineAsset(asset, out string reason))
         {
             SnapshotDiagnostics.LogAssetSerializationDecision(asset, SnapshotAssetSerializationMode.Inline, reason);
-            return asset;
+            return asset is TextFile text && !string.IsNullOrWhiteSpace(text.FilePath)
+                ? SnapshotTextFile.FromTextFile(text)
+                : asset;
         }
 
         SnapshotDiagnostics.LogAssetSerializationDecision(asset, SnapshotAssetSerializationMode.Reference, reason);
         return SnapshotAssetReference.FromAsset(asset);
     }
 
-    private static object? ResolveAssetReference(object? value)
+    private static object? RestoreSnapshotValue(object? value)
     {
-        if (value is not SnapshotAssetReference reference)
-            return value;
+        switch (value)
+        {
+            case SnapshotAssetReference reference:
+                return ResolveAssetReference(reference);
+            case SnapshotTextFile text:
+                return text.ToTextFile();
+            case XRShader shader when UberShaderVariantBuilder.TryGetCachedVariant(shader, out XRShader? live):
+                // A generated uber variant is inlined because it has no file path.
+                // Share the live cached instance instead of keeping one copy of its
+                // source per material per round trip. The live instance is never
+                // tracked as restored content, so the next restore cannot destroy it.
+                shader.Destroy(now: true);
+                return live;
+            case GenericRenderObject or XRMesh or Model:
+                // The reader created this asset: resolved assets arrive as references and
+                // leave above as the loaded instance. Models are included because their
+                // registered submesh list keeps the copy's meshes reachable until destroyed.
+                t_createdRenderAssets?.Add((XRAsset)value);
+                return value;
+            default:
+                return value;
+        }
+    }
 
+    private static object ResolveAssetReference(SnapshotAssetReference reference)
+    {
         XRAsset? resolved = reference.Resolve();
         if (resolved is null)
             SnapshotDiagnostics.LogAssetResolveFailure(reference, "all reference lookup routes returned null");
 
-        return resolved ?? value;
+        return resolved ?? (object)reference;
     }
 
     private static bool ShouldInlineAsset(XRAsset asset, out string reason)
@@ -80,7 +165,39 @@ internal static class SnapshotBinarySerializer
             return true;
         }
 
+        bool heldByAssetManager = IsAssetManagerInstance(asset);
+
+        // A text file can claim a path while holding other text (a generated shader source
+        // keeps its canonical file's path), and a reference resolves only to the asset
+        // manager's own instance, so any other text file is written by value.
+        if (asset is TextFile && !heldByAssetManager)
+        {
+            reason = "text file the asset manager does not hold";
+            return true;
+        }
+
+        // A reference resolves through the asset manager or by loading its file. An asset
+        // with neither, such as the placeholder an import creates for a texture whose source
+        // is missing on this machine, cannot be restored by reference.
+        if (!heldByAssetManager && !SnapshotAssetReference.HasLoadableFile(asset.FilePath))
+        {
+            reason = "asset manager does not hold it and its file is missing";
+            return true;
+        }
+
         reason = "external asset uses cached/loaded asset reference";
         return false;
+    }
+
+    private static bool IsAssetManagerInstance(XRAsset asset)
+    {
+        if (asset.ID != Guid.Empty &&
+            Engine.Assets.TryGetAssetByID(asset.ID, out XRAsset? byId) &&
+            ReferenceEquals(byId, asset))
+            return true;
+
+        return asset.FilePath is { } path &&
+            Engine.Assets.TryGetAssetByPath(path, out XRAsset? byPath) &&
+            ReferenceEquals(byPath, asset);
     }
 }

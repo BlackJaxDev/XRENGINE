@@ -37,9 +37,17 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     uint MsaaSampleCount = 1u,
     bool HasAuthoredBackground = false,
     EAdvancedVisibilitySampleEncoding SampleEncoding = EAdvancedVisibilitySampleEncoding.None,
-    bool EnableAuthoredDecals = false)
+    bool EnableAuthoredDecals = false,
+    /// <summary>
+    /// Directional cascade group for the <see cref="EAdvancedRenderStage.DirectionalShadowRaster"/>
+    /// stage. Its page framebuffer is the request target; other stages leave it null.
+    /// </summary>
+    Shadows.AdvancedDirectionalShadowLaneRequest? DirectionalShadowLane = null)
 {
     public bool IsValid => GetInvalidReason() is null;
+
+    /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
+    public bool IsDirectionalShadowStage => Stage == EAdvancedRenderStage.DirectionalShadowRaster;
 
     /// <summary>Reports the failed prerequisite without allocating on accepted frames.</summary>
     public string? GetInvalidReason()
@@ -70,6 +78,14 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
             return "The native authored decal selection differs from its frozen frame package.";
         if (Target is null || Target.Width == 0u || Target.Height == 0u)
             return "The advanced visibility target has no renderable extent.";
+        if (IsDirectionalShadowStage)
+        {
+            if (DirectionalShadowLane is not { CascadeCount: > 0 } lane)
+                return "The directional shadow stage has no cascade group.";
+            if (!ReferenceEquals(lane.PageFrameBuffer, Target))
+                return "The directional shadow stage target is not the cascade group's atlas page.";
+            return null;
+        }
         if (string.IsNullOrWhiteSpace(IdentityTargetName) ||
             string.IsNullOrWhiteSpace(MetadataTargetName) ||
             string.IsNullOrWhiteSpace(SelectionTargetName) ||
@@ -85,7 +101,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
         => Stage switch
         {
             EAdvancedRenderStage.VisibilityPreparation or
-            EAdvancedRenderStage.VisibilityRaster =>
+            EAdvancedRenderStage.VisibilityRaster or
+            EAdvancedRenderStage.DirectionalShadowRaster =>
                 Phase == EAdvancedVisibilityStageBackendPhase.Complete,
             EAdvancedRenderStage.DepthPyramidAndLateVisibility =>
                 Phase is EAdvancedVisibilityStageBackendPhase.LateCompute or

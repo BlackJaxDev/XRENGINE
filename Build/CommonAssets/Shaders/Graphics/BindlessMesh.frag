@@ -1,6 +1,7 @@
 #version 460 core
 #extension GL_ARB_bindless_texture : require
 #extension GL_ARB_gpu_shader_int64 : require
+#include "Advanced/Generated/GPUSceneRecords.glslinc"
 
 // Inlined generated-compatible material table definitions (no GLSL include extension assumed)
 struct XR_MaterialRecord {
@@ -25,11 +26,6 @@ void XR_LoadMaterial(uint materialId, out XR_MaterialRecord material) {
         material = XR_MaterialRecord(0u, 0u, 0u, 0u, vec4(1.0, 1.0, 1.0, 1.0), vec4(1.0, 0.0, 1.0, 0.0));
 }
 
-struct TextureHandleEntry {
-    uvec2 Handle;
-    uint Flags;
-    uint Pad0;
-};
 layout(std430, binding = 17) readonly buffer XR_MaterialTextureHandleTableBuffer { TextureHandleEntry XR_TextureHandleTable[]; };
 #define TextureHandleTable XR_TextureHandleTable
 uint64_t XR_CombineHandle(uvec2 parts){ return (uint64_t(parts.y) << 32) | uint64_t(parts.x); }
@@ -37,10 +33,7 @@ uint64_t XR_CombineHandle(uvec2 parts){ return (uint64_t(parts.y) << 32) | uint6
 in VS_OUT { vec3 N; vec2 UV; flat uint DrawID; } fs_in;
 layout(location=0) out vec4 outColor;
 
-// Commands buffer (to read MaterialID at float slot 22)
-layout(std430, binding=12) readonly buffer DrawMetadataBuffer { uint DrawMetadataWords[]; };
-const int DRAW_METADATA_WORDS = 16;
-const int DRAW_METADATA_MATERIAL_ID_WORD = 3;
+layout(std430, binding=12) readonly buffer DrawMetadataBuffer { DrawMetadata Draws[]; };
 
 vec4 SampleBindless(uint handleIndex, vec2 uv, vec4 fallback){
     if(handleIndex == 0u || handleIndex >= uint(XR_TextureHandleTable.length()))
@@ -53,8 +46,7 @@ vec4 SampleBindless(uint handleIndex, vec2 uv, vec4 fallback){
 
 void main(){
     uint drawID = fs_in.DrawID;
-    int base = int(drawID) * DRAW_METADATA_WORDS;
-    uint materialID = DrawMetadataWords[base + DRAW_METADATA_MATERIAL_ID_WORD];
+    uint materialID = Draws[drawID].MaterialID;
     if(materialID >= MaterialTable.length()) { outColor = vec4(1,0,1,1); return; }
     MaterialEntry m = MaterialTable[materialID];
     vec4 fallback = vec4(1,0,1,1);

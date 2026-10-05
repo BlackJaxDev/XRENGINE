@@ -47,6 +47,27 @@ public static partial class EditorUnitTests
         private static readonly StringBuilder _fpsTextBuilder = new(768);
         private static long _lastSampledRenderTimestampTicks = -1L;
 
+        // Per-refresh window accumulators. Each refresh reports means over the render frames
+        // sampled since the previous refresh. Single-frame values alternate between desktop,
+        // XR and recovery frames, which made consecutive refreshes look like different stat sets.
+        private static int _fpsWindowFrames;
+        private static double _fpsWindowIntervalMs;
+        private static double _fpsWindowMaxIntervalMs;
+        private static double _fpsWindowDispatchMs;
+        private static double _fpsWindowVulkanMs;
+        private static double _fpsWindowGpuMs;
+        private static double _fpsWindowRenderWaitMs;
+        private static double _fpsWindowCollectWaitMs;
+        private static double _fpsWindowUpdateMs;
+        private static long _fpsWindowDeskDrawCalls;
+        private static long _fpsWindowDeskMultiDrawCalls;
+        private static long _fpsWindowDeskTriangles;
+        private static int _fpsWindowVrFrames;
+        private static double _fpsWindowVrPassMs;
+        private static long _fpsWindowVrDrawCalls;
+        private static long _fpsWindowVrMultiDrawCalls;
+        private static long _fpsWindowVrTriangles;
+
         private static UIEditorComponent? _editorComponent = null;
         private static SceneNode? _editorRootCanvasNode;
         private static readonly List<CameraPreviewRequest> _pendingCameraPreviewRequests = [];
@@ -98,6 +119,7 @@ public static partial class EditorUnitTests
             {
                 _lastSampledRenderTimestampTicks = renderTimestampTicks;
                 AddFpsFrameDuration(Engine.Time.Timer.Render.Delta);
+                AccumulateFpsWindowSample();
             }
 
             // The sample window remains frame-accurate, while formatting and rebuilding
@@ -108,29 +130,40 @@ public static partial class EditorUnitTests
             {
                 return;
             }
+            if (_fpsWindowFrames == 0 && _lastFpsOverlayRefreshTicks != 0)
+                return;
             _lastFpsOverlayRefreshTicks = renderTimestampTicks;
 
             float averageHz = _fpsSampleDurationSeconds > 0.0
                 ? MathF.Round((float)(_fpsSampleCount / _fpsSampleDurationSeconds))
                 : 0.0f;
-            double renderMs = Engine.Time.Timer.Render.Delta * 1000.0;
-            double updateMs = Engine.Time.Timer.Update.Delta * 1000.0;
+            int windowFrames = Math.Max(1, _fpsWindowFrames);
+            double renderMs = _fpsWindowIntervalMs / windowFrames;
+            double maxRenderMs = _fpsWindowMaxIntervalMs;
+            double updateMs = _fpsWindowUpdateMs / windowFrames;
             double fixedMs = Engine.Time.Timer.FixedUpdateDelta * 1000.0;
-            RuntimeEngine.Rendering.Stats.RenderPassCounters frameCounters = RuntimeEngine.Rendering.Stats.Frame.LastCounters;
-            RuntimeEngine.Rendering.Stats.RenderPassCounters vrCounters = RuntimeEngine.Rendering.Stats.Vr.VrRenderPassCounters;
-            bool vrActive = RuntimeEngine.VRState.IsInVR || vrCounters.HasAny;
-            RuntimeEngine.Rendering.Stats.RenderPassCounters desktopCounters = vrActive
-                ? RuntimeEngine.Rendering.Stats.RenderPassCounters.SubtractClamped(frameCounters, vrCounters)
-                : frameCounters;
-            double cpuFrameMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTotalMs;
-            double gpuCmdMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs;
-            double dispatchCpuMs = RuntimeEngine.Rendering.Stats.FrameOutputs.LastWholeFrameMs;
-            double renderWaitForCollectMs =
-                RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs;
-            double collectWaitForRenderMs =
-                RuntimeEngine.Rendering.Stats.FrameLifecycle.CollectWaitForRenderMs;
+            // The layout follows the VR session, not per-frame counters, so lines do not
+            // appear and disappear between refreshes.
+            bool vrActive = RuntimeEngine.VRState.IsInVR ||
+                RuntimeEngine.VRState.IsOpenXRActive ||
+                RuntimeEngine.VRState.IsOpenVRActive;
+            RuntimeEngine.Rendering.Stats.RenderPassCounters desktopCounters = new(
+                (int)(_fpsWindowDeskDrawCalls / windowFrames),
+                (int)(_fpsWindowDeskMultiDrawCalls / windowFrames),
+                (int)(_fpsWindowDeskTriangles / windowFrames));
+            int vrFrames = Math.Max(1, _fpsWindowVrFrames);
+            RuntimeEngine.Rendering.Stats.RenderPassCounters vrCounters = new(
+                (int)(_fpsWindowVrDrawCalls / vrFrames),
+                (int)(_fpsWindowVrMultiDrawCalls / vrFrames),
+                (int)(_fpsWindowVrTriangles / vrFrames));
+            double cpuFrameMs = _fpsWindowVulkanMs / windowFrames;
+            double gpuCmdMs = _fpsWindowGpuMs / windowFrames;
+            double dispatchCpuMs = _fpsWindowDispatchMs / windowFrames;
+            double renderWaitForCollectMs = _fpsWindowRenderWaitMs / windowFrames;
+            double collectWaitForRenderMs = _fpsWindowCollectWaitMs / windowFrames;
             double vrHz = ResolveVrRenderHz();
-            double vrPassMs = RuntimeEngine.Rendering.Stats.Vr.VrRenderPassTimeMs;
+            double vrPassMs = _fpsWindowVrFrames > 0 ? _fpsWindowVrPassMs / _fpsWindowVrFrames : 0.0;
+            ResetFpsWindow();
             int fallbackEvents = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents;
             float networkingRttMs = 0.0f;
             float packetsPerSecond = 0.0f;
@@ -169,13 +202,15 @@ public static partial class EditorUnitTests
             builder.Append(vrActive ? "\ndesktop:" : "\nrender: ");
             AppendFixed(builder, averageHz, "F0", 3);
             builder.Append("hz ");
-            AppendFixed(builder, renderMs, "F2", 6);
-            builder.Append("ms interval | dispatch ");
-            AppendFixed(builder, dispatchCpuMs, "F2", 6);
+            AppendFixed(builder, renderMs, "F1", 5);
+            builder.Append("ms avg ");
+            AppendFixed(builder, maxRenderMs, "F0", 3);
+            builder.Append("max | dispatch ");
+            AppendFixed(builder, dispatchCpuMs, "F1", 5);
             builder.Append("ms | vk ");
-            AppendFixed(builder, cpuFrameMs, "F2", 6);
+            AppendFixed(builder, cpuFrameMs, "F1", 5);
             builder.Append("ms | gpu ");
-            AppendFixed(builder, gpuCmdMs, "F2", 6);
+            AppendFixed(builder, gpuCmdMs, "F1", 5);
             builder.Append("ms");
 
             builder.Append("\nwait:   render<-collect ");
@@ -397,6 +432,60 @@ public static partial class EditorUnitTests
                 EMeshSubmissionStrategy.GpuMeshletInstrumented => nameof(EMeshSubmissionStrategy.GpuMeshletInstrumented),
                 _ => "UnknownSubmission",
             };
+        }
+
+        /// <summary>Adds the latest render frame's published values to the refresh window.</summary>
+        private static void AccumulateFpsWindowSample()
+        {
+            double intervalMs = Engine.Time.Timer.Render.Delta * 1000.0;
+            _fpsWindowFrames++;
+            _fpsWindowIntervalMs += intervalMs;
+            _fpsWindowMaxIntervalMs = Math.Max(_fpsWindowMaxIntervalMs, intervalMs);
+            _fpsWindowUpdateMs += Engine.Time.Timer.Update.Delta * 1000.0;
+            _fpsWindowDispatchMs += RuntimeEngine.Rendering.Stats.FrameOutputs.LastWholeFrameMs;
+            _fpsWindowVulkanMs += RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTotalMs;
+            _fpsWindowGpuMs += RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs;
+            _fpsWindowRenderWaitMs += RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs;
+            _fpsWindowCollectWaitMs += RuntimeEngine.Rendering.Stats.FrameLifecycle.CollectWaitForRenderMs;
+
+            RuntimeEngine.Rendering.Stats.RenderPassCounters frameCounters = RuntimeEngine.Rendering.Stats.Frame.LastCounters;
+            // VR counters persist across frames without VR work; subtract them only from a
+            // frame whose total actually includes them.
+            if (RuntimeEngine.Rendering.Stats.Vr.LastFrameHadVrWork)
+            {
+                RuntimeEngine.Rendering.Stats.RenderPassCounters vrCounters = RuntimeEngine.Rendering.Stats.Vr.VrRenderPassCounters;
+                frameCounters = RuntimeEngine.Rendering.Stats.RenderPassCounters.SubtractClamped(frameCounters, vrCounters);
+                _fpsWindowVrFrames++;
+                _fpsWindowVrPassMs += RuntimeEngine.Rendering.Stats.Vr.VrRenderPassTimeMs;
+                _fpsWindowVrDrawCalls += vrCounters.DrawCalls;
+                _fpsWindowVrMultiDrawCalls += vrCounters.MultiDrawCalls;
+                _fpsWindowVrTriangles += vrCounters.TrianglesRendered;
+            }
+
+            _fpsWindowDeskDrawCalls += frameCounters.DrawCalls;
+            _fpsWindowDeskMultiDrawCalls += frameCounters.MultiDrawCalls;
+            _fpsWindowDeskTriangles += frameCounters.TrianglesRendered;
+        }
+
+        private static void ResetFpsWindow()
+        {
+            _fpsWindowFrames = 0;
+            _fpsWindowIntervalMs = 0.0;
+            _fpsWindowMaxIntervalMs = 0.0;
+            _fpsWindowUpdateMs = 0.0;
+            _fpsWindowDispatchMs = 0.0;
+            _fpsWindowVulkanMs = 0.0;
+            _fpsWindowGpuMs = 0.0;
+            _fpsWindowRenderWaitMs = 0.0;
+            _fpsWindowCollectWaitMs = 0.0;
+            _fpsWindowDeskDrawCalls = 0;
+            _fpsWindowDeskMultiDrawCalls = 0;
+            _fpsWindowDeskTriangles = 0;
+            _fpsWindowVrFrames = 0;
+            _fpsWindowVrPassMs = 0.0;
+            _fpsWindowVrDrawCalls = 0;
+            _fpsWindowVrMultiDrawCalls = 0;
+            _fpsWindowVrTriangles = 0;
         }
 
         private static void AddFpsFrameDuration(double durationSeconds)

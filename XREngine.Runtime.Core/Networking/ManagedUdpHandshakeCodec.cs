@@ -15,6 +15,7 @@ public static class ManagedUdpHandshakeCodec
         stream.WriteByte(request.ResumeRequested ? (byte)1 : (byte)0);
         WriteGuid(stream, request.SessionId ?? Guid.Empty); WriteGuid(stream, request.WorkerGeneration ?? Guid.Empty);
         WriteInt64(stream, request.CredentialEpoch);
+        WriteInt64(stream, request.WireProtocolVersion);
         WriteString(stream, request.ReservationId, 128); WriteString(stream, request.ClientId, 128); WriteString(stream, request.AccountId, 256);
         WriteString(stream, request.DisplayName, 256); WriteString(stream, request.BuildVersion, 128); WriteString(stream, request.WorldName, 256);
         WriteString(stream, request.ClientWorldAsset?.WorldId, 256); WriteString(stream, request.ClientWorldAsset?.RevisionId, 256); WriteString(stream, request.ClientWorldAsset?.ContentHash, 256);
@@ -28,12 +29,12 @@ public static class ManagedUdpHandshakeCodec
         try
         {
             using var stream = new MemoryStream(bytes.ToArray(), writable:false);
-            bool resume = ReadByte(stream) != 0; Guid session=ReadGuid(stream), generation=ReadGuid(stream); long epoch=ReadInt64(stream);
+            bool resume = ReadByte(stream) != 0; Guid session=ReadGuid(stream), generation=ReadGuid(stream); long epoch=ReadInt64(stream); int wireVersion=checked((int)ReadInt64(stream));
             string reservation=ReadString(stream,128), client=ReadString(stream,128), account=ReadString(stream,256);
             string display=ReadString(stream,256), build=ReadString(stream,128), world=ReadString(stream,256);
             string id=ReadString(stream,256), revision=ReadString(stream,256), hash=ReadString(stream,256);
             nonce=ReadExact(stream,32); if(stream.Position!=stream.Length || session==Guid.Empty || generation==Guid.Empty || epoch<0 || string.IsNullOrEmpty(reservation)||string.IsNullOrEmpty(client)||string.IsNullOrEmpty(account)) return false;
-            request=new PlayerJoinRequest { ResumeRequested=resume, SessionId=session, WorkerGeneration=generation, CredentialEpoch=epoch, ReservationId=reservation, ClientId=client, AccountId=account, DisplayName=display, BuildVersion=build, WorldName=world, ClientWorldAsset=new WorldAssetIdentity { WorldId=id, RevisionId=revision, ContentHash=hash } };
+            request=new PlayerJoinRequest { WireProtocolVersion=wireVersion, ResumeRequested=resume, SessionId=session, WorkerGeneration=generation, CredentialEpoch=epoch, ReservationId=reservation, ClientId=client, AccountId=account, DisplayName=display, BuildVersion=build, WorldName=world, ClientWorldAsset=new WorldAssetIdentity { WorldId=id, RevisionId=revision, ContentHash=hash } };
             return true;
         } catch { return false; }
     }

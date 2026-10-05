@@ -382,7 +382,14 @@ namespace XREngine.Rendering.OpenGL
             /// of redundantly compiling. Cleared when compilation succeeds (binary cached)
             /// or fails (added to <see cref="Failed"/>).
             /// </summary>
-            private static readonly ConcurrentDictionary<ulong, byte> InFlightCompilations = new();
+            private static readonly ConcurrentDictionary<ulong, uint> InFlightCompilations = new();
+
+            /// <summary>
+            /// Releases a completed source build only if its program still owns the hash.
+            /// Another build may have claimed the same hash after an earlier cancellation.
+            /// </summary>
+            private static bool ReleaseCompletedCompilationClaim(ulong hash, uint programId)
+                => ((ICollection<KeyValuePair<ulong, uint>>)InFlightCompilations).Remove(new(hash, programId));
             private static readonly ConcurrentDictionary<GLRenderProgram, byte> PendingAsyncPrograms = new();
 
             /// <summary>

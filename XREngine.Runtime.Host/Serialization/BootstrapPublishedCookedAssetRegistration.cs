@@ -12,7 +12,7 @@ public static class BootstrapPublishedCookedAssetRegistration
         {
             leases.Add(PublishedCookedAssetRegistry.Register(
                 typeof(GameStartupSettings),
-                static asset => MemoryPackSerializer.Serialize((GameStartupSettings)asset),
+                static (asset, writer) => MemoryPackSerializer.Serialize(writer, (GameStartupSettings)asset),
                 static (payload, _) => MemoryPackSerializer.Deserialize<GameStartupSettings>(payload),
                 "XREngine.Runtime.Host",
                 static asset => DescribeStartupDependencies((GameStartupSettings)asset)));
@@ -31,7 +31,7 @@ public static class BootstrapPublishedCookedAssetRegistration
     private static IDisposable RegisterMemoryPackAsset<T>() where T : XRAsset
         => PublishedCookedAssetRegistry.Register(
             typeof(T),
-            static asset => MemoryPackSerializer.Serialize((T)asset),
+            static (asset, writer) => MemoryPackSerializer.Serialize(writer, (T)asset),
             static (payload, _) => MemoryPackSerializer.Deserialize<T>(payload),
             "XREngine.Runtime.Host");
 }

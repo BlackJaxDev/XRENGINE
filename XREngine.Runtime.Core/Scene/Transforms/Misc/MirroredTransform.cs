@@ -83,6 +83,8 @@ namespace XREngine.Scene.Transforms
         /// The result is a transformation that positions objects as if they were reflected in a mirror.
         /// </summary>
         /// <returns>A matrix representing the mirrored world transformation</returns>
+        protected override bool HasCustomWorldMatrix => true;
+
         protected override Matrix4x4 CreateWorldMatrix()
         {
             //Take parent world matrix and mirror it along the forward axis of the mirror transform

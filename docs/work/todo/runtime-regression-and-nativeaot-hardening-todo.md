@@ -4,8 +4,118 @@ Created: 2026-08-28
 
 Owner: Runtime / Testing / AOT
 
-Status: Proposed. This is post-Phase 6 quality work; runtime modularization
-remains complete.
+Status: Incomplete; work stopped at the user's request on 2026-10-03. Do not move
+this document to `COMPLETED/`. Current implementation and validation are recorded in the
+[runtime hardening progress ledger](../progress/runtime/runtime-regression-and-nativeaot-hardening-progress.md).
+Runtime modularization remains complete.
+
+## Handoff Status — 2026-10-03
+
+This section is the current status; the older baseline and chronological ledger
+are historical evidence. Changes remain in the working tree, without a commit or
+merge from this task. Concurrent broker, OpenVR, Vulkan and earlier shadow changes
+must be preserved and reviewed separately. A focused pass below is not full-suite
+or NativeAOT acceptance.
+
+### Completed And Validated Work
+
+| Area | Implemented result | Evidence and limits |
+|---|---|---|
+| Scene restoration | Restore procedural geometry, render subscriptions, authored transforms, typed shader references and the existing possessed pawn. Defer PhysX kinematic updates until native scene attachment. | Multiple owned OpenGL runs, including 300 seconds with zero parity violations; viewed captures from two camera positions show the course, ball and bumpers. Three enter/exit-play cycles also pass. |
+| Active-world inspection | Resolve node/transform/component commands against the active world before dormant snapshot caches. | Live `ResetRound` and `SetTilt` affect the visible scene; seven focused identity checks pass. Nested owned-object paths are listed separately below. |
+| Material/shader restoration | Rebuild restored material shader-stage caches and restore explicit shader-source subscriptions. | Active-component inspection confirms the fragment shader; material restoration checks pass. Eleven shader subscription/dependency checks pass. Actual live restored-source invalidation still needs the nested-object probe. |
+| Capture and bloom | Honor exact requested image dimensions; exercise temporal capture and public bloom schema/toggles. | Three-frame live sequence has zero failed/dropped frames; contact sheet viewed. Both revised bloom defaults and enable/visibility assertions pass. |
+| Assets and snapshots | Preserve typed animation model bytes in inline snapshots; preserve persistent IDs during deferred object-cache publication without displacing the incumbent. | Combined snapshot/cooked/capture/material lane: 40/40. Prefab serialization: 40/40, including both former mesh-ID failures. Unchanged external import stable-closure/rollback case passes. New cache lifecycle checks remain unrun. |
+| Focused runtime lanes | Repair component construction, networking registration, GPU fixture inputs, root-motion contracts and softbody math. | Component construction 5/5; networking 42/42; indirect/scatter/physics-chain/SurfelGI OpenGL 46/46; AO public schema 15/15; native root-motion/animation serialization 7/7; softbody 7/7. Softbody warmed dispatch median: 30,720 ns for 128 clusters × six members on this machine. |
+| Humanoid mapping and neutral pose | Repair partial torso/arm discovery, mirrored semantic sides, sparse fingers/helper filtering, named-eye precedence, late initialization and explicit native neutral-pose authority. | Latest focused result: **37 passed / 5 failed**, improved from 18/42. This is not a completed humanoid lane; see remaining production defect below. |
+| NativeAOT groundwork | Add static registrations/typed model paths, narrow schema-only authoring compilation and repair generated project/reference and trimming contracts. | Canonical Release editor build passed with zero warnings/errors. Latest strict publish still **fails with 688 IL2xxx/IL3xxx warnings**, down from 751 and 914. No allow-warning switch or warning-bearing packaged acceptance was used. Later animation codec edits are not covered by this publish. |
+
+### Implemented Or Edited, But Not Yet Accepted
+
+- **Published animation codecs:** new closed property/value/keyframe models,
+  exact baked-sample restoration, strict clip/blend-tree/state-machine/motion
+  paths, generated registry wiring and five version-2 schema declarations are
+  work in progress. The narrow Animation build passed with zero warnings/errors;
+  the integrated generated-player path has not been rebuilt or run. They need round-trip/rejection coverage, nested motion and
+  raw-cache compatibility checks, a fresh strict publish and packaged runtime
+  smoke. Do not infer
+  correctness from the earlier typed snapshot model result.
+- **Nested MCP `object_path`:** implemented for get/set/invoke and compiled in
+  the isolated editor, but not exercised live or covered by the pending owned-
+  object regression cases. Next probe must start from the live sphere component
+  and address `Material`, `Material.Shaders[0].Source` and its parameters. A
+  direct asset-ID probe can hit a dormant snapshot and is insufficient evidence.
+- **Cache publication coverage:** six new cases in
+  `XREngine.UnitTests/Core/ObjectCachePublicationTests.cs` are unbuilt/unrun.
+  They cover persistent collisions, completion/abort, same-ID adoption,
+  regeneration and a vetoed identity change. Existing prefab/import checks
+  validate the production fix, not these new cases.
+- **Humanoid automatic upper-leg expectation:** one correction to include the
+  compiled canonical neutral baseline was made after the 37/42 run and has not
+  been rerun. Keep the exact tolerance and native-acceptance checks.
+- **Package manifest fixture:** `ControlPlaneTests` now explicitly declares
+  `world.xrworld` as its entry point; that edit is unbuilt/unrun. The preceding
+  test still failed verification. A separate direct probe was rejected because
+  its source path traversed a reparse point; it is not passing evidence.
+
+### Remaining Work, In Resume Order
+
+1. Validate the unaccepted edits above at a stable source/build point. Re-run
+   the focused asset, animation, MCP and humanoid lanes before expanding scope.
+2. Fix the **four authored humanoid axis-mapping failures**. Refresh can retain
+   a prior binding instead of current `Settings.BoneAxisMappings`, and continuous
+   native solve plans bypass those mappings. Track explicit authored authority
+   per bone, preserve generated geometry bases, and apply signed authored axes
+   within the continuous solver. Do not route all plans through legacy Euler
+   math or weaken assertions. Validate axis sign/swap, refresh persistence,
+   zero-muscle baseline and unchanged automatic poses.
+3. Validate actual live material parameter/resource revisions and shader reload
+   through the new owned-object path. Audit `XRMaterialBase` parameter/texture
+   subscriptions if that probe reproduces a missing revision; no base-class
+   subscription fix has been made yet.
+4. Reconcile the remaining non-Vulkan rendering source/path/behavior contracts,
+   imported curves and humanoid full-clip playback, BlendTree schema inspection,
+   package verification, editor exit ordering, MCP permissions and other small
+   residuals. Preserve assertions for supported behavior and validate runtime
+   paths before replacing stale private-source expectations.
+5. Finish test composition and shared-state isolation; reconcile all focused
+   results into the failure inventory, then run retained lanes, the exhaustive
+   software suite and **three recorded deterministic randomized seeds**.
+6. Finish the published animation/static binding migration and remaining AOT
+   reflection roots. Major remaining files include
+   `ImportedAnimationBindingRuntime.cs`, `AnimationPropertySerialization.cs`,
+   cooked collection/custom-object modules, `JsonAsset.cs`, speech providers and
+   optional backend integration. Inspect selected graph ownership before pruning:
+   the last generated launcher still selects renderer backends `All`.
+7. Rebuild and publish strictly to **zero warnings**, inspect package cargo and
+   renderer hashes, run the representative packaged smoke, audit hot-path
+   allocations, and finish aggregate builds/docs/dependency review. No final
+   exhaustive, randomized, packaged-AOT or complete allocation acceptance has
+   been performed.
+
+### Blocks And Evidence
+
+- **Missing original Unity corpus:** the user confirmed these are not on this
+  machine: `XREngine.UnitTests/TestData/HumanoidConformance/unity-project/Assets/HumanoidPoseAuditExporter.schema7.cs`
+  and `XREngine.UnitTests/TestData/HumanoidConformance/unity-project/Assets/Clips/editable-families-v7.anim`.
+  Recover the exact hash-matching originals or produce a separately verified
+  reference corpus. Do not fabricate files, replace hashes or waive provenance.
+- **Disk and tool policy:** editor startup requires 10 GiB free. Generated
+  outputs were compressed, but low space delayed the next live probe. Automatic
+  tool policy rejected cleanup of obsolete build directories with “blocked by
+  policy”; `AGENTS.md` did not prohibit that cleanup. No rejected removal was
+  performed. Logs/reports and generated directories remain available.
+- Evidence root: `Build/_AgentValidation/20261002-211500-runtime-hardening/`.
+  Latest strict report: `reports/aot-warnings-688.md`, with publish logs beside
+  it. Its categories are 374 general first-party, 174 cooked-binary, 66
+  authoring/import/cache, 27 other first-party runtime and 47 third-party/runtime.
+- Latest broad name-filtered run: **4,223 passes, 215 failures, six skips**.
+  `reports/tests/current-reconciled-inventory.json` then matched 14 later reports:
+  18 later passes, 16 later failures, 181 without a later observation. Subsequent
+  prefab/import/bloom and humanoid results above postdate that reconciliation;
+  update it rather than treating those numbers as a fresh remaining-failure
+  count. Vulkan/hardware exclusions and unknown suite-order effects remain
+  explicit; no completion gate below is implied by these partial results.
 
 Predecessors and related work:
 
@@ -14,6 +124,10 @@ Predecessors and related work:
 - [Unit Test Project Reorganization TODO](tests/unit-test-project-reorganization-todo.md)
 - [Humanoid Body Root Compensation TODO](avatar/humanoid-body-root-compensation-todo.md)
 - [Rolling Ball Final-Build Runtime TODO](games/rolling-ball-final-build-runtime-todo.md)
+- [Runtime Data Layout And Generated Contracts TODO](runtime/runtime-data-layout-and-generated-contracts-todo.md)
+  provides the Roslyn generator, span-based cooked codecs, published-reader
+  split, and `XRE_AOT_PARITY` diagnostics used by A0-A2. This tracker remains
+  responsible for strict-publication acceptance.
 
 ## Goal
 
@@ -125,18 +239,18 @@ snapshot as permanent truth.
 
 ## R0 - Establish A Current, Reproducible Baseline
 
-- [ ] Reserve one bounded `Build/_AgentValidation/<run>/` root and create a
+- [x] Reserve one bounded `Build/_AgentValidation/<run>/` root and create a
       progress ledger under `docs/work/progress/runtime/`.
-- [ ] Record the exact commit/working-tree state and explicitly list concurrent
+- [x] Record the exact commit/working-tree state and explicitly list concurrent
       files that are outside this tracker.
-- [ ] Obtain a buildable source snapshot without modifying or reverting the
+- [x] Obtain a buildable source snapshot without modifying or reverting the
       concurrent Vulkan work.
 - [ ] Build the relevant non-Vulkan owners and consumers independently with
       zero warnings and zero errors.
 - [ ] Re-run the current focused Phase/profile/naming, publish, collectible,
       animation, cooked/snapshot, OpenGL/shared-rendering, physics-boundary,
       editor, and tooling lanes.
-- [ ] Run the exhaustive UnitTests project once and archive console output plus
+- [x] Run the exhaustive UnitTests project once and archive console output plus
       TRX without stopping at the first failure.
 - [ ] Generate a machine-readable failure inventory with test identity,
       subsystem, failure signature, source owner, isolated result, suite-order
@@ -276,7 +390,7 @@ Acceptance criteria:
 
 - [ ] Repair blend-tree cooked schema inspection so the published schema
       describes the serialized runtime model shape.
-- [ ] Preserve inline animation clip trees across scene snapshot round trips.
+- [x] Preserve inline animation clip trees across scene snapshot round trips.
 - [ ] Add or repair missing-registration diagnostics for rejected cooked assets
       before adding compatibility behavior.
 - [ ] Replace `MagicPhysX` types exposed by public gameplay component APIs with
@@ -286,7 +400,7 @@ Acceptance criteria:
       of the solver API.
 - [ ] Reconcile the retained physics-chain debug, dispatcher, and shader source
       contracts with the intended runtime batching path.
-- [ ] Make provider `response.failed` events surface as
+- [x] Make provider `response.failed` events surface as
       `AgentModelException` with the provider message and failure identity.
 - [ ] Reconcile Editor exit-play-mode ordering and MCP persisted permission
       policy behavior.

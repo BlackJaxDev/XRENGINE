@@ -32,6 +32,17 @@ public interface IRenderApiWrapperOwner
 public interface IRuntimeRenderObjectServices
 {
     AbstractRenderAPIObject?[] CreateObjectsForAllOwners(GenericRenderObject renderObject);
+
+    /// <summary>
+    /// Evicts a destroyed render object from every renderer cache that
+    /// <see cref="CreateObjectsForAllOwners"/> may have populated. A wrapper's identity owner
+    /// can be a backend-generation context rather than the renderer that cached it, so the
+    /// identity owner's own removal does not reach the renderer cache.
+    /// </summary>
+    void RemoveObjectFromAllOwners(GenericRenderObject renderObject)
+    {
+    }
+
     ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject> CreateObjectsForOwner(IRenderApiWrapperOwner owner);
     void DestroyObjectsForOwner(IRenderApiWrapperOwner owner);
     void IssueMemoryBarrier(EMemoryBarrierMask mask);

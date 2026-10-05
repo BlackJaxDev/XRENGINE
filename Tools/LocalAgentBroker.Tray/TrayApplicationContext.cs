@@ -26,7 +26,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private int _historyRefreshScheduled;
     private bool _exiting;
 
-    public TrayApplicationContext(string repositoryRoot)
+    public TrayApplicationContext(string repositoryRoot, bool showHistory = false)
     {
         var paths = new BrokerUiPaths(repositoryRoot);
         _store = new BrokerHistoryStore(paths);
@@ -58,6 +58,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
         _refreshTimer.Tick += (_, _) => RefreshState();
         RefreshState(forceMenu: true);
+        if (showHistory)
+            ShowHistory();
     }
 
     protected override void ExitThreadCore()

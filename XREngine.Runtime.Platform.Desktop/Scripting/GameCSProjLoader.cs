@@ -9,12 +9,86 @@ namespace XREngine.Components.Scripting
     /// <summary>Loads and unloads authoring game assemblies in collectible desktop contexts.</summary>
     public static class GameCSProjLoader
     {
+        /// <summary>Repository-relative path of the policy that explains why these guards exist.</summary>
+        public const string ContentExecutionPolicyDocumentPath = "docs/architecture/runtime/downloadable-content-execution-policy.md";
+
+        private static readonly object ProtectedRootSync = new();
+        private static string[] _protectedContentRoots = [];
+
+        /// <summary>
+        /// Registers a directory that holds downloaded or staged content. Assemblies under a protected
+        /// root are refused in every build kind, including development, because downloaded content is
+        /// data only.
+        /// </summary>
+        public static void ProtectContentRoot(string rootDirectory)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(rootDirectory);
+            string normalized = NormalizeRoot(rootDirectory);
+            lock (ProtectedRootSync)
+            {
+                string[] current = _protectedContentRoots;
+                for (int i = 0; i < current.Length; i++)
+                {
+                    if (string.Equals(current[i], normalized, StringComparison.OrdinalIgnoreCase))
+                        return;
+                }
+
+                string[] updated = new string[current.Length + 1];
+                Array.Copy(current, updated, current.Length);
+                updated[current.Length] = normalized;
+                _protectedContentRoots = updated;
+            }
+        }
+
+        /// <summary>Returns true when <paramref name="path"/> resolves under a protected content root.</summary>
+        public static bool IsUnderProtectedContentRoot(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+
+            string full;
+            try
+            {
+                full = Path.GetFullPath(path);
+            }
+            catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException)
+            {
+                return false;
+            }
+
+            string[] roots = Volatile.Read(ref _protectedContentRoots);
+            for (int i = 0; i < roots.Length; i++)
+            {
+                if (full.StartsWith(roots[i], StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static string NormalizeRoot(string rootDirectory)
+        {
+            string full = Path.GetFullPath(rootDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return full + Path.DirectorySeparatorChar;
+        }
+
         private static void EnsureRuntimeAssemblyLoadingSupported()
         {
-            if (!XRRuntimeEnvironment.IsAotRuntimeBuild)
+            if (XRRuntimeEnvironment.IsAotRuntimeBuild)
+                throw new NotSupportedException("Runtime managed assembly loading is disabled for NativeAOT runtime builds.");
+
+            // Published CoreCLR players refuse runtime assembly loading as well. AssemblyLoadContext
+            // is not a security boundary, so downloaded IL would run with the player's privileges.
+            if (XRRuntimeEnvironment.IsPublishedBuild)
+                throw new NotSupportedException($"Runtime managed assembly loading is disabled for published runtime builds. Downloaded content is data only; see {ContentExecutionPolicyDocumentPath}.");
+        }
+
+        private static void EnsureNotProtectedContent(string id, string assemblyPath)
+        {
+            if (!IsUnderProtectedContentRoot(assemblyPath))
                 return;
 
-            throw new NotSupportedException("Runtime managed assembly loading is disabled for NativeAOT runtime builds.");
+            throw new NotSupportedException($"Assembly '{id}' at '{assemblyPath}' is inside a downloaded-content root and cannot be loaded. Downloaded content is data only; see {ContentExecutionPolicyDocumentPath}.");
         }
 
         public class DynamicEngineAssemblyLoadContext : AssemblyLoadContext
@@ -58,6 +132,8 @@ namespace XREngine.Components.Scripting
         public static void LoadFromStream(string id, Stream stream)
         {
             EnsureRuntimeAssemblyLoadingSupported();
+            if (stream is FileStream fileStream)
+                EnsureNotProtectedContent(id, fileStream.Name);
 
             // Unload existing assembly with this ID first
             Unload(id);
@@ -78,6 +154,7 @@ namespace XREngine.Components.Scripting
         public static void LoadFromPath(string id, string assemblyPath)
         {
             EnsureRuntimeAssemblyLoadingSupported();
+            EnsureNotProtectedContent(id, assemblyPath);
 
             if (!File.Exists(assemblyPath))
             {

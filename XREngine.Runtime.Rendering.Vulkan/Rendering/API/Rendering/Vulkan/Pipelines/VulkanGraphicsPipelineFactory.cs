@@ -680,15 +680,9 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 
 	internal static PipelineShaderStageCreateInfo[] GetGraphicsPipelineLibraryStages(
 		VkRenderProgram program,
-		EProgramStageMask mask,
-		uint colorAttachmentCount)
-	{
-		PipelineShaderStageCreateInfo[] stages = program.GetShaderStages(mask).ToArray();
-		if (colorAttachmentCount == 0)
-			stages = stages.Where(static stage => stage.Stage != ShaderStageFlags.FragmentBit).ToArray();
-
-		return stages;
-	}
+		EProgramStageMask mask)
+		// Depth-only targets still need fragment discard, depth writes and side effects.
+		=> program.GetShaderStages(mask).ToArray();
 
 	private static void ApplyGraphicsPipelineLibrarySubset(
 		ref GraphicsPipelineCreateInfo pipelineInfo,

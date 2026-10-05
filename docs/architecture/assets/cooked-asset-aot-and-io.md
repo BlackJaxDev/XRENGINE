@@ -2,7 +2,7 @@
 
 [Architecture index](../README.md)
 
-> Status: **Implemented** (AOT type references, registry-backed runtime cooked assets); **Deferred** (DirectStorage asset packer reads).
+> Status: **Implemented** (AOT type references, registry-backed runtime cooked assets, long-lived archive handles, payload leases, fixed envelope); **Deferred** (DirectStorage asset packer reads).
 
 ## 1. Problem Statement
 
@@ -58,7 +58,12 @@ for the current design.
 | Type | Location | Role |
 |------|----------|------|
 | `CookedAssetTypeReference` | `Core/Files/CookedAssetTypeReference.cs` | Shared encode/resolve for type references in cooked envelopes |
-| `CookedAssetBlob` | `Core/Files/CookedAssetBlob.cs` | MemoryPack envelope: type reference + format tag + binary payload |
+| `CookedAssetEnvelope` | `Core/Files/CookedAssetEnvelope.cs` | Fixed binary envelope: magic, version, format, type reference, payload offset and length |
+| `CookedAssetBlob` | `Core/Files/CookedAssetBlob.cs` | Authoring-side value (type reference, format, payload) written through the envelope during cooking |
+| `PublishedArchiveHandle` | `Core/Files/AssetPacker/PublishedArchiveHandle.cs` | Long-lived mapped view of one archive with parsed tables and thread-safe lookups |
+| `PublishedArchiveRegistry` | `Core/Files/AssetPacker/PublishedArchiveRegistry.cs` | One open handle per archive; maps the config, game content, and common-assets roots |
+| `CookedPayloadLease` / `CookedPayloadOwner` | `Core/Files/CookedPayload/` | Stack-confined and heap-owned access to payload bytes without transient arrays |
+| `PublishedCookedAssetReader` | `Core/Files/PublishedCookedAssetReader.cs` | Reflection-free reader for `RuntimeBinaryV1`; the only reader a published runtime uses |
 | `PublishedCookedAssetRegistry` | `Core/Files/PublishedCookedAssetRegistry.cs` | Explicit registry of published runtime asset serializers used by shipped builds |
 | `XRAssetMemoryPackEnvelope` | `Core/Files/XRAsset.MemoryPack.cs` | Inner envelope used when CookedBinarySerializer falls through to MemoryPack for `XRAsset` subclasses |
 | `AotRuntimeMetadata` | `Core/Engine/AotRuntimeMetadata.cs` | MemoryPack-serializable table of all known types, redirects, replication info |
@@ -237,6 +242,8 @@ Core/Files/
 ├── CookedBinary/
 │   ├── CookedBinarySerializer.cs   # Core read/write/size
 │   ├── CookedBinarySerializer.Schema.cs
+│   ├── CookedBinarySharedValueTracker.cs  # Write/size/schema side of shared values
+│   ├── CookedBinarySharedValueTable.cs    # Read side of shared values
 │   ├── CookedBinaryTypeMarker.cs
 │   ├── IPostCookedBinaryDeserialize.cs
 │   └── Modules/
@@ -285,16 +292,121 @@ boundary, including draining queued child destruction. Failed owned destruction
 retains its ledger and source/session services for a later stop retry; a replacement
 source cannot be admitted while that ownership remains.
 
-## 6. Open Items
+## 6. Shared Values
+
+Generic BinaryV2 serialization without a sharing callback preserves object
+identity with graph definitions and references (markers 62/63 with fixed-width
+identities). Supported cyclic references are registered before their contents
+are read. A serialization that sets
+`CookedBinarySerializationCallbacks.ShareReference` writes each selected
+value once: its first complete occurrence as a `SharedDefinition` (marker 64,
+a 7-bit identity, then the value in its own encoding) and later occurrences as
+a `SharedReference` (marker 65 and the identity). An occurrence met while the
+value itself is still being written, a cycle, is written by value as before.
+The size pass and the schema inspector make the same decisions as the writer,
+and the reader registers each definition after reading it; a reference to an
+unknown identity fails the read, and a definition met where its occurrence is
+skipped is still read in full. The option applies to `Serialize`,
+`CalculateSize` and `Deserialize` alike; custom serializers write and size
+their payloads through independent callback-free scopes. They do not use the
+enclosing snapshot's selected-sharing table. Cooked
+assets on disk do not use it; play-mode snapshots do.
+
+## Open Items
 
 - **Index-based resolution caching.** `AotRuntimeMetadataStore.ResolveType(int)`
   calls `Type.GetType()` on every invocation. If config blob loading ever
   becomes hot (~3 calls today), add a `Type?[]` cache sized to the metadata
   table.
-- **`CookedAssetBlob.TypeName` field naming.** The field can now hold `"aot:5"`
-  in addition to assembly-qualified names. Renaming is a MemoryPack versioning
-  concern; deferred until the next envelope format bump.
 - **Trimming annotations on `XRAssetMemoryPackAdapter`.** The `Serialize` and
   `Deserialize` methods lack `[RequiresUnreferencedCode]` attributes. All
   current call sites are already annotated, so this is low-risk but should be
   cleaned up for correctness.
+
+## 7. Archive Handles, Payload Leases, And The Envelope
+
+### Archive handles
+
+A published runtime opens each archive once. `PublishedArchiveRegistry` maps the
+three content roots (config, game content, common assets) to
+`PublishedArchiveHandle` instances. A handle memory-maps the file and parses the
+header, footer, string dictionary, and table of contents once; lookups for all
+three modes (hash buckets, sorted-by-hash, linear) are then thread-safe and
+allocation-free. Handles close when a root is reconfigured, when
+`XRRuntimeEnvironment.ConfigurePublishedPaths` changes the config archive, or
+when `AssetManager` is disposed. Using a disposed handle throws
+`ObjectDisposedException` naming the archive.
+
+`AssetPacker.GetAsset`, `GetAssetPaths`, `ReadArchiveInfo`, `DecompressEntry`,
+and `AssetArchiveReader` remain as one-shot tooling APIs. Each opens a temporary
+handle, so the format has one set of magic, version, footer, and TOC
+definitions.
+
+### Payload leases
+
+`PublishedArchiveHandle.TryReadAsset` returns a `CookedPayloadLease`:
+
+- A stored entry (`CompressionCodec.Stored`) is a span over the mapping. Nothing
+  is copied.
+- A compressed entry is decompressed by
+  `Compression.Decompress(ReadOnlySpan<byte>, CompressionCodec, Span<byte>)`
+  into lease-owned storage. Storage through 65,536 bytes comes from a bounded
+  pool of managed buffers; larger storage is native memory
+  balanced through `NativeMemoryPressureTracker`, so temporary payloads never
+  reach the large object heap.
+
+A lease is a `ref struct` and cannot be captured by a closure or an awaited
+continuation. Its small shared ownership object makes copied leases observe the
+same disposal/transfer state, preventing double returns and double frees. Stored
+leases retain the archive mapping even when its registry root is replaced;
+closing the handle forbids new reads and defers unmapping until the final lease
+or owner releases it. The managed bucket ceiling prevents a request just below
+the CLR LOH threshold from rounding up to a 128 KiB managed array. When bytes must
+cross a job boundary, `TransferToOwner()` moves them into a
+`CookedPayloadOwner`, a `MemoryManager<byte>` that exposes `ReadOnlyMemory<byte>`
+over pooled, native, or mapped storage. Transfers do not copy mapped payloads.
+Pinned owner memory remains alive until its final pin is released, even if
+`Dispose` was requested meanwhile. `CookedPayloadOwner.MapFile` maps a whole
+file the same way; texture streaming uses it to parse cache files and decode
+source images without a managed array. `CookedPayloadBufferPool.Statistics`
+reports rents, misses, native rents, retained bytes, and high-water marks.
+
+### Envelope
+
+Cooked assets are wrapped in a fixed little-endian header instead of a
+MemoryPack struct:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | Magic `XRCA` |
+| 4 | 2 | Envelope version (2) |
+| 6 | 1 | `CookedAssetFormat` |
+| 7 | 1 | Reserved |
+| 8 | 2 | Type reference length in UTF-8 bytes |
+| 10 | 2 | Reserved |
+| 12 | 4 | Payload offset from the start of the envelope |
+| 16 | 4 | Payload length |
+| 20 | n | Type reference, padded so the payload starts on an 8-byte boundary |
+
+The reader parses the header from a span and slices the payload in place. The
+type reference is the `CookedAssetTypeReference.Encode` string (an
+assembly-qualified name or an `aot:` metadata index); the header field is named
+*type reference*, which resolves the earlier `TypeName` naming item.
+
+### Version gates
+
+The archive format is version 5 and the envelope is version 2. Archives or
+envelopes from earlier versions are rejected with one diagnostic that names the
+file and tells the user to re-cook the content. There is no compatibility shim.
+
+### Registry delegates and the reader split
+
+`PublishedCookedAssetRegistry` delegates are span-based: the deserializer takes
+`ReadOnlySpan<byte>` and the serializer writes to `IBufferWriter<byte>`. Full-name
+resolution uses a dictionary maintained at registration.
+
+`PublishedCookedAssetReader` handles `RuntimeBinaryV1` only and carries no
+`RequiresUnreferencedCode` or `RequiresDynamicCode` annotations. `CookedAssetReader`
+is the authoring and development reader: it also accepts reflective `BinaryV1`
+payloads and keeps the annotations. `AssetManager` published loads use only the
+published reader.

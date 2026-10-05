@@ -99,6 +99,7 @@ allow	XREngine.Data/Core/Files/CookedBinary/Modules/Core/Registry.cs	Type.GetTyp
 allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	GetCustomAttribute	StructLayout and serialization member attribute metadata
 allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	GetProperty	Known event and collection property metadata
 allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	MakeGenericType	Closed ValueTuple, event, and HashSet types for legacy cooked values
+allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	MakeGenericMethod	Closed immutable-array wrapper for legacy snapshot decoding in the untrimmed interpreter; player reflection is diagnosed before specialization
 allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	Activator.CreateInstance	Managed event, collection, tuple, and cooked object materialization
 allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	GetMethod	Closed HashSet Add method lookup during cooked decode
 allow	XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs	GetUninitializedObject	Legacy cooked object materialization without constructor

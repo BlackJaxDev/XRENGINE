@@ -468,6 +468,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("ViewportRenderCommandContainer.EnsureResourcesAllocated"))
                 EnsureResourcesAllocated(instance);
 
+            Exception? commandFailure = null;
             for (int i = 0; i < _commands.Count; i++)
             {
                 if (AbstractRenderer.Current?.IsDeviceLost == true)
@@ -483,6 +484,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
                 catch (Exception ex)
                 {
+                    if (instance.PropagateCommandExceptions)
+                    {
+                        commandFailure ??= ex;
+                        if (AbstractRenderer.Current?.IsDeviceLost == true)
+                            break;
+                        // Complete the authored pop/unbind commands before a
+                        // cold caller retries or tears down the failed frame.
+                        continue;
+                    }
                     instance.RenderState.RejectRequiredOffscreenAuthoring(
                         $"Command [{i}] {_commands[i].GetType().Name} threw {ex.GetType().Name}: {ex.Message}");
                     // Canvas command packets are submitted atomically. An offscreen-only
@@ -515,6 +525,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                         ex.ToString());
                 }
             }
+            if (commandFailure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(commandFailure).Throw();
         }
 
         private void SaveOccupiedFrameBufferBindings()

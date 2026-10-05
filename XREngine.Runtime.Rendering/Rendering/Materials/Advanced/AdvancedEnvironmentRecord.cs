@@ -6,6 +6,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Global environment maps and exposure state.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedEnvironmentRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedEnvironmentRecord
 {

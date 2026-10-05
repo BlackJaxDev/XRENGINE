@@ -379,6 +379,23 @@ internal unsafe partial class VkRenderProgram
         }
     }
 
+    /// <summary>
+    /// Drops every cross-frame artifact slot owned by <paramref name="meshRenderer"/>.
+    /// Programs outlive the worlds that draw with them, so a slot left behind keeps the
+    /// renderer, its materials, and every scene object their binding publishers reference
+    /// reachable after the world is destroyed.
+    /// </summary>
+    internal void ReleasePersistentProgramBindingArtifacts(XRMeshRenderer meshRenderer)
+    {
+        lock (_persistentProgramBindingArtifactSync)
+        {
+            // Dictionary removal does not invalidate an active key enumeration.
+            foreach (PersistentProgramBindingArtifactSlotKey slot in _persistentProgramBindingArtifacts.Keys)
+                if (slot.IsOwnedBy(meshRenderer))
+                    _persistentProgramBindingArtifacts.Remove(slot);
+        }
+    }
+
     internal bool TryGetAutoUniformMaterialWritePlan(
         string blockName,
         ulong publicationLayoutSignature,

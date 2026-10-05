@@ -48,6 +48,7 @@ namespace XREngine
 
             public ClientNetworkingManager() : base(peerId: null)
             {
+                _drainPosePackets = DrainHumanoidPosePackets;
             }
 
             protected override void Dispose(bool disposing)
@@ -137,10 +138,11 @@ namespace XREngine
                 //UdpSender.Connect(ServerIP);
             }
 
-            protected override async Task SendUDP()
+            protected override Task SendUDP()
             {
                 //Send to server
-                await ConsumeAndSendUDPQueue(UdpSender, ServerIP);
+                ConsumeAndSendUDPQueue(UdpSender, ServerIP);
+                return Task.CompletedTask;
             }
 
             protected override void CollectUdpSendTargets(List<IPEndPoint> targets)
@@ -165,52 +167,51 @@ namespace XREngine
                 }
             }
 
-            protected override void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
+            protected override void HandleStateChange(EStateChangeType type, ReadOnlySpan<byte> payload, IPEndPoint? sender)
             {
-                if (TryHandleReplicationStateChange(change, sender))
+                if (TryHandleReplicationStateChange(type, payload, sender))
                     return;
 
                 // Remote jobs are not part of the managed realtime authority surface. They can
                 // load/process arbitrary application data and must use an explicitly provisioned
                 // control transport instead of a gameplay UDP sender.
-                if (change.Type is EStateChangeType.RemoteJobRequest or EStateChangeType.RemoteJobResponse)
+                if (type is EStateChangeType.RemoteJobRequest or EStateChangeType.RemoteJobResponse)
                     return;
 
-                if (change.Type == EStateChangeType.HumanoidPoseFrame)
+                if (type == EStateChangeType.HumanoidPoseFrame)
                 {
-                    QueueReplicationPresentation(() => base.HandleStateChange(change, sender));
+                    QueueHumanoidPosePacket(payload, sender);
                     return;
                 }
 
-                switch (change.Type)
+                switch (type)
                 {
                     case EStateChangeType.PlayerAssignment:
-                        if (StateChangePayloadSerializer.TryDeserialize<PlayerAssignment>(change.Data, out var assignment) && assignment is not null)
+                        if (TryReadStateChangePayload(payload, out PlayerAssignment assignment) && assignment is not null)
                             RuntimeNetworkingHostServices.Current.EnqueueSimulation(() => HandlePlayerAssignment(assignment));
                         break;
                     case EStateChangeType.PlayerTransformUpdate:
-                        if (StateChangePayloadSerializer.TryDeserialize<PlayerTransformUpdate>(change.Data, out var transformUpdate) && transformUpdate is not null)
+                        if (TryReadStateChangePayload(payload, out PlayerTransformUpdate transformUpdate) && transformUpdate is not null)
                             QueueReplicationPresentation(() => HandleRemoteTransform(transformUpdate));
                         break;
                     case EStateChangeType.PlayerLeave:
-                        if (StateChangePayloadSerializer.TryDeserialize<PlayerLeaveNotice>(change.Data, out var leave) && leave is not null)
+                        if (TryReadStateChangePayload(payload, out PlayerLeaveNotice leave) && leave is not null)
                             RuntimeNetworkingHostServices.Current.EnqueueSimulation(() => HandlePlayerLeave(leave));
                         break;
                     case EStateChangeType.ServerError:
-                        if (StateChangePayloadSerializer.TryDeserialize<ServerErrorMessage>(change.Data, out var error) && error is not null)
+                        if (TryReadStateChangePayload(payload, out ServerErrorMessage error) && error is not null)
                             HandleServerError(error);
                         break;
                     case EStateChangeType.AuthorityLeaseUpdate:
-                        if (StateChangePayloadSerializer.TryDeserialize<NetworkAuthorityLease>(change.Data, out var lease) && lease is not null)
+                        if (TryReadStateChangePayload(payload, out NetworkAuthorityLease lease) && lease is not null)
                             QueueReplicationPresentation(() => HandleAuthorityLeaseUpdate(lease));
                         break;
                     case EStateChangeType.ClockSync:
-                        if (StateChangePayloadSerializer.TryDeserialize<ClockSyncMessage>(change.Data, out var clock) && clock is not null)
-                            HandleClockSync(clock);
+                        base.HandleStateChange(type, payload, sender);
                         break;
                     case EStateChangeType.ReplicationSnapshot:
                     case EStateChangeType.ReplicationDelta:
-                        base.HandleStateChange(change, sender);
+                        base.HandleStateChange(type, payload, sender);
                         break;
                 }
             }
@@ -276,6 +277,7 @@ namespace XREngine
                     ClientId = EffectiveClientId,
                     DisplayName = Environment.UserName,
                     BuildVersion = CurrentProtocolVersion,
+                    WireProtocolVersion = RealtimeProtocol.WireVersion,
                     WorldName = ResolvePrimaryWorldInstance()?.TargetWorld?.Name,
                     ClientWorldAsset = _localWorldAsset,
                     SessionId = SessionId ?? (_activeSessionId == Guid.Empty ? null : _activeSessionId),
@@ -737,83 +739,6 @@ namespace XREngine
                     else
                         playerInfo.NetworkEntityId = lease.EntityId;
                 }
-            }
-
-            private void HandleClockSync(ClockSyncMessage clock)
-            {
-                if (!string.Equals(clock.ClientId, EffectiveClientId, StringComparison.OrdinalIgnoreCase))
-                    return;
-
-                if (_activeSessionId != Guid.Empty && clock.SessionId != _activeSessionId)
-                    return;
-
-                double receiveUtc = GetUtcSeconds();
-                double midpoint = (clock.ClientSendTimestampUtc + receiveUtc) * 0.5d;
-                _clockOffsetSeconds = clock.ServerSendTimestampUtc - midpoint;
-                _lastReceivedServerTickId = Math.Max(_lastReceivedServerTickId, clock.ServerTickId);
-            }
-
-            protected override void PrepareOutgoingHumanoidPoseFrame(HumanoidPoseFrame frame)
-            {
-                if (!IsGameplayReady)
-                {
-                    // Base exposes pose broadcast to renderer/XR callers. Keep the frame
-                    // structurally invalid until synchronization permits gameplay traffic.
-                    frame.SessionId = Guid.Empty;
-                    frame.SourceClientId = string.Empty;
-                    frame.EntityIds = [];
-                    return;
-                }
-                if (frame.SessionId == Guid.Empty)
-                    frame.SessionId = _activeSessionId;
-                if (string.IsNullOrWhiteSpace(frame.SourceClientId))
-                    frame.SourceClientId = EffectiveClientId;
-                if (frame.FrameSequence == 0)
-                    frame.FrameSequence = ++_poseFrameSequence;
-                if (frame.EntityIds.Length == 0)
-                    frame.EntityIds = GetLocalNetworkEntityIds();
-                frame.AuthorityMode = NetworkAuthorityMode.ClientPredicted;
-                frame.Channel = NetworkReplicationChannel.HumanoidPose;
-
-                if (!IsManagedTransportRequested)
-                    return;
-
-                if (_primaryAssignedServerPlayerIndex is <= 0 or > ushort.MaxValue
-                    || _primaryAssignedEntityId.IsEmpty
-                    || frame.AvatarCount != 1
-                    || frame.Payload.Length < 6
-                    || frame.BaselineSequence == 0)
-                {
-                    RejectManagedPoseFrame(frame);
-                    return;
-                }
-
-                // Managed pose traffic has one stable avatar, bound by the server-assigned
-                // player index. The server re-parses the complete frame before accepting it.
-                BinaryPrimitives.WriteUInt16LittleEndian(frame.Payload, (ushort)_primaryAssignedServerPlayerIndex);
-                frame.EntityIds = [_primaryAssignedEntityId];
-            }
-
-            private void RejectManagedPoseFrame(HumanoidPoseFrame frame)
-            {
-                frame.SessionId = Guid.Empty;
-                frame.SourceClientId = string.Empty;
-                frame.EntityIds = [];
-            }
-
-            private NetworkEntityId[] GetLocalNetworkEntityIds()
-            {
-                List<NetworkEntityId> ids = [];
-                foreach (var player in RuntimeNetworkingHostServices.Current.LocalPlayers)
-                {
-                    if (player?.PlayerInfo is { NetworkEntityId.IsEmpty: false } playerInfo)
-                        ids.Add(playerInfo.NetworkEntityId);
-                }
-
-                if (ids.Count == 0 && !_primaryAssignedEntityId.IsEmpty)
-                    ids.Add(_primaryAssignedEntityId);
-
-                return [.. ids];
             }
 
             private RemotePlayerState? GetOrCreateRemotePlayer(int serverPlayerIndex, string? displayName = null, IRuntimeNetworkWorldContext? preferredWorld = null)

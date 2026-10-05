@@ -25,9 +25,14 @@ public interface IRuntimeAnimationHostServices
     void RenderLine(Vector3 start, Vector3 end, ColorF4 color);
     void RenderPoint(Vector3 position, ColorF4 color);
     void RenderText(Vector3 position, string text, ColorF4 color, float scale = 0.0012f);
-    bool BroadcastHumanoidPoseFrame(HumanoidPoseFrame frame, bool compress = false);
+    /// <summary>
+    /// Broadcasts quantized avatar records on the high-rate pose channel without allocating.
+    /// The transport may rewrite the avatar id inside <paramref name="avatarPayload"/> in place.
+    /// </summary>
+    bool BroadcastHumanoidPose(HumanoidPosePacketKind kind, ushort baselineSequence, int avatarCount, Span<byte> avatarPayload);
 
-    event Action<HumanoidPoseFrame>? HumanoidPoseFrameReceived;
+    /// <summary>Raised for every accepted pose packet. The view is valid only during the call.</summary>
+    event HumanoidPosePacketHandler? HumanoidPosePacketReceived;
 }
 
 /// <summary>Process-wide animation host boundary configured by the application composition root.</summary>
@@ -51,7 +56,7 @@ public static class RuntimeAnimationHostServices
         public ELoopType ChildRecalculationLoopType => ELoopType.Sequential;
         public bool HumanoidPoseTransportAvailable => false;
 
-        public event Action<HumanoidPoseFrame>? HumanoidPoseFrameReceived
+        public event HumanoidPosePacketHandler? HumanoidPosePacketReceived
         {
             add { }
             remove { }
@@ -76,6 +81,6 @@ public static class RuntimeAnimationHostServices
         public void RenderLine(Vector3 start, Vector3 end, ColorF4 color) { }
         public void RenderPoint(Vector3 position, ColorF4 color) { }
         public void RenderText(Vector3 position, string text, ColorF4 color, float scale = 0.0012f) { }
-        public bool BroadcastHumanoidPoseFrame(HumanoidPoseFrame frame, bool compress = false) => false;
+        public bool BroadcastHumanoidPose(HumanoidPosePacketKind kind, ushort baselineSequence, int avatarCount, Span<byte> avatarPayload) => false;
     }
 }

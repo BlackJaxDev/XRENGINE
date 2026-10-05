@@ -17,7 +17,7 @@ public static class ShaderHotReload
     public static int ReloadAll(string reason = "manual shader reload")
     {
         ShaderSourceResolver.ClearCaches();
-        return ShaderSourceDependencyIndex.InvalidateAll(reason);
+        return ShaderSourceDependencyIndex.ReloadAllDiskRoots(reason);
     }
 }
 

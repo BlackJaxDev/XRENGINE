@@ -250,6 +250,21 @@ public static class AdvancedGpuResourceSourceEncoder
             Math.Min(texture.MaxLOD, texture.SmallestAllowedMipmapLevel),
             minimumLod,
             maximumMip);
+        if (texture.SparseTextureStreamingEnabled &&
+            texture.SparseTextureStreamingLogicalMipCount > 0 &&
+            texture.SparseTextureStreamingResidentBaseMipLevel >= 0 &&
+            texture.SparseTextureStreamingResidentBaseMipLevel < texture.SparseTextureStreamingLogicalMipCount &&
+            texture.LargestMipmapLevel == texture.SparseTextureStreamingResidentBaseMipLevel)
+        {
+            // Sparse storage already exposes the resident base as level zero for
+            // sampling. Sampler clamps stay relative to that base, including
+            // authored positive limits; applying the base again discards detail.
+            float relativeMaximumMip = Math.Max(0, Math.Min(
+                texture.SmallestAllowedMipmapLevel,
+                texture.SparseTextureStreamingLogicalMipCount - 1) - texture.LargestMipmapLevel);
+            minimumLod = Math.Clamp(texture.MinLOD, 0.0f, relativeMaximumMip);
+            maximumLod = Math.Clamp(texture.MaxLOD, minimumLod, relativeMaximumMip);
+        }
         return new AdvancedSamplerRecord
         {
             Filter = nearestMinification && nearestMagnification

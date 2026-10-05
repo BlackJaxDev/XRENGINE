@@ -73,7 +73,11 @@ function Read-Manifest([string]$sessionName) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         return $null
     }
-    return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    $manifest = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if ([string]$manifest.name -cne $sessionName) {
+        throw "RenderBench manifest identity does not match requested session '$sessionName'."
+    }
+    return $manifest
 }
 
 function Write-Manifest($manifest) {
@@ -105,13 +109,32 @@ function Get-OwnedProcess($manifest) {
     $process = Get-Process -Id ([int]$manifest.processId) -ErrorAction SilentlyContinue
     if ($null -eq $process) { return $null }
 
-    $recordedStart = [DateTime]::Parse([string]$manifest.processStartTimeUtc).ToUniversalTime()
+    $recordedStart = [DateTime]::MinValue
+    if ($manifest.processStartTimeUtc -is [DateTime]) {
+        $recordedStart = $manifest.processStartTimeUtc
+    }
+    elseif ($manifest.processStartTimeUtc -is [DateTimeOffset]) {
+        $recordedStart = $manifest.processStartTimeUtc.UtcDateTime
+    }
+    elseif (-not [DateTime]::TryParse([string]$manifest.processStartTimeUtc,
+        [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind,
+        [ref]$recordedStart)) { return $null }
+    $recordedStart = $recordedStart.ToUniversalTime()
     $actualStart = $process.StartTime.ToUniversalTime()
-    if ([Math]::Abs(($actualStart - $recordedStart).TotalSeconds) -gt 2) { return $null }
+    if ($actualStart -ne $recordedStart) { return $null }
 
     $cim = Get-CimInstance Win32_Process -Filter "ProcessId = $($process.Id)" -ErrorAction SilentlyContinue
     if ($null -eq $cim -or [string]::IsNullOrWhiteSpace([string]$cim.CommandLine)) { return $null }
-    if (([string]$cim.CommandLine).IndexOf([string]$manifest.renderBenchPath, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { return $null }
+    $assemblyPath = [IO.Path]::GetFullPath([string]$manifest.renderBenchPath)
+    if ([IO.Path]::GetFileName($assemblyPath) -ne 'XREngine.RenderBench.dll') { return $null }
+    $artifactPrefix = [IO.Path]::GetFullPath((Join-Path (Get-SessionRoot $manifest.name) 'artifacts')) + [IO.Path]::DirectorySeparatorChar
+    if (-not $assemblyPath.StartsWith($artifactPrefix, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+    $executable = [Regex]::Escape($process.Path)
+    $assembly = [Regex]::Escape($assemblyPath)
+    $prefixPattern = '^(?:"' + $executable + '"|' + $executable + ')\s+(?:"' + $assembly + '"|' + $assembly + ')(?:\s|$)'
+    if ([string]$cim.CommandLine -notmatch $prefixPattern) { return $null }
+    $sessionName = [Regex]::Escape([string]$manifest.name)
+    if ([string]$cim.CommandLine -notmatch ('\s--session-name\s+(?:"' + $sessionName + '"|' + $sessionName + ')(?:\s|$)')) { return $null }
     return $process
 }
 
@@ -388,6 +411,16 @@ function Stop-Session {
     Emit (Get-StatusObject $manifest)
 }
 
+$operationMutex = $null
+$operationLocked = $false
+try {
+if ($Action -in @('Start', 'Run', 'Stop')) {
+    Assert-Name
+    $operationMutex = [Threading.Mutex]::new($false, "Local\XREngine-McpRenderBenchOperation-$($Name.ToLowerInvariant())")
+    try { $operationLocked = $operationMutex.WaitOne([TimeSpan]::FromMinutes(10)) }
+    catch [Threading.AbandonedMutexException] { $operationLocked = $true }
+    if (-not $operationLocked) { throw "Timed out waiting for RenderBench session '$Name' operation ownership." }
+}
 switch ($Action) {
     'Start' { Start-Session }
     'Run' { Run-Session }
@@ -395,7 +428,14 @@ switch ($Action) {
     'Status' { Assert-Name; Emit (Get-StatusObject (Read-Manifest $Name)) }
     'List' {
         if (-not (Test-Path -LiteralPath $sessionsRoot)) { Emit @(); break }
-        $items = @(Get-ChildItem -LiteralPath $sessionsRoot -Directory | ForEach-Object { Get-StatusObject (Read-Manifest $_.Name) })
+        $items = @(Get-ChildItem -LiteralPath $sessionsRoot -Directory -Filter 'renderbench-*' | ForEach-Object {
+            Get-StatusObject (Read-Manifest $_.Name.Substring('renderbench-'.Length))
+        })
         Emit $items
     }
+}
+}
+finally {
+    if ($operationLocked) { $operationMutex.ReleaseMutex() }
+    if ($null -ne $operationMutex) { $operationMutex.Dispose() }
 }

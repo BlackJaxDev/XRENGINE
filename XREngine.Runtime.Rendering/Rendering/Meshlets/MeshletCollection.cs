@@ -108,7 +108,9 @@ namespace XREngine.Rendering.Meshlets
                 _meshlets.Add(m);
             }
 
-            _vertices.AddRange(payload.Vertices);
+            // Payloads no longer carry a vertex copy; this diagnostic path
+            // expands the mesh's attributes only for the meshes it collects.
+            _vertices.AddRange(MeshOptimizerIntegration.BuildMeshletVerticesForPayload(mesh));
             for (int i = 0; i < payload.VertexIndices.Length; i++)
                 _vertexIndices.Add(payload.VertexIndices[i] + baseVertexOffset);
             _triangleIndices.AddRange(payload.TriangleIndices);

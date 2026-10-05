@@ -701,7 +701,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 in bounds,
                 in command,
                 out AdvancedGpuHandle residentGeometry) ||
-            !tables.Transforms.TryAdd(CreateTransform(world), out currentTransform) ||
+            !tables.Transforms.TryAdd(CreateTransform(world, plan.Source as RenderCommand), out currentTransform) ||
             !tables.Transforms.TryAdd(CreateTransform(previousWorld), out previousTransform) ||
             !tables.Instances.TryAdd(CreateInstance(world, previousWorld, in bounds, in command), out instance) ||
             !(geometry = residentGeometry).IsValid ||
@@ -879,7 +879,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             CreateTransform(previousWorld)) ||
             !Database.Scene.Transforms.TryReplace(
             registration.CurrentTransform,
-            CreateTransform(world)) ||
+            CreateTransform(world, plan.Source as RenderCommand)) ||
             !Database.Scene.Instances.TryReplace(
             registration.Instance,
             CreateInstance(world, previousWorld, in bounds, in command)) ||
@@ -1196,8 +1196,9 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             Database.Scene.EditorIdentities.TryRemoveImmediatelyBeforePublication(editorIdentity);
     }
 
-    private static AdvancedTransformRecord CreateTransform(in Matrix4x4 world)
-        => new() { World = world };
+    private static AdvancedTransformRecord CreateTransform(in Matrix4x4 world, RenderCommand? source = null)
+        => TransformPublicationRecords.TryGet(source, world, out _, out AdvancedTransformRecord record)
+            ? record : new() { World = world };
 
     private static AdvancedInstanceRecord CreateInstance(
         in Matrix4x4 world,

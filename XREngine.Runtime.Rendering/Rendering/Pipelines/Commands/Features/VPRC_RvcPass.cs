@@ -49,6 +49,10 @@ public class VPRC_RvcPass : ViewportRenderCommand
     {
         base.DescribeRenderPass(context);
 
+        // Without planned RVC stages the pipeline declares no RVC resources.
+        if (ParentPipeline is not RvcRenderPipeline { RequiresRvcResources: true })
+            return;
+
         RenderPassBuilder builder = context
             .GetOrCreateSyntheticPass(BuildPassName(Stage), ResolveRenderGraphStage(Stage))
             .WithName($"RVC {Stage}")

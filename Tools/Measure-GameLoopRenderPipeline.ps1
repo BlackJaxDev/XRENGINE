@@ -36,6 +36,9 @@ param(
     [double]$MotionCameraLookAtY = [double]::NaN,
     [double]$MotionCameraLookAtZ = [double]::NaN,
     [string]$ProfileLights = '',
+    [string]$DirectionalShadowLightNode = '',
+    [ValidateRange(0, 16384)]
+    [int]$DirectionalShadowResolution = 0,
     [string]$ProfileViewport = '',
     [string]$RenderScale = '',
     [int]$WindowWidth = 0,
@@ -248,7 +251,14 @@ if ($hasCameraMotion -and
     $MotionCameraPositionZ -eq $MotionCameraLookAtZ) {
     throw 'The motion camera endpoint and look-at target must differ.'
 }
-$requiresMcpMutation = $hasFixedCameraPose -or $hasCameraMotion
+$hasDirectionalShadowResolution = $DirectionalShadowResolution -gt 0
+if ([string]::IsNullOrWhiteSpace($DirectionalShadowLightNode) -eq $hasDirectionalShadowResolution) {
+    throw 'Specify both DirectionalShadowLightNode and a positive DirectionalShadowResolution, or omit both.'
+}
+if ($hasDirectionalShadowResolution -and $DisableMcpDiagnostics) {
+    throw 'Directional shadow resolution setup requires MCP; do not combine it with DisableMcpDiagnostics.'
+}
+$requiresMcpMutation = $hasFixedCameraPose -or $hasCameraMotion -or $hasDirectionalShadowResolution
 
 function Get-SpeedProfileRoot {
     Join-Path (Join-Path $repoRoot 'Build\Logs') 'speed-profiles\game-loop-render-pipeline'
@@ -419,6 +429,108 @@ function Set-ProfileFixedCameraWhenReady {
     throw "Fixed camera did not become ready within ${TimeoutSec}s after $attempt MCP attempt(s). Last error: $lastError"
 }
 
+function Set-ProfileDirectionalShadowWhenReady {
+    param(
+        [int]$Port,
+        [System.Diagnostics.Process]$Process,
+        [string]$NodeName,
+        [int]$Resolution,
+        [int]$TimeoutSec = 120
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+    $lastError = 'directional light discovery was not attempted'
+    $node = $null
+    $component = $null
+    do {
+        if ($Process.HasExited) {
+            throw "Editor exited before directional shadow setup (exit=0x$([Convert]::ToString($Process.ExitCode, 16))). Last discovery error: $lastError"
+        }
+
+        try {
+            $nodesResponse = Invoke-ProfileMcpTool -Port $Port -Name 'find_nodes_by_name' `
+                -Arguments @{ name = $NodeName; match_mode = 'exact' } `
+                -ReadyTimeoutSec 5 -RetryUnavailableCapabilities
+            $nodes = @($nodesResponse.result.structuredContent.nodes | Where-Object { [string]$_.name -ceq $NodeName })
+            if ($nodes.Count -gt 1) {
+                throw "Directional shadow node '$NodeName' is ambiguous ($($nodes.Count) exact matches)."
+            }
+            if ($nodes.Count -eq 1) {
+                $node = $nodes[0]
+                $componentsResponse = Invoke-ProfileMcpTool -Port $Port -Name 'list_components' `
+                    -Arguments @{ node_id = [string]$node.id } `
+                    -ReadyTimeoutSec 5 -RetryUnavailableCapabilities
+                $components = @($componentsResponse.result.structuredContent.components | Where-Object {
+                    [string]$_.type -ceq 'XREngine.Components.Lights.DirectionalLightComponent'
+                })
+                if ($components.Count -gt 1) {
+                    throw "Directional shadow node '$NodeName' has $($components.Count) directional light components."
+                }
+                if ($components.Count -eq 1) {
+                    $component = $components[0]
+                    break
+                }
+            }
+            $lastError = "Node '$NodeName' or its directional light component is not available."
+        }
+        catch {
+            if ($_.Exception.Message -match ' is ambiguous | has \d+ directional light components') {
+                throw
+            }
+            $lastError = $_.Exception.Message
+        }
+        Start-Sleep -Milliseconds 500
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    if ($null -eq $component) {
+        throw "Directional shadow light '$NodeName' did not become ready within ${TimeoutSec}s. Last error: $lastError"
+    }
+
+    $target = @{ node_id = [string]$node.id; component_id = [string]$component.id }
+    $beforeDimensions = @{}
+    foreach ($dimension in @('ShadowMapResolutionWidth', 'ShadowMapResolutionHeight')) {
+        $response = Invoke-ProfileMcpTool -Port $Port -Name 'get_component_property' `
+            -Arguments ($target + @{ property_name = $dimension }) `
+            -ReadyTimeoutSec 5
+        if ($null -eq $response.result.structuredContent.value) {
+            throw "Directional shadow $dimension initial readback is unavailable for '$NodeName'."
+        }
+        $beforeDimensions[$dimension] = [int]$response.result.structuredContent.value
+    }
+    foreach ($dimension in @('ShadowMapResolutionWidth', 'ShadowMapResolutionHeight')) {
+        Invoke-ProfileMcpTool -Port $Port -Name 'set_component_property' `
+            -Arguments ($target + @{ property_name = $dimension; value = $Resolution }) `
+            -ReadyTimeoutSec 5 | Out-Null
+    }
+    $dimensions = @{}
+    foreach ($dimension in @('ShadowMapResolutionWidth', 'ShadowMapResolutionHeight')) {
+        $response = Invoke-ProfileMcpTool -Port $Port -Name 'get_component_property' `
+            -Arguments ($target + @{ property_name = $dimension }) `
+            -ReadyTimeoutSec 5
+        if ($null -eq $response.result.structuredContent.value) {
+            throw "Directional shadow $dimension readback is unavailable for '$NodeName'."
+        }
+        $dimensions[$dimension] = [int]$response.result.structuredContent.value
+    }
+    if ($dimensions.ShadowMapResolutionWidth -ne $Resolution -or
+        $dimensions.ShadowMapResolutionHeight -ne $Resolution) {
+        throw "Directional shadow resolution readback mismatch for '$NodeName': requested ${Resolution}x${Resolution}, read $($dimensions.ShadowMapResolutionWidth)x$($dimensions.ShadowMapResolutionHeight)."
+    }
+
+    return [pscustomobject]@{
+        NodeName = [string]$node.name
+        NodeId = [string]$node.id
+        NodePath = [string]$node.path
+        ComponentId = [string]$component.id
+        ComponentType = [string]$component.type
+        RequestedResolution = $Resolution
+        BeforeWidth = $beforeDimensions.ShadowMapResolutionWidth
+        BeforeHeight = $beforeDimensions.ShadowMapResolutionHeight
+        Width = $dimensions.ShadowMapResolutionWidth
+        Height = $dimensions.ShadowMapResolutionHeight
+    }
+}
+
 function Wait-ProfileCameraPose {
     param(
         [int]$Port,
@@ -500,6 +612,8 @@ function New-ProfilePublicationReadinessState {
     return [pscustomobject]@{
         Identity = ''
         StableSinceUtc = [datetime]::MinValue
+        StageFrames = @{}
+        CompletedFrames = $null
     }
 }
 
@@ -520,6 +634,8 @@ function Test-ProfilePublicationReadiness {
     catch {
         $State.Identity = ''
         $State.StableSinceUtc = [datetime]::MinValue
+        $State.StageFrames = @{}
+        $State.CompletedFrames = $null
         return [pscustomobject]@{
             Ready = $false
             Reason = "MCP readiness query failed: $($_.Exception.Message)"
@@ -532,9 +648,22 @@ function Test-ProfilePublicationReadiness {
     $framePackage = $renderState.canonicalFramePackage
     $scenePublication = $framePackage.scenePublication
     $preparation = $renderState.advancedPreparation
+    $profile = $renderState.advancedProfile.profile
+    $backend = [string]$profile.capabilities.backend
+    $isVulkan = $backend -in @('2', 'Vulkan')
+    $requiredStages = @('VisibilityPreparation', 'VisibilityRaster', 'NativeOpaqueShading')
+    $acceptedStageFrames = @{}
+    $vulkanCompletedFrames = $null
+    $stageOutputId = [uint64]0
+    $visibleMeshCommandCount = [uint64]0
 
     $notReady = New-Object System.Collections.Generic.List[string]
-    if ($null -eq $framePackage -or [string]$framePackage.state -ne 'Published') {
+    if ($backend -notin @('1', 'OpenGL', '2', 'Vulkan')) {
+        $notReady.Add("selected viewport renderer backend is unavailable: $backend") | Out-Null
+    }
+    # A mutable asynchronous snapshot may show Prepared before publication; progressing
+    # accepted stage receipts below establish that rendering continued through that state.
+    if ($null -eq $framePackage -or [string]$framePackage.state -notin @('Prepared', 'Published')) {
         $notReady.Add("canonical frame package state=$($framePackage.state)") | Out-Null
     }
     if ($null -eq $scenePublication -or
@@ -561,29 +690,146 @@ function Test-ProfilePublicationReadiness {
         [string]$preparation.deferralReason -ne 'Ready') {
         $notReady.Add("Advanced preparation deferred: $($preparation.deferralReason)") | Out-Null
     }
+    if ($null -eq $profile -or
+        -not [bool]$profile.executionAdmitted -or
+        -not [bool]$profile.reservationCurrent -or
+        [uint64]$profile.instanceId -eq 0 -or
+        [uint64]$profile.resourceGeneration -eq 0) {
+        $notReady.Add('Advanced execution or output reservation is not current') | Out-Null
+    }
+
+    # EDefaultRenderPass 1/3/4 collect opaque deferred, opaque forward, and masked forward meshes.
+    foreach ($pass in @($renderState.activeViewportRenderingCommandPasses)) {
+        if ([int]$pass.passIndex -in @(1, 3, 4)) {
+            $visibleMeshCommandCount += [uint64]$pass.enabledMeshCommandCount
+        }
+    }
+    if ($visibleMeshCommandCount -eq 0) {
+        $notReady.Add('no enabled opaque or masked mesh commands were collected for the active viewport') | Out-Null
+    }
+
+    foreach ($stageName in $requiredStages) {
+        $accepted = @($renderState.advancedProfile.stages | Where-Object {
+            [string]$_.stage -eq $stageName -and [string]$_.phase -eq 'Complete' -and
+            [string]$_.state -eq 'BackendEnqueueAccepted' -and
+            [bool]$_.matchesCurrentOutputGeneration -and
+            [uint64]$_.frameId -gt 0 -and [uint64]$_.outputId -gt 0 -and
+            [uint64]$_.resourceGeneration -eq [uint64]$profile.resourceGeneration
+        } | Sort-Object -Property frameId -Descending | Select-Object -First 1)
+        if ($accepted.Count -ne 1) {
+            $notReady.Add("current accepted $stageName Complete-phase receipt is unavailable") | Out-Null
+            continue
+        }
+        $stage = $accepted[0]
+        if ($stageOutputId -ne 0 -and $stageOutputId -ne [uint64]$stage.outputId) {
+            $notReady.Add('accepted Advanced stages do not share the current output') | Out-Null
+        }
+        $stageOutputId = [uint64]$stage.outputId
+        $acceptedStageFrames[$stageName] = [uint64]$stage.frameId
+    }
+    if ($isVulkan -and $notReady.Count -eq 0) {
+        try {
+            $profilerResponse = Invoke-ProfileMcpTool `
+                -Port $Port `
+                -Name 'get_render_profiler_stats' `
+                -Arguments @{} `
+                -ReadyTimeoutSec 5
+            $frameLifecycle = $profilerResponse.result.structuredContent.vulkan.frame_lifecycle
+            if ($null -eq $frameLifecycle -or
+                $null -eq $frameLifecycle.PSObject.Properties['outcome_counts'] -or
+                $null -eq $frameLifecycle.outcome_counts -or
+                $null -eq $frameLifecycle.outcome_counts.PSObject.Properties['completed'] -or
+                $null -eq $frameLifecycle.PSObject.Properties['terminal_result'] -or
+                $null -eq $frameLifecycle.PSObject.Properties['present_now_terminal']) {
+                throw 'Vulkan frame lifecycle telemetry is incomplete.'
+            }
+            $completed = $frameLifecycle.outcome_counts.completed
+            if ($null -eq $completed) {
+                $notReady.Add('Vulkan completed-frame telemetry is unavailable') | Out-Null
+            }
+            else {
+                $vulkanCompletedFrames = [long]$completed
+                if ($vulkanCompletedFrames -lt 0) {
+                    $notReady.Add("Vulkan completed-frame telemetry is invalid: $vulkanCompletedFrames") | Out-Null
+                }
+            }
+            if ($null -eq $frameLifecycle.terminal_result -or
+                [string]::IsNullOrWhiteSpace([string]$frameLifecycle.terminal_result.outcome)) {
+                $notReady.Add('latest Vulkan frame terminal result is unavailable') | Out-Null
+            }
+            if ($null -ne $frameLifecycle.present_now_terminal) {
+                $terminal = $frameLifecycle.present_now_terminal
+                $notReady.Add("Vulkan PresentNow terminal fault remains: $($terminal.disposition) frame=$($terminal.frame_id)") | Out-Null
+            }
+            if ([string]$frameLifecycle.terminal_result.outcome -in @('Rejected', 'Failed')) {
+                $terminal = $frameLifecycle.terminal_result
+                $notReady.Add("latest Vulkan frame is $($terminal.outcome): $($terminal.failure_kind) frame=$($terminal.frame_id)") | Out-Null
+            }
+        }
+        catch {
+            $notReady.Add("Vulkan profiler readiness query failed: $($_.Exception.Message)") | Out-Null
+        }
+    }
     if ($notReady.Count -gt 0) {
         $State.Identity = ''
         $State.StableSinceUtc = [datetime]::MinValue
+        $State.StageFrames = @{}
+        $State.CompletedFrames = $null
         return [pscustomobject]@{
             Ready = $false
             Reason = $notReady -join '; '
             ContentGeneration = if ($null -eq $scenePublication) { 0 } else { [uint64]$scenePublication.contentGeneration }
             ResourceGeneration = $activeResourceGeneration
+            AcceptedStageFrames = $acceptedStageFrames
+            VulkanCompletedFrames = $vulkanCompletedFrames
+            VisibleMeshCommandCount = $visibleMeshCommandCount
+            OutputId = $stageOutputId
         }
     }
 
-    $identity = "$($scenePublication.databaseEpoch):$($scenePublication.sequence):$($scenePublication.frameGeneration):$($scenePublication.topologyGeneration):$($scenePublication.contentGeneration):$($scenePublication.lookupGeneration):$activeResourceGeneration"
+    $identity = "$($scenePublication.databaseEpoch):$($scenePublication.sequence):$($scenePublication.frameGeneration):$($scenePublication.topologyGeneration):$($scenePublication.contentGeneration):$($scenePublication.lookupGeneration):${activeResourceGeneration}:$($profile.instanceId):$($profile.resourceGeneration):$stageOutputId"
     $now = [datetime]::UtcNow
+    $hasProgressed = $false
     if ($State.Identity -ne $identity) {
         $State.Identity = $identity
         $State.StableSinceUtc = $now
+        $State.StageFrames = $acceptedStageFrames
+        $State.CompletedFrames = $vulkanCompletedFrames
+        $progressReason = 'accepted Advanced stages seeded for the current publication'
+    }
+    else {
+        $stalledStages = @($requiredStages | Where-Object {
+            -not $State.StageFrames.ContainsKey($_) -or
+            [uint64]$acceptedStageFrames[$_] -le [uint64]$State.StageFrames[$_]
+        })
+        $completedStalled = $isVulkan -and ($null -eq $State.CompletedFrames -or
+            [long]$vulkanCompletedFrames -le [long]$State.CompletedFrames)
+        $State.StageFrames = $acceptedStageFrames
+        $State.CompletedFrames = $vulkanCompletedFrames
+        if ($stalledStages.Count -gt 0 -or $completedStalled) {
+            # Enqueue receipts and completed Vulkan frames must both progress.
+            $State.StableSinceUtc = $now
+            $progressReason = if ($completedStalled) {
+                "Vulkan completed frames stalled or regressed at $vulkanCompletedFrames"
+            } else {
+                "accepted Advanced stage frames stalled or regressed: $($stalledStages -join ', ')"
+            }
+        }
+        else {
+            $hasProgressed = $true
+            $progressReason = 'accepted Advanced stages are progressing'
+        }
     }
     $stableSeconds = ($now - $State.StableSinceUtc).TotalSeconds
     return [pscustomobject]@{
-        Ready = $stableSeconds -ge $WindowSec
-        Reason = "publication stable for $([Math]::Round($stableSeconds, 1))/${WindowSec}s"
+        Ready = $hasProgressed -and $stableSeconds -ge $WindowSec
+        Reason = "$progressReason; publication stable for $([Math]::Round($stableSeconds, 1))/${WindowSec}s"
         ContentGeneration = [uint64]$scenePublication.contentGeneration
         ResourceGeneration = $activeResourceGeneration
+        AcceptedStageFrames = $acceptedStageFrames
+        VulkanCompletedFrames = $vulkanCompletedFrames
+        VisibleMeshCommandCount = $visibleMeshCommandCount
+        OutputId = $stageOutputId
     }
 }
 
@@ -1713,6 +1959,7 @@ function Measure-Variant {
         'Not attempted.'
     }
     $fixedCameraReadback = $null
+    $directionalShadowResolutionReadback = $null
     $motionCameraReadback = $null
     $postScreenshotStabilityWaitSec = 0
 
@@ -1909,6 +2156,22 @@ function Measure-Variant {
         }
         $proc = Start-Process @startProcessArguments
         $processStartUtc = $proc.StartTime.ToUniversalTime()
+        if ($hasDirectionalShadowResolution) {
+            Write-Host "[measure] $runName setting directional shadow resolution via MCP..."
+            try {
+                $directionalShadowResolutionReadback = Set-ProfileDirectionalShadowWhenReady `
+                    -Port $mcpPort -Process $proc `
+                    -NodeName $DirectionalShadowLightNode `
+                    -Resolution $DirectionalShadowResolution `
+                    -TimeoutSec 120
+            }
+            catch {
+                if (-not $proc.HasExited) {
+                    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                }
+                throw
+            }
+        }
         if ($hasFixedCameraPose) {
             Write-Host "[measure] $runName positioning fixed camera via MCP..."
             try {
@@ -2798,6 +3061,9 @@ function Measure-Variant {
         MotionCameraPoseVerified = -not $hasCameraMotion -or $null -ne $motionCameraReadback
         MotionCameraPoseReadback = $motionCameraReadback
         ProfileLights = $ProfileLights
+        DirectionalShadowLightNode = if ($hasDirectionalShadowResolution) { $DirectionalShadowLightNode } else { $null }
+        DirectionalShadowResolutionRequested = if ($hasDirectionalShadowResolution) { $DirectionalShadowResolution } else { $null }
+        DirectionalShadowResolutionReadback = $directionalShadowResolutionReadback
         ProfileViewport = $ProfileViewport
         RenderScale = $RenderScale
         WindowWidth = if ($WindowWidth -gt 0) { $WindowWidth } else { $null }
@@ -3262,6 +3528,13 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "VulkanDiagnosticPreset: $VulkanDiagnosticPreset"
     "VulkanCommandBufferLabels: $([bool]$VulkanCommandBufferLabels)"
     "Lights: $ProfileLights"
+    "DirectionalShadowResolution: $(if ($hasDirectionalShadowResolution) { "node='$DirectionalShadowLightNode' requested=${DirectionalShadowResolution}x${DirectionalShadowResolution}" } else { 'not configured by harness' })"
+    @($results | ForEach-Object {
+        if ($null -ne $_.DirectionalShadowResolutionReadback) {
+            $readback = $_.DirectionalShadowResolutionReadback
+            "DirectionalShadowResolutionReadback $($_.Strategy) r$($_.Repetition): node='$($readback.NodeName)' nodeId=$($readback.NodeId) componentId=$($readback.ComponentId) before=$($readback.BeforeWidth)x$($readback.BeforeHeight) applied=$($readback.Width)x$($readback.Height)"
+        }
+    })
     "Viewport: $ProfileViewport"
     "RenderScale: $RenderScale"
     "WindowSize: $(if ($WindowWidth -gt 0) { "${WindowWidth}x${WindowHeight}" } else { 'automatic' })"

@@ -27,11 +27,9 @@ public sealed class XRMeshShapeTests
         Vector3.Distance(mesh.Bounds.Max, new Vector3(1.5f, 2.5f, 4.75f))
             .ShouldBeLessThan(0.0001f);
 
-        foreach (var vertex in mesh.Vertices)
-        {
-            Vector3 normal = vertex.Normal.ShouldNotBeNull();
-            normal.Length().ShouldBe(1.0f, 0.0001f);
-        }
+        mesh.HasNormals.ShouldBeTrue();
+        for (uint vertexIndex = 0u; vertexIndex < (uint)mesh.VertexCount; vertexIndex++)
+            mesh.GetNormal(vertexIndex).Length().ShouldBe(1.0f, 0.0001f);
     }
 
     [Test]

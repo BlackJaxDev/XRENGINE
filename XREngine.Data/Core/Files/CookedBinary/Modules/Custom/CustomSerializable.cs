@@ -71,6 +71,7 @@ public static partial class CookedBinarySerializer
             return true;
         }
 
+#if !XRE_PUBLISHED
         public override CookedBinarySchemaNode? TryBuildValueSchema(CookedBinarySchemaBuilder builder, string name, Type? declaredType, object value, Type runtimeType, bool allowCustom)
         {
             if (!allowCustom)
@@ -111,5 +112,6 @@ public static partial class CookedBinarySerializer
             builder.AddCustomSchemaNode(node, type, $"opaque {payloadKind} payload");
             return builder.FinalizeNode(node, allowUnknownChildren: true);
         }
+#endif
     }
 }

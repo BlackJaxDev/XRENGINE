@@ -4,6 +4,33 @@ This document records bugs that were found and fixed in `DefaultRenderPipeline` 
 
 ---
 
+## Explicit Output Failure Policy
+
+`XRRenderPipelineInstance.PropagateCommandExceptions` lets an explicit frame
+producer require complete command authoring. When enabled, a command-container
+exception is retained while the authored pop/unbind sequence finishes, then
+aborts the invocation with its original stack. The
+presentationless production benchmark enables this policy before its first
+frame; a partial scene cannot produce an accepted submission receipt.
+Ordinary viewport recovery continues to isolate command failures by default.
+
+An exact offscreen completion reservation separately rejects required authoring
+failures. A window-free invocation with no output FBO or completion reservation
+must select the explicit failure policy rather than assume that reservation
+validation covers it.
+
+The GPU material table's CPU upload row must match the generated std430 layout.
+Four texture indices plus flags require three header-padding words before the
+first vec4, yielding 36 words/144 bytes for the opaque layout. Keep the size and
+stride guard enabled; a stale row definition otherwise prevents scene raster
+submission while ordinary command recovery can hide the original exception.
+
+Vulkan atlas index synchronization resolves cold mesh-version and index-buffer
+wrappers at the renderer facade before passing typed wrappers to command
+execution. The command runtime's retained wrapper lookup cannot create them.
+Deferred mesh publication and committed atlas bytes deliberately do not create
+backend wrappers; generating existing wrappers alone cannot satisfy first use.
+
 ## Resource Generation Lifecycle
 
 `DefaultRenderPipeline` declares stable pipeline-owned resources through
@@ -21,6 +48,18 @@ leaves the active generation rendering. Both OpenGL and Vulkan consume the same
 generation-owned descriptors; OpenGL creates concrete objects through the
 existing factories, while Vulkan stages a pending physical resource plan before
 swapping it into active renderer state.
+
+If a resize callback temporarily has no current or retained camera, preserve the
+last output's AO enablement and mode in its resource feature mask, including the
+required forward prepass. Recompute those fields when a camera becomes available;
+an explicitly disabled camera AO setting must not inherit the previous mode.
+
+Vulkan publication commits allocator ownership before retiring old physical
+resources. A retirement failure must not roll back the newly published allocator.
+Retire each eligible group independently and quarantine failed groups with their
+owners retained. Shared groups remain excluded from retirement. The retired
+generation count is a soft bound: absent, pending, or failed completion receipts
+must never be treated as permission to dispose resources still in use.
 
 Initial generations use the same bounded owner-thread materializer as
 replacements; they must not bypass slice limits merely because no active
@@ -40,6 +79,20 @@ Do not add new stable core render targets to cache commands without also adding
 them to the declared resource layout.
 
 Full contract: [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md).
+
+Every declared texture is materialized and allocated eagerly; nothing checks
+whether a pass uses it, and Vulkan aliasing is still disabled. Declarations must
+therefore follow the active passes through the resource feature mask:
+
+- `RvcRenderPipeline` declares its RVC targets, buffers and FBOs only while the
+  resolved RVC plan schedules GPU stages (`RvcResourcesEnabled`). `Off` and the
+  Forward+ oracle schedule none, so OpenXR eyes no longer carry about 0.8 GB of
+  unwritten two-layer targets; `VPRC_RvcPass` then describes no resources.
+- AO scratch targets follow the encoded AO mode: SSAO/MVAO/MSVO allocate the
+  shared raw target, HBAO+ and GTAO their own raw and blur targets.
+- The bloom chain is R11G11B10F. No bloom consumer reads alpha (the format
+  drops what the bloom copy passes through) and every consumer samples `.rgb`;
+  keep it that way or move bloom back to RGBA16F.
 
 ---
 
@@ -240,6 +293,28 @@ The non-stereo `HDRSceneTex` was created via `CreateFrameBufferTexture` which de
 
 - Both `DefaultRenderPipeline.Textures.cs` and `AdvancedRenderPipeline.Textures.cs`: added `t.Resizable = false` to the non-stereo HDR texture.
 - `GLTexture2D.ResolveMaxMipLevel` and `GLTexture2DArray.ResolveMaxMipLevel`: changed the mutable-texture fallback from `baseLevel` (0) to `naturalMaxLevel` (`SmallestMipmapLevel`) so `GL_TEXTURE_MAX_LEVEL` is correct even when immutable storage is not used.
+
+### Log-average exposure
+
+Mip-backed log-average metering uses a luminance floor of
+`max(meanLuminance * 0.25, 1e-4)` on OpenGL and Vulkan. A fixed near-zero floor
+lets black samples dominate the geometric mean and drive ordinary high-contrast
+scenes to maximum exposure despite valid HDR mip data. The relative floor
+preserves the geometric response while anchoring dark samples to the measured
+scene. It does not change authored exposure bounds or disable automatic
+exposure. Vulkan's mipless arithmetic fallback is a separate policy.
+
+OpenGL mono and array shaders cache at most 256 sampled luminances in shader-local
+storage to compute the arithmetic mean and regularized geometric mean without
+extra texture fetches. The array path retains its existing eye-combination
+order; this does not imply bitwise stereo parity across backends.
+
+All non-average OpenGL metering modes center the bounded sample positions in
+equal-area linear intervals across the selected mip. Quotient/remainder indexing
+avoids overflowing a texture-size-times-sample-index product and samples every
+texel exactly when there are at most 256. This prevents integer-stride truncation
+on non-divisible extents while preserving the fetch budget. It is deterministic
+quadrature and can still alias spatial patterns in row-major storage.
 
 ### Checklist for new textures
 
@@ -491,6 +566,10 @@ Forward shading reserves two directional shadow slots. `DirectionalShadowMaps[0.
 
 Cascaded directional shadows publish per-cascade effective bias values on the directional light struct (`CascadeBiasMin`, `CascadeBiasMax`, `CascadeReceiverOffsets`). Automatic values are derived from the light's texel bias controls plus cascade texel size, light-space depth span, and shadow-map resolution. `CascadeBiasMin` is the constant depth floor, `CascadeBiasMax` is the slope scale in texels, and `CascadeReceiverOffsets` is the world-space normal offset.
 
+**Rule:** Never copy `CascadeBiasMax` (or `RenderedSplitBlendBias.w`) into a consumer that expects normalized depth. Raster receivers resolve the texel slope scale with screen-space derivatives. `AdvancedGlobalResourceCapture` converts it for native shading into normalized depth per authored texel, using the rendered orthographic light matrix and the atlas resolution scale. `StandardShadow.glslinc` multiplies that by the receiver's `tan(theta)`, clamped near 84 degrees. Copying the raw texel count (default `2.0`) as a depth bias pushes every receiver in front of every occluder, which removes all Advanced directional shadows.
+
+The native slope term follows the stored depth, not the shading. It uses the reconstructed triangle plane (`XRAdvancedSurface.geometricNormal`) with `|cos(theta)|`, so a plane facing away from the light keeps its true slope. Clamping `N.L` to zero would treat back-facing receivers as grazing and lift them through thin occluders such as arch soffits. The footprint is `sqrt(2) * (radius + 0.5)` texels, covering the diagonal 3x3 PCF taps and half-texel receiver quantization.
+
 Forward cascade receivers must not sample the last cascade after the view-space depth has passed that cascade's far split. The last cascade fades to the contact/lit fallback over its configured blend width, and fragments beyond the final split use the same fallback instead of reading undefined/stale far-cascade depth.
 
 Live forward and deferred shadow receivers use three user-facing bias controls: `ShadowDepthBiasTexels`, `ShadowSlopeBiasTexels`, and `ShadowNormalBiasTexels`. The shaders convert those texel values to the active shadow map, cascade, atlas tile, spot projection, or cubemap face instead of relying on fixed absolute compare-bias numbers.
@@ -655,11 +734,17 @@ prediction; a matching unrelated neighbor must not admit a wider color filter.
 Current and historical surface selection use the same footprint. Logical
 clip-depth/reversed-depth conventions and per-eye jitter/matrices travel with
 the temporal snapshot. A depth-convention change invalidates history.
-Advanced TSR reads a dedicated draw snapshot captured at temporal Begin, after
-both eyes have been populated. Commit advances the general history state without
+TAA and TSR read an explicit pipeline-owned draw snapshot captured after
+both eyes have been populated. TAA refreshes exposure readiness before enqueueing
+its resolve. Commit advances the general history state without
 replacing this resolve's preceding matrices or jitter; explicit reset and missing
 snapshot handling also invalidate the resolve snapshot. Deferred Vulkan bindings
 must consume this frame pair before the next Begin for the same pipeline instance.
+For desktop outputs with an authoritative logical history sequence, any invalid
+matching logical view also invalidates accumulation before jitter generation.
+CPU authoring of a subsequently rejected submission cannot make history reusable
+on the first resumed frame. The existing coverage tracker reseeds it after
+recovery. Untracked stereo views do not use this desktop validity gate.
 Projected-depth slopes are limited at local extrema and predictions outside
 the previous clip volume reject history. Camera-only depth prediction is not
 valid for arbitrary independent object motion; disagreement with motion-vector
@@ -814,6 +899,39 @@ OpenGL `TexSubImage2D` upload paths must validate allocated storage, mip level, 
 
 Runtime-managed imported-texture promotions are chunked for CPU-pointer mips where the format allows row uploads. Partial rows stay hidden by clamping the sampled mip range until the mip is complete. Pending transitions carry queue timing and are coalesced when the target residency/page selection is unchanged.
 
+OpenGL repeats row chunks within the shared frame byte and measured-upload-time
+budgets, charging actual transferred bytes in the backend rather than the full
+mip on every callback. Indivisible formats may consume one native upload before
+yielding. The two progressive slots have exact work-item owners; active owners
+do not block free slots through waiting priority. Local and runtime-managed
+registrations participate in the same ordering, and stale cleanup cannot
+release a newer owner's slot. Advanced material admission remains strict until
+uploads finish; an implicit placeholder must not replace required texture data.
+
+OpenGL sparse residency transitions must enter through the same bindless
+parameter guard as dense uploads. Existing sampler-pair leases retire before
+native storage can be recreated; a deferred admission keeps the decoded request
+and retries within the existing scheduling budget. Link the texture wrapper
+before gating new handle acquisition so first-use upload callbacks remain
+available. Pending imported transitions and queued or submitted sparse uploads
+prevent new handles from freezing their sampling range.
+
+An asynchronous sparse upload retains its exact native texture and fence owner
+through finalization or cancellation. Cancellation retires the fence through
+that originating wrapper; it must not resolve cleanup through the ambient
+renderer or release unsignaled storage. Sparse mip/sampler metadata and content
+generation publish together under the imported-source metadata transaction.
+Budget accounting charges an accepted upload once, not each deferred retry.
+
+Sparse resident storage already applies its absolute base mip when sampling.
+Canonical sampler LOD clamps are relative to that exposed chain; adding the
+absolute base again discards available detail. When a frozen native identity
+is retired and its retained CPU mip chain is uploaded densely, publish the
+zero-based resident range and canonical content generation in one imported-source
+metadata transaction. Preserve authored LOD limits and any narrower maximum
+range. Native retirement triggered by a property notification joins the existing
+transaction rather than temporarily exposing an even metadata epoch mid-write.
+
 During active imports, textures bound by material uniform setup can act as a fallback priority source before a visibility snapshot exists. Related textures on the same material get a small shared residency floor so albedo, normal, and roughness detail tiers do not diverge obviously during startup.
 
 Visible preview loads are prioritized ahead of high-res promotions. Non-critical promotions are delayed while any visible or recently-bound texture lacks a resident preview. Superseded resident data is kept in a short-lived reuse cache keyed by authority path, source timestamp/length, requested resident dimension, mip-chain flag, and the current cooked payload format so canceled sparse/tiered transitions can reuse CPU-prepared mips instead of decoding the same source repeatedly.
@@ -823,6 +941,37 @@ Preview paths that cannot provide their intended texture must bind an explicit r
 Texture uploads and shadow atlas tile rendering publish queue and budget counters through the shared render-work budget coordinator. Profiler FPS-drop and render-stall logs include those counters, and the shadow atlas can defer lower-priority tiles when urgent visible texture repair is pending. Startup boost is bounded by frame/time limits so it cannot turn into multi-second starvation.
 
 The ImGui Texture Streaming panel shows tracked textures with backend, committed bytes, priority, queue wait, last upload duration, visibility, pending state, pressure-demotion state, and validation-failure state. Use **Dump Summary** from that panel to force an immediate `Texture.VramSummary` event.
+
+### Resident pixels, budget and quality
+
+- **Pixels after upload (Vulkan).** When a Vulkan dense publication completes
+  for a texture with a streaming source, the manager clears `Data` on each mip of
+  the chain it applied. Mip dimensions and formats stay, `Mipmaps` is not
+  reassigned and the image is not recreated. A renderer restart restores the
+  published generation by reloading that chain from the streaming source on a
+  worker; cooked writes and browser export reload it synchronously
+  (`XRTexture2D.TryRestoreReleasedResidentPixels`). OpenGL keeps the pixels
+  because it uploads progressively from them. `ImportedTextureStreamingManager.DescribeResidentPixelRelease`
+  reports released bytes and rehydrations.
+- **A preview load is never canceled by a hold.** A texture without its preview
+  that the policy only holds (not visible or bound this frame) queues nothing.
+  The budget fit used to raise that hold to the 1-pixel minimum, which canceled
+  the preview load in flight; under flickering visibility the two loads canceled
+  each other indefinitely, each one re-decoding the full source image.
+- **Failed and deferred promotions cool down from completion.** A failed
+  transition's cooldown starts at the frame it ended, not the frame it was
+  queued, and an allocator-pressure deferral holds promotions to that size for
+  one cooldown.
+- **Budget.** Streaming fits resident textures into the smaller of `VramBudgetMB`
+  and what the device-local heap budget (VMA, `VK_EXT_memory_budget`) times
+  `VramBudgetHeapFraction` (default 0.84, less a 768 MB reserve) leaves after
+  every other Vulkan allocation.
+- **Quality.** The user `TextureQuality` caps resident size at 4096, 2048, 1024
+  and 512 texels for High, Medium, Low and Lowest; Highest leaves the policy's
+  size. Full screen coverage no longer forces the source size; the projected
+  span, role and UV-density terms decide.
+- **Reuse cache.** Entries own their copies, are disposed on eviction and expire
+  every 600 collect frames even without further access.
 
 ---
 

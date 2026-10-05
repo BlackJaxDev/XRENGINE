@@ -49,6 +49,9 @@ namespace XREngine.Data
                 }
             }
 
+            Runtime.AotParity.AotParityDiagnostics.Report(type,
+                Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                nameof(OverrideableSettingYamlTypeConverter), "Load settings through the generated cooked settings contract on the player path.");
             object? instance = Activator.CreateInstance(type);
             if (instance is IOverrideableSetting overrideable)
             {

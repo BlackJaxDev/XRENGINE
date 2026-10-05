@@ -201,7 +201,10 @@ public sealed class ControlPlaneTests
         File.WriteAllText(Path.Combine(sourceRoot, "world.xrworld"), "world");
         File.WriteAllText(Path.Combine(sourceRoot, "Scenes", "main.xrscene"), "scene");
 
-        WorldPackageManifest manifest = WorldPackageManifestBuilder.CreateFromDirectory(sourceRoot, CreateWorldAsset(contentHash: string.Empty));
+        WorldPackageManifest manifest = WorldPackageManifestBuilder.CreateFromDirectory(
+            sourceRoot,
+            CreateWorldAsset(contentHash: string.Empty),
+            worldEntryPoint: "world.xrworld");
         manifest.Files.Count.ShouldBe(2);
         manifest.ManifestHash.ShouldStartWith("sha256:");
         manifest.Asset.ContentHash.ShouldStartWith("sha256:");

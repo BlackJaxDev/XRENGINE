@@ -80,6 +80,17 @@ public partial class OpenGLRenderer
         }
         if (!TryValidateAdvancedSampler(in sampler, out reason))
             return false;
+        // Linking installs the imported texture's progressive-upload callbacks.
+        // It does not allocate native storage or acquire a bindless handle.
+        _ = GetOrCreateAPIRenderObject(texture, generateNow: false);
+        // A pending imported transition owns the canonical texture until its
+        // sparse fence or dense upload has published. Check before Bind can
+        // prepare a new handle and freeze the old sampling range.
+        if (HasPendingImportedTextureTransition(texture))
+        {
+            reason = "The imported texture has a pending residency transition.";
+            return false;
+        }
         if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not GLObjectBase glObject ||
             glObject is not IGLTexture glTexture || glObject is not IGLBindlessTexture bindlessTexture ||
             !IsSupportedAdvancedTexturePair(texture, glObject, glTexture.TextureTarget))
@@ -88,9 +99,14 @@ public partial class OpenGLRenderer
             return false;
         }
 
+        if (glObject is GLTexture2D texture2D && texture2D.HasPendingSparseAsyncWork)
+        {
+            reason = "A sparse texture upload still owns the native identity.";
+            return false;
+        }
         bindlessTexture.PrepareForBindlessHandle();
         glTexture.Bind();
-        if (!bindlessTexture.IsReadyForBindlessHandle())
+        if (HasPendingImportedTextureTransition(texture) || !bindlessTexture.IsReadyForBindlessHandle())
         {
             reason = "The texture still has a pending sampling-parameter transition.";
             return false;
@@ -128,6 +144,12 @@ public partial class OpenGLRenderer
         reason = "Ready";
         return true;
     }
+
+    private static bool HasPendingImportedTextureTransition(XRTexture texture)
+        => texture is XRTexture2D texture2D
+            && ImportedTextureStreamingManager.Instance.TryGetGenerationState(
+                texture2D, out _, out _, out _, out bool pending)
+            && pending;
 
     internal void ReleaseAdvancedBindlessTextureSamplerHandle(ulong handle)
     {

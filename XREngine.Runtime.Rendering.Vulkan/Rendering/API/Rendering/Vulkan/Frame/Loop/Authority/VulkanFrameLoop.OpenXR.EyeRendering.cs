@@ -1,5 +1,6 @@
 using Silk.NET.Vulkan;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -1205,9 +1206,14 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
-        FrameOp[] combined = new FrameOp[firstEye.Ops.Length + secondEye.Ops.Length];
-        CopyLogicalOperationsWithoutNativeTargets(firstEye.Ops, combined, 0);
-        CopyLogicalOperationsWithoutNativeTargets(secondEye.Ops, combined, firstEye.Ops.Length);
+        // Both eyes' operations are lowered as one borrowed logical cohort:
+        // lowering strips their native output framebuffers and leaves their
+        // leases with the prepared eyes, so no operation is cloned. The pooled
+        // array only concatenates the two borrowed references.
+        int combinedCount = firstEye.Ops.Length + secondEye.Ops.Length;
+        FrameOp[] combined = ArrayPool<FrameOp>.Shared.Rent(combinedCount);
+        firstEye.Ops.CopyTo(combined, 0);
+        secondEye.Ops.CopyTo(combined, firstEye.Ops.Length);
         ResourcePlannerRuntimeState firstPlannerState = firstEye.PlannerState;
         ResourcePlannerRuntimeState secondPlannerState = secondEye.PlannerState;
         try
@@ -1226,7 +1232,9 @@ internal sealed partial class VulkanFrameLoop
                     _resourceRuntime.BackendObjectContext,
                     SecondarySwitchingState:
                         secondPlannerState.FrameOpResourcePlannerSwitchingState),
-                openXrImagesAcquired: true);
+                openXrImagesAcquired: true,
+                authoringOperationCount: combinedCount,
+                borrowedLogicalOperations: true);
             plan.PrepareRecordingPlannerGenerations(
                 in firstPlannerState,
                 in secondPlannerState);
@@ -1244,7 +1252,7 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
-            VulkanAdvancedVisibilityInputLease.ReleaseOperations(combined);
+            ArrayPool<FrameOp>.Shared.Return(combined, clearArray: true);
         }
     }
 
@@ -1260,55 +1268,6 @@ internal sealed partial class VulkanFrameLoop
             if (operations[index].Context.LogicalViewId != logicalViewId)
                 return 0UL;
         return logicalViewId;
-    }
-
-    private static void CopyLogicalOperationsWithoutNativeTargets(
-        FrameOp[] source,
-        FrameOp[] destination,
-        int destinationIndex)
-    {
-        for (int index = 0; index < source.Length; index++)
-            destination[destinationIndex + index] = source[index];
-
-        ClearLogicalOperationNativeTargets(
-            destination.AsSpan(destinationIndex, source.Length));
-    }
-
-    /// <summary>
-    /// Removes native framebuffer authority from an already captured logical
-    /// operation cohort. The stable output-target identity remains intact so
-    /// planner ownership and the eventual native target seal cannot diverge.
-    /// </summary>
-    private static void ClearLogicalOperationNativeTargets(Span<FrameOp> operations)
-    {
-        int clonedCount = 0;
-        try
-        {
-        for (int index = 0; index < operations.Length; index++)
-        {
-            FrameOp operation = operations[index];
-            FrameOpContext context = operation.Context with
-            {
-                // OutputTargetIdentity names the stable per-view resource-plan owner;
-                // it deliberately excludes the acquired runtime image. Retaining it
-                // is required to resolve the exact frozen left/right planner plans.
-                OutputFrameBufferIdentity = 0,
-                OutputFrameBufferName = null,
-                OutputFrameBuffer = null,
-            };
-            FrameOp copy = operation.CreateSealedAuthoringCopy();
-            copy.Context = context;
-            operations[index] = copy;
-            clonedCount++;
-        }
-        }
-        catch
-        {
-            VulkanAdvancedVisibilityInputLease.ReleaseOperations(operations[..clonedCount]);
-            // Uncloned entries are borrowed from the prepared-eye owner.
-            operations.Clear();
-            throw;
-        }
     }
 
     private PrimaryCommandArtifactOwner GetOrCreateOpenXrPrimaryCommandBufferOwner(
@@ -1337,29 +1296,25 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
-        FrameOp[] logicalOperations = new FrameOp[eye.Ops.Length];
-        CopyLogicalOperationsWithoutNativeTargets(
-            eye.Ops,
-            logicalOperations,
-            destinationIndex: 0);
         try
         {
-            // This single-eye path has no later consumer of its producer
-            // operations. Strip native framebuffer authority before sealing so
-            // it has the same logical/native split as the paired-eye path.
+            // Lower the eye's operations as a borrowed logical cohort without
+            // native framebuffer authority, the same logical/native split as
+            // the paired-eye path.
             plan = _framePlanner.FramePlanBuilder.BuildAndSeal(
                 frameSlot: 0,
                 eye.PlannerRevision,
                 eye.FrameOpsSignature,
                 dynamicOverlaySignature: 0UL,
-                logicalOperations,
+                eye.Ops,
                 Array.Empty<FrameOp>(),
                 new VulkanFramePlanRenderGraphAuthority(
                     eye.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan,
                     eye.PlannerState.FrameOpResourcePlannerSwitchingState,
                     _framePlanner,
                     _resourceRuntime.BackendObjectContext),
-                openXrImagesAcquired: true);
+                openXrImagesAcquired: true,
+                borrowedLogicalOperations: true);
             ResourcePlannerRuntimeState recordingPlannerState = eye.PlannerState;
             plan.PrepareRecordingPlannerGenerations(in recordingPlannerState);
             return true;
@@ -1373,10 +1328,6 @@ internal sealed partial class VulkanFrameLoop
                 ex.Message);
             plan = null!;
             return false;
-        }
-        finally
-        {
-            VulkanAdvancedVisibilityInputLease.ReleaseOperations(logicalOperations);
         }
     }
 

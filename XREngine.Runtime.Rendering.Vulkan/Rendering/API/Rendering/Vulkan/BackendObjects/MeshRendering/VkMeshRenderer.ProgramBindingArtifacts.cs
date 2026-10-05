@@ -28,6 +28,11 @@ internal unsafe partial class VkMeshRenderer
     private ComputeDispatchSnapshot? _fastPersistentArtifact;
     private bool _hasFastPersistentArtifact;
 
+    // Programs holding a cross-frame slot keyed by this renderer. Shared programs outlive
+    // the renderer, so the slots are released when the renderer unlinks.
+    private readonly HashSet<VkRenderProgram> _persistentArtifactPrograms = [];
+    private readonly Lock _persistentArtifactProgramsSync = new();
+
     /// <summary>
     /// Reuses the renderer-local artifact after validating only the mutable owner
     /// generations. Eligibility and the program-wide cache lookup were already
@@ -307,6 +312,29 @@ internal unsafe partial class VkMeshRenderer
                 meshPublishers);
         _fastPersistentArtifact = artifact;
         _hasFastPersistentArtifact = true;
+        using (_persistentArtifactProgramsSync.EnterScope())
+            _persistentArtifactPrograms.Add(program);
+    }
+
+    /// <summary>
+    /// Removes this renderer's slots from every program it published into and drops the
+    /// renderer-local fast slot, so unlinking does not leave a shared program holding the
+    /// renderer's materials and the scene objects they reference.
+    /// </summary>
+    private void ReleasePersistentProgramBindingArtifacts()
+    {
+        using (_persistentArtifactProgramsSync.EnterScope())
+        {
+            foreach (VkRenderProgram program in _persistentArtifactPrograms)
+                program.ReleasePersistentProgramBindingArtifacts(MeshRenderer);
+            _persistentArtifactPrograms.Clear();
+        }
+
+        _hasFastPersistentArtifact = false;
+        _fastPersistentArtifactMaterial = null;
+        _fastPersistentArtifactProgram = null;
+        _fastPersistentArtifactPublisherGenerations = null;
+        _fastPersistentArtifact = null;
     }
 
     /// <summary>

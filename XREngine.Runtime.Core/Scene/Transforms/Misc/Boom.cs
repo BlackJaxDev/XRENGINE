@@ -20,6 +20,11 @@ namespace XREngine.Components.Scene.Transforms
         private float _zoomOutSpeed = 10.0f;
         private IPhysicsGeometry.Sphere _traceSphere = new(0.2f);
         private bool _zoomOutAffectedByTimeDilation = true;
+        private bool _automaticUpdate = true;
+
+        /// <summary>Disable when a coherent camera owner explicitly evaluates the boom after its anchor.</summary>
+        public bool AutomaticUpdate { get => _automaticUpdate; set => SetField(ref _automaticUpdate, value); }
+        public float CurrentLength => _currentLength;
 
         /// <summary>
         /// How big the trace sphere is.
@@ -122,6 +127,15 @@ namespace XREngine.Components.Scene.Transforms
 
         private void Tick()
         {
+            if (AutomaticUpdate)
+                Evaluate(ZoomOutAffectedByTimeDilation
+                    ? RuntimeTransformServices.Current?.DilatedUpdateDeltaSeconds ?? 0f
+                    : RuntimeTransformServices.Current?.UndilatedUpdateDeltaSeconds ?? 0f);
+        }
+
+        /// <summary>Runs the existing sphere sweep, snapping inward and exponentially recovering outward.</summary>
+        public void Evaluate(float deltaSeconds, bool reset = false)
+        {
             float newLength;
             lock (_traceOutput)
             {
@@ -155,15 +169,16 @@ namespace XREngine.Components.Scene.Transforms
                 }
             }
 
-            if (float.IsNaN(newLength))
+            if (!float.IsFinite(newLength))
                 return;
 
-            if (newLength < _currentLength)
+            newLength = Math.Clamp(newLength, 0f, Math.Max(0f, MaxLength));
+
+            if (reset || newLength < _currentLength)
                 _currentLength = newLength; //Moving closer to the character, meaning something is obscuring the view. Need to jump to the right position.
             else //Nothing is now obscuring the view, so we can lerp out quickly to give the appearance of a clean camera zoom out
-                _currentLength = Interp.Lerp(_currentLength, newLength, ZoomOutAffectedByTimeDilation
-                    ? RuntimeTransformServices.Current?.DilatedUpdateDeltaSeconds ?? 0.0f
-                    : RuntimeTransformServices.Current?.UndilatedUpdateDeltaSeconds ?? 0.0f, ZoomOutSpeed);
+                _currentLength = Interp.Lerp(_currentLength, newLength,
+                    1f - MathF.Exp(-Math.Max(0f, ZoomOutSpeed) * Math.Max(0f, float.IsFinite(deltaSeconds) ? deltaSeconds : 0f)));
 
             MarkLocalModified();
             CurrentDistanceChanged?.Invoke(_currentLength);

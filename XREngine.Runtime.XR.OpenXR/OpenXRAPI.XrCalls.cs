@@ -377,6 +377,13 @@ public unsafe partial class OpenXRAPI
     private bool LocateViews(OpenXrPoseTiming timing)
     {
         AssertOpenXrRenderThread(nameof(LocateViews));
+        lock (_openXrPoseLock)
+        {
+            if (timing == OpenXrPoseTiming.Late)
+                _openXrLateHeadValid = false;
+            else
+                _openXrPredHeadValid = false;
+        }
         var displayTime = ResolveOpenXrPoseDisplayTime(timing);
 
         var viewLocateInfo = new ViewLocateInfo
@@ -394,6 +401,7 @@ public unsafe partial class OpenXRAPI
             var viewsSpan = new Span<View>(viewsPtr, (int)_viewCount);
             if (CheckResult(Api.LocateView(_session, &viewLocateInfo, &viewState, &viewCountOutput, viewsSpan), "xrLocateViews") != Result.Success)
             {
+                Volatile.Write(ref _openXrLatestViewTrackingValid, 0);
                 Debug.LogWarning("Failed to locate OpenXR views.");
                 return false;
             }
@@ -505,6 +513,12 @@ public unsafe partial class OpenXRAPI
         var l = _views[0].Pose;
         var r = _views[1].Pose;
 
+        if (!IsFiniteTrackedViewPose(l) || !IsFiniteTrackedViewPose(r))
+        {
+            Volatile.Write(ref _openXrLatestViewTrackingValid, 0);
+            return;
+        }
+
         var lPos = new System.Numerics.Vector3(l.Position.X, l.Position.Y, l.Position.Z);
         var rPos = new System.Numerics.Vector3(r.Position.X, r.Position.Y, r.Position.Z);
         var centerPos = (lPos + rPos) * 0.5f;
@@ -564,22 +578,34 @@ public unsafe partial class OpenXRAPI
 
             if (timing == OpenXrPoseTiming.Late)
             {
+                _openXrLateHeadValid = Volatile.Read(ref _openXrLatestViewTrackingValid) != 0;
                 _openXrLateLeftEyeLocalPose = lRotM;
                 _openXrLateRightEyeLocalPose = rRotM;
                 _openXrLateHeadLocalPose = headLocal;
+                _openXrLateHeadTrackingValid = Volatile.Read(ref _openXrLatestViewTrackingValid) != 0;
                 _openXrLateLeftEyeFov = leftFov;
                 _openXrLateRightEyeFov = rightFov;
             }
             else
             {
+                _openXrPredHeadValid = Volatile.Read(ref _openXrLatestViewTrackingValid) != 0;
                 _openXrPredLeftEyeLocalPose = lRotM;
                 _openXrPredRightEyeLocalPose = rRotM;
                 _openXrPredHeadLocalPose = headLocal;
+                _openXrPredHeadTrackingValid = Volatile.Read(ref _openXrLatestViewTrackingValid) != 0;
                 _openXrPredLeftEyeFov = leftFov;
                 _openXrPredRightEyeFov = rightFov;
             }
         }
         RecordSmokeViewPoseCache(timing);
+    }
+
+    private static bool IsFiniteTrackedViewPose(Posef pose)
+    {
+        float lengthSquared = pose.Orientation.X * pose.Orientation.X + pose.Orientation.Y * pose.Orientation.Y
+            + pose.Orientation.Z * pose.Orientation.Z + pose.Orientation.W * pose.Orientation.W;
+        return float.IsFinite(pose.Position.X) && float.IsFinite(pose.Position.Y) && float.IsFinite(pose.Position.Z)
+            && float.IsFinite(lengthSquared) && lengthSquared > 1e-12f;
     }
 
     internal static void CreatePhase524bDeterministicRuntimePoseBasis(
@@ -613,6 +639,7 @@ public unsafe partial class OpenXRAPI
             {
                 _openXrPredictedViewCount = count;
                 _openXrPredictedViewFrameNumber = frameNo;
+                _openXrPredictedViewSampleTime = ResolveOpenXrPoseDisplayTime(OpenXrPoseTiming.Predicted);
             }
         }
     }
@@ -622,8 +649,22 @@ public unsafe partial class OpenXRAPI
     /// </summary>
     private void PollEvents()
     {
-        if (_instance.Handle == 0)
+        if (_instance.Handle == 0 ||
+            Interlocked.CompareExchange(ref _deferredOpenGlSessionCreationPending, -1, 0) != 0)
             return;
+
+        try
+        {
+            PollEventsCore();
+        }
+        finally
+        {
+            Interlocked.CompareExchange(ref _deferredOpenGlSessionCreationPending, 0, -1);
+        }
+    }
+
+    private void PollEventsCore()
+    {
 
         // OpenXR requires the input buffer's Type be set to EventDataBuffer.
         // The runtime then overwrites the same memory with the specific event struct.
@@ -700,6 +741,21 @@ public unsafe partial class OpenXRAPI
                 case StructureType.EventDataViveTrackerConnectedHtcx:
                     HandleViveTrackerConnectedEvent((EventDataViveTrackerConnectedHTCX*)eventDataPtr);
                     break;
+                case StructureType.EventDataInteractionProfileChanged:
+                    _controllerProfilesDirty = true;
+                    EnumerateViveTrackerPaths();
+                    break;
+                case StructureType.EventDataReferenceSpaceChangePending:
+                    {
+                        var change = (EventDataReferenceSpaceChangePending*)eventDataPtr;
+                        if (change->Session.Handle == _session.Handle && change->ReferenceSpaceType == ReferenceSpaceType.Local)
+                        {
+                            _openXrPendingReferenceSpaceChangeTime = change->ChangeTime;
+                            RuntimeEngine.VRState.NotifyTrackingBasisChanged();
+                            Debug.Out("OpenXR: reference space change reported; avatar tracking basis needs recalibration.");
+                        }
+                    }
+                    break;
                 default:
                     if (eventData.Type.ToString().Contains("VisibilityMask", StringComparison.OrdinalIgnoreCase))
                         InvalidateOpenXrRvcVisibilityMasks($"OpenXR runtime reported {eventData.Type}; RVC visibility masks must be reacquired.");
@@ -723,9 +779,13 @@ public unsafe partial class OpenXRAPI
         ClearOpenXrCollectVisiblePrepThread();
         StopOpenXrParallelCollectWorkers();
 
-        if (Window is not null && _deferredOpenGlInit is not null)
-            Window.RenderViewportsCallback -= _deferredOpenGlInit;
-        _deferredOpenGlInit = null;
+        lock (_deferredOpenGlSessionCreationLock)
+        {
+            if (Window is not null && _deferredOpenGlInit is not null)
+                Window.RenderViewportsCallback -= _deferredOpenGlInit;
+            _deferredOpenGlInit = null;
+            Interlocked.CompareExchange(ref _deferredOpenGlSessionCreationPending, 0, 1);
+        }
 
         // Break viewport/camera links.
         if (ReferenceEquals(RuntimeEngine.VRState.LeftEyeViewport, _openXrLeftViewport))

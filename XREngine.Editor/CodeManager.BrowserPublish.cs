@@ -143,7 +143,11 @@ internal partial class CodeManager
             if (!File.Exists(packagedProject) ||
                 !File.Exists(Path.Combine(packagedRoot, "Directory.Build.props")) ||
                 !File.Exists(Path.Combine(packagedRoot, "Build", "Portable", "PortableProjects.tsv")) ||
-                !File.Exists(Path.Combine(packagedRoot, "Tools", "Generate-AotFactoryRegistrations.ps1")))
+                !File.Exists(Path.Combine(packagedRoot, "Tools", "Generate-AotFactoryRegistrations.ps1")) ||
+                !File.Exists(Path.Combine(packagedRoot, "Build", "Registration", "RuntimeContracts.props")) ||
+                !File.Exists(Path.Combine(packagedRoot, "Build", "Registration", "RuntimeContractSchemas.txt")) ||
+                !File.Exists(Path.Combine(packagedRoot, "XREngine.SourceGenerators", "XREngine.SourceGenerators.csproj")) ||
+                !File.Exists(Path.Combine(packagedRoot, "XREngine.SourceGenerators", "AnalyzerReleases.Unshipped.md")))
                 throw new FileNotFoundException("BrowserPublisher.PayloadIncomplete: the packaged Editor browser publishing payload is incomplete.", packagedProject);
             BrowserPublisherPayloadManifest.Validate(packagedRoot);
             return packagedProject;

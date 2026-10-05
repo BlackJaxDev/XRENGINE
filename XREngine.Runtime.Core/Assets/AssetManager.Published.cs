@@ -4,12 +4,17 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Data.Runtime.AotParity;
 using XREngine.Diagnostics;
 
 namespace XREngine
 {
     public partial class AssetManager
     {
+        /// <summary>
+        /// Assigns the archives for the three published content roots. Each archive opens once on
+        /// first use and stays open until the root is reconfigured or the runtime shuts down.
+        /// </summary>
         public static void ConfigurePublishedArchives(
             string? configArchivePath,
             string? gameContentArchivePath,
@@ -22,43 +27,35 @@ namespace XREngine
             _publishedConfigArchivePath = NormalizeExistingArchivePath(configArchivePath);
             _publishedGameContentArchivePath = NormalizeExistingArchivePath(gameContentArchivePath);
             _publishedEngineContentArchivePath = NormalizeExistingArchivePath(engineContentArchivePath);
+
+            PublishedArchiveRegistry.ConfigureRoot(EPublishedContentRoot.Config, _publishedConfigArchivePath);
+            PublishedArchiveRegistry.ConfigureRoot(EPublishedContentRoot.GameContent, _publishedGameContentArchivePath);
+            PublishedArchiveRegistry.ConfigureRoot(EPublishedContentRoot.CommonAssets, _publishedEngineContentArchivePath);
         }
 
-        [RequiresUnreferencedCode("Cooked asset loading from archives uses reflection and requires runtime metadata.")]
-        [RequiresDynamicCode("Cooked asset loading from archives uses reflection and cannot be fully AOT-analyzed.")]
-        private static bool TryLoadPublishedAssetFromArchive<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
+        /// <summary>Closes every published archive. Called when content is swapped or the runtime shuts down.</summary>
+        public static void ClosePublishedArchives()
+            => PublishedArchiveRegistry.Reset();
+
+        private static bool TryLoadPublishedAssetFromArchive<T>(
             string filePath,
             [NotNullWhen(true)] out T? asset) where T : XRAsset, new()
         {
             asset = default;
-
-            if (!TryResolvePublishedArchiveRequest(filePath, out string? archivePath, out string? archiveAssetPath))
-                return false;
-
-            foreach (var (candidateArchivePath, candidateAssetPath) in EnumeratePublishedArchiveRequests(filePath))
+            if (TryLoadPublishedAssetFromArchive(filePath, typeof(T), out XRAsset? loaded) && loaded is T typed)
             {
-                try
-                {
-                    byte[] cookedBytes = AssetPacker.GetAsset(candidateArchivePath, candidateAssetPath);
-                    object? loaded = CookedAssetReader.LoadAsset(cookedBytes, typeof(T));
-                    asset = loaded as T;
-                    if (asset is not null)
-                        return true;
-                }
-                catch (FileNotFoundException)
-                {
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"Failed to load published asset '{candidateAssetPath}' from '{candidateArchivePath}': {ex.Message}");
-                }
+                asset = typed;
+                return true;
             }
 
             return false;
         }
 
-        [RequiresUnreferencedCode("Cooked asset loading from archives uses reflection and requires runtime metadata.")]
-        [RequiresDynamicCode("Cooked asset loading from archives uses reflection and cannot be fully AOT-analyzed.")]
+        /// <summary>
+        /// Loads a cooked asset from the published archives through the long-lived archive handles.
+        /// The payload is leased, never copied into a transient array, and deserialized through the
+        /// published reader, which performs no reflection.
+        /// </summary>
         private static bool TryLoadPublishedAssetFromArchive(
             string filePath,
             Type expectedType,
@@ -66,61 +63,58 @@ namespace XREngine
         {
             asset = null;
 
-            if (!TryResolvePublishedArchiveRequest(filePath, out _, out _))
-                return false;
-
-            foreach (var (candidateArchivePath, candidateAssetPath) in EnumeratePublishedArchiveRequests(filePath))
-            {
-                try
-                {
-                    byte[] cookedBytes = AssetPacker.GetAsset(candidateArchivePath, candidateAssetPath);
-                    asset = CookedAssetReader.LoadAsset(cookedBytes, expectedType) as XRAsset;
-                    if (asset is not null)
-                        return true;
-                }
-                catch (FileNotFoundException)
-                {
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"Failed to load published asset '{candidateAssetPath}' from '{candidateArchivePath}': {ex.Message}");
-                }
-            }
-
-            return false;
-        }
-
-        private static bool TryResolvePublishedArchiveRequest(string filePath, out string archivePath, out string archiveAssetPath)
-        {
-            archivePath = string.Empty;
-            archiveAssetPath = string.Empty;
-
             if (!XRRuntimeEnvironment.IsPublishedBuild)
                 return false;
 
             if (!string.Equals(Path.GetExtension(filePath), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase))
                 return false;
 
-            foreach (var (candidateArchivePath, candidateAssetPath) in EnumeratePublishedArchiveRequests(filePath))
+            Span<EPublishedContentRoot> rootOrder = stackalloc EPublishedContentRoot[3];
+            int rootCount = ResolvePublishedRootOrder(filePath, rootOrder);
+            if (rootCount == 0)
+                return false;
+
+            using AotParityPlayerPathScope parityScope = AotParityDiagnostics.EnterPlayerPath(EAotParityPlayerPathKind.PublishedContentLoad);
+
+            List<string> assetPathCandidates = CollectArchiveAssetPathCandidates(filePath);
+            for (int rootIndex = 0; rootIndex < rootCount; rootIndex++)
             {
-                archivePath = candidateArchivePath;
-                archiveAssetPath = candidateAssetPath;
-                return true;
+                if (!PublishedArchiveRegistry.TryGetRoot(rootOrder[rootIndex], out PublishedArchiveHandle handle))
+                    continue;
+
+                for (int candidateIndex = 0; candidateIndex < assetPathCandidates.Count; candidateIndex++)
+                {
+                    string candidateAssetPath = assetPathCandidates[candidateIndex];
+                    if (!handle.TryFindEntry(candidateAssetPath, out int entryIndex))
+                        continue;
+
+                    try
+                    {
+                        CookedPayloadLease lease = handle.ReadEntry(entryIndex);
+                        try
+                        {
+                            asset = PublishedCookedAssetReader.LoadAsset(lease.Span, expectedType) as XRAsset;
+                        }
+                        finally
+                        {
+                            lease.Dispose();
+                        }
+
+                        if (asset is not null)
+                            return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"Failed to load published asset '{candidateAssetPath}' from '{handle.FilePath}': {ex.Message}");
+                    }
+                }
             }
 
             return false;
         }
 
-        private static IEnumerable<(string archivePath, string assetPath)> EnumeratePublishedArchiveRequests(string filePath)
-        {
-            foreach (string archivePath in EnumerateArchivePathCandidates(filePath))
-            {
-                foreach (string assetPath in EnumerateArchiveAssetPathCandidates(filePath))
-                    yield return (archivePath, assetPath);
-            }
-        }
-
-        private static IEnumerable<string> EnumerateArchivePathCandidates(string filePath)
+        /// <summary>Orders the three roots by how the request path classifies, writing into <paramref name="order"/>.</summary>
+        private static int ResolvePublishedRootOrder(string filePath, Span<EPublishedContentRoot> order)
         {
             string normalizedPath = filePath.Replace('\\', '/');
             string fileName = Path.GetFileName(normalizedPath);
@@ -131,42 +125,31 @@ namespace XREngine
             bool looksLikeGameAsset = normalizedPath.Contains("/Assets/", StringComparison.OrdinalIgnoreCase)
                 || (!looksLikeEngineAsset && !looksLikeConfigAsset);
 
-            var yielded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            static void YieldIfExists(string? path, HashSet<string> seen, List<string> output)
-            {
-                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) || !seen.Add(path))
-                    return;
-
-                output.Add(path);
-            }
-
-            var results = new List<string>();
+            int count = 0;
             if (looksLikeConfigAsset)
             {
-                YieldIfExists(_publishedConfigArchivePath, yielded, results);
-                YieldIfExists(_publishedGameContentArchivePath, yielded, results);
-                YieldIfExists(_publishedEngineContentArchivePath, yielded, results);
+                order[count++] = EPublishedContentRoot.Config;
+                order[count++] = EPublishedContentRoot.GameContent;
+                order[count++] = EPublishedContentRoot.CommonAssets;
             }
             else if (looksLikeEngineAsset)
             {
-                YieldIfExists(_publishedEngineContentArchivePath, yielded, results);
-                YieldIfExists(_publishedGameContentArchivePath, yielded, results);
-                YieldIfExists(_publishedConfigArchivePath, yielded, results);
+                order[count++] = EPublishedContentRoot.CommonAssets;
+                order[count++] = EPublishedContentRoot.GameContent;
+                order[count++] = EPublishedContentRoot.Config;
             }
             else
             {
                 if (looksLikeGameAsset)
                 {
-                    YieldIfExists(_publishedGameContentArchivePath, yielded, results);
-                    YieldIfExists(_publishedEngineContentArchivePath, yielded, results);
+                    order[count++] = EPublishedContentRoot.GameContent;
+                    order[count++] = EPublishedContentRoot.CommonAssets;
                 }
 
-                YieldIfExists(_publishedConfigArchivePath, yielded, results);
+                order[count++] = EPublishedContentRoot.Config;
             }
 
-            foreach (string path in results)
-                yield return path;
+            return count;
         }
 
         private static bool IsPublishedConfigAssetName(string fileName)
@@ -176,37 +159,39 @@ namespace XREngine
                 || string.Equals(fileName, "editor_preferences.asset", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(fileName, "build_settings.asset", StringComparison.OrdinalIgnoreCase);
 
-        private static IEnumerable<string> EnumerateArchiveAssetPathCandidates(string filePath)
+        private static List<string> CollectArchiveAssetPathCandidates(string filePath)
         {
-            var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            static void EmitIfValid(string? path, HashSet<string> seen, List<string> output)
-            {
-                if (string.IsNullOrWhiteSpace(path))
-                    return;
-
-                string normalized = path.Replace('\\', '/').TrimStart('/');
-                if (string.IsNullOrWhiteSpace(normalized) || !seen.Add(normalized))
-                    return;
-
-                output.Add(normalized);
-            }
-
-            var results = new List<string>();
+            List<string> results = new(6);
             string normalized = filePath.Replace('\\', '/');
 
-            EmitIfValid(TryExtractAfterSegment(normalized, "/Config/"), emitted, results);
-            EmitIfValid(TryExtractAfterSegment(normalized, "/Assets/"), emitted, results);
-            EmitIfValid(TryExtractAfterSegment(normalized, "/Build/CommonAssets/"), emitted, results);
-            EmitIfValid(TryExtractAfterSegment(normalized, "/CommonAssets/"), emitted, results);
+            AddCandidate(results, TryExtractAfterSegment(normalized, "/Config/"));
+            AddCandidate(results, TryExtractAfterSegment(normalized, "/Assets/"));
+            AddCandidate(results, TryExtractAfterSegment(normalized, "/Build/CommonAssets/"));
+            AddCandidate(results, TryExtractAfterSegment(normalized, "/CommonAssets/"));
 
             if (!Path.IsPathRooted(filePath))
-                EmitIfValid(filePath, emitted, results);
+                AddCandidate(results, filePath);
 
-            EmitIfValid(Path.GetFileName(filePath), emitted, results);
+            AddCandidate(results, Path.GetFileName(filePath));
+            return results;
+        }
 
-            foreach (string candidate in results)
-                yield return candidate;
+        private static void AddCandidate(List<string> results, string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            string normalized = path.Replace('\\', '/').TrimStart('/');
+            if (string.IsNullOrWhiteSpace(normalized))
+                return;
+
+            for (int i = 0; i < results.Count; i++)
+            {
+                if (string.Equals(results[i], normalized, StringComparison.OrdinalIgnoreCase))
+                    return;
+            }
+
+            results.Add(normalized);
         }
 
         private static string? TryExtractAfterSegment(string normalizedPath, string segment)

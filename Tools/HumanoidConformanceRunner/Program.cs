@@ -16,7 +16,7 @@ using XREngine.Scene;
 
 namespace HumanoidConformanceRunner;
 
-/// <summary>Unity-free command-line executor for Phase 10 humanoid conformance corpus rows.</summary>
+/// <summary>Unity-free command-line executor for humanoid conformance corpus rows.</summary>
 internal static class Program
 {
     private sealed class RunSummary

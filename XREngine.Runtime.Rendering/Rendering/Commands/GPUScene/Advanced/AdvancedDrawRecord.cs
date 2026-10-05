@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Commands;
 /// Canonical draw row. Every dependency is a stable generation-checked table
 /// handle; no managed renderer identity is required to shade the draw.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedDrawRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedDrawRecord
 {

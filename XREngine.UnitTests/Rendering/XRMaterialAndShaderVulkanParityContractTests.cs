@@ -32,17 +32,20 @@ public sealed class XRMaterialAndShaderVulkanParityContractTests
     [Test]
     public void VulkanMaterialUniformUploadMatchesOpenGlShadowAndEngineUniformSources()
     {
-        string drawStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderState.cs");
+        string drawStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.MeshMaterialOperations.cs");
         string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MeshRenderMaterialResolver.cs");
         string xrProgramSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Resources/Shaders/XRRenderProgram.cs");
 
         drawStateSource.ShouldContain("ShadowBindingSourceMaterial");
-        drawStateSource.ShouldContain("MaterialTextureBindingResolver.BuildShadowBindingPlan");
+        drawStateSource.ShouldContain("XRMaterialBase uniformSource = material.ShadowBindingSourceMaterial ?? material;");
+        drawStateSource.ShouldContain("foreach (ShaderVar parameter in uniformSource.Parameters)");
+        drawStateSource.ShouldContain("parameter.SetUniform(program, forceUpdate: true);");
+        drawStateSource.ShouldContain("SetTextureUniforms(program, uniformSource);");
         drawStateSource.ShouldContain("program.GetActiveEngineUniformRequirements()");
         drawStateSource.ShouldContain("EUniformRequirements.AmbientOcclusion");
         drawStateSource.ShouldContain("Lights3DCollection.SetForwardAmbientOcclusionUniforms(program)");
-        drawStateSource.ShouldContain("XRTexture.GetIndexedSamplerName(textureIndex)");
-        drawStateSource.ShouldContain("program.Sampler(indexedSamplerName, texture, textureIndex);");
+        drawStateSource.ShouldContain("string samplerName = texture.ResolveSamplerName(index, null);");
+        drawStateSource.ShouldContain("program.Sampler(samplerName, texture, index);");
 
         resolverSource.ShouldContain("shadowBindingSource.HasSettingShadowUniformHandlers");
         resolverSource.ShouldContain("shadowBindingSource.OnSettingUniforms(program)");

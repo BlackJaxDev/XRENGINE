@@ -41,6 +41,7 @@ public static partial class XRRuntimeEnvironment
             ? null
             : Path.GetFullPath(configArchivePath);
         AotRuntimeMetadataStore.ResetForTestsOrReconfiguration();
+        Core.Files.PublishedArchiveRegistry.CloseAll();
     }
 
     public static string ComposeDefineConstants(string? existing, bool includePublishedBuild, bool includeAotRuntime)

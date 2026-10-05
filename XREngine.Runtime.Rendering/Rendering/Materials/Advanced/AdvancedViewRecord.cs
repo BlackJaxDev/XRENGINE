@@ -8,6 +8,7 @@ namespace XREngine.Rendering;
 /// Matrices use the explicit row-major, row-vector convention declared by the
 /// advanced shader access library.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedViewRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedViewRecord
 {

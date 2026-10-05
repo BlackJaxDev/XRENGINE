@@ -16,14 +16,6 @@ public enum RuntimeVrPoseTiming
     Recalc,
 }
 
-public readonly record struct RuntimeVrTrackerInfo(
-    string UserPath,
-    string? PersistentPath,
-    string? RolePath,
-    string? RoleName,
-    bool PoseAvailable,
-    bool RuntimeReported);
-
 public enum RuntimeVrActionValueType
 {
     Boolean,

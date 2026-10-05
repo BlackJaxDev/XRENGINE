@@ -1,4 +1,3 @@
-using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 
@@ -14,8 +13,6 @@ public static partial class AdvancedPackedVertexCodec
     {
         if (mesh.VertexCount <= 0)
             return false;
-        if (mesh.Vertices.Length == mesh.VertexCount)
-            return true;
         uint count = checked((uint)mesh.VertexCount);
         if (mesh.Interleaved)
         {
@@ -55,24 +52,8 @@ public static partial class AdvancedPackedVertexCodec
         return true;
     }
 
-    /// <summary>Packs one vertex after the caller validates the immutable mesh source with CanReadMesh.</summary>
-    internal static AdvancedDeformedVertex Pack(XRMesh mesh, uint vertexIndex, uint sourceVertex)
-    {
-        if (mesh.Vertices.Length == mesh.VertexCount)
-            return Pack(mesh.Vertices[vertexIndex], sourceVertex);
-        Vector4 tangent = mesh.HasTangents ? mesh.GetTangentWithSign(vertexIndex) : new(Vector3.UnitX, 1);
-        return Pack(mesh.GetPosition(vertexIndex),
-            mesh.HasNormals ? mesh.GetNormal(vertexIndex) : Vector3.UnitY,
-            new Vector3(tangent.X, tangent.Y, tangent.Z), tangent.W,
-            mesh.TexCoordCount > 0 ? mesh.GetTexCoord(vertexIndex, 0) : Vector2.Zero,
-            mesh.TexCoordCount > 1 ? mesh.GetTexCoord(vertexIndex, 1) : Vector2.Zero,
-            mesh.ColorCount > 0 ? mesh.GetColor(vertexIndex, 0) : Vector4.One,
-            mesh.ColorCount > 1 ? mesh.GetColor(vertexIndex, 1) : Vector4.One,
-            sourceVertex, mesh.TexCoordCount > 1);
-    }
-
     private static bool HasReadableBytes(XRDataBuffer? buffer)
-        => buffer is { HasGpuCompressedPayload: false, GpuProduced: false, ClientSideSource: { } source } &&
+        => buffer is { IsDestroyed: false, HasGpuCompressedPayload: false, GpuProduced: false, ClientSideSource: { } source } &&
            source.Address != VoidPtr.Zero && source.Length > 0;
 
     private static bool HasReadableStream(XRDataBuffer? buffer, uint count, uint components)

@@ -69,6 +69,34 @@ public sealed class PrefabModelSerializationTests
     }
 
     [Test]
+    public void RuntimeCookedBinary_RoundTrips_MeshWithMoreThanEightColorChannels()
+    {
+        // FBX files can carry dozens of color layers; the reader once rejected more than eight.
+        const int colorChannels = 23;
+        Vertex CreateVertex(Vector3 position)
+        {
+            List<Vector4> colors = new(colorChannels);
+            for (int channel = 0; channel < colorChannels; channel++)
+                colors.Add(new Vector4(channel / (float)colorChannels, position.X, position.Y, 1.0f));
+            return new Vertex(position) { ColorSets = colors };
+        }
+
+        List<Vertex> vertices = [CreateVertex(Vector3.Zero), CreateVertex(Vector3.UnitX), CreateVertex(Vector3.UnitY)];
+        XRMesh mesh = new(vertices, [0, 1, 2])
+        {
+            Name = "ManyColorChannels",
+        };
+        mesh.ColorCount.ShouldBe((uint)colorChannels);
+        byte[] payload = RuntimeCookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => RuntimeCookedBinarySerializer.Serialize(mesh));
+
+        XRMesh clone = RuntimeCookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
+            () => RuntimeCookedBinarySerializer.Deserialize(typeof(XRMesh), payload) as XRMesh).ShouldNotBeNull();
+
+        clone.ColorCount.ShouldBe(mesh.ColorCount);
+        clone.VertexCount.ShouldBe(mesh.VertexCount);
+    }
+
+    [Test]
     public void RuntimeCookedBinary_RoundTrips_SkinningBlendshapesAndSerializedBoneIds()
     {
         Transform bone = new()
@@ -978,12 +1006,20 @@ MatchDestinationRenderArea: true
 
         XRMesh runtimeMesh = renderable.CurrentLODRenderer!.Mesh.ShouldNotBeNull();
         runtimeMesh.ShouldNotBeSameAs(templateMesh);
-        runtimeMesh.Vertices.ShouldBeSameAs(templateMesh.Vertices);
+        // The bone-rebound runtime mesh shares the template's packed vertex and skinning data instead of copying it.
+        (runtimeMesh.PositionsBuffer ?? runtimeMesh.InterleavedVertexBuffer).ShouldNotBeNull()
+            .ShouldBeSameAs(templateMesh.PositionsBuffer ?? templateMesh.InterleavedVertexBuffer);
+        runtimeMesh.BoneInfluenceCoreIndices.ShouldNotBeNull().ShouldBeSameAs(templateMesh.BoneInfluenceCoreIndices);
+        runtimeMesh.BoneInfluenceCoreWeights.ShouldNotBeNull().ShouldBeSameAs(templateMesh.BoneInfluenceCoreWeights);
         runtimeMesh.UtilizedBones.Length.ShouldBe(1);
         runtimeMesh.UtilizedBones[0].tfm.ShouldBeSameAs(instanceBoneNode.Transform);
         runtimeMesh.UtilizedBones[0].tfm.ShouldNotBeSameAs(templateBoneNode.Transform);
-        templateMesh.Vertices[0].Weights.ShouldNotBeNull().ContainsKey(templateBoneNode.Transform).ShouldBeTrue();
-        templateMesh.Vertices[0].Weights.ShouldNotBeNull().ContainsKey(instanceBoneNode.Transform).ShouldBeFalse();
+        templateMesh.UtilizedBones[0].tfm.ShouldBeSameAs(templateBoneNode.Transform);
+        using (XRMeshVertexView templateView = XRMeshVertexView.Open(templateMesh, EXRMeshVertexViewContent.Weights))
+        {
+            templateView.Vertices[0].Weights.ShouldNotBeNull().ContainsKey(templateBoneNode.Transform).ShouldBeTrue();
+            templateView.Vertices[0].Weights.ShouldNotBeNull().ContainsKey(instanceBoneNode.Transform).ShouldBeFalse();
+        }
         renderable.RootBone.ShouldBeSameAs(instanceBoneNode.Transform);
     }
 
@@ -1434,9 +1470,9 @@ NonVertexShadersOverride:
         {
             Name = meshName,
         };
-        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.RebuildSkinningBuffersFromVertices(vertices);
         mesh.BlendshapeNames = [blendshapeName];
-        mesh.RebuildBlendshapeBuffersFromVertices();
+        mesh.RebuildBlendshapeBuffersFromVertices(vertices);
         return mesh;
     }
 

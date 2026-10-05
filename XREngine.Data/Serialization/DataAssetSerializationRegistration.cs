@@ -11,9 +11,12 @@ public static class DataAssetSerializationRegistration
         => RegistrationLeaseGroup.Create(static leases =>
         {
             leases.Add(DataPublishedCookedAssetRegistration.Install());
+#if !XRE_PUBLISHED
             leases.Add(YamlSerializationContributions.Install(new DataYamlContribution()));
+#endif
         });
 
+#if !XRE_PUBLISHED
     private sealed class DataYamlContribution : IYamlSerializationContribution
     {
         public string OwnerName => "XREngine.Data";
@@ -33,4 +36,5 @@ public static class DataAssetSerializationRegistration
                 new TextFileYamlTypeConverter(),
             ];
     }
+#endif
 }

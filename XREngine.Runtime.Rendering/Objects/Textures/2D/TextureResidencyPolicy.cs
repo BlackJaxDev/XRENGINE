@@ -81,13 +81,12 @@ internal static class TextureResidencyPolicy
             float projectedPixelSpan = float.IsFinite(input.MaxProjectedPixelSpan)
                 ? MathF.Max(0.0f, input.MaxProjectedPixelSpan)
                 : 0.0f;
-            float screenCoverage = float.IsFinite(input.MaxScreenCoverage)
-                ? Math.Clamp(input.MaxScreenCoverage, 0.0f, 1.0f)
-                : 0.0f;
+            // Screen coverage does not force the source size: a covering mesh's
+            // projected span already reaches the viewport size, and the role and
+            // UV density terms still apply. For a stereo 2688-pixel eye a covering
+            // albedo quantizes to 4096 either way, while normal, mask and ORM maps
+            // of a self-avatar the HMD sits inside no longer all go to full size.
             float targetPixelSpan = projectedPixelSpan * roleMultiplier * uvDensityHint;
-
-            if (screenCoverage >= 0.95f)
-                return sourceMaxDimension;
 
             uint visibleTarget = QuantizeResidentSize(sourceMaxDimension, normalPolicyFloor, targetPixelSpan);
             if (input.ResidentMaxDimension > visibleTarget)
@@ -130,6 +129,28 @@ internal static class TextureResidencyPolicy
             return GetNextLowerResidentCandidate(sourceMaxDimension, input.ResidentMaxDimension, normalPolicyFloor);
 
         return normalPolicyFloor;
+    }
+
+    /// <summary>
+    /// Caps a desired resident size by the user's texture quality. Highest keeps
+    /// the policy's size; High, Medium, Low and Lowest allow at most 4096, 2048,
+    /// 1024 and 512 texels on the largest side. The cap acts as the mip bias: the
+    /// mips above it are never resident. It never drops below
+    /// <paramref name="previewMaxDimension"/>, the preview floor.
+    /// </summary>
+    internal static uint ApplyTextureQuality(uint desiredResidentSize, uint previewMaxDimension, EEngineQuality quality)
+    {
+        uint cap = quality switch
+        {
+            EEngineQuality.High => 4096u,
+            EEngineQuality.Medium => 2048u,
+            EEngineQuality.Low => 1024u,
+            EEngineQuality.Lowest => 512u,
+            _ => uint.MaxValue,
+        };
+        return desiredResidentSize <= cap
+            ? desiredResidentSize
+            : Math.Max(cap, Math.Min(desiredResidentSize, previewMaxDimension));
     }
 
     internal static uint FitResidentSizeToBudget(

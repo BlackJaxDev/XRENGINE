@@ -78,7 +78,6 @@ public static class MeshOptimizerIntegration
                 [],
                 [],
                 [],
-                [],
                 new MeshOptimizerMeshletStats(0, 0, 0, 0));
 
             return new MeshletBuildResult
@@ -121,7 +120,6 @@ public static class MeshOptimizerIntegration
                 [],
                 [],
                 [],
-                vertices,
                 new MeshOptimizerMeshletStats(0, 0, 0, 0));
 
             return new MeshletBuildResult
@@ -169,7 +167,6 @@ public static class MeshOptimizerIntegration
                 [],
                 [],
                 [],
-                vertices,
                 new MeshOptimizerMeshletStats(0, 0, 0, 0));
 
             return new MeshletBuildResult
@@ -248,7 +245,6 @@ public static class MeshOptimizerIntegration
             descriptors,
             meshletVertices,
             meshletTriangles,
-            vertices,
             stats);
 
         return new MeshletBuildResult
@@ -270,7 +266,6 @@ public static class MeshOptimizerIntegration
         CpuMeshletDescriptor[] descriptors,
         uint[] vertexIndices,
         byte[] triangleIndices,
-        MeshletVertex[] vertices,
         MeshOptimizerMeshletStats stats)
     {
         MeshletGenerationSettingsSnapshot meshletSnapshot = MeshletGenerationSettingsSnapshot.From(settings);
@@ -301,7 +296,6 @@ public static class MeshOptimizerIntegration
             Meshlets = descriptors.ToImmutableArray(),
             VertexIndices = vertexIndices.ToImmutableArray(),
             TriangleIndices = triangleIndices.ToImmutableArray(),
-            Vertices = vertices.ToImmutableArray(),
             Stats = stats,
         };
         payload.ValidatePortablePayload();
@@ -518,7 +512,10 @@ public static class MeshOptimizerIntegration
         for (int i = 0; i < sourceIndices.Length; i++)
             workingIndices[i] = (uint)sourceIndices[i];
 
-        Vertex[] vertices = [.. sourceMesh.Vertices.Select(static vertex => vertex.HardCopy())];
+        // LOD generation runs on import/editor threads; the view's vertices are
+        // fresh objects this method may modify.
+        using XRMeshVertexView sourceView = XRMeshVertexView.Open(sourceMesh);
+        Vertex[] vertices = sourceView.Vertices;
         float[] positions = GetPositionArray(vertices);
         AttributeBuffer attributes = BuildAttributeBuffer(sourceMesh, vertices, settings);
         byte[]? vertexLock = BuildVertexLockBuffer(sourceMesh, vertices, settings);
@@ -578,16 +575,16 @@ public static class MeshOptimizerIntegration
         if (triangles.Count == 0)
             return null;
 
-        XRMesh mesh = XRMesh.Create([.. triangles]);
+        XRMesh mesh = XRMesh.Create([.. triangles], out Vertex[] meshVertices);
         mesh.Name = meshName;
         if (sourceMesh.HasBlendshapes)
         {
             mesh.BlendshapeNames = [.. sourceMesh.BlendshapeNames];
-            mesh.RebuildBlendshapeBuffersFromVertices();
+            mesh.RebuildBlendshapeBuffersFromVertices(meshVertices);
         }
 
         if (sourceMesh.HasSkinning)
-            mesh.RebuildSkinningBuffersFromVertices();
+            mesh.RebuildSkinningBuffersFromVertices(meshVertices);
 
         return mesh;
     }
@@ -731,10 +728,9 @@ public static class MeshOptimizerIntegration
 
     private static float[] GetPositionArray(XRMesh mesh)
     {
-        // Cooked meshes retain their render buffers without rebuilding the optional
-        // authoring Vertex array. Use the same current positions as the meshlet stream.
-        float[] positions = new float[checked(mesh.VertexCount * 3)];
-        for (int i = 0; i < mesh.VertexCount; i++)
+        int vertexCount = Math.Max(0, mesh.VertexCount);
+        float[] positions = new float[checked(vertexCount * 3)];
+        for (int i = 0; i < vertexCount; i++)
         {
             Vector3 position = mesh.GetPosition((uint)i);
             positions[i * 3 + 0] = position.X;

@@ -115,6 +115,8 @@ DefaultUserSettings:
   UnfocusedTargetFramesPerSecondOverride:
     HasOverride: false
     Value: 0
+  StandingHeightToEyeHeightRatio: 0.936
+  HeightCalibrationWarningToleranceMeters: 0.12
   ID: 6fe82a52-aff2-4f4b-a4ce-f0583801fdad
 Rendering:
   Common:

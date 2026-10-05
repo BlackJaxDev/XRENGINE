@@ -41,9 +41,9 @@ public sealed class ImportedTextureStreamingContractTests
     public void ImportedTextureStreaming_EvaluatesResidencyAfterCollectBeforeSwapBuffers()
     {
         string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
-        string timerSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Core/Time/EngineTimer.cs");
+        string timerSource = ReadWorkspaceFile("XREngine.Runtime.Host/Core/Time/EngineTimer.cs");
         string interfaceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSchedulingServices.cs");
-        string hostSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
+        string hostSource = ReadWorkspaceFile("XREngine.Runtime.Host/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
 
         timerSource.ShouldContain("PostCollectVisible?.Invoke();");
         interfaceSource.ShouldContain("void SubscribeViewportPostCollectVisible(Action postCollectVisible);");

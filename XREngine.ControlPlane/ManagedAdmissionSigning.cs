@@ -65,6 +65,7 @@ public static class ManagedAdmissionSigning
         Write(writer, launch.AdvertisedEndpoint.Host);
         writer.Write(launch.AdvertisedEndpoint.Port);
         Write(writer, launch.AdvertisedEndpoint.ProtocolVersion);
+        writer.Write(launch.AdvertisedEndpoint.WireProtocolVersion);
         writer.Write(SHA256.HashData(Encoding.UTF8.GetBytes(grant.Secret)));
         writer.Flush();
         return stream.ToArray();

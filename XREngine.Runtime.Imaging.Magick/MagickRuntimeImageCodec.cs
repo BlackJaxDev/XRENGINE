@@ -10,13 +10,25 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
 {
     public RuntimeImage Decode(ReadOnlyMemory<byte> encodedImage)
     {
-        using MagickImage source = new(encodedImage.ToArray());
+        using MagickImage source = new(GetWholeArray(encodedImage));
         return DecodePixels(source);
     }
 
+    /// <summary>
+    /// The array behind <paramref name="encodedImage"/> when it spans the whole
+    /// array, so decoding a file read into one array does not copy it again.
+    /// </summary>
+    private static byte[] GetWholeArray(ReadOnlyMemory<byte> encodedImage)
+        => MemoryMarshal.TryGetArray(encodedImage, out ArraySegment<byte> segment) &&
+           segment.Array is { } array &&
+           segment.Offset == 0 &&
+           segment.Count == array.Length
+            ? array
+            : encodedImage.ToArray();
+
     public IReadOnlyList<RuntimeImage> DecodeFrames(ReadOnlyMemory<byte> encodedImage)
     {
-        using MagickImageCollection collection = new(encodedImage.ToArray());
+        using MagickImageCollection collection = new(GetWholeArray(encodedImage));
         RuntimeImage[] frames = new RuntimeImage[collection.Count];
         int completed = 0;
         try
@@ -217,20 +229,23 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
             new PixelReadSettings(image.Width, image.Height, storage, mapping));
         if (image.Type == XREngine.Data.Rendering.EPixelType.Float)
             resized.Format = MagickFormat.Exr;
+        // The runtime codec promises exact dimensions. Aspect-preserving containment
+        // belongs to the caller and otherwise leaves the pixel readback out of bounds.
+        MagickGeometry geometry = new(width, height) { IgnoreAspectRatio = true };
         switch (mode)
         {
             case RuntimeImageResizeMode.Standard:
-                resized.Resize(width, height);
+                resized.Resize(geometry);
                 break;
             case RuntimeImageResizeMode.Bilinear:
-                resized.InterpolativeResize(width, height, PixelInterpolateMethod.Bilinear);
+                resized.InterpolativeResize(geometry, PixelInterpolateMethod.Bilinear);
                 break;
             case RuntimeImageResizeMode.Lanczos:
                 resized.FilterType = FilterType.Lanczos;
-                resized.Resize(width, height);
+                resized.Resize(geometry);
                 break;
             case RuntimeImageResizeMode.Adaptive:
-                resized.AdaptiveResize(width, height);
+                resized.AdaptiveResize(geometry);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(mode));

@@ -660,9 +660,11 @@ namespace XREngine.Scene.Prefabs
             if (hinted is null)
                 return fallback;
 
-            if (fallback.IsAssignableFrom(hinted))
-                return hinted;
-
+            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(
+                hinted,
+                XREngine.Data.Runtime.AotParity.EAotParityCategory.TypeResolutionScan,
+                $"{nameof(SceneNodePrefabUtility)}.{nameof(ResolveOverrideType)}",
+                "Add the override type to the published runtime metadata known-type table so prefab overrides resolve without Type.GetType.");
             return hinted;
         }
 

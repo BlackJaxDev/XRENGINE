@@ -1,6 +1,8 @@
+using XREngine.Data.Runtime.AotParity;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
@@ -48,9 +50,18 @@ namespace XREngine
         public DateTime CaptureTime { get; }
 
         /// <summary>
-        /// Whether the snapshot was captured successfully.
+        /// Whether every scene and the world settings were captured. An invalid snapshot
+        /// cannot return the world to its captured state: it must not be used to start play,
+        /// and restoring it never removes a scene, since a scene missing from
+        /// <see cref="SerializedScenes"/> may have failed to serialize rather than been
+        /// introduced after capture.
         /// </summary>
         public bool IsValid { get; }
+
+        /// <summary>
+        /// Why the snapshot is invalid, including the first failure's exception; null when valid.
+        /// </summary>
+        public string? CaptureFailure { get; }
 
         private WorldStateSnapshot(
             XRWorld sourceWorld,
@@ -58,15 +69,16 @@ namespace XREngine
             byte[]? serializedSettings,
             byte[]? serializedGameMode,
             HashSet<Guid> capturedRuntimeOnlyRootIds,
-            bool isValid)
+            string? captureFailure)
         {
             SourceWorld = sourceWorld;
             SerializedScenes = serializedScenes;
             SerializedSettings = serializedSettings;
             SerializedGameMode = serializedGameMode;
             CapturedRuntimeOnlyRootIds = capturedRuntimeOnlyRootIds;
+            CaptureFailure = captureFailure;
             CaptureTime = DateTime.UtcNow;
-            IsValid = isValid;
+            IsValid = captureFailure is null;
         }
 
         /// <summary>
@@ -82,89 +94,79 @@ namespace XREngine
             byte[]? settingsData = null;
             byte[]? gameModeData = null;
             HashSet<Guid> capturedRuntimeOnlyRootIds = CaptureRuntimeOnlyRootIds(world);
-            bool isValid = true;
+            string? captureFailure = null;
+
+            // The first failure makes the snapshot invalid; every failure is recorded in
+            // the snapshot diagnostics log, which Release builds keep.
+            void RecordFailure(string message)
+            {
+                captureFailure ??= message;
+                SnapshotDiagnostics.Warning(message);
+            }
 
             try
             {
                 LogWorldSceneTree(world, "BeforeSerialize");
                 SnapshotDiagnostics.LogWorldAssetSummary(world, "BeforeSerialize");
 
-                // Serialize each scene
                 foreach (var scene in world.Scenes)
                 {
                     try
                     {
-                        var sceneData = SerializeObject(scene);
-                        if (sceneData is not null)
+                        byte[]? sceneData = SnapshotBinarySerializer.Serialize(scene);
+                        if (sceneData is { Length: > 0 })
                         {
-                            var key = GetSceneKey(scene);
-                            serializedScenes[key] = sceneData;
+                            serializedScenes[GetSceneKey(scene)] = sceneData;
                             SnapshotDiagnostics.LogScenePayload("Serialized", scene, sceneData.Length);
+                            continue;
                         }
-                        else
-                        {
-                            SnapshotDiagnostics.Warning($"Scene '{scene.Name ?? "<unnamed>"}' serialized to a null payload.");
-                        }
+
+                        RecordFailure($"Scene '{scene.Name ?? "<unnamed>"}' serialized to an empty payload.");
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not AotParityViolationException)
                     {
-                        Debug.LogWarning($"Failed to serialize scene '{scene.Name}': {ex.Message}");
-                        SnapshotDiagnostics.Warning($"Failed to serialize scene '{scene.Name ?? "<unnamed>"}': {ex}");
-                        isValid = false;
+                        RecordFailure($"Failed to serialize scene '{scene.Name ?? "<unnamed>"}': {ex}");
                     }
                 }
 
-                // Serialize world settings
                 try
                 {
-                    settingsData = SerializeObject(world.Settings);
+                    settingsData = SnapshotBinarySerializer.Serialize(world.Settings);
                     SnapshotDiagnostics.Log($"Serialized world settings payloadBytes={settingsData?.Length ?? 0}");
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not AotParityViolationException)
                 {
-                    Debug.LogWarning($"Failed to serialize world settings: {ex.Message}");
-                    SnapshotDiagnostics.Warning($"Failed to serialize world settings: {ex}");
-                    isValid = false;
+                    RecordFailure($"Failed to serialize world settings: {ex}");
                 }
 
-                // Serialize game mode if present
                 if (world.DefaultGameMode is not null)
                 {
                     try
                     {
-                        gameModeData = SerializeObject(world.DefaultGameMode);
+                        gameModeData = SnapshotBinarySerializer.Serialize(world.DefaultGameMode);
                         SnapshotDiagnostics.Log($"Serialized default game mode type={world.DefaultGameMode.GetType().FullName} payloadBytes={gameModeData?.Length ?? 0}");
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not AotParityViolationException)
                     {
-                        Debug.LogWarning($"Failed to serialize game mode: {ex.Message}");
+                        // The default game mode is recreated on the next entry when it
+                        // cannot be restored, so its failure does not invalidate the snapshot.
                         SnapshotDiagnostics.Warning($"Failed to serialize game mode '{world.DefaultGameMode.GetType().FullName}': {ex}");
-                        // Game mode serialization failure is not critical
                     }
                 }
-
-                Debug.Out($"World state snapshot captured ({serializedScenes.Count} scenes, valid: {isValid})");
-
-                return new WorldStateSnapshot(
-                    world,
-                    serializedScenes,
-                    settingsData,
-                    gameModeData,
-                    capturedRuntimeOnlyRootIds,
-                    isValid);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not AotParityViolationException)
             {
-                Debug.LogException(ex, "Failed to capture world state snapshot");
-                // Return a minimal snapshot that can still be used for reference
-                return new WorldStateSnapshot(
-                    world,
-                    serializedScenes,
-                    null,
-                    null,
-                    capturedRuntimeOnlyRootIds,
-                    false);
+                RecordFailure($"Failed to capture world state snapshot: {ex}");
             }
+
+            Debug.Out($"World state snapshot captured ({serializedScenes.Count} scenes, valid: {captureFailure is null})");
+            return new WorldStateSnapshot(
+                world,
+                serializedScenes,
+                settingsData,
+                gameModeData,
+                capturedRuntimeOnlyRootIds,
+                captureFailure);
         }
 
         /// <summary>
@@ -180,6 +182,11 @@ namespace XREngine
         /// <summary>
         /// Restores the world to the captured state.
         /// </summary>
+        /// <returns>
+        /// True when the world settings and every captured scene were restored; false when
+        /// any of them failed, in which case the failed parts keep their current state and
+        /// the failures are recorded in the snapshot diagnostics log.
+        /// </returns>
         public bool Restore()
         {
             if (SourceWorld is null)
@@ -187,11 +194,9 @@ namespace XREngine
 
             using var diagnosticScope = SnapshotDiagnostics.BeginScope("Restore", SourceWorld);
             if (!IsValid)
-            {
-                Debug.LogWarning("Attempting to restore from invalid snapshot - some state may not be restored");
-                SnapshotDiagnostics.Warning("Attempting to restore from invalid snapshot - some state may not be restored.");
-            }
+                SnapshotDiagnostics.Warning($"Restoring an invalid snapshot; scenes it does not hold are kept. Capture failure: {CaptureFailure}");
 
+            bool complete = true;
             try
             {
                 SnapshotDiagnostics.LogWorldAssetSummary(SourceWorld, "BeforeRestore");
@@ -224,10 +229,15 @@ namespace XREngine
                             SourceWorld.Settings = settings;
                             SnapshotDiagnostics.Log($"Restored world settings payloadBytes={SerializedSettings.Length}");
                         }
+                        else
+                        {
+                            complete = false;
+                            SnapshotDiagnostics.Warning("World settings could not be deserialized; the current settings are kept.");
+                        }
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not AotParityViolationException)
                     {
-                        Debug.LogWarning($"Failed to restore world settings: {ex.Message}");
+                        complete = false;
                         SnapshotDiagnostics.Warning($"Failed to restore world settings: {ex}");
                     }
                 }
@@ -244,9 +254,8 @@ namespace XREngine
                             SnapshotDiagnostics.Log($"Restored default game mode type={gameMode.GetType().FullName} payloadBytes={SerializedGameMode.Length}");
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not AotParityViolationException)
                     {
-                        Debug.LogWarning($"Failed to restore game mode: {ex.Message}");
                         SnapshotDiagnostics.Warning($"Failed to restore game mode: {ex}");
                     }
                 }
@@ -265,11 +274,12 @@ namespace XREngine
                         try
                         {
                             SnapshotDiagnostics.Log($"Restoring existing scene key='{kvp.Key}' payloadBytes={kvp.Value.Length} currentRoots={scene.RootNodes?.Count ?? 0}");
-                            RestoreScene(scene, kvp.Value, runtimeInstance);
+                            if (!RestoreScene(scene, kvp.Value, runtimeInstance))
+                                complete = false;
                         }
-                        catch (Exception ex)
+                        catch (Exception ex) when (ex is not AotParityViolationException)
                         {
-                            Debug.LogWarning($"Failed to restore scene '{kvp.Key}': {ex.Message}");
+                            complete = false;
                             SnapshotDiagnostics.Warning($"Failed to restore existing scene '{kvp.Key}': {ex}");
                         }
                         continue;
@@ -277,29 +287,36 @@ namespace XREngine
 
                     // Scene existed during capture but no longer present; recreate it
                     SnapshotDiagnostics.Log($"Recreating missing scene key='{kvp.Key}' payloadBytes={kvp.Value.Length}");
-                    var recreatedScene = DeserializeObject<XRScene>(kvp.Value);
+                    List<XRAsset> createdRenderAssets = [];
+                    var recreatedScene = DeserializeObject<XRScene>(kvp.Value, createdRenderAssets);
                     if (recreatedScene is null)
                     {
-                        Debug.LogWarning($"Failed to deserialize scene '{kvp.Key}' while recreating snapshot state");
+                        complete = false;
+                        SnapshotRestoredContent.Discard(createdRenderAssets);
                         SnapshotDiagnostics.Warning($"Failed to deserialize scene '{kvp.Key}' while recreating snapshot state.");
                         continue;
                     }
 
                     SourceWorld.Scenes.Add(recreatedScene);
                     runtimeInstance?.LoadScene(recreatedScene);
+                    SnapshotRestoredContent.Replace(recreatedScene, [], createdRenderAssets);
                     SnapshotDiagnostics.Log($"Recreated scene '{recreatedScene.Name ?? "<unnamed>"}' roots={recreatedScene.RootNodes?.Count ?? 0}");
                 }
 
-                // Remove any scenes that were introduced after the snapshot
-                var scenesToRemove = SourceWorld.Scenes
-                    .Where(scene => !processedSceneKeys.Contains(GetSceneKey(scene)))
-                    .ToList();
-
-                foreach (var removedScene in scenesToRemove)
+                // Remove scenes introduced after the snapshot. An invalid snapshot may be
+                // missing scenes that failed to serialize, so it removes none.
+                if (IsValid)
                 {
-                    SnapshotDiagnostics.Log($"Removing scene introduced after snapshot: '{removedScene.Name ?? "<unnamed>"}' roots={removedScene.RootNodes?.Count ?? 0}");
-                    runtimeInstance?.UnloadScene(removedScene);
-                    SourceWorld.Scenes.Remove(removedScene);
+                    var scenesToRemove = SourceWorld.Scenes
+                        .Where(scene => !processedSceneKeys.Contains(GetSceneKey(scene)))
+                        .ToList();
+
+                    foreach (var removedScene in scenesToRemove)
+                    {
+                        SnapshotDiagnostics.Log($"Removing scene introduced after snapshot: '{removedScene.Name ?? "<unnamed>"}' roots={removedScene.RootNodes?.Count ?? 0}");
+                        runtimeInstance?.UnloadScene(removedScene);
+                        SourceWorld.Scenes.Remove(removedScene);
+                    }
                 }
 
                 // IMPORTANT:
@@ -356,12 +373,11 @@ namespace XREngine
                 if (runtimeInstance is not null)
                     SnapshotDiagnostics.LogWorldInstanceAssetSummary(runtimeInstance, "AfterDeserialize");
 
-                Debug.Out($"World state restored from snapshot taken at {CaptureTime}");
-                return true;
+                Debug.Out($"World state restored from snapshot taken at {CaptureTime} (complete: {complete})");
+                return complete;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not AotParityViolationException)
             {
-                Debug.LogException(ex, "Failed to restore world state from snapshot");
                 SnapshotDiagnostics.Warning($"Failed to restore world state from snapshot: {ex}");
                 return false;
             }
@@ -393,60 +409,49 @@ namespace XREngine
             return result;
         }
 
-        private static byte[]? SerializeObject<T>(T obj)
-        {
-            if (obj is null)
-                return null;
-
-            try
-            {
-                return SnapshotBinarySerializer.Serialize(obj);
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"Snapshot serialization failed for {typeof(T).Name}: {ex.Message}");
-                return null;
-            }
-        }
-
-        private static T? DeserializeObject<T>(byte[]? data) where T : class
+        private static T? DeserializeObject<T>(byte[]? data, List<XRAsset>? createdRenderAssets = null) where T : class
         {
             if (data is null || data.Length == 0)
                 return null;
 
             try
             {
-                return SnapshotBinarySerializer.Deserialize<T>(data);
+                return SnapshotBinarySerializer.Deserialize<T>(data, createdRenderAssets);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not AotParityViolationException)
             {
-                Debug.LogWarning($"Snapshot deserialization failed for {typeof(T).Name}: {ex.Message}");
+                SnapshotDiagnostics.Warning($"Snapshot deserialization failed for {typeof(T).Name}: {ex}");
                 return null;
             }
         }
 
-        private static void RestoreScene(
+        /// <returns>False when the scene data could not be deserialized and the scene was left as it was.</returns>
+        private static bool RestoreScene(
             XRScene scene,
             byte[] data,
             RuntimeWorld? runtimeInstance)
         {
             SnapshotDiagnostics.Log($"RestoreScene begin: target='{scene.Name ?? "<unnamed>"}' payloadBytes={data.Length} runtimeInstance={(runtimeInstance is null ? "<null>" : runtimeInstance.GetHashCode().ToString())}");
-            var restoredScene = DeserializeObject<XRScene>(data);
+            List<XRAsset> createdRenderAssets = [];
+            var restoredScene = DeserializeObject<XRScene>(data, createdRenderAssets);
             if (restoredScene is null)
             {
-                Debug.LogWarning($"Scene restoration skipped because scene data could not be deserialized.");
+                SnapshotRestoredContent.Discard(createdRenderAssets);
                 SnapshotDiagnostics.Warning($"Scene restoration skipped for '{scene.Name ?? "<unnamed>"}' because scene data could not be deserialized.");
-                return;
+                return false;
             }
 
             runtimeInstance?.UnloadScene(scene);
+            SceneNode[] replacedRoots = scene.RootNodes is { } currentRoots ? [.. currentRoots] : [];
 
             scene.Name = restoredScene.Name;
             scene.IsVisible = restoredScene.IsVisible;
             scene.RootNodes = restoredScene.RootNodes ?? new List<SceneNode>();
 
             runtimeInstance?.LoadScene(scene);
+            SnapshotRestoredContent.Replace(scene, replacedRoots, createdRenderAssets);
             SnapshotDiagnostics.Log($"RestoreScene end: target='{scene.Name ?? "<unnamed>"}' visible={scene.IsVisible} roots={scene.RootNodes.Count}");
+            return true;
         }
 
         private static string GetSceneKey(XRScene scene)

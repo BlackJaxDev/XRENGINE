@@ -4,6 +4,7 @@ using System.Runtime.ExceptionServices;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Data.Runtime.AotParity;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Transforms;
@@ -206,7 +207,11 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         => _lifecycle.UnregisterTick(group, order, tick);
 
     public void TickGroup(ETickGroup group)
-        => _lifecycle.TickGroup(group);
+    {
+        using var parityScope = PlayState is RuntimeWorldPlayState.Playing or RuntimeWorldPlayState.BeginningPlay
+            ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
+        _lifecycle.TickGroup(group);
+    }
 
     public void PausePlay()
     {
@@ -235,6 +240,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
             return;
 
         PlayState = RuntimeWorldPlayState.BeginningPlay;
+        using var parityScope = AotParityDiagnostics.EnterPlayerPath(EAotParityPlayerPathKind.PlayMode);
         PreBeginPlay?.Invoke(this);
         if (beforeNodeActivation is not null)
             await beforeNodeActivation();
@@ -267,6 +273,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         if (PlayState == RuntimeWorldPlayState.Stopped)
             return;
 
+        using var parityScope = AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode);
         PlayState = RuntimeWorldPlayState.EndingPlay;
         PreEndPlay?.Invoke(this);
         foreach (SceneNode node in RootNodes.ToArray())
@@ -289,16 +296,19 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         PhysicsEnabled = false;
         _physicsResetCacheValid = false;
         _initialDynamicBodyPoses.Clear();
-        _invalidTransforms.Clear();
+        TransformHierarchy.ClearDirty();
         ClearPendingPhysicsRequests();
         PostEndPlay?.Invoke(this);
         PlayState = RuntimeWorldPlayState.Stopped;
+
     }
 
     public void FixedUpdate()
     {
         ThrowIfDisposed();
-        if (PlayState != RuntimeWorldPlayState.Playing)
+        bool playing = PlayState == RuntimeWorldPlayState.Playing;
+        RuntimeWorldTickTelemetry.FixedUpdateCalled(playing);
+        if (!playing)
             return;
         TickGroup(ETickGroup.PrePhysics);
         if (PhysicsEnabled)
@@ -600,12 +610,16 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
 
     public void Dispose()
     {
-        if (IsDisposing || !PhysicsChainWorld.PrepareWorldDisposal(this))
+        if (IsDisposing)
+            return;
+        TransformHierarchy.RejectHierarchyMutationDuringEvaluation();
+        if (!PhysicsChainWorld.PrepareWorldDisposal(this))
             return;
         if (_disposed || Interlocked.CompareExchange(ref _disposing, 1, 0) != 0)
             return;
         ExceptionDispatchInfo? firstFault = null;
         bool ticksReleased = false;
+        bool hierarchyReleased = false;
         try
         {
             if (PlayState != RuntimeWorldPlayState.Stopped)
@@ -624,6 +638,8 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
             }
             _capabilities.Clear();
             _scenePolicy = null;
+            TransformHierarchy.Dispose();
+            hierarchyReleased = true;
             GameMode = null;
             _disposed = true;
         }
@@ -640,9 +656,18 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
             catch (Exception ex) { firstFault ??= ExceptionDispatchInfo.Capture(ex); }
             finally
             {
-                if (!ticksReleased)
-                    _lifecycle.ReleaseTicks();
-                Volatile.Write(ref _disposing, 0);
+                try
+                {
+                    if (!hierarchyReleased)
+                        TransformHierarchy.Dispose();
+                }
+                catch (Exception ex) { firstFault ??= ExceptionDispatchInfo.Capture(ex); }
+                finally
+                {
+                    if (!ticksReleased)
+                        _lifecycle.ReleaseTicks();
+                    Volatile.Write(ref _disposing, 0);
+                }
             }
         }
         firstFault?.Throw();

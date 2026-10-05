@@ -13,9 +13,12 @@ namespace XREngine.Rendering.Vulkan;
 internal readonly struct ProgramUniformValue
 {
     private readonly object? _referenceValue;
+    private readonly ProgramUniformInlineValue _inlineValue;
+    private readonly EProgramUniformInlineKind _inlineKind;
 
     public ProgramUniformValue(EShaderVarType type, object value, bool isArray)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
         _referenceValue = value;
@@ -23,26 +26,29 @@ internal readonly struct ProgramUniformValue
 
     public ProgramUniformValue(EShaderVarType type, float value, bool isArray = false)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
-        Float = value;
-        HasInlineValue = true;
+        _inlineValue = new() { Float = value };
+        _inlineKind = EProgramUniformInlineKind.Float;
     }
 
     public ProgramUniformValue(EShaderVarType type, int value, bool isArray = false)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
-        Int = value;
-        HasInlineValue = true;
+        _inlineValue = new() { Int = value };
+        _inlineKind = EProgramUniformInlineKind.Int;
     }
 
     public ProgramUniformValue(EShaderVarType type, uint value, bool isArray = false)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
-        UInt = value;
-        HasInlineValue = true;
+        _inlineValue = new() { UInt = value };
+        _inlineKind = EProgramUniformInlineKind.UInt;
     }
 
     public ProgramUniformValue(EShaderVarType type, bool value, bool isArray = false)
@@ -52,42 +58,47 @@ internal readonly struct ProgramUniformValue
 
     public ProgramUniformValue(EShaderVarType type, Vector2 value, bool isArray = false)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
-        Vector2 = value;
-        HasInlineValue = true;
+        _inlineValue = new() { Vector2 = value };
+        _inlineKind = EProgramUniformInlineKind.Vector2;
     }
 
     public ProgramUniformValue(EShaderVarType type, Vector3 value, bool isArray = false)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
-        Vector3 = value;
-        HasInlineValue = true;
+        _inlineValue = new() { Vector3 = value };
+        _inlineKind = EProgramUniformInlineKind.Vector3;
     }
 
     public ProgramUniformValue(EShaderVarType type, Vector4 value, bool isArray = false)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
-        Vector4 = value;
-        HasInlineValue = true;
+        _inlineValue = new() { Vector4 = value };
+        _inlineKind = EProgramUniformInlineKind.Vector4;
     }
 
     public ProgramUniformValue(EShaderVarType type, Matrix4x4 value, bool isArray = false)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
-        Matrix4x4 = value;
-        HasInlineValue = true;
+        _inlineValue = new() { Matrix4x4 = value };
+        _inlineKind = EProgramUniformInlineKind.Matrix4x4;
     }
 
     public ProgramUniformValue(EShaderVarType type, double value, bool isArray = false)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
-        Double = value;
-        HasInlineValue = true;
+        _inlineValue = new() { Double = value };
+        _inlineKind = EProgramUniformInlineKind.Double;
     }
 
     public ProgramUniformValue(EShaderVarType type, DVector2 value, bool isArray = false)
@@ -102,10 +113,11 @@ internal readonly struct ProgramUniformValue
 
     public ProgramUniformValue(EShaderVarType type, DVector4 value, bool isArray = false)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
-        DVector4 = value;
-        HasInlineValue = true;
+        _inlineValue = new() { DVector4 = value };
+        _inlineKind = EProgramUniformInlineKind.DVector4;
     }
 
     public ProgramUniformValue(EShaderVarType type, IVector2 value, bool isArray = false)
@@ -120,10 +132,11 @@ internal readonly struct ProgramUniformValue
 
     public ProgramUniformValue(EShaderVarType type, IVector4 value, bool isArray = false)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
-        IVector4 = value;
-        HasInlineValue = true;
+        _inlineValue = new() { IVector4 = value };
+        _inlineKind = EProgramUniformInlineKind.IVector4;
     }
 
     public ProgramUniformValue(EShaderVarType type, UVector2 value, bool isArray = false)
@@ -138,27 +151,28 @@ internal readonly struct ProgramUniformValue
 
     public ProgramUniformValue(EShaderVarType type, UVector4 value, bool isArray = false)
     {
+        this = default;
         Type = type;
         IsArray = isArray;
-        UVector4 = value;
-        HasInlineValue = true;
+        _inlineValue = new() { UVector4 = value };
+        _inlineKind = EProgramUniformInlineKind.UVector4;
     }
 
     public EShaderVarType Type { get; }
     public bool IsArray { get; }
-    public bool HasInlineValue { get; }
+    public bool HasInlineValue => _inlineKind != EProgramUniformInlineKind.None;
     public object? ReferenceValue => _referenceValue;
-    public float Float { get; }
-    public int Int { get; }
-    public uint UInt { get; }
-    public double Double { get; }
-    public Vector2 Vector2 { get; }
-    public Vector3 Vector3 { get; }
-    public Vector4 Vector4 { get; }
-    public Matrix4x4 Matrix4x4 { get; }
-    public DVector4 DVector4 { get; }
-    public IVector4 IVector4 { get; }
-    public UVector4 UVector4 { get; }
+    public float Float => _inlineKind == EProgramUniformInlineKind.Float ? _inlineValue.Float : default;
+    public int Int => _inlineKind == EProgramUniformInlineKind.Int ? _inlineValue.Int : default;
+    public uint UInt => _inlineKind == EProgramUniformInlineKind.UInt ? _inlineValue.UInt : default;
+    public double Double => _inlineKind == EProgramUniformInlineKind.Double ? _inlineValue.Double : default;
+    public Vector2 Vector2 => _inlineKind == EProgramUniformInlineKind.Vector2 ? _inlineValue.Vector2 : default;
+    public Vector3 Vector3 => _inlineKind == EProgramUniformInlineKind.Vector3 ? _inlineValue.Vector3 : default;
+    public Vector4 Vector4 => _inlineKind == EProgramUniformInlineKind.Vector4 ? _inlineValue.Vector4 : default;
+    public Matrix4x4 Matrix4x4 => _inlineKind == EProgramUniformInlineKind.Matrix4x4 ? _inlineValue.Matrix4x4 : default;
+    public DVector4 DVector4 => _inlineKind == EProgramUniformInlineKind.DVector4 ? _inlineValue.DVector4 : default;
+    public IVector4 IVector4 => _inlineKind == EProgramUniformInlineKind.IVector4 ? _inlineValue.IVector4 : default;
+    public UVector4 UVector4 => _inlineKind == EProgramUniformInlineKind.UVector4 ? _inlineValue.UVector4 : default;
 
     public bool TryGetVector4(out Vector4 value)
     {

@@ -30,6 +30,10 @@ Call `start_agent_run` only when all of these conditions are true:
   `recommend_agent_route` defaults to the GPT-6 family. Use the deprecated
   `model_family: "gpt-5.6"` only for an explicit legacy request. GPT-6 maps bounded
   work to Luna, ordinary work to Sol, and difficult/high-risk work to Astra.
+  A user-pinned `gpt-6.1-sol` is also supported for independent runs with
+  `low`, `medium`, `high`, `xhigh`, or `max` effort; `none` and `minimal` are
+  rejected before launch. Automatic route advice continues to select
+  `gpt-6-sol` for ordinary work.
 - The five broker tools are callable in the current session. If they are
   missing, follow `docs/user-guide/ai/local-agent-broker.md` for setup,
   project trust, and restart requirements. Do not simulate a broker run.

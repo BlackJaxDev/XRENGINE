@@ -7,56 +7,7 @@ layout(triangles, max_vertices = 64, max_primitives = 124) out;
 const uint GROUP_SIZE = 32u;
 const uint MESHLET_TASK_MESHLET_INDEX_MASK = 0x7FFFFFFFu;
 
-struct DrawMetadata
-{
-    uint DrawID;
-    uint MeshID;
-    uint SubmeshID;
-    uint MaterialID;
-    uint TransformID;
-    uint SkinID;
-    uint RenderPassMask;
-    uint LayerMask;
-    uint Flags;
-    uint LodPolicy;
-    uint StateClassID;
-    uint InstanceCount;
-    uint RenderPass;
-    uint RenderIdentityID;
-    uint LogicalMeshID;
-    uint BoundsID;
-};
-
-struct MeshDataEntry
-{
-    uint IndexCount;
-    uint FirstIndex;
-    uint FirstVertex;
-    uint Flags;
-};
-
-struct GpuMeshletTaskRecord
-{
-    uint MeshletIndex;
-    uint DrawID;
-    uint TransformID;
-    uint MaterialID;
-};
-
-struct GpuMeshletDescriptor
-{
-    vec4 BoundsSphere;
-    uint VertexOffset;
-    uint TriangleByteOffset;
-    uint VertexCount;
-    uint TriangleCount;
-    vec4 Cone;
-    vec4 ConeApex;
-    uint PackedCone;
-    uint Reserved0;
-    uint Reserved1;
-    uint Reserved2;
-};
+#include "Advanced/Generated/GPUSceneRecords.glslinc"
 
 struct VertexSkin
 {

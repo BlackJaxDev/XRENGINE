@@ -49,6 +49,7 @@ internal sealed class SceneCaptureWorld : IRuntimeRenderWorld, IDisposable
     public bool PreviewQuadtrees => false;
     public bool GpuMeshBvhPickingEnabled { get; set; }
     public IReadOnlyList<SceneNode> RootNodes => [];
+    public ReadOnlySpan<SceneNode> RootNodeSnapshot => [];
     public VisualScene3D VisualScene { get; }
     public Lights3DCollection Lights => _source.Lights;
     public EventList<CameraComponent> FramebufferCameras { get; } = [];

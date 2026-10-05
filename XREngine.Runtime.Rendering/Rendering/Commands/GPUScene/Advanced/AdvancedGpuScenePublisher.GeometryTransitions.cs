@@ -47,8 +47,12 @@ public sealed partial class AdvancedGpuScenePublisher
             return false;
         }
 
+        // The canonical record is packed from the attribute buffers, so they
+        // must hold client-side data for every vertex the triangles address.
+        int vertexCount = mesh.VertexCount;
         List<IndexTriangle>? triangles = mesh.Triangles;
-        if (!AdvancedPackedVertexCodec.CanReadMesh(mesh) ||
+        if (vertexCount <= 0 ||
+            !AdvancedPackedVertexCodec.HasReadableAttributes(mesh) ||
             triangles is null || triangles.Count == 0)
         {
             reason = EAdvancedCanonicalCompatibilityReason.InvalidGeometrySource;
@@ -58,9 +62,9 @@ public sealed partial class AdvancedGpuScenePublisher
         for (int triangleIndex = 0; triangleIndex < triangles.Count; ++triangleIndex)
         {
             IndexTriangle triangle = triangles[triangleIndex];
-            if ((uint)triangle.Point0 >= (uint)mesh.VertexCount ||
-                (uint)triangle.Point1 >= (uint)mesh.VertexCount ||
-                (uint)triangle.Point2 >= (uint)mesh.VertexCount)
+            if ((uint)triangle.Point0 >= (uint)vertexCount ||
+                (uint)triangle.Point1 >= (uint)vertexCount ||
+                (uint)triangle.Point2 >= (uint)vertexCount)
             {
                 reason = EAdvancedCanonicalCompatibilityReason.InvalidGeometrySource;
                 return false;
@@ -81,7 +85,7 @@ public sealed partial class AdvancedGpuScenePublisher
         if (!TryValidateCanonicalGeometry(mesh, out _))
             return false;
 
-        // Validation establishes non-null mesh and source streams above.
+        // Validation establishes non-null mesh and readable attribute streams above.
         int vertexCount = mesh!.VertexCount;
         List<IndexTriangle> sourceTriangles = mesh.Triangles!;
         if (!HasGeometryScratchCapacity(
@@ -92,10 +96,11 @@ public sealed partial class AdvancedGpuScenePublisher
             return false;
         }
 
-        for (int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+        for (uint vertexIndex = 0u; vertexIndex < (uint)vertexCount; ++vertexIndex)
             _packedGeometryVertices[vertexIndex] = AdvancedPackedVertexCodec.Pack(
-                mesh, checked((uint)vertexIndex),
-                checked((uint)vertexIndex));
+                mesh,
+                vertexIndex,
+                vertexIndex);
 
         int indexCursor = 0;
         for (int triangleIndex = 0; triangleIndex < sourceTriangles.Count; ++triangleIndex)

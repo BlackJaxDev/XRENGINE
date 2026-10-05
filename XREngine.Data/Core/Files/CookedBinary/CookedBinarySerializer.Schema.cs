@@ -1,3 +1,4 @@
+#if !XRE_PUBLISHED
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -113,7 +114,9 @@ public static partial class CookedBinarySerializer
     {
         private readonly CookedBinarySerializationCallbacks? _callbacks = callbacks;
         private readonly bool _includeValues = includeValues;
-        private Dictionary<object, int> _referenceIds = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<object, int> _referenceIds = new(ReferenceEqualityComparer.Instance);
+        private readonly CookedBinarySharedValueTracker? _sharedValues =
+            callbacks?.ShareReference is null ? null : new CookedBinarySharedValueTracker();
 
         [RequiresUnreferencedCode(ReflectionWarningMessage)]
         [RequiresDynamicCode(ReflectionWarningMessage)]
@@ -130,8 +133,40 @@ public static partial class CookedBinarySerializer
             if (IsRuntimeOnlyType(runtimeType))
                 return FinalizeNullNode(node, runtimeType, "runtime-only type; cooked serializer emits null");
 
+            // Mirrors the shared-value decisions of WriteValue.
+            if (_sharedValues is not null && _callbacks!.ShareReference!(serializedValue))
+            {
+                if (_sharedValues.TryGetCompleted(serializedValue, out int identity))
+                {
+                    node.TypeName = runtimeType.FullName ?? runtimeType.Name;
+                    node.Marker = CookedBinaryTypeMarker.SharedReference.ToString();
+                    AddFixedLeaf(node, "marker", "marker", size: 1, valueDisplay: node.Marker);
+                    AddFixedLeaf(node, "identity", "identity", SizeOf7BitEncodedInt(identity), identity.ToString(CultureInfo.InvariantCulture), "refers to an earlier shared definition");
+                    return FinalizeNode(node);
+                }
+
+                if (_sharedValues.TryBegin(serializedValue, out identity))
+                {
+                    node.TypeName = runtimeType.FullName ?? runtimeType.Name;
+                    node.Marker = CookedBinaryTypeMarker.SharedDefinition.ToString();
+                    AddFixedLeaf(node, "marker", "marker", size: 1, valueDisplay: node.Marker);
+                    AddFixedLeaf(node, "identity", "identity", SizeOf7BitEncodedInt(identity), identity.ToString(CultureInfo.InvariantCulture));
+                    node.MutableChildren.Add(BuildModuleValueNode("sharedValue", declaredType, serializedValue, runtimeType, allowCustom));
+                    _sharedValues.Complete(serializedValue, identity);
+                    return FinalizeNode(node);
+                }
+            }
+
+            return BuildModuleValueNode(name, declaredType, serializedValue, runtimeType, allowCustom);
+        }
+
+        [RequiresUnreferencedCode(ReflectionWarningMessage)]
+        [RequiresDynamicCode(ReflectionWarningMessage)]
+        private CookedBinarySchemaNode BuildModuleValueNode(string name, Type? declaredType, object serializedValue, Type runtimeType, bool allowCustom)
+        {
+            var node = NewNode(name, "value", declaredType?.FullName ?? declaredType?.Name);
             int definitionId = -1;
-            if (IsGraphReferenceCandidate(serializedValue, runtimeType))
+            if (_callbacks?.ShareReference is null && IsGraphReferenceCandidate(serializedValue, runtimeType))
             {
                 if (_referenceIds.TryGetValue(serializedValue, out int existingId))
                 {
@@ -402,24 +437,14 @@ public static partial class CookedBinarySerializer
             AddFixedLeaf(node, "payload", "customPayload", size: payloadSize, valueDisplay: $"{payloadSize} bytes", notes: note);
         }
 
-        internal void AddExpandedCustomModelValueNode(CookedBinarySchemaNode node, Type runtimeType, object model, Type modelType, string note)
+        internal void AddExpandedCustomModelValueNode(CookedBinarySchemaNode node, Type runtimeType, object model, Type modelType, long actualPayloadSize, string note)
         {
             AddFixedLeaf(node, "marker", "marker", size: 1, valueDisplay: node.Marker);
             AddStringLeaf(node, "runtimeType", runtimeType.AssemblyQualifiedName ?? runtimeType.FullName ?? runtimeType.Name);
 
-            Dictionary<object, int> outerReferences = _referenceIds;
-            CookedBinarySchemaNode payloadNode;
-            try
-            {
-                _referenceIds = new(ReferenceEqualityComparer.Instance);
-                payloadNode = ExecuteWithMemoryPackSuppressed(
-                    () => BuildValueNode("payload", modelType, model, allowCustom: true));
-            }
-            finally
-            {
-                _referenceIds = outerReferences;
-            }
-            long actualPayloadSize = CalculateSize(model);
+            var payloadBuilder = new CookedBinarySchemaBuilder(callbacks: null, includeValues: true);
+            CookedBinarySchemaNode payloadNode = ExecuteWithMemoryPackSuppressed(
+                () => payloadBuilder.BuildValueNode("payload", modelType, model, allowCustom: true));
             payloadNode.Size = actualPayloadSize;
             payloadNode.SizeDescription = $"{actualPayloadSize} byte{(actualPayloadSize == 1 ? string.Empty : "s")}";
             payloadNode.Notes = string.IsNullOrWhiteSpace(payloadNode.Notes)
@@ -737,3 +762,4 @@ public static partial class CookedBinarySerializer
     }
 
 }
+#endif

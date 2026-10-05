@@ -38,6 +38,7 @@ public static partial class CookedBinarySerializer
             return true;
         }
 
+#if !XRE_PUBLISHED
         public override CookedBinarySchemaNode? TryBuildValueSchema(CookedBinarySchemaBuilder builder, string name, Type? declaredType, object value, Type runtimeType, bool allowCustom)
         {
             if (!runtimeType.IsGenericType || runtimeType.GetGenericTypeDefinition() != typeof(HashSet<>))
@@ -70,5 +71,6 @@ public static partial class CookedBinarySerializer
             node.Notes = "repeated for each set entry";
             return builder.FinalizeNode(node, allowUnknownChildren: true);
         }
+#endif
     }
 }

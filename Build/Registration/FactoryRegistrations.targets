@@ -1,46 +1,26 @@
 <Project>
-  <PropertyGroup Condition="'$(XREngineFactoryRegistrationMode)' != ''">
+  <PropertyGroup Condition="'$(XREngineFactoryRegistrationMode)' == 'BrowserManifest'">
     <XREngineFactoryRegistrationGenerator>$(MSBuildThisFileDirectory)../../Tools/Generate-AotFactoryRegistrations.ps1</XREngineFactoryRegistrationGenerator>
-    <XREngineFactoryRegistrationSourceList Condition="'$(XREngineFactoryRegistrationSourceList)' == ''">$(BaseIntermediateOutputPath)$(Configuration)/$(TargetFramework)/Generated/FactoryRegistrationSources.txt</XREngineFactoryRegistrationSourceList>
     <XREngineFactoryRegistrationHost Condition="'$(OS)' == 'Windows_NT'">powershell -NoProfile -ExecutionPolicy Bypass</XREngineFactoryRegistrationHost>
     <XREngineFactoryRegistrationHost Condition="'$(OS)' != 'Windows_NT'">pwsh -NoProfile</XREngineFactoryRegistrationHost>
   </PropertyGroup>
-
-  <ItemGroup Condition="'$(XREngineFactoryRegistrationMode)' != '' and '$(DesignTimeBuild)' != 'true'">
+  <ItemGroup Condition="'$(XREngineFactoryRegistrationMode)' == 'BrowserManifest' and '$(DesignTimeBuild)' != 'true'">
     <Compile Include="$(XREngineFactoryRegistrationOutput)" />
   </ItemGroup>
-
-  <Target Name="WriteXREngineFactoryRegistrationSources"
-          BeforeTargets="GenerateXREngineFactoryRegistrations"
-          Condition="'$(DesignTimeBuild)' != 'true' and ('$(XREngineFactoryRegistrationMode)' == 'Portable' or '$(XREngineFactoryRegistrationMode)' == 'Desktop')">
-    <Error Condition="'@(XREngineFactoryRegistrationInput)' == ''"
-           Text="Factory registration source input set is empty for $(MSBuildProjectName)." />
-    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(XREngineFactoryRegistrationSourceList)'))" />
-    <WriteLinesToFile File="$(XREngineFactoryRegistrationSourceList)"
-                      Lines="@(XREngineFactoryRegistrationInput->'%(FullPath)|%(RegistrationAssembly)|%(EmitRegistration)')"
-                      Overwrite="true" WriteOnlyWhenDifferent="true" />
-  </Target>
-
   <Target Name="InvalidateMissingXREngineFactoryRegistrationOutput"
           BeforeTargets="GenerateXREngineFactoryRegistrations"
-          Condition="'$(XREngineFactoryRegistrationMode)' != '' and '$(DesignTimeBuild)' != 'true' and !Exists('$(XREngineFactoryRegistrationOutput)') and Exists('$(XREngineFactoryRegistrationStamp)')">
+          Condition="'$(XREngineFactoryRegistrationMode)' == 'BrowserManifest' and '$(DesignTimeBuild)' != 'true' and !Exists('$(XREngineFactoryRegistrationOutput)') and Exists('$(XREngineFactoryRegistrationStamp)')">
     <Delete Files="$(XREngineFactoryRegistrationStamp)" />
   </Target>
-
   <Target Name="GenerateXREngineFactoryRegistrations"
           BeforeTargets="ValidateXREnginePortableProject;CoreCompile"
-          Inputs="$(XREngineFactoryRegistrationGenerator);$(MSBuildThisFileDirectory)BrowserStaticRegistrations.template.txt;$(MSBuildProjectFullPath);$(XREngineFactoryRegistrationSourceList);$(XREngineBrowserRegistrationManifest);@(XREngineFactoryRegistrationInput)"
+          Inputs="$(XREngineFactoryRegistrationGenerator);$(MSBuildThisFileDirectory)BrowserStaticRegistrations.template.txt;$(MSBuildProjectFullPath);$(XREngineBrowserRegistrationManifest)"
           Outputs="$(XREngineFactoryRegistrationStamp)"
-          Condition="'$(XREngineFactoryRegistrationMode)' != '' and '$(DesignTimeBuild)' != 'true'">
-    <Error Condition="'$(XREngineFactoryRegistrationMode)' != 'Portable' and '$(XREngineFactoryRegistrationMode)' != 'Desktop' and '$(XREngineFactoryRegistrationMode)' != 'BrowserManifest'"
-           Text="Unknown factory registration mode '$(XREngineFactoryRegistrationMode)'." />
+          Condition="'$(XREngineFactoryRegistrationMode)' == 'BrowserManifest' and '$(DesignTimeBuild)' != 'true'">
     <Error Condition="'$(XREngineFactoryRegistrationOutput)' == '' or '$(XREngineFactoryRegistrationStamp)' == ''"
-           Text="Factory registration output and stamp paths are required for $(MSBuildProjectName)." />
+           Text="Browser registration output and stamp paths are required for $(MSBuildProjectName)." />
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(XREngineFactoryRegistrationOutput)'))" />
-    <Exec Condition="'$(XREngineFactoryRegistrationMode)' == 'BrowserManifest'"
-          Command="$(XREngineFactoryRegistrationHost) -File &quot;$(XREngineFactoryRegistrationGenerator)&quot; -Mode BrowserManifest -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(XREngineFactoryRegistrationOutput)&quot; -BrowserManifest &quot;$(XREngineBrowserRegistrationManifest)&quot;" />
-    <Exec Condition="'$(XREngineFactoryRegistrationMode)' == 'Portable' or '$(XREngineFactoryRegistrationMode)' == 'Desktop'"
-          Command="$(XREngineFactoryRegistrationHost) -File &quot;$(XREngineFactoryRegistrationGenerator)&quot; -Mode $(XREngineFactoryRegistrationMode) -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(XREngineFactoryRegistrationOutput)&quot; -SourcesFile &quot;$(XREngineFactoryRegistrationSourceList)&quot;" />
+    <Exec Command="$(XREngineFactoryRegistrationHost) -File &quot;$(XREngineFactoryRegistrationGenerator)&quot; -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -OutputFile &quot;$(XREngineFactoryRegistrationOutput)&quot; -BrowserManifest &quot;$(XREngineBrowserRegistrationManifest)&quot;" />
     <Touch Files="$(XREngineFactoryRegistrationStamp)" AlwaysCreate="true" ForceTouch="true" />
   </Target>
 </Project>

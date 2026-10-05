@@ -131,6 +131,18 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
         }
     }
 
+    public event Action? TrackingBasisChanged
+    {
+        add => RuntimeEngine.VRState.TrackingBasisChanged += value;
+        remove => RuntimeEngine.VRState.TrackingBasisChanged -= value;
+    }
+
+    public event Action? SessionGenerationChanged
+    {
+        add => RuntimeEngine.VRState.SessionGenerationChanged += value;
+        remove => RuntimeEngine.VRState.SessionGenerationChanged -= value;
+    }
+
     private void ForwardDeviceDetected(RuntimeVrDeviceInfo device)
         => _deviceDetected?.Invoke(device);
 
@@ -149,10 +161,22 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
         => RuntimeEngine.VRState.IsInVR;
 
     public object? CalibrationSettings
-        => RuntimeEngine.VRState.CalibrationSettings;
+        => EngineVrLifecycle.CalibrationSettings;
+
+    public string? GetControllerInteractionProfile(bool leftHand) => RuntimeEngine.VRState.OpenXRApi?.GetControllerInteractionProfile(leftHand);
+
+    public float CalibrationHeadTiltToleranceDegrees => EngineVrLifecycle.CalibrationSettings.HeadTiltToleranceDegrees;
+
+    public UserSettings? PlayerSettings => Engine.UserSettings;
 
     public float RealWorldIPD
         => RuntimeEngine.VRState.RealWorldIPD;
+
+    public float RealWorldHeight
+    {
+        get => RuntimeEngine.VRState.RealWorldHeight;
+        set => RuntimeEngine.VRState.RealWorldHeight = value;
+    }
 
     public float ScaledIPD
         => RuntimeEngine.VRState.ScaledIPD;
@@ -187,8 +211,36 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
             ? openXrApi.GetKnownTrackers()
             : [];
 
+    public RuntimeVrTrackerStatus GetOpenXrTrackerStatus(string persistentPath)
+        => TryGetOpenXr(out OpenXRAPI? openXrApi)
+            ? openXrApi.GetTrackerStatus(persistentPath)
+            : RuntimeVrTrackerStatus.ProviderUnavailable;
+
+    public void RequestTrackerRefreshForCalibration()
+    {
+        if (TryGetOpenXr(out OpenXRAPI? openXrApi))
+            openXrApi.RequestTrackerRefreshForCalibration();
+    }
+
+    public bool IsTrackerRefreshPending
+        => TryGetOpenXr(out OpenXRAPI? openXrApi) && openXrApi.IsTrackerRefreshPending;
+
+    public string? GetCurrentInteractionProfile(bool leftHand)
+        => TryGetOpenXr(out OpenXRAPI? openXrApi)
+            ? openXrApi.GetCurrentInteractionProfile(leftHand)
+            : null;
+
     public bool IsGenericTracker(uint deviceIndex)
         => OpenVrDeviceBackend.IsGenericTracker(deviceIndex);
+
+    public bool TryCopyTrackingSnapshot(Span<RuntimeVrTrackerPose> trackers, out RuntimeVrTrackingSnapshot snapshot, out int trackerCount)
+    {
+        if (TryGetOpenXr(out IOpenXrRuntime? openXrApi))
+            return openXrApi.TryCopyTrackingSnapshot(trackers, out snapshot, out trackerCount);
+        snapshot = default;
+        trackerCount = 0;
+        return false;
+    }
 
     public bool TryGetDeviceLocalPose(uint deviceIndex, RuntimeVrPoseTiming timing, out Matrix4x4 pose)
         => OpenVrDeviceBackend.TryGetDeviceLocalPose(deviceIndex, timing, out pose);
@@ -198,11 +250,14 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
         if (TryGetOpenXr(out IOpenXrRuntime? openXrApi))
             return openXrApi.TryGetHeadLocalPose(MapPoseTiming(openXrApi, timing), out pose);
 
-        if (Headset is { } headset && TryGetDeviceLocalPose(headset.DeviceIndex, timing, out Matrix4x4 matrix))
+        if (IsOpenXRActive)
         {
-            pose = matrix;
-            return true;
+            pose = Matrix4x4.Identity;
+            return false;
         }
+
+        if (Headset is { } headset)
+            return TryGetDeviceLocalPose(headset.DeviceIndex, timing, out pose);
 
         pose = Matrix4x4.Identity;
         return false;
@@ -213,12 +268,15 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
         if (TryGetOpenXr(out IOpenXrRuntime? openXrApi))
             return openXrApi.TryGetControllerLocalPose(leftHand, MapPoseTiming(openXrApi, timing), out pose);
 
-        RuntimeVrDeviceInfo? controller = leftHand ? LeftController : RightController;
-        if (controller is { } tracked && TryGetDeviceLocalPose(tracked.DeviceIndex, timing, out Matrix4x4 matrix))
+        if (IsOpenXRActive)
         {
-            pose = matrix;
-            return true;
+            pose = Matrix4x4.Identity;
+            return false;
         }
+
+        RuntimeVrDeviceInfo? controller = leftHand ? LeftController : RightController;
+        if (controller is { } tracked)
+            return TryGetDeviceLocalPose(tracked.DeviceIndex, timing, out pose);
 
         pose = Matrix4x4.Identity;
         return false;
@@ -230,6 +288,16 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
             return openXrApi.TryGetTrackerLocalPose(trackerUserPath, MapPoseTiming(openXrApi, timing), out pose);
 
         pose = Matrix4x4.Identity;
+        return false;
+    }
+
+    public bool TryGetCurrentPoseSnapshot(out long snapshotId, out long sampleTime)
+    {
+        if (TryGetOpenXr(out OpenXRAPI? openXrApi))
+            return openXrApi.TryGetCurrentPoseSnapshot(out snapshotId, out sampleTime);
+
+        snapshotId = 0;
+        sampleTime = 0;
         return false;
     }
 
@@ -275,6 +343,12 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
     private static bool TryGetOpenXr([NotNullWhen(true)] out IOpenXrRuntime? openXrApi)
     {
         openXrApi = RuntimeEngine.VRState.IsOpenXRActive ? RuntimeEngine.VRState.OpenXRApi : null;
+        return openXrApi is not null;
+    }
+
+    private static bool TryGetOpenXr([NotNullWhen(true)] out OpenXRAPI? openXrApi)
+    {
+        openXrApi = RuntimeEngine.VRState.IsOpenXRActive ? RuntimeEngine.VRState.OpenXRApi as OpenXRAPI : null;
         return openXrApi is not null;
     }
 

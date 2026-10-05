@@ -7,7 +7,7 @@ namespace XREngine.Core.Files
     public static partial class AssetPacker
     {
         // Optimized string compression with prefix and dictionary compression
-        private class StringCompressor
+        internal sealed class StringCompressor
         {
             #region Fields
 

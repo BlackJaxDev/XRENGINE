@@ -161,10 +161,20 @@ without instrumenting each pass manually.
 
 - Enable it from **Profiler Settings** with **Enable GPU Pipeline Profiling**.
 - Results appear in the new **GPU Pipeline** panel in both the in-process and remote profilers.
-- The panel shows backend/status text, a resolved whole-frame GPU total, root-series history plots, and a hierarchical per-command timing tree.
+- The panel shows backend/status text, GPU timing totals, root-series history plots, and a hierarchical per-command timing tree. A sum of named scopes covers only those scopes; do not treat partial instrumentation as whole-frame GPU elapsed time.
 - In the in-editor profiler, each render-pipeline root history graph has a **Dump** button that writes a unique `profiler-gpu-pipeline-*.log` file under the active `Build/Logs/.../<session>/` folder. The dump includes retained frame samples, warmup-excluded summaries, worst frames, render-thread CPU/present deltas, named XRWindow CPU phase aggregates, slow command/scope rankings, shader/material hint rankings, and full aggregate tables for LLM analysis.
 - To avoid OpenGL driver stalls, timestamp sampling is capped per frame and temporarily throttled after slow query calls. Shadow-map passes keep high-level pass timings but skip per-mesh shadow draw scopes.
-- Current backend support is **OpenGL**. Unsupported renderers report status text rather than falling back to CPU timings.
+- Current backend support includes **OpenGL** and selected **Vulkan** scopes. Vulkan command scopes additionally require `XRE_GPU_TIMESTAMP_DENSE=1`; coarse command-buffer timing remains available separately. Unsupported or disabled timing reports status text rather than substituting CPU timings.
+
+Vulkan's `Advanced/Shadows/DirectionalCascades` interval covers a recorded
+directional cascade group's read barrier, target setup, tile clears and draws.
+It uses two queries from the existing fixed dense-query budget and records the
+submitted source-frame identity. It does not move the render-pass closure;
+later store/transition work is outside the interval. Disabling GPU pipeline
+profiling suppresses these queries. Native compute scopes and this shadow scope
+do not cover every raster or postprocess command. TOP_OF_PIPE/BOTTOM_OF_PIPE
+intervals can include dependency/drain time and overlap GPU work; use source-frame
+correlation and coarse command-buffer timings before assigning exclusive costs.
 
 ### CPU Hierarchy And Render Resource Churn
 
@@ -430,6 +440,16 @@ workload. `-VulkanGpuDrivenProfile ShippingFast`, `DevParity`, or `Diagnostics`
 freezes the effective GPU-driven feature profile independently of saved user
 settings. Every value is copied into the summary and capture manifest.
 
+For a directional-shadow comparison, pass `-DirectionalShadowLightNode` with
+the exact fixture node name and `-DirectionalShadowResolution 1024` (or another
+positive requested resolution). Supply both options together. Before warmup,
+the harness finds one directional light on that node, sets both dimensions,
+and verifies their readback through MCP. Missing or ambiguous lights and
+mismatched readback fail the run. JSON and text summaries retain the initial,
+requested and applied dimensions. This controls the warmed workload; bootstrap
+settings can still differ during cold startup, and atlas allocation policy is
+unchanged. Omitting both options preserves the fixture's existing settings.
+
 Use `-CacheMode Cold` for startup/cache-miss measurements; the harness clears
 OpenGL shader-program caches only in cold mode unless
 `-NoClearCachesBetweenVariants` is supplied. Use `-CacheMode Warm` for steady
@@ -451,13 +471,32 @@ After the minimum `-WarmupSec`, capture begins only after a measured quiet
 window (default: five seconds, with a 120-second timeout): output workload
 identity and target generations must be stable, asset/shader work must be quiet,
 and retirement, planner-prune, global-wait, and force-flush counters must be
-zero. Use `-StabilityWindowSec` and `-StabilityTimeoutSec` to tune this gate;
+zero. Advanced admission also requires a current output reservation, collected
+enabled opaque or masked mesh commands, and accepted preparation, visibility
+raster and native opaque shading receipts that advance on successive polls.
+Resident candidate counts and a colorful sky image do not establish visible
+geometry. These receipts certify backend authoring; Vulkan additionally requires
+an increasing `frame_lifecycle.outcome_counts.completed` counter throughout the
+stable window, no retained PresentNow terminal fault and no latest Rejected/Failed
+frame. Missing completion telemetry rejects admission. The selected viewport's
+actual backend selects this extra query, which runs only before measurement;
+OpenGL uses its existing admission checks. These checks do not certify GPU
+timestamp completion, and separately sampled frame IDs need not be equal.
+Use `-StabilityWindowSec` and
+`-StabilityTimeoutSec` to tune this gate;
 `-NoStabilityGate` is diagnostic-only. A capture is invalid if workload identity
 changes, an output takes an unapproved fallback, or a Vulkan submission is
 rejected. `-FailOnSteadyStateResourceChurn` covers every published retirement
 kind plus planner/global synchronization, while
 `-FailOnSteadyStateCommandBufferChurn` reports and gates record/reuse/dirty
 outcomes with an optional `-MinSteadyStateCommandBufferCleanReuseRatio`.
+
+MCP render-state pass summaries copy counts and labels under the collection's
+rendering-buffer read scope, then format owned rows after releasing it. They
+never retain a borrowed command list across buffer publication. Other fields in
+the response remain independently sampled observations; the response is not an
+atomic snapshot of all engine state. Summary storage is allocated only for an
+explicit diagnostic request, with no additional per-frame publication copy.
 
 Do not compare Debug and Release numbers as architectural evidence. Disable
 validation layers and verbose GL debug output for benchmark captures unless the
@@ -635,8 +674,37 @@ mode is reserved for diagnostics, is marked in manifests and samples via
 
 The in-editor **Profiler Settings** panel also exposes **Enable Profiler
 Component Timing**, which independently controls per-component tick timing
-capture for the Components panel without affecting frame logging or render
-statistics.
+capture for the Component Timings panel without affecting frame logging or
+render statistics. While it is on, the profiler installs itself as
+`RuntimeComponentTickTiming.Recorder`, and the world tick dispatch
+(`RuntimeWorldLifecycle`) times each callback and reports it with the
+component that owns it: the callback's target, or the component captured by a
+compiler-generated closure such as an animation tick. Callbacks run during a
+timed update frame are shown; fixed-update ticks between frames are not. The
+panel reads the frame snapshot, so **Frame Logging** must be on as well. While
+the toggle is off, the dispatch reads one static field per queue and times
+nothing. The world tick counters below report per kind of callback rather than
+per component; with both on, the component recording adds its cost to the
+counters' callback time.
+
+### World Tick Counters
+
+Set `XRE_WORLD_TICK_TELEMETRY=1` before launch to observe the world tick path
+(`RuntimeWorldLifecycle`): per tick group, how often it is dispatched and how
+long the queue snapshot, pending registration and callbacks take; per kind of
+callback, its invocations, total and longest time with a timestamp, counts of
+invocations of at least 0.25, 1, 4 and 16 ms (and how many of the 1 ms ones
+coincided with a garbage collection), and the bytes the dispatching thread
+allocated. A callback registered through a compiler-generated closure, such as
+an animation tick, is named by the method it forwards to. Read the counters
+with the read-only MCP tool `get_world_tick_telemetry`; they are cumulative
+since launch, so compare two reads to observe a window. World update calls
+skipped because the world is not playing are counted separately.
+
+With the variable unset, the dispatch loop runs its unobserved path and the
+counters stay at zero. With it set, the observer adds a few timestamp and
+counter reads per queue and per callback, and identifies each newly registered
+callback once, outside the reported pending-registration time.
 
 When code-profiler frame logging is enabled, the stats thread also writes
 disk diagnostics for severe frame anomalies:
@@ -754,11 +822,13 @@ remote profiler instead.
 
 ## Dedicated Vulkan RenderBench
 
-`XREngine.RenderBench` is the editor-free process for deterministic
-presentationless Vulkan control measurements. It constructs no `XRWindow`,
-editor panel, ImGui UI, input service, dynamic text, or window title. The Phase
-2 fixture is a synthetic clear whose fixed-step animation, random seed, output
-contract, warmup, stability window, and capture length are explicit.
+`XREngine.RenderBench` is the editor-free process for deterministic Vulkan
+component and presentationless measurements. It constructs no `XRWindow`,
+editor panel, ImGui UI, input service, dynamic text, or window title. Recipes
+fix the scene proxy, output, random seed, warmup, stability window, and capture
+length. `presentationless-deferred` and `presentationless-uber` execute real
+Vulkan work through fullscreen proxy passes; they do not represent a production
+deferred/Uber scene frame and cannot alone promote a renderer change.
 
 Run a bounded process without MCP:
 
@@ -834,7 +904,7 @@ states are `Preparing`, `Stabilizing`, `Armed`, `Capturing`, `Draining`,
 `Completed`, `Failed`, and `Cancelled`. Timeouts fail visibly; unsupported
 targets and requirements never select a fallback renderer.
 
-### Phase 4 Recipes and Deterministic Fixtures
+### Recipes and deterministic fixtures
 
 The authoritative JSONC schema is
 `.vscode/schemas/render-profile-recipe.schema.json`. A recipe declares every
@@ -865,13 +935,67 @@ The stable fixture names are:
   `gpu-final-composition`.
 - Full presentationless proxies: `presentationless-deferred` and
   `presentationless-uber`.
+- Production full frame: `production-default-static`.
 
 GPU-pass fixtures compile their fullscreen shader and create their dynamic-
 rendering pipeline before capture. Secondary fixtures create persistent workers
-with one command pool per worker and one secondary buffer per frame slot.
+with one command pool per worker and one secondary buffer per frame slot. Their
+completion `CountdownEvent`'s native `WaitHandle` is created before capture, and
+each worker join uses its blocking `WaitOne` path. A countdown-count poll was
+removed because the event signal and reset can race; the capture waits on the
+event itself. Worker allocation totals are snapshotted at `EndCapture`, before
+query drainage, so teardown/drain work is excluded.
 Descriptor layouts/pools/buffers and upload staging/device buffers are likewise
 resident before capture. Native object creation during capture occurs only when
 the recipe explicitly selects resource, descriptor, or pipeline churn.
+
+The `production-default-static` recipe in
+`docs/examples/profiling/recipes/production-default.jsonc` runs a distinct
+production full-frame fixture. It uses the real production scene host,
+viewport, and `DefaultRenderPipeline` with the fixed moderate-static world,
+raw-albedo path, and GPU-indirect zero-readback feature. It validates the
+production submission receipt and currently exposes submission and primary
+command-buffer counts. Command exceptions propagate and abort production output
+authoring; a partially authored command chain cannot count as a complete frame.
+The fixture does not measure renderer worker allocations;
+worker allocation results are reported as unmeasured, and a requested worker
+allocation budget fails instead of treating that value as zero.
+Its process scope disables and restores bucket dry-run, clean-swap skipping,
+empty-bucket skipping, single-bucket forcing, P3 logging, and per-bucket GPU
+finish overrides so ambient diagnostic switches cannot suppress work or add
+unrequested synchronization.
+Cold production preparation follows the recipe's existing whole-session timeout
+and cancellation token. An unchanged admission stage may wait at most five
+seconds, and retries retain their 4,096-attempt cap. Measured frames never retry.
+Final production simulation time comes from the explicit world clock, including
+failed cold attempts and drain frames, before scene teardown.
+Direct command-line runs report an expired recipe deadline as a timeout failure
+with a nonzero exit code; explicit shutdown remains a cancellation.
+
+Run it with the standard recipe executor after building RenderBench:
+
+```powershell
+dotnet .\Build\RenderBench\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.RenderBench.dll `
+  --output-dir .\Build\_AgentValidation\<run>\reports\production-default `
+  --recipe-file .\docs\examples\profiling\recipes\production-default.jsonc
+```
+
+This recipe is a diagnostic capture with validation enabled. Its 64 MiB
+capture-thread allocation limit is a guard informed by the currently measured
+production allocation level; it does not claim zero allocation or qualify the
+recipe as clean promotion evidence. Production selected GPU timestamps and
+optional or required calibration are supported in `GraphicsOnly` queue mode.
+Select exact production metadata names, such as `OpaqueDeferred`; synthetic
+fixture pass names do not apply. Selected recording uses a dedicated uncached
+primary and rejects artifact reuse. Hardware counter replay and split-queue
+selected recording remain unsupported.
+The Deferred/Uber fixtures remain fullscreen pass proxies. A clean production
+performance comparison and cross-target correctness acceptance remain open. After
+capture, the fixture reads the exact final measured receipt once, derives its
+hash and PNG from those bytes, and requires visible red anchor pixels. Failed
+output gates retain the image and admission snapshot for diagnosis. Bounded
+visibility and material-count readbacks run only after that measured receipt
+completes; they do not enter the measured interval.
 
 The effective-configuration hash includes the complete recipe and resolved
 catalog defaults. The workload hash deliberately excludes recipe name, worker
@@ -882,6 +1006,118 @@ adapter/driver identity, output hash, optional PNG, and explicit gates for
 fixture/shader/fallback identity, expected work, query drainage, allocations,
 and percentile budgets. Expected counters are per retained frame and are
 multiplied by `capture_frames * repetitions` during validation.
+
+### Selected CPU and GPU diagnostics
+
+The ordinary `EVulkanCpuStage` aggregate counters remain the low-cost default.
+Set `instrumentation` to include `targeted_cpu_spans` and list stages in
+`cpu_profiling.stages` for a diagnostic run. Before capture, the main and
+secondary threads warm fixed-capacity buffers. Retained records carry a global
+span ID, parent ID, stable stage ID, frame, thread and worker IDs, invocation
+ordinal, timestamps, managed allocation bytes, and a wait reason where known.
+Overflow, unwarmed threads, invalid nesting, and invalid parent intervals mark
+the analysis incomplete. After drain, child-interval union gives exclusive
+time without adding nested stages twice; stage distributions and worker work,
+wait, overlap, and imbalance are separate results. Parent and child aggregate
+stage totals are not mutually exclusive and must not be added together.
+`cpu_profiling.emit_markers` additionally enables fixed-schema
+`XREngine-Vulkan-CpuSpans` EventSource events for EventPipe/ETW tools such as
+`dotnet-trace`, PerfView, or WPA. Marker and Chrome trace export are optional
+diagnostics, never clean promotion evidence.
+
+Set `instrumentation` to include `targeted_gpu_timestamps` and select exact
+case-sensitive names in `gpu_profiling.targets`, for example
+`presentationless-deferred.Pass3`. The fixture resolves these names before
+capture; a selected name with no observed scope fails validation. Queue-local
+query pools have explicit per-frame query and scope-depth budgets. Completed
+frame slots are read with availability flags after submission, without waiting
+on a query inside the measured frame. Valid bits, timestamp period, query
+bytes, skipped/overflowed scopes, and readback latency travel with the samples.
+`calibrated_timestamps` requests host/device samples and uncertainty; when
+unsupported, an uncorrelated trace remains available unless
+`require_calibration` asks to fail. A selected GPU sink only covers the queue
+and passes it can observe. Split-queue Advanced work is explicitly unsupported
+by this fixture path until each queue has independent query ownership.
+
+`hardware_counter_policy` is an intrusive diagnostic. `VK_KHR_performance_query`
+enumeration and repeated query-pass replay are restricted to the immutable
+`noop-control` fixture, after ordinary timestamp capture drains. Set explicit
+`gpu_profiling.hardware_counter_indices`; `required` fails when the extension,
+counter, lock, or query support is unavailable. Such replay does not measure a
+production pass and must not be mixed into clean timing evidence.
+
+Use `profile_mode: clean_profile` or `release_benchmark` with aggregate CPU and
+coarse GPU only for promotable comparisons. `diagnostics` and
+`development_profile` allow selected spans, markers, validation, labels, and
+counter probes with their observer cost recorded. Clean primary and secondary
+command-buffer reuse evidence is captured separately from selected diagnostic
+runs: timestamp or label instrumentation can change cache decisions, so a
+diagnostic capture cannot establish clean reuse.
+
+### Repeated command-line profiles
+
+Build the executable separately, then use one task run root for repeated
+invocations. `Build-RenderBench` is the build task;
+`RenderBench (Component Diagnostics)` is a debugger launch for the selected
+secondary recipe. The wrapper never builds, deploys, or accepts a baseline:
+
+```powershell
+pwsh Tools/Benchmarks/Invoke-RenderProfile.ps1 -Preset Quick `
+  -ExecutablePath <repo-root>/Build/RenderBench/Debug/AnyCPU/Debug/net10.0-windows7.0/XREngine.RenderBench.dll `
+  -RunRoot Build/_AgentValidation/<run>
+pwsh Tools/Benchmarks/Invoke-RenderProfile.ps1 -Preset Compare `
+  -BaselineExecutablePath <baseline-build>/XREngine.RenderBench.dll `
+  -CandidateExecutablePath <candidate-build>/XREngine.RenderBench.dll `
+  -RunRoot Build/_AgentValidation/<run>
+pwsh Tools/Benchmarks/Invoke-RenderProfile.ps1 -Preset Gate `
+  -BaselineExecutablePath <baseline-build>/XREngine.RenderBench.dll `
+  -CandidateExecutablePath <candidate-build>/XREngine.RenderBench.dll `
+  -RunRoot Build/_AgentValidation/<run>
+```
+
+Quick uses one 640×360 clean component recipe with at least 100 warmup and
+180 capture frames. Compare and Gate run four independent processes per
+variant in repeated A/B/B/A order, then invoke
+`Tools/Benchmarks/Invoke-RenderProfileComparison.ps1`. They reject invalid
+gates, unstable samples, incompatible workload/output/source identity, and
+regressions above the selected thresholds. `-DiagnosticComparison` permits an
+explicitly non-promotable comparison; pair it with `-ObserverOverhead` when the
+variants intentionally differ in instrumentation. Use `-AllowWorkerVariation`
+or `-AllowMutationVariation` only for the corresponding controlled experiment.
+The comparison report can record a broader presentationless result; component
+savings alone do not prove full-frame savings. Baseline acceptance remains a
+separate explicit operation in the comparator.
+
+Each invocation gets a unique `reports/profile-*` directory beneath its run
+root. Schema-v2 results retain raw CPU/GPU frame streams, spans, selected GPU
+queries, summary and validation files, optional traces/images/captures, canonical
+recipe and effective configuration, workload identity, source executable and
+assembly hashes, hardware/driver identity, timing intervals, and gate status.
+The source and workload hashes prevent an unrelated build or workload change
+from silently entering a clean comparison. Current live evidence and validation
+are recorded in the [Vulkan component profiling progress report](../../work/progress/rendering/vulkan-component-profiling.md#previously-recorded-local-evidence).
+
+External GPU captures made by RenderDoc, Nsight, RGP, or an existing capture
+bridge can be attached after the measured interval with `external_capture`:
+
+```json
+{
+  "external_capture": {
+    "tool_identity": "RenderDoc",
+    "artifact_paths": ["renderdoc/selected-pass.rdc"],
+    "require_artifacts": true
+  }
+}
+```
+
+Paths are relative to the current `Build/_AgentValidation/<task-run>` directory
+or absolute paths within it. Drain accepts at most 16 files, rejects paths that
+escape the task run or traverse reparse points, copies present files into the
+profile's `external-captures/` directory, and records their size and SHA-256 in
+`render-profile-external-captures.json`. Optional missing files appear there as
+`missing`; required missing files fail the profile during drain. The tool
+identity marks the recipe intrusive, so clean and release profiles reject it.
+This hook attaches existing files; it does not start a capture tool.
 
 ### Zero-readback validation scope
 

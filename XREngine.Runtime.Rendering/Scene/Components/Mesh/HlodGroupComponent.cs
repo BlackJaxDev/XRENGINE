@@ -559,8 +559,11 @@ namespace XREngine.Components.Scene.Mesh
                     if (indices is null || indices.Length < 3)
                         continue;
 
-                    var verts = mesh.Vertices;
-                    if (verts is null || verts.Length == 0)
+                    // HLOD proxies are rebuilt off the render path; the view
+                    // materializes the source attributes only for this build.
+                    using XRMeshVertexView view = XRMeshVertexView.Open(mesh, EXRMeshVertexViewContent.Attributes);
+                    Vertex[] verts = view.Vertices;
+                    if (verts.Length == 0)
                         continue;
 
                     if (!trianglesByMaterial.TryGetValue(material, out var tris))

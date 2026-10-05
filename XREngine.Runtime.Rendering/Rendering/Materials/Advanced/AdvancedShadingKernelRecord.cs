@@ -5,6 +5,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Pipeline identity shared by any number of material instance rows.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedShadingKernelRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedShadingKernelRecord
 {

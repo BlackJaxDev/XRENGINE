@@ -1,5 +1,4 @@
 using XREngine.Imaging;
-using System.Collections.Concurrent;
 using System.IO;
 using System.Threading;
 
@@ -77,12 +76,14 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
         {
             long totalStartTimestamp = XRTexture2D.StartImportedTextureTiming();
             long readStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-            byte[] assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(assetPath);
+            // The cache file is leased through an owner so the encoded bytes never reach the large
+            // object heap; only the selected resident mips are copied out during parsing.
+            using XREngine.Core.Files.CookedPayloadOwner assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytesOwned(assetPath);
             double cacheReadMilliseconds = XRTexture2D.CompleteImportedTextureTiming(readStartTimestamp);
             cancellationToken.ThrowIfCancellationRequested();
 
             long parseStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-            if (XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes(assetBytes, maxResidentDimension, includeMipChain, out TextureStreamingResidentData residentData))
+            if (XRTexture2D.TryReadResidentDataFromTextureAssetFileBytes(assetBytes.Span, maxResidentDimension, includeMipChain, out TextureStreamingResidentData residentData))
             {
                 double cacheParseMilliseconds = XRTexture2D.CompleteImportedTextureTiming(parseStartTimestamp);
                 TextureRuntimeDiagnostics.LogCacheRead(
@@ -106,7 +107,7 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
             cancellationToken.ThrowIfCancellationRequested();
 
             if (_fallbackSource is not null &&
-                XRTexture2D.LooksLikeBinaryTextureStreamingPayload(assetBytes))
+                XRTexture2D.LooksLikeBinaryTextureStreamingPayload(assetBytes.Span))
             {
                 return LoadFallbackResidentData(
                     maxResidentDimension,
@@ -221,6 +222,12 @@ internal sealed class ThirdPartyTextureStreamingSource(string sourcePath) : ITex
     }
 }
 
+/// <summary>
+/// Keeps deep copies of recently decoded resident chains for a short time so a
+/// transition that is canceled and requeued, or a texture shared by several
+/// records, does not decode the same source again. Entries own their copies:
+/// eviction and expiry dispose them, under the same lock that clones them out.
+/// </summary>
 internal static class TextureStreamingResidentDataReuseCache
 {
     private const int MaxEntries = 24;
@@ -237,8 +244,12 @@ internal static class TextureStreamingResidentDataReuseCache
 
     private sealed record CacheEntry(TextureStreamingResidentData Data, long CreatedTimestamp, long Bytes);
 
-    private static readonly ConcurrentDictionary<CacheKey, CacheEntry> Entries = new();
+    private static readonly Dictionary<CacheKey, CacheEntry> Entries = [];
+    private static readonly object Sync = new();
     private static long s_totalBytes;
+
+    /// <summary>Bytes currently held by cached resident copies.</summary>
+    public static long TotalBytes => Interlocked.Read(ref s_totalBytes);
 
     public static bool TryGet(
         ITextureStreamingSource source,
@@ -250,17 +261,20 @@ internal static class TextureStreamingResidentDataReuseCache
         if (!TryCreateKey(source, maxResidentDimension, includeMipChain, out CacheKey key))
             return false;
 
-        if (!Entries.TryGetValue(key, out CacheEntry? entry))
-            return false;
-
-        if (TextureRuntimeDiagnostics.ElapsedMilliseconds(entry.CreatedTimestamp) > EntryLifetimeMilliseconds)
+        lock (Sync)
         {
-            Remove(key);
-            return false;
-        }
+            if (!Entries.TryGetValue(key, out CacheEntry? entry))
+                return false;
 
-        residentData = CloneResidentData(entry.Data);
-        return true;
+            if (TextureRuntimeDiagnostics.ElapsedMilliseconds(entry.CreatedTimestamp) > EntryLifetimeMilliseconds)
+            {
+                RemoveNoLock(key);
+                return false;
+            }
+
+            residentData = CloneResidentData(entry.Data);
+            return true;
+        }
     }
 
     public static void Store(
@@ -276,21 +290,30 @@ internal static class TextureStreamingResidentDataReuseCache
         if (bytes <= 0 || bytes > MaxEntryBytes)
             return;
 
+        // Copy outside the lock; the caller keeps ownership of residentData.
         CacheEntry entry = new(CloneResidentData(residentData), TextureRuntimeDiagnostics.StartTiming(), bytes);
-        Entries.AddOrUpdate(
-            key,
-            addValueFactory: _ =>
-            {
-                Interlocked.Add(ref s_totalBytes, bytes);
-                return entry;
-            },
-            updateValueFactory: (_, previous) =>
-            {
-                Interlocked.Add(ref s_totalBytes, bytes - previous.Bytes);
-                return entry;
-            });
+        lock (Sync)
+        {
+            RemoveNoLock(key);
+            Entries[key] = entry;
+            Interlocked.Add(ref s_totalBytes, bytes);
+            PruneNoLock();
+        }
+    }
 
-        PruneIfNeeded();
+    /// <summary>
+    /// Disposes entries older than their lifetime. Called periodically by the
+    /// streaming manager so idle entries do not wait for the next access.
+    /// </summary>
+    public static void ExpireStale()
+    {
+        lock (Sync)
+        {
+            if (Entries.Count == 0)
+                return;
+
+            RemoveExpiredNoLock();
+        }
     }
 
     private static bool TryCreateKey(
@@ -345,18 +368,12 @@ internal static class TextureStreamingResidentDataReuseCache
             residentData.ResidentMaxDimension);
     }
 
-    private static void PruneIfNeeded()
+    private static void PruneNoLock()
     {
-        long totalBytes = Interlocked.Read(ref s_totalBytes);
-        if (Entries.Count <= MaxEntries && totalBytes <= MaxTotalBytes)
+        if (Entries.Count <= MaxEntries && Interlocked.Read(ref s_totalBytes) <= MaxTotalBytes)
             return;
 
-        foreach (KeyValuePair<CacheKey, CacheEntry> pair in Entries)
-        {
-            if (TextureRuntimeDiagnostics.ElapsedMilliseconds(pair.Value.CreatedTimestamp) > EntryLifetimeMilliseconds)
-                Remove(pair.Key);
-        }
-
+        RemoveExpiredNoLock();
         while (Entries.Count > MaxEntries || Interlocked.Read(ref s_totalBytes) > MaxTotalBytes)
         {
             CacheKey oldestKey = default;
@@ -373,13 +390,34 @@ internal static class TextureStreamingResidentDataReuseCache
             if (oldestEntry is null)
                 return;
 
-            Remove(oldestKey);
+            RemoveNoLock(oldestKey);
         }
     }
 
-    private static void Remove(CacheKey key)
+    private static void RemoveExpiredNoLock()
     {
-        if (Entries.TryRemove(key, out CacheEntry? removed))
-            Interlocked.Add(ref s_totalBytes, -removed.Bytes);
+        List<CacheKey>? expired = null;
+        foreach (KeyValuePair<CacheKey, CacheEntry> pair in Entries)
+        {
+            if (TextureRuntimeDiagnostics.ElapsedMilliseconds(pair.Value.CreatedTimestamp) > EntryLifetimeMilliseconds)
+                (expired ??= []).Add(pair.Key);
+        }
+
+        if (expired is null)
+            return;
+
+        foreach (CacheKey key in expired)
+            RemoveNoLock(key);
+    }
+
+    private static void RemoveNoLock(CacheKey key)
+    {
+        if (!Entries.Remove(key, out CacheEntry? removed))
+            return;
+
+        Interlocked.Add(ref s_totalBytes, -removed.Bytes);
+        // The entry owns its deep copy; the Data setter disposes each source.
+        foreach (Mipmap2D mipmap in removed.Data.Mipmaps)
+            mipmap.Data = null;
     }
 }

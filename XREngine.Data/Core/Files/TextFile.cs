@@ -18,6 +18,18 @@ namespace XREngine.Core.Files
         public event Action? TextChanged;
 
         private string? _directFilePath;
+        [NonSerialized]
+        private readonly object _diskProvenanceLock = new();
+        [NonSerialized]
+        private string? _diskBaselinePath;
+        [NonSerialized]
+        private string? _diskBaselineText;
+        [NonSerialized]
+        private long _sourceMutationRevision;
+        [NonSerialized]
+        private long _refreshRequestRevision;
+        [NonSerialized]
+        private bool _destroyed;
 
         [YamlIgnore]
         [JsonIgnore]
@@ -28,8 +40,13 @@ namespace XREngine.Core.Files
             set
             {
                 string? normalized = NormalizeDirectFilePath(value);
-                SetField(ref _directFilePath, normalized);
-                base.FilePath = normalized;
+                lock (_diskProvenanceLock)
+                {
+                    if (!string.Equals(FilePath, normalized, StringComparison.OrdinalIgnoreCase))
+                        _sourceMutationRevision++;
+                    SetField(ref _directFilePath, normalized);
+                    base.FilePath = normalized;
+                }
             }
         }
 
@@ -37,7 +54,15 @@ namespace XREngine.Core.Files
         public string? Text
         {
             get => _text;
-            set => SetField(ref _text, value);
+            set
+            {
+                lock (_diskProvenanceLock)
+                {
+                    if (!string.Equals(_text, value, StringComparison.Ordinal))
+                        _sourceMutationRevision++;
+                    SetField(ref _text, value);
+                }
+            }
         }
 
         [MemoryPackIgnore]
@@ -54,7 +79,15 @@ namespace XREngine.Core.Files
                 return _encoding;
             }
 
-            set => SetField(ref _encoding, value);
+            set
+            {
+                lock (_diskProvenanceLock)
+                {
+                    if (_encoding.CodePage != value.CodePage)
+                        _sourceMutationRevision++;
+                    SetField(ref _encoding, value);
+                }
+            }
         }
 
         public int EncodingCodePage
@@ -114,6 +147,81 @@ namespace XREngine.Core.Files
             }
         }
 
+        private void ApplyLoadedText(string path, string text, Encoding encoding, RuntimeAssetReadLease read)
+        {
+            lock (_diskProvenanceLock)
+            {
+                read.EnsureCurrent();
+                Encoding = encoding;
+                read.EnsureCurrent();
+                Text = text;
+                bool diskBacked = !OperatingSystem.IsBrowser()
+                    && (RuntimeAssetReadServices.Source?.SupportsHostFileAccess ?? true);
+                _diskBaselinePath = diskBacked ? NormalizeDirectFilePath(path) : null;
+                _diskBaselineText = diskBacked ? text : null;
+                _refreshRequestRevision++;
+            }
+        }
+
+        /// <summary>
+        /// Captures a clean disk-backed source before an off-thread refresh read.
+        /// A path assigned to an in-memory source without a successful load or save is not disk-owned.
+        /// </summary>
+        public bool TryCaptureDiskRefresh(string path, out string baselineText, out long mutationRevision,
+            out long requestRevision, out Encoding encoding)
+        {
+            lock (_diskProvenanceLock)
+            {
+                baselineText = _diskBaselineText ?? string.Empty;
+                mutationRevision = _sourceMutationRevision;
+                requestRevision = 0;
+                encoding = _encoding;
+                string? normalizedPath = NormalizeDirectFilePath(path);
+                if (_diskBaselineText is null ||
+                    !string.Equals(_diskBaselinePath, normalizedPath, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(FilePath, normalizedPath, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(_text ?? string.Empty, _diskBaselineText, StringComparison.Ordinal) ||
+                    _destroyed)
+                {
+                    return false;
+                }
+
+                requestRevision = ++_refreshRequestRevision;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Applies an off-thread disk read only when neither an edit, path change, nor newer refresh superseded it.
+        /// </summary>
+        public bool TryApplyDiskRefresh(string path, string baselineText, long mutationRevision,
+            long requestRevision, string refreshedText)
+        {
+            lock (_diskProvenanceLock)
+            {
+                string? normalizedPath = NormalizeDirectFilePath(path);
+                if (_sourceMutationRevision != mutationRevision ||
+                    _refreshRequestRevision != requestRevision ||
+                    !string.Equals(FilePath, normalizedPath, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(_diskBaselinePath, normalizedPath, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(_diskBaselineText, baselineText, StringComparison.Ordinal) ||
+                    !string.Equals(_text ?? string.Empty, baselineText, StringComparison.Ordinal) ||
+                    _destroyed)
+                {
+                    return false;
+                }
+
+                if (string.Equals(_text ?? string.Empty, refreshedText, StringComparison.Ordinal))
+                    return false;
+
+                Text = refreshedText;
+                if (!string.Equals(_text, refreshedText, StringComparison.Ordinal))
+                    return false;
+                _diskBaselineText = refreshedText;
+                return true;
+            }
+        }
+
         public override void Reload(string path)
         {
             // Don't reload embedded TextFiles from disk - they live within their parent asset
@@ -163,13 +271,45 @@ namespace XREngine.Core.Files
         public void SaveTo(string path)
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("Text file save");
-            File.WriteAllText(path, _text ?? string.Empty, Encoding);
+            string text;
+            Encoding encoding;
+            long revision;
+            lock (_diskProvenanceLock)
+            {
+                text = _text ?? string.Empty;
+                encoding = Encoding;
+                revision = _sourceMutationRevision;
+            }
+            File.WriteAllText(path, text, encoding);
+            RecordSavedText(path, text, revision);
         }
 
         public async Task SaveToAsync(string path)
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("Text file save");
-            await File.WriteAllTextAsync(path, _text ?? string.Empty, Encoding).ConfigureAwait(false);
+            string text;
+            Encoding encoding;
+            long revision;
+            lock (_diskProvenanceLock)
+            {
+                text = _text ?? string.Empty;
+                encoding = Encoding;
+                revision = _sourceMutationRevision;
+            }
+            await File.WriteAllTextAsync(path, text, encoding).ConfigureAwait(false);
+            RecordSavedText(path, text, revision);
+        }
+
+        private void RecordSavedText(string path, string text, long revision)
+        {
+            lock (_diskProvenanceLock)
+            {
+                if (_sourceMutationRevision != revision || !string.Equals(_text ?? string.Empty, text, StringComparison.Ordinal))
+                    return;
+                _diskBaselinePath = NormalizeDirectFilePath(path);
+                _diskBaselineText = text;
+                _refreshRequestRevision++;
+            }
         }
     }
 }

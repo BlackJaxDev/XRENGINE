@@ -28,6 +28,8 @@ namespace XREngine.Components.Scene.Mesh
         private readonly RenderCommandMesh3D _rc;
         private readonly RenderCommandMethod3D _renderBoundsCommand;
         private readonly HashSet<XRMesh> _ownedRuntimeMeshes = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        // Source LODs can outlive this renderable and be shared by other components.
+        // Retirement removes these handlers before it releases runtime ownership.
         private readonly List<(SubMeshLOD Source, XRPropertyChangedEventHandler Handler)> _sourceLodSubscriptions = [];
         private readonly Dictionary<SubMeshLOD, (XRMeshRenderer Renderer, bool Mesh, bool Material)> _pendingLodReferenceUpdates = [];
         private bool _lodReferenceUpdateInProgress;
@@ -280,7 +282,9 @@ namespace XREngine.Components.Scene.Mesh
                         RenderInfo.CullingOffsetMatrix = GetCurrentCullingBasisMatrix(Component.Transform);
                     }
 
+                    PublishRenderCommandCullingVolume();
                     CaptureRenderDeformationSettings(IsSkinned);
+                    EnsureInitialSubscriptions();
                     // Do not expose source callbacks to a half-constructed wrapper.
                     foreach ((SubMeshLOD source, XRPropertyChangedEventHandler handler) in _sourceLodSubscriptions)
                         source.PropertyChanged += handler;
@@ -308,6 +312,30 @@ namespace XREngine.Components.Scene.Mesh
                     throw;
                 }
             }
+        }
+
+        private void EnsureInitialSubscriptions()
+        {
+            // Snapshot restoration can suppress SetField notifications while this mesh is
+            // constructed. Replacing an existing handler keeps the normal path idempotent.
+            TransformBase transform = Component.Transform;
+            transform.WorldMatrixChanged -= Component_WorldMatrixPreviewChanged;
+            transform.RenderMatrixChanged -= Component_WorldMatrixChanged;
+            transform.WorldMatrixChanged += Component_WorldMatrixPreviewChanged;
+            transform.RenderMatrixChanged += Component_WorldMatrixChanged;
+
+            Component.PropertyChanged -= ComponentPropertyChanged;
+            Component.PropertyChanging -= ComponentPropertyChanging;
+            Component.PropertyChanged += ComponentPropertyChanged;
+            Component.PropertyChanging += ComponentPropertyChanging;
+
+            if (RootBone is not { } rootBone)
+                return;
+
+            rootBone.WorldMatrixChanged -= RootBone_WorldMatrixPreviewChanged;
+            rootBone.RenderMatrixChanged -= RootBone_WorldMatrixChanged;
+            rootBone.WorldMatrixChanged += RootBone_WorldMatrixPreviewChanged;
+            rootBone.RenderMatrixChanged += RootBone_WorldMatrixChanged;
         }
 
         #endregion
@@ -786,6 +814,7 @@ namespace XREngine.Components.Scene.Mesh
                             // must not dispatch another registration transaction.
                             using (XRBase.SuppressPropertyNotifications())
                                 RenderInfo.WorldInstance = null;
+                            Attempt(RenderInfo.RenderCommands.Clear);
                         }
                     }
                     Attempt(() =>

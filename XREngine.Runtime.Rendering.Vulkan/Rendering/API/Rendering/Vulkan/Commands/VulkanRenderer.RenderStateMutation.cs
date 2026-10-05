@@ -294,7 +294,7 @@ internal sealed class VulkanStateTracker
             return new IndexedViewportScissorSnapshot(viewports, scissors, (uint)count);
         }
 
-        private static Rect2D CreateVulkanScissor(BoundingRectangle region, Extent2D targetExtent)
+        internal static Rect2D CreateVulkanScissor(BoundingRectangle region, Extent2D targetExtent)
         {
             int targetWidth = (int)Math.Max(targetExtent.Width, 1u);
             int targetHeight = (int)Math.Max(targetExtent.Height, 1u);

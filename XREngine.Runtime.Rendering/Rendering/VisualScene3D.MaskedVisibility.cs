@@ -84,6 +84,13 @@ public partial class VisualScene3D
                 {
                     if (_mainVisibilityFamilies[i] is not MainVisibilityCacheEntry cached)
                         continue;
+                    // A family not collected in the frame that just ended releases its results:
+                    // an idle entry would otherwise keep removed renderables and their owners alive.
+                    if (!cached.Attempted)
+                    {
+                        cached.Results.BeginFrame();
+                        cached.ReferenceResults.Begin();
+                    }
                     cached.Attempted = false;
                     cached.Built = false;
                     cached.Valid = false;

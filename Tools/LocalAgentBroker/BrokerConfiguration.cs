@@ -48,6 +48,16 @@ internal sealed record BrokerConfiguration
         if (!File.Exists(Path.Combine(fullRepositoryRoot, "AGENTS.md")))
             throw new ArgumentException($"Repository root '{fullRepositoryRoot}' does not contain AGENTS.md.");
 
+        int maximumConcurrentRuns = ReadBoundedInteger(
+            "XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY", 4, 1, 100);
+        int maximumRetainedRuns = ReadBoundedInteger(
+            "XRE_LOCAL_AGENT_BROKER_MAX_RUNS", Math.Max(32, maximumConcurrentRuns), 4, 256);
+        if (maximumRetainedRuns < maximumConcurrentRuns)
+        {
+            throw new ArgumentException(
+                "XRE_LOCAL_AGENT_BROKER_MAX_RUNS must be at least XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY.");
+        }
+
         return new BrokerConfiguration
         {
             RepositoryRoot = fullRepositoryRoot,
@@ -55,8 +65,8 @@ internal sealed record BrokerConfiguration
             EditorAuthTokenEnvironmentVariable = string.IsNullOrWhiteSpace(editorAuthEnvironmentVariable)
                 ? null
                 : ValidateEnvironmentVariableName(editorAuthEnvironmentVariable),
-            MaximumRetainedRuns = ReadBoundedInteger("XRE_LOCAL_AGENT_BROKER_MAX_RUNS", 32, 4, 256),
-            MaximumConcurrentRuns = ReadBoundedInteger("XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY", 4, 1, 8),
+            MaximumRetainedRuns = maximumRetainedRuns,
+            MaximumConcurrentRuns = maximumConcurrentRuns,
             RetentionMinutes = ReadBoundedInteger("XRE_LOCAL_AGENT_BROKER_RETENTION_MINUTES", 120, 1, 1_440),
             TraceMode = ParseTraceMode(Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_TRACE")),
         };

@@ -11,7 +11,15 @@ namespace XREngine.Data.Components.Scene
         public VRTrackerTransform() { }
         public VRTrackerTransform(TransformBase parent) : base(parent) { }
 
-        private RuntimeVrDeviceInfo? _tracker = null;
+        private RuntimeVrDeviceInfo? _tracker;
+        private string? _syntheticIdentity;
+
+        /// <summary>Explicit session identity for a manually supplied tracker pose.</summary>
+        public string? SyntheticIdentity
+        {
+            get => _syntheticIdentity;
+            set => SetField(ref _syntheticIdentity, value);
+        }
         public RuntimeVrDeviceInfo? Tracker
         {
             get => _tracker;
@@ -20,10 +28,22 @@ namespace XREngine.Data.Components.Scene
 
         public override RuntimeVrDeviceInfo? Device => Tracker;
 
+        /// <summary>Session-scoped physical path used to keep a binding with the same tracker after reconnection.</summary>
+        public string? SessionIdentity
+        {
+            get
+            {
+                if (RuntimeVrStateServices.IsOpenXRActive)
+                    return SyntheticPoseEnabled ? SyntheticIdentity : OpenXrTrackerPersistentPath;
+                if (SyntheticPoseEnabled)
+                    return SyntheticIdentity;
+                return Tracker?.PersistentIdentity;
+            }
+        }
+
         private string? _openXrTrackerUserPath;
         /// <summary>
-        /// OpenXR tracker user path (e.g. "/user/vive_tracker_htcx/role/waist").
-        /// When OpenXR is the active runtime, this is used to resolve tracker poses.
+        /// Opaque physical tracker path used to resolve OpenXR poses. Never a body role.
         /// </summary>
         public string? OpenXrTrackerUserPath
         {
@@ -61,11 +81,19 @@ namespace XREngine.Data.Components.Scene
 
         public void ApplyOpenXrTrackerInfo(RuntimeVrTrackerInfo tracker)
         {
-            OpenXrTrackerUserPath = tracker.UserPath;
+            OpenXrTrackerUserPath = tracker.PersistentPath ?? tracker.UserPath;
             OpenXrTrackerPersistentPath = tracker.PersistentPath;
             OpenXrTrackerRolePath = tracker.RolePath;
             OpenXrTrackerRoleName = tracker.RoleName;
-            OpenXrTrackerPoseAvailable = tracker.PoseAvailable;
+            OpenXrTrackerPoseAvailable = tracker.PoseCurrentlyUsable;
+            OpenXrTrackerInfo = tracker;
+        }
+
+        private RuntimeVrTrackerInfo _openXrTrackerInfo;
+        public RuntimeVrTrackerInfo OpenXrTrackerInfo
+        {
+            get => _openXrTrackerInfo;
+            private set => SetField(ref _openXrTrackerInfo, value);
         }
 
         public void SetTrackerByDeviceIndex(uint deviceIndex)

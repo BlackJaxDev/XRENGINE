@@ -122,7 +122,8 @@ internal static class VulkanFrameOperationSemantics
             MeshTaskDispatchIndirectCountOp meshTask => meshTask.Target ?? meshTask.Context.OutputFrameBuffer,
             TransformFeedbackOp transformFeedback => transformFeedback.Target ?? transformFeedback.Context.OutputFrameBuffer,
             AdvancedVisibilityOp visibility
-                when visibility.Request.Stage == EAdvancedRenderStage.VisibilityRaster
+                when visibility.Request.Stage is EAdvancedRenderStage.VisibilityRaster or
+                    EAdvancedRenderStage.DirectionalShadowRaster
                 => visibility.Target,
             _ => null,
         };
@@ -196,6 +197,17 @@ internal static class VulkanFrameOperationSemantics
                     EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
                 break;
             case AdvancedVisibilityOp visibility:
+                if (visibility.Request.Stage == EAdvancedRenderStage.DirectionalShadowRaster)
+                {
+                    // The atlas page is light-owned: declare the exact framebuffer
+                    // write without the visibility graph resources.
+                    AddFrameBufferUses(
+                        ref uses,
+                        output,
+                        version,
+                        EFrameOpResourceAccess.Write);
+                    break;
+                }
                 if (visibility.Request.Stage == EAdvancedRenderStage.VisibilityRaster ||
                     visibility.Request.Phase ==
                         EAdvancedVisibilityStageBackendPhase.LateRaster)

@@ -188,8 +188,9 @@ public sealed class RollingBallInputIntegrationTests
             "Cooked RollingBall Input World",
             new XRScene("Cooked RollingBall Input Scene", root));
 
-        byte[] payload = RollingBallWorldCookedSerializer.Serialize(authored);
-        RollingBallWorldAsset cooked = RollingBallWorldCookedSerializer.Deserialize(payload);
+        var payload = new System.Buffers.ArrayBufferWriter<byte>();
+        RollingBallWorldCookedSerializer.Serialize(authored, payload);
+        RollingBallWorldAsset cooked = RollingBallWorldCookedSerializer.Deserialize(payload.WrittenSpan);
         cooked.Scenes.Count.ShouldBe(1);
         cooked.Scenes[0].RootNodes.Count.ShouldBe(1);
         return cooked.Scenes[0].RootNodes[0]

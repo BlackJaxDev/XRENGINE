@@ -6,6 +6,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Backend-neutral texture reference stored by material and global-resource records.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedTextureReference")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public readonly record struct AdvancedTextureReference(
     AdvancedGpuHandle Handle,

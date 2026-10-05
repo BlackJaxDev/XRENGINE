@@ -164,6 +164,13 @@ namespace XREngine.Rendering
         internal void EnsureOwnerFirstConstructionCompleted()
             => CompleteOwnerFirstConstruction();
 
+        /// <summary>Completes owner-first publication before requesting native storage generation.</summary>
+        public override void Generate()
+        {
+            EnsureOwnerFirstConstructionCompleted();
+            base.Generate();
+        }
+
         /// <summary>
         /// The current mapping state of this buffer.
         /// If the buffer is mapped, this means any updates to the buffer will be shown by the GPU immediately.
@@ -500,6 +507,7 @@ namespace XREngine.Rendering
         /// </summary>
         public void PushData()
         {
+            NoteClientWrite();
             IApiDataBuffer apiBuffer = GetApiBufferForOwnerFirstUse();
             XRBufferWriteTelemetry.RecordUpload(XRBufferResolvedRoute.CompatibilityPush, Length);
             apiBuffer.PushData();
@@ -517,6 +525,7 @@ namespace XREngine.Rendering
         /// </summary>
         public void PushSubData(int offset, uint length)
         {
+            NoteClientWrite();
             IApiDataBuffer apiBuffer = GetApiBufferForOwnerFirstUse();
             XRBufferWriteTelemetry.RecordUpload(XRBufferResolvedRoute.CompatibilityPush, length);
             apiBuffer.PushSubData(offset, length);
@@ -624,10 +633,12 @@ namespace XREngine.Rendering
         {
             if (_clientSideSource != null)
                 WriteStructValue(_clientSideSource.Address + offset, value);
+            NoteClientWrite();
         }
 
         public void SetDataPointer(VoidPtr data)
         {
+            using XRDataBufferClientWriteScope writeScope = new(this);
             if (_clientSideSource != null)
                 Memory.Move(_clientSideSource.Address, data, Length);
             else
@@ -655,6 +666,7 @@ namespace XREngine.Rendering
 
         public unsafe void SetRawBytes(ReadOnlySpan<byte> data, uint? expectedLength = null)
         {
+            using XRDataBufferClientWriteScope writeScope = new(this);
             uint byteLength = expectedLength ?? (uint)data.Length;
             if (byteLength != data.Length)
                 throw new InvalidOperationException($"Raw byte payload length mismatch for buffer '{AttributeName}'. Expected {byteLength} bytes, got {data.Length}.");
@@ -676,7 +688,7 @@ namespace XREngine.Rendering
             if (_clientSideSource is not null && _clientSideSource.Length == byteLength)
                 return;
 
-            _clientSideSource?.Dispose();
+            DisposeReleasedClientSource(_clientSideSource);
             long allocationStart = Stopwatch.GetTimestamp();
             _clientSideSource = DataSource.Allocate(byteLength);
             bool recordMeshPreparation = XRMeshCpuPreparationTelemetry.IsPreparationActive || IsMeshOwnedBuffer;
@@ -818,6 +830,7 @@ namespace XREngine.Rendering
 
         public unsafe void SetDataRaw<T>(ReadOnlySpan<T> data) where T : unmanaged
         {
+            using XRDataBufferClientWriteScope writeScope = new(this);
             ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
             _normalize = false;
             _elementCount = (uint)data.Length;
@@ -855,6 +868,7 @@ namespace XREngine.Rendering
 
         public unsafe uint WriteDataRaw<T>(ReadOnlySpan<T> data, uint elementOffset) where T : unmanaged
         {
+            using XRDataBufferClientWriteScope writeScope = new(this);
             ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
             _normalize = false;
 
@@ -906,6 +920,7 @@ namespace XREngine.Rendering
             if (_clientSideSource is null)
                 throw new InvalidOperationException($"Cannot set data at index {index}: client-side buffer has not been allocated.");
             WriteStructValue(_clientSideSource.Address[index, ElementSize], data);
+            NoteClientWrite();
         }
 
         public T GetDataRawAtIndex<T>(uint index) where T : unmanaged
@@ -919,6 +934,7 @@ namespace XREngine.Rendering
 
         public void SetDataArrayRawAtIndex<T>(uint index, T[] data) where T : unmanaged
         {
+            using XRDataBufferClientWriteScope writeScope = new(this);
             if (_clientSideSource is null)
                 throw new InvalidOperationException($"Cannot set data array at index {index}: client-side buffer has not been allocated.");
 
@@ -954,43 +970,68 @@ namespace XREngine.Rendering
         }
 
         public unsafe void SetFloat(uint index, float data)
-            => ((float*)_clientSideSource!.Address.Pointer)[index] = data;
+        {
+            ((float*)_clientSideSource!.Address.Pointer)[index] = data;
+            NoteClientWrite();
+        }
         public unsafe float GetFloat(uint index)
             => ((float*)_clientSideSource!.Address.Pointer)[index];
         public unsafe void SetFloatAtOffset(uint offset, float data)
-            => ((float*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+        {
+            ((float*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+            NoteClientWrite();
+        }
         public unsafe float GetFloatAtOffset(uint offset)
             => ((float*)(_clientSideSource!.Address + offset).Pointer)[0];
 
         public unsafe void SetVector2(uint index, Vector2 data)
-            => ((Vector2*)_clientSideSource!.Address.Pointer)[index] = data;
+        {
+            ((Vector2*)_clientSideSource!.Address.Pointer)[index] = data;
+            NoteClientWrite();
+        }
         public unsafe Vector2 GetVector2(uint index)
             => ((Vector2*)_clientSideSource!.Address.Pointer)[index];
         public unsafe void SetVector2AtOffset(uint offset, Vector2 data)
-            => ((Vector2*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+        {
+            ((Vector2*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+            NoteClientWrite();
+        }
         public unsafe Vector2 GetVector2AtOffset(uint offset)
             => ((Vector2*)(_clientSideSource!.Address + offset).Pointer)[0];
 
         public unsafe void SetVector3(uint index, Vector3 data)
-            => ((Vector3*)_clientSideSource!.Address.Pointer)[index] = data;
+        {
+            ((Vector3*)_clientSideSource!.Address.Pointer)[index] = data;
+            NoteClientWrite();
+        }
         public unsafe Vector3 GetVector3(uint index)
             => ((Vector3*)_clientSideSource!.Address.Pointer)[index];
         public unsafe void SetVector3AtOffset(uint offset, Vector3 data)
-            => ((Vector3*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+        {
+            ((Vector3*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+            NoteClientWrite();
+        }
         public unsafe Vector3 GetVector3AtOffset(uint offset)
             => ((Vector3*)(_clientSideSource!.Address + offset).Pointer)[0];
 
         public unsafe void SetVector4(uint index, Vector4 data)
-            => ((Vector4*)_clientSideSource!.Address.Pointer)[index] = data;
+        {
+            ((Vector4*)_clientSideSource!.Address.Pointer)[index] = data;
+            NoteClientWrite();
+        }
         public unsafe Vector4 GetVector4(uint index)
             => ((Vector4*)_clientSideSource!.Address.Pointer)[index];
         public unsafe void SetVector4AtOffset(uint offset, Vector4 data)
-            => ((Vector4*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+        {
+            ((Vector4*)(_clientSideSource!.Address + offset).Pointer)[0] = data;
+            NoteClientWrite();
+        }
         public unsafe Vector4 GetVector4AtOffset(uint offset)
             => ((Vector4*)(_clientSideSource!.Address + offset).Pointer)[0];
 
         public Remapper? SetDataRaw<T>(IEnumerable<T> items, int count, bool remap = false) where T : unmanaged
         {
+            using XRDataBufferClientWriteScope writeScope = new(this);
             ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
 
             if (_componentType == EComponentType.Struct)
@@ -1036,6 +1077,7 @@ namespace XREngine.Rendering
         }
         public Remapper? SetDataRaw<T>(IList<T> list, bool remap = false) where T : unmanaged
         {
+            using XRDataBufferClientWriteScope writeScope = new(this);
             ConfigureRawComponentLayout<T>(out _componentType, out _componentCount);
 
             _normalize = false;
@@ -1076,6 +1118,7 @@ namespace XREngine.Rendering
         }
         public Remapper? SetData<T>(IList<T> list, bool remap = false) where T : unmanaged, IBufferable
         {
+            using XRDataBufferClientWriteScope writeScope = new(this);
             IBufferable d = default(T);
             _componentType = d.ComponentType;
             _componentCount = d.ComponentCount;
@@ -1243,7 +1286,7 @@ namespace XREngine.Rendering
 
             if (_clientSideSource != null)
             {
-                _clientSideSource.Dispose();
+                DisposeReleasedClientSource(_clientSideSource);
                 _clientSideSource = null;
             }
 
@@ -1306,6 +1349,11 @@ namespace XREngine.Rendering
             ElementCount = elementCount;
             uint newLength = Length;
 
+            // A GPU-produced buffer without a CPU copy only changes its element
+            // metadata; backends size its GPU storage from Length.
+            if (GpuProduced && _clientSideSource is null)
+                return oldLength != newLength;
+
             if (alignClientSourceToPowerOf2)
                 newLength = XRMath.NextPowerOfTwo(newLength);
 
@@ -1317,7 +1365,7 @@ namespace XREngine.Rendering
             if (copyData && _clientSideSource != null && minMatch > 0u)
                 Memory.Move(newSource.Address, _clientSideSource.Address, minMatch);
 
-            _clientSideSource?.Dispose();
+            DisposeReleasedClientSource(_clientSideSource);
             _clientSideSource = newSource;
 
             if (!copyData)

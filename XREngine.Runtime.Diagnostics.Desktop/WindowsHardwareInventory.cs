@@ -1,4 +1,6 @@
+#if !XRE_PUBLISHED
 using System.Management;
+#endif
 using XREngine.Data.Profiling;
 
 namespace XREngine.Rendering;
@@ -10,6 +12,10 @@ public sealed class WindowsHardwareInventory : IHardwareInventory
     {
         count = 0;
         diagnostic = null;
+#if XRE_PUBLISHED
+        diagnostic = "WMI hardware inventory is unavailable in published NativeAOT players.";
+        return false;
+#else
         if (!OperatingSystem.IsWindows())
         {
             diagnostic = "Windows hardware inventory is unavailable on this platform.";
@@ -32,5 +38,6 @@ public sealed class WindowsHardwareInventory : IHardwareInventory
             diagnostic = ex.Message;
             return false;
         }
+#endif
     }
 }

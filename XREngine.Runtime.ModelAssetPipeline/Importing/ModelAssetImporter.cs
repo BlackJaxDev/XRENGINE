@@ -878,8 +878,11 @@ namespace XREngine
             }
         }
 
-        private static readonly ConcurrentDictionary<(string path, string samplerName), XRTexture2D> _uberSamplerTextureCache = new();
-        private static readonly ConcurrentDictionary<(string path, string samplerName), XRTexture2D> _deferredUberSamplerTextureCache = new();
+        // File-backed sampler textures are shared while a material uses them. The
+        // caches hold them weakly so textures no material references any more (and
+        // their streaming records and pixels) can be collected after an import.
+        private static readonly WeakTextureCache _uberSamplerTextureCache = new();
+        private static readonly WeakTextureCache _deferredUberSamplerTextureCache = new();
         private static readonly ConcurrentDictionary<string, XRTexture2D> _uberDefaultSamplerTextureCache = new();
 
         private static bool IsNormalLikeSampler(string samplerName)
@@ -909,12 +912,12 @@ namespace XREngine
                 schedulePreviewLoad: false);
 
         private static XRTexture2D GetOrCreateUberSamplerTexture(
-            ConcurrentDictionary<(string path, string samplerName), XRTexture2D> cache,
+            WeakTextureCache cache,
             string filePath,
             string samplerName,
             bool schedulePreviewLoad)
         {
-            return cache.GetOrAdd((filePath, samplerName), key =>
+            return cache.GetOrAdd((filePath, samplerName), schedulePreviewLoad, static (key, preview) =>
             {
                 var tex = new XRTexture2D
                 {
@@ -944,7 +947,7 @@ namespace XREngine
                     LogImportWarning($"Failed to assign filler texture for '{key.path}'. {ex.Message}");
                 }
 
-                if (schedulePreviewLoad)
+                if (preview)
                 {
                     _ = XRTexture2D.ScheduleImportedTexturePreviewJob(
                         key.path,

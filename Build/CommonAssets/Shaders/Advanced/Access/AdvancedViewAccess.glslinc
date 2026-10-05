@@ -8,42 +8,6 @@ const uint XR_ADV_VIEW_FRAMEBUFFER_TEXTURE_Y_DOWN = 1u << 6u;
 const uint XR_ADV_VIEW_TEMPORAL_HISTORY_VALID = 1u << 7u;
 const uint XR_ADV_VIEW_EXCLUDE_PROJECTIVE_MIRRORS = 1u << 8u;
 
-struct XRAdvancedViewRecord
-{
-    mat4 view;
-    mat4 projectionJittered;
-    mat4 projectionUnjittered;
-    mat4 viewProjectionJittered;
-    mat4 viewProjectionUnjittered;
-    mat4 previousView;
-    mat4 previousProjectionJittered;
-    mat4 previousProjectionUnjittered;
-    mat4 previousViewProjectionJittered;
-    mat4 previousViewProjectionUnjittered;
-    mat4 inverseViewProjectionJittered;
-    mat4 inverseViewProjectionUnjittered;
-    vec4 cameraPositionAndNear;
-    vec4 cameraForwardAndFar;
-    vec4 renderSizeAndInverse;
-    vec4 outputSizeAndInverse;
-    vec4 currentAndPreviousJitter;
-    vec4 depthParams;
-    uint viewId;
-    uint outputLayer;
-    uint flags;
-    uint historyKeyLo;
-    uint historyKeyHi;
-    uint viewGeneration;
-    uint viewMaskLo;
-    uint viewMaskHi;
-    vec4 foveationCenterAndBias;
-    vec4 foveationRadii;
-    uint sourceCameraIdentityLo;
-    uint sourceCameraIdentityHi;
-    uint sourceCameraIdentityPadding0;
-    uint sourceCameraIdentityPadding1;
-};
-
 // Analytic reconstruction keeps full-rate visibility. Peripheral sampling only
 // widens the texture footprint; it never removes geometry or borrows another eye.
 float XR_ADV_FoveationDerivativeScale(XRAdvancedViewRecord viewRecord, vec2 targetUv)

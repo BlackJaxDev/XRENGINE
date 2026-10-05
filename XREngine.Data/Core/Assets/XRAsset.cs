@@ -310,7 +310,7 @@ namespace XREngine.Core.Files
         /// <remarks>
         /// The default implementation delegates to <see cref="Load3rdParty(string)"/>.
         /// Override this method when your asset type generates auxiliary files during import
-        /// (e.g., font atlas textures) — use <see cref="AssetImportContext.ResolveAuxiliaryPath"/>
+        /// (e.g., font atlas textures) ï¿½ use <see cref="AssetImportContext.ResolveAuxiliaryPath"/>
         /// to determine where to write them.
         /// </remarks>
         public virtual bool Load3rdParty(string filePath, AssetImportContext context)
@@ -536,6 +536,25 @@ namespace XREngine.Core.Files
         #endregion
 
         #region Methods - Protected Overrides
+
+        /// <summary>
+        /// Releases this asset's claim on its embedded sub-assets. They stay registered in the
+        /// global object cache after this asset is destroyed, and a back-reference left in place
+        /// would keep this asset, and everything it references, reachable for the rest of the
+        /// process. They are detached rather than destroyed because other owners may still use them.
+        /// The asset destroys only its constructor-owned metadata container.
+        /// </summary>
+        protected override void OnDestroying()
+        {
+            foreach (XRAsset embedded in _embeddedAssets)
+                if (ReferenceEquals(embedded._sourceAsset, this))
+                    embedded.SourceAsset = embedded;
+            _embeddedAssets.Clear();
+            _ownedEmbeddedAssets.Destroy(now: true);
+            if (!_ownedEmbeddedAssets.IsDestroyed)
+                throw new InvalidOperationException("Asset metadata storage destruction was vetoed.");
+            base.OnDestroying();
+        }
 
         /// <inheritdoc/>
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

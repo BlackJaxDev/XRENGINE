@@ -23,6 +23,11 @@ public partial class XRMesh : ICookedBinarySerializable
     private const int CurrentSkinningPayloadVersion = 3;
     private const int CurrentBlendshapePayloadVersion = 2;
 
+    // Upper bound for color and texture coordinate channels in a cooked mesh. The
+    // reader uses it to tell the current layout from legacy payloads, so the
+    // writer refuses meshes above it. FBX files can carry dozens of color layers.
+    private const int MaxCookedVertexChannels = 64;
+
     private MeshPayloadWritePlan? _meshPayloadPlan;
     private readonly Dictionary<string, MeshBufferEncoding> _bufferEncodingOverrides = new(StringComparer.OrdinalIgnoreCase);
 
@@ -42,18 +47,35 @@ public partial class XRMesh : ICookedBinarySerializable
     public void ClearBufferEncodings()
         => _bufferEncodingOverrides.Clear();
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     void ICookedBinarySerializable.WriteCookedBinary(CookedBinaryWriter writer)
     {
+        long start = writer.Position;
         writer.WriteBaseObject<XRAsset>(this);
+        long baseObjectBytes = writer.Position - start;
         MeshPayloadWritePlan plan = _meshPayloadPlan ?? BuildMeshPayloadPlan();
-        WriteMeshPayload(writer, plan);
         _meshPayloadPlan = null;
+        WriteMeshPayload(writer, plan);
+        long payloadBytes = writer.Position - start - baseObjectBytes;
+
+        // The reader validates the payload by skipping it to the exact end of the
+        // allotted bytes, so a write that differs from the calculated size is
+        // unreadable. Fail here, where the mesh and the section are known.
+        if (plan.BaseObjectSize >= 0 && baseObjectBytes != plan.BaseObjectSize)
+            throw new InvalidOperationException(
+                $"Cooked mesh '{Name}' wrote {baseObjectBytes} base object bytes but calculated {plan.BaseObjectSize}.");
+        if (payloadBytes != plan.TotalSize)
+            throw new InvalidOperationException(
+                $"Cooked mesh '{Name}' wrote {payloadBytes} payload bytes but calculated {plan.TotalSize}.");
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     void ICookedBinarySerializable.ReadCookedBinary(CookedBinaryReader reader)
     {
         using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
@@ -64,15 +86,16 @@ public partial class XRMesh : ICookedBinarySerializable
         publication.Complete();
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     long ICookedBinarySerializable.CalculateCookedBinarySize()
     {
         MeshPayloadWritePlan plan = BuildMeshPayloadPlan();
+        plan.BaseObjectSize = CookedBinarySerializer.CalculateBaseObjectSize(this, typeof(XRAsset));
         _meshPayloadPlan = plan;
-        long size = CookedBinarySerializer.CalculateBaseObjectSize(this, typeof(XRAsset));
-        size += plan.TotalSize;
-        return size;
+        return plan.BaseObjectSize + plan.TotalSize;
     }
 
     private MeshPayloadWritePlan BuildMeshPayloadPlan()
@@ -96,6 +119,10 @@ public partial class XRMesh : ICookedBinarySerializable
             ColorChannels = (int)ColorCount,
             TexCoordChannels = (int)TexCoordCount
         };
+
+        if (metadata.ColorChannels > MaxCookedVertexChannels || metadata.TexCoordChannels > MaxCookedVertexChannels)
+            throw new InvalidOperationException(
+                $"Cooked mesh '{Name}' has {metadata.ColorChannels} color and {metadata.TexCoordChannels} texture coordinate channels; at most {MaxCookedVertexChannels} each can be cooked.");
 
         MeshPayloadWritePlan plan = new()
         {
@@ -189,7 +216,8 @@ public partial class XRMesh : ICookedBinarySerializable
             if (TryReadLegacyMeshPayload(reader, payloadStart))
                 return;
 
-            throw new InvalidOperationException("Unable to read cooked mesh metadata.");
+            throw new InvalidOperationException(
+                $"Unable to read cooked mesh metadata for '{Name}' ({reader.Length - payloadStart} payload bytes).");
         }
 
         Triangles = ReadTriangles(reader);
@@ -335,7 +363,6 @@ public partial class XRMesh : ICookedBinarySerializable
         Buffers?.Clear();
         InitMeshBuffers(hasNormals, hasTangents, colorChannels, texCoordChannels);
         PopulateLegacyBuffers(positions, normals, tangents, colors, texCoords);
-        Vertices = BuildLegacyVertices(positions, normals, tangents, colors, texCoords);
 
         ApplySkinningPayload(payload.Skinning);
         ApplyBlendshapePayload(payload.Blendshapes);
@@ -393,52 +420,6 @@ public partial class XRMesh : ICookedBinarySerializable
                     SetTexCoord((uint)i, values[i], (uint)channel);
             }
         }
-    }
-
-    private static Vertex[] BuildLegacyVertices(
-        Vector3[] positions,
-        Vector3[]? normals,
-        Vector3[]? tangents,
-        Vector4[][]? colors,
-        Vector2[][]? texCoords)
-    {
-        Vertex[] vertices = new Vertex[positions.Length];
-        for (int i = 0; i < positions.Length; i++)
-        {
-            Vertex vertex = new(positions[i]);
-            if (normals is not null && i < normals.Length)
-                vertex.Normal = normals[i];
-            if (tangents is not null && i < tangents.Length)
-                vertex.Tangent = tangents[i];
-
-            if (colors is not null && colors.Length > 0)
-            {
-                List<Vector4> colorSets = new(colors.Length);
-                for (int channel = 0; channel < colors.Length; channel++)
-                {
-                    Vector4[]? values = colors[channel];
-                    colorSets.Add(values is not null && i < values.Length ? values[i] : Vector4.Zero);
-                }
-
-                vertex.ColorSets = colorSets;
-            }
-
-            if (texCoords is not null && texCoords.Length > 0)
-            {
-                List<Vector2> texCoordSets = new(texCoords.Length);
-                for (int channel = 0; channel < texCoords.Length; channel++)
-                {
-                    Vector2[]? values = texCoords[channel];
-                    texCoordSets.Add(values is not null && i < values.Length ? values[i] : Vector2.Zero);
-                }
-
-                vertex.TextureCoordinateSets = texCoordSets;
-            }
-
-            vertices[i] = vertex;
-        }
-
-        return vertices;
     }
 
     private static List<IndexTriangle>? CreateLegacyTriangles(int[]? indices)
@@ -517,7 +498,8 @@ public partial class XRMesh : ICookedBinarySerializable
         if (!Enum.IsDefined(typeof(ESkinningShaderConvention), metadata.SkinningShaderConvention))
             return false;
 
-        if (metadata.ColorChannels is < 0 or > 8 || metadata.TexCoordChannels is < 0 or > 8)
+        if (metadata.ColorChannels is < 0 or > MaxCookedVertexChannels ||
+            metadata.TexCoordChannels is < 0 or > MaxCookedVertexChannels)
             return false;
 
         if (metadata.InterleavedLayout)
@@ -1258,8 +1240,8 @@ public partial class XRMesh : ICookedBinarySerializable
             throw new InvalidOperationException("Cooked Core4Spill skinning payload is missing spill influence buffers.");
         }
 
-        // The mesh is still construction-owned. Validate the complete restored
-        // aggregate, not buffer references paired with default palette metadata.
+        // The cooked reader fills metadata and buffers separately while object
+        // publication is deferred. Publish their coherent generation before validation.
         ApplySkinningBufferState(CaptureSkinningBufferState());
         EnsureComputeSkinningBuffers();
     }
@@ -1625,6 +1607,8 @@ public partial class XRMesh : ICookedBinarySerializable
         public SkinningPlan Skinning { get; set; } = SkinningPlan.Empty;
         public BlendshapePlan Blendshapes { get; set; } = BlendshapePlan.Empty;
         public long TotalSize { get; set; }
+        /// <summary>Calculated base object size; -1 when the plan was built at write time.</summary>
+        public long BaseObjectSize { get; set; } = -1;
     }
 
     private struct MeshMetadata
@@ -1965,8 +1949,10 @@ public partial class XRMesh : ICookedBinarySerializable
         Buffers.Add(key, buffer);
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     private static void WritePayload(CookedBinaryWriter writer, MeshCookedPayload payload)
     {
         writer.WriteValue(payload.Positions);
@@ -1982,8 +1968,10 @@ public partial class XRMesh : ICookedBinarySerializable
         writer.WriteValue(payload.PrimitiveType);
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     private static MeshCookedPayload ReadPayload(CookedBinaryReader reader)
     {
         Vector3[]? positions = reader.ReadValue<Vector3[]>();

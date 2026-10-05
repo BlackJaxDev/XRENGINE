@@ -42,7 +42,7 @@ XREngine needs a production-ready multiplayer architecture where:
   - join by instance id / code
 - Client boot flow:
   - discover instance
-  - fetch world manifest + binaries/assets
+  - fetch world manifest + assets (data only; see the [downloadable content execution policy](../../../architecture/runtime/downloadable-content-execution-policy.md))
   - validate hash/version compatibility
   - connect and receive snapshot + deltas
 - Simulation authority handoff workflow for interactable objects.

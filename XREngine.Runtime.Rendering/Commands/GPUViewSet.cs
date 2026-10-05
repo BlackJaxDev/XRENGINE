@@ -55,6 +55,7 @@ namespace XREngine.Rendering.Commands
         }
     }
 
+    [XREngine.Rendering.Shaders.GpuRecord("GPUViewDescriptor", "GPUScene")]
     [StructLayout(LayoutKind.Sequential)]
     public struct GPUViewDescriptor
     {
@@ -77,6 +78,7 @@ namespace XREngine.Rendering.Commands
         public Vector4 FoveationB;
     }
 
+    [XREngine.Rendering.Shaders.GpuRecord("GPUViewConstants", "GPUScene")]
     [StructLayout(LayoutKind.Sequential)]
     public struct GPUViewConstants
     {

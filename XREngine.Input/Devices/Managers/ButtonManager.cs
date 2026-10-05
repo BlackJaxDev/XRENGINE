@@ -14,7 +14,7 @@ namespace XREngine.Input.Devices
 
         public ButtonManager(int index, string name)
         {
-            _actions = new Dictionary<EButtonInputType, List<Action?>?>(4)
+            _actions = new Dictionary<EButtonInputType, Action[]?>(4)
             {
                 [EButtonInputType.Pressed] = null,
                 [EButtonInputType.Released] = null,
@@ -34,8 +34,8 @@ namespace XREngine.Input.Devices
         public bool IsHeld { get; protected set; }
         public bool IsDoublePressed { get; protected set; }
 
-        protected List<DelButtonState?> _onStateChanged = [];
-        protected Dictionary<EButtonInputType, List<Action?>?> _actions;
+        private DelButtonState[] _onStateChanged = [];
+        protected Dictionary<EButtonInputType, Action[]?> _actions;
         protected HashSet<EButtonInputType> _usedTypes;
         private Lock _actionsLock = new();
         private ulong _registrationRevision;
@@ -45,35 +45,43 @@ namespace XREngine.Input.Devices
         protected float _timer;
 
         #region Registration
-        public virtual bool IsEmpty() => _usedTypes.Count == 0 && _onStateChanged.All(x => x is null);
+        public virtual bool IsEmpty()
+        {
+            using var scope = _actionsLock.EnterScope();
+            return _usedTypes.Count == 0 && _onStateChanged.Length == 0;
+        }
         public void Register(Action func, EButtonInputType type, bool unregister)
         {
             using var scope = _actionsLock.EnterScope();
             ++_registrationRevision;
 
-            List<Action?>? list = _actions[type];
+            Action[] current = _actions[type] ?? [];
 
             if (unregister)
             {
-                if (list is null)
+                int index = Array.IndexOf(current, func);
+                if (index < 0)
                     return;
-
-                list.Remove(func);
-                if (list.Count == 0)
+                if (current.Length == 1)
                 {
                     _actions[type] = null;
                     _usedTypes.Remove(type);
                 }
+                else
+                {
+                    Action[] next = new Action[current.Length - 1];
+                    Array.Copy(current, 0, next, 0, index);
+                    Array.Copy(current, index + 1, next, index, current.Length - index - 1);
+                    _actions[type] = next;
+                }
             }
             else
             {
-                if (list is null)
-                {
-                    _actions[type] = [func];
-                    _usedTypes.Add(type);
-                }
-                else
-                    _actions[type]?.Add(func);
+                Action[] next = new Action[current.Length + 1];
+                Array.Copy(current, next, current.Length);
+                next[current.Length] = func;
+                _actions[type] = next;
+                _usedTypes.Add(type);
             }
         }
 
@@ -89,11 +97,26 @@ namespace XREngine.Input.Devices
 
         public void RegisterPressedState(DelButtonState func, bool unregister)
         {
+            using var scope = _actionsLock.EnterScope();
             ++_registrationRevision;
+            DelButtonState[] current = _onStateChanged;
             if (unregister)
-                _onStateChanged.Remove(func);
+            {
+                int index = Array.IndexOf(current, func);
+                if (index < 0)
+                    return;
+                DelButtonState[] next = new DelButtonState[current.Length - 1];
+                Array.Copy(current, 0, next, 0, index);
+                Array.Copy(current, index + 1, next, index, current.Length - index - 1);
+                _onStateChanged = next;
+            }
             else
-                _onStateChanged.Add(func);
+            {
+                DelButtonState[] next = new DelButtonState[current.Length + 1];
+                Array.Copy(current, next, current.Length);
+                next[current.Length] = func;
+                _onStateChanged = next;
+            }
         }
         public virtual void UnregisterAll()
         {
@@ -103,7 +126,7 @@ namespace XREngine.Input.Devices
             foreach (var type in _usedTypes)
                 _actions[type] = null;
             _usedTypes.Clear();
-            _onStateChanged.Clear();
+            _onStateChanged = [];
         }
         #endregion
 
@@ -121,7 +144,7 @@ namespace XREngine.Input.Devices
                     if (_timer <= _maxSecondsBetweenPresses)
                         OnDoublePressed(device, dispatchRevision);
 
-                    if (revision != _registrationRevision || !IsDispatchCurrent(device, dispatchRevision))
+                    if (!IsDispatchCurrent(device, dispatchRevision, revision))
                         return;
 
                     _timer = 0.0f;
@@ -148,7 +171,7 @@ namespace XREngine.Input.Devices
             ulong revision = _registrationRevision;
             IsPressed = true;
             ExecuteActionList(EButtonInputType.Pressed, device, dispatchRevision);
-            if (revision == _registrationRevision && IsDispatchCurrent(device, dispatchRevision))
+            if (IsDispatchCurrent(device, dispatchRevision, revision))
                 ExecutePressedStateList(true, device, dispatchRevision);
         }
         public void OnReleased()
@@ -161,7 +184,7 @@ namespace XREngine.Input.Devices
             IsHeld = false;
             IsDoublePressed = false;
             ExecuteActionList(EButtonInputType.Released, device, dispatchRevision);
-            if (revision == _registrationRevision && IsDispatchCurrent(device, dispatchRevision))
+            if (IsDispatchCurrent(device, dispatchRevision, revision))
                 ExecutePressedStateList(false, device, dispatchRevision);
         }
         public void OnHeld()
@@ -180,15 +203,20 @@ namespace XREngine.Input.Devices
             IsDoublePressed = true;
             ExecuteActionList(EButtonInputType.DoublePressed, device, dispatchRevision);
         }
-        private static bool IsDispatchCurrent(InputDevice? device, ulong revision)
-            => device is null || device.InputDispatchRevision == revision;
+        // Direct notifications finish their immutable snapshot. Device dispatch also
+        // stops when a callback changes the mappings or retires the input owner.
+        private bool IsDispatchCurrent(InputDevice? device, ulong dispatchRevision, ulong registrationRevision)
+            => device is null || (device.InputDispatchRevision == dispatchRevision && _registrationRevision == registrationRevision);
 
         private void ExecuteActionList(EButtonInputType type, InputDevice? device, ulong dispatchRevision)
         {
-            using var scope = _actionsLock.EnterScope();
-            ulong revision = _registrationRevision;
-
-            List<Action?>? list = _actions[type];
+            Action[]? list;
+            ulong revision;
+            using (var scope = _actionsLock.EnterScope())
+            {
+                list = _actions[type];
+                revision = _registrationRevision;
+            }
             if (list is null)
                 return;
 
@@ -198,7 +226,7 @@ namespace XREngine.Input.Devices
             //Run the input locally
             try
             {
-                for (int i = 0; i < list.Count && revision == _registrationRevision && IsDispatchCurrent(device, dispatchRevision); i++)
+                for (int i = 0; i < list.Length && IsDispatchCurrent(device, dispatchRevision, revision); i++)
                 {
                     try
                     {
@@ -217,16 +245,22 @@ namespace XREngine.Input.Devices
         }
         private void ExecutePressedStateList(bool pressed, InputDevice? device, ulong dispatchRevision)
         {
-            ulong revision = _registrationRevision;
+            DelButtonState[] callbacks;
+            ulong revision;
+            using (var scope = _actionsLock.EnterScope())
+            {
+                callbacks = _onStateChanged;
+                revision = _registrationRevision;
+            }
             //Inform the server of the input
             StatePressed?.Invoke(Index, EButtonInputType.Pressed, pressed);
 
             //Run the input locally
-            for (int i = 0; i < _onStateChanged.Count && revision == _registrationRevision && IsDispatchCurrent(device, dispatchRevision); i++)
+            for (int i = 0; i < callbacks.Length && IsDispatchCurrent(device, dispatchRevision, revision); i++)
             {
                 try
                 {
-                    _onStateChanged[i]?.Invoke(pressed);
+                    callbacks[i]?.Invoke(pressed);
                 }
                 catch (Exception e)
                 {

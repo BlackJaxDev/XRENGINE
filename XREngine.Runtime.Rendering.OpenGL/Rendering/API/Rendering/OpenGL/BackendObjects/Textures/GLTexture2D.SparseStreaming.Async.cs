@@ -11,6 +11,26 @@ namespace XREngine.Rendering.OpenGL;
 public partial class GLTexture2D
 {
     private readonly ConcurrentDictionary<nint, int> _deferredSparseTransitionStorageGenerations = new();
+    private int _sparseAsyncWorkCount;
+    private Action<SparseTextureStreamingTransitionResult>? _discardSparseTransition;
+
+    private Action<SparseTextureStreamingTransitionResult> DiscardSparseTransition
+        => _discardSparseTransition ??= ScheduleDiscardSparseTextureStreamingTransition;
+
+    protected override bool HasInFlightNativeOperation
+        => Volatile.Read(ref _sparseAsyncWorkCount) != 0;
+
+    internal bool HasPendingSparseAsyncWork
+        => HasInFlightNativeOperation;
+
+    private void ReleaseSparseAsyncWork()
+    {
+        if (Interlocked.Decrement(ref _sparseAsyncWorkCount) < 0)
+        {
+            Interlocked.Exchange(ref _sparseAsyncWorkCount, 0);
+            throw new InvalidOperationException("A sparse texture async operation was released more than once.");
+        }
+    }
 
     private readonly record struct PreparedSparseTransition(
         SparseTextureStreamingTransitionRequest Request,
@@ -34,25 +54,39 @@ public partial class GLTexture2D
         if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
             return false;
 
+        PrepareForBindlessHandle();
+        if (HasInFlightNativeOperation || !EnsureBindlessParametersMutable())
+            return false;
+
         if (!TryPrepareSparseTransitionForAsyncPromotion(request, out PreparedSparseTransition prepared))
             return false;
 
         if (cancellationToken.IsCancellationRequested)
             return false;
 
+        Interlocked.Increment(ref _sparseAsyncWorkCount);
         uint textureBindingId = BindingId;
         GLEnum textureTarget = ToGLEnum(TextureTarget);
-        if (!Renderer.TryEnqueueSharedContextJob(gl =>
-            ExecuteSparsePromotionOnSharedContext(
-                gl,
-                textureTarget,
-                textureBindingId,
-                prepared,
-                cancellationToken,
-                onCompleted,
-                onError)))
+        try
         {
-            return false;
+            if (!Renderer.TryEnqueueSharedContextJob(gl =>
+                ExecuteSparsePromotionOnSharedContext(
+                    gl,
+                    textureTarget,
+                    textureBindingId,
+                    prepared,
+                    cancellationToken,
+                    onCompleted,
+                    onError)))
+            {
+                ReleaseSparseAsyncWork();
+                return false;
+            }
+        }
+        catch
+        {
+            ReleaseSparseAsyncWork();
+            throw;
         }
 
         return true;
@@ -85,22 +119,28 @@ public partial class GLTexture2D
             {
                 if (waitResult == GLEnum.WaitFailed)
                 {
-                    _deferredSparseTransitionStorageGenerations.TryRemove(transitionResult.FenceSync, out _);
-                    Api.DeleteSync(transitionResult.FenceSync);
+                    // A failed wait cannot prove that the shared-context upload has
+                    // stopped using this identity. Keep the wrapper quarantined.
                     return SparseTextureStreamingFinalizeResult.Failed("glClientWaitSync failed while finalizing a sparse texture promotion.");
                 }
 
                 return SparseTextureStreamingFinalizeResult.Pending();
             }
 
-            if (!_deferredSparseTransitionStorageGenerations.TryRemove(transitionResult.FenceSync, out int storageGeneration)
-                || !IsStorageGenerationCurrent(storageGeneration))
+            if (!_deferredSparseTransitionStorageGenerations.TryRemove(transitionResult.FenceSync, out int storageGeneration))
+                return SparseTextureStreamingFinalizeResult.Failed("Sparse upload fence ownership was already released.");
+
+            if (!IsStorageGenerationCurrent(storageGeneration))
             {
                 Api.DeleteSync(transitionResult.FenceSync);
+                ReleaseSparseAsyncWork();
                 return SparseTextureStreamingFinalizeResult.Failed("Sparse texture storage changed before deferred promotion finalization.");
             }
 
             Api.DeleteSync(transitionResult.FenceSync);
+            ReleaseSparseAsyncWork();
+            if (!transitionResult.Applied || !transitionResult.UsedSparseResidency)
+                return SparseTextureStreamingFinalizeResult.Failed(transitionResult.FailureReason ?? "Sparse upload failed before publication.");
             SetSparseMipSamplingRange(transitionResult.RequestedBaseMipLevel, Math.Max(0, request.LogicalMipCount - 1));
             UncommitSparseCoverageDifference(
                 Renderer.GetSparseTextureStreamingSupport(request.SizedInternalFormat),
@@ -125,15 +165,6 @@ public partial class GLTexture2D
         catch (Exception ex)
         {
             Debug.OpenGLException(ex);
-            try
-            {
-                _deferredSparseTransitionStorageGenerations.TryRemove(transitionResult.FenceSync, out _);
-                Api.DeleteSync(transitionResult.FenceSync);
-            }
-            catch
-            {
-            }
-
             return SparseTextureStreamingFinalizeResult.Failed(ex.Message);
         }
         finally
@@ -147,6 +178,36 @@ public partial class GLTexture2D
             }
         }
     }
+
+    /// <summary>Retires a canceled shared-context upload without exposing its pages.</summary>
+    internal bool TryDiscardSparseTextureStreamingTransition(SparseTextureStreamingTransitionResult transitionResult)
+    {
+        if (transitionResult.FenceSync == 0 ||
+            !_deferredSparseTransitionStorageGenerations.ContainsKey(transitionResult.FenceSync))
+            return true;
+
+        GLEnum waitResult = Api.ClientWaitSync(transitionResult.FenceSync, 0u, 0u);
+        if (waitResult == GLEnum.TimeoutExpired)
+            return false;
+        if (waitResult == GLEnum.WaitFailed)
+        {
+            Debug.OpenGLWarning("A canceled sparse upload fence failed; retaining its native texture identity.");
+            return true;
+        }
+
+        if (_deferredSparseTransitionStorageGenerations.TryRemove(transitionResult.FenceSync, out _))
+        {
+            Api.DeleteSync(transitionResult.FenceSync);
+            ReleaseSparseAsyncWork();
+        }
+        return true;
+    }
+
+    private void ScheduleDiscardSparseTextureStreamingTransition(SparseTextureStreamingTransitionResult transitionResult)
+        => RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
+            () => TryDiscardSparseTextureStreamingTransition(transitionResult),
+            $"XRTexture2D.DiscardSparseTransition[{Data.Name}]",
+            RenderThreadJobKind.TextureUpload);
 
     private bool TryPrepareSparseTransitionForAsyncPromotion(
         SparseTextureStreamingTransitionRequest request,
@@ -276,14 +337,20 @@ public partial class GLTexture2D
     {
         if (cancellationToken.IsCancellationRequested)
         {
+            ReleaseSparseAsyncWork();
             onCompleted(SparseTextureStreamingTransitionResult.Unsupported("Sparse texture promotion was canceled before GPU submission."));
             return;
         }
 
+        bool gpuWorkStarted = false;
+        bool ownerReleased = false;
+        SparseTextureStreamingTransitionResult? transferredResult = null;
         try
         {
             if (!IsStorageGenerationCurrent(prepared.StorageGeneration))
             {
+                ReleaseSparseAsyncWork();
+                ownerReleased = true;
                 onCompleted(SparseTextureStreamingTransitionResult.Unsupported("Sparse texture storage changed before async promotion began."));
                 return;
             }
@@ -291,6 +358,7 @@ public partial class GLTexture2D
             gl.BindTexture(textureTarget, textureBindingId);
             ResetUnpackStateForTextureUpload(gl);
 
+            gpuWorkStarted = true;
             CommitDesiredSparseCoverage(
                 prepared.Support,
                 prepared.DesiredPageSelection,
@@ -306,31 +374,80 @@ public partial class GLTexture2D
 
             if (fenceSync == 0)
             {
-                onCompleted(SparseTextureStreamingTransitionResult.Unsupported("glFenceSync returned an invalid handle for sparse texture promotion."));
-                return;
-            }
-
-            if (!IsStorageGenerationCurrent(prepared.StorageGeneration))
-            {
-                gl.DeleteSync(fenceSync);
-                onCompleted(SparseTextureStreamingTransitionResult.Unsupported("Sparse texture storage changed before async promotion completed."));
+                onError?.Invoke(new InvalidOperationException("glFenceSync returned an invalid handle after sparse texture upload; native identity is retained."));
                 return;
             }
 
             _deferredSparseTransitionStorageGenerations[fenceSync] = prepared.StorageGeneration;
-            onCompleted(new SparseTextureStreamingTransitionResult(
-                Applied: true,
+            bool storageCurrent = IsStorageGenerationCurrent(prepared.StorageGeneration);
+            SparseTextureStreamingTransitionResult result = new(
+                Applied: storageCurrent,
                 UsedSparseResidency: true,
                 RequestedBaseMipLevel: prepared.RequestedBaseMipLevel,
                 CommittedBaseMipLevel: prepared.CommittedBaseMipLevel,
                 NumSparseLevels: prepared.NumSparseLevels,
                 CommittedBytes: prepared.CommittedBytes,
                 ExposureDeferred: true,
-                FenceSync: fenceSync));
+                FenceSync: fenceSync,
+                FailureReason: storageCurrent ? null : "Sparse texture storage changed before async promotion completed.",
+                DiscardDeferred: DiscardSparseTransition);
+            transferredResult = result;
+            onCompleted(result);
         }
         catch (Exception ex)
         {
-            onError?.Invoke(ex);
+            if (transferredResult is { } result)
+            {
+                ScheduleDiscardSparseTextureStreamingTransition(result);
+                onError?.Invoke(ex);
+                return;
+            }
+
+            if (!gpuWorkStarted)
+            {
+                if (!ownerReleased)
+                    ReleaseSparseAsyncWork();
+                onError?.Invoke(ex);
+            }
+            else
+            {
+                nint fenceSync = 0;
+                try
+                {
+                    fenceSync = gl.FenceSync(GLEnum.SyncGpuCommandsComplete, 0u);
+                    gl.Flush();
+                }
+                catch (Exception fenceError)
+                {
+                    onError?.Invoke(new InvalidOperationException("Sparse upload failed and could not be fenced; native identity is retained.", new AggregateException(ex, fenceError)));
+                    return;
+                }
+                if (fenceSync == 0)
+                {
+                    onError?.Invoke(new InvalidOperationException("Sparse upload failed and could not be fenced; native identity is retained.", ex));
+                }
+                else
+                {
+                    _deferredSparseTransitionStorageGenerations[fenceSync] = prepared.StorageGeneration;
+                    SparseTextureStreamingTransitionResult failure = new(
+                        Applied: false,
+                        UsedSparseResidency: true,
+                        RequestedBaseMipLevel: prepared.RequestedBaseMipLevel,
+                        CommittedBaseMipLevel: prepared.CommittedBaseMipLevel,
+                        NumSparseLevels: prepared.NumSparseLevels,
+                        CommittedBytes: prepared.CommittedBytes,
+                        ExposureDeferred: true,
+                        FenceSync: fenceSync,
+                        FailureReason: ex.Message,
+                        DiscardDeferred: DiscardSparseTransition);
+                    try { onCompleted(failure); }
+                    catch (Exception callbackError)
+                    {
+                        ScheduleDiscardSparseTextureStreamingTransition(failure);
+                        onError?.Invoke(new AggregateException(ex, callbackError));
+                    }
+                }
+            }
         }
         finally
         {

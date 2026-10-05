@@ -34,6 +34,8 @@ public interface IRuntimeRenderWorld
     bool PreviewQuadtrees { get; }
     bool GpuMeshBvhPickingEnabled { get; set; }
     IReadOnlyList<SceneNode> RootNodes { get; }
+    /// <summary>Stable root membership for concurrent visibility traversal.</summary>
+    ReadOnlySpan<SceneNode> RootNodeSnapshot { get; }
     VisualScene3D VisualScene { get; }
     Lights3DCollection Lights { get; }
     EventList<CameraComponent> FramebufferCameras { get; }

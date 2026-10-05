@@ -275,6 +275,7 @@ internal sealed class FrameOperationStream
         for (int index = 0; index < _payloads.AdvancedVisibilityInputs.Length; index++)
             Volatile.Read(ref _payloads.AdvancedVisibilityInputs[index])?.Reset();
         int sourceCount = source.Count;
+        bool borrowed = source.IsBorrowedLogicalCohort;
         try
         {
             EnsureCapacity(sourceCount);
@@ -310,7 +311,9 @@ internal sealed class FrameOperationStream
                         operationResourceUseCount));
                 _resourceUseCount += operationResourceUseCount;
                 _headers[sourceIndex] = new FrameOperationHeader(kind, payloadIndex, operation.PassIndex, operation.ContextReference.OutputTargetIdentity, sourceIndex, resourceUseOffset, operationResourceUseCount, sourceIndex, operation.RequiresPrimaryRecordingContext, preserveSubmissionOrder);
-                _contexts[sourceIndex] = operation.ContextReference;
+                _contexts[sourceIndex] = borrowed
+                    ? WithoutNativeOutputFrameBuffer(in operation.ContextReference)
+                    : operation.ContextReference;
                 _targets[sourceIndex] = operation.Target;
             }
             _count = sourceCount;
@@ -318,7 +321,8 @@ internal sealed class FrameOperationStream
         }
         finally
         {
-            for (int index = 0; index < sourceCount; ++index)
+            // A borrowed cohort's snapshots and leases stay with its owner.
+            for (int index = 0; !borrowed && index < sourceCount; ++index)
             {
                 source.GetAuthoringOperation(index).ReleaseAuthoringSnapshot();
                 if (source.GetAuthoringOperation(index) is
@@ -330,6 +334,21 @@ internal sealed class FrameOperationStream
             source.Clear();
         }
     }
+
+    /// <summary>
+    /// Removes native framebuffer authority from a logical operation context.
+    /// <see cref="FrameOpContext.OutputTargetIdentity"/> names the stable
+    /// per-view resource-plan owner and deliberately excludes the acquired
+    /// runtime image, so it is kept: it resolves the exact frozen per-view
+    /// planner plans, and the native target is sealed separately.
+    /// </summary>
+    private static FrameOpContext WithoutNativeOutputFrameBuffer(in FrameOpContext context)
+        => context with
+        {
+            OutputFrameBufferIdentity = 0,
+            OutputFrameBufferName = null,
+            OutputFrameBuffer = null,
+        };
 
     /// <summary>
     /// Appends one prepared mesh partition without creating authoring
@@ -376,7 +395,10 @@ internal sealed class FrameOperationStream
             int operationIndex = operationStart + appendIndex;
             int payloadIndex = meshPayloadStart + appendIndex;
             _payloads.MeshDraws[payloadIndex] = new(
-                entry.Draw.CreateSealedCopy());
+                _payloads.SealDraw(
+                    EVulkanPrimaryPlanNodeKind.MeshDraw,
+                    payloadIndex,
+                    entry.Draw));
             int resourceOffset = _resourceUseCount;
             ingress.GetResourceUses(in entry).CopyTo(_resourceUses.AsSpan(resourceOffset));
             _resourceUseCount += entry.ResourceUseCount;
@@ -935,11 +957,11 @@ internal sealed class FrameOperationStream
             case EVulkanPrimaryPlanNodeKind.Clear: { var p=(ClearOp)op; _payloads.Clears[i]=new(p.ClearColor,p.ClearDepth,p.ClearStencil,p.Color,p.Depth,p.Stencil,p.Rect); break; }
             case EVulkanPrimaryPlanNodeKind.TransformFeedback: { var p=(TransformFeedbackOp)op; _payloads.TransformFeedbacks[i]=new(p.TransformFeedback,p.Operation,p.CounterBuffer,p.FeedbackBufferOffset,p.FeedbackBufferSize,p.CounterBufferOffset,p.CounterOffset,p.VertexStride,p.InstanceCount,p.FirstInstance); break; }
             case EVulkanPrimaryPlanNodeKind.Query: { var p=(QueryOp)op; _payloads.Queries[i]=new(p.Query,p.Descriptor,p.Operation,p.TimestampStage,p.PointIndex,p.SourceHandles,p.ResultDestination,p.ResultDestinationOffset,p.ResultStride,p.IncludeAvailability); break; }
-            case EVulkanPrimaryPlanNodeKind.MeshDraw: _payloads.MeshDraws[i]=new(((MeshDrawOp)op).Draw.CreateSealedCopy()); break;
+            case EVulkanPrimaryPlanNodeKind.MeshDraw: _payloads.MeshDraws[i]=new(_payloads.SealDraw(kind, i, ((MeshDrawOp)op).Draw)); break;
             case EVulkanPrimaryPlanNodeKind.IndirectDraw:
             {
                 var p = (IndirectDrawOp)op;
-                PendingMeshDraw draw = p.Draw.CreateSealedCopy();
+                PendingMeshDraw draw = _payloads.SealDraw(kind, i, p.Draw);
                 draw.ProgramBindingSnapshot?.SetMaterialTablePublication(p.BindlessMaterialTextures?.Publication);
                 _payloads.IndirectDraws[i] = new(p.IndirectBuffer, p.ParameterBuffer, p.MeshRenderer, draw, p.DrawCount, p.Stride, p.ByteOffset, p.CountByteOffset, p.UseCount, p.BindlessMaterialTextures, p.SecondaryRecordingContract);
                 break;
@@ -947,13 +969,13 @@ internal sealed class FrameOperationStream
             case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount:
             {
                 var p = (MeshTaskDispatchIndirectCountOp)op;
-                ComputeDispatchSnapshot snapshot = p.ProgramBindingSnapshot.CreateSealedCopy();
+                ComputeDispatchSnapshot snapshot = _payloads.SealBindingSnapshot(kind, i, p.ProgramBindingSnapshot);
                 snapshot.SetMaterialTablePublication(p.BindlessMaterialTextures?.Publication);
                 _payloads.MeshTasks[i] = new(p.Program, p.ProgramLinkGeneration, snapshot, p.ProducerSnapshot, p.Pipeline, p.IndirectBuffer, p.CountBuffer, p.MaxDrawCount, p.Stride, p.ByteOffset, p.CountByteOffset, p.BindlessMaterialTextures);
                 break;
             }
-            case EVulkanPrimaryPlanNodeKind.ComputeDispatch: { var p=(ComputeDispatchOp)op; _payloads.ComputeDispatches[i]=new(p.Program,p.GroupsX,p.GroupsY,p.GroupsZ,p.Snapshot.CreateSealedCopy()); break; }
-            case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect: { var p=(ComputeDispatchIndirectOp)op; _payloads.ComputeDispatchIndirects[i]=new(p.Program,p.Snapshot.CreateSealedCopy(),p.ArgumentOwner,p.ArgumentBuffer,p.ArgumentOffset,p.Label); break; }
+            case EVulkanPrimaryPlanNodeKind.ComputeDispatch: { var p=(ComputeDispatchOp)op; _payloads.ComputeDispatches[i]=new(p.Program,p.GroupsX,p.GroupsY,p.GroupsZ,_payloads.SealBindingSnapshot(kind,i,p.Snapshot)); break; }
+            case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect: { var p=(ComputeDispatchIndirectOp)op; _payloads.ComputeDispatchIndirects[i]=new(p.Program,_payloads.SealBindingSnapshot(kind,i,p.Snapshot),p.ArgumentOwner,p.ArgumentBuffer,p.ArgumentOffset,p.Label); break; }
             case EVulkanPrimaryPlanNodeKind.BufferCopy: { var p=(BufferCopyOp)op; _payloads.BufferCopies[i]=new(p.SourceOwner,p.SourceBuffer,p.SourceOffset,p.DestinationOwner,p.DestinationBuffer,p.DestinationOffset,p.ByteCount,p.RequireGpuWriteVisibility,p.DiagnosticReceipt,p.Label); break; }
             case EVulkanPrimaryPlanNodeKind.SubmissionMarker: { var p=(SubmissionMarkerOp)op; _payloads.SubmissionMarkers[i]=new(p.Fence,p.Label,p.RequiredOperationCount); break; }
             case EVulkanPrimaryPlanNodeKind.MemoryBarrier: _payloads.MemoryBarriers[i]=new(((MemoryBarrierOp)op).Mask); break;

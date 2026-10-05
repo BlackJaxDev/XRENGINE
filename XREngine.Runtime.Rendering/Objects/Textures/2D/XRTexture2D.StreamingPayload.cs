@@ -56,15 +56,41 @@ public partial class XRTexture2D
     /// </remarks>
     internal static byte[] CreateTextureStreamingPayloadFromTexture(XRTexture2D texture)
     {
+        byte[] payload = new byte[GetTextureStreamingPayloadSize(texture)];
+        WriteTextureStreamingPayload(texture, payload);
+        return payload;
+    }
+
+    /// <summary>Exact byte size of the streaming payload for <paramref name="texture"/>.</summary>
+    internal static int GetTextureStreamingPayloadSize(XRTexture2D texture)
+    {
         long size = ((ICookedBinarySerializable)texture).CalculateCookedBinarySize();
         if (size > int.MaxValue)
             throw new InvalidOperationException($"Texture streaming payload exceeds maximum supported size ({size} bytes).");
 
-        byte[] payload = new byte[(int)size];
-        CookedBinaryWriter writer = new(payload);
-        ((ICookedBinarySerializable)texture).WriteCookedBinary(writer);
+        return (int)size;
+    }
 
-        return payload;
+    /// <summary>
+    /// Writes the streaming payload into caller-owned storage sized by
+    /// <see cref="GetTextureStreamingPayloadSize"/>. No intermediate array is allocated.
+    /// </summary>
+    internal static void WriteTextureStreamingPayload(XRTexture2D texture, Span<byte> destination)
+    {
+        CookedBinaryWriter writer = new(destination);
+        ((ICookedBinarySerializable)texture).WriteCookedBinary(writer);
+    }
+
+    /// <summary>Writes the streaming payload through a buffer writer for callers that own the output buffer.</summary>
+    internal static void WriteTextureStreamingPayload(XRTexture2D texture, System.Buffers.IBufferWriter<byte> destination)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        int size = GetTextureStreamingPayloadSize(texture);
+        if (size == 0)
+            return;
+
+        WriteTextureStreamingPayload(texture, destination.GetSpan(size)[..size]);
+        destination.Advance(size);
     }
 
     /// <summary>
@@ -83,11 +109,25 @@ public partial class XRTexture2D
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
 
-            byte[] payload = CreateTextureStreamingPayloadFromTexture(texture);
-
-            // Atomic-ish write: stage to .tmp then rename so a crash mid-write can't leave a torn cache file.
+            // The payload is built in leased storage, which is native for anything at or above the
+            // large-object threshold, so writing a cache file never allocates a transient LOH array.
             string tempPath = cachePath + ".tmp";
-            File.WriteAllBytes(tempPath, payload);
+            XREngine.Core.Files.CookedPayloadLease lease = XREngine.Core.Files.CookedPayloadBufferPool.Rent(
+                GetTextureStreamingPayloadSize(texture),
+                out Span<byte> payload);
+            try
+            {
+                WriteTextureStreamingPayload(texture, payload);
+
+                // Atomic-ish write: stage to .tmp then rename so a crash mid-write can't leave a torn cache file.
+                using FileStream stream = new(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 1, FileOptions.SequentialScan);
+                stream.Write(lease.Span);
+            }
+            finally
+            {
+                lease.Dispose();
+            }
+
             if (File.Exists(cachePath))
                 File.Delete(cachePath);
             File.Move(tempPath, cachePath);
@@ -143,8 +183,9 @@ public partial class XRTexture2D
 
         try
         {
-            byte[] fileBytes = RuntimeRenderingHostServices.Assets.ReadAllBytes(sourceFilePath);
-            using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(fileBytes);
+            // The encoded source is read through an owner so the file bytes never become a managed array.
+            using XREngine.Core.Files.CookedPayloadOwner fileBytes = RuntimeRenderingHostServices.Assets.ReadAllBytesOwned(sourceFilePath);
+            using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(fileBytes.ReadOnlyMemory);
             texture = CreateTextureStreamingCacheTexture(sourceFilePath, GetMipmapsFromImage(sourceImage));
             texture.FilePath = cacheFilePath;
             texture.OriginalPath = sourceFilePath;
@@ -391,30 +432,35 @@ public partial class XRTexture2D
             return false;
         }
 
-        if (!TryExtractTextureStreamingPayloadFromYamlAsset(assetYaml, out byte[]? payload))
+        if (!TryExtractTextureStreamingPayloadFromYamlAsset(assetYaml, out DataSource? payloadSource) || payloadSource is null)
             return false;
 
-        try
+        // The decoded YAML payload is read in place from the data source; it is not copied to an array.
+        using (payloadSource)
         {
-            if (TryReadResidentDataFromTextureStreamingPayload(payload, maxResidentDimension, includeMipChain, out residentData))
+            ReadOnlySpan<byte> payload = payloadSource.AsReadOnlySpan();
+            try
+            {
+                if (TryReadResidentDataFromTextureStreamingPayload(payload, maxResidentDimension, includeMipChain, out residentData))
+                    return true;
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                XRTexture2D? texture = CookedBinarySerializer.Deserialize(typeof(XRTexture2D), payload) as XRTexture2D;
+                if (texture is null)
+                    return false;
+
+                residentData = BuildResidentDataFromLoadedTexture(texture, maxResidentDimension, includeMipChain);
                 return true;
-        }
-        catch
-        {
-        }
-
-        try
-        {
-            XRTexture2D? texture = CookedBinarySerializer.Deserialize(typeof(XRTexture2D), payload) as XRTexture2D;
-            if (texture is null)
+            }
+            catch
+            {
                 return false;
-
-            residentData = BuildResidentDataFromLoadedTexture(texture, maxResidentDimension, includeMipChain);
-            return true;
-        }
-        catch
-        {
-            return false;
+            }
         }
     }
 
@@ -439,8 +485,11 @@ public partial class XRTexture2D
             return false;
         }
 
-        return TryExtractTextureStreamingPayloadFromYamlAsset(assetYaml, out byte[]? payload)
-            && TryReadTextureStreamingManifestFromTextureStreamingPayload(payload, out manifest);
+        if (!TryExtractTextureStreamingPayloadFromYamlAsset(assetYaml, out DataSource? payloadSource) || payloadSource is null)
+            return false;
+
+        using (payloadSource)
+            return TryReadTextureStreamingManifestFromTextureStreamingPayload(payloadSource.AsReadOnlySpan(), out manifest);
     }
 
     internal static bool TryReadTextureStreamingManifestFromTextureStreamingPayload(
@@ -479,21 +528,19 @@ public partial class XRTexture2D
         if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
             return false;
 
-        byte[] assetBytes;
+        TextureStreamingSourceManifest manifest;
         try
         {
             FileInfo assetInfo = new(assetPath);
             if (assetInfo.Length <= 0)
                 return false;
 
-            assetBytes = File.ReadAllBytes(assetPath);
+            // Only the manifest is needed, so the cache file is mapped instead of read into an array.
+            using XREngine.Core.Files.CookedPayloadOwner assetBytes = XREngine.Core.Files.CookedPayloadOwner.MapFile(assetPath);
+            if (!TryReadTextureStreamingManifestFromTextureAssetFileBytes(assetBytes.Span, out manifest))
+                return false;
         }
         catch
-        {
-            return false;
-        }
-
-        if (!TryReadTextureStreamingManifestFromTextureAssetFileBytes(assetBytes, out TextureStreamingSourceManifest manifest))
         {
             return false;
         }
@@ -511,7 +558,11 @@ public partial class XRTexture2D
         return sourceMaxDimension <= expectedResidentMaxDimension || manifest.Mips.Length > 1;
     }
 
-    private static bool TryExtractTextureStreamingPayloadFromYamlAsset(string assetYaml, out byte[]? payload)
+    /// <summary>
+    /// Extracts the cooked payload from a YAML-wrapped texture asset. The caller owns the returned
+    /// data source and reads it through <see cref="DataSource.AsReadOnlySpan"/>.
+    /// </summary>
+    private static bool TryExtractTextureStreamingPayloadFromYamlAsset(string assetYaml, out DataSource? payload)
     {
         payload = null;
         if (string.IsNullOrWhiteSpace(assetYaml))
@@ -553,11 +604,12 @@ public partial class XRTexture2D
                 || envelopePayload is null
                 || envelopePayload.Length == 0)
             {
+                envelopePayload?.Dispose();
                 return false;
             }
 
-            payload = envelopePayload.GetBytes();
-            return payload.Length > 0;
+            payload = envelopePayload;
+            return true;
         }
         catch
         {
@@ -676,8 +728,6 @@ public partial class XRTexture2D
         SizedInternalFormat = ReadStructOrDefault(reader, SizedInternalFormat);
     }
 
-    [RequiresUnreferencedCode("Calls XREngine.Core.Files.RuntimeCookedBinaryWriter.WriteValue(Object)")]
-    [RequiresDynamicCode("Calls XREngine.Core.Files.RuntimeCookedBinaryWriter.WriteValue(Object)")]
     private static void WriteStreamableMipmaps(CookedBinaryWriter writer, Mipmap2D[]? mipmaps)
     {
         writer.Write(StreamableMipSectionMagic);
@@ -878,8 +928,10 @@ public partial class XRTexture2D
         return true;
     }
 
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode("Calls XREngine.Core.Files.RuntimeCookedBinaryReader.ReadValue<T>()")]
     [RequiresDynamicCode("Calls XREngine.Core.Files.RuntimeCookedBinaryReader.ReadValue<T>()")]
+#endif
     private static Mipmap2D[] ReadMipmapsLegacy(CookedBinaryReader reader)
     {
         int mipCount = ReadStructOrDefault(reader, 0);
@@ -910,8 +962,6 @@ public partial class XRTexture2D
         return mipmaps;
     }
 
-    [RequiresUnreferencedCode("Calls XREngine.Core.Files.RuntimeCookedBinarySerializer.CalculateSize(Object)")]
-    [RequiresDynamicCode("Calls XREngine.Core.Files.RuntimeCookedBinarySerializer.CalculateSize(Object)")]
     private static long CalculateStreamableMipmapSize(Mipmap2D[]? mipmaps)
     {
         long size = sizeof(int) * 4;

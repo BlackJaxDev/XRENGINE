@@ -17,6 +17,12 @@ public partial class XRMesh
         ECommonBufferType.BoneInfluenceSpillEntries.ToString(),
     ];
 
+    /// <summary>
+    /// Validates that a skinned mesh carries the canonical Core4 compute-skinning
+    /// buffers. Packed buffers are the mesh's only weight data: they are built
+    /// when a mesh is created or rebound (<see cref="RebuildSkinningBuffersFromVertices"/>)
+    /// or loaded from cooked data, never lazily from per-vertex objects.
+    /// </summary>
     public void EnsureComputeSkinningBuffers()
     {
         if (!HasSkinning)
@@ -25,69 +31,24 @@ public partial class XRMesh
         if (HasCanonicalComputeSkinningBuffers())
             return;
 
-        lock (_skinningBufferPreparationLock)
-        {
-            // A concurrent preparation winner may have published while this caller waited.
-            if (HasCanonicalComputeSkinningBuffers())
-                return;
-
-            XRMeshSkinningBufferState? prepared = null;
-            if (CanRebuildSkinningBuffersFromVertices())
-                prepared = RebuildSkinningBuffersFromVerticesTransactionallyCore();
-
-            if (!HasCanonicalComputeSkinningBuffers() &&
-                (prepared is null || !HasCanonicalComputeSkinningBuffers(prepared)))
-            {
-                throw new InvalidOperationException(BuildInvalidComputeSkinningMessage(GetComputeSkinningValidationError()));
-            }
-        }
+        throw new InvalidOperationException(BuildInvalidComputeSkinningMessage(GetComputeSkinningValidationError()));
     }
 
     /// <summary>
-    /// Ensures the mesh's <see cref="UtilizedBones"/> ordering is finalized to the same order the
-    /// per-vertex compressed core bone indices are (or will be) packed against.
-    /// <para>
-    /// <see cref="RebuildSkinningBuffersFromVertices"/> can reorder and extend <see cref="UtilizedBones"/>
-    /// while packing the core indices. If a renderer builds its bone palette from the pre-rebuild
-    /// ordering and the rebuild happens afterwards (e.g. lazily during the compute pre-pass), the
-    /// per-vertex indices will reference the wrong palette slots, corrupting skinning for that mesh.
-    /// Callers that read <see cref="UtilizedBones"/> to build a palette should call this first.
-    /// </para>
-    /// Unlike <see cref="EnsureComputeSkinningBuffers"/>, this never throws: meshes that cannot be
-    /// rebuilt (no source vertices) are assumed to already carry canonical, cooked buffers.
+    /// Kept for palette builders that read <see cref="UtilizedBones"/>: the
+    /// ordering is final once the packed buffers exist, because packing happens
+    /// eagerly with the buffers' publication.
     /// </summary>
     public void EnsureSkinningBoneOrderFinalized()
         => _ = GetSkinningBoneOrderForPreparation();
 
     /// <summary>
-    /// Returns the immutable bone ordering used by either the current canonical buffers or
-    /// the replacement already enlisted in the ambient publication transaction.
+    /// Returns the bone ordering the canonical buffers index. A bone rebind
+    /// replaces <see cref="UtilizedBones"/> in place of the packed indices, so
+    /// the property, not the published buffer state, is authoritative.
     /// </summary>
     internal (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] GetSkinningBoneOrderForPreparation()
-    {
-        if (!HasSkinning)
-            return UtilizedBones;
-
-        if (HasCanonicalComputeSkinningBuffers())
-            return UtilizedBones;
-
-        if (CanRebuildSkinningBuffersFromVertices())
-        {
-            lock (_skinningBufferPreparationLock)
-            {
-                if (HasCanonicalComputeSkinningBuffers())
-                    return GetSkinningBufferStateSnapshot().UtilizedBones;
-                return RebuildSkinningBuffersFromVerticesTransactionallyCore().UtilizedBones;
-            }
-        }
-
-        return UtilizedBones;
-    }
-
-    private bool CanRebuildSkinningBuffersFromVertices()
-        => Vertices is { Length: > 0 } vertices &&
-           vertices.Length == VertexCount &&
-           UtilizedBones is { Length: > 0 };
+        => UtilizedBones;
 
     private bool HasCanonicalComputeSkinningBuffers()
     {
@@ -181,25 +142,31 @@ public partial class XRMesh
            buffer.ComponentCount == 1u &&
            buffer.Integral;
 
-    public void RebuildSkinningBuffersFromVertices()
+    /// <summary>
+    /// Packs the bone weights of <paramref name="sourceVertices"/> (one per mesh
+    /// vertex, in mesh order) into the canonical Core4 + spill buffers and
+    /// publishes them with the final <see cref="UtilizedBones"/> ordering. Bones
+    /// referenced by weights but missing from <see cref="UtilizedBones"/> are
+    /// appended. The mesh keeps no reference to the source vertices.
+    /// </summary>
+    public void RebuildSkinningBuffersFromVertices(IReadOnlyList<Vertex> sourceVertices)
     {
+        ArgumentNullException.ThrowIfNull(sourceVertices);
+        if (sourceVertices.Count != VertexCount)
+            throw new ArgumentException(
+                $"Skinning source has {sourceVertices.Count} vertices; mesh '{Name}' has {VertexCount}.",
+                nameof(sourceVertices));
         lock (_skinningBufferPreparationLock)
-            _ = RebuildSkinningBuffersFromVerticesTransactionallyCore();
+            _ = RebuildSkinningBuffersFromVerticesTransactionallyCore(sourceVertices);
     }
 
-    private XRMeshSkinningBufferState RebuildSkinningBuffersFromVerticesTransactionallyCore()
+    private XRMeshSkinningBufferState RebuildSkinningBuffersFromVerticesTransactionallyCore(
+        IReadOnlyList<Vertex> sourceVertices)
     {
-        BufferCollection targetBuffers = Buffers;
-        BufferCollection.PreparedBufferTicket preparationTicket =
-            targetBuffers.CapturePreparationTicket(SkinningBufferKeys, includeGeometryRevision: true);
-        XRMeshSkinningBufferState previous = CaptureSkinningBufferState();
-        XRMeshSkinningBufferState prepared = EmptySkinningBufferState();
-        BufferCollection.PreparedBufferBatch? swap = null;
-        XRMesh? staging = null;
-
+        // The palette starts with the current bone table; bones referenced by
+        // weights but absent from it are appended in first-use order.
         var boneToIndexTable = new Dictionary<TransformBase, int>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         var utilizedBones = new List<(TransformBase tfm, Matrix4x4 invBindWorldMtx)>(UtilizedBones.Length);
-
         for (int i = 0; i < UtilizedBones.Length; ++i)
         {
             var utilized = UtilizedBones[i];
@@ -210,34 +177,64 @@ public partial class XRMesh
             utilizedBones.Add(utilized);
         }
 
-        Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[]? weightsPerVertex = null;
-        if (Vertices is { Length: > 0 } sourceVertices)
+        for (int vertexIndex = 0; vertexIndex < sourceVertices.Count; ++vertexIndex)
         {
-            weightsPerVertex = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[VertexCount];
-            for (int vertexIndex = 0; vertexIndex < VertexCount; ++vertexIndex)
+            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = sourceVertices[vertexIndex].Weights;
+            if (weights is null || weights.Count == 0)
+                continue;
+
+            foreach (var pair in weights)
             {
-                Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = sourceVertices[vertexIndex].Weights;
-                if (weights is null || weights.Count == 0)
+                if (boneToIndexTable.ContainsKey(pair.Key))
                     continue;
 
-                var copiedWeights = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>(weights.Count, System.Collections.Generic.ReferenceEqualityComparer.Instance);
-                foreach (var pair in weights)
-                {
-                    copiedWeights[pair.Key] = pair.Value;
-                    if (boneToIndexTable.ContainsKey(pair.Key))
-                        continue;
-
-                    boneToIndexTable.Add(pair.Key, utilizedBones.Count);
-                    utilizedBones.Add((pair.Key, pair.Value.bindInvWorldMatrix));
-                }
-
-                weightsPerVertex[vertexIndex] = copiedWeights;
+                boneToIndexTable.Add(pair.Key, utilizedBones.Count);
+                utilizedBones.Add((pair.Key, pair.Value.bindInvWorldMatrix));
             }
         }
 
+        // The source dictionaries are read in place; packing never copies them.
+        int ReadVertexInfluences(int vertex, List<LogicalSkinningInfluence> destination)
+        {
+            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = sourceVertices[vertex].Weights;
+            if (weights is null || weights.Count == 0)
+                return 0;
+            foreach (var pair in weights)
+            {
+                float weight = pair.Value.weight;
+                if (weight > 0.0f && boneToIndexTable.TryGetValue(pair.Key, out int boneIndex) && boneIndex >= 0)
+                    destination.Add(new LogicalSkinningInfluence(boneIndex, weight));
+            }
+            return weights.Count;
+        }
+
+        // A bone table without weights still packs: every vertex gets the
+        // zero-influence sentinel, so the mesh stays on the skinned path.
+        return RebuildSkinningBuffersTransactionallyCore(
+            sourceVertices.Count > 0 && boneToIndexTable.Count > 0 ? [.. utilizedBones] : null,
+            ReadVertexInfluences);
+    }
+
+    /// <summary>
+    /// Packs influences supplied per vertex against <paramref name="palette"/>
+    /// into a staging generation and swaps it into the mesh's buffers in one
+    /// publication. A null palette publishes an unskinned state.
+    /// </summary>
+    private XRMeshSkinningBufferState RebuildSkinningBuffersTransactionallyCore(
+        (TransformBase tfm, Matrix4x4 invBindWorldMtx)[]? palette,
+        LogicalInfluenceSource influences)
+    {
+        BufferCollection targetBuffers = Buffers;
+        BufferCollection.PreparedBufferTicket preparationTicket =
+            targetBuffers.CapturePreparationTicket(SkinningBufferKeys, includeGeometryRevision: true);
+        XRMeshSkinningBufferState previous = CaptureSkinningBufferState();
+        XRMeshSkinningBufferState prepared = EmptySkinningBufferState();
+        BufferCollection.PreparedBufferBatch? swap = null;
+        XRMesh? staging = null;
+
         try
         {
-            if (weightsPerVertex is not null && boneToIndexTable.Count > 0)
+            if (palette is { Length: > 0 })
             {
                 // The temporary owner and its metadata are detached. Replacement
                 // buffers created below still join the caller's atomic publication.
@@ -246,12 +243,12 @@ public partial class XRMesh
                     staging = new XRMesh(deferObjectCachePublication: true)
                     {
                         VertexCount = VertexCount,
-                        UtilizedBones = [.. utilizedBones],
+                        UtilizedBones = palette,
                         SkinningShaderConvention = ESkinningShaderConvention.ExplicitRowMajorRowVector,
                     };
                 }
                 using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
-                staging.PopulateSkinningBuffers(boneToIndexTable, weightsPerVertex);
+                staging.PopulateSkinningBuffers(influences);
                 prepared = staging.CaptureSkinningBufferState();
                 KeyValuePair<string, XRDataBuffer>[] replacements = CreateSkinningBufferReplacements(prepared);
                 publication.Complete(
@@ -370,17 +367,11 @@ public partial class XRMesh
         if (!changed || remap is null)
             return false;
 
+        // Packed influences index UtilizedBones by position, so rebinding the bone
+        // table is the whole remap; two source bones that resolve to one bone
+        // simply keep two identical palette entries.
         UtilizedBones = reboundBones;
-        if (remapVertexWeights)
-        {
-            RemapVertexWeights(remap);
-            RuntimeBoneReferenceRemap = null;
-        }
-        else
-        {
-            RuntimeBoneReferenceRemap = remap;
-        }
-
+        RuntimeBoneReferenceRemap = remapVertexWeights ? null : remap;
         return true;
     }
 
@@ -412,26 +403,6 @@ public partial class XRMesh
         }
 
         UtilizedBones = rebasedBones;
-        if (Vertices is not { Length: > 0 })
-            return;
-
-        for (int vertexIndex = 0; vertexIndex < Vertices.Length; vertexIndex++)
-        {
-            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = Vertices[vertexIndex].Weights;
-            if (weights is null || weights.Count == 0)
-                continue;
-
-            TransformBase[] bones = [.. weights.Keys];
-            for (int boneIndex = 0; boneIndex < bones.Length; boneIndex++)
-            {
-                TransformBase bone = bones[boneIndex];
-                (float weight, _) = weights[bone];
-                Matrix4x4 inverseBind = inverseBinds.TryGetValue(bone, out Matrix4x4 utilizedInverseBind)
-                    ? utilizedInverseBind
-                    : bone.InverseBindMatrix;
-                weights[bone] = (weight, inverseBind);
-            }
-        }
     }
 
     private static TransformBase ResolveSerializedBoneReference(TransformBase searchRoot, TransformBase sourceBone)
@@ -455,50 +426,6 @@ public partial class XRMesh
         }
 
         return false;
-    }
-
-    private void RemapVertexWeights(IReadOnlyDictionary<TransformBase, TransformBase> remap)
-    {
-        if (Vertices is not { Length: > 0 })
-            return;
-
-        for (int vertexIndex = 0; vertexIndex < Vertices.Length; vertexIndex++)
-        {
-            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = Vertices[vertexIndex].Weights;
-            if (weights is null || weights.Count == 0)
-                continue;
-
-            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? remapped = null;
-            foreach (var pair in weights)
-            {
-                if (!remap.ContainsKey(pair.Key))
-                    continue;
-
-                remapped = new Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>(weights.Count, System.Collections.Generic.ReferenceEqualityComparer.Instance);
-                break;
-            }
-
-            if (remapped is null)
-                continue;
-
-            foreach (var pair in weights)
-            {
-                TransformBase bone = remap.TryGetValue(pair.Key, out TransformBase? reboundBone)
-                    ? reboundBone
-                    : pair.Key;
-
-                if (remapped.TryGetValue(bone, out (float weight, Matrix4x4 bindInvWorldMatrix) existing))
-                {
-                    remapped[bone] = (existing.weight + pair.Value.weight, pair.Value.bindInvWorldMatrix);
-                }
-                else
-                {
-                    remapped.Add(bone, pair.Value);
-                }
-            }
-
-            Vertices[vertexIndex].Weights = remapped;
-        }
     }
 
     private BufferCollection.PreparedBufferBatch CommitSkinningBufferState(
@@ -608,9 +535,14 @@ public partial class XRMesh
             replacements.Add(new KeyValuePair<string, XRDataBuffer>(buffer.AttributeName, buffer));
     }
 
-    private void PopulateSkinningBuffers(
-        Dictionary<TransformBase, int> boneToIndexTable,
-        Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
+    /// <summary>
+    /// Supplies one vertex's logical influences (palette bone index, positive
+    /// weight) and returns how many source weights the vertex had before
+    /// filtering, so a weighted vertex that packs to nothing is diagnosed.
+    /// </summary>
+    private delegate int LogicalInfluenceSource(int vertex, List<LogicalSkinningInfluence> destination);
+
+    private void PopulateSkinningBuffers(LogicalInfluenceSource influences)
     {
         uint vertCount = (uint)VertexCount;
         int utilizedBoneCount = UtilizedBones.Length;
@@ -638,8 +570,8 @@ public partial class XRMesh
             Usage = EBufferUsage.StaticDraw,
             DisposeOnPush = false
         };
-        PopulateWeightBuffers(boneToIndexTable, weightsPerVertex);
-
+        SetField(ref _maxWeightCount, 0, nameof(MaxWeightCount));
+        PopulateCompressedWeights(influences);
     }
 
     private void RecordSkinningBufferUpload()
@@ -650,17 +582,7 @@ public partial class XRMesh
             spillHeaderBytes: (long)(BoneInfluenceSpillHeaders?.Length ?? 0u),
             spillEntryBytes: (long)(BoneInfluenceSpillEntries?.Length ?? 0u));
 
-    private void PopulateWeightBuffers(
-        Dictionary<TransformBase, int> boneToIndexTable,
-        Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
-    {
-        SetField(ref _maxWeightCount, 0, nameof(MaxWeightCount));
-        PopulateCompressedWeights(boneToIndexTable, weightsPerVertex);
-    }
-
-    private unsafe void PopulateCompressedWeights(
-        Dictionary<TransformBase, int> boneToIndexTable,
-        Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
+    private unsafe void PopulateCompressedWeights(LogicalInfluenceSource influenceSource)
     {
         using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
 
@@ -672,6 +594,8 @@ public partial class XRMesh
         byte* coreWeightData = (byte*)coreWeights.Address;
         uint[] spillHeaders = new uint[vertexCount];
         List<uint> spillEntries = [];
+        List<LogicalSkinningInfluence> logical = [];
+        List<PackedSkinningInfluence> influences = [];
 
         // Diagnostic: vertices that carry skin weights but pack to zero usable core
         // influence collapse to the origin on the GPU (transformSkinPosition accumulates
@@ -682,9 +606,10 @@ public partial class XRMesh
 
         for (int vi = 0; vi < vertexCount; vi++)
         {
-            var group = weightsPerVertex[vi];
             int coreBase = vi * 4;
-            if (group is null || group.Count == 0)
+            logical.Clear();
+            int sourceWeightCount = influenceSource(vi, logical);
+            if (sourceWeightCount == 0)
             {
                 for (int k = 0; k < 4; k++)
                 {
@@ -698,8 +623,8 @@ public partial class XRMesh
                 continue;
             }
 
-            List<PackedSkinningInfluence> influences = BuildPackedInfluences(boneToIndexTable, group, out int logicalInfluenceCount);
-            SetField(ref _maxWeightCount, Math.Max(_maxWeightCount, logicalInfluenceCount), nameof(MaxWeightCount));
+            PackLogicalInfluences(logical, influences);
+            SetField(ref _maxWeightCount, Math.Max(_maxWeightCount, logical.Count), nameof(MaxWeightCount));
 
             if (influences.Count == 0)
             {
@@ -793,26 +718,21 @@ public partial class XRMesh
             spillEntryData[i] = spillEntries[i];
     }
 
-    private static List<PackedSkinningInfluence> BuildPackedInfluences(
-        Dictionary<TransformBase, int> boneToIndexTable,
-        Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)> group,
-        out int logicalInfluenceCount)
+    /// <summary>
+    /// Orders one vertex's logical influences strongest first and quantizes
+    /// them to unorm8 weights that sum to 255 into <paramref name="packed"/>.
+    /// Leaves <paramref name="packed"/> empty when no influence has weight.
+    /// </summary>
+    private static void PackLogicalInfluences(
+        List<LogicalSkinningInfluence> logical,
+        List<PackedSkinningInfluence> packed)
     {
-        List<LogicalSkinningInfluence> logical = new(group.Count);
+        packed.Clear();
         float totalWeight = 0.0f;
-        foreach (var pair in group)
-        {
-            float weight = pair.Value.weight;
-            if (weight <= 0.0f || !boneToIndexTable.TryGetValue(pair.Key, out int boneIndex) || boneIndex < 0)
-                continue;
-
-            logical.Add(new LogicalSkinningInfluence(boneIndex, weight));
-            totalWeight += weight;
-        }
-
-        logicalInfluenceCount = logical.Count;
+        for (int i = 0; i < logical.Count; i++)
+            totalWeight += logical[i].Weight;
         if (logical.Count == 0 || totalWeight <= 0.0f)
-            return [];
+            return;
 
         logical.Sort(static (left, right) =>
         {
@@ -820,7 +740,6 @@ public partial class XRMesh
             return weightOrder != 0 ? weightOrder : left.BoneIndex.CompareTo(right.BoneIndex);
         });
 
-        List<PackedSkinningInfluence> packed = new(logical.Count);
         for (int i = 0; i < logical.Count; i++)
         {
             LogicalSkinningInfluence influence = logical[i];
@@ -837,7 +756,6 @@ public partial class XRMesh
             packed.Add(new PackedSkinningInfluence(checked((ushort)(logical[0].BoneIndex + 1)), byte.MaxValue));
 
         NormalizePackedWeights(packed);
-        return packed;
     }
 
     private static void NormalizePackedWeights(List<PackedSkinningInfluence> packed)

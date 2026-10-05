@@ -996,8 +996,8 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
             BlendshapeNames = ["Smile"],
             UtilizedBones = [(bone, Matrix4x4.Identity)],
         };
-        mesh.RebuildSkinningBuffersFromVertices();
-        mesh.RebuildBlendshapeBuffersFromVertices();
+        mesh.RebuildSkinningBuffersFromVertices(vertices);
+        mesh.RebuildBlendshapeBuffersFromVertices(vertices);
 
         return mesh;
     }

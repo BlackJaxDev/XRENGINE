@@ -13,11 +13,11 @@ using XREngine.Rendering.Vulkan;
 namespace XREngine.RenderBench;
 
 /// <summary>
-/// Frame-granular executor for deterministic Phase 4 fixtures on the real Vulkan explicit-target
+/// Frame-granular executor for deterministic fixtures on the real Vulkan explicit-target
 /// host. Capture buffers, shaders, descriptors, command pools, and fixture resources are prepared
 /// before the armed interval.
 /// </summary>
-public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
+public sealed partial class RenderBenchProfileExecutor : IRenderProfileExecutor
 {
     private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -64,8 +64,10 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         cancellationToken.ThrowIfCancellationRequested();
         ValidateRecipe(recipe);
         _startedUtc = DateTimeOffset.UtcNow;
+        PrepareDiagnostics(recipe);
         _runDirectory = Path.Combine(_processOptions.OutputDirectory, "profiles", $"{SanitizeFileName(recipe.Name)}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_runDirectory);
+        File.Copy(Assembly.GetExecutingAssembly().Location, Path.Combine(_runDirectory, "render-bench-executable.dll"));
         EPixelInternalFormat colorFormat = ParseFormat(recipe.ColorFormat, "color");
         EPixelInternalFormat depthFormat = ParseFormat(recipe.DepthFormat, "depth");
         _options = _processOptions with
@@ -88,7 +90,12 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             FrozenWorld = recipe.Scene.AnimationIdentity.Equals("frozen", StringComparison.OrdinalIgnoreCase),
         };
 
-        _fixture = RenderBenchFixtureCatalog.Create(recipe, _processOptions.LayoutPolicy == "general");
+        RenderBenchFixtureDefinition definition = RenderBenchFixtureCatalog.Get(recipe.Fixture, recipe.Component, recipe.ExecutionMode);
+        _fixture = definition.Kind == RenderBenchFixtureKind.ProductionFullFrame
+            ? RenderBenchFixtureCatalog.CreateProduction(recipe, _options)
+            : RenderBenchFixtureCatalog.Create(recipe, _processOptions.LayoutPolicy == "general");
+        ValidateGpuTargetSelection(recipe, _fixture.Manifest);
+        _selectedGpuTargets = recipe.GpuProfiling.Targets;
         _recordFrame = RecordFixtureFrame;
         RenderBenchEffectiveConfiguration effectiveConfiguration = new(1, recipe, _fixture.Manifest, _processOptions.LayoutPolicy);
         RenderBenchWorkloadIdentity workloadIdentity = CreateWorkloadIdentity(recipe, _fixture.Manifest);
@@ -98,6 +105,7 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         _workloadIdentityPath = Path.Combine(_runDirectory, "render-bench-workload.json");
         WriteAtomic(_effectiveConfigurationPath, _effectiveConfigurationJson);
         WriteAtomic(_workloadIdentityPath, _workloadIdentityJson);
+        WriteAtomic(Path.Combine(_runDirectory, "render-profile-recipe.json"), _recipeJson);
 
         _cpuFrameNanoseconds = GC.AllocateUninitializedArray<long>(recipe.TotalCaptureFrames);
         _gpuFrameNanoseconds = GC.AllocateUninitializedArray<double>(recipe.TotalCaptureFrames);
@@ -106,10 +114,31 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         _delayedGpuTimingAllocatedBytes = GC.AllocateUninitializedArray<long>(recipe.TotalCaptureFrames);
         _explicitTargetFrameAllocationCounters = GC.AllocateUninitializedArray<VulkanExplicitTargetFrameAllocationCounters>(recipe.TotalCaptureFrames);
         Array.Fill(_gpuFrameNanoseconds, double.NaN);
-        _host = new VulkanExplicitTargetRendererHost(CreateTarget(recipe));
+        if (_fixture is RenderBenchProductionProfileFixture production)
+        {
+            production.PrepareProduction(cancellationToken);
+            _host = production.Host;
+        }
+        else
+            _host = new VulkanExplicitTargetRendererHost(CreateTarget(recipe));
         List<string> unsupported = ValidateSelectedRuntime(recipe, _host);
         if (unsupported.Count == 0)
-            _fixture.Prepare(_host, recipe);
+        {
+            if (recipe.Instrumentation.HasFlag(RenderProfileInstrumentation.TargetedGpuTimestamps) ||
+                recipe.GpuProfiling.Targets.Length != 0 || recipe.GpuProfiling.CalibratedTimestamps)
+            {
+                _gpuDiagnostic = new(_host, recipe);
+                if (_fixture is SyntheticRenderBenchFixture synthetic)
+                    synthetic.SetGpuDiagnostic(_gpuDiagnostic);
+                else if (_fixture is RenderBenchProductionProfileFixture productionFixture)
+                {
+                    _gpuDiagnostic.ConfigureProductionPasses(productionFixture.PassMetadata);
+                    _host.SelectedGpuPassSink = _gpuDiagnostic;
+                }
+            }
+            if (_fixture is not RenderBenchProductionProfileFixture)
+                _fixture.Prepare(_host, recipe);
+        }
         string[] extensions = [.. _host.EnabledInstanceExtensions, .. _host.EnabledDeviceExtensions];
         return Task.FromResult(new RenderProfilePreparation(
             _host.AdapterName,
@@ -124,21 +153,24 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         VulkanExplicitTargetRendererHost host = GetHost();
         IRenderBenchFixture fixture = GetFixture();
         _state.SetPhase(RenderBenchPhase.Warmup);
+        _warmupStartUtc = DateTimeOffset.UtcNow;
         for (int index = 0; index < recipe.WarmupFrames; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             _submittedFrames++;
-            host.SubmitFrame(_recordFrame!);
+            SubmitFixtureFrame(host);
         }
         _state.SetPhase(RenderBenchPhase.Stabilizing);
+        _warmupEndUtc = _stabilityStartUtc = DateTimeOffset.UtcNow;
         _stableGeneration = host.TargetGeneration;
         for (int index = 0; index < recipe.StabilityFrames; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             _submittedFrames++;
-            host.SubmitFrame(_recordFrame!);
+            SubmitFixtureFrame(host);
             ValidateStableHost(host, "stability window");
         }
+        _stabilityEndUtc = DateTimeOffset.UtcNow;
         return Task.CompletedTask;
     }
 
@@ -148,10 +180,15 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         IRenderBenchFixture fixture = GetFixture();
         host.ExplicitTargetAllocationDiagnosticsEnabled = true;
         _submittedFrames++;
-        host.SubmitFrame(_recordFrame!);
+        SubmitFixtureFrame(host);
         ValidateStableHost(host, "capture-thread warmup");
         _captureStartFrame = _submittedFrames;
         fixture.BeginCapture();
+        if (_cpuSpansEnabled)
+        {
+            VulkanCpuSpanProfiler.WarmCurrentThread();
+            VulkanCpuSpanProfiler.Arm();
+        }
         _ = GC.GetAllocatedBytesForCurrentThread();
     }
 
@@ -169,15 +206,18 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             _allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
             _state.SetPhase(RenderBenchPhase.Capturing);
             _captureAllocationBreakdownActive = true;
+            _captureStartUtc = DateTimeOffset.UtcNow;
         }
         else if (threadId != _captureThreadId)
             throw new InvalidOperationException("Measured Vulkan frames moved between worker threads.");
 
         VulkanExplicitTargetRendererHost host = GetHost();
+        if (_cpuSpansEnabled)
+            VulkanCpuSpanProfiler.SetFrameContext(_submittedFrames);
         _submittedFrames++;
         long submitAllocationStart = GC.GetAllocatedBytesForCurrentThread();
         long frameStart = Stopwatch.GetTimestamp();
-        host.SubmitFrame(_recordFrame!);
+        SubmitFixtureFrame(host);
         long submitAllocationEnd = GC.GetAllocatedBytesForCurrentThread();
         _submitFrameAllocatedBytes[captureIndex] = submitAllocationEnd - submitAllocationStart;
         _explicitTargetFrameAllocationCounters[captureIndex] = host.LastExplicitTargetFrameAllocationCounters;
@@ -192,32 +232,72 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
     public Task<RenderProfileResult> DrainAsync(RenderProfileRecipe recipe, RenderProfilePreparation preparation, CancellationToken cancellationToken)
     {
         _state.SetPhase(RenderBenchPhase.Draining);
+        _captureEndUtc = _drainStartUtc = DateTimeOffset.UtcNow;
+        if (_cpuSpansEnabled)
+            VulkanCpuSpanProfiler.Disarm();
         VulkanExplicitTargetRendererHost host = GetHost();
         IRenderBenchFixture fixture = GetFixture();
         fixture.EndCapture();
         _captureAllocationBreakdownActive = false;
         host.ExplicitTargetAllocationDiagnosticsEnabled = false;
         int capturedFrames = _submittedFrames - _captureStartFrame;
-        string? outputHash = TryComputeOutputHash(host);
-        string? outputImagePath = recipe.ValidationMode == RenderProfileValidationMode.CountersHashAndImage
-            ? WriteOutputImage(host, recipe)
-            : null;
+        string? outputHash;
+        string? outputImagePath;
+        int? productionRedPixels = null;
+        if (fixture is RenderBenchProductionProfileFixture production)
+        {
+            int expectedBytes = checked((int)(recipe.ScaledWidth * recipe.ScaledHeight * 4));
+            byte[] color = production.ReadCapturedColor(expectedBytes);
+            outputHash = Convert.ToHexString(SHA256.HashData(color));
+            outputImagePath = WriteOutputImage(color, recipe);
+            productionRedPixels = CountProductionRedPixels(color);
+            WriteDiagnostic("production_admission", "render-profile-production-admission.json", production.CaptureOutputDiagnostics());
+            WriteDiagnostic("output_oracle", "render-profile-output-oracle.json", new
+            {
+                CapturedEngineFrameId = production.FirstCapturedEngineFrameId + unchecked((ulong)(capturedFrames - 1)),
+                OutputSha256 = outputHash,
+                PureRedPixels = productionRedPixels.Value,
+                RequiredPureRedPixels = 4,
+                Passed = productionRedPixels.Value >= 4,
+            });
+        }
+        else
+        {
+            outputHash = TryComputeOutputHash(host);
+            outputImagePath = recipe.ValidationMode == RenderProfileValidationMode.CountersHashAndImage
+                ? WriteOutputImage(host, recipe)
+                : null;
+        }
         for (int index = 0; index < _options.FrameSlots; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            host.SubmitFrame(_recordFrame!);
+            SubmitFixtureFrame(host);
             CaptureDelayedGpuTiming(host, _submittedFrames++);
         }
+        host.CompleteDiagnosticGpuWork();
+        _gpuWorkDrained = true;
+        if (_gpuDiagnostic is not null)
+            for (uint slot = 0; slot < recipe.FrameSlots; slot++)
+                _gpuDiagnostic.ResolveCompletedFrame(slot);
 
         long allocatedBytes = _allocatedAfter - _allocatedBefore;
         WriteCaptureAllocationDiagnostics(capturedFrames, allocatedBytes);
         long[] cpu = _cpuFrameNanoseconds.AsSpan(0, capturedFrames).ToArray();
         double[] gpu = _gpuFrameNanoseconds.AsSpan(0, capturedFrames).ToArray();
         RenderBenchWorkCounters workCounters = fixture.Counters;
-        long workerAllocatedBytes = fixture.WorkerAllocatedBytes;
+        long? workerAllocatedBytes = fixture is RenderBenchProductionProfileFixture { WorkerAllocationsMeasured: false }
+            ? null
+            : fixture.WorkerAllocatedBytes;
         RenderBenchGateResult[] stabilityGates = BuildGates(
             recipe, preparation, host, fixture, capturedFrames, allocatedBytes, workerAllocatedBytes,
-            outputHash, outputImagePath, cpu, gpu, workCounters);
+            outputHash, outputImagePath, productionRedPixels, cpu, gpu, workCounters);
+        WriteDiagnostic("gates", "render-profile-gates.json", stabilityGates);
+        WriteDiagnostic("frame_stream", "render-profile-frame-stream.json", new
+        {
+            CpuFrameNanoseconds = cpu, GpuFrameNanoseconds = gpu,
+            AllocatedBytesOnCaptureThread = allocatedBytes,
+            AllocatedBytesOnFixtureWorkers = workerAllocatedBytes, WorkCounters = workCounters,
+        });
         string adapterName = host.AdapterName;
         uint driverVersion = host.DriverVersion;
         uint vendorId = host.VendorId;
@@ -225,6 +305,23 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         string presentationDescription = host.PresentationDescription;
         RenderTargetOutputProperties actualOutput = host.OutputProperties;
         RenderBenchFixtureManifest fixtureManifest = fixture.Manifest;
+        RenderBenchCommandBufferActivity commandBufferActivity = fixture.CommandBufferActivity;
+        RenderBenchTargetManifest targetManifest = new(recipe.ExecutionMode.ToString(), checked((int)actualOutput.Layers),
+            host.GraphicsQueueFamilyIndex, "NoAcquireNoPresent", ComputeFileHash(typeof(VulkanExplicitTargetRendererHost).Assembly.Location))
+        {
+            QueueFamilies = host.QueueFamilies,
+        };
+        long backendGeneration = host.BackendGeneration;
+        VulkanValidationDiagnosticSnapshot validation = host.CaptureValidationDiagnostics();
+        WriteDiagnosticArtifacts(recipe, validation);
+        if (recipe.GpuProfiling.HardwareCounterIndices.Length != 0)
+            WriteDiagnostic("hardware_counters", "render-profile-hardware-counters.json",
+                RenderBenchPerformanceCounterDiagnostic.Capture(host, fixtureManifest, recipe.GpuProfiling.HardwareCounterIndices,
+                    recipe.HardwareCounterPolicy == RenderProfileHardwareCounterPolicy.Required, cancellationToken));
+        _drainEndUtc = DateTimeOffset.UtcNow;
+        double finalSimulationTimeSeconds = fixture is RenderBenchProductionProfileFixture productionClock
+            ? productionClock.SimulationTimeSeconds
+            : _submittedFrames * recipe.Scene.FixedTimeStepSeconds;
         DisposeHost();
 
         RenderBenchGateResult? failedGate = stabilityGates.FirstOrDefault(static gate => !gate.Passed);
@@ -238,7 +335,7 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             recipe.Scene.CameraIdentity,
             recipe.Scene.LightIdentities,
             recipe.Scene.AnimationIdentity,
-            _submittedFrames * recipe.Scene.FixedTimeStepSeconds,
+            finalSimulationTimeSeconds,
             recipe.Scene.FixedTimeStepSeconds,
             recipe.Scene.RandomSeed,
             recipe.Scene.MeshStrategy,
@@ -247,6 +344,19 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             recipe.Scene.OutputIdentities);
         RenderBenchResult result = new()
         {
+            RecipeSha256 = ComputeTextHash(_recipeJson),
+            IsIntrusive = recipe.IsIntrusive,
+            TargetManifest = targetManifest,
+            CommandBufferActivity = commandBufferActivity,
+            Source = CreateSourceIdentity(backendGeneration),
+            Environment = CreateEnvironmentManifest(recipe, preparation),
+            Intervals = new(_processStartUtc, _warmupStartUtc, _warmupEndUtc, _stabilityStartUtc,
+                _stabilityEndUtc, _captureStartUtc, _captureEndUtc, _drainStartUtc, _drainEndUtc, completedUtc),
+            CpuFrameStatistics = RenderBenchMetricStatistics.FromNanoseconds(cpu),
+            GpuFrameStatistics = RenderBenchMetricStatistics.FromNanoseconds(gpu),
+            ArtifactManifest = CreateArtifactManifest(outputImagePath),
+            OperationsPerSecond = cpu.Length == 0 || cpu.Sum(static time => (double)time) == 0 ? null :
+                workCounters.Submissions * 1_000_000_000.0 / cpu.Sum(static time => (double)time),
             LayoutPolicy = _processOptions.LayoutPolicy,
             RunId = $"{_startedUtc:yyyyMMdd-HHmmss}-{Environment.ProcessId}",
             StartedUtc = _startedUtc,
@@ -255,7 +365,7 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             ExecutionMode = recipe.ExecutionMode,
             Recipe = recipe.Name,
             Fixture = recipe.Fixture,
-            ExecutablePath = Assembly.GetExecutingAssembly().Location,
+            ExecutablePath = Path.Combine(_runDirectory, "render-bench-executable.dll"),
             ExecutableSha256 = ComputeFileHash(Assembly.GetExecutingAssembly().Location),
             EffectiveConfigurationSha256 = ComputeTextHash(_effectiveConfigurationJson),
             WorkloadSha256 = preparation.WorkloadIdentity,
@@ -297,6 +407,8 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         };
         if (outputImagePath is not null)
             artifacts["output_image"] = outputImagePath;
+        foreach ((string key, string path) in _diagnosticArtifacts)
+            artifacts[key] = path;
         return Task.FromResult(new RenderProfileResult
         {
             SessionId = string.Empty,
@@ -306,6 +418,7 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             CapturedFrames = capturedFrames,
             FrameMilliseconds = cpu.Select(static nanoseconds => nanoseconds / 1_000_000.0).ToArray(),
             Artifacts = artifacts,
+            IsIntrusive = recipe.IsIntrusive,
         });
     }
 
@@ -322,9 +435,10 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         IRenderBenchFixture fixture,
         int capturedFrames,
         long allocatedBytes,
-        long workerAllocatedBytes,
+        long? workerAllocatedBytes,
         string? outputHash,
         string? outputImagePath,
+        int? productionRedPixels,
         long[] cpu,
         double[] gpu,
         RenderBenchWorkCounters actual)
@@ -336,7 +450,8 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         double cpuP95 = Percentile(cpu.Select(static value => value / 1_000_000.0).ToArray(), 0.95);
         double gpuP95 = Percentile(gpu.Select(static value => value / 1_000_000.0).ToArray(), 0.95);
         bool allocationBudget = !recipe.Budgets.MaxCaptureThreadAllocatedBytes.HasValue || allocatedBytes <= recipe.Budgets.MaxCaptureThreadAllocatedBytes.Value;
-        bool workerAllocationBudget = !recipe.Budgets.MaxWorkerAllocatedBytes.HasValue || workerAllocatedBytes <= recipe.Budgets.MaxWorkerAllocatedBytes.Value;
+        bool workerAllocationBudget = !recipe.Budgets.MaxWorkerAllocatedBytes.HasValue ||
+            (workerAllocatedBytes.HasValue && workerAllocatedBytes.Value <= recipe.Budgets.MaxWorkerAllocatedBytes.Value);
         bool outputHashValid = !recipe.Budgets.RequireOutputHash || outputHash is not null;
         bool requiredHashMatches = recipe.Budgets.RequiredOutputSha256 is null ||
             recipe.Budgets.RequiredOutputSha256.Equals(outputHash, StringComparison.OrdinalIgnoreCase);
@@ -344,6 +459,12 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         return
         [
             new("mcp_capture_silence", true, "MCP transport is suspended during capture and drain.", "listener suspended"),
+            new("cpu_span_completeness", !_cpuSpansEnabled || VulkanCpuSpanProfiler.GetDiagnostics().Complete,
+                "Targeted span buffers must retain every selected warmed-thread invocation.",
+                _cpuSpansEnabled ? VulkanCpuSpanProfiler.GetDiagnostics().ToString() : "not requested"),
+            new("gpu_target_completeness", _gpuDiagnostic is null || GpuDiagnosticComplete(capturedFrames),
+                "Selected pass queries must complete without query overflow or abandonment.",
+                _gpuDiagnostic is null ? "not requested" : "selected queue-local queries"),
             new("fixture_precreation", true, "Fixture-owned reusable assets and Vulkan objects exist before capture.", fixture.Definition.Kind.ToString()),
             new("fixture_identity", fixture.Definition.Name.Equals(recipe.Fixture, StringComparison.OrdinalIgnoreCase) &&
                 fixture.Definition.Component.Equals(recipe.Component, StringComparison.OrdinalIgnoreCase),
@@ -361,9 +482,12 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             new("target_generation", host.TargetGeneration == _stableGeneration, "Target generation remains stable after warmup.", $"stable={host.TargetGeneration == _stableGeneration}"),
             new("device_health", !host.IsDeviceLost, "The Vulkan device remains available.", $"healthy={!host.IsDeviceLost}"),
             new("capture_thread_allocations", allocationBudget, "Capture-thread managed allocation satisfies the recipe budget.", $"allocatedBytes={allocatedBytes}; max={recipe.Budgets.MaxCaptureThreadAllocatedBytes?.ToString() ?? "unbounded"}"),
-            new("fixture_worker_allocations", workerAllocationBudget, "Persistent fixture workers satisfy the recipe managed-allocation budget.", $"allocatedBytes={workerAllocatedBytes}; max={recipe.Budgets.MaxWorkerAllocatedBytes?.ToString() ?? "unbounded"}"),
+            new("fixture_worker_allocations", workerAllocationBudget, "Measured fixture workers satisfy any requested managed-allocation budget.", $"allocatedBytes={workerAllocatedBytes?.ToString() ?? "unmeasured"}; max={recipe.Budgets.MaxWorkerAllocatedBytes?.ToString() ?? "unbounded"}"),
             new("output_hash", outputHashValid && requiredHashMatches, "Required output identity is readable and matches any pinned hash.", outputHash ?? "unavailable"),
             new("output_image", imageValid, "Image validation mode emits a post-capture image.", outputImagePath ?? "not requested"),
+            new("output_visual_oracle", productionRedPixels is null || productionRedPixels.Value >= 4,
+                "Production output must contain at least four visible pure-red candidate pixels.",
+                productionRedPixels is null ? "not production" : $"pureRedPixels={productionRedPixels.Value}; required=4"),
             BudgetGate("cpu_p50_budget", cpuP50, recipe.Budgets.MaxCpuP50Milliseconds),
             BudgetGate("cpu_p95_budget", cpuP95, recipe.Budgets.MaxCpuP95Milliseconds),
             BudgetGate("gpu_p95_budget", gpuP95, recipe.Budgets.MaxGpuP95Milliseconds),
@@ -376,6 +500,8 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
 
     private static RenderBenchWorkCounters ExpectedCounters(RenderProfileRecipe recipe, RenderBenchFixtureManifest fixture, int frames)
     {
+        if (fixture.Kind == RenderBenchFixtureKind.ProductionFullFrame)
+            return new(0, 0, frames, frames, 0, 0, 0, 0, 0);
         long PerFrame(long? explicitValue, long fallback) => (explicitValue ?? fallback) * frames;
         long commandBuffers = fixture.Kind is RenderBenchFixtureKind.SecondaryCommandRecording or RenderBenchFixtureKind.CommandBufferReuse
             ? fixture.WorkerCount + 1
@@ -441,7 +567,7 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             return;
         }
 
-        int captureIndex = _submittedFrames - _captureStartFrame;
+        int captureIndex = _submittedFrames - _captureStartFrame - 1;
         long allocationStart = GC.GetAllocatedBytesForCurrentThread();
         GetFixture().RecordFrame(api, commandBuffer, target);
         if ((uint)captureIndex < (uint)_fixtureFrameAllocatedBytes.Length)
@@ -470,8 +596,16 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             !host.AdapterName.Contains(recipe.Adapter, StringComparison.OrdinalIgnoreCase) &&
             !recipe.Adapter.Equals($"0x{host.VendorId:X4}:0x{host.DeviceId:X4}", StringComparison.OrdinalIgnoreCase))
             unsupported.Add($"Requested adapter '{recipe.Adapter}' does not match selected adapter '{host.AdapterName}' (0x{host.VendorId:X4}:0x{host.DeviceId:X4}).");
-        if (recipe.HardwareCounterPolicy == RenderProfileHardwareCounterPolicy.Required)
-            unsupported.Add("Required hardware counters are unavailable in the RenderBench in-process Vulkan lane.");
+        if (recipe.HardwareCounterPolicy == RenderProfileHardwareCounterPolicy.Required &&
+            !host.EnabledDeviceExtensions.Contains("VK_KHR_performance_query", StringComparer.Ordinal))
+            unsupported.Add("Required VK_KHR_performance_query support is unavailable on the selected Vulkan device.");
+        if (recipe.GpuProfiling.HardwareCounterIndices.Length != 0 && recipe.Fixture != "noop-control")
+            unsupported.Add("Hardware counter replay requires the immutable noop-control fixture.");
+        VulkanValidationDiagnosticSnapshot validation = host.CaptureValidationDiagnostics();
+        if (recipe.EnableValidation && !validation.StandardValidationEnabled)
+            unsupported.Add("Required standard Vulkan validation could not be enabled.");
+        if (recipe.EnableSynchronizationValidation && !validation.SynchronizationValidationEnabled)
+            unsupported.Add("Required Vulkan synchronization validation could not be enabled.");
         if (recipe.CpuSamplingPolicy == RenderProfileCpuSamplingPolicy.ExternalSamplerRequired)
             unsupported.Add("Required external CPU sampling must be supplied by an external profiler run.");
         return unsupported;
@@ -521,20 +655,68 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
     private IRenderBenchFixture GetFixture()
         => _fixture ?? throw new InvalidOperationException("The deterministic fixture is not prepared.");
 
+    private void SubmitFixtureFrame(VulkanExplicitTargetRendererHost host)
+    {
+        if (_fixture is RenderBenchProductionProfileFixture production)
+            production.SubmitStep();
+        else
+            host.SubmitFrame(_recordFrame!);
+    }
+
     private void DisposeHost()
     {
         if (_disposed)
             return;
         _disposed = true;
-        _fixture?.Dispose();
-        _fixture = null;
-        _recordFrame = null;
-        _host?.Dispose();
-        _host = null;
+        try
+        {
+            if (_host is not null && !_gpuWorkDrained)
+                _host.CompleteDiagnosticGpuWork();
+        }
+        finally
+        {
+            bool sceneOwnsHost = _fixture is RenderBenchProductionProfileFixture;
+            if (_host is not null)
+                _host.SelectedGpuPassSink = null;
+            try { _gpuDiagnostic?.Dispose(); }
+            finally
+            {
+                _gpuDiagnostic = null;
+                try { _fixture?.Dispose(); }
+                finally
+                {
+                    _fixture = null;
+                    _recordFrame = null;
+                    try
+                    {
+                        if (!sceneOwnsHost)
+                            _host?.Dispose();
+                    }
+                    finally
+                    {
+                        _host = null;
+                        if (_cpuSpansEnabled)
+                            VulkanCpuSpanProfiler.Disarm();
+                        _environmentScope?.Dispose();
+                        _environmentScope = null;
+                    }
+                }
+            }
+        }
     }
 
     private void CaptureDelayedGpuTiming(VulkanExplicitTargetRendererHost host, int submittedFrame)
     {
+        if (_fixture is RenderBenchProductionProfileFixture production)
+        {
+            VulkanGpuCommandBufferTimingSample sample = RuntimeEngine.Rendering.Stats.Vulkan.LastCompletedVulkanFrameGpuCommandBufferTiming;
+            if (!sample.IsCompleted || sample.SourceRenderFrameId < production.FirstCapturedEngineFrameId)
+                return;
+            ulong sourceIndex = sample.SourceRenderFrameId - production.FirstCapturedEngineFrameId;
+            if (sourceIndex < unchecked((ulong)_gpuFrameNanoseconds.Length))
+                _gpuFrameNanoseconds[checked((int)sourceIndex)] = sample.ElapsedNanoseconds;
+            return;
+        }
         int completedFrame = submittedFrame - checked((int)_options.FrameSlots);
         int captureIndex = completedFrame - _captureStartFrame;
         if ((uint)captureIndex < (uint)_gpuFrameNanoseconds.Length)
@@ -555,10 +737,24 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         byte[] rgba = host.ReadbackLastSubmittedColor(checked(pixelCount * 4));
         if (rgba.Length < pixelCount * 4)
             throw new InvalidOperationException($"Output readback returned {rgba.Length} bytes; expected at least {pixelCount * 4}.");
+        return WriteOutputImage(rgba, recipe);
+    }
+
+    private string WriteOutputImage(byte[] rgba, RenderProfileRecipe recipe)
+    {
         string path = Path.Combine(_runDirectory, "render-bench-output.png");
         using RuntimeImage image = new(recipe.ScaledWidth, recipe.ScaledHeight, RuntimePixelFormat.Rgba8, rgba);
         File.WriteAllBytes(path, RuntimeImageCodecs.Require().EncodePng(image));
         return path;
+    }
+
+    private static int CountProductionRedPixels(ReadOnlySpan<byte> rgba)
+    {
+        int count = 0;
+        for (int offset = 0; offset < rgba.Length; offset += 4)
+            if (rgba[offset] >= 240 && rgba[offset + 1] <= 15 && rgba[offset + 2] <= 15)
+                count++;
+        return count;
     }
 
     private static double Percentile(double[] values, double percentile)

@@ -6,6 +6,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Shadow transform, atlas placement, and residency consumed by native shading.
 /// </summary>
+[XREngine.Rendering.Shaders.GpuRecord("XRAdvancedShadowRecord")]
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AdvancedShadowRecord
 {
@@ -24,8 +25,14 @@ public struct AdvancedShadowRecord
     /// </summary>
     public Vector4 UvScaleBias;
     /// <summary>
-    /// Depth bias/filter data. BrowserStandalonePcss stores depth/slope/normal
-    /// bias in xyz and effective light-source radius in w.
+    /// Receiver bias and filter controls in normalized shadow depth. For
+    /// <see cref="EAdvancedShadowType.DirectionalCascade"/>, X is the constant depth
+    /// floor and Y is the depth spanned per authored texel of receiver slope, which
+    /// native shading scales by tan(theta). For other types, X and Y are the minimum
+    /// and maximum depth bias interpolated by <c>1 - N.L</c>. Z is the world-space
+    /// normal offset and W is the filter radius in texels.
+    /// BrowserStandalonePcss stores depth, slope, and normal bias in XYZ and
+    /// the effective light-source radius in W.
     /// </summary>
     public Vector4 DepthBiasAndFilter;
 

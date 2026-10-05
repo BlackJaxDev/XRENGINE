@@ -627,11 +627,24 @@ namespace XREngine.Rendering.Vulkan
                 EVulkanPrimaryPlanNodeKind.Clear => operations.Stream.GetClear(index).GetHashCode(),
                 EVulkanPrimaryPlanNodeKind.TransformFeedback => operations.Stream.GetTransformFeedback(index).GetHashCode(),
                 EVulkanPrimaryPlanNodeKind.Query => operations.Stream.GetQuery(index).GetHashCode(),
-                EVulkanPrimaryPlanNodeKind.MeshDraw => operations.Stream.GetMeshDraw(index).GetHashCode(),
-                EVulkanPrimaryPlanNodeKind.IndirectDraw => operations.Stream.GetIndirectDraw(index).GetHashCode(),
-                EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount => operations.Stream.GetMeshTask(index).GetHashCode(),
-                EVulkanPrimaryPlanNodeKind.ComputeDispatch => operations.Stream.GetComputeDispatch(index).GetHashCode(),
-                EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect => operations.Stream.GetComputeDispatchIndirect(index).GetHashCode(),
+                EVulkanPrimaryPlanNodeKind.MeshDraw => HashCode.Combine(
+                    operations.Stream.GetMeshDraw(index),
+                    operations.Stream.GetMeshDraw(index).Draw.ProgramBindingSnapshot?.SealedContentVersion),
+                EVulkanPrimaryPlanNodeKind.IndirectDraw => HashCode.Combine(
+                    operations.Stream.GetIndirectDraw(index),
+                    operations.Stream.GetIndirectDraw(index).Draw.ProgramBindingSnapshot?.SealedContentVersion),
+                // Sealed binding snapshots are row-owned and refilled per slot
+                // rebuild; their content version keeps these signatures as
+                // replay-sensitive as a fresh snapshot identity was.
+                EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount => HashCode.Combine(
+                    operations.Stream.GetMeshTask(index),
+                    operations.Stream.GetMeshTask(index).ProgramBindingSnapshot?.SealedContentVersion),
+                EVulkanPrimaryPlanNodeKind.ComputeDispatch => HashCode.Combine(
+                    operations.Stream.GetComputeDispatch(index),
+                    operations.Stream.GetComputeDispatch(index).Snapshot?.SealedContentVersion),
+                EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect => HashCode.Combine(
+                    operations.Stream.GetComputeDispatchIndirect(index),
+                    operations.Stream.GetComputeDispatchIndirect(index).Snapshot?.SealedContentVersion),
                 EVulkanPrimaryPlanNodeKind.BufferCopy => operations.Stream.GetBufferCopy(index).GetHashCode(),
                 EVulkanPrimaryPlanNodeKind.SubmissionMarker => operations.Stream.GetSubmissionMarker(index).GetHashCode(),
                 EVulkanPrimaryPlanNodeKind.MemoryBarrier => operations.Stream.GetMemoryBarrier(index).GetHashCode(),

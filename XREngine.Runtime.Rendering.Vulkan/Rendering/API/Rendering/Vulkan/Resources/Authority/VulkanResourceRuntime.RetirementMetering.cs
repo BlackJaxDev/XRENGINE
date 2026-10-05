@@ -98,13 +98,14 @@ internal sealed partial class VulkanResourceRuntime
             workClass,
             VulkanResourceRetirementQueue.GetOldestEnqueuedTimestampNoLock(entries, ticketSelector));
 
-    private void QuarantineRetirementFailure(
+    internal void QuarantineRetirementFailure(
         EVulkanRetirementWorkClass workClass,
         ulong handle,
-        Exception exception)
+        Exception exception,
+        object? retainedOwner = null)
     {
         lock (Lifetime.Retirement.SyncRoot)
-            Lifetime.Retirement.QuarantinedFailures.Add(new(workClass, handle, exception));
+            Lifetime.Retirement.QuarantinedFailures.Add(new(workClass, handle, exception, retainedOwner));
     }
 
     private void CompleteRetiredBufferDeduplication(int frameSlot, in RetiredBuffer retired)

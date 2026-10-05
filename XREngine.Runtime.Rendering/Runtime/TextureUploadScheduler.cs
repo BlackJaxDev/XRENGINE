@@ -1,5 +1,3 @@
-using System.Collections.Concurrent;
-
 namespace XREngine.Rendering;
 
 /// <summary>
@@ -19,7 +17,10 @@ internal sealed class TextureUploadScheduler
     private const long ProgressiveOpenGlUploadBytesPerFrame = 16L * 1024L * 1024L;
     private const long CaptureDeferralBacklogBytesPerFrame = 24L * 1024L * 1024L;
 
-    private readonly ConcurrentDictionary<XRTexture2D, TextureUploadWorkItem> _progressiveUploads = [];
+    private readonly Dictionary<XRTexture2D, TextureUploadWorkItem> _progressiveUploads = [];
+    private readonly object _slotLock = new();
+    private readonly (XRTexture2D Texture, TextureUploadWorkItem WorkItem)?[] _slotOwners =
+        new (XRTexture2D Texture, TextureUploadWorkItem WorkItem)?[MaxConcurrentProgressiveOpenGlUploads];
     private int _activeProgressiveUploadCount;
     private long _progressiveUploadBytesScheduledThisFrame;
     private long _progressiveUploadBytesFrameTicks = -1;
@@ -28,14 +29,24 @@ internal sealed class TextureUploadScheduler
     public static TextureUploadScheduler Instance { get; } = new();
 
     public int ActiveUploadCount => Volatile.Read(ref _activeProgressiveUploadCount);
-    public int QueuedUploadCount => _progressiveUploads.Count;
+    public int QueuedUploadCount
+    {
+        get
+        {
+            lock (_slotLock)
+                return _progressiveUploads.Count;
+        }
+    }
     /// <summary>
     /// Returns whether a texture still has a registered progressive upload. The registration
     /// spans both locally scheduled OpenGL mip uploads and runtime-managed uploads, and is
     /// therefore the authoritative readiness check for consumers that freeze native state.
     /// </summary>
     public bool HasPendingUpload(XRTexture2D texture)
-        => _progressiveUploads.ContainsKey(texture);
+    {
+        lock (_slotLock)
+            return _progressiveUploads.ContainsKey(texture);
+    }
 
     public long BytesScheduledThisFrame => GetBytesScheduledThisFrame();
     public bool HasLargeBacklog
@@ -43,23 +54,43 @@ internal sealed class TextureUploadScheduler
             && BytesScheduledThisFrame >= CaptureDeferralBacklogBytesPerFrame;
 
     public bool TryRegister(XRTexture2D texture, TextureUploadWorkItem workItem)
-        => _progressiveUploads.TryAdd(texture, workItem);
+    {
+        lock (_slotLock)
+            return _progressiveUploads.TryAdd(texture, workItem);
+    }
 
     public void ForceRemove(XRTexture2D texture)
-        => _progressiveUploads.TryRemove(texture, out _);
+    {
+        lock (_slotLock)
+            _progressiveUploads.Remove(texture);
+    }
 
     public bool TryRemove(XRTexture2D texture, TextureUploadWorkItem workItem)
-        => ((ICollection<KeyValuePair<XRTexture2D, TextureUploadWorkItem>>)_progressiveUploads).Remove(
-            new KeyValuePair<XRTexture2D, TextureUploadWorkItem>(texture, workItem));
+    {
+        lock (_slotLock)
+        {
+            if (!_progressiveUploads.TryGetValue(texture, out TextureUploadWorkItem registered)
+                || !registered.Equals(workItem))
+                return false;
+
+            return _progressiveUploads.Remove(texture);
+        }
+    }
 
     public bool HasHigherPriorityUpload(XRTexture2D currentTexture, TextureUploadWorkItem current)
+    {
+        lock (_slotLock)
+            return HasHigherPriorityWaitingUpload(currentTexture, current);
+    }
+
+    private bool HasHigherPriorityWaitingUpload(XRTexture2D currentTexture, TextureUploadWorkItem current)
     {
         foreach (KeyValuePair<XRTexture2D, TextureUploadWorkItem> pair in _progressiveUploads)
         {
             if (ReferenceEquals(pair.Key, currentTexture))
                 continue;
 
-            if (!pair.Key.RuntimeManagedProgressiveUploadActive)
+            if (OwnsSlot(pair.Key, pair.Value))
                 continue;
 
             if (IsHigherPriority(pair.Value, current))
@@ -69,22 +100,73 @@ internal sealed class TextureUploadScheduler
         return false;
     }
 
-    public bool TryAcquireUploadSlot()
+    public bool TryAcquireUploadSlot(XRTexture2D texture, TextureUploadWorkItem workItem)
     {
-        int active = Interlocked.Increment(ref _activeProgressiveUploadCount);
-        if (active <= MaxConcurrentProgressiveOpenGlUploads)
-            return true;
+        lock (_slotLock)
+        {
+            if (!_progressiveUploads.TryGetValue(texture, out TextureUploadWorkItem registered)
+                || !SameWorkItem(registered, workItem)
+                || HasHigherPriorityWaitingUpload(texture, workItem))
+                return false;
 
-        Interlocked.Decrement(ref _activeProgressiveUploadCount);
+            for (int i = 0; i < _slotOwners.Length; i++)
+            {
+                (XRTexture2D Texture, TextureUploadWorkItem WorkItem)? owner = _slotOwners[i];
+                if (owner is not null && ReferenceEquals(owner.Value.Texture, texture))
+                    return false;
+            }
+
+            for (int i = 0; i < _slotOwners.Length; i++)
+            {
+                if (_slotOwners[i] is not null)
+                    continue;
+
+                _slotOwners[i] = (texture, workItem);
+                Volatile.Write(ref _activeProgressiveUploadCount, _activeProgressiveUploadCount + 1);
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    public void ReleaseUploadSlot(XRTexture2D texture, TextureUploadWorkItem workItem)
+    {
+        lock (_slotLock)
+        {
+            for (int i = 0; i < _slotOwners.Length; i++)
+            {
+                (XRTexture2D Texture, TextureUploadWorkItem WorkItem)? owner = _slotOwners[i];
+                if (owner is null
+                    || !ReferenceEquals(owner.Value.Texture, texture)
+                    || !SameWorkItem(owner.Value.WorkItem, workItem))
+                    continue;
+
+                _slotOwners[i] = null;
+                Volatile.Write(ref _activeProgressiveUploadCount, _activeProgressiveUploadCount - 1);
+                return;
+            }
+        }
+    }
+
+    private bool OwnsSlot(XRTexture2D texture, TextureUploadWorkItem workItem)
+    {
+        for (int i = 0; i < _slotOwners.Length; i++)
+        {
+            (XRTexture2D Texture, TextureUploadWorkItem WorkItem)? owner = _slotOwners[i];
+            if (owner is not null
+                && ReferenceEquals(owner.Value.Texture, texture)
+                && SameWorkItem(owner.Value.WorkItem, workItem))
+                return true;
+        }
+
         return false;
     }
 
-    public void ReleaseUploadSlot()
-    {
-        int active = Interlocked.Decrement(ref _activeProgressiveUploadCount);
-        if (active < 0)
-            Interlocked.Exchange(ref _activeProgressiveUploadCount, 0);
-    }
+    // Each registration creates its own weak-reference object, which remains stable
+    // when the work item is copied into a coroutine or scheduler entry.
+    private static bool SameWorkItem(TextureUploadWorkItem left, TextureUploadWorkItem right)
+        => ReferenceEquals(left.Texture, right.Texture);
 
     public bool WouldExceedFrameByteBudget(long nextBytes)
     {

@@ -228,6 +228,10 @@ namespace XREngine.Build
         {
             foreach (ITaskItem reference in ProjectReferences)
             {
+                // Analyzer-only projects contribute compiler tooling, not runtime references.
+                if (reference.GetMetadata("OutputItemType").Equals("Analyzer", StringComparison.OrdinalIgnoreCase) &&
+                    reference.GetMetadata("ReferenceOutputAssembly").Equals("false", StringComparison.OrdinalIgnoreCase))
+                    continue;
                 string name = Path.GetFileNameWithoutExtension(reference.ItemSpec);
                 bool authoredGame = ProjectName == "XREngine.Browser" && !string.IsNullOrWhiteSpace(BrowserGameProject)
                     && Path.GetFullPath(reference.GetMetadata("FullPath")).Equals(Path.GetFullPath(BrowserGameProject),
@@ -248,8 +252,6 @@ namespace XREngine.Build
         private void ValidateWholeProjectSourceSet()
         {
             string project = File.ReadAllText(ProjectFile);
-            if (ProjectName == "XREngine.Runtime.Host")
-                ValidateGeneratedSource(GeneratedAotFactoryRegistrations, "AotFactoryRegistrations.g.cs");
             if (ProjectName == "XREngine.Browser")
             {
                 ValidateGeneratedSource(GeneratedBrowserStaticRegistrations, "BrowserStaticRegistrations.g.cs");
@@ -349,10 +351,11 @@ namespace XREngine.Build
                     package.ItemSpec.Equals("Microsoft.NET.Sdk.WebAssembly.Pack", StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                // The SDK injects its trim/AOT analysis tasks into any project that declares
-                // IsTrimmable or IsAotCompatible. The version follows the installed SDK, and
-                // the package contributes build tasks only, never a runtime asset.
-                if (package.ItemSpec.Equals("Microsoft.NET.ILLink.Tasks", StringComparison.OrdinalIgnoreCase) &&
+                // Trim analysis and NativeAOT publishing inject SDK-owned build tools.
+                // Their versions follow the SDK; explicitly authored references still
+                // require review, and resolved native runtime assets remain guarded.
+                if ((package.ItemSpec.Equals("Microsoft.NET.ILLink.Tasks", StringComparison.OrdinalIgnoreCase) ||
+                     package.ItemSpec.Equals("Microsoft.DotNet.ILCompiler", StringComparison.OrdinalIgnoreCase)) &&
                     package.GetMetadata("IsImplicitlyDefined").Equals("true", StringComparison.OrdinalIgnoreCase))
                     continue;
 

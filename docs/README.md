@@ -23,7 +23,10 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
 - [WebGPU Sky Backgrounds](architecture/rendering/webgpu-sky-background.md)
 - [Native Authored Material Vertex Functions](work/progress/rendering/browser-native-material-vertices-2026-10-03.md)
+
+- [Vulkan Scene Preparation And Publication](architecture/rendering/vulkan-scene-preparation-and-publication.md)
 - [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)
+- [Vulkan Pipeline Compilation, Readiness And Depth-Only Coverage](architecture/rendering/vulkan-pipeline-compilation.md)
 - [CPU Scene BVH](architecture/rendering/cpu-scene-bvh.md)
 - [GPU Scene BVH](architecture/rendering/gpu-scene-bvh.md)
 - [Scene Architecture](architecture/scene/overview.md)
@@ -35,10 +38,13 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Modeling XRMesh Editing](architecture/modeling/xrmesh-editing.md)
 - [Play Mode Architecture](architecture/editor/play-mode-architecture.md)
 - [Editor Undo System](architecture/editor/undo-system.md)
+- [Editor Background Preparation](architecture/editor/background-preparation.md)
 
 ## Developer Guides
 
+- [Software Vulkan Correctness Validation](developer-guides/testing/software-vulkan-validation.md)
 - [Continuous Integration And Releases](developer-guides/ci-cd.md)
+- [Windows CI Build Preparation Investigation](work/investigations/platform/windows-ci-build-preparation-2026-10-05.md)
 - [MCP Server Implementation](developer-guides/ai/mcp-server.md)
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
 - [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
@@ -60,6 +66,9 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Hot-Path Memory Control](developer-guides/runtime/hot-path-memory.md)
 - [Job System](developer-guides/runtime/job-system.md)
 - [Profiler](developer-guides/diagnostics/profiler.md)
+- [Dedicated Vulkan RenderBench](developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench)
+- [Runtime Data Layout Measurements](developer-guides/diagnostics/runtime-data-layout-measurements.md)
+- [Runtime Regression And NativeAOT Hardening](work/todo/runtime-regression-and-nativeaot-hardening-todo.md): current software regression and strict packaged-player acceptance, with an active [progress ledger](work/progress/runtime/runtime-regression-and-nativeaot-hardening-progress.md).
 - [Self-Iterating Rendering Performance Loop](developer-guides/diagnostics/self-iterating-performance-loop.md)
 - [Skinning](developer-guides/rendering/skinning.md)
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
@@ -68,6 +77,11 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Vulkan OBS Hook Compatibility](developer-guides/rendering/vulkan-obs-hook-compatibility.md)
 - [Surface Detail And Forward Shadows](developer-guides/rendering/shadows/surface-detail-forward-shadows.md)
 - [OpenXR Runtime](developer-guides/vr/openxr-runtime.md)
+- [OpenXR Body Tracking and Spectator Integration](developer-guides/vr/openxr-body-tracking.md)
+- [Full-Body VR Calibration](developer-guides/vr/full-body-calibration.md)
+- [VR Body Measurements](developer-guides/vr/body-measurements.md)
+- [VR Spectator Camera](developer-guides/vr/spectator-camera.md)
+- [VR Calibration Session Continuity](developer-guides/vr/calibration-session-continuity.md)
 - [VR Developer Guide](developer-guides/vr/vr-development.md)
 
 ## User Guide
@@ -82,6 +96,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Physics](user-guide/physics.md)
 - [Rendering](user-guide/rendering.md)
 - [VR Development](user-guide/vr-development.md)
+- [Full-body VR calibration](user-guide/vr/full-body-calibration.md)
 - [Shader Editor](user-guide/editor/shader-editor.md)
 - [Prefab Workflow](user-guide/prefab-workflow.md)
 - [Job System](user-guide/job-system.md)
@@ -89,9 +104,20 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Work Docs
 
 - [Work Docs Index](work/README.md)
+- [Shadow and Pipeline Validation — Completed](work/todo/rendering/shadow-and-pipeline-validation-failures-todo.md)
 - [Editor OpenXR Toggle, Rendering, And Import Responsiveness Todo](work/todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md)
 - [Six-Device VR Calibration Baseline](work/investigations/avatar/vr-calibration-baseline-2026-09-24.md)
+- [OpenXR Full-body Implementation Record](work/progress/avatar/openxr-full-body-calibration-spectator-implementation.md)
+- [OpenXR Calibration and Spectator Implementation](work/progress/avatar/openxr-calibration-spectator-implementation-2026-09-30.md)
+- [OpenXR Calibration and Spectator Acceptance](work/testing/avatar/openxr-calibration-spectator-validation.md)
+- [Windows Calibration and Spectator Validation](work/investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md)
+- [Animation and IK Stability](work/investigations/avatar/animation-ik-stability-2026-09-30.md)
+- [Tracked Body Solver Validation](work/investigations/avatar/tracked-body-solver-2026-09-30.md)
+- [Spectator and Calibration Feedback Validation](work/investigations/avatar/spectator-validation-2026-09-30.md)
 - [Vulkan Lifecycle Evidence Harness](work/testing/rendering/vulkan-lifecycle-evidence-harness.md)
+- [Vulkan Stall Remediation: Remaining Tasks](work/todo/rendering/vulkan-stall-remediation-todo.md)
+- [Vulkan Stall Remediation Results](work/progress/rendering/vulkan-stall-remediation-results.md)
+- [Vulkan Stall Validation Protocol](work/testing/rendering/vulkan-stall-validation.md)
 - [Control Plane Managed Server Instances and Client Synchronization Todo](work/todo/networking/control-plane-managed-server-instances-todo.md)
 - [Apple Platform and MoltenVK Support Design](work/design/platform/apple-platform-moltenvk-support-design.md)
 - [Runtime Modularization Plan](work/design/runtime-modularization-plan.md)

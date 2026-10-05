@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Editor.GpuLayouts;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Shaders;
@@ -58,7 +59,7 @@ public sealed class AdvancedShaderAccessContractTests
     }
 
     [Test]
-    public void Preamble_EmitsCpuLayoutAuthorityAndBackendEncodingSelection()
+    public void Preamble_EmitsBackendBindingsAndEncodingSelection()
     {
         string openGl = AdvancedShaderAccessLibrary.BuildPreamble(
             RuntimeGraphicsApiKind.OpenGL,
@@ -77,10 +78,8 @@ public sealed class AdvancedShaderAccessContractTests
         vulkan.ShouldContain("#define XR_ADV_GLOBAL_SET 3");
         foreach (string preamble in new[] { openGl, vulkan })
         {
-            preamble.ShouldContain("#define XR_ADV_CPU_SIZE_GEOMETRY 320");
-            preamble.ShouldContain("#define XR_ADV_CPU_SIZE_HANDLE_LOOKUP 8");
             preamble.ShouldContain("#define XR_ADV_BINDING_HANDLE_LOOKUPS 27");
-            preamble.ShouldContain("#define XR_ADV_CPU_OFFSET_GEOMETRY_BOUNDS_SPHERE 240");
+            preamble.ShouldContain("#define XR_ADV_BINDING_MESHES 2");
             preamble.ShouldContain(
                 $"#include \"{AdvancedShaderAccessLibrary.IncludePath}\"");
             preamble.ShouldNotContain("#version");
@@ -93,13 +92,17 @@ public sealed class AdvancedShaderAccessContractTests
     }
 
     [Test]
-    public void LayoutInclude_StaticallyChecksSizesOffsetsAndMatrixConvention()
+    public void LayoutInclude_MatchesGeneratedRecordsAndReflectedOffsetsAndMatrixConvention()
     {
         string layout = SourceContractWorkspace.ReadFile(
             $"{AccessRoot}AdvancedLayout.glslinc");
 
-        layout.ShouldContain("#error \"Advanced CPU/GPU record size mismatch.\"");
-        layout.ShouldContain("#error \"Advanced CPU/GPU record byte-offset mismatch.\"");
+        layout.ShouldContain("#include \"../Generated/AdvancedRecords.glslinc\"");
+        string declarations = SourceContractWorkspace.ReadFile(
+            "Build/CommonAssets/Shaders/Advanced/Generated/AdvancedRecords.glslinc");
+        declarations.Replace("\r\n", "\n").ShouldBe(
+            GpuRecordIncludeGenerator.Generate("Advanced").Replace("\r\n", "\n"));
+        Should.NotThrow(() => GpuRecordSpirvValidator.ValidateDeclarations(declarations, "Advanced"));
         layout.ShouldContain("#define XR_ADV_MATRIX_STORAGE_ROW_MAJOR 1");
         layout.ShouldContain("#define XR_ADV_VECTOR_CONVENTION_ROW_VECTOR 1");
         layout.ShouldContain("return value * matrixValue;");

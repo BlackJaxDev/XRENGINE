@@ -1212,6 +1212,7 @@ internal sealed partial class VulkanCommandRuntime
 
     internal void RemoveCommandBufferState(CommandBuffer commandBuffer)
     {
+        LaneRecordingContexts.AbandonContext(commandBuffer);
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         if (handle != 0)
         {
@@ -1228,6 +1229,7 @@ internal sealed partial class VulkanCommandRuntime
 
     private void ClearCommandBufferStateAfterSuccessfulReset(CommandBuffer commandBuffer)
     {
+        LaneRecordingContexts.AbandonContext(commandBuffer);
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         if (handle != 0)
         {

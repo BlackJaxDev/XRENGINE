@@ -35,9 +35,11 @@ namespace XREngine.Editor.Mcp
             [McpName("include_non_public"), Description("Include non-public instance members.")]
             bool includeNonPublic = false,
             [McpName("max_depth"), Description("Maximum nesting depth for nested object serialization (default 1).")]
-            int maxDepth = 1)
+            int maxDepth = 1,
+            [McpName("object_path"), Description("Optional instance member path from object_id, including list indices (e.g. Material.Shaders[0].Source).")]
+            string? objectPath = null)
         {
-            if (!TryResolveXRObject(objectId, out var obj, out var error))
+            if (!TryResolveInspectionTarget(context?.WorldOrNull, objectId!, objectPath, out var obj, out var error))
                 return Task.FromResult(new McpToolResponse(error!, isError: true));
 
             var objType = obj!.GetType();
@@ -99,9 +101,11 @@ namespace XREngine.Editor.Mcp
                 $"Retrieved {properties.Length} properties and {fields.Length} fields from '{objType.Name}' ({objectId}).",
                 new
                 {
-                    objectId = obj.ID,
-                    objectName = obj.Name,
+                    objectId = (obj as XRObjectBase)?.ID,
+                    objectName = (obj as XRObjectBase)?.Name,
                     objectType = objType.FullName ?? objType.Name,
+                    rootObjectId = objectId,
+                    objectPath,
                     properties,
                     fields
                 }));
@@ -119,9 +123,11 @@ namespace XREngine.Editor.Mcp
             [McpName("property_name"), Description("Property name to set (case-insensitive).")]
             string propertyName,
             [McpName("value"), Description("JSON value to assign. For simple types use the literal (e.g. 42, true, \"hello\"). For colors pass an object like {\"R\":1,\"G\":0,\"B\":0,\"A\":1} or a hex string \"#FF0000\". For vectors pass {\"X\":1,\"Y\":2,\"Z\":3}. For enums pass the string name.")]
-            object value)
+            object value,
+            [McpName("object_path"), Description("Optional instance member path from object_id, including list indices (e.g. Material.Shaders[0].Source).")]
+            string? objectPath = null)
         {
-            if (!TryResolveXRObject(objectId, out var obj, out var error))
+            if (!TryResolveInspectionTarget(context?.WorldOrNull, objectId!, objectPath, out var obj, out var error))
                 return Task.FromResult(new McpToolResponse(error!, isError: true));
 
             var objType = obj!.GetType();
@@ -140,8 +146,10 @@ namespace XREngine.Editor.Mcp
                     $"Set property '{property.Name}' on '{objType.Name}' ({objectId}).",
                     new
                     {
-                        objectId = obj.ID,
+                        objectId = (obj as XRObjectBase)?.ID,
                         objectType = objType.FullName ?? objType.Name,
+                        rootObjectId = objectId,
+                        objectPath,
                         property = property.Name,
                         propertyType = FormatTypeName(property.PropertyType)
                     }));
@@ -165,7 +173,9 @@ namespace XREngine.Editor.Mcp
             [McpName("type_name"), Description("Fully-qualified or short type name (required for static methods).")]
             string? typeName = null,
             [McpName("arguments"), Description("JSON array of positional arguments.")]
-            object[]? arguments = null)
+            object[]? arguments = null,
+            [McpName("object_path"), Description("Optional instance member path from object_id, including list indices (e.g. Material.Shaders[0]). Not valid for static calls.")]
+            string? objectPath = null)
         {
             object? target = null;
             Type targetType;
@@ -173,7 +183,7 @@ namespace XREngine.Editor.Mcp
             if (!string.IsNullOrWhiteSpace(objectId))
             {
                 // Instance method
-                if (!TryResolveXRObject(objectId!, out var obj, out var error))
+                if (!TryResolveInspectionTarget(context?.WorldOrNull, objectId!, objectPath, out var obj, out var error))
                     return Task.FromResult(new McpToolResponse(error!, isError: true));
 
                 target = obj;
@@ -181,6 +191,8 @@ namespace XREngine.Editor.Mcp
             }
             else if (!string.IsNullOrWhiteSpace(typeName))
             {
+                if (!string.IsNullOrWhiteSpace(objectPath))
+                    return Task.FromResult(new McpToolResponse("object_path requires an instance object_id.", isError: true));
                 // Static method
                 if (!TryResolveAnyType(typeName!, out targetType))
                     return Task.FromResult(new McpToolResponse($"Type '{typeName}' not found.", isError: true));
@@ -284,6 +296,8 @@ namespace XREngine.Editor.Mcp
                     {
                         objectId = (target as XRObjectBase)?.ID,
                         objectType = targetType.FullName ?? targetType.Name,
+                        rootObjectId = objectId,
+                        objectPath,
                         methodName = bestMatch.Name,
                         returnType = FormatTypeName(bestMatch.ReturnType),
                         result = SerializeValue(result, 0, 2)
@@ -318,7 +332,7 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(expression))
                 return Task.FromResult(new McpToolResponse("Expression must not be empty.", isError: true));
 
-            if (!TryResolveXRObject(objectId, out var obj, out var error))
+            if (!TryResolveXRObject(context?.WorldOrNull, objectId, out var obj, out var error))
                 return Task.FromResult(new McpToolResponse(error!, isError: true));
 
             string[] segments = expression.Split('.');
@@ -383,7 +397,7 @@ namespace XREngine.Editor.Mcp
                 $"Evaluated '{expression}' on '{obj.GetType().Name}' ({objectId}).",
                 new
                 {
-                    objectId = obj.ID,
+                    objectId = (obj as XRObjectBase)?.ID,
                     objectType = obj.GetType().FullName ?? obj.GetType().Name,
                     expression,
                     resolvedPath,
@@ -531,7 +545,7 @@ namespace XREngine.Editor.Mcp
             }
 
             // Create a new watch
-            if (!TryResolveXRObject(objectId, out var obj, out var error))
+            if (!TryResolveXRObject(context?.WorldOrNull, objectId, out var obj, out var error))
                 return Task.FromResult(new McpToolResponse(error!, isError: true));
 
             // Verify property exists
@@ -557,7 +571,7 @@ namespace XREngine.Editor.Mcp
                 new
                 {
                     watchId = newWatchId,
-                    objectId = obj.ID,
+                    objectId = (obj as XRObjectBase)?.ID,
                     objectType = objType.FullName ?? objType.Name,
                     propertyName
                 }));
@@ -568,9 +582,9 @@ namespace XREngine.Editor.Mcp
         // ───────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Resolves any XRObjectBase from the global object cache or loaded asset table by GUID string.
+        /// Resolves live scene objects before cached assets when snapshot identities overlap.
         /// </summary>
-        private static bool TryResolveXRObject(string objectId, out XRObjectBase? obj, out string? error)
+        internal static bool TryResolveXRObject(RuntimeWorld? world, string objectId, out XRObjectBase? obj, out string? error)
         {
             obj = null;
             error = null;
@@ -587,7 +601,8 @@ namespace XREngine.Editor.Mcp
                 return false;
             }
 
-            if (!XRObjectBase.ObjectsCache.TryGetValue(guid, out var resolved))
+            XRObjectBase? resolved = world is null ? null : FindObjectInWorld(world, guid);
+            if (resolved is null && !XRObjectBase.ObjectsCache.TryGetValue(guid, out resolved))
                 resolved = Engine.Assets.GetAssetByID(guid);
 
             if (resolved is null)

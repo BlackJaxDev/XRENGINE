@@ -54,7 +54,9 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
         bool published = result != Result.Success;
         reason = string.Empty;
 
-        if (LaneContext is not null && LaneContext.CommandBuffer.Handle == commandBuffer.Handle)
+        if (LaneContext is not null && LaneContext.IsActive && LaneContext.CommandBuffer.Handle == commandBuffer.Handle &&
+            Runtime.LaneRecordingContexts.TryGetActiveContext(commandBuffer, Runtime.CommandBuffers.ResolveRecordingGeneration(commandBuffer), out VulkanLaneRecordingContext? activeContext) &&
+            ReferenceEquals(activeContext, LaneContext))
         {
             VulkanSealedRecordingReceipt receipt = LaneContext.CreateReceipt(result == Result.Success);
             Runtime.LaneRecordingContexts.EndContext(LaneContext);
@@ -115,8 +117,7 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
     internal void Abandon(CommandBuffer commandBuffer)
     {
         ulong handle = unchecked((ulong)commandBuffer.Handle);
-        if (LaneContext is not null && LaneContext.CommandBuffer.Handle == commandBuffer.Handle)
-            Runtime.LaneRecordingContexts.EndContext(LaneContext);
+        Runtime.LaneRecordingContexts.AbandonContext(commandBuffer);
 
         Runtime.ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);
         if (handle != 0)

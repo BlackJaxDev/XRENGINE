@@ -1,7 +1,7 @@
 # Dependency Inventory
 
-Generated: 2026-09-30T14:44:02-07:00
-Commit: 00233106ac1abcae4eca70357051182da04ae47b
+Generated: 2026-10-05T11:25:00-07:00
+Commit: 79ab16f8f98778b92624e238a261aa558c1c684d
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
 
@@ -61,6 +61,8 @@ Notes:
 | MIConvexHull | 1.1.19.1019 | DesignEngrLab | [MIT](licenses/nuget/MIConvexHull-1.1.19.1019-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | Microsoft.Build | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build-18.8.2-MIT.txt) | XREngine.Editor.csproj |
 | Microsoft.Build.Framework | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build.Framework-18.8.2-MIT.txt) | XREngine.Editor.csproj |
+| Microsoft.CodeAnalysis.Analyzers | 3.11.0 | dotnet | [MIT](licenses/nuget/Microsoft.CodeAnalysis.Analyzers-3.11.0-MIT.txt) | XREngine.SourceGenerators.csproj |
+| Microsoft.CodeAnalysis.CSharp | 4.14.0 | dotnet | [MIT](licenses/nuget/Microsoft.CodeAnalysis.CSharp-4.14.0-MIT.txt) | XREngine.SourceGenerators.csproj |
 | Microsoft.NET.Test.Sdk | 18.8.1 | microsoft | [MIT](licenses/nuget/Microsoft.NET.Test.Sdk-18.8.1-MIT.txt) | XREngine.UnitTests.csproj |
 | Microsoft.Web.WebView2 | 1.0.4129.50 | Microsoft | [LICENSE.txt](licenses/nuget/Microsoft.Web.WebView2-1.0.4129.50-LICENSE.txt.txt) | LocalAgentBroker.Tray.csproj |
 | NAudio | 2.3.0 | naudio | [MIT](licenses/nuget/NAudio-2.3.0-MIT.txt) | XREngine.Audio.NAudio.csproj |
@@ -69,12 +71,13 @@ Notes:
 | Newtonsoft.Json | 13.0.4 | JamesNK | [MIT](licenses/nuget/Newtonsoft.Json-13.0.4-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Bootstrap.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.Host.csproj, XREngine.Server.csproj |
 | NUnit | 4.6.1 | nunit | [MIT](licenses/nuget/NUnit-4.6.1-MIT.txt) | XREngine.UnitTests.csproj |
 | NUnit3TestAdapter | 6.2.0 | nunit | [MIT](licenses/nuget/NUnit3TestAdapter-6.2.0-MIT.txt) | XREngine.UnitTests.csproj |
+| NUnitLite | 4.6.1 | nunit | [MIT](licenses/nuget/NUnitLite-4.6.1-MIT.txt) | XREngine.HeadlessTests.csproj |
 | NVorbis | 0.10.5 | NVorbis | [MIT](licenses/nuget/NVorbis-0.10.5-MIT.txt) | XREngine.Data.csproj |
 | SharpCompress | 0.50.3 | adamhathcock | [MIT](licenses/nuget/SharpCompress-0.50.3-MIT.txt) | XREngine.Editor.csproj |
 | SharpFont.Dependencies | 2.6.0 | Robmaister | [FreeType License (FTL)](licenses/nuget/SharpFont.Dependencies-2.6.0-FreeType License (FTL).txt) | XREngine.Runtime.Text.FreeType.csproj |
 | SharpFont.NetStandard | 1.0.5 | vonderborch | [MIT](licenses/nuget/SharpFont.NetStandard-1.0.5-MIT.txt) | XREngine.Runtime.Text.FreeType.csproj |
 | SharpZipLib | 1.4.2 | icsharpcode | [MIT](licenses/nuget/SharpZipLib-1.4.2-MIT.txt) | XREngine.Runtime.Platform.Desktop.csproj |
-| Shouldly | 4.3.0 | shouldly | [BSD-3-Clause](licenses/nuget/Shouldly-4.3.0-BSD-3-Clause.txt) | XREngine.UnitTests.csproj |
+| Shouldly | 4.3.0 | shouldly | [BSD-3-Clause](licenses/nuget/Shouldly-4.3.0-BSD-3-Clause.txt) | XREngine.HeadlessTests.csproj, XREngine.UnitTests.csproj |
 | Silk.NET | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET-2.23.0-MIT.txt) | XREngine.Editor.csproj |
 | Silk.NET.Core | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Core-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.IO.DirectStorage.csproj, XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.Runtime.Rendering.Vulkan.csproj, XREngine.UnitTests.csproj |
 | Silk.NET.Core.Win32Extras | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Core.Win32Extras-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |

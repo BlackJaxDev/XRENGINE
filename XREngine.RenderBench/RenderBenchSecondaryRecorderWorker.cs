@@ -15,7 +15,10 @@ internal sealed unsafe class RenderBenchSecondaryRecorderWorker : IDisposable
     private CountdownEvent? _completion;
     private Exception? _failure;
     private int _requestedSlot;
+    private long _requestedFrameId;
+    private readonly int _workerIndex;
     private int _operation;
+    private bool _warmCpuProfiler;
     private long _allocatedBefore;
     private long _allocatedAfter;
     private bool _stopping;
@@ -28,6 +31,7 @@ internal sealed unsafe class RenderBenchSecondaryRecorderWorker : IDisposable
     {
         _host = host;
         _barrierCount = barrierCount;
+        _workerIndex = workerIndex;
         CommandPoolCreateInfo poolInfo = new()
         {
             SType = StructureType.CommandPoolCreateInfo,
@@ -70,19 +74,30 @@ internal sealed unsafe class RenderBenchSecondaryRecorderWorker : IDisposable
     public CommandBuffer GetBuffer(uint frameSlot) => _buffers[checked((int)frameSlot)];
     public long AllocatedBytes => Volatile.Read(ref _allocatedAfter) - Volatile.Read(ref _allocatedBefore);
 
-    public void RequestCaptureBaseline(CountdownEvent completion)
+    public void RequestCaptureBaseline(CountdownEvent completion, bool warmCpuProfiler)
     {
+        _failure = null;
+        _warmCpuProfiler = warmCpuProfiler;
         _completion = completion;
         _operation = 2;
         _request.Set();
     }
 
-    public void RequestRecord(uint frameSlot, CountdownEvent completion)
+    public void RequestRecord(uint frameSlot, long frameId, CountdownEvent completion)
     {
         _requestedSlot = checked((int)frameSlot);
+        _requestedFrameId = frameId;
         _failure = null;
         _completion = completion;
         _operation = 1;
+        _request.Set();
+    }
+
+    public void RequestCaptureEnd(CountdownEvent completion)
+    {
+        _failure = null;
+        _completion = completion;
+        _operation = 3;
         _request.Set();
     }
 
@@ -103,12 +118,18 @@ internal sealed unsafe class RenderBenchSecondaryRecorderWorker : IDisposable
             {
                 if (_operation == 2)
                 {
+                    if (_warmCpuProfiler)
+                        VulkanCpuSpanProfiler.WarmCurrentThread(_workerIndex);
                     _allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
                     _allocatedAfter = _allocatedBefore;
                 }
+                else if (_operation == 3)
+                    _allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
                 else
                 {
-                    Record(_buffers[_requestedSlot]);
+                    VulkanCpuSpanProfiler.SetFrameContext(_requestedFrameId);
+                    using (VulkanCpuSpanScope recording = new(EVulkanCpuStage.SecondaryRecording))
+                        Record(_buffers[_requestedSlot]);
                     _allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
                 }
             }
@@ -125,13 +146,15 @@ internal sealed unsafe class RenderBenchSecondaryRecorderWorker : IDisposable
 
     private void Record(CommandBuffer commandBuffer)
     {
-        Ensure(_host.Api.ResetCommandBuffer(commandBuffer, 0), "reset worker secondary command buffer");
+        using (VulkanCpuSpanScope reset = new(EVulkanCpuStage.CommandBufferReset))
+            Ensure(_host.Api.ResetCommandBuffer(commandBuffer, 0), "reset worker secondary command buffer");
         CommandBufferBeginInfo begin = new()
         {
             SType = StructureType.CommandBufferBeginInfo,
             Flags = CommandBufferUsageFlags.SimultaneousUseBit,
         };
-        Ensure(_host.Api.BeginCommandBuffer(commandBuffer, in begin), "begin worker secondary command buffer");
+        using (VulkanCpuSpanScope beginScope = new(EVulkanCpuStage.CommandBufferBegin))
+            Ensure(_host.Api.BeginCommandBuffer(commandBuffer, in begin), "begin worker secondary command buffer");
         MemoryBarrier barrier = new()
         {
             SType = StructureType.MemoryBarrier,
@@ -143,7 +166,8 @@ internal sealed unsafe class RenderBenchSecondaryRecorderWorker : IDisposable
             _host.Api.CmdPipelineBarrier(commandBuffer, PipelineStageFlags.AllCommandsBit, PipelineStageFlags.AllCommandsBit,
                 0, 1, in barrier, 0, null, 0, null);
         }
-        Ensure(_host.Api.EndCommandBuffer(commandBuffer), "end worker secondary command buffer");
+        using (VulkanCpuSpanScope endScope = new(EVulkanCpuStage.CommandBufferEnd))
+            Ensure(_host.Api.EndCommandBuffer(commandBuffer), "end worker secondary command buffer");
     }
 
     private static void Ensure(Result result, string operation)

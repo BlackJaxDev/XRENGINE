@@ -120,20 +120,6 @@ public partial class XRMesh : XRAsset
     [YamlIgnore]
     public long GeometryRevision => Interlocked.Read(ref _geometryRevision);
 
-    [YamlIgnore]
-    private Vertex[] _vertices = [];
-    [Browsable(false)]
-    [YamlIgnore]
-    public Vertex[] Vertices
-    {
-        get => _vertices;
-        private set
-        {
-            SetField(ref _vertices, value);
-            AdvanceGeometryRevision();
-        }
-    }
-
     // Primitive index storage
     private List<int>? _points;
     private List<IndexLine>? _lines;
@@ -620,57 +606,6 @@ public partial class XRMesh : XRAsset
                 QuantizationMetadata = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer"),
             };
             ApplyBlendshapeBufferState(state);
-        }
-
-        // Rebuild Vertices from buffers if they weren't loaded (we omit them from YAML to reduce file size).
-        if ((_vertices is null || _vertices.Length == 0 || _vertices.Length != VertexCount) && VertexCount > 0)
-        {
-            if (Interleaved)
-            {
-                if (InterleavedVertexBuffer?.ClientSideSource is null)
-                    return;
-            }
-            else
-            {
-                if (PositionsBuffer?.ClientSideSource is null)
-                    return;
-            }
-
-            Vertex[] rebuilt = new Vertex[VertexCount];
-            for (uint i = 0; i < (uint)VertexCount; i++)
-            {
-                Vertex v = new()
-                {
-                    Position = GetPosition(i),
-                };
-
-                if (HasNormals)
-                    v.Normal = GetNormal(i);
-                if (HasTangents)
-                {
-                    Vector4 tanSign = GetTangentWithSign(i);
-                    v.Tangent = new Vector3(tanSign.X, tanSign.Y, tanSign.Z);
-                    v.BitangentSign = tanSign.W;
-                }
-
-                if (TexCoordCount > 0)
-                {
-                    v.TextureCoordinateSets = new List<Vector2>((int)TexCoordCount);
-                    for (uint t = 0; t < TexCoordCount; t++)
-                        v.TextureCoordinateSets.Add(GetTexCoord(i, t));
-                }
-
-                if (ColorCount > 0)
-                {
-                    v.ColorSets = new List<Vector4>((int)ColorCount);
-                    for (uint c = 0; c < ColorCount; c++)
-                        v.ColorSets.Add(GetColor(i, c));
-                }
-
-                rebuilt[i] = v;
-            }
-
-            _vertices = rebuilt;
         }
 
         // Rebuild Triangles from vertex order if they weren't loaded (we omit them from YAML to reduce file size).

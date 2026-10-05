@@ -63,11 +63,15 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
             childRecalculationLoopType: Engine.EffectiveSettings.RecalcChildMatricesLoopType);
     }
 
+    /// <summary>
+    /// Restarts the world without a game mode or simulation, first ending a session that
+    /// is still beginning or ending because its transition threw.
+    /// </summary>
     public Task BeginEditModeAsync()
     {
         ThrowIfDisposed();
-        if (CoreWorld.IsPlaySessionActive)
-            EndPlay();
+        if (CoreWorld.PlayState != RuntimeWorldPlayState.Stopped)
+            EndPlaySession();
         CoreWorld.PhysicsEnabled = false;
         CoreWorld.GameMode = null;
         return BeginPlayAsync();
@@ -76,6 +80,14 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
     public void EndPlay()
     {
         if (_disposed || _endingPlay || CoreWorld.PlayState == RuntimeWorldPlayState.Stopped)
+            return;
+
+        EndPlaySession();
+    }
+
+    private void EndPlaySession()
+    {
+        if (_endingPlay)
             return;
 
         _endingPlay = true;

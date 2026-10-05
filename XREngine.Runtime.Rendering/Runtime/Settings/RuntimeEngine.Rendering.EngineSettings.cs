@@ -692,6 +692,8 @@ public static partial class RuntimeEngine
                 private bool _logMaterialTextureBindings = false;
                 private bool _enableVramBudget = true;
                 private int _vramBudgetMB = 20 * 1024;
+                private double _vramBudgetHeapFraction = 0.84;
+                private EXRBufferClientCopyPolicy _meshBufferClientCopyPolicy = EXRBufferClientCopyPolicy.ReleaseAfterUpload;
 
                 private bool _cullShadowCollectionByCameraFrusta = true;
                 private bool _useSpotShadowAtlas = true;
@@ -753,6 +755,34 @@ public static partial class RuntimeEngine
                 {
                     get => _vramBudgetMB;
                     set => SetField(ref _vramBudgetMB, Math.Clamp(value, 256, 256 * 1024));
+                }
+
+                /// <summary>
+                /// Share of the device-local heap budget reported by the driver
+                /// (VK_EXT_memory_budget) that all Vulkan allocations may use. Texture
+                /// streaming fits resident textures into what this leaves after every
+                /// other allocation, and also stays within <see cref="VramBudgetMB"/>.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Share (0.25-0.98) of the driver-reported device-local heap budget that Vulkan allocations may use; texture streaming demotes to fit the remainder after other allocations.")]
+                public double VramBudgetHeapFraction
+                {
+                    get => _vramBudgetHeapFraction;
+                    set => SetField(ref _vramBudgetHeapFraction, Math.Clamp(value, 0.25, 0.98));
+                }
+
+                /// <summary>
+                /// What mesh vertex, skinning and blendshape buffers do with their CPU copy
+                /// once uploaded. <see cref="EXRBufferClientCopyPolicy.ReleaseAfterUpload"/>
+                /// moves copies of 256 KiB or more into copy-on-write mappings of session
+                /// spill files, out of private memory; CPU readers keep working unchanged.
+                /// </summary>
+                [Category("Performance")]
+                [Description("What mesh buffers do with their CPU copy after upload: Retain keeps it in private memory; ReleaseAfterUpload moves large copies into file-backed copy-on-write mappings.")]
+                public EXRBufferClientCopyPolicy MeshBufferClientCopyPolicy
+                {
+                    get => _meshBufferClientCopyPolicy;
+                    set => SetField(ref _meshBufferClientCopyPolicy, value == EXRBufferClientCopyPolicy.Default ? EXRBufferClientCopyPolicy.ReleaseAfterUpload : value);
                 }
 
                 /// <summary>

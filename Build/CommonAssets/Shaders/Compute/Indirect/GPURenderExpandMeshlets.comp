@@ -11,56 +11,7 @@ const uint METADATA_UINTS = 4u;
 const uint DOMAIN_EXACT = 3u;
 
 
-struct DrawMetadata
-{
-    uint DrawID;
-    uint MeshID;
-    uint SubmeshID;
-    uint MaterialID;
-    uint TransformID;
-    uint SkinID;
-    uint RenderPassMask;
-    uint LayerMask;
-    uint Flags;
-    uint LodPolicy;
-    uint StateClassID;
-    uint InstanceCount;
-    uint RenderPass;
-    uint RenderIdentityID;
-    uint LogicalMeshID;
-    uint BoundsID;
-};
-
-struct GpuMeshletRange
-{
-    uint MeshletOffset;
-    uint MeshletCount;
-    uint VertexIndexOffset;
-    uint TriangleIndexOffset;
-};
-
-struct GpuMeshletTaskRecord
-{
-    uint MeshletIndex;
-    uint DrawID;
-    uint TransformID;
-    uint MaterialID;
-};
-
-struct GpuMeshletDescriptor
-{
-    vec4 BoundsSphere;
-    uint VertexOffset;
-    uint TriangleByteOffset;
-    uint VertexCount;
-    uint TriangleCount;
-    vec4 Cone;
-    vec4 ConeApex;
-    uint PackedCone;
-    uint Reserved0;
-    uint Reserved1;
-    uint Reserved2;
-};
+#include "Advanced/Generated/GPUSceneRecords.glslinc"
 
 layout(std430, binding = 0) readonly buffer VisibleDrawIdsBuffer { uint visibleDrawIds[]; };
 layout(std430, binding = 1) readonly buffer CulledCountBuffer
