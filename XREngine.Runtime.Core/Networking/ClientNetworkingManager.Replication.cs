@@ -97,6 +97,8 @@ public partial class ClientNetworkingManager
             _replicationWorldLease = next is null ? default : ReplicationWorldOwnershipLeases.Acquire(next.WorldInstance, this);
             ++_replicationAttemptGeneration;
             _replicationFailure = null;
+            if (_replicationConnectionGeneration != assignment.ReplicationConnectionGeneration)
+                ClearPredictedInputs();
             _replicationConnectionGeneration = assignment.ReplicationConnectionGeneration;
             _replicationTransferId = Guid.Empty;
             _replicationBaselineTick = 0;

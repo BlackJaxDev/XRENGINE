@@ -111,3 +111,40 @@ loaded-world replication, or browser gameplay.
 - Optional microphone/voice services and physical mobile-device checks
 - Full server deployment, native desktop preservation, and operating-system
   certificate-store startup
+
+## Managed local correction preparation (2026-10-05)
+
+Source inspection found that managed local corrections invoked the controller's
+network-transform hook and then replayed unacknowledged inputs without first
+restoring the authoritative pose. `LocalPlayerController` inherits a no-op hook;
+its plain `Transform` therefore accumulated replay on the predicted position.
+The replay path now restores authoritative local translation/rotation even when
+no history remains, clears stale translation/rotation smoothing targets, and
+then applies only unacknowledged locomotion commands for that exact session and
+entity. Commands retained from a prior assignment cannot move its replacement.
+Scale is unchanged.
+
+Direct transform messages and replication batches can carry the same stored
+pose in different transport packets. The new local correction watermark is
+scoped to the assigned player, session, entity and connection generation. It
+rejects an older tick, a regressed input acknowledgment, an exact repeated
+version, or a mismatched assignment before drift metrics and replay. A newer
+tick with an unchanged acknowledgment is accepted. Global clock/ack telemetry
+is not used to decide admission. A genuinely new connection generation clears
+prediction history and correction marks; a baseline resynchronization on the
+same connection preserves them. Existing terminal cleanup clears both.
+
+This change is restricted to managed local plain-`Transform` correction. Remote
+interpolation, legacy UDP controller behavior, rigid-body character simulation,
+wire formats and host scheduling remain unchanged. The existing
+`CharacterPawnComponent.CaptureNetworkInputState` already captures shared input,
+but that pawn uses `RigidBodyTransform` and does not exercise the existing
+plain-transform server locomotion/replay fallback. A real browser gameplay
+fixture must select a compatible, explicit pawn rather than claim that the
+free-camera or physics-character paths already qualify this behavior.
+
+The source and assignment/ordering paths were reviewed. The current development
+environment has no .NET SDK, so compile and real-network execution remain
+pending; this record does not close browser networking acceptance. No browser
+certificate was installed or trusted. Production gateway TLS/origin/authentication
+checks are retained for the eventual real-server run.

@@ -707,7 +707,11 @@ namespace XREngine
                         continue;
 
                     if (player.ControlledPawnComponent?.SceneNode?.Transform is Transform transform)
+                    {
+                        if (IsManagedTransportRequested && !TryAcceptManagedLocalCorrection(playerInfo, update))
+                            return;
                         RecordPredictionCorrection(transform.Translation, update.Translation);
+                    }
                     player.ApplyNetworkTransform(update);
                     ReplayPredictedInputs(player, update);
                     return;

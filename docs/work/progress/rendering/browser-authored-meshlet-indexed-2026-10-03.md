@@ -706,3 +706,48 @@ The original Windows failure evidence ZIP has SHA-256
 `4f94fbfe3b1ca97974f27634ec7a867c98d1342fb2cae89a21c440d426fb7649`.
 The new browser evidence ZIP (artifact `11334932655`) has SHA-256
 `9603b735a768d9e145ea444544ea6e0ce3c6c994abda5a431483cdf099ae5056`.
+
+## Browser acceptance: bounded static Default meshlet cohort
+
+On 2026-10-05, the exact published source commit
+`2b97bda4075563efc9f2558832c6fbcf57611f31` passes
+[run 37290314776, job 111708082004](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37290314776/job/111708082004).
+The Windows Editor freshly cooks and publishes both CPU and GPU bundles for
+the same static `StaticMeshletParityWorld`; the shared
+`NativeMeshOptimizer.InteropVersion` 3 build is included. The browser uses
+Chromium 153.0.8010.12 with the software WebGPU adapter. This closes only the
+static Default meshlet acceptance leaf recorded in the unified browser TODO.
+
+Two fresh GPU contexts each render the initial 977×550 extent and then resize,
+one to 813×457 and one to 893×502. Each initial/resized GPU image is compared
+with the matching CPU render: all four comparisons have mean RGB error 0,
+zero mismatched pixels and silhouette overlap 1. The GPU path executes actual
+`meshlets::select-lod`, `meshlets::cull-expand` and
+`meshlets::finalize-indexed` dispatches followed by indexed-indirect draws;
+there are zero direct mapped-scene draws and zero read maps in the GPU captures.
+Fullscreen post-processing draws remain direct. Both
+CPU and GPU captures use the exact authored Standard Lit local-shadows raster
+program, with WGSL SHA-256
+`197db6f431fdbc3340609ead56a415b06982408b98b6d41f751d21c0009c66a5` and the
+same `standardLitVertex` / `standardLitFragment` entry points. The selected
+output profile is `linear-hdr-local-shadows-v1`.
+
+All three renderer teardowns (one CPU baseline and two GPU contexts) finish
+with zero live or retiring resources, cached pipelines or shader modules, and
+readback tickets. The host reports `aa=None`; its configured `msaa=4` is not
+active multisample rendering in this cohort. The GPU snapshots report
+`unbounded=true` because the vertex bounds are undeclared, so conservative
+geometric rejection is disabled. This result makes no bounded-culling or
+performance claim and covers only one static, single-LOD, single-instance
+mapped panel on a software adapter. It does not qualify physical devices,
+deformation, dynamic LOD, multiple instances, other custom or native Advanced
+profiles, broader material output, or unsupported-profile diagnostics.
+
+The acceptance summary and full smoke report are under
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/ci-2b97-static-meshlet/`;
+that folder also contains the four GPU captures. Artifact `11337755080` has
+ZIP SHA-256
+`45df17ad7b23c90df11accda0d8b35cf2deeab14c5379e1baa869218b11c8477`.
+The source contract still requires rejection of incompatible old meshlet
+payload provenance, but this run did not separately exercise an old disk-cache
+payload rejection.
