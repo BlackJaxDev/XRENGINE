@@ -2370,6 +2370,7 @@ namespace XREngine.Rendering
                         camera,
                         null,
                         this,
+                        world,
                         targetFbo,
                         screenSpaceUI,
                         shadowPass,

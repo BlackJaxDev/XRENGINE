@@ -5,6 +5,9 @@ on:
     branches:
       - master
       - codex/webgpu-readiness-audit
+    paths-ignore:
+      - '.github/diagnostic-requests/network-walkthrough-20261005.json'
+      - '.github/diagnostic-activations/network-walkthrough-20261005.json'
   pull_request:
   workflow_dispatch:
 

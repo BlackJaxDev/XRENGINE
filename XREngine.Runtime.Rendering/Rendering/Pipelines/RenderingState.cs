@@ -59,6 +59,8 @@ public sealed partial class XRRenderPipelineInstance
         /// May be null if rendering directly to a framebuffer.
         /// </summary>
         public XRViewport? WindowViewport { get; private set; }
+        /// <summary>The world selected by this render invocation, which may override the viewport's world.</summary>
+        public IRuntimeRenderWorld? RenderingWorld { get; private set; }
         /// <summary>
         /// The scene being rendered.
         /// </summary>
@@ -257,6 +259,7 @@ public sealed partial class XRRenderPipelineInstance
             RenderOutputRequest viewHistoryOutputRequest = default)
             => PushMainAttributesWithFrozenDesktopHistory(
                 viewport,
+                viewport?.World,
                 scene,
                 camera,
                 stereoRightEyeCamera,
@@ -277,6 +280,7 @@ public sealed partial class XRRenderPipelineInstance
 
         internal StateObject PushMainAttributesWithFrozenDesktopHistory(
             XRViewport? viewport,
+            IRuntimeRenderWorld? renderingWorld,
             VisualScene? scene,
             XRCamera? camera,
             XRCamera? stereoRightEyeCamera,
@@ -295,6 +299,7 @@ public sealed partial class XRRenderPipelineInstance
             RenderFrameViewDescriptor? frozenDesktopView = null,
             RenderFrameViewHistoryCandidateToken frozenHistoryCandidate = default)
         {
+            IRuntimeRenderWorld? previousRenderingWorld = RenderingWorld;
             WindowViewport = viewport;
             Scene = scene;
             SceneCamera = camera;
@@ -326,6 +331,7 @@ public sealed partial class XRRenderPipelineInstance
             int mainAreaDepth = _mainAttributeRenderAreaDepths.Count;
             try
             {
+                RenderingWorld = renderingWorld;
                 RenderFrameViewSet? capturedViews = camera is null
                     ? null
                     : stereoPass && RenderFrameViewSetPublication.TryGetLatest(
@@ -373,12 +379,13 @@ public sealed partial class XRRenderPipelineInstance
                 // here would let a collection viewport leak into an unrelated mesh draw.
                 if (applyRenderArea)
                     PushInitialMainRenderArea(viewport, target);
-                _mainAttributeRenderAreaDepths.Push((renderAreaDepth, cropAreaDepth));
+                _mainAttributeRenderAreaDepths.Push((renderAreaDepth, cropAreaDepth, previousRenderingWorld));
 
                 return StateObject.New(PopMainAttributesAction, this);
             }
             catch
             {
+                RenderingWorld = previousRenderingWorld;
                 // Capture can mint a resolved candidate before snapshot acquisition
                 // or native viewport setup fails. It has not transferred to a
                 // backend reservation yet, so this scope still owns settlement.
@@ -402,6 +409,7 @@ public sealed partial class XRRenderPipelineInstance
         {
             if (_mainAttributeRenderAreaDepths.TryPop(out var areaDepths))
             {
+                RenderingWorld = areaDepths.PreviousWorld;
                 // Atomic backends can abort before queued pop commands execute.
                 // Release only this invocation's regions, retaining any enclosing scope.
                 while (_renderRegionStack.Count > areaDepths.Render) PopRenderArea();
@@ -455,7 +463,7 @@ public sealed partial class XRRenderPipelineInstance
             LastVisibilityContentPolicy = ViewBatchContentPolicy.Exact;
         }
 
-        private readonly Stack<(int Render, int Crop)> _mainAttributeRenderAreaDepths = new();
+        private readonly Stack<(int Render, int Crop, IRuntimeRenderWorld? PreviousWorld)> _mainAttributeRenderAreaDepths = new();
 
         private bool PushInitialMainRenderArea(XRViewport? viewport, XRFrameBuffer? target)
         {
