@@ -11,7 +11,8 @@ public sealed class PhysicsChainDispatcherRoutingTests
     {
         string componentSource = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.GPU.cs")
             .Replace("\r\n", "\n");
-        componentSource.ShouldContain("SubmitToBatchedDispatcher(loop, timeVar)");
+        componentSource.ShouldContain("RuntimePhysicsChainRendering.Current.Execute(this, new PhysicsChainGpuDispatchSnapshot(");
+        componentSource.ShouldNotContain(".DispatchCompute(");
         componentSource.ShouldNotContain("private bool TryGetGpuParticleRenderSource");
         componentSource.ShouldNotContain("XRDataBuffer<GPUParticleData>? _particlesBuffer");
 

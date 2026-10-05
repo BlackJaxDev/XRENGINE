@@ -1,5 +1,3 @@
-using Silk.NET.Vulkan;
-
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -12,18 +10,18 @@ internal sealed class VulkanAdvancedNativeComputeClosureStorage
     // Identity, metadata, depth, HDR, velocity, reactive, diagnostics, and
     // the shared AO view, four raw MSAA visibility views, plus four optional
     // DDGI surface exports.
-    private readonly ImageView[] _views = new ImageView[17];
+    private readonly VulkanInternedImageViewReference[] _views = new VulkanInternedImageViewReference[17];
     private int _count;
     private VulkanImageResourceService? _images;
 
-    internal bool TryTrack(VulkanImageResourceService images, ImageView view)
+    internal bool TryTrack(VulkanImageResourceService images, in VulkanInternedImageViewReference reference)
     {
         ArgumentNullException.ThrowIfNull(images);
-        if (view.Handle == 0 || _count == _views.Length ||
+        if (!reference.IsValid || _count == _views.Length ||
             _images is not null && !ReferenceEquals(_images, images))
             return false;
         _images = images;
-        _views[_count++] = view;
+        _views[_count++] = reference;
         return true;
     }
 
@@ -38,7 +36,7 @@ internal sealed class VulkanAdvancedNativeComputeClosureStorage
     {
         for (int index = _count - 1; index >= 0; --index)
         {
-            _ = images.ReleaseInternedView(_views[index]);
+            images.ReleaseInternedView(_views[index]);
             _views[index] = default;
         }
         _count = 0;

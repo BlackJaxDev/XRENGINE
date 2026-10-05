@@ -776,6 +776,31 @@ internal sealed partial class VulkanResourceLifetimeTracker
         }
     }
 
+    /// <summary>Close recording admission only for the specified live native generation.</summary>
+    internal bool TryFenceResourceRecordingAdmission(
+        VulkanResourceLifetimeKey key,
+        ulong expectedGeneration)
+    {
+        if (!key.IsValid || expectedGeneration == 0)
+            return false;
+
+        using (VulkanFrameLockScope.Enter(
+                   SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
+        {
+            if (!ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource) ||
+                resource.Generation != expectedGeneration ||
+                (resource.State & EVulkanResourceLifetimeState.Destroyed) != 0)
+            {
+                return false;
+            }
+
+            if ((resource.State & EVulkanResourceLifetimeState.PendingRetirement) == 0)
+                SetPublishedGenerationNoLock(key, 0UL);
+            return true;
+        }
+    }
+
     private void IncrementNativeBufferBindingRevisionNoLock()
     {
         long revision = unchecked(NativeBufferBindingRevision + 1L);

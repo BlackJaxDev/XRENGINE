@@ -46,9 +46,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
         VulkanGeneration.IncrementNonZero(ref resourceCounter).ShouldBe(1UL);
         resourceCounter.ShouldBe(1L);
 
-        string arenaSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanWorkerSecondaryCommandArena.cs");
-        arenaSource.ShouldContain(
+        string artifactSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Artifacts/VulkanRecordedCommandArtifact.cs");
+        artifactSource.ShouldContain(
             "Generation = VulkanGeneration.NextNonZero(Generation)");
     }
 
@@ -2473,7 +2473,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string initialization = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
         string frameOpApi = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpApi.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.FrameOperationApi.cs");
+        string frameLoop = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.AutoExposure.cs");
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Secondaries.cs");
         string frameOperationQueue = SourceContractWorkspace.ReadVulkanSourcesContaining(
@@ -2495,7 +2497,8 @@ public sealed class VulkanStablePacketAndDescriptorTests
         barrierOp.ShouldContain("internal static MemoryBarrierOp Rent(");
         initialization.ShouldContain("EnqueueFrameOp(ComputeDispatchOp.Rent(");
         initialization.ShouldContain("EnqueueFrameOp(ClearOp.Rent(");
-        frameOpApi.ShouldContain("EnqueueFrameOp(MemoryBarrierOp.Rent(");
+        frameOpApi.ShouldContain("=> MemoryBarrierOp.Rent(passIndex, mask, context);");
+        frameLoop.ShouldContain("EnqueueFrameOp(VulkanCommandRuntime.CreateMemoryBarrierOperation(passIndex, mask, context));");
         recording.ShouldNotContain("clear with { ClearColor = false }");
         frameOperationQueue.ShouldContain("op.PassIndex = validatedPassIndex;");
         frameOperationQueue.ShouldNotContain("with { PassIndex = validatedPassIndex }");
@@ -2572,7 +2575,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         allocated.ShouldBe(0);
 
         string effectiveSettings = ReadWorkspaceFile(
-            "XREngine.Runtime.Bootstrap/Engine/Subclasses/Engine.EffectiveSettings.cs");
+            "XREngine.Runtime.Host/Engine/Subclasses/Engine.EffectiveSettings.cs");
         string queueOverlap = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.QueueOverlap.cs");
         string diagnostics = ReadWorkspaceFile(
@@ -2705,7 +2708,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string runtimeEngine = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs");
         string engine = ReadWorkspaceFile(
-            "XREngine.Runtime.Bootstrap/Engine/Engine.cs");
+            "XREngine.Runtime.Host/Engine/Engine.cs");
         string preparedFrustum = ReadWorkspaceFile(
             "XREngine.Data/Geometry/PreparedFrustum.cs");
         string camera = ReadWorkspaceFile(
@@ -2964,8 +2967,6 @@ public sealed class VulkanStablePacketAndDescriptorTests
     {
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Planning/VulkanRenderer.CommandChains.Planning.cs");
-        string diagnostics = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOpDiagnostics.cs");
         string markers = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.SubmissionMarkers.cs");
         string meshRenderer = ReadWorkspaceFile(
@@ -3632,9 +3633,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string hierarchy = ReadWorkspaceFile(
             "XREngine.Editor/IMGUI/EditorImGuiUI.HierarchyPanel.cs");
         string profiler = ReadWorkspaceFile(
-            "XREngine.Runtime.Bootstrap/Engine/Subclasses/Engine.CodeProfiler.cs");
+            "XREngine.Runtime.Host/Engine/Subclasses/Engine.CodeProfiler.cs");
         string preferences = ReadWorkspaceFile(
-            "XREngine.Runtime.Bootstrap/Settings/EditorPreferences.cs");
+            "XREngine.Runtime.Host/Settings/EditorPreferences.cs");
         string imageViewCache = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.ViewCache.cs");
         string viewport = ReadWorkspaceFile(
@@ -3658,9 +3659,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string meshRendererBase = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/XRMeshRenderer.cs");
         string engine = ReadWorkspaceFile(
-            "XREngine.Runtime.Bootstrap/Engine/Engine.cs");
+            "XREngine.Runtime.Host/Engine/Engine.cs");
         string renderingHost = ReadWorkspaceFile(
-            "XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
+            "XREngine.Runtime.Host/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
         string profilerDumps = ReadWorkspaceFile(
             "XREngine.Editor/ProfilerDiagnosticDumps.cs");
         string eventBase = ReadWorkspaceFile(

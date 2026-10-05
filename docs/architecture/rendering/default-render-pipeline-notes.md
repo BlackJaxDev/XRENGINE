@@ -33,6 +33,13 @@ backend wrappers; generating existing wrappers alone cannot satisfy first use.
 
 ## Resource Generation Lifecycle
 
+The deferred light-combine descriptor declares the destination color, depth,
+and stencil attachments through the same framebuffer identity. An inferred
+texture output does not declare the corresponding framebuffer slot for Vulkan
+attachment planning. A partial framebuffer declaration can mark that color slot
+unused and leave the following sky pass reading undefined HDR content. Keep the
+explicit color declaration when the descriptor uses destination depth/stencil.
+
 `DefaultRenderPipeline` declares stable pipeline-owned resources through
 `DescribeResources(...)`. `XRRenderPipelineInstance` materializes those specs
 into a pending `RenderResourceGeneration`, validates required resources,

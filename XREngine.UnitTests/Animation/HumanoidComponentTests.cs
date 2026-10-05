@@ -605,6 +605,9 @@ public sealed class HumanoidComponentTests
         humanoid.Settings.ProfileSource = "manual";
         humanoid.Settings.BoneAxisMappings["Spine"] = customSpineMapping;
         humanoid.RefreshAvatarDefinition();
+        HumanoidAvatarBoneBinding spineBinding = humanoid.AvatarDefinition.Bones.Single(x => x.Role == EHumanoidAvatarBoneRole.Spine);
+        spineBinding.AxisMapping.ShouldBe(customSpineMapping);
+        spineBinding.HasAuthoredAxisMapping.ShouldBeTrue();
 
         humanoid.SetValue(EHumanoidValue.SpineFrontBack, 0.5f);
         InvokeApplyMusclePose(humanoid);
@@ -662,17 +665,36 @@ public sealed class HumanoidComponentTests
         humanoid.Settings.ProfileSource = "manual";
         humanoid.Settings.BoneAxisMappings["LeftLeg"] = customUpperLegMapping;
         humanoid.RefreshAvatarDefinition();
+        HumanoidAvatarBoneBinding legBinding = humanoid.AvatarDefinition.Bones.Single(x => x.Role == EHumanoidAvatarBoneRole.LeftUpperLeg);
+        legBinding.AxisMapping.ShouldBe(customUpperLegMapping);
+        legBinding.HasAuthoredAxisMapping.ShouldBeTrue();
+
+        humanoid.SetValue(EHumanoidValue.LeftUpperLegFrontBack, 0.0f);
+        InvokeApplyMusclePose(humanoid);
+        AssertLastNativeFrameAccepted(humanoid);
+        var leftLegTransform = leftLeg.GetTransformAs<Transform>(true)!;
+        Quaternion zeroMuscleRotation = Quaternion.Normalize(leftLegTransform.Rotation);
+        Quaternion inverseBindRotation = Quaternion.Inverse(Quaternion.Normalize(leftLegTransform.BindState.Rotation));
 
         humanoid.SetValue(EHumanoidValue.LeftUpperLegFrontBack, 0.5f);
         InvokeApplyMusclePose(humanoid);
         AssertLastNativeFrameAccepted(humanoid);
 
         float pitchDeg = GetExpectedDeg(humanoid, EHumanoidValue.LeftUpperLegFrontBack, 0.5f);
-        var leftLegTransform = leftLeg.GetTransformAs<Transform>(true)!;
-        Quaternion expected = CreateExpectedRotation(humanoid, leftLeg, customUpperLegMapping, yawDeg: 0.0f, pitchDeg: pitchDeg, rollDeg: 0.0f);
+        Quaternion expected = Quaternion.Normalize(zeroMuscleRotation * inverseBindRotation
+            * CreateExpectedRotation(humanoid, leftLeg, customUpperLegMapping, yawDeg: 0.0f, pitchDeg: pitchDeg, rollDeg: 0.0f));
         Quaternion actual = Quaternion.Normalize(leftLegTransform.Rotation);
 
         AssertEquivalent(actual, expected);
+
+        humanoid.SetValue(EHumanoidValue.LeftUpperLegTwistInOut, 0.25f);
+        InvokeApplyMusclePose(humanoid);
+        AssertLastNativeFrameAccepted(humanoid);
+
+        float yawDeg = GetExpectedDeg(humanoid, EHumanoidValue.LeftUpperLegTwistInOut, 0.25f);
+        Quaternion combinedExpected = Quaternion.Normalize(zeroMuscleRotation * inverseBindRotation
+            * CreateExpectedRotation(humanoid, leftLeg, customUpperLegMapping, yawDeg, pitchDeg, rollDeg: 0.0f));
+        AssertEquivalent(Quaternion.Normalize(leftLegTransform.Rotation), combinedExpected);
     }
 
     [Test]

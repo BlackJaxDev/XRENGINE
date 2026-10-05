@@ -52,6 +52,42 @@ registries, retirement queues, or completion watermarks.
   are published only after transfer completion; replaced resources then enter
   the normal retirement path.
 
+## Interned Image Views
+
+`VulkanImageResourceService` owns the native lifetime of interned image views.
+Each acquisition returns a `VulkanInternedImageViewReference` with the handle
+and its registered generation. The service captures that pair under the intern
+cache lock and the lifetime tracker lock, in that order.
+
+Texture-view wrappers and compute closures retain this reference. A release
+decrements only the cache entry with the same handle and generation. A missing
+or replaced entry is a no-op. It does not transfer native retirement authority
+to the caller. This prevents an old wrapper from retiring another resource
+after Vulkan reuses a handle.
+
+Zero-reference entries remain cached. Backing-image retirement owns their
+removal and native retirement through the existing lifetime ledger. Texture-view
+wrappers still own their samplers. Cached descriptor and attachment checks use
+the acquired view generation as well as the backing-image identity.
+
+## Owned Image Views
+
+`VkImageBackedTexture` retains each owned view as a
+`VulkanOwnedImageView`, which stores the native handle and its creation
+generation. This applies to primary views, attachment views, and views held in
+the physical-image cache. Imported texture upload preparation and publication,
+including retained descriptor-slot retirement, preserve the same view receipt.
+View reuse checks the exact generation.
+
+Owned-view retirement carries each expected view generation. A missing, stale,
+or destroyed receipt is a no-op before retirement admission fencing. The
+resource-lifetime core checks the exact identity again after publishing
+dependency information. Matching pending tickets are reused, and the
+retirement queue deduplicates by handle and generation.
+
+This view receipt does not change image or sampler ownership. Lifecycle locking
+also remains unchanged.
+
 ## Recording And Allocation
 
 Persistent Vulkan image or buffer creation is rejected while the render-graph
@@ -59,4 +95,3 @@ command-recording scope is active. Persistent resources must be allocated by
 planning or upload preparation before recording begins. This preserves the
 allocation-free steady-state recording and submission paths; the organization
 refactor adds no per-frame collections, closures, or delegates.
-

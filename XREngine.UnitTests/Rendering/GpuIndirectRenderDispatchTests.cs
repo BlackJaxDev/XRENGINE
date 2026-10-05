@@ -83,7 +83,7 @@ public class GpuIndirectRenderDispatchTests
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
-        source.ShouldContain("COMMAND_FLOATS = 20");
+        source.ShouldContain("const int DRAW_COMMAND_UINTS = 5;");
         source.ShouldContain("DRAW_COMMAND_UINTS = 5");
         source.ShouldContain("CulledCommandsBuffer");
         source.ShouldContain("IndirectDrawBuffer");
@@ -97,7 +97,8 @@ public class GpuIndirectRenderDispatchTests
 
         source.ShouldNotBeNullOrEmpty();
         source.ShouldContain("#version 460 core");
-        source.ShouldContain("COMMAND_FLOATS = 20");
+        source.ShouldContain("VisibleDrawIdsBuffer { uint outDrawIds[]; }");
+        source.ShouldContain("outDrawIds[outIndex] = meta.DrawID;");
         source.ShouldContain("DrawMetadataBuffer");
         source.ShouldContain("BoundsBuffer");
         source.ShouldContain("FrustumPlanes");

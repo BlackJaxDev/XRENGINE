@@ -4,7 +4,7 @@ Updated: 2026-10-05. Evidence cutoff: 2026-10-05.
 
 This record consolidates completed work and measured deferrals from the
 [remaining-work checklist](../../todo/rendering/vulkan-stall-remediation-todo.md).
-It does not report new runtime validation. The linked investigations retain
+Each result applies only to its stated scope. The linked investigations retain
 exact binaries, captures, measurements and case-level decisions.
 
 The cumulative gate remains **NOT PASSED**. The original long-recording and
@@ -36,6 +36,81 @@ owns the repeatable procedure and gate template.
   Summed parallel work and overlapping waits are not elapsed critical-path cost.
 
 ## Completed Work And Scoped Dispositions
+
+### Monado Package Consumption
+
+The October 5 strict stereo correction validates the captured XR package's
+collection generation instead of the desktop consumed generation. In the
+isolated Release fixture, submissions and both eye-preview frame IDs advanced
+through camera changes and a Play round trip. The sampled failure log contains
+no collection-generation mismatch. Normal exit balanced 432 image acquisitions
+and releases per eye and drained the retired generation. The existing package
+validation selection passed 13 tests with zero build warnings and errors.
+
+This is an ownership result. Visual defects, cold preparation, reservation
+failures, physical headset feedback, and broader performance gates remain open.
+The [Monado investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md)
+records the exact fixture, control, candidate, captures, and limits.
+
+The two existing YAML round-trip tests also passed for disabled automatic
+capture on probes and their grid spawner. Those owners already carry explicit
+default-value annotations. This does not establish an engine-wide boolean audit.
+
+### Deferred Stereo Color Attachment
+
+The deferred light-combine descriptor now declares its destination color slot
+with the same framebuffer identity as depth and stencil. Previously, Vulkan
+pruned that color attachment and recorded a depth-only combine pass. RenderDoc
+now shows HDR color Clear/Store and shared depth/stencil Load/Store in the
+strict stereo path. Both HDR layers contain scene color.
+
+Normal Monado interior captures show textured geometry in both eyes through
+pose changes and Play. Normal exit balanced 479 acquisitions and releases per
+eye and drained the retired generation. The Release build had zero warnings
+and errors. Cold final output still contains a magenta line and an undefined-
+data pattern. Repeated desktop recording exceptions also remain under review.
+These are separate open gates in the
+[Monado investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md).
+
+### Stable-Bin Manifest Growth
+
+Visibility manifests now use compact record indices. The builder grows each
+row before it accesses the manifest. The prior order threw an index exception
+at the first valid draw beyond the initial 256 rows and could also fail after
+skipped payloads. Capacity limits, payload identities, and freeze ownership
+remain unchanged.
+
+The Release Monado fixture completed 1,300 desktop frames in a 60.22-second
+window with zero recording failures. Cold startup and a Play round trip also
+had zero recording failures. Normal exit balanced 5,554 acquisitions and
+releases per eye and drained the retired generation. This fixes the observed
+exception and repeated output recreation. It does not establish the desktop
+100 FPS target or complete visual acceptance. The
+[Monado investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md)
+records the failed control, trace limits, candidate, and retained binaries.
+
+### Generation-Qualified Image-View Ownership
+
+`VkImageBackedTexture` retains each native image-view creation generation for
+primary, attachment, cached, and imported views. Retirement checks the exact
+receipt before admission fencing and checks identity again after dependency
+publication. The service keeps native view ownership. Lifecycle locks and image
+or sampler ownership did not change.
+
+The scoped gate passed on the frozen Release candidate. The normal Monado
+trigger run, graph-patch-parked cold control, both-eye previews, Play/Edit round
+trip, warm 60-second liveness window, and normal teardown passed their stated
+ownership checks. The final control matched the frozen source and binary
+identities. The focused test rerun passed 11/11 with zero skips and no build
+warnings or errors; two tests exercise stale-generation behavior and nine
+assert source contracts. See the [investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#scoped-image-view-ownership-closeout).
+
+This closes only the image-view ownership child. It does not establish temporal
+history acceptance, TSR visual quality, 100 FPS, headset comfort, lighting
+parity, or cumulative report completion. The next scoped item is accepted
+strict-stereo temporal history, with the parked TSR ordering patch as a required
+dependency. Its pre-edit gate is recorded in the investigation.
+### Earlier Scoped Results
 
 IDs below preserve links to the active checklist and original investigations.
 Validated means the recorded scoped live gate passed. It does not mean Closed.

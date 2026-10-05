@@ -42,6 +42,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Software Vulkan Correctness Validation](developer-guides/testing/software-vulkan-validation.md)
 - [Continuous Integration And Releases](developer-guides/ci-cd.md)
 - [Windows CI Build Preparation Investigation](work/investigations/platform/windows-ci-build-preparation-2026-10-05.md)
+- [Windows CI Test Coverage](developer-guides/testing/windows-ci.md)
 - [MCP Server Implementation](developer-guides/ai/mcp-server.md)
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
 - [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)

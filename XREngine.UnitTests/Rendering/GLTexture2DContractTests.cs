@@ -223,8 +223,8 @@ public sealed class GLTexture2DContractTests
         source.ShouldContain("StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent");
         source.ShouldContain("RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent");
         source.ShouldContain("StorageFlags = EBufferMapStorageFlags.DynamicStorage");
-        source.ShouldContain("TryGetMappedAddress(_outputPositions, out VoidPtr mappedAddress)");
-        source.ShouldContain("Vector4* ptr = (Vector4*)mappedAddress.Pointer;");
+        source.ShouldContain("_outputPositions.TryReadMapped(bytes =>");
+        source.ShouldContain("ReadOnlySpan<Vector4> values = MemoryMarshal.Cast<byte, Vector4>(bytes);");
 
         shader.ShouldContain("atomicCompSwap(MinBoundsBits.x");
         shader.ShouldContain("atomicCompSwap(MaxBoundsBits.x");

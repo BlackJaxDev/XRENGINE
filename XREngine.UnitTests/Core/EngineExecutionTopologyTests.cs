@@ -97,7 +97,7 @@ public sealed class EngineExecutionTopologyTests
     }
 
     [Test]
-    public void CreateDiagnosticSummary_ReportsSourcesAndPhase1BSchedulerBoundary()
+    public void CreateDiagnosticSummary_ReportsSourcesAndSchedulerDomains()
     {
         EngineExecutionTopology topology = EngineExecutionTopology.Resolve(
             CreateRequest() with
@@ -111,8 +111,8 @@ public sealed class EngineExecutionTopologyTests
         summary.ShouldContain("general:User");
         summary.ShouldContain("render:Environment");
         summary.ShouldContain("requests={foreground:-1,general:-1,generalCap:16,render:0,renderCap:8,dedicated:0}");
-        summary.ShouldContain("phase1B=scheduler-active");
-        summary.ShouldContain("existing Vulkan/OpenXR recording workers unchanged");
+        summary.ShouldContain("schedulerDomains=[general,render,job-auxiliary]");
+        summary.ShouldContain("backendRecording=retained");
     }
 
     [Test]

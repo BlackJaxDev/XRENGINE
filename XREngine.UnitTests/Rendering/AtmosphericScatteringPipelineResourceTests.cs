@@ -38,8 +38,16 @@ public sealed class AtmosphericScatteringPipelineResourceTests
         fbos.ShouldContain("CreateAtmosphereReprojectQuadFBO");
         fbos.ShouldContain("CreateAtmosphereHistoryFBO");
         fbos.ShouldContain("CreateAtmosphereUpscaleQuadFBO");
-        fbos.ShouldContain("GetTexture<XRTexture>(AtmosphereColorTextureName)!");
-        fbos.ShouldContain("GetTexture<XRTexture>(VolumetricFogColorTextureName)!");
+        if (pipelineName == "AdvancedRenderPipeline")
+        {
+            fbos.ShouldContain("owner.RequirePostProcessTexture(AtmosphereColorTextureName)");
+            fbos.ShouldContain("owner.RequirePostProcessTexture(VolumetricFogColorTextureName)");
+        }
+        else
+        {
+            fbos.ShouldContain("GetTexture<XRTexture>(AtmosphereColorTextureName)!");
+            fbos.ShouldContain("GetTexture<XRTexture>(VolumetricFogColorTextureName)!");
+        }
     }
 
     [TestCase("DefaultRenderPipeline")]

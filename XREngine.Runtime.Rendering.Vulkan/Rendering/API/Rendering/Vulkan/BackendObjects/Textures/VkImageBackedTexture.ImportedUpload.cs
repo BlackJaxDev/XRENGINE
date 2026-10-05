@@ -214,12 +214,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                     return true;
 
                 case VulkanImportedTextureUploadPreparationStep.CreateImageView:
-                    preparation.ImageView = CreateImportedUploadImageView(
+                    VulkanOwnedImageView preparedView = CreateImportedUploadImageView(
                         preparation.Image,
                         preparation.Format,
                         preparation.AspectMask,
                         preparation.MipLevels,
                         preparation.ArrayLayers);
+                    preparation.ImageView = preparedView.View;
+                    preparation.ImageViewGeneration = preparedView.Generation;
                     preparation.Step = CreateSampler
                         ? VulkanImportedTextureUploadPreparationStep.CreateSampler
                         : VulkanImportedTextureUploadPreparationStep.Complete;
@@ -238,6 +240,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                         preparation.Image,
                         preparation.Memory,
                         preparation.ImageView,
+                        preparation.ImageViewGeneration,
                         preparation.Sampler,
                         preparation.Format,
                         preparation.AspectMask,
@@ -258,6 +261,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                     preparation.Image = default;
                     preparation.Memory = default;
                     preparation.ImageView = default;
+                    preparation.ImageViewGeneration = 0;
                     preparation.Sampler = default;
                     completed = true;
                     return true;
@@ -437,12 +441,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             preparation.Image,
             preparation.Memory,
             preparation.ImageView,
+            preparation.ImageViewGeneration,
             preparation.Sampler,
             preparation.CommittedBytes,
             [.. preparation.StagingResources]);
         preparation.Image = default;
         preparation.Memory = default;
         preparation.ImageView = default;
+        preparation.ImageViewGeneration = 0;
         preparation.Sampler = default;
         preparation.StagingResources.Clear();
     }
@@ -595,7 +601,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         return ImageLayout.TransferSrcOptimal;
     }
 
-    private ImageView CreateImportedUploadImageView(
+    private VulkanOwnedImageView CreateImportedUploadImageView(
         Image image,
         Format format,
         ImageAspectFlags aspectMask,
@@ -626,8 +632,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
             throw new Exception("Failed to create synchronized imported texture image view.");
 
-        BackendContext.Resources.Images.RegisterView(created, in viewInfo, "VkImageBackedTexture.ImportedUploadView");
-        return created;
+        ulong generation = BackendContext.Resources.Images.RegisterView(created, in viewInfo, "VkImageBackedTexture.ImportedUploadView");
+        return new VulkanOwnedImageView(created, generation);
     }
 
     private Sampler CreateImportedUploadSampler(uint mipLevels)
@@ -685,6 +691,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             pendingUpload.Image,
             pendingUpload.Memory,
             pendingUpload.ImageView,
+            pendingUpload.ImageViewGeneration,
             pendingUpload.Sampler,
             pendingUpload.CommittedBytes,
             pendingUpload.StagingResources);
@@ -695,6 +702,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         Image image,
         DeviceMemory memory,
         ImageView imageView,
+        ulong imageViewGeneration,
         Sampler sampler,
         long committedBytes,
         VulkanImportedTextureUploadStagingResource[] stagingResources)
@@ -714,7 +722,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 imageView,
                 [],
                 sampler,
-                committedBytes),
+                committedBytes,
+                imageViewGeneration,
+                [],
+                true),
                 "VkImageBackedTexture.ImportedUpload.DisposePreparedResources");
         }
 
@@ -750,25 +761,34 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         // commit. After an ExactPublished result, only non-throwing field
         // ownership transfers are allowed before the pending upload detaches.
         ImageView[] retiredAttachmentViews;
+        ulong[] retiredAttachmentGenerations;
         if (_attachmentViews.Count > 0)
         {
             retiredAttachmentViews = new ImageView[_attachmentViews.Count];
+            retiredAttachmentGenerations = new ulong[_attachmentViews.Count];
             int index = 0;
-            foreach ((_, ImageView attachmentView) in _attachmentViews)
-                retiredAttachmentViews[index++] = attachmentView;
+            foreach ((_, VulkanOwnedImageView attachmentView) in _attachmentViews)
+            {
+                retiredAttachmentViews[index] = attachmentView.View;
+                retiredAttachmentGenerations[index++] = attachmentView.Generation;
+            }
         }
         else
         {
             retiredAttachmentViews = [];
+            retiredAttachmentGenerations = [];
         }
 
         RetiredImageResources previousResources = new(
             _ownsImageMemory ? _image : default,
             _ownsImageMemory ? _memory : default,
-            _view,
+            _view.View,
             retiredAttachmentViews,
             _sampler,
-            _ownsImageMemory ? _allocatedVRAMBytes : 0);
+            _ownsImageMemory ? _allocatedVRAMBytes : 0,
+            _view.Generation,
+            retiredAttachmentGenerations,
+            true);
         TextureLayout publishedLayout = new(
             pendingUpload.Extent,
             Math.Max(pendingUpload.ArrayLayers, 1u),
@@ -814,7 +834,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         _image = pendingUpload.Image;
         _memory = pendingUpload.Memory;
-        _view = pendingUpload.ImageView;
+        _view = new VulkanOwnedImageView(pendingUpload.ImageView, pendingUpload.ImageViewGeneration);
         _sampler = pendingUpload.Sampler;
         _ownsImageMemory = true;
         _physicalGroup = null;

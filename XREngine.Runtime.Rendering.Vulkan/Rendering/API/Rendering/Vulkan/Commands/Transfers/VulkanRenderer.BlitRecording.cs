@@ -32,7 +32,8 @@ namespace XREngine.Rendering.Vulkan
                 imageIndex,
                 new BlitPayload(op.InFbo, op.OutFbo, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH, op.ReadBufferMode, op.ColorBit, op.DepthBit, op.StencilBit, op.LinearFilter, op.RequireExactCompatibility),
                 in swapchainTarget,
-                exactColorSource: null);
+                exactColorSource: null,
+                passIndex: op.PassIndex);
 
         /// <summary>
         /// Blits an already-published presentation source without resolving a
@@ -64,7 +65,8 @@ namespace XREngine.Rendering.Vulkan
                 imageIndex,
                 new BlitPayload(null, null, 0, 0, source.Width, source.Height, 0, 0, swapchainTarget.Extent.Width, swapchainTarget.Extent.Height, EReadBufferMode.ColorAttachment0, true, false, false, true, false),
                 in swapchainTarget,
-                exactSource);
+                exactSource,
+                passIndex);
         }
 
         internal bool RecordBlitPayload(
@@ -72,7 +74,8 @@ namespace XREngine.Rendering.Vulkan
             uint imageIndex,
             BlitPayload op,
             in SwapchainRecordingTarget swapchainTarget,
-            BlitImageInfo? exactColorSource)
+            BlitImageInfo? exactColorSource,
+            int passIndex)
         {
             bool ExecuteSingleBlit(in BlitImageInfo source, in BlitImageInfo destination, Filter filter)
             {
@@ -264,6 +267,8 @@ namespace XREngine.Rendering.Vulkan
                     PipelineStageFlags.TransferBit,
                     resolvedDestination.StageMask);
 
+                RecordTemporalHistoryBlit(in op, in resolvedSource, in resolvedDestination, in region);
+
                 return true;
             }
 
@@ -272,17 +277,17 @@ namespace XREngine.Rendering.Vulkan
             BlitImageInfo colorSource = exactColorSource ?? default;
             bool colorSourceReady = exactColorSource.HasValue
                 ? colorSource.IsValid
-                : TryResolvePreparedBlitImage(op.InFbo, op.ReadBufferMode, wantColor: true, wantDepth: false, wantStencil: false, out colorSource, isSource: true, in swapchainTarget);
+                : TryResolvePreparedBlitImage(op.InFbo, op.ReadBufferMode, wantColor: true, wantDepth: false, wantStencil: false, out colorSource, true, passIndex, in op, in swapchainTarget);
             if (op.ColorBit &&
                 colorSourceReady &&
-                TryResolvePreparedBlitImage(op.OutFbo, EReadBufferMode.ColorAttachment0, wantColor: true, wantDepth: false, wantStencil: false, out var colorDestination, isSource: false, in swapchainTarget))
+                TryResolvePreparedBlitImage(op.OutFbo, EReadBufferMode.ColorAttachment0, wantColor: true, wantDepth: false, wantStencil: false, out var colorDestination, false, passIndex, in op, in swapchainTarget))
             {
                 copiedAny |= ExecuteSingleBlit(colorSource, colorDestination, op.LinearFilter ? Filter.Linear : Filter.Nearest);
             }
 
             if ((op.DepthBit || op.StencilBit) &&
-                TryResolvePreparedBlitImage(op.InFbo, op.ReadBufferMode, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthSource, isSource: true, in swapchainTarget) &&
-                TryResolvePreparedBlitImage(op.OutFbo, EReadBufferMode.None, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthDestination, isSource: false, in swapchainTarget))
+                TryResolvePreparedBlitImage(op.InFbo, op.ReadBufferMode, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthSource, true, passIndex, in op, in swapchainTarget) &&
+                TryResolvePreparedBlitImage(op.OutFbo, EReadBufferMode.None, wantColor: false, wantDepth: op.DepthBit, wantStencil: op.StencilBit, out var depthDestination, false, passIndex, in op, in swapchainTarget))
             {
                 // Vulkan only supports nearest filtering for depth/stencil blits.
                 copiedAny |= ExecuteSingleBlit(depthSource, depthDestination, Filter.Nearest);

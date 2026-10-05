@@ -37,7 +37,7 @@ public sealed class Audio2Face3DComponentTests
         bool connected = component.TryConnectLiveClient();
 
         connected.ShouldBeFalse();
-        component.LastLiveError.ShouldContain("No Audio2Face-3D live client adapter is registered");
+        component.LastLiveError.ShouldContain("Add Audio2Face3DNativeBridgeComponent to the same scene node");
     }
 
     [Test]

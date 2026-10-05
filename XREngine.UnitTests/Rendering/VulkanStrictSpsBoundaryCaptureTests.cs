@@ -135,9 +135,14 @@ public sealed class VulkanStrictSpsBoundaryCaptureTests
             .ShouldBe(ImageLayout.General);
         VulkanReadbackLayoutPolicy.ResolveRestore(
                 ImageLayout.Undefined,
-                ImageUsageFlags.ColorAttachmentBit,
+                ImageUsageFlags.DepthStencilAttachmentBit,
                 depthOrStencil: true)
             .ShouldBe(ImageLayout.DepthStencilAttachmentOptimal);
+        VulkanReadbackLayoutPolicy.ResolveRestore(
+                ImageLayout.Undefined,
+                ImageUsageFlags.ColorAttachmentBit,
+                depthOrStencil: true)
+            .ShouldBe(ImageLayout.General);
     }
 
     private static XRTexture2DArray CreateStereoArray()

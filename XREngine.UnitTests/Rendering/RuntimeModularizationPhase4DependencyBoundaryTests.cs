@@ -98,7 +98,7 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
         string root = ResolveWorkspaceRoot();
         string source = File.ReadAllText(Path.Combine(
             root,
-            "XREngine.Runtime.Bootstrap",
+            "XREngine.Runtime.Host",
             "RenderingHost",
             "Engine.RuntimeRenderingHostServices.cs"));
         Match resolver = Regex.Match(
@@ -371,13 +371,13 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
     public void P47_VrStateCompatibilityFacade_IsRemoved()
     {
         string root = ResolveWorkspaceRoot();
-        string engineRoot = Path.Combine(root, "XREngine.Runtime.Bootstrap", "Engine");
-        string bootstrapHostRoot = Path.Combine(root, "XREngine.Runtime.Bootstrap", "SubsystemHost");
-        string lifecycleSource = File.ReadAllText(Path.Combine(bootstrapHostRoot, "EngineVrLifecycle.cs"));
+        string engineRoot = Path.Combine(root, "XREngine.Runtime.Host", "Engine");
+        string bootstrapHostRoot = Path.Combine(root, "XREngine.Runtime.Host", "SubsystemHost");
+        string lifecycleSource = File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Bootstrap", "SubsystemHost", "EngineVrLifecycle.cs"));
         string networkingSource = File.ReadAllText(Path.Combine(engineRoot, "Engine.Networking.cs"));
         string windowsSource = File.ReadAllText(Path.Combine(
             root,
-            "XREngine.Runtime.Bootstrap",
+            "XREngine.Runtime.Host",
             "RenderingHost",
             "Engine.Windows.cs"));
         string jsonSource = File.ReadAllText(Path.Combine(bootstrapHostRoot, "XREngineVrRuntimeJsonContext.cs"));

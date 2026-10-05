@@ -143,6 +143,7 @@ public partial class HumanoidComponent
         var hasTranslationDegreesOfFreedom = new bool[CompiledHumanoidAvatarDefinition.RoleCount];
         var axisMappings = new BoneAxisMapping[CompiledHumanoidAvatarDefinition.RoleCount];
         var hasAxisMappings = new bool[CompiledHumanoidAvatarDefinition.RoleCount];
+        var hasAuthoredAxisMappings = new bool[CompiledHumanoidAvatarDefinition.RoleCount];
         var jointBases = new Quaternion[CompiledHumanoidAvatarDefinition.RoleCount];
         var hasContinuousJointBases = new bool[CompiledHumanoidAvatarDefinition.RoleCount];
         var jointLimits = new HumanoidAvatarJointLimit[CompiledHumanoidAvatarDefinition.RoleCount];
@@ -178,6 +179,7 @@ public partial class HumanoidComponent
             hasTranslationDegreesOfFreedom[roleIndex] = binding.HasTranslationDoF;
             axisMappings[roleIndex] = binding.AxisMapping;
             hasAxisMappings[roleIndex] = binding.HasAxisMapping;
+            hasAuthoredAxisMappings[roleIndex] = binding.HasAuthoredAxisMapping;
             jointLimits[roleIndex] = CopyJointLimit(binding.JointLimit);
             semanticParents[roleIndex] = binding.ParentRole;
         }
@@ -227,6 +229,7 @@ public partial class HumanoidComponent
                 hasTranslationDegreesOfFreedom,
                 axisMappings,
                 hasAxisMappings,
+                hasAuthoredAxisMappings,
                 jointBases,
                 hasContinuousJointBases,
                 jointLimits,
@@ -350,6 +353,7 @@ public partial class HumanoidComponent
         bool[] hasTranslationDegreesOfFreedom,
         BoneAxisMapping[] axisMappings,
         bool[] hasAxisMappings,
+        bool[] hasAuthoredAxisMappings,
         Quaternion[] jointBases,
         bool[] hasContinuousJointBases,
         HumanoidAvatarJointLimit[] jointLimits,
@@ -492,7 +496,7 @@ public partial class HumanoidComponent
                             compiledLimit, semanticParents[i],
                             ancestorIndex >= 0 ? (EHumanoidAvatarBoneRole)ancestorIndex : null,
                             ancestorIndex, zeroMuscleRotation, inverseRestJoint,
-                            jointBases[i], hasContinuousJointBases[i]),
+                            jointBases[i], hasContinuousJointBases[i], hasAuthoredAxisMappings[i]),
                         0.0f, 0.0f, 0.0f),
                     zeroMuscleRotation))
             {
@@ -526,7 +530,8 @@ public partial class HumanoidComponent
                 zeroMuscleRotation,
                 inverseRestJoint,
                 jointBases[i],
-                hasContinuousJointBases[i]);
+                hasContinuousJointBases[i],
+                hasAuthoredAxisMappings[i]);
         }
 
         int hipsIndex = (int)EHumanoidAvatarBoneRole.Hips;

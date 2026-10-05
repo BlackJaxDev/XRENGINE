@@ -2393,23 +2393,75 @@ namespace XREngine.Rendering
             XRCamera? rightCamera,
             IRuntimeRenderWorld? worldOverride = null,
             FrameOutputPacingDecision? frameOutputPacing = null)
+            => _ = TryRenderStereoCore(
+                targetFbo,
+                leftCamera,
+                rightCamera,
+                worldOverride,
+                frameOutputPacing,
+                consumedCollectGenerationOverride: null);
+
+        /// <summary>
+        /// Renders strict OpenXR stereo from one published frame package.
+        /// </summary>
+        internal bool TryRenderOpenXrStereoFramePackage(
+            XRFrameBuffer? targetFbo,
+            XRCamera? leftCamera,
+            XRCamera? rightCamera,
+            IRuntimeRenderWorld? worldOverride,
+            FrameOutputPacingDecision? frameOutputPacing,
+            in BackendReadyFramePackageConsumptionAuthority packageAuthority)
+        {
+            if (!packageAuthority.IsValid)
+                return false;
+
+            RenderCommandCollection commands =
+                MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            if (!ReferenceEquals(commands, packageAuthority.Commands))
+                return false;
+
+            using (commands.EnterRenderingBufferReadScope())
+            {
+                BackendReadyFramePackage package = commands.RenderingBackendReadyPackage;
+                if (package.State != EBackendReadyFramePackageState.Published ||
+                    package.PackageGeneration != packageAuthority.PackageGeneration ||
+                    package.Identity.CollectGeneration != packageAuthority.CollectGeneration)
+                    return false;
+            }
+
+            return TryRenderStereoCore(
+                targetFbo,
+                leftCamera,
+                rightCamera,
+                worldOverride,
+                frameOutputPacing,
+                packageAuthority.CollectGeneration);
+        }
+
+        private bool TryRenderStereoCore(
+            XRFrameBuffer? targetFbo,
+            XRCamera? leftCamera,
+            XRCamera? rightCamera,
+            IRuntimeRenderWorld? worldOverride,
+            FrameOutputPacingDecision? frameOutputPacing,
+            long? consumedCollectGenerationOverride)
         {
             using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.RenderStereo");
 
             if (ShouldSuspendPipelineWork(nameof(RenderStereo)))
-                return;
+                return false;
 
             var world = worldOverride ?? World;
             if (world is null)
             {
                 Debug.RenderingWarning("No world is set to this viewport.");
-                return;
+                return false;
             }
 
             if (RuntimeRenderingHostServices.BackendInterop.IsViewportCurrentlyRendering(this))
             {
                 Debug.RenderingWarning("Render recursion: Viewport is already currently rendering.");
-                return;
+                return false;
             }
 
             IRuntimeRenderPresentationServices presentation = RuntimeRenderingHostServices.Presentation;
@@ -2431,13 +2483,13 @@ namespace XREngine.Rendering
                 IsDue = scheduling.Execute,
             };
             if (!scheduling.Execute)
-                return;
+                return false;
             bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
             long renderStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
             LastRenderedTargetFBO = targetFbo;
             _ = Interlocked.Increment(ref _sceneRenderSequenceId);
-            bool recorded = _renderPipeline.TryRender(
+            bool recorded = _renderPipeline.TryRenderWithFrozenDesktopHistory(
                 world.VisualScene,
                 leftCamera,
                 rightCamera,
@@ -2447,7 +2499,16 @@ namespace XREngine.Rendering
                 false,
                 true,
                 null,
-                meshRenderCommandsOverride: MeshRenderCommandsOverride);
+                MeshRenderCommandsOverride,
+                viewHistorySequenceId: 0UL,
+                viewHistoryOutputRequest: default,
+                frozenDesktopView: null,
+                frozenHistoryCandidate: default,
+                outputCompletionRequest: default,
+                outputCompletionCollectGeneration: -1L,
+                consumedCollectGenerationOverride,
+                out _,
+                out _);
 
             if (!uiThroughPipeline)
                 RenderScreenSpaceUIOverlay(targetFbo);
@@ -2459,6 +2520,7 @@ namespace XREngine.Rendering
                 sceneRendered: recorded && !Suppress3DSceneRendering,
                 commandCount: GetRenderingCommandCountForTelemetry(),
                 elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - renderStart);
+            return recorded;
         }
 
         private FrameOutputPacingDecision EvaluateFrameOutputPacing(EFrameOutputKind fallbackOutputKind)

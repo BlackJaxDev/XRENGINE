@@ -70,6 +70,7 @@ public sealed class HumanoidBodyRootCompensationTests
             BakePositionXZIntoPose = false,
             KeepOriginalPositionXZ = true,
             BakePositionYIntoPose = false,
+            HeightFromFeet = true,
             BakeOrientationIntoPose = false,
             KeepOriginalOrientation = false,
         };

@@ -64,6 +64,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="runtimes\win-x64\native\xr_shaderc.dll;runtimes\win-x64\native\xr_shaderc.license.txt">
+      <TargetPath>%(Filename)%(Extension)</TargetPath>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
   </ItemGroup>
 

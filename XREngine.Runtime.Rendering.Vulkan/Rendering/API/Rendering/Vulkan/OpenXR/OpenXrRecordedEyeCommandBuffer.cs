@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -16,4 +17,5 @@ internal readonly record struct OpenXrRecordedEyeCommandBuffer(
     ulong FrameOpContextId,
     ulong ResourceGeneration,
     ulong DescriptorGeneration,
-    bool OwnedByOpenXrPrimaryCache);
+    bool OwnedByOpenXrPrimaryCache,
+    TemporalHistorySubmissionCandidate TemporalHistoryCandidate = default);

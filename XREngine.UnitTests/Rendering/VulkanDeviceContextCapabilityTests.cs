@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using Shouldly;
 using Silk.NET.Vulkan;
+using System.Runtime.CompilerServices;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.Vulkan.DeviceBootstrap;
 
@@ -9,6 +10,8 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class VulkanDeviceContextCapabilityTests
 {
+    private static readonly Vk TestApi = (Vk)RuntimeHelpers.GetUninitializedObject(typeof(Vk));
+
     [Test]
     public void PhysicalSelection_PublishesOneImmutableAuthority()
     {
@@ -38,7 +41,7 @@ public sealed class VulkanDeviceContextCapabilityTests
             CreateQueueFamilies()));
 
         context.AttachInstance(
-            null!,
+            TestApi,
             new Instance((nint)0x51),
             ["VK_EXT_debug_utils"],
             Vk.Version13,
@@ -49,7 +52,7 @@ public sealed class VulkanDeviceContextCapabilityTests
         context.EnabledInstanceExtensions.ShouldContain("VK_EXT_debug_utils");
         context.InstanceApiVersion.ShouldBe(Vk.Version13);
         Should.Throw<InvalidOperationException>(() => context.AttachInstance(
-            null!,
+            TestApi,
             new Instance((nint)0x52),
             [],
             Vk.Version13,
@@ -210,7 +213,7 @@ public sealed class VulkanDeviceContextCapabilityTests
     {
         VulkanDeviceContext context = new(configuration);
         context.AttachInstance(
-            null!,
+            TestApi,
             new Instance((nint)0x51),
             [],
             Vk.Version13,

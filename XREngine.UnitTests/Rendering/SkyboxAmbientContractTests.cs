@@ -15,7 +15,7 @@ public sealed class SkyboxAmbientContractTests
         source.ShouldContain("private bool _syncGlobalAmbientLighting = true;");
         source.ShouldContain("public bool SyncGlobalAmbientLighting");
         source.ShouldContain("ApplyGlobalAmbientSync(sun, moon, sunDirection, moonDirection, sunKelvin, moonKelvin);");
-        source.ShouldContain("WorldAs<IRuntimeRenderWorld>()?.AmbientSettings");
+        source.ShouldContain("World.GetRenderWorld()?.AmbientSettings");
         source.ShouldContain("settings.AmbientLightColor = color;");
         source.ShouldContain("settings.AmbientLightIntensity = intensity;");
     }
@@ -54,16 +54,16 @@ public sealed class SkyboxAmbientContractTests
     public void DeferredPipeline_LightCombineDrawsPushAmbientAndProbeBindings()
     {
         string fboSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs");
-        string commandSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs");
+        string publisherSource = ReadCSharpFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.BindingPublishers.cs");
 
-        fboSource.ShouldContain("lightCombineMat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");
-        fboSource.ShouldContain("mat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);");
-        commandSource.ShouldContain("x.ApplyUniforms = ApplyLightCombineProgramBindings");
-        commandSource.ShouldContain("x.BindingLocation = DeferredLightProbePositionBufferBinding;");
-        commandSource.ShouldContain("x.BindingLocation = DeferredLightProbeTetraBufferBinding;");
-        commandSource.ShouldContain("x.BindingLocation = DeferredLightProbeParamBufferBinding;");
-        commandSource.ShouldContain("x.BindingLocation = DeferredLightProbeGridCellBufferBinding;");
-        commandSource.ShouldContain("x.BindingLocation = DeferredLightProbeGridIndexBufferBinding;");
+        fboSource.ShouldContain("lightCombineMat.BindingPublishers.Add(");
+        fboSource.ShouldContain("mat.BindingPublishers.Add(");
+        fboSource.ShouldContain("new LightCombineBindingPublisher(this)");
+        publisherSource.ShouldContain("owner.ApplyLightCombineNumericBindings(materialProgram)");
+        publisherSource.ShouldContain("owner.BindPbrLightingResources(materialProgram, deferredProbeBufferBindings: true)");
+        publisherSource.ShouldContain("Vector3 GlobalAmbient");
+        publisherSource.ShouldContain("XRDataBuffer? ProbePositionBuffer");
+        publisherSource.ShouldContain("XRDataBuffer? ProbeGridIndexBuffer");
     }
 
     private static string ReadCSharpFile(string relativePath)

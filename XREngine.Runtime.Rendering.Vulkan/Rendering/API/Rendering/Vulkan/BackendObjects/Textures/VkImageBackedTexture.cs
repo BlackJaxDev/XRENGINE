@@ -36,7 +36,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     #region Fields
 
     /// <summary>Cache of per-attachment image views keyed by mip/layer/viewType/aspect.</summary>
-    private readonly Dictionary<AttachmentViewKey, ImageView> _attachmentViews = new();
+    private readonly Dictionary<AttachmentViewKey, VulkanOwnedImageView> _attachmentViews = new();
 
     /// <summary>
     /// Per physical-image view cache used when serial desktop/eye rendering switches resource-planner
@@ -80,7 +80,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     private DeviceMemory _memory;
 
     /// <summary>Primary image view used for shader sampling.</summary>
-    private ImageView _view;
+    private VulkanOwnedImageView _view;
 
     /// <summary>Sampler object (created when <see cref="CreateSampler"/> is <c>true</c>).</summary>
     private Sampler _sampler;
@@ -163,6 +163,94 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return true;
 
         return !IsInvalidated && HasUploadedData;
+    }
+
+    /// <summary>
+    /// Describes cached descriptor state after a failed readiness check. This method does not refresh or create resources.
+    /// </summary>
+    internal string DescribeCachedDescriptorReadinessFailure()
+    {
+        lock (_imageStateLock)
+        {
+            Image image = _image;
+            ImageView view = _view;
+            Sampler sampler = _sampler;
+            VulkanPhysicalImageGroup? physicalGroup = _physicalGroup;
+            bool dirty = IsDescriptorDirty;
+            bool invalidated = IsInvalidated;
+            bool uploaded = HasUploadedData;
+            bool createSampler = CreateSampler;
+            bool groupAllocated = physicalGroup?.IsAllocated ?? false;
+            ulong groupImageHandle = physicalGroup?.Image.Handle ?? 0;
+            bool hasBackingImage = BackendContext.Resources.Images.TryGetBackingImage(view, out Image backingImage);
+            bool viewLive = BackendContext.Resources.Images.IsLiveBackedByLiveImage(view);
+            bool viewAvailable = BackendContext.Resources.Images.IsAvailableForDescriptor(view);
+            VulkanResourceLifetimeTracker tracker = BackendContext.Resources.Lifetime.Tracker;
+            string viewLifetime;
+            string imageLifetime;
+            string backingImageLifetime;
+            lock (tracker.SyncRoot)
+            {
+                viewLifetime = DescribeLifetime(ObjectType.ImageView, view.Handle);
+                imageLifetime = DescribeLifetime(ObjectType.Image, image.Handle);
+                backingImageLifetime = hasBackingImage && backingImage.Handle != image.Handle
+                    ? DescribeLifetime(ObjectType.Image, backingImage.Handle)
+                    : "<same-or-unknown>";
+            }
+
+            int primaryViewMatches = 0;
+            int attachmentViewMatches = 0;
+            int matchingEntries = 0;
+            System.Text.StringBuilder cacheMatches = new();
+            foreach (PhysicalImageViewCacheEntry entry in _physicalImageViewCache)
+            {
+                bool primaryMatch = view.Handle != 0 && entry.PrimaryView.View.Handle == view.Handle;
+                int entryAttachmentMatches = 0;
+                foreach (VulkanOwnedImageView cached in entry.AttachmentViews.Values)
+                {
+                    if (view.Handle != 0 && cached.View.Handle == view.Handle)
+                        entryAttachmentMatches++;
+                }
+
+                if (!primaryMatch && entryAttachmentMatches == 0)
+                    continue;
+
+                matchingEntries++;
+                if (primaryMatch)
+                    primaryViewMatches++;
+                attachmentViewMatches += entryAttachmentMatches;
+                if (matchingEntries > 4)
+                    continue;
+
+                if (cacheMatches.Length != 0)
+                    cacheMatches.Append(';');
+                cacheMatches.Append($"groupId={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(entry.Group)},image=0x{entry.ImageHandle:X},imageGeneration={entry.ImageGeneration},primaryGeneration={entry.PrimaryView.Generation},primaryMatch={primaryMatch},attachmentMatches={entryAttachmentMatches}");
+            }
+
+            return $"cachedImage=0x{image.Handle:X}, cachedView=0x{view.Handle:X}, cachedSampler=0x{sampler.Handle:X}, " +
+                $"descriptorDirty={dirty}, invalidated={invalidated}, uploaded={uploaded}, createSampler={createSampler}, " +
+                $"physicalGroupPresent={physicalGroup is not null}, physicalGroupId={(physicalGroup is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(physicalGroup))}, physicalGroupAllocated={groupAllocated}, physicalGroupImage=0x{groupImageHandle:X}, " +
+                $"viewBackingKnown={hasBackingImage}, viewBackingImage=0x{backingImage.Handle:X}, " +
+                $"viewBacksCachedImage={hasBackingImage && backingImage.Handle == image.Handle}, viewLive={viewLive}, viewAvailable={viewAvailable}, " +
+                $"viewLifetime=[{viewLifetime}], imageLifetime=[{imageLifetime}], backingImageLifetime=[{backingImageLifetime}], " +
+                $"physicalViewCacheCount={_physicalImageViewCache.Count}, cachePrimaryMatches={primaryViewMatches}, cacheAttachmentMatches={attachmentViewMatches}, cacheMatchingEntries={matchingEntries}, cacheMatches=[{cacheMatches}]";
+
+            string DescribeLifetime(ObjectType type, ulong handle)
+            {
+                if (handle == 0)
+                    return "<zero-handle>";
+                if (!tracker.ResourceLifetimes.TryGetValue(new VulkanResourceLifetimeKey(type, handle), out VulkanResourceLifetimeRecord? record))
+                    return "<no-record>";
+
+                ulong generation = record.Generation;
+                ulong publishedGeneration = record.PublishedGeneration;
+                EVulkanResourceLifetimeState state = record.State;
+                string owner = record.Owner;
+                string? retirementOwner = record.RetirementOwner;
+                ulong retirementSerial = record.RetirementSerial;
+                return $"generation={generation},publishedGeneration={publishedGeneration},state={state},owner='{owner}',retirementOwner='{retirementOwner ?? "<none>"}',retirementSerial={retirementSerial}";
+            }
+        }
     }
 
     public override bool TryEnsureDescriptorReadyForUse(string reason)
@@ -521,7 +609,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return false;
         }
 
-        ImageView view = requestedAspectMask switch
+        VulkanOwnedImageView view = requestedAspectMask switch
         {
             ImageAspectFlags.DepthBit => TryGetPublishedAspectViewNoLock(
                 ImageAspectFlags.DepthBit),
@@ -557,7 +645,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         return ready;
     }
 
-    private ImageView TryGetPublishedAspectViewNoLock(ImageAspectFlags aspect)
+    private VulkanOwnedImageView TryGetPublishedAspectViewNoLock(ImageAspectFlags aspect)
     {
         AttachmentViewKey key = new(
             0,
@@ -566,16 +654,20 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             ResolvedArrayLayers,
             DefaultViewType,
             aspect);
-        return _attachmentViews.TryGetValue(key, out ImageView cached)
+        return _attachmentViews.TryGetValue(key, out VulkanOwnedImageView cached) &&
+            IsImageViewBackedByCurrentImage(cached) &&
+            BackendContext.Resources.Images.IsAvailableForDescriptor(cached)
             ? cached
             : default;
     }
 
-    private ImageView TryGetPublishedDescriptorViewNoLock(ImageViewType viewType)
+    private VulkanOwnedImageView TryGetPublishedDescriptorViewNoLock(ImageViewType viewType)
     {
         if (!TryBuildDescriptorViewKey(viewType, out AttachmentViewKey key))
             return default;
-        return _attachmentViews.TryGetValue(key, out ImageView cached)
+        return _attachmentViews.TryGetValue(key, out VulkanOwnedImageView cached) &&
+            IsImageViewBackedByCurrentImage(cached) &&
+            BackendContext.Resources.Images.IsAvailableForDescriptor(cached)
             ? cached
             : default;
     }
@@ -613,7 +705,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         ImageAspectFlags? requestedAspectMask,
         out VkImageDescriptorSnapshot snapshot)
     {
-        ImageView view = requestedAspectMask switch
+        VulkanOwnedImageView view = requestedAspectMask switch
         {
             ImageAspectFlags.DepthBit => GetDepthOnlyDescriptorViewNoLock(),
             ImageAspectFlags.StencilBit => GetStencilOnlyDescriptorViewNoLock(),
@@ -690,34 +782,44 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         return _currentImageLayout;
     }
 
-    private ImageView GetDepthOnlyDescriptorViewNoLock()
+    private VulkanOwnedImageView GetDepthOnlyDescriptorViewNoLock()
     {
         var key = new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, DefaultViewType, ImageAspectFlags.DepthBit);
-        if (!_attachmentViews.TryGetValue(key, out ImageView cached))
+        bool hadCached = _attachmentViews.TryGetValue(key, out VulkanOwnedImageView cached);
+        if (!hadCached ||
+            !IsImageViewBackedByCurrentImage(cached) ||
+            !BackendContext.Resources.Images.IsAvailableForDescriptor(cached))
         {
             cached = CreateView(key);
             _attachmentViews[key] = cached;
+            if (hadCached && cached.IsValid)
+                PublishDescriptorViewRefreshNoLock();
         }
 
         return cached;
     }
 
-    private ImageView GetStencilOnlyDescriptorViewNoLock()
+    private VulkanOwnedImageView GetStencilOnlyDescriptorViewNoLock()
     {
         if (!HasStencilAspect(ResolvedFormat))
             return default;
 
         var key = new AttachmentViewKey(0, ResolvedMipLevels, 0, ResolvedArrayLayers, DefaultViewType, ImageAspectFlags.StencilBit);
-        if (!_attachmentViews.TryGetValue(key, out ImageView cached))
+        bool hadCached = _attachmentViews.TryGetValue(key, out VulkanOwnedImageView cached);
+        if (!hadCached ||
+            !IsImageViewBackedByCurrentImage(cached) ||
+            !BackendContext.Resources.Images.IsAvailableForDescriptor(cached))
         {
             cached = CreateView(key);
             _attachmentViews[key] = cached;
+            if (hadCached && cached.IsValid)
+                PublishDescriptorViewRefreshNoLock();
         }
 
         return cached;
     }
 
-    private ImageView GetDescriptorViewNoLock(ImageViewType viewType)
+    private VulkanOwnedImageView GetDescriptorViewNoLock(ImageViewType viewType)
     {
         if (viewType == DefaultViewType)
             return _view;
@@ -725,10 +827,15 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (!TryBuildDescriptorViewKey(viewType, out AttachmentViewKey key))
             return default;
 
-        if (!_attachmentViews.TryGetValue(key, out ImageView cached))
+        bool hadCached = _attachmentViews.TryGetValue(key, out VulkanOwnedImageView cached);
+        if (!hadCached ||
+            !IsImageViewBackedByCurrentImage(cached) ||
+            !BackendContext.Resources.Images.IsAvailableForDescriptor(cached))
         {
             cached = CreateView(key);
             _attachmentViews[key] = cached;
+            if (hadCached && cached.IsValid)
+                PublishDescriptorViewRefreshNoLock();
         }
 
         return cached;

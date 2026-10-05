@@ -818,7 +818,8 @@ internal sealed partial class VulkanFrameLoop
     private bool PrewarmOpenXrFrameOpResources(
         FrameOp[] ops,
         uint frameDataImageIndex,
-        bool sealFrameManifest = false)
+        bool sealFrameManifest = false,
+        bool capacityOnly = false)
     {
         if (ops.Length == 0)
             return true;
@@ -848,6 +849,9 @@ internal sealed partial class VulkanFrameLoop
                 frameWideReason);
             return false;
         }
+        if (capacityOnly)
+            return true;
+
         int rendererCount = meshDrawSlotsByRenderer.Count;
         int descriptorFrameIndex = frameDataImageIndex > int.MaxValue
             ? int.MaxValue

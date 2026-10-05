@@ -94,7 +94,8 @@ public class ColorGradingSettingsTests
     [Test]
     public void GpuAutoExposureShaders_LerpFromFallbackWhenHistoryTextureWasReset()
     {
-        string vulkan = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/VulkanRenderer.AutoExposure.cs")
+        string vulkan = (ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.AutoExposure.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.AutoExposureComputeResources.cs"))
             .Replace("\r\n", "\n");
         string openGl = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/Luminance/OpenGLRenderer.LuminanceResources.cs")
             .Replace("\r\n", "\n");
@@ -113,7 +114,8 @@ public class ColorGradingSettingsTests
     [Test]
     public void VulkanGpuAutoExposure_UsesBlockMeteringWhenMipPyramidIsUnavailable()
     {
-        string vulkan = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/VulkanRenderer.AutoExposure.cs")
+        string vulkan = (ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.AutoExposure.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.AutoExposureComputeResources.cs"))
             .Replace("\r\n", "\n");
 
         vulkan.ShouldContain("program.Uniform(\"MeteringTargetSize\", settings.AutoExposureMeteringTargetSize);");

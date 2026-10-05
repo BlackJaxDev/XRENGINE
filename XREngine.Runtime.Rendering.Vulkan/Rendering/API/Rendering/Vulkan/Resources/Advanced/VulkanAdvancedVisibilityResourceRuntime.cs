@@ -2037,11 +2037,15 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         uint layer,
         out ImageView view)
     {
-        if (!TryAcquireView(context, group, Format.Undefined, aspect, 0u, 1u, layer, out view))
+        if (!TryAcquireView(context, group, Format.Undefined, aspect, 0u, 1u, layer, out VulkanInternedImageViewReference reference))
+        {
+            view = default;
             return false;
-        if (storage.TryTrack(context.Resources.Images, view))
+        }
+        view = reference.View;
+        if (storage.TryTrack(context.Resources.Images, reference))
             return true;
-        _ = context.Resources.Images.ReleaseInternedView(view);
+        context.Resources.Images.ReleaseInternedView(reference);
         view = default;
         return false;
     }
@@ -2054,7 +2058,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         uint baseMipLevel,
         uint levelCount,
         uint arrayLayer,
-        out ImageView view)
+        out VulkanInternedImageViewReference reference)
     {
         ImageViewCreateInfo createInfo = new()
         {
@@ -2073,7 +2077,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             context,
             in createInfo,
             "AdvancedVisibility.LateDepthPyramid",
-            out view);
+            out reference);
     }
 
     private static uint DivideRoundUp(uint value, uint divisor)
@@ -2098,14 +2102,16 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 baseMipLevel,
                 levelCount,
                 arrayLayer,
-                out view))
+                out VulkanInternedImageViewReference reference))
         {
+            view = default;
             return false;
         }
-        if (storage.TryTrackAcquiredView(view))
+        view = reference.View;
+        if (storage.TryTrackAcquiredView(reference))
             return true;
 
-        _ = context.Resources.Images.ReleaseInternedView(view);
+        context.Resources.Images.ReleaseInternedView(reference);
         view = default;
         return false;
     }

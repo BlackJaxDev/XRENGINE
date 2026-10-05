@@ -4,8 +4,9 @@ Updated: 2026-10-05. Runtime evidence cutoff: 2026-10-05.
 Owner: Rendering, with Profiler, Runtime Core, serialization and ImGui Editor owners below.
 Status: **Cumulative acceptance NOT PASSED. The original CPU/TSR report is open.**
 
-This checklist contains remaining work and conditions for reopening deferred
-work. Completed results and historical status reports are in the
+This checklist contains remaining work, conditions for reopening deferred
+work, and a short list of scoped fixes completed in this run. Detailed results
+and historical status reports are in the
 [result record](../../progress/rendering/vulkan-stall-remediation-results.md).
 Architecture is in [scene preparation and publication](../../../architecture/rendering/vulkan-scene-preparation-and-publication.md)
 and [editor background preparation](../../../architecture/editor/background-preparation.md).
@@ -25,19 +26,50 @@ Do not close broader contracts from a narrow stall result.
 
 ## Next Work
 
-The active Vulkan/OpenXR hardware regression takes priority. Start with cold
-and post-Play pipeline-admission gaps in the hardware worklist below. Preserve
-Advanced/CpuDirect Sponza and strict SinglePassStereo during isolation.
+### Completed fixes in this run
 
-The desktop target is above 100 fresh FPS during camera motion, with one
-directional light and no removed features. The latest interior route measures
-92.09-92.46 FPS with the shadow lane versus 33.65-33.74 generically. The target
-is unmet. Earlier exterior-route results do not close this gate.
+- [x] **Validate the exact XR package generation.** Scoped Monado package gate passed. See [results](../../progress/rendering/vulkan-stall-remediation-results.md#monado-package-consumption) and [investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md).
+- [x] **Keep the deferred-light color output attached.** Scoped stereo color-attachment gate passed. See [results](../../progress/rendering/vulkan-stall-remediation-results.md#deferred-stereo-color-attachment).
+- [x] **Grow compact stable-bin rows before writes.** Scoped stable-bin regression gate passed. See [results](../../progress/rendering/vulkan-stall-remediation-results.md#stable-bin-manifest-growth).
+- [x] **Qualify image-view retirement by creation generation.** Ownership-only Monado gate and focused 11/11 Release tests passed. See [results](../../progress/rendering/vulkan-stall-remediation-results.md#generation-qualified-image-view-ownership) and [investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#scoped-image-view-ownership-closeout).
+
+### Active and next work
+
+- [ ] **Publish strict stereo temporal history only after queue acceptance.** The scoped source, build, and normal Monado gates below passed. Controlled fault recovery and cold/warm RenderDoc checks remain open; see the [gate record](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#next-gate-accepted-temporal-history-publication).
+  - [x] Seal exact native history identities, require recorded resolve producers and both-eye history copies, and publish only after queue acceptance. Astra reviewed the source. The Release build passed with zero warnings and errors.
+  - [x] Recover after cold startup and a camera cut. Both eyes seeded generation two after the compatible-program admission gap. Keep that gap open as separate work.
+  - [x] Complete a 60-second warm liveness window with no failed recording outcomes. The 62.417-second window added 1,150 completed recordings and zero deferred recordings.
+  - [x] Complete a Play/Edit round trip and view both eye previews after recovery.
+  - [x] Restart the Monado session and finish normal teardown. Both runs balanced per-eye acquire/release counts, drained retired generations, and reported no device loss.
+  - [x] Prove that an injected submit rejection does not publish accepted history. The exact rejected frame has no stereo commit; both adjacent frames commit both eyes. The ring has no lost entries or diagnostic failures.
+  - [x] Prove that an injected recording failure does not publish accepted history. The rejected frame has no stereo commit, and recording resumes with complete both-eye commits.
+  - [ ] Prove that an accepted-publication fault publishes history exactly once.
+  - [ ] Inspect cold and warm stereo RenderDoc captures for both-eye history validity and output quality.
+  - [ ] Resolve the smoke-run editor shutdown delay. OpenXR teardown completes, but the editor does not return to write its automatic summary. Saved diagnostic exports do not count as full smoke-suite passes.
+- [ ] **Accept TSR ordering and image quality.** Keep the broader visual and output gate open after history publication passes.
+
+The active Vulkan/OpenXR hardware regression continues beyond these scoped
+fixes. After temporal history publication, resume the cold and post-Play
+pipeline-admission gaps below. Preserve Advanced/CpuDirect Sponza and strict SinglePassStereo
+during isolation. Use Monado for OpenXR testing. The
+[current Monado investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md)
+tracks the current history-publication gate. Simulator results do not close
+physical headset and comfort gates.
+
+Work stopped at the user's request after the recording-failure check. The named
+test editor is stopped. Resume with the accepted-publication failure check and
+cold/warm RenderDoc evidence before closing temporal history.
+
+The desktop target remains above 100 fresh FPS during camera motion, with one
+directional light and no removed features. The latest interior route measured
+92.09-92.46 FPS with the shadow lane versus 33.65-33.74 FPS with the generic
+path. The target remains unmet. Earlier exterior-route results do not close this
+gate.
 
 After hardware isolation, resolve the invalid OpenGL control, run matched
-shadow/temporal comparisons, and continue allocation/lifetime and CPU/GPU
+shadow and temporal comparisons, and continue allocation, lifetime, and CPU/GPU
 attribution. The user waived replay of the unavailable original recording on
-October 3. This is not a fix or a reproduced result; live symptom evidence and
+October 3. This is not a fix or a reproduced result. Live symptom evidence and
 user confirmation remain required.
 
 ## OpenXR Stereo And Desktop Regression Worklist

@@ -299,11 +299,16 @@ public sealed partial class VulkanSourceArchitectureGuardrailTests
     [Test]
     public void PrimaryRecording_UsesOneReusableRenderScopeController()
     {
-        string source = SourceContractWorkspace.ReadVulkanRendererSource();
-        source.ShouldContain("recordingScratch.RenderScope");
-        source.ShouldContain("renderScope.Activate(");
-        source.ShouldContain("renderScope.Deactivate()");
-        source.ShouldContain("renderScope.ShouldPreserveForContextChange(");
+        string preparation = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Preparation.cs");
+        string operations = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Operations.cs");
+        string renderScopes = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.RenderScopes.cs");
+        preparation.ShouldContain("recordingState.RenderScope = recordingState.RecordingScratch.RenderScope;");
+        preparation.ShouldContain("recordingState.RenderScope.Deactivate();");
+        operations.ShouldContain("state.RenderScope.ShouldPreserveForContextChange(");
+        renderScopes.ShouldContain("recordingState.RenderScope.Activate(");
     }
     [Test]
     public void PrimaryRecordingEntryPoints_RemainShortContextCoordinators()

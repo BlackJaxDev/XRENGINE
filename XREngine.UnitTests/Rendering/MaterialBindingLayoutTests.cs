@@ -15,18 +15,17 @@ public sealed class MaterialBindingLayoutTests
         MaterialBindingLayout layout = MaterialBindingLayouts.OpaqueDeferred;
 
         layout.RenderPass.ShouldBe((int)EDefaultRenderPass.OpaqueDeferred);
-        layout.RowWordCount.ShouldBe(12u);
-        layout.RowByteCount.ShouldBe(48u);
-        GPUMaterialTable.MaterialEntryUIntCount.ShouldBe(12u);
+        layout.RowWordCount.ShouldBe(36u);
+        layout.RowByteCount.ShouldBe(144u);
+        GPUMaterialTable.MaterialEntryUIntCount.ShouldBe(layout.RowWordCount);
 
         layout.PackedMembers[0].Name.ShouldBe("AlbedoHandleIndex");
         layout.PackedMembers[0].WordOffset.ShouldBe(0u);
-        layout.PackedMembers[3].Name.ShouldBe("Flags");
+        layout.PackedMembers[3].Name.ShouldBe("EmissiveHandleIndex");
         layout.PackedMembers[3].WordOffset.ShouldBe(3u);
-        layout.PackedMembers[4].Name.ShouldBe("BaseColorOpacity");
-        layout.PackedMembers[4].WordOffset.ShouldBe(4u);
-        layout.PackedMembers[5].Name.ShouldBe("RMSE");
-        layout.PackedMembers[5].WordOffset.ShouldBe(8u);
+        WordOffset(layout, "Flags").ShouldBe(4);
+        WordOffset(layout, "BaseColorOpacity").ShouldBe(8);
+        WordOffset(layout, "RMSE").ShouldBe(12);
     }
 
     [Test]
@@ -45,7 +44,8 @@ public sealed class MaterialBindingLayoutTests
             supportsGeneratedMaterialTableDispatch: baseline.SupportsGeneratedMaterialTableDispatch);
 
         changed.LayoutHash.ShouldNotBe(baseline.LayoutHash);
-        changed.RowWordCount.ShouldBeGreaterThan(baseline.RowWordCount);
+        WordOffset(changed, "Clearcoat").ShouldBe(34);
+        changed.RowWordCount.ShouldBe(baseline.RowWordCount);
     }
 
     [Test]
@@ -143,11 +143,13 @@ public sealed class MaterialBindingLayoutTests
         row[0].ShouldBe(2u);
         row[1].ShouldBe(3u);
         row[2].ShouldBe(4u);
-        row[3].ShouldBe(0x80000007u);
-        UIntToFloat(row[4]).ShouldBe(0.25f, 0.000001f);
-        UIntToFloat(row[7]).ShouldBe(0.9f, 0.000001f);
-        UIntToFloat(row[8]).ShouldBe(0.1f, 0.000001f);
-        UIntToFloat(row[11]).ShouldBe(0.4f, 0.000001f);
+        row[WordOffset(layout, "Flags")].ShouldBe(0x80000007u);
+        int baseColorOffset = WordOffset(layout, "BaseColorOpacity");
+        int rmseOffset = WordOffset(layout, "RMSE");
+        UIntToFloat(row[baseColorOffset]).ShouldBe(0.25f, 0.000001f);
+        UIntToFloat(row[baseColorOffset + 3]).ShouldBe(0.9f, 0.000001f);
+        UIntToFloat(row[rmseOffset]).ShouldBe(0.1f, 0.000001f);
+        UIntToFloat(row[rmseOffset + 3]).ShouldBe(0.4f, 0.000001f);
     }
 
     [Test]
@@ -159,13 +161,15 @@ public sealed class MaterialBindingLayoutTests
         MaterialBindingRowPacker.WriteDefaultRow(layout, row);
 
         row[0].ShouldBe(0u);
-        row[3].ShouldBe(0u);
-        UIntToFloat(row[4]).ShouldBe(1.0f, 0.000001f);
-        UIntToFloat(row[7]).ShouldBe(1.0f, 0.000001f);
-        UIntToFloat(row[8]).ShouldBe(1.0f, 0.000001f);
-        UIntToFloat(row[9]).ShouldBe(0.0f, 0.000001f);
-        UIntToFloat(row[10]).ShouldBe(1.0f, 0.000001f);
-        UIntToFloat(row[11]).ShouldBe(0.0f, 0.000001f);
+        row[WordOffset(layout, "Flags")].ShouldBe(0u);
+        int baseColorOffset = WordOffset(layout, "BaseColorOpacity");
+        int rmseOffset = WordOffset(layout, "RMSE");
+        UIntToFloat(row[baseColorOffset]).ShouldBe(1.0f, 0.000001f);
+        UIntToFloat(row[baseColorOffset + 3]).ShouldBe(1.0f, 0.000001f);
+        UIntToFloat(row[rmseOffset]).ShouldBe(1.0f, 0.000001f);
+        UIntToFloat(row[rmseOffset + 1]).ShouldBe(0.0f, 0.000001f);
+        UIntToFloat(row[rmseOffset + 2]).ShouldBe(1.0f, 0.000001f);
+        UIntToFloat(row[rmseOffset + 3]).ShouldBe(0.0f, 0.000001f);
     }
 
     [Test]
@@ -206,4 +210,10 @@ public sealed class MaterialBindingLayoutTests
 
     private static float UIntToFloat(uint value)
         => BitConverter.UInt32BitsToSingle(value);
+
+    private static int WordOffset(MaterialBindingLayout layout, string name)
+    {
+        layout.TryGetPackedMember(name, out MaterialBindingPackedMember member).ShouldBeTrue();
+        return (int)member.WordOffset;
+    }
 }

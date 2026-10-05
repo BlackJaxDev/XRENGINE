@@ -40,8 +40,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             : key;
 
         descriptor = NormalizeAttachmentViewKey(descriptor);
-        ImageView replacement = CreateView(descriptor, _view);
-        if (replacement.Handle == _view.Handle)
+        VulkanOwnedImageView replacement = CreateView(descriptor, _view);
+        if (replacement == _view)
             return;
 
         DestroyView(ref _view);
@@ -53,7 +53,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// The aspect mask is normalised to ensure depth/stencil formats don't include the
     /// color bit.
     /// </summary>
-    private ImageView CreateView(AttachmentViewKey descriptor, ImageView reusableView = default)
+    private VulkanOwnedImageView CreateView(AttachmentViewKey descriptor, VulkanOwnedImageView reusableView = default)
     {
         if (_image.Handle == 0)
         {
@@ -85,17 +85,21 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             }
         };
 
-        if (BackendContext.Resources.Images.IsAvailableForDescriptor(reusableView) &&
+        if (reusableView.IsValid &&
+            BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
+                new VulkanResourceLifetimeKey(ObjectType.ImageView, reusableView.Handle)) == reusableView.Generation &&
+            BackendContext.Resources.Images.IsAvailableForDescriptor(reusableView) &&
             BackendContext.Resources.Images.IsStructurallyEquivalent(reusableView, in viewInfo))
             return reusableView;
 
         if (Api!.CreateImageView(Device, ref viewInfo, null, out ImageView created) != Result.Success)
             throw new Exception("Failed to create image view.");
-        BackendContext.Resources.Images.RegisterView(
+        ulong nativeGeneration = BackendContext.Resources.Images.RegisterView(
             created,
             in viewInfo,
             $"VkImageBackedTexture.View:{ResolveLogicalResourceName() ?? Data.Name ?? GetDescribingName()}");
-        return created;
+        TraceImageViewCreation(created, viewInfo.Image, nativeGeneration);
+        return new VulkanOwnedImageView(created, nativeGeneration);
     }
 
     /// <summary>
@@ -154,17 +158,20 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     }
 
     /// <summary>Destroys a single image view and resets the handle to <c>default</c>.</summary>
-    private void DestroyView(ref ImageView view)
+    private void DestroyView(ref VulkanOwnedImageView view)
     {
         if (view.Handle != 0)
         {
             BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
                 default,
                 default,
-                view,
+                view.View,
                 [],
                 default,
-                0),
+                0,
+                view.Generation,
+                null,
+                true),
                 "VkImageBackedTexture.DestroyView");
             view = default;
         }
@@ -180,18 +187,24 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// <summary>Destroys only the views for the currently active physical image.</summary>
     private void DestroyCurrentViews(bool removeActiveCacheEntry)
     {
-        ImageView primaryView = _view;
+        VulkanOwnedImageView primaryView = _view;
         ImageView[] attachmentViews;
+        ulong[] attachmentGenerations;
         if (_attachmentViews.Count > 0)
         {
             attachmentViews = new ImageView[_attachmentViews.Count];
+            attachmentGenerations = new ulong[_attachmentViews.Count];
             int index = 0;
-            foreach ((_, ImageView attachmentView) in _attachmentViews)
-                attachmentViews[index++] = attachmentView;
+            foreach ((_, VulkanOwnedImageView attachmentView) in _attachmentViews)
+            {
+                attachmentViews[index] = attachmentView.View;
+                attachmentGenerations[index++] = attachmentView.Generation;
+            }
         }
         else
         {
             attachmentViews = [];
+            attachmentGenerations = [];
         }
 
         if (primaryView.Handle != 0 || attachmentViews.Length != 0)
@@ -199,10 +212,13 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
                 default,
                 default,
-                primaryView,
+                primaryView.View,
                 attachmentViews,
                 default,
-                0),
+                0,
+                primaryView.Generation,
+                attachmentGenerations,
+                true),
                 "VkImageBackedTexture.DestroyCurrentViews");
         }
 
@@ -276,7 +292,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 return _view;
             }
 
-            if (_attachmentViews.TryGetValue(key, out ImageView cached) &&
+            if (_attachmentViews.TryGetValue(key, out VulkanOwnedImageView cached) &&
                 (!IsImageViewBackedByCurrentImage(cached) ||
                  !BackendContext.Resources.Images.IsAvailableForDescriptor(cached)))
             {
@@ -346,7 +362,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             if (key == primaryKey)
                 return _view;
 
-            if (_attachmentViews.TryGetValue(key, out ImageView cached) &&
+            if (_attachmentViews.TryGetValue(key, out VulkanOwnedImageView cached) &&
                 (!IsImageViewBackedByCurrentImage(cached) ||
                  !BackendContext.Resources.Images.IsAvailableForDescriptor(cached)))
             {
@@ -391,13 +407,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                     ResolvedArrayLayers,
                     DefaultViewType,
                     AspectFlags));
-            view = key == primaryKey
+            VulkanOwnedImageView owned = key == primaryKey
                 ? _view
-                : _attachmentViews.TryGetValue(key, out ImageView cached)
+                : _attachmentViews.TryGetValue(key, out VulkanOwnedImageView cached)
                     ? cached
                     : default;
+            view = owned.View;
             return view.Handle != 0 &&
-                IsImageViewBackedByCurrentImage(view) &&
+                IsImageViewBackedByCurrentImage(owned) &&
                 BackendContext.Resources.Images.IsAvailableForDescriptor(view);
         }
     }
@@ -445,6 +462,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             backingImage.Handle == _image.Handle &&
             BackendContext.Resources.Images.IsLiveBackedByLiveImage(view);
     }
+
+    private bool IsImageViewBackedByCurrentImage(VulkanOwnedImageView owned)
+        => owned.IsValid &&
+            BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
+                new VulkanResourceLifetimeKey(ObjectType.ImageView, owned.Handle)) == owned.Generation &&
+            IsImageViewBackedByCurrentImage(owned.View);
 
     bool IVkFrameBufferAttachmentSource.TryGetAttachmentExtent(int mipLevel, int layerIndex, out Extent2D extent)
     {
@@ -709,19 +732,16 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
                     new VulkanResourceLifetimeKey(ObjectType.Image, _image.Handle)),
                 CreatePhysicalImageViewCacheValue(_view),
-                new Dictionary<AttachmentViewKey, PhysicalImageViewCacheValue>(_attachmentViews.Count));
+                new Dictionary<AttachmentViewKey, VulkanOwnedImageView>(_attachmentViews.Count));
             _physicalImageViewCache.Add(entry);
         }
 
-        foreach (KeyValuePair<AttachmentViewKey, ImageView> pair in _attachmentViews)
-            entry.AttachmentViews[pair.Key] = CreatePhysicalImageViewCacheValue(pair.Value);
+        foreach (KeyValuePair<AttachmentViewKey, VulkanOwnedImageView> pair in _attachmentViews)
+            entry.AttachmentViews[pair.Key] = pair.Value;
     }
 
-    private PhysicalImageViewCacheValue CreatePhysicalImageViewCacheValue(ImageView view)
-        => new(
-            view,
-            BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
-                new VulkanResourceLifetimeKey(ObjectType.ImageView, view.Handle)));
+    private VulkanOwnedImageView CreatePhysicalImageViewCacheValue(VulkanOwnedImageView view)
+        => view;
 
     private bool TryRestorePhysicalImageViewCache(VulkanPhysicalImageGroup group, Image image)
     {
@@ -733,18 +753,18 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (!IsCachedImageViewBackedByImage(entry.PrimaryView, image))
             return false;
 
-        _view = entry.PrimaryView.View;
+        _view = entry.PrimaryView;
         _attachmentViews.Clear();
-        foreach (KeyValuePair<AttachmentViewKey, PhysicalImageViewCacheValue> pair in entry.AttachmentViews)
+        foreach (KeyValuePair<AttachmentViewKey, VulkanOwnedImageView> pair in entry.AttachmentViews)
         {
             if (IsCachedImageViewBackedByImage(pair.Value, image))
-                _attachmentViews[pair.Key] = pair.Value.View;
+                _attachmentViews[pair.Key] = pair.Value;
         }
         return _view.Handle != 0;
     }
 
     private bool IsCachedImageViewBackedByImage(
-        PhysicalImageViewCacheValue cached,
+        VulkanOwnedImageView cached,
         Image image)
     {
         ImageView view = cached.View;
@@ -796,40 +816,50 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (_physicalImageViewCache.Count == 0)
             return;
 
-        List<ImageView> cachedViews = [];
-        HashSet<ulong> seenHandles = [];
+        List<VulkanOwnedImageView> cachedViews = [];
+        HashSet<(ulong Handle, ulong Generation)> seenViews = [];
         foreach (PhysicalImageViewCacheEntry entry in _physicalImageViewCache)
         {
             AddUniqueView(entry.PrimaryView);
-            foreach (PhysicalImageViewCacheValue view in entry.AttachmentViews.Values)
+            foreach (VulkanOwnedImageView view in entry.AttachmentViews.Values)
                 AddUniqueView(view);
         }
 
         if (cachedViews.Count > 0)
         {
+            ImageView[] views = new ImageView[cachedViews.Count];
+            ulong[] generations = new ulong[cachedViews.Count];
+            for (int index = 0; index < cachedViews.Count; index++)
+            {
+                views[index] = cachedViews[index].View;
+                generations[index] = cachedViews[index].Generation;
+            }
             BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
                 default,
                 default,
                 default,
-                [.. cachedViews],
+                views,
                 default,
-                0),
+                0,
+                0,
+                generations,
+                true),
                 "VkImageBackedTexture.DestroyPhysicalImageViewCache");
         }
 
         _physicalImageViewCache.Clear();
 
-        void AddUniqueView(PhysicalImageViewCacheValue cached)
+        void AddUniqueView(VulkanOwnedImageView cached)
         {
             ImageView view = cached.View;
             if (view.Handle == 0 ||
                 BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
                     new VulkanResourceLifetimeKey(ObjectType.ImageView, view.Handle)) != cached.Generation ||
-                !seenHandles.Add(view.Handle))
+                !seenViews.Add((view.Handle, cached.Generation)))
             {
                 return;
             }
-            cachedViews.Add(view);
+            cachedViews.Add(cached);
         }
     }
 
@@ -837,19 +867,15 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         VulkanPhysicalImageGroup group,
         ulong imageHandle,
         ulong imageGeneration,
-        PhysicalImageViewCacheValue primaryView,
-        Dictionary<AttachmentViewKey, PhysicalImageViewCacheValue> attachmentViews)
+        VulkanOwnedImageView primaryView,
+        Dictionary<AttachmentViewKey, VulkanOwnedImageView> attachmentViews)
     {
         public VulkanPhysicalImageGroup Group { get; } = group;
         public ulong ImageHandle { get; } = imageHandle;
         public ulong ImageGeneration { get; } = imageGeneration;
-        public PhysicalImageViewCacheValue PrimaryView { get; set; } = primaryView;
-        public Dictionary<AttachmentViewKey, PhysicalImageViewCacheValue> AttachmentViews { get; } = attachmentViews;
+        public VulkanOwnedImageView PrimaryView { get; set; } = primaryView;
+        public Dictionary<AttachmentViewKey, VulkanOwnedImageView> AttachmentViews { get; } = attachmentViews;
     }
-
-    private readonly record struct PhysicalImageViewCacheValue(
-        ImageView View,
-        ulong Generation);
 
     private static bool BloomDiagnosticsEnabled
         => XREnvironment.IsEnabled(XREngineEnvironmentVariables.BloomDiag);

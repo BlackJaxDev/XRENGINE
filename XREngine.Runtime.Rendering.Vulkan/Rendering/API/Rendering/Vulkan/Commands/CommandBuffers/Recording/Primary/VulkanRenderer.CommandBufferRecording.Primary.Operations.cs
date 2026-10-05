@@ -1609,6 +1609,12 @@ internal sealed partial class VulkanCommandRuntime
         int uniformSlot = GetMeshDrawUniformSlot(ref state, info.OperationIndex, payload.Draw.Renderer, state.ActiveContext, payload.Draw);
         bool recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot);
         state.CurrentPrimaryOperationRecorded = recorded;
+        int originalIndex = state.Ops.GetHeader(info.OperationIndex).OriginalIndex;
+        if (IsTemporalResolveProducer(originalIndex))
+        {
+            PendingMeshDraw temporalDraw = payload.Draw;
+            RecordTemporalResolveProducer(ref state, originalIndex, in temporalDraw, recorded);
+        }
         if (state.ActiveInlineQuery is not null && recorded) state.ActiveInlineQueryRecordedDraw = true;
         if (recorded)
         {
@@ -1666,7 +1672,7 @@ internal sealed partial class VulkanCommandRuntime
     {
         if (payload.ColorBit && (payload.InFbo is null || payload.OutFbo is null)) EnsureSwapchainColorAttachmentLayoutForBlit(ref state);
         CmdBeginLabel(state.CommandBuffer, "Blit");
-        bool recorded = RecordBlitPayload(state.CommandBuffer, state.ImageIndex, payload, in state.SwapchainTarget, exactColorSource: null);
+        bool recorded = RecordBlitPayload(state.CommandBuffer, state.ImageIndex, payload, in state.SwapchainTarget, exactColorSource: null, passIndex: info.PassIndex);
         if (payload.RequireExactCompatibility && !recorded)
             throw new VulkanPlanPreconditionException("A strict Vulkan blit was accepted into the frame plan but could not be recorded.");
         state.CurrentPrimaryOperationRecorded = recorded;
