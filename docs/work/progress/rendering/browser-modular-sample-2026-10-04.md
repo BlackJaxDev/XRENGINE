@@ -100,3 +100,24 @@ depth/stencil, filtered and malformed blits explicitly. Sample preparation
 stages the three custom and four canonical recipes in one cooker invocation.
 The x4 Editor publication and live browser checks remain pending after this
 repair; source inspection alone does not qualify them.
+
+The repaired exact commit `c9139dd69679c2872d956323971df46fb5292926` passes
+the real Windows publication and
+[custom browser job in run 37261633781](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37261633781/job/111616155761).
+Artifact `11325880578` has SHA-256
+`c7f9f7de62dd8b5bcda4f2f9231e64ab0148d5aa9b3bac334b5e33d9874e7192`.
+Two fresh contexts each exercise the original clear/quad sources and both
+authored x4 sources before and after resize. All eight x4 captures preserve the
+distinct CPU/GPU source IDs, four-sample rgba16float color and depth32float
+attachments, and the single-sample rgba16float resolved target. The native API
+observer sees direct scene draws for CPU selection and indexed-indirect scene
+draws for GPU selection, with actual color resolves and presentation.
+
+Every x4 capture's overlap center is (83, 128, 77, 255) in displayed bytes,
+matching the authored rear/front straight-alpha composition. Background and
+fractional-edge checks pass as well. The initial GPU and second-start resized
+CPU screenshots were inspected. This qualifies the sample's mono x4 color and
+blended behavior through its original custom graph. It does not establish
+custom depth/normal sidecars, unavailable sample/format rejection, simultaneous
+output isolation, physical-device performance or the full modular acceptance
+matrix.

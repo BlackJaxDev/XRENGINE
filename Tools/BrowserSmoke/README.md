@@ -452,3 +452,35 @@ Primary tool references: [Playwright browser selection](https://playwright.dev/d
 [Playwright browser launch](https://playwright.dev/docs/api/class-browsertype),
 [Chromium SwiftShader modes](https://github.com/chromium/chromium/blob/main/docs/gpu/swiftshader.md),
 and [Chrome headless WebGPU qualification](https://developer.chrome.com/blog/supercharge-web-ai-testing).
+
+## One approved native GPU capture
+
+`--native-owned-profile-once` is an inactive-by-default diagnostic for the
+Advanced software game-only route. It does not enable profiling in ordinary
+push CI or on a developer's computer. The dedicated one-shot workflow first
+verifies its immutable request and existing published bundle. A separate
+activation must bind that request to the exact checked-out commit and Actions
+run ID; a different run, rerun or changed request is rejected. Only the first
+attempt can consume the exclusive runner marker.
+
+The approved collector uses the already-installed perf binary through one
+fixed sudo/timeout command. It targets about eight seconds of user-space
+sampling on the isolated browser's verified GPU threads; the root supervisor
+sends INT at nine seconds and KILL one second later. It changes no security
+settings and does not install a profiler. Process identity is rechecked after
+disabled attachment and before enable. Incidental kernel-symbol metadata is
+discarded before analysis input is written. Unknown layouts, ownership changes,
+missing tools and incomplete cleanup fail closed without another capture.
+
+Raw data and control pipes stay outside upload paths and must be deleted before
+summary admission. The workflow suppresses ordinary harness logs and uploads
+only the allowlisted `owned-native-profile-summary.json`, capped at 128 KiB.
+An unverified privileged exit or cleanup interrupts the diagnostic, skips the
+comparison arm and forces process exit 86. The original application verdict and
+45-second compile budget remain unchanged; profiled timing is diagnostic
+evidence, not performance acceptance. Stripped binaries may identify only
+modules or code regions.
+
+After the single result, remove the request, activation and one-shot workflow.
+Any later capture requires a new explicit scope decision; editing or re-adding
+the request is not an automatic retry.

@@ -1342,8 +1342,34 @@ async function main() {
             report.browserCloseRequested = true;
             await browser.close().catch(error => { report.cleanupError = String(error); report.passed = false; });
         }
-        if (origin && !report.cleanupError && report.advancedRenderingFailures?.length)
-            await runNativeCompileIsolation(chromium, origin, report, config, instrumentedPage);
+        if (origin && !report.cleanupError && report.advancedRenderingFailures?.length) {
+            try { await runNativeCompileIsolation(chromium, origin, report, config, instrumentedPage); }
+            catch (error) {
+                if (!report.nativeCompileIsolation?.ownedGpuProfile?.requiresJobTermination) throw error;
+            }
+        }
+        if (report.nativeCompileIsolation?.ownedGpuProfile?.requiresJobTermination) {
+            report.passed = false;
+            report.ownedProfileForcedTermination = true;
+            report.finishedUtc = new Date().toISOString();
+            let deadline;
+            try {
+                server?.closeAllConnections();
+                server?.close();
+                await Promise.race([
+                    fs.writeFile(path.join(config.output, 'smoke-report.json'), JSON.stringify(report, null, 2)),
+                    new Promise((_, reject) => {
+                        deadline = setTimeout(() => reject(new Error('Owned profile failure report deadline.')), 2000);
+                    }),
+                ]);
+            } catch {
+                // An unverified privileged child must not keep the diagnostic alive
+                // while reporting or unrelated cleanup waits for more work.
+            } finally {
+                clearTimeout(deadline);
+                process.exit(86);
+            }
+        }
         if (server) await new Promise(resolve => server.close(resolve));
         report.finishedUtc = new Date().toISOString();
         await fs.writeFile(path.join(config.output, 'smoke-report.json'), JSON.stringify(report, null, 2));
