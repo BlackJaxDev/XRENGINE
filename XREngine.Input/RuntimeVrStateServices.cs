@@ -99,6 +99,20 @@ public interface IRuntimeVrStateServices
     /// </summary>
     event Action<RuntimeVrDeviceInfo>? DeviceDetected;
 
+    /// <summary>Raised when the runtime reference-space basis or session changes.</summary>
+    event Action? TrackingBasisChanged
+    {
+        add { }
+        remove { }
+    }
+
+    /// <summary>Raised after a new OpenXR session starts so device sources can be reacquired.</summary>
+    event Action? SessionGenerationChanged
+    {
+        add { }
+        remove { }
+    }
+
     /// <summary>
     /// Runtime currently providing VR state.
     /// </summary>
@@ -125,6 +139,13 @@ public interface IRuntimeVrStateServices
     /// User interpupillary distance in real-world meters.
     /// </summary>
     float RealWorldIPD { get; }
+
+    /// <summary>Measured real-world eye height used by the runtime VR state.</summary>
+    float RealWorldHeight
+    {
+        get => 1.8f;
+        set { }
+    }
 
     /// <summary>
     /// Interpupillary distance after applying runtime avatar/view scaling.
@@ -172,6 +193,19 @@ public interface IRuntimeVrStateServices
     /// </summary>
     RuntimeVrTrackerInfo[] GetKnownOpenXrTrackers();
 
+    /// <summary>Current transport and pose status for a persistent OpenXR tracker path.</summary>
+    RuntimeVrTrackerStatus GetOpenXrTrackerStatus(string persistentPath)
+        => RuntimeVrTrackerStatus.ProviderUnavailable;
+
+    /// <summary>Requests a controlled tracker action refresh after the player opens calibration.</summary>
+    void RequestTrackerRefreshForCalibration() { }
+
+    /// <summary>True when a discovered tracker still needs an explicit action refresh.</summary>
+    bool IsTrackerRefreshPending => false;
+
+    /// <summary>The active controller interaction profile path, if available.</summary>
+    string? GetCurrentInteractionProfile(bool leftHand) => null;
+
     /// <summary>Copies one coherent predicted publication; insufficient capacity reports the required count without copying.</summary>
     bool TryCopyTrackingSnapshot(Span<RuntimeVrTrackerPose> trackers, out RuntimeVrTrackingSnapshot snapshot, out int trackerCount)
     {
@@ -208,6 +242,14 @@ public interface IRuntimeVrStateServices
     /// </summary>
     bool TryGetHeadToEyeLocalPose(bool leftEye, out Matrix4x4 pose);
 
+    /// <summary>Identifier and runtime time of the latest predicted pose snapshot.</summary>
+    bool TryGetCurrentPoseSnapshot(out long snapshotId, out long sampleTime)
+    {
+        snapshotId = 0;
+        sampleTime = 0;
+        return false;
+    }
+
     /// <summary>Gets the runtime's asymmetric projection for an eye without initializing a runtime.</summary>
     bool TryGetEyeProjectionMatrix(bool leftEye, float nearPlane, float farPlane, out Matrix4x4 projection);
 }
@@ -228,6 +270,8 @@ public static class RuntimeVrStateServices
     private static event Action<float>? StaticDesiredAvatarHeightChanged;
     private static event Action<float>? StaticModelHeightChanged;
     private static event Action<RuntimeVrDeviceInfo>? StaticDeviceDetected;
+    private static event Action? StaticTrackingBasisChanged;
+    private static event Action? StaticSessionGenerationChanged;
     private static readonly object DeviceEventSync = new();
 
     static RuntimeVrStateServices()
@@ -284,6 +328,12 @@ public static class RuntimeVrStateServices
     public static float RealWorldIPD
         => Current.RealWorldIPD;
 
+    public static float RealWorldHeight
+    {
+        get => Current.RealWorldHeight;
+        set => Current.RealWorldHeight = value;
+    }
+
     /// <inheritdoc cref="IRuntimeVrStateServices.ScaledIPD"/>
     public static float ScaledIPD
         => Current.ScaledIPD;
@@ -322,6 +372,18 @@ public static class RuntimeVrStateServices
     /// <inheritdoc cref="IRuntimeVrStateServices.GetKnownOpenXrTrackers"/>
     public static RuntimeVrTrackerInfo[] GetKnownOpenXrTrackers()
         => Current.GetKnownOpenXrTrackers();
+
+    /// <inheritdoc cref="IRuntimeVrStateServices.GetOpenXrTrackerStatus"/>
+    public static RuntimeVrTrackerStatus GetOpenXrTrackerStatus(string persistentPath)
+        => Current.GetOpenXrTrackerStatus(persistentPath);
+
+    public static void RequestTrackerRefreshForCalibration()
+        => Current.RequestTrackerRefreshForCalibration();
+
+    public static bool IsTrackerRefreshPending => Current.IsTrackerRefreshPending;
+
+    public static string? GetCurrentInteractionProfile(bool leftHand)
+        => Current.GetCurrentInteractionProfile(leftHand);
 
     /// <inheritdoc cref="IRuntimeVrStateServices.TryCopyTrackingSnapshot"/>
     public static bool TryCopyTrackingSnapshot(Span<RuntimeVrTrackerPose> trackers, out RuntimeVrTrackingSnapshot snapshot, out int trackerCount)
@@ -402,6 +464,18 @@ public static class RuntimeVrStateServices
         }
     }
 
+    public static event Action? TrackingBasisChanged
+    {
+        add => StaticTrackingBasisChanged += value;
+        remove => StaticTrackingBasisChanged -= value;
+    }
+
+    public static event Action? SessionGenerationChanged
+    {
+        add => StaticSessionGenerationChanged += value;
+        remove => StaticSessionGenerationChanged -= value;
+    }
+
     #endregion
 
     #region Pose and device queries
@@ -430,6 +504,10 @@ public static class RuntimeVrStateServices
     public static bool TryGetHeadToEyeLocalPose(bool leftEye, out Matrix4x4 pose)
         => Current.TryGetHeadToEyeLocalPose(leftEye, out pose);
 
+    /// <inheritdoc cref="IRuntimeVrStateServices.TryGetCurrentPoseSnapshot"/>
+    public static bool TryGetCurrentPoseSnapshot(out long snapshotId, out long sampleTime)
+        => Current.TryGetCurrentPoseSnapshot(out snapshotId, out sampleTime);
+
     /// <inheritdoc cref="IRuntimeVrStateServices.TryGetEyeProjectionMatrix"/>
     public static bool TryGetEyeProjectionMatrix(bool leftEye, float nearPlane, float farPlane, out Matrix4x4 projection)
         => Current.TryGetEyeProjectionMatrix(leftEye, nearPlane, farPlane, out projection);
@@ -448,6 +526,8 @@ public static class RuntimeVrStateServices
         services.ModelHeightChanged += ForwardModelHeightChanged;
         if (StaticDeviceDetected is not null)
             services.DeviceDetected += ForwardDeviceDetected;
+        services.TrackingBasisChanged += ForwardTrackingBasisChanged;
+        services.SessionGenerationChanged += ForwardSessionGenerationChanged;
     }
 
     private static void Detach(IRuntimeVrStateServices services)
@@ -460,6 +540,8 @@ public static class RuntimeVrStateServices
         services.ModelHeightChanged -= ForwardModelHeightChanged;
         if (StaticDeviceDetected is not null)
             services.DeviceDetected -= ForwardDeviceDetected;
+        services.TrackingBasisChanged -= ForwardTrackingBasisChanged;
+        services.SessionGenerationChanged -= ForwardSessionGenerationChanged;
     }
 
     private static void ForwardFrameAdvanced()
@@ -482,6 +564,12 @@ public static class RuntimeVrStateServices
 
     private static void ForwardDeviceDetected(RuntimeVrDeviceInfo device)
         => StaticDeviceDetected?.Invoke(device);
+
+    private static void ForwardTrackingBasisChanged()
+        => StaticTrackingBasisChanged?.Invoke();
+
+    private static void ForwardSessionGenerationChanged()
+        => StaticSessionGenerationChanged?.Invoke();
 
     #endregion
 
@@ -532,11 +620,25 @@ public static class RuntimeVrStateServices
             remove { }
         }
 
+
+        public event Action? TrackingBasisChanged
+        {
+            add { }
+            remove { }
+        }
+
+        public event Action? SessionGenerationChanged
+        {
+            add { }
+            remove { }
+        }
+
         public RuntimeVrRuntimeKind ActiveRuntime => RuntimeVrRuntimeKind.None;
         public bool IsOpenXRActive => false;
         public bool IsInVR => false;
         public object? CalibrationSettings => null;
         public float RealWorldIPD => 0.0f;
+        public float RealWorldHeight { get; set; } = 1.8f;
         public float ScaledIPD => 0.0f;
         public float ModelToRealWorldHeightRatio => 1.0f;
         public float ModelHeight { get; set; } = 1.0f;

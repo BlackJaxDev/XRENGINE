@@ -22,6 +22,8 @@ namespace XREngine.Components.VR
         }
 
         private float _calibrationRadius = 0.25f;
+        private float _configuredTrackingHold = float.NaN;
+        private float _configuredTrackingFade = float.NaN;
         public float CalibrationRadius
         {
             get => _calibrationRadius;
@@ -332,6 +334,9 @@ namespace XREngine.Components.VR
                 && (hipsTarget.tfm is not IVrTrackingPoseSource hipsPose || hipsPose.PoseCurrentlyUsable);
             bool useHead = resolvedHead is not null
                 && (headTarget.tfm is not IVrTrackingPoseSource headPose || headPose.PoseCurrentlyUsable);
+            // A missing bound hips source must not turn headset lean into locomotion.
+            if (hipsTarget.tfm is not null && !useHip)
+                return;
             if (!useHip && !useHead)
                 return;
 
@@ -370,6 +375,7 @@ namespace XREngine.Components.VR
         {
             PublishSimulationSnapshot();
             ProcessCalibrationRequest();
+            ApplyTrackingSettings();
             EnsureInitialTrackingRig();
             Spectator?.UpdateFirstPersonVisibility(IsCalibrating);
             ApplySpectatorDesktopRouting();
@@ -390,6 +396,19 @@ namespace XREngine.Components.VR
             }
             else
                 MovePlayer(avatarRootTfm, playspaceRootTfm);
+        }
+
+        private void ApplyTrackingSettings()
+        {
+            UserSettings? settings = RuntimeVrStateServices.PlayerSettings;
+            if (settings is null || GetIKSolver() is not { } solver)
+                return;
+            if (_configuredTrackingHold == settings.TrackingLossHoldSeconds &&
+                _configuredTrackingFade == settings.TrackingSourceBlendSeconds)
+                return;
+            solver.ConfigureTrackingTransitions(settings.TrackingLossHoldSeconds, settings.TrackingSourceBlendSeconds);
+            _configuredTrackingHold = settings.TrackingLossHoldSeconds;
+            _configuredTrackingFade = settings.TrackingSourceBlendSeconds;
         }
 
         private static Matrix4x4 GetFixedEyeToHeadOffset(IHumanoidVrCalibrationRig humanoid, Vector3 scaledEyeOffset)
@@ -441,6 +460,7 @@ namespace XREngine.Components.VR
 
 
             solver.IsActive = false;
+            solver.SuspendCalibrationAnimationWriters();
             humanoid.ClearIKTargets();
             humanoid.PosePreviewMode = EHumanoidPosePreviewMode.TPose;
             if (!humanoid.SetCanonicalCalibrationPose())
@@ -501,7 +521,10 @@ namespace XREngine.Components.VR
             humanoid.SetIKTarget(EHumanoidIKTarget.Head, Headset, GetFixedEyeToHeadOffset(humanoid, eyeOffset));
             humanoid.SetIKTarget(EHumanoidIKTarget.LeftHand, LeftController, LeftControllerOffset);
             humanoid.SetIKTarget(EHumanoidIKTarget.RightHand, RightController, RightControllerOffset);
-            VrCalibrationResult result = RuntimeVRIKCalibrator.CalibrateSnapshot(solver, RuntimeVrStateServices.CalibrationSettings, poses);
+            float headTiltTolerance = RuntimeVrStateServices.PlayerSettings?.CalibrationHeadTiltTolerance
+                ?? RuntimeVrStateServices.CalibrationHeadTiltToleranceDegrees;
+            VrCalibrationResult result = RuntimeVRIKCalibrator.CalibrateSnapshot(
+                solver, RuntimeVrStateServices.CalibrationSettings, poses, headTiltTolerance);
             if (!result.Success)
             {
                 RestoreCalibrationState(humanoid, solver);
@@ -511,6 +534,7 @@ namespace XREngine.Components.VR
                 return;
             }
             humanoid.PosePreviewMode = _previousPreviewMode;
+            solver.EndCalibrationPose();
             solver.IsActive = true;
             IsCalibrating = false;
             HasCommittedCalibration = true;
@@ -569,7 +593,7 @@ namespace XREngine.Components.VR
             AddBindingSlot(EHumanoidIKTarget.RightKnee, humanoid.RightKneeNode?.Transform, true, true);
             float scale = MathF.Abs(humanoid.RootTransform.LossyWorldScale.Y);
             int count = VrTrackerBinder.Bind(_bindingSlots.AsSpan(0, slotCount), _bindingCandidates.AsSpan(0, candidateCount),
-                CalibrationRadius * scale, _previewBindings);
+                (RuntimeVrStateServices.PlayerSettings?.TrackerBindingCutoff ?? CalibrationRadius) * scale, _previewBindings);
             ClearTrackerTargets(humanoid);
             for (int i = 0; i < count; i++)
             {

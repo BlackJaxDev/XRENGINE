@@ -12,13 +12,15 @@ public sealed class VrSpectatorFollowState
     public void Reset() => _initialized = false;
 
     public VrSpectatorFollowPose Evaluate(in Matrix4x4 playerRoot, Matrix4x4? hips,
-        VrSpectatorFollowSettings settings, float deltaSeconds)
+        VrSpectatorFollowSettings settings, float deltaSeconds, Vector3? semanticForward = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         Vector3 root = playerRoot.Translation;
         if (!Finite(root))
             throw new ArgumentException("Player-root position must be finite.", nameof(playerRoot));
-        Vector3 forward = HorizontalForward(hips ?? playerRoot);
+        Vector3 forward = semanticForward is Vector3 bodyForward && Finite(bodyForward)
+            ? new Vector3(bodyForward.X, 0, bodyForward.Z)
+            : HorizontalForward(hips ?? playerRoot);
         if (forward.LengthSquared() < 1e-8f)
             forward = HorizontalForward(playerRoot);
         if (forward.LengthSquared() < 1e-8f)

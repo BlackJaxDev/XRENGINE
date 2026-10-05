@@ -112,12 +112,16 @@ public sealed class RuntimeWorldHost : IDisposable
             childRecalculationLoopType: Engine.EffectiveSettings.RecalcChildMatricesLoopType);
     }
 
-    /// <summary>Returns a composed world to editor operation without a game mode or simulation.</summary>
+    /// <summary>
+    /// Returns a composed world to editor operation without a game mode or simulation.
+    /// A session that is still beginning or ending, because its transition threw, is
+    /// ended first so the world restarts from a stopped state with its timer callbacks linked.
+    /// </summary>
     public Task BeginEditModeAsync()
     {
         ThrowIfDisposed();
-        if (CoreWorld.IsPlaySessionActive)
-            EndPlay();
+        if (CoreWorld.PlayState != RuntimeWorldPlayState.Stopped)
+            EndPlaySession();
 
         CoreWorld.PhysicsEnabled = false;
         CoreWorld.GameMode = null;
@@ -130,6 +134,11 @@ public sealed class RuntimeWorldHost : IDisposable
         if (_disposed || !CoreWorld.IsPlaySessionActive)
             return;
 
+        EndPlaySession();
+    }
+
+    private void EndPlaySession()
+    {
         UnlinkTimeCallbacks();
         CoreWorld.EndPlay(
             afterNodeDeactivation: () =>
@@ -217,6 +226,7 @@ public sealed class RuntimeWorldHost : IDisposable
         Engine.Time.Timer.WorldSwapBuffers += RenderWorld.GlobalSwapBuffers;
         Engine.Time.Timer.PreCollectVisible += RenderWorld.GlobalPreCollectVisible;
         Engine.Time.Timer.CollectVisible += RenderWorld.GlobalCollectVisible;
+        RenderWorld.SetCollectPublicationOpen(true);
         _timeCallbacksLinked = true;
     }
 
@@ -225,6 +235,9 @@ public sealed class RuntimeWorldHost : IDisposable
         if (!_timeCallbacksLinked)
             return;
 
+        // Close publication first: direct callers such as OpenXR do not go through
+        // the timer subscription, and closing waits out any in-flight publication.
+        RenderWorld.SetCollectPublicationOpen(false);
         Engine.Time.Timer.UpdateFrame -= CoreWorld.Update;
         Engine.Time.Timer.PostUpdateFrame -= ProcessDirtyTransforms;
         Engine.Time.Timer.FixedUpdate -= CoreWorld.FixedUpdate;

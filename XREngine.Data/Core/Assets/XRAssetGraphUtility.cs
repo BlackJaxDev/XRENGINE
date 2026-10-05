@@ -101,6 +101,12 @@ public static class XRAssetGraphUtility
             0,
             root.GetType().Name);
 
+        // An asset this root no longer reaches (a replaced sub-object) stays registered in the
+        // global object cache; its back-reference would keep this root reachable after it is gone.
+        foreach (XRAsset previous in root.EmbeddedAssets)
+            if (!discoveredAssets.Contains(previous) && ReferenceEquals(previous.SourceAsset, root))
+                previous.SourceAsset = previous;
+
         root.EmbeddedAssets.Set(discoveredAssets, reportRemoved: false, reportAdded: false, reportModified: false);
 
         sw.Stop();

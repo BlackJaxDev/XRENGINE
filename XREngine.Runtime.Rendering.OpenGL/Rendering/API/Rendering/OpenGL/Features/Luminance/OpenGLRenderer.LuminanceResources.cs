@@ -169,20 +169,32 @@ float ComputeMeteredLuminance()
     int h = max(1, ts.y);
     int total = w * h;
     int sampleCount = min(MAX_METERING_SAMPLES, total);
-    int stride = max(1, total / sampleCount);
+    // Center one sample in each linear stratum, including the image tail.
+    // Row-major sampling can still alias spatial patterns within a stratum.
+    int sampleQuotient = total / sampleCount;
+    int sampleRemainder = total % sampleCount;
+    int sampleCenterRemainder = (sampleRemainder + (sampleQuotient % 2) * sampleCount) / 2;
 
     if (MeteringMode == 1)
     {
-    // Log-average (geometric mean) luminance.
-    float sumLog = 0.0;
+    // Anchor dark samples to the mean of this mip-backed sample set.
+    float lums[MAX_METERING_SAMPLES];
+    float sumLum = 0.0;
     for (int i = 0; i < sampleCount; ++i)
     {
-        int idx = i * stride;
+        int idx = i * sampleQuotient + sampleQuotient / 2
+            + (i * sampleRemainder + sampleCenterRemainder) / sampleCount;
         int x = idx % w;
         int y = idx / w;
         float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
-        sumLog += log(max(lum, 1e-6));
+        lums[i] = lum;
+        sumLum += lum;
     }
+    float meanLum = sumLum / float(max(sampleCount, 1));
+    float logFloor = max(meanLum * 0.25, 1e-4);
+    float sumLog = 0.0;
+    for (int i = 0; i < sampleCount; ++i)
+        sumLog += log(max(lums[i], logFloor));
     return exp(sumLog / float(max(sampleCount, 1)));
     }
 
@@ -198,7 +210,8 @@ float ComputeMeteredLuminance()
 
     for (int i = 0; i < sampleCount; ++i)
     {
-        int idx = i * stride;
+        int idx = i * sampleQuotient + sampleQuotient / 2
+            + (i * sampleRemainder + sampleCenterRemainder) / sampleCount;
         int x = idx % w;
         int y = idx / w;
         float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
@@ -222,7 +235,8 @@ float ComputeMeteredLuminance()
     float lums[MAX_METERING_SAMPLES];
     for (int i = 0; i < sampleCount; ++i)
     {
-    int idx = i * stride;
+    int idx = i * sampleQuotient + sampleQuotient / 2
+        + (i * sampleRemainder + sampleCenterRemainder) / sampleCount;
     int x = idx % w;
     int y = idx / w;
     lums[i] = SafeLum(FetchRgbAt(ivec2(x, y), mip));
@@ -356,19 +370,30 @@ float ComputeMeteredLuminance()
     int h = max(1, ts3.y);
     int total = w * h;
     int sampleCount = min(MAX_METERING_SAMPLES, total);
-    int stride = max(1, total / sampleCount);
+    // Match the mono shader's centered coverage without changing stereo averaging.
+    int sampleQuotient = total / sampleCount;
+    int sampleRemainder = total % sampleCount;
+    int sampleCenterRemainder = (sampleRemainder + (sampleQuotient % 2) * sampleCount) / 2;
 
     if (MeteringMode == 1)
     {
-    float sumLog = 0.0;
+    float lums[MAX_METERING_SAMPLES];
+    float sumLum = 0.0;
     for (int i = 0; i < sampleCount; ++i)
     {
-        int idx = i * stride;
+        int idx = i * sampleQuotient + sampleQuotient / 2
+            + (i * sampleRemainder + sampleCenterRemainder) / sampleCount;
         int x = idx % w;
         int y = idx / w;
         float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
-        sumLog += log(max(lum, 1e-6));
+        lums[i] = lum;
+        sumLum += lum;
     }
+    float meanLum = sumLum / float(max(sampleCount, 1));
+    float logFloor = max(meanLum * 0.25, 1e-4);
+    float sumLog = 0.0;
+    for (int i = 0; i < sampleCount; ++i)
+        sumLog += log(max(lums[i], logFloor));
     return exp(sumLog / float(max(sampleCount, 1)));
     }
 
@@ -383,7 +408,8 @@ float ComputeMeteredLuminance()
 
     for (int i = 0; i < sampleCount; ++i)
     {
-        int idx = i * stride;
+        int idx = i * sampleQuotient + sampleQuotient / 2
+            + (i * sampleRemainder + sampleCenterRemainder) / sampleCount;
         int x = idx % w;
         int y = idx / w;
         float lum = SafeLum(FetchRgbAt(ivec2(x, y), mip));
@@ -406,7 +432,8 @@ float ComputeMeteredLuminance()
     float lums[MAX_METERING_SAMPLES];
     for (int i = 0; i < sampleCount; ++i)
     {
-    int idx = i * stride;
+    int idx = i * sampleQuotient + sampleQuotient / 2
+        + (i * sampleRemainder + sampleCenterRemainder) / sampleCount;
     int x = idx % w;
     int y = idx / w;
     lums[i] = SafeLum(FetchRgbAt(ivec2(x, y), mip));

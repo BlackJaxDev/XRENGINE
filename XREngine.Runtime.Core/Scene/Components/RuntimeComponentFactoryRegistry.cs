@@ -19,18 +19,21 @@ public static class RuntimeComponentFactoryRegistry
         }
     }
 
-    public static bool TryCreate(Type type, out XRComponent? component)
+    internal static bool TryGetFactory(Type type, out Func<XRComponent>? factory)
     {
         ArgumentNullException.ThrowIfNull(type);
-        Func<XRComponent>? factory;
         lock (Sync)
-            Factories.TryGetValue(type, out factory);
-        if (factory is null)
+            return Factories.TryGetValue(type, out factory);
+    }
+
+    public static bool TryCreate(Type type, out XRComponent? component)
+    {
+        if (!TryGetFactory(type, out Func<XRComponent>? factory))
         {
             component = null;
             return false;
         }
-        component = factory();
+        component = factory!();
         if (component is null || component.GetType() != type)
             throw new InvalidOperationException($"Component factory '{type}' returned a different or null type.");
         return true;

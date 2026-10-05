@@ -47,6 +47,12 @@ namespace XREngine.Animation
 
         private BakedValueStore<TValue>? _baked;
 
+        internal TValue[] CapturePublishedBakedValues()
+            => _baked?.CaptureValues() ?? [];
+
+        internal void RestorePublishedBakedValues(TValue[] values, EAnimationValueCompressionAlgorithm encodedCompression)
+            => _baked = BakedValueStore<TValue>.EncodeUnmanaged(values, encodedCompression);
+
         /// <summary>
         /// If true, speed calculated relative to the current tangent rather than multiplied directly with the current velocity (change in position).
         /// </summary>

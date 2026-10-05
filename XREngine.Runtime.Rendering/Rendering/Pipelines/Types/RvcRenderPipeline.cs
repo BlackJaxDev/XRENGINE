@@ -368,8 +368,18 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderSt
         }
 
         base.DescribeResources(builder);
-        DeclareRvcResources(builder);
+        if ((((DefaultPipelineResourceFeature)builder.Profile.FeatureMask) & DefaultPipelineResourceFeature.RvcResourcesEnabled) != 0)
+            DeclareRvcResources(builder);
     }
+
+    /// <summary>
+    /// RVC targets and buffers exist only while the resolved plan schedules RVC GPU
+    /// stages. <see cref="ERvcPipelineMode.Off"/> and the Forward+ oracle plan none,
+    /// and declaring the set anyway allocated about 0.8 GB of two-layer stereo
+    /// targets at 2688² per eye that no pass writes.
+    /// </summary>
+    internal bool RequiresRvcResources
+        => LastRvcPlan.GpuPassExecution.PlannedStages != ERvcGpuPassStage.None;
 
     internal override ulong BuildResourceFeatureMaskForGenerationKey(
         XRRenderPipelineInstance instance,
@@ -381,7 +391,11 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderSt
                 .BuildResourceFeatureMaskForGenerationKey(instance, viewport);
         }
 
-        return base.BuildResourceFeatureMaskForGenerationKey(instance, viewport);
+        ulong mask = base.BuildResourceFeatureMaskForGenerationKey(instance, viewport);
+        // A mode change that starts or stops planning RVC stages replaces the generation.
+        if (RequiresRvcResources)
+            mask |= (ulong)DefaultPipelineResourceFeature.RvcResourcesEnabled;
+        return mask;
     }
 
     /// <summary>

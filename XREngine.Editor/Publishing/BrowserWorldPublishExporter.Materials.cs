@@ -68,6 +68,9 @@ public sealed partial class BrowserWorldPublishExporter
     {
         if (_textures.TryGetValue(texture, out string? id))
             return id;
+        // Streamed textures free their CPU pixels after upload; reload them from source.
+        if (!texture.TryRestoreReleasedResidentPixels(out string? reloadFailure))
+            throw Unsupported(path, $"texture '{texture.Name}' pixels could not be reloaded: {reloadFailure}");
         if (texture.MultiSample || texture.Rectangle || texture.GrabPass is not null ||
             texture.Width == 0 || texture.Height == 0 || (long)texture.Width * texture.Height * 4 > 4 * 1024 * 1024 ||
             texture.Mipmaps.Length == 0 || !texture.Mipmaps[0].HasData())

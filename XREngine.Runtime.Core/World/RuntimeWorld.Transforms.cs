@@ -14,7 +14,9 @@ public sealed partial class RuntimeWorld
     public void Update()
     {
         ThrowIfDisposed();
-        if (PlayState != RuntimeWorldPlayState.Playing)
+        bool playing = PlayState == RuntimeWorldPlayState.Playing;
+        RuntimeWorldTickTelemetry.UpdateCalled(playing);
+        if (!playing)
             return;
         TickGroup(ETickGroup.Normal);
         TickGroup(ETickGroup.Late);

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 using Silk.NET.Vulkan;
@@ -6,6 +7,22 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe partial class VkMeshRenderer
 {
+	// Shared by every mesh renderer. A workspace is held only for one descriptor publication,
+	// so the pool is bounded by concurrent publications; one fixed-capacity workspace per
+	// renderer cost hundreds of kilobytes for each of thousands of renderers.
+	private static readonly ConcurrentBag<DescriptorWriteScratch> s_descriptorWriteScratchPool = [];
+
+	private static DescriptorWriteScratch RentDescriptorWriteScratch()
+	{
+		if (!s_descriptorWriteScratchPool.TryTake(out DescriptorWriteScratch? scratch))
+			scratch = new DescriptorWriteScratch();
+		scratch.Clear();
+		return scratch;
+	}
+
+	private static void ReturnDescriptorWriteScratch(DescriptorWriteScratch scratch)
+		=> s_descriptorWriteScratchPool.Add(scratch);
+
 	private sealed class DescriptorWriteScratch
 	{
 		public readonly VulkanDescriptorScratchBuffer<WriteDescriptorSet> Writes = new();

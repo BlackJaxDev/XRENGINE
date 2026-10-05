@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />
+    <ProjectReference Include="..\..\XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj" />
     <ProjectReference Include="..\..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj" />
   </ItemGroup>
 </Project>

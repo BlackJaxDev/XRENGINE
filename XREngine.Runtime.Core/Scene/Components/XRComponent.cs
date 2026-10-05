@@ -6,6 +6,7 @@ using System.Runtime.Serialization;
 using XREngine.Data.Core;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Data.Runtime.AotParity;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Components
@@ -53,7 +54,7 @@ namespace XREngine.Components
 
         //TODO: figure out how to disallow users from constructing xrcomponents
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
-        internal protected XRComponent() { }
+        internal protected XRComponent() => RuntimeComponentConstructionContext.TryClaim(this);
 #pragma warning restore CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
 
         internal static T New<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] T>(SceneNode node) where T : XRComponent 
@@ -66,14 +67,45 @@ namespace XREngine.Components
         internal static T New<T>(SceneNode node, Func<T> factory) where T : XRComponent
         {
             ArgumentNullException.ThrowIfNull(factory);
-            T component = factory();
-            ArgumentNullException.ThrowIfNull(component);
+            return (T)NewFromFactory(node, typeof(T), factory, requireExactType: false);
+        }
 
-            component.ConstructionSetSceneNode(node);
-            component.OnTransformChanged();
-            component.World = node.World;
-            ComponentCreated?.Invoke(component);
-            return component;
+        private static XRComponent NewFromFactory(SceneNode node, Type type, Func<XRComponent> factory, bool requireExactType)
+        {
+            RuntimeComponentConstructionContext context = RuntimeComponentConstructionContext.Push(node, type, requireExactType);
+            XRComponent? component = null;
+            try
+            {
+                component = factory();
+                if (component is null || !ReferenceEquals(component, context.Claimed) ||
+                    (requireExactType && component.GetType() != type))
+                {
+                    throw new InvalidOperationException($"Component factory '{type}' did not return its node-bound construction instance.");
+                }
+            }
+            catch
+            {
+                context.Claimed?.AbortComponentConstruction();
+                throw;
+            }
+            finally
+            {
+                context.Pop();
+            }
+
+            try
+            {
+                component.ConstructionSetSceneNode(node);
+                component.OnTransformChanged();
+                component.World = node.World;
+                ComponentCreated?.Invoke(component);
+                return component;
+            }
+            catch
+            {
+                component.AbortComponentConstruction();
+                throw;
+            }
         }
 
         internal static XRComponent? New(SceneNode node, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)] Type t)
@@ -81,8 +113,14 @@ namespace XREngine.Components
             if (t is null || !t.IsSubclassOf(typeof(XRComponent)))
                 return null;
 
-            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(t,
-                XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+            if (RuntimeComponentFactoryRegistry.TryGetFactory(t, out Func<XRComponent>? factory))
+                return NewFromFactory(node, t, factory!, requireExactType: true);
+
+            if (XRRuntimeEnvironment.IsPublishedBuild)
+                throw new InvalidOperationException($"Published component type '{t}' has no registered constructor factory.");
+
+            AotParityDiagnostics.Report(t,
+                EAotParityCategory.ReflectiveFactory,
                 "XRComponent.New", "Register a generated component factory that preserves scene-node construction semantics.");
 
             //Specific order of operations to ensure the component is properly constructed:
@@ -154,14 +192,45 @@ namespace XREngine.Components
                 : node.GetComponents<T>().Where(x => !ReferenceEquals(x, this));
         }
 
+        internal void ConstructionBindSceneNode(SceneNode node)
+            => SetField(ref _sceneNode, node, publishNotifications: false, nameof(SceneNode));
+
         internal void ConstructionSetSceneNode(SceneNode node)
         {
-            _sceneNode = node;
-            _sceneNode.PropertyChanging += SceneNodePropertyChanging;
-            _sceneNode.PropertyChanged += SceneNodePropertyChanged;
+            if (ReferenceEquals(_sceneNode, node))
+            {
+                if (_sceneNodeEventsSubscribed)
+                    return;
+            }
+            else
+            {
+                if (_sceneNode is not null)
+                    throw new InvalidOperationException("A component cannot be rebound to a different scene node during construction.");
+                ConstructionBindSceneNode(node);
+            }
+            node.PropertyChanging += SceneNodePropertyChanging;
+            node.PropertyChanged += SceneNodePropertyChanged;
+            _sceneNodeEventsSubscribed = true;
+        }
+
+        private void AbortComponentConstruction()
+        {
+            _constructionFailed = true;
+            if (_sceneNode is not null)
+            {
+                _sceneNode.PropertyChanging -= SceneNodePropertyChanging;
+                _sceneNode.PropertyChanged -= SceneNodePropertyChanged;
+                _sceneNodeEventsSubscribed = false;
+                if (!_sceneNode.IsTransformNull)
+                    _sceneNode.Transform.RenderMatrixChanged -= OnTransformRenderWorldMatrixChanged;
+            }
+            try { AbortFailedConstruction(); }
+            catch { DeferExistingObjectCachePublication(); }
         }
 
         private SceneNode _sceneNode;
+        private bool _sceneNodeEventsSubscribed;
+        private bool _constructionFailed;
         private bool _clearTicksOnStop = true;
         private bool _componentActivated;
 
@@ -319,6 +388,7 @@ namespace XREngine.Components
                     World = _sceneNode.World;
                     _sceneNode.PropertyChanging += SceneNodePropertyChanging;
                     _sceneNode.PropertyChanged += SceneNodePropertyChanged;
+                    _sceneNodeEventsSubscribed = true;
                     if (!_sceneNode.IsTransformNull)
                         OnTransformChanged();
 
@@ -432,13 +502,15 @@ namespace XREngine.Components
             {
                 _sceneNode.PropertyChanging -= SceneNodePropertyChanging;
                 _sceneNode.PropertyChanged -= SceneNodePropertyChanged;
+                _sceneNodeEventsSubscribed = false;
             }
 
             //Unsubscribe from transform events
             if (_sceneNode is not null && !_sceneNode.IsTransformNull)
                 OnTransformChanging();
 
-            ComponentDestroyed?.Invoke(this);
+            if (!_constructionFailed)
+                ComponentDestroyed?.Invoke(this);
         }
 
         protected virtual void RemovedFromSceneNode(SceneNode sceneNode)

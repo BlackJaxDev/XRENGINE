@@ -23,6 +23,10 @@
         if (event.deltaY < 0) followTail = false;
     }, { passive: true });
     window.addEventListener("keydown", event => {
+        if (event.target.closest("summary") && ["Enter", " "].includes(event.key)) {
+            stopScroll();
+            followTail = false;
+        }
         if (["ArrowUp", "PageUp", "Home", "ArrowDown", "PageDown", "End", " "].includes(event.key)) {
             stopScroll();
             if (["ArrowUp", "PageUp", "Home"].includes(event.key)) followTail = false;
@@ -34,6 +38,10 @@
     document.addEventListener("pointerdown", () => { stopScroll(); followTail = false; });
     document.addEventListener("pointerup", () => { followTail = nearBottom() && !hasSelection(); });
     document.addEventListener("click", event => {
+        if (event.target.closest("summary")) {
+            stopScroll();
+            followTail = false;
+        }
         const link = event.target.closest("a");
         if (!link) return;
         event.preventDefault();
@@ -86,6 +94,11 @@
         if (element.textContent !== text) element.textContent = text;
     }
 
+    function context(id, text, sameRun) {
+        const section = document.getElementById(id);
+        if (!sameRun) section.open = text.length <= 4000 && text.split("\n").length <= 24;
+    }
+
     function saveSelection() {
         const selection = window.getSelection();
         if (selection.isCollapsed || !main.contains(selection.anchorNode) || !main.contains(selection.focusNode)) return null;
@@ -133,7 +146,10 @@
         const selected = sameRun && hasSelection();
         // Use an unchanged visible block to compensate for reflow above a scrolled-up reader.
         const anchor = sameRun && !followTail
-            ? [...response.children].find(node => node.getBoundingClientRect().bottom > 0) : null;
+            ? [...response.children].find(node => {
+                const bounds = node.getBoundingClientRect();
+                return bounds.bottom > 0 && bounds.top < window.innerHeight;
+            }) : null;
         const anchorTop = anchor?.getBoundingClientRect().top;
         if (!sameRun) { stopScroll(); followTail = snapshot.active; window.getSelection().removeAllRanges(); }
         motion = snapshot.motion && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -142,6 +158,8 @@
         plain("system", snapshot.system);
         plain("prompt", snapshot.prompt);
         plain("failure", snapshot.failure);
+        context("system-section", snapshot.system, sameRun);
+        context("prompt-section", snapshot.prompt, sameRun);
         document.getElementById("system-section").hidden = !snapshot.system.trim();
         document.getElementById("failure-section").hidden = !snapshot.failure;
         if (!sameRun || snapshot.response !== previous.response || snapshot.active !== previous.active) {

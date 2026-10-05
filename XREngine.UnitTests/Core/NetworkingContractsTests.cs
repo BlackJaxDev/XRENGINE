@@ -664,6 +664,7 @@ public sealed class NetworkingContractsTests
             ClientId = "client-a",
             DisplayName = "Client A",
             BuildVersion = "1.2.3",
+            WireProtocolVersion = RealtimeProtocol.WireVersion,
             ClientWorldAsset = clientWorldAsset,
             SessionId = sessionId,
             SessionToken = sessionToken

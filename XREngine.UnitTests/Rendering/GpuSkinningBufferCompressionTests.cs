@@ -25,9 +25,9 @@ public class GpuSkinningBufferCompressionTests
             [0] = 0.2f,
             [4] = 0.1f,
             [3] = 0.1f,
-        });
+        }, out List<Vertex> sourceVertices);
 
-        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.RebuildSkinningBuffersFromVertices(sourceVertices);
 
         mesh.SkinningInfluenceEncoding.ShouldBe(SkinningInfluenceEncoding.Core4Spill);
         mesh.SkinningCoreIndexFormat.ShouldBe(SkinningCoreIndexFormat.Core4x8);
@@ -53,9 +53,9 @@ public class GpuSkinningBufferCompressionTests
             [2] = 0.2f,
             [3] = 0.099f,
             [4] = 0.001f,
-        });
+        }, out List<Vertex> sourceVertices);
 
-        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.RebuildSkinningBuffersFromVertices(sourceVertices);
 
         mesh.SkinningInfluenceEncoding.ShouldBe(SkinningInfluenceEncoding.Core4NoSpill);
         mesh.HasSpillInfluences.ShouldBeFalse();
@@ -77,9 +77,9 @@ public class GpuSkinningBufferCompressionTests
         XRMesh mesh = CreateWeightedMesh(bones, new Dictionary<int, float>
         {
             [255] = 1.0f,
-        });
+        }, out List<Vertex> sourceVertices);
 
-        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.RebuildSkinningBuffersFromVertices(sourceVertices);
 
         mesh.SkinningInfluenceEncoding.ShouldBe(SkinningInfluenceEncoding.Core4NoSpill);
         mesh.SkinningCoreIndexFormat.ShouldBe(SkinningCoreIndexFormat.Core4x16);
@@ -93,9 +93,9 @@ public class GpuSkinningBufferCompressionTests
         XRMesh mesh = CreateWeightedMesh(bones, new Dictionary<int, float>
         {
             [0] = 1.0f,
-        });
+        }, out List<Vertex> sourceVertices);
 
-        Should.Throw<NotSupportedException>(() => mesh.RebuildSkinningBuffersFromVertices())
+        Should.Throw<NotSupportedException>(() => mesh.RebuildSkinningBuffersFromVertices(sourceVertices))
             .Message.ShouldContain("at most 65535 utilized bones");
     }
 
@@ -103,9 +103,9 @@ public class GpuSkinningBufferCompressionTests
     public void RebuildSkinningBuffers_ZeroInfluenceVertexUsesSentinels()
     {
         Transform[] bones = CreateBones(1);
-        XRMesh mesh = CreateWeightedMesh(bones, []);
+        XRMesh mesh = CreateWeightedMesh(bones, [], out List<Vertex> sourceVertices);
 
-        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.RebuildSkinningBuffersFromVertices(sourceVertices);
 
         mesh.SkinningInfluenceEncoding.ShouldBe(SkinningInfluenceEncoding.Core4NoSpill);
         mesh.HasSpillInfluences.ShouldBeFalse();
@@ -117,17 +117,21 @@ public class GpuSkinningBufferCompressionTests
     }
 
     [Test]
-    public void EnsureComputeSkinningBuffers_RebuildsCore4ForWeightedSourceMesh()
+    public void EnsureComputeSkinningBuffers_ValidatesExplicitCore4PackForWeightedSourceMesh()
     {
         Transform[] bones = CreateBones(2);
         XRMesh mesh = CreateWeightedMesh(bones, new Dictionary<int, float>
         {
             [0] = 0.75f,
             [1] = 0.25f,
-        });
+        }, out List<Vertex> sourceVertices);
 
+        // Packed buffers are the only weight data; validation never packs lazily from per-vertex objects.
         mesh.SupportsComputeSkinning.ShouldBeFalse();
+        Should.Throw<InvalidOperationException>(() => mesh.EnsureComputeSkinningBuffers())
+            .Message.ShouldContain("Core4 compute-skinning runtime format");
 
+        mesh.RebuildSkinningBuffersFromVertices(sourceVertices);
         mesh.EnsureComputeSkinningBuffers();
 
         mesh.SupportsComputeSkinning.ShouldBeTrue();
@@ -174,7 +178,7 @@ public class GpuSkinningBufferCompressionTests
         actual.Z.ShouldBe(expected.Z, 1e-5f);
     }
 
-    private static XRMesh CreateWeightedMesh(Transform[] bones, Dictionary<int, float> weights)
+    private static XRMesh CreateWeightedMesh(Transform[] bones, Dictionary<int, float> weights, out List<Vertex> sourceVertices)
     {
         Vector3 normal = Vector3.UnitZ;
         List<Vertex> vertices =
@@ -197,6 +201,7 @@ public class GpuSkinningBufferCompressionTests
         {
             UtilizedBones = CreateUtilizedBones(bones),
         };
+        sourceVertices = vertices;
         return mesh;
     }
 

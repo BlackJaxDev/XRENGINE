@@ -63,6 +63,7 @@ internal sealed partial class VulkanCommandRuntime
                     handle,
                     out VulkanCommandBufferTrackingBatch? batch))
             {
+                LaneRecordingContexts.AbandonContext(commandBuffer);
                 return false;
             }
 
@@ -80,6 +81,7 @@ internal sealed partial class VulkanCommandRuntime
             }
 
             ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);
+            LaneRecordingContexts.AbandonContext(commandBuffer);
         }
 
         if (abandoned)
@@ -382,7 +384,7 @@ internal sealed partial class VulkanCommandRuntime
         trackingFailure = string.Empty;
 
         ulong handle = unchecked((ulong)commandBuffer.Handle);
-        if (LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
+        if (LaneRecordingContexts.TryGetActiveContext(commandBuffer, CommandBuffers.ResolveRecordingGeneration(commandBuffer), out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
         {
             VulkanSealedRecordingReceipt receipt = laneContext.CreateReceipt(result == Result.Success);
             LaneRecordingContexts.EndContext(laneContext);

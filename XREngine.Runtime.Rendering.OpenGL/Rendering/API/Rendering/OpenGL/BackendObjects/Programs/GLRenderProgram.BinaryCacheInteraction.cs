@@ -273,6 +273,17 @@ namespace XREngine.Rendering.OpenGL
                     return false;
                 }
 
+                // Errors belong to the context, not the next GL call. Report any
+                // earlier errors before attributing a new one to ProgramBinary.
+                GLEnum preexistingError;
+                do
+                {
+                    preexistingError = Api.GetError();
+                    if (preexistingError != GLEnum.NoError)
+                        Debug.OpenGLWarning($"Preexisting GL error before shared-context program binary handoff for program {programId}: {preexistingError}.");
+                }
+                while (preexistingError != GLEnum.NoError);
+
                 long binaryStart = Stopwatch.GetTimestamp();
                 fixed (byte* ptr = snapshot.Binary)
                 {
@@ -296,14 +307,18 @@ namespace XREngine.Rendering.OpenGL
                     programId,
                     () => error = Api.GetError(),
                     "phase=shared-context-render-handoff-error-check");
+                string cacheKey = _activeBuildFingerprint ?? BuildBinaryCacheKey(Hash);
+                bool linked = TryValidateProgramBinaryLoad(programId, cacheKey, snapshot.Format, out string? linkFailure);
                 if (error != GLEnum.NoError)
                 {
-                    failureReason = $"glProgramBinary failed during shared-context render handoff: {error}.";
+                    failureReason = linked
+                        ? $"glProgramBinary generated {error} during shared-context render handoff, although the program reports linked."
+                        : $"glProgramBinary generated {error} during shared-context render handoff; link validation: {linkFailure}";
                     return false;
                 }
 
-                string cacheKey = _activeBuildFingerprint ?? BuildBinaryCacheKey(Hash);
-                return TryValidateProgramBinaryLoad(programId, cacheKey, snapshot.Format, out failureReason);
+                failureReason = linkFailure;
+                return linked;
             }
 
             /// <summary>

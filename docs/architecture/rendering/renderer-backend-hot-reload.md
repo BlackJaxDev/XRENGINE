@@ -120,6 +120,26 @@ variants. Asset create/change/rename/delete events are debounced, readable
 files are stabilized, and watcher callbacks never compile synchronously.
 Every source change advances a monotonic revision.
 
+Disk-backed text sources retain nonserialized provenance from successful raw
+loads and saves. Root-file changes prepare disk reads off the render thread;
+the frame-swap batch applies them only if the source identity, path, clean text
+baseline, edit revision and latest refresh request still match. Unsaved edits
+win over disk notifications. Generated sources with an assigned file path but
+no disk provenance remain memory authoritative. Include and snippet changes
+invalidate dependency caches without replacing authored root text.
+
+OpenGL Advanced variants share the template's authored text object. Include
+resolution runs against its current text before the variant's immutable
+preamble, binding and source-lowering transform. Disk refresh and unsaved text
+edits therefore invalidate the same derived programs; specialization must not
+replace that source with a synthetic include that rereads the disk root.
+
+Manual shader reload queues clean-root refresh and dependency invalidation.
+Its returned count selects reload targets; it does not certify publication or
+compilation. MCP reports `requested_shader_count`; `invalidated_shader_count`
+remains a compatibility alias with the same target-count semantics. Observe
+the backend's current program readiness and source fingerprint for completion.
+
 OpenGL and Vulkan compile candidates while last-good remains active. A result
 publishes only when its source revision is current and at a legal render
 boundary. Interface changes invalidate material/reflection, descriptor,
@@ -137,6 +157,14 @@ pipeline libraries, and recorded-command dependency signatures carry the
 program link generation. Results compiled or recorded against an older
 generation are rejected or rebuilt even when the managed program object itself
 did not change identity.
+
+Required Advanced Vulkan stages author a complete family using physical device
+capability and reservation identity. Asynchronous executable readiness is checked
+when preparing the sealed family, where pending compilation retries the frame.
+It must not independently remove stages during authoring. Initial or stale
+output-binding refresh starts at visibility preparation, so later stages cannot
+join a family whose preparation was absent. Structural completeness validation
+and optional-stage readiness still apply.
 
 The `Watch-Editor-RendererDevelopment` task applies supported method-body
 deltas. Decline any `dotnet watch` process restart for a rude edit and use

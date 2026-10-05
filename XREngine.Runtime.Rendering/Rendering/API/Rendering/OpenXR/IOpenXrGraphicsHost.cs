@@ -28,6 +28,8 @@ public interface IOpenXrGraphicsHost
     void ReleaseRetirement(OpenXrRetirementToken token);
     void AbandonRetirement(OpenXrRetirementToken token);
     IOpenXrNativeGraphicsBorrow BorrowNativeGraphicsDispatch();
+    /// <summary>Reports whether the current instance was created with the named extension enabled.</summary>
+    bool IsInstanceExtensionEnabled(string extensionName);
 
     IRuntimeRenderWorld? FrameWorld { get; }
     XRCamera? LeftEyeCamera { get; }

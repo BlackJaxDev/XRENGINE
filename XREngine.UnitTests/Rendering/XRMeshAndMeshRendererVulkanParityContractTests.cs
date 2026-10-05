@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using Shouldly;
 
@@ -84,11 +85,13 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MeshRenderMaterialResolver.cs");
         string enqueueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
 
-        enqueueSource.ShouldContain("MeshRenderMaterialResolver.ResolveLayeredShadowInstanceCount(effectiveMaterial, instances)");
+        Regex.Replace(enqueueSource, @"\s+", "").ShouldContain(
+            "MeshRenderMaterialResolver.ResolveLayeredShadowInstanceCount(resolvedMaterial.Material,instances,shadowUniformState,shadowCasterRelevance)");
         drawingSource.ShouldContain("bool skipLinePointDraws = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();");
         drawingSource.ShouldContain("Suppressed line/point index draws for shadow geometry pass");
         drawingSource.ShouldContain("Suppressed non-indexed {0} fallback for shadow geometry pass");
-        drawingSource.ShouldContain("MeshRenderMaterialResolver.ApplyShadowUniforms(programData, material, draw.ShadowUniformState);");
+        Regex.Replace(drawingSource, @"\s+", "").ShouldContain(
+            "MeshRenderMaterialResolver.ApplyShadowUniforms(programData,material,draw.ShadowUniformState,draw.ShadowCasterRelevance);");
 
         resolverSource.ShouldContain("CascadeLayerCount");
         resolverSource.ShouldContain("CascadeViewProjectionMatrices");

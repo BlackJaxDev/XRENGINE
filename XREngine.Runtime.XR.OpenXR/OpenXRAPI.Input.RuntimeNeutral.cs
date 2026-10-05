@@ -32,7 +32,7 @@ public unsafe partial class OpenXRAPI
     private int _openXrLateRightControllerAimValid;
 
     private XrAction _hapticAction;
-    private readonly Dictionary<string, OpenXrRuntimeInputAction> _runtimeInputActions = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string Category, string Name), OpenXrRuntimeInputAction> _runtimeInputActions = [];
     private readonly List<OpenXrRuntimeInputAction> _runtimeInputActionList = [];
 
     private ExtHandTracking? _handTracking;
@@ -47,16 +47,16 @@ public unsafe partial class OpenXRAPI
     private int _handTrackingUnavailableLogged;
 
     private HtcxViveTrackerInteraction? _viveTrackerInteraction;
-    private readonly HashSet<string> _enumeratedTrackerPaths = new(StringComparer.Ordinal);
-    private long _nextTrackerEnumerationTimestamp;
     private int _viveTrackerExtensionUnavailableLogged;
+    private long _nextViveTrackerEnumerationTick;
+    private readonly HashSet<string> _enumeratedViveTrackerPaths = new(StringComparer.Ordinal);
 
     public bool IsInputActionKnown(string category, string name, RuntimeVrActionValueType valueType)
     {
         if (valueType == RuntimeVrActionValueType.Haptic)
             return _hapticAction.Handle != 0;
 
-        return _runtimeInputActions.TryGetValue(MakeRuntimeInputKey(category, name), out OpenXrRuntimeInputAction? action) &&
+        return _runtimeInputActions.TryGetValue((category, name), out OpenXrRuntimeInputAction? action) &&
                action.ValueType == valueType;
     }
 
@@ -281,6 +281,10 @@ public unsafe partial class OpenXRAPI
         CreateRuntimeInputAction("Global", "Jump", RuntimeVrActionValueType.Boolean, ActionType.BooleanInput, _rightHandPath, "Jump");
         CreateRuntimeInputAction("Global", "ToggleQuickMenu", RuntimeVrActionValueType.Boolean, ActionType.BooleanInput, _leftHandPath, "Quick Menu");
         CreateRuntimeInputAction("Global", "ToggleMute", RuntimeVrActionValueType.Boolean, ActionType.BooleanInput, _leftHandPath, "Mute");
+        CreateRuntimeInputAction("Global", "OpenCalibration", RuntimeVrActionValueType.Boolean, ActionType.BooleanInput, _leftHandPath, "Open Calibration");
+        CreateRuntimeInputAction("Global", "CancelCalibration", RuntimeVrActionValueType.Boolean, ActionType.BooleanInput, _rightHandPath, "Cancel Calibration");
+        CreateRuntimeInputAction("Global", "CalibrationTriggerLeft", RuntimeVrActionValueType.Boolean, ActionType.BooleanInput, _leftHandPath, "Calibration Left Trigger");
+        CreateRuntimeInputAction("Global", "CalibrationTriggerRight", RuntimeVrActionValueType.Boolean, ActionType.BooleanInput, _rightHandPath, "Calibration Right Trigger");
         CreateRuntimeInputAction("Global", "GrabLeft", RuntimeVrActionValueType.Float, ActionType.FloatInput, _leftHandPath, "Grab Left");
         CreateRuntimeInputAction("Global", "GrabRight", RuntimeVrActionValueType.Float, ActionType.FloatInput, _rightHandPath, "Grab Right");
         CreateRuntimeInputAction("Global", "Locomote", RuntimeVrActionValueType.Vector2, ActionType.Vector2fInput, _leftHandPath, "Locomote");
@@ -322,7 +326,7 @@ public unsafe partial class OpenXRAPI
         }
 
         var runtimeAction = new OpenXrRuntimeInputAction(category, name, valueType, action, subactionPath);
-        _runtimeInputActions[MakeRuntimeInputKey(category, name)] = runtimeAction;
+        _runtimeInputActions[(category, name)] = runtimeAction;
         _runtimeInputActionList.Add(runtimeAction);
     }
 
@@ -429,6 +433,10 @@ public unsafe partial class OpenXRAPI
             (GetAction("Global", "Jump"), "/user/hand/right/input/a/click"),
             (GetAction("Global", "ToggleQuickMenu"), "/user/hand/left/input/system/click"),
             (GetAction("Global", "ToggleMute"), "/user/hand/left/input/b/click"),
+            (GetAction("Global", "OpenCalibration"), "/user/hand/left/input/a/click"),
+            (GetAction("Global", "CancelCalibration"), "/user/hand/right/input/b/click"),
+            (GetAction("Global", "CalibrationTriggerLeft"), "/user/hand/left/input/trigger/click"),
+            (GetAction("Global", "CalibrationTriggerRight"), "/user/hand/right/input/trigger/click"),
             (_handAimPoseAction, "/user/hand/left/input/aim/pose"),
             (_handAimPoseAction, "/user/hand/right/input/aim/pose"),
             (_hapticAction, "/user/hand/left/output/haptic"),
@@ -448,7 +456,11 @@ public unsafe partial class OpenXRAPI
             (GetAction("Global", "GrabRight"), "/user/hand/right/input/trigger/value"),
             (GetAction("Global", "Jump"), "/user/hand/right/input/trackpad/click"),
             (GetAction("Global", "ToggleQuickMenu"), "/user/hand/left/input/trackpad/click"),
-            (GetAction("Global", "ToggleMute"), "/user/hand/left/input/grip/click"),
+            (GetAction("Global", "ToggleMute"), "/user/hand/left/input/squeeze/click"),
+            (GetAction("Global", "OpenCalibration"), "/user/hand/left/input/menu/click"),
+            (GetAction("Global", "CancelCalibration"), "/user/hand/right/input/menu/click"),
+            (GetAction("Global", "CalibrationTriggerLeft"), "/user/hand/left/input/trigger/value"),
+            (GetAction("Global", "CalibrationTriggerRight"), "/user/hand/right/input/trigger/value"),
             (_handAimPoseAction, "/user/hand/left/input/aim/pose"),
             (_handAimPoseAction, "/user/hand/right/input/aim/pose"),
             (_hapticAction, "/user/hand/left/output/haptic"),
@@ -462,6 +474,10 @@ public unsafe partial class OpenXRAPI
             (GetAction("Global", "CalibrationCaptureRight"), "/user/hand/right/input/select/click"),
             (_handGripPoseAction, "/user/hand/left/input/grip/pose"),
             (_handGripPoseAction, "/user/hand/right/input/grip/pose"),
+            (GetAction("Global", "OpenCalibration"), "/user/hand/left/input/menu/click"),
+            (GetAction("Global", "CancelCalibration"), "/user/hand/right/input/menu/click"),
+            (GetAction("Global", "CalibrationTriggerLeft"), "/user/hand/left/input/select/click"),
+            (GetAction("Global", "CalibrationTriggerRight"), "/user/hand/right/input/select/click"),
             (GetAction("Global", "GrabLeft"), "/user/hand/left/input/select/click"),
             (GetAction("Global", "GrabRight"), "/user/hand/right/input/select/click"),
             (_handAimPoseAction, "/user/hand/left/input/aim/pose"),
@@ -484,6 +500,10 @@ public unsafe partial class OpenXRAPI
             (GetAction("Global", "Jump"), "/user/hand/right/input/a/click"),
             (GetAction("Global", "ToggleQuickMenu"), "/user/hand/left/input/menu/click"),
             (GetAction("Global", "ToggleMute"), "/user/hand/left/input/x/click"),
+            (GetAction("Global", "OpenCalibration"), "/user/hand/left/input/y/click"),
+            (GetAction("Global", "CancelCalibration"), "/user/hand/right/input/b/click"),
+            (GetAction("Global", "CalibrationTriggerLeft"), "/user/hand/left/input/trigger/value"),
+            (GetAction("Global", "CalibrationTriggerRight"), "/user/hand/right/input/trigger/value"),
             (_handAimPoseAction, "/user/hand/left/input/aim/pose"),
             (_handAimPoseAction, "/user/hand/right/input/aim/pose"),
             (_hapticAction, "/user/hand/left/output/haptic"),
@@ -499,10 +519,14 @@ public unsafe partial class OpenXRAPI
             (_handGripPoseAction, "/user/hand/right/input/grip/pose"),
             (GetAction("Global", "Locomote"), "/user/hand/left/input/thumbstick"),
             (GetAction("Global", "Turn"), "/user/hand/right/input/thumbstick"),
-            (GetAction("Global", "GrabLeft"), "/user/hand/left/input/squeeze/value"),
-            (GetAction("Global", "GrabRight"), "/user/hand/right/input/squeeze/value"),
+            (GetAction("Global", "GrabLeft"), "/user/hand/left/input/squeeze/click"),
+            (GetAction("Global", "GrabRight"), "/user/hand/right/input/squeeze/click"),
             (GetAction("Global", "Jump"), "/user/hand/right/input/trackpad/click"),
-            (GetAction("Global", "ToggleQuickMenu"), "/user/hand/left/input/trackpad/click"),
+            (GetAction("Global", "ToggleQuickMenu"), "/user/hand/left/input/thumbstick/click"),
+            (GetAction("Global", "OpenCalibration"), "/user/hand/left/input/menu/click"),
+            (GetAction("Global", "CancelCalibration"), "/user/hand/right/input/menu/click"),
+            (GetAction("Global", "CalibrationTriggerLeft"), "/user/hand/left/input/trigger/value"),
+            (GetAction("Global", "CalibrationTriggerRight"), "/user/hand/right/input/trigger/value"),
             (_handAimPoseAction, "/user/hand/left/input/aim/pose"),
             (_handAimPoseAction, "/user/hand/right/input/aim/pose"),
             (_hapticAction, "/user/hand/left/output/haptic"),
@@ -854,38 +878,59 @@ public unsafe partial class OpenXRAPI
         EnumerateViveTrackerPaths();
     }
 
-    private void EnumerateViveTrackerPaths()
+    private bool EnumerateViveTrackerPaths()
     {
         if (_viveTrackerInteraction is null)
-            return;
+            return true;
+
+        _nextViveTrackerEnumerationTick = Environment.TickCount64 + 1000;
 
         uint count = 0;
         Result countResult = _viveTrackerInteraction.EnumerateViveTrackerPathsHtcx(_instance, 0, ref count, null);
         if (countResult != Result.Success)
-            return;
-
-        _enumeratedTrackerPaths.Clear();
-        var paths = new ViveTrackerPathsHTCX[count];
-        for (int i = 0; i < paths.Length; i++)
-            paths[i].Type = StructureType.ViveTrackerPathsHtcx;
-
-        fixed (ViveTrackerPathsHTCX* pathsPtr = paths)
         {
-            Result result = _viveTrackerInteraction.EnumerateViveTrackerPathsHtcx(_instance, count, ref count, pathsPtr);
-            if (result != Result.Success)
+            Debug.Out($"OpenXR: xrEnumerateViveTrackerPathsHTCX count query failed: {countResult}");
+            return false;
+        }
+
+        _enumeratedViveTrackerPaths.Clear();
+        if (count != 0)
+        {
+            var paths = new ViveTrackerPathsHTCX[count];
+            for (int i = 0; i < paths.Length; i++)
+                paths[i].Type = StructureType.ViveTrackerPathsHtcx;
+
+            fixed (ViveTrackerPathsHTCX* pathsPtr = paths)
             {
-                Debug.Out($"OpenXR: xrEnumerateViveTrackerPathsHTCX failed: {result}");
-                return;
+                Result result = _viveTrackerInteraction.EnumerateViveTrackerPathsHtcx(_instance, count, ref count, pathsPtr);
+                if (result != Result.Success)
+                {
+                    Debug.Out($"OpenXR: xrEnumerateViveTrackerPathsHTCX failed: {result}");
+                    return false;
+                }
+            }
+
+            for (int i = 0; i < count && i < paths.Length; i++)
+            {
+                string? persistentPath = PathToString(paths[i].PersistentPath);
+                if (!string.IsNullOrWhiteSpace(persistentPath))
+                    _enumeratedViveTrackerPaths.Add(persistentPath);
+                AddViveTrackerPaths(paths[i]);
             }
         }
 
-        for (int i = 0; i < count && i < paths.Length; i++)
-            AddViveTrackerPaths(paths[i]);
-
         lock (_openXrPoseLock)
-            foreach (var entry in _openXrKnownTrackers)
-                if (!_enumeratedTrackerPaths.Contains(entry.Key))
-                    _openXrKnownTrackers[entry.Key] = entry.Value with { Connected = false, PoseAvailable = false, ActionActive = false, PositionValid = false, OrientationValid = false };
+        {
+            foreach (var (identity, info) in _openXrKnownTrackers)
+            {
+                if (!_enumeratedViveTrackerPaths.Contains(identity))
+                    _openXrKnownTrackers[identity] = info with { Connected = false, PoseAvailable = false, ActionActive = false, PositionValid = false, OrientationValid = false };
+            }
+        }
+
+        if (_inputCreated && Volatile.Read(ref _lateTrackerRefreshRequired) != 0 && !HasConnectedTrackerWithoutActionSpace())
+            Volatile.Write(ref _lateTrackerRefreshRequired, 0);
+        return true;
     }
 
     private void HandleViveTrackerConnectedEvent(EventDataViveTrackerConnectedHTCX* connected)
@@ -896,7 +941,7 @@ public unsafe partial class OpenXRAPI
         ViveTrackerPathsHTCX* paths = connected->Paths;
         if (paths is not null)
             AddViveTrackerPaths(*paths);
-        Debug.Out("OpenXR: physical tracker discovered or transport mapping changed. Body assignment remains calibration-owned.");
+        Debug.Out("OpenXR: Vive tracker connected or metadata changed. Newly connected trackers require an explicit calibration refresh before their pose action can be used.");
     }
 
     private void AddViveTrackerPaths(ViveTrackerPathsHTCX paths)
@@ -906,7 +951,6 @@ public unsafe partial class OpenXRAPI
         if (string.IsNullOrWhiteSpace(persistentPath))
             return;
 
-        _enumeratedTrackerPaths.Add(persistentPath);
         bool isNew;
         lock (_openXrPoseLock)
         {
@@ -925,6 +969,8 @@ public unsafe partial class OpenXRAPI
             };
         }
         AddTrackerSubactionPath(persistentPath);
+        if ((_inputAttached || _trackerPoseAction.Handle != 0) && !_trackerSpaces.ContainsKey(persistentPath))
+            Volatile.Write(ref _lateTrackerRefreshRequired, 1);
         if (isNew)
             Debug.Out($"OpenXR tracker discovered: persistentPath={persistentPath}, transportRole={rolePath ?? "<none>"}, inputAttached={_inputAttached}. Persistent-path streaming requires runtime validation.");
     }
@@ -945,7 +991,7 @@ public unsafe partial class OpenXRAPI
             for (int i = 0; i < count && i < properties.Length; i++)
                 if (Marshal.PtrToStringAnsi((nint)ptr[i].ExtensionName) == HtcxViveTrackerInteraction.ExtensionName)
                     _viveTrackerExtensionRevision = ptr[i].ExtensionVersion;
-        }
+    }
     }
 
     private static string? GetViveTrackerRoleName(string? userPath)
@@ -969,6 +1015,8 @@ public unsafe partial class OpenXRAPI
         try
         {
             _trackerSubactionPaths[userPath] = StringToPathOrThrow(userPath);
+            if (_inputCreated)
+                Volatile.Write(ref _lateTrackerRefreshRequired, 1);
         }
         catch (Exception ex)
         {
@@ -1018,7 +1066,7 @@ public unsafe partial class OpenXRAPI
     }
 
     private XrAction GetAction(string category, string name)
-        => _runtimeInputActions.TryGetValue(MakeRuntimeInputKey(category, name), out OpenXrRuntimeInputAction? action)
+        => _runtimeInputActions.TryGetValue((category, name), out OpenXrRuntimeInputAction? action)
             ? action.Action
             : default;
 
@@ -1028,7 +1076,7 @@ public unsafe partial class OpenXRAPI
         RuntimeVrActionValueType valueType,
         [NotNullWhen(true)] out OpenXrRuntimeInputAction? action)
     {
-        if (_runtimeInputActions.TryGetValue(MakeRuntimeInputKey(category, name), out action) &&
+        if (_runtimeInputActions.TryGetValue((category, name), out action) &&
             action.ValueType == valueType)
         {
             return true;
@@ -1046,9 +1094,6 @@ public unsafe partial class OpenXRAPI
             return _rightHandPath;
         return default;
     }
-
-    private static string MakeRuntimeInputKey(string category, string name)
-        => string.Concat(category, "/", name);
 
     private static string MakeOpenXrActionName(string category, string name)
     {

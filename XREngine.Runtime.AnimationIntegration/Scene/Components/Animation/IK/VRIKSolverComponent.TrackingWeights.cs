@@ -15,6 +15,14 @@ public partial class VRIKSolverComponent
     public float TrackingLossHoldSeconds { get; set; } = 0.1f;
     public float TrackingCrossfadeSeconds { get; set; } = 0.2f;
 
+    public void ConfigureTrackingTransitions(float lossHoldSeconds, float crossfadeSeconds)
+    {
+        if (float.IsFinite(lossHoldSeconds) && lossHoldSeconds >= 0f)
+            TrackingLossHoldSeconds = lossHoldSeconds;
+        if (float.IsFinite(crossfadeSeconds) && crossfadeSeconds > 0f)
+            TrackingCrossfadeSeconds = crossfadeSeconds;
+    }
+
     public VrSlotPoseState GetSlotPoseState(EHumanoidIKTarget slot) => _slotStates[(int)slot];
 
     internal void RestoreConfiguredHeadWeights()

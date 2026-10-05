@@ -21,6 +21,14 @@ namespace XREngine
         public Action<SceneNode>? NodeUncacheAction { get; set; }
 
         private readonly List<SceneNode> _rootNodes = [];
+        private readonly object _rootNodesLock = new();
+        private SceneNode[] _rootSnapshot = [];
+
+        /// <summary>
+        /// Stable root membership for concurrent traversal. A new array is published only
+        /// when roots are added or removed; readers do not lock or allocate.
+        /// </summary>
+        public ReadOnlySpan<SceneNode> Snapshot => Volatile.Read(ref _rootSnapshot);
 
         public SceneNode this[int index] => _rootNodes[index];
 
@@ -47,7 +55,14 @@ namespace XREngine
             node.Destroying += RootNodeDestroying;
             node.SetWorldContext(_world);
 
-            _rootNodes.Add(node);
+            lock (_rootNodesLock)
+            {
+                SceneNode[] next = new SceneNode[_rootNodes.Count + 1];
+                _rootNodes.CopyTo(next);
+                next[^1] = node;
+                _rootNodes.Add(node);
+                Volatile.Write(ref _rootSnapshot, next);
+            }
             CacheComponents(node);
 
             if (_world.IsPlaySessionActive)
@@ -72,8 +87,19 @@ namespace XREngine
             if (node is null)
                 return false;
 
-            if (!_rootNodes.Remove(node))
-                return false;
+            lock (_rootNodesLock)
+            {
+                int index = _rootNodes.IndexOf(node);
+                if (index < 0)
+                    return false;
+
+                SceneNode[] current = _rootSnapshot;
+                SceneNode[] next = new SceneNode[current.Length - 1];
+                Array.Copy(current, 0, next, 0, index);
+                Array.Copy(current, index + 1, next, index, next.Length - index);
+                _rootNodes.RemoveAt(index);
+                Volatile.Write(ref _rootSnapshot, next);
+            }
 
             node.Destroying -= RootNodeDestroying;
 

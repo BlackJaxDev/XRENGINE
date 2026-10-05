@@ -211,6 +211,8 @@ Core/Files/
 ├── CookedBinary/
 │   ├── CookedBinarySerializer.cs   # Core read/write/size
 │   ├── CookedBinarySerializer.Schema.cs
+│   ├── CookedBinarySharedValueTracker.cs  # Write/size/schema side of shared values
+│   ├── CookedBinarySharedValueTable.cs    # Read side of shared values
 │   ├── CookedBinaryTypeMarker.cs
 │   ├── IPostCookedBinaryDeserialize.cs
 │   └── Modules/
@@ -223,7 +225,24 @@ Core/Files/
 └── XRAsset.MemoryPack.cs           # Inner MemoryPack envelope for XRAsset
 ```
 
-## 6. Open Items
+## 6. Shared Values
+
+By default the cooked format writes every occurrence of an object in full, so
+an object reachable twice reads back as two objects. A serialization that sets
+`CookedBinarySerializationCallbacks.ShareReference` writes each selected
+value once: its first complete occurrence as a `SharedDefinition` (marker 62,
+a 7-bit identity, then the value in its own encoding) and later occurrences as
+a `SharedReference` (marker 63 and the identity). An occurrence met while the
+value itself is still being written, a cycle, is written by value as before.
+The size pass and the schema inspector make the same decisions as the writer,
+and the reader registers each definition after reading it; a reference to an
+unknown identity fails the read, and a definition met where its occurrence is
+skipped is still read in full. The option applies to `Serialize`,
+`CalculateSize` and `Deserialize` alike; custom serializers write and size
+their payloads through callback-free entry points and never share. Cooked
+assets on disk do not use it; play-mode snapshots do.
+
+## 7. Open Items
 
 - **Index-based resolution caching.** `AotRuntimeMetadataStore.ResolveType(int)`
   calls `Type.GetType()` on every invocation. If config blob loading ever

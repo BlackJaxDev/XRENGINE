@@ -6,6 +6,7 @@ using XREngine.Editor;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.PostProcessing;
 using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.UnitTests.Rendering;
@@ -170,24 +171,25 @@ public sealed class AlphaToCoveragePhase2Tests
         bloomSettingsSource.ShouldContain("private float _lod4Weight = 0.102f;");
         bloomSettingsSource.ShouldNotContain("usesLegacySingleMipProfile");
 
-        string pipelinePostProcessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
-    pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Enabled),\n            PostProcessParameterKind.Bool,\n            true,");
-        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.StartMip),\n            PostProcessParameterKind.Int,\n            1,");
-        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.EndMip),\n            PostProcessParameterKind.Int,\n            4,");
-        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod1Weight),\n            PostProcessParameterKind.Float,\n            1.0f,");
-        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod2Weight),\n            PostProcessParameterKind.Float,\n            0.649f,");
-        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod3Weight),\n            PostProcessParameterKind.Float,\n            0.397f,");
-        pipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod4Weight),\n            PostProcessParameterKind.Float,\n            0.102f,");
+        foreach (RenderPipeline pipeline in new RenderPipeline[] { new DefaultRenderPipeline(), new AdvancedRenderPipeline() })
+        {
+            pipeline.PostProcessSchema.TryGetStage(CommonPostProcessStages.BloomStageKey, out var stage).ShouldBeTrue();
+            stage.ShouldNotBeNull();
+            AssertDefault(nameof(BloomSettings.Enabled), PostProcessParameterKind.Bool, true);
+            AssertDefault(nameof(BloomSettings.StartMip), PostProcessParameterKind.Int, 1);
+            AssertDefault(nameof(BloomSettings.EndMip), PostProcessParameterKind.Int, 4);
+            AssertDefault(nameof(BloomSettings.Lod1Weight), PostProcessParameterKind.Float, 1.0f);
+            AssertDefault(nameof(BloomSettings.Lod2Weight), PostProcessParameterKind.Float, 0.649f);
+            AssertDefault(nameof(BloomSettings.Lod3Weight), PostProcessParameterKind.Float, 0.397f);
+            AssertDefault(nameof(BloomSettings.Lod4Weight), PostProcessParameterKind.Float, 0.102f);
 
-        string advancedPipelinePostProcessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
-    advancedPipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Enabled),\n            PostProcessParameterKind.Bool,\n            true,");
-        advancedPipelinePostProcessSource.ShouldContain("nameof(BloomSettings.StartMip),\n            PostProcessParameterKind.Int,\n            1,");
-        advancedPipelinePostProcessSource.ShouldContain("nameof(BloomSettings.EndMip),\n            PostProcessParameterKind.Int,\n            4,");
-        advancedPipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod1Weight),\n            PostProcessParameterKind.Float,\n            1.0f,");
-        advancedPipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod2Weight),\n            PostProcessParameterKind.Float,\n            0.649f,");
-        advancedPipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod3Weight),\n            PostProcessParameterKind.Float,\n            0.397f,");
-        advancedPipelinePostProcessSource.ShouldContain("nameof(BloomSettings.Lod4Weight),\n            PostProcessParameterKind.Float,\n            0.102f,");
-
+            void AssertDefault(string name, PostProcessParameterKind kind, object expected)
+            {
+                var parameter = stage!.Parameters.Single(parameter => parameter.Name == name);
+                parameter.Kind.ShouldBe(kind);
+                parameter.DefaultValue.ShouldBe(expected);
+            }
+        }
         string postProcessShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/PostProcess.fs").Replace("\r\n", "\n");
         postProcessShader.ShouldContain("uniform int BloomStartMip = 1;");
         postProcessShader.ShouldContain("uniform int BloomEndMip = 4;");
@@ -207,16 +209,29 @@ public sealed class AlphaToCoveragePhase2Tests
         bloomSettingsSource.ShouldContain("program.Uniform(\"BloomStrength\", enabled ? MathF.Max(0.0f, Strength) : 0.0f);");
         bloomSettingsSource.ShouldContain("program.Uniform(\"DebugBloomOnly\", enabled && _debugBloomOnly);");
 
-        string pipelinePostProcessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
-        pipelinePostProcessSource.ShouldContain("bool IsEnabled(object o) => ((BloomSettings)o).Enabled;");
-        pipelinePostProcessSource.ShouldContain("visibilityCondition: IsEnabled");
+        foreach (RenderPipeline pipeline in new RenderPipeline[] { new DefaultRenderPipeline(), new AdvancedRenderPipeline() })
+        {
+            pipeline.PostProcessSchema.TryGetStage(CommonPostProcessStages.BloomStageKey, out var stage).ShouldBeTrue();
+            stage.ShouldNotBeNull();
+            BloomSettings settings = new();
+            foreach (var parameter in stage!.Parameters)
+            {
+                if (parameter.Name == nameof(BloomSettings.Enabled))
+                {
+                    parameter.VisibilityCondition.ShouldBeNull();
+                    continue;
+                }
+                parameter.VisibilityCondition.ShouldNotBeNull();
+                settings.Enabled = true;
+                parameter.VisibilityCondition!(settings).ShouldBeTrue(parameter.Name);
+                settings.Enabled = false;
+                parameter.VisibilityCondition(settings).ShouldBeFalse(parameter.Name);
+            }
+        }
+        string pipelinePostProcessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs");
         pipelinePostProcessSource.ShouldContain("bool settingsDisabled = GetBloomSettings() is { Enabled: false };");
-
-        string advancedPipelinePostProcessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
-        advancedPipelinePostProcessSource.ShouldContain("bool IsEnabled(object o) => ((BloomSettings)o).Enabled;");
-        advancedPipelinePostProcessSource.ShouldContain("visibilityCondition: IsEnabled");
+        string advancedPipelinePostProcessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs");
         advancedPipelinePostProcessSource.ShouldContain("GetBloomSettings() is not { Enabled: false };");
-
         string pipelineCommandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
         pipelineCommandChainSource.ShouldContain("bloomChoice.ConditionEvaluator = ShouldUseBloom;");
 

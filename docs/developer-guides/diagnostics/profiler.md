@@ -161,10 +161,20 @@ without instrumenting each pass manually.
 
 - Enable it from **Profiler Settings** with **Enable GPU Pipeline Profiling**.
 - Results appear in the new **GPU Pipeline** panel in both the in-process and remote profilers.
-- The panel shows backend/status text, a resolved whole-frame GPU total, root-series history plots, and a hierarchical per-command timing tree.
+- The panel shows backend/status text, GPU timing totals, root-series history plots, and a hierarchical per-command timing tree. A sum of named scopes covers only those scopes; do not treat partial instrumentation as whole-frame GPU elapsed time.
 - In the in-editor profiler, each render-pipeline root history graph has a **Dump** button that writes a unique `profiler-gpu-pipeline-*.log` file under the active `Build/Logs/.../<session>/` folder. The dump includes retained frame samples, warmup-excluded summaries, worst frames, render-thread CPU/present deltas, named XRWindow CPU phase aggregates, slow command/scope rankings, shader/material hint rankings, and full aggregate tables for LLM analysis.
 - To avoid OpenGL driver stalls, timestamp sampling is capped per frame and temporarily throttled after slow query calls. Shadow-map passes keep high-level pass timings but skip per-mesh shadow draw scopes.
-- Current backend support is **OpenGL**. Unsupported renderers report status text rather than falling back to CPU timings.
+- Current backend support includes **OpenGL** and selected **Vulkan** scopes. Vulkan command scopes additionally require `XRE_GPU_TIMESTAMP_DENSE=1`; coarse command-buffer timing remains available separately. Unsupported or disabled timing reports status text rather than substituting CPU timings.
+
+Vulkan's `Advanced/Shadows/DirectionalCascades` interval covers a recorded
+directional cascade group's read barrier, target setup, tile clears and draws.
+It uses two queries from the existing fixed dense-query budget and records the
+submitted source-frame identity. It does not move the render-pass closure;
+later store/transition work is outside the interval. Disabling GPU pipeline
+profiling suppresses these queries. Native compute scopes and this shadow scope
+do not cover every raster or postprocess command. TOP_OF_PIPE/BOTTOM_OF_PIPE
+intervals can include dependency/drain time and overlap GPU work; use source-frame
+correlation and coarse command-buffer timings before assigning exclusive costs.
 
 ### CPU Hierarchy And Render Resource Churn
 
@@ -430,6 +440,16 @@ workload. `-VulkanGpuDrivenProfile ShippingFast`, `DevParity`, or `Diagnostics`
 freezes the effective GPU-driven feature profile independently of saved user
 settings. Every value is copied into the summary and capture manifest.
 
+For a directional-shadow comparison, pass `-DirectionalShadowLightNode` with
+the exact fixture node name and `-DirectionalShadowResolution 1024` (or another
+positive requested resolution). Supply both options together. Before warmup,
+the harness finds one directional light on that node, sets both dimensions,
+and verifies their readback through MCP. Missing or ambiguous lights and
+mismatched readback fail the run. JSON and text summaries retain the initial,
+requested and applied dimensions. This controls the warmed workload; bootstrap
+settings can still differ during cold startup, and atlas allocation policy is
+unchanged. Omitting both options preserves the fixture's existing settings.
+
 Use `-CacheMode Cold` for startup/cache-miss measurements; the harness clears
 OpenGL shader-program caches only in cold mode unless
 `-NoClearCachesBetweenVariants` is supplied. Use `-CacheMode Warm` for steady
@@ -451,13 +471,32 @@ After the minimum `-WarmupSec`, capture begins only after a measured quiet
 window (default: five seconds, with a 120-second timeout): output workload
 identity and target generations must be stable, asset/shader work must be quiet,
 and retirement, planner-prune, global-wait, and force-flush counters must be
-zero. Use `-StabilityWindowSec` and `-StabilityTimeoutSec` to tune this gate;
+zero. Advanced admission also requires a current output reservation, collected
+enabled opaque or masked mesh commands, and accepted preparation, visibility
+raster and native opaque shading receipts that advance on successive polls.
+Resident candidate counts and a colorful sky image do not establish visible
+geometry. These receipts certify backend authoring; Vulkan additionally requires
+an increasing `frame_lifecycle.outcome_counts.completed` counter throughout the
+stable window, no retained PresentNow terminal fault and no latest Rejected/Failed
+frame. Missing completion telemetry rejects admission. The selected viewport's
+actual backend selects this extra query, which runs only before measurement;
+OpenGL uses its existing admission checks. These checks do not certify GPU
+timestamp completion, and separately sampled frame IDs need not be equal.
+Use `-StabilityWindowSec` and
+`-StabilityTimeoutSec` to tune this gate;
 `-NoStabilityGate` is diagnostic-only. A capture is invalid if workload identity
 changes, an output takes an unapproved fallback, or a Vulkan submission is
 rejected. `-FailOnSteadyStateResourceChurn` covers every published retirement
 kind plus planner/global synchronization, while
 `-FailOnSteadyStateCommandBufferChurn` reports and gates record/reuse/dirty
 outcomes with an optional `-MinSteadyStateCommandBufferCleanReuseRatio`.
+
+MCP render-state pass summaries copy counts and labels under the collection's
+rendering-buffer read scope, then format owned rows after releasing it. They
+never retain a borrowed command list across buffer publication. Other fields in
+the response remain independently sampled observations; the response is not an
+atomic snapshot of all engine state. Summary storage is allocated only for an
+explicit diagnostic request, with no additional per-frame publication copy.
 
 Do not compare Debug and Release numbers as architectural evidence. Disable
 validation layers and verbose GL debug output for benchmark captures unless the
@@ -635,8 +674,37 @@ mode is reserved for diagnostics, is marked in manifests and samples via
 
 The in-editor **Profiler Settings** panel also exposes **Enable Profiler
 Component Timing**, which independently controls per-component tick timing
-capture for the Components panel without affecting frame logging or render
-statistics.
+capture for the Component Timings panel without affecting frame logging or
+render statistics. While it is on, the profiler installs itself as
+`RuntimeComponentTickTiming.Recorder`, and the world tick dispatch
+(`RuntimeWorldLifecycle`) times each callback and reports it with the
+component that owns it: the callback's target, or the component captured by a
+compiler-generated closure such as an animation tick. Callbacks run during a
+timed update frame are shown; fixed-update ticks between frames are not. The
+panel reads the frame snapshot, so **Frame Logging** must be on as well. While
+the toggle is off, the dispatch reads one static field per queue and times
+nothing. The world tick counters below report per kind of callback rather than
+per component; with both on, the component recording adds its cost to the
+counters' callback time.
+
+### World Tick Counters
+
+Set `XRE_WORLD_TICK_TELEMETRY=1` before launch to observe the world tick path
+(`RuntimeWorldLifecycle`): per tick group, how often it is dispatched and how
+long the queue snapshot, pending registration and callbacks take; per kind of
+callback, its invocations, total and longest time with a timestamp, counts of
+invocations of at least 0.25, 1, 4 and 16 ms (and how many of the 1 ms ones
+coincided with a garbage collection), and the bytes the dispatching thread
+allocated. A callback registered through a compiler-generated closure, such as
+an animation tick, is named by the method it forwards to. Read the counters
+with the read-only MCP tool `get_world_tick_telemetry`; they are cumulative
+since launch, so compare two reads to observe a window. World update calls
+skipped because the world is not playing are counted separately.
+
+With the variable unset, the dispatch loop runs its unobserved path and the
+counters stay at zero. With it set, the observer adds a few timestamp and
+counter reads per queue and per callback, and identifies each newly registered
+callback once, outside the reported pending-registration time.
 
 When code-profiler frame logging is enabled, the stats thread also writes
 disk diagnostics for severe frame anomalies:

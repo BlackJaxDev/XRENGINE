@@ -263,8 +263,39 @@ internal unsafe partial class VkMeshRenderer
 		ComputeDispatchSnapshot? bindingSnapshot,
 		bool recordDescriptorTableGeneration)
 	{
-		DescriptorWriteScratch scratch = _descriptorWriteScratch;
-		scratch.Clear();
+		DescriptorWriteScratch scratch = RentDescriptorWriteScratch();
+		try
+		{
+			return WriteDescriptorSetsCore(
+				scratch,
+				frameSets,
+				bindings,
+				material,
+				frameIndex,
+				drawUniformSlot,
+				allocation,
+				descriptorSlotIndex,
+				bindingSnapshot,
+				recordDescriptorTableGeneration);
+		}
+		finally
+		{
+			ReturnDescriptorWriteScratch(scratch);
+		}
+	}
+
+	private bool WriteDescriptorSetsCore(
+		DescriptorWriteScratch scratch,
+		DescriptorSet[] frameSets,
+		IReadOnlyList<DescriptorBindingInfo> bindings,
+		XRMaterial material,
+		int frameIndex,
+		int drawUniformSlot,
+		DescriptorAllocation? allocation,
+		int descriptorSlotIndex,
+		ComputeDispatchSnapshot? bindingSnapshot,
+		bool recordDescriptorTableGeneration)
+	{
 		VulkanDescriptorScratchBuffer<WriteDescriptorSet> writes = scratch.Writes;
 		VulkanDescriptorScratchBuffer<DescriptorBufferInfo> bufferInfos = scratch.BufferInfos;
 		VulkanDescriptorScratchBuffer<DescriptorImageInfo> imageInfos = scratch.ImageInfos;

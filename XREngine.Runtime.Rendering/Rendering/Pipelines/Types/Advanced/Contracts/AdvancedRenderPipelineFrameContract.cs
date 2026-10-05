@@ -37,6 +37,11 @@ public static class AdvancedRenderPipelineFrameContract
             "Advanced / Depth Pyramid And Late Visibility",
             ERenderGraphPassStage.Compute),
         new(
+            EAdvancedRenderStage.DirectionalShadowRaster,
+            "Advanced.DirectionalShadowRaster",
+            "Advanced / Directional Shadow Raster",
+            ERenderGraphPassStage.Graphics),
+        new(
             EAdvancedRenderStage.AmbientOcclusion,
             "Advanced.AmbientOcclusion",
             "Advanced / Ambient Occlusion",

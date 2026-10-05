@@ -26,6 +26,11 @@ internal sealed class TextureTransitionQueue
         previousPendingLoadCts = null;
         lock (record.Sync)
         {
+            // Once an async sparse upload has produced a fence, its exact
+            // finalizer owns the native identity until that fence signals.
+            if (record.PendingSparseTransitionResult is { ExposureDeferred: true })
+                return false;
+
             previousPendingLoadCts = record.PendingLoadCts;
             record.PendingLoadCts = cts;
             record.PendingMaxDimension = pendingMaxDimension;
@@ -56,7 +61,8 @@ internal sealed class TextureTransitionQueue
         pendingLoadCts = null;
         lock (record.Sync)
         {
-            if (record.PendingMaxDimension == 0)
+            if (record.PendingMaxDimension == 0 ||
+                record.PendingSparseTransitionResult is { ExposureDeferred: true })
                 return false;
 
             pendingLoadCts = record.PendingLoadCts;

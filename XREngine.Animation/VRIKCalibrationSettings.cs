@@ -1,6 +1,6 @@
 using MemoryPack;
-using System.ComponentModel.DataAnnotations;
 using System.Numerics;
+using System.ComponentModel.DataAnnotations;
 using XREngine.Core.Files;
 
 namespace XREngine.Components.Animation
@@ -22,6 +22,13 @@ namespace XREngine.Components.Animation
         }
 
         private float _hipRotationWeight = 1.0f;
+        /// <summary>Maximum headset pitch or roll, in degrees, allowed when capturing a standing pose.</summary>
+        [Range(0f, 45f)]
+        public float CalibrationHeadTiltTolerance
+        {
+            get => HeadTiltToleranceDegrees;
+            set => HeadTiltToleranceDegrees = value;
+        }
         [Range(0f, 1f)]
         public float HipRotationWeight
         {
@@ -37,19 +44,12 @@ namespace XREngine.Components.Animation
             set => SetField(ref _hipPositionWeight, value);
         }
 
-
-
-
         private Vector3 _handOffset;
         public Vector3 HandOffset
         {
             get => _handOffset;
             set => SetField(ref _handOffset, value);
         }
-
-
-
-
         private Vector3 _handTrackerUp = Globals.Up;
         public Vector3 HandTrackerUp
         {
@@ -63,8 +63,5 @@ namespace XREngine.Components.Animation
             get => _handTrackerForward;
             set => SetField(ref _handTrackerForward, value);
         }
-
-
-
     }
 }

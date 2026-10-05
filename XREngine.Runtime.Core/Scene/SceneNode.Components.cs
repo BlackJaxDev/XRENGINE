@@ -66,8 +66,15 @@ namespace XREngine.Scene
                 ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
             XRComponent? existingComponent = null;
 
-            if (XRComponent.New(this, type) is not XRComponent comp || !VerifyComponentAttributesOnAdd(comp, out existingComponent))
+            if (XRComponent.New(this, type) is not XRComponent comp)
                 return existingComponent;
+
+            if (!VerifyComponentAttributesOnAdd(comp, out existingComponent))
+            {
+                comp.World = null;
+                comp.Destroy();
+                return existingComponent;
+            }
 
             AddComponent(comp);
             comp.Name = name;

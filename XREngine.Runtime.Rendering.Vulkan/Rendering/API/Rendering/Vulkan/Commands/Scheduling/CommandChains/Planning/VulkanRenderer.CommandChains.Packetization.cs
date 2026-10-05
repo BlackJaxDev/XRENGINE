@@ -47,6 +47,7 @@ internal sealed partial class VulkanCommandRuntime
         in VulkanRecordedRenderTargetSnapshot preparedRecordingTarget,
         bool profileDetail)
     {
+        CaptureMeshPacketIdentityDemand(ops);
         int queryBracketDepth = 0;
         for (int i = 0; i < ops.Count; i++)
         {
@@ -105,6 +106,7 @@ internal sealed partial class VulkanCommandRuntime
         in VulkanRecordedRenderTargetSnapshot preparedRecordingTarget,
         bool profileDetail)
     {
+        CaptureMeshPacketIdentityDemand(ops);
         for (int i = 0; i < ops.Count; i++)
         {
             int consumed = TryLowerCompatibleMeshPacket(
@@ -143,7 +145,8 @@ internal sealed partial class VulkanCommandRuntime
     {
         preparedMeshDraw = default;
         if (!IsSchedulableCommandChainFrameOp(ops, startIndex, dynamicOverlay) ||
-            ops.GetHeader(startIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
+            ops.GetHeader(startIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw ||
+            !CanMeshPacketReachMinimumWithinIdentityCapacity(ops, startIndex))
             return 0;
         ref readonly MeshDrawPayload first = ref ops.GetMeshDraw(startIndex);
         ref readonly FrameOperationHeader firstHeader = ref ops.GetHeader(startIndex);
@@ -311,19 +314,41 @@ internal sealed partial class VulkanCommandRuntime
         int startIndex,
         int compatibleRunCount)
     {
-        int vertexIdentityCount = 0;
-        int auxiliaryIdentityCount = 0;
-        int descriptorSetIdentityCount = 0;
-
         int programLimitedCount = Math.Min(
             compatibleRunCount,
             VulkanRecordedProgramIdentityBuffer.Capacity);
-        for (int relativeIndex = 0;
-             relativeIndex < programLimitedCount;
-             relativeIndex++)
+        int fittingCount = CountMeshDrawsWithinIdentityCapacity(
+            ops,
+            startIndex,
+            programLimitedCount);
+        return fittingCount < programLimitedCount
+            ? Math.Max(1, fittingCount)
+            : programLimitedCount;
+    }
+
+    /// <summary>
+    /// Captures every mesh operation's recorded identity demand once for the
+    /// stream being lowered. Packet lowering evaluates a candidate run from
+    /// every start position, so reading renderer binding state per position
+    /// repeated the same locked reads for each overlapping window.
+    /// </summary>
+    private void CaptureMeshPacketIdentityDemand(FrameOperationStream ops)
+    {
+        int count = ops.Count;
+        ref MeshPacketIdentityDemand[] scratch =
+            ref _commandRuntime.CommandChains.MeshPacketIdentityDemandScratch;
+        if (scratch.Length < count)
+            scratch = new MeshPacketIdentityDemand[Math.Max(count, scratch.Length * 2)];
+
+        for (int operationIndex = 0; operationIndex < count; operationIndex++)
         {
-            ref readonly MeshDrawPayload draw = ref ops.GetMeshDraw(
-                startIndex + relativeIndex);
+            if (ops.GetHeader(operationIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
+            {
+                scratch[operationIndex] = default;
+                continue;
+            }
+
+            ref readonly MeshDrawPayload draw = ref ops.GetMeshDraw(operationIndex);
             draw.Draw.Renderer.GetRecordedBufferBindingCounts(
                 out int vertexCount,
                 out int indexCount);
@@ -331,24 +356,68 @@ internal sealed partial class VulkanCommandRuntime
                 draw.Draw.ProgramBindingSnapshot is null ? 0 : 1,
                 draw.Draw.Renderer.GetRecordedDescriptorSetCount(
                     draw.Draw.PreparedProgram));
+            scratch[operationIndex] = new MeshPacketIdentityDemand(
+                vertexCount,
+                indexCount,
+                descriptorSetCount);
+        }
+    }
 
+    /// <summary>
+    /// Returns how many consecutive mesh operations from <paramref name="startIndex"/>
+    /// fit the bounded recorded-identity buffers, up to <paramref name="maxCount"/>.
+    /// Uses the demand captured for the current lowering pass.
+    /// </summary>
+    private int CountMeshDrawsWithinIdentityCapacity(
+        FrameOperationStream ops,
+        int startIndex,
+        int maxCount)
+    {
+        MeshPacketIdentityDemand[] demand =
+            _commandRuntime.CommandChains.MeshPacketIdentityDemandScratch;
+        int vertexIdentityCount = 0;
+        int auxiliaryIdentityCount = 0;
+        int descriptorSetIdentityCount = 0;
+        int limit = Math.Min(maxCount, ops.Count - startIndex);
+        for (int relativeIndex = 0; relativeIndex < limit; relativeIndex++)
+        {
+            int operationIndex = startIndex + relativeIndex;
+            if (ops.GetHeader(operationIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
+                return relativeIndex;
+
+            MeshPacketIdentityDemand drawDemand = demand[operationIndex];
             bool nextDrawFits = vertexIdentityCount <=
-                    VulkanRecordedBufferIdentityBuffer.Capacity - vertexCount &&
+                    VulkanRecordedBufferIdentityBuffer.Capacity - drawDemand.VertexBufferCount &&
                 auxiliaryIdentityCount <=
-                    VulkanRecordedBufferIdentityBuffer.Capacity - indexCount &&
+                    VulkanRecordedBufferIdentityBuffer.Capacity - drawDemand.IndexBufferCount &&
                 descriptorSetIdentityCount <=
                     VulkanRecordedDescriptorSetIdentityBuffer.Capacity -
-                    descriptorSetCount;
+                    drawDemand.DescriptorSetCount;
             if (!nextDrawFits)
-                return Math.Max(1, relativeIndex);
+                return relativeIndex;
 
-            vertexIdentityCount += vertexCount;
-            auxiliaryIdentityCount += indexCount;
-            descriptorSetIdentityCount += descriptorSetCount;
+            vertexIdentityCount += drawDemand.VertexBufferCount;
+            auxiliaryIdentityCount += drawDemand.IndexBufferCount;
+            descriptorSetIdentityCount += drawDemand.DescriptorSetCount;
         }
 
-        return programLimitedCount;
+        return limit;
     }
+
+    /// <summary>
+    /// A packet is accepted only when at least <see cref="MinMeshDrawsPerRenderPacket"/>
+    /// consecutive mesh operations both match and fit the recorded-identity capacity.
+    /// When capacity alone already rules that out, the compatibility scan (and its
+    /// per-candidate signature and context comparisons) cannot produce a packet, so
+    /// skip it. The accepted packet set is unchanged.
+    /// </summary>
+    private bool CanMeshPacketReachMinimumWithinIdentityCapacity(
+        FrameOperationStream ops,
+        int startIndex)
+        => CountMeshDrawsWithinIdentityCapacity(
+               ops,
+               startIndex,
+               MinMeshDrawsPerRenderPacket) >= MinMeshDrawsPerRenderPacket;
 
     private static bool IsMeshDrawPacketCompatible(
         in PendingMeshDraw first,

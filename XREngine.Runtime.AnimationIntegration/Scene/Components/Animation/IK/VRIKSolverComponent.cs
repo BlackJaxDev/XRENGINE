@@ -4,6 +4,8 @@ using System.Numerics;
 using System.Buffers.Binary;
 using XREngine.Core.Attributes;
 using XREngine.Networking;
+using XREngine.Components;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Animation
@@ -18,6 +20,101 @@ namespace XREngine.Components.Animation
         private static readonly long BaselineIntervalTicks = Math.Max(1L, (long)Math.Round(BaselineIntervalSeconds * System.Diagnostics.Stopwatch.Frequency));
 
         public IKSolverVR Solver { get; } = new();
+        private EHumanoidPosePreviewMode? _previewModeBeforeCalibration;
+        private readonly List<(XRComponent Component, bool WasActive, EHumanoidRootMotionApplicationMode RootMode)> _suspendedAnimationWriters = [];
+
+        /// <summary>Display the avatar's measured T-pose with its eyes at the headset and its body facing headset yaw.</summary>
+        public VrCalibrationResult ApplyCanonicalCalibrationPose(Matrix4x4 headWorld, Vector3 eyeOffsetFromHead = default)
+        {
+            if (!VrCalibrationMath.TryGetRigidPose(headWorld, out _)
+                || !Matrix4x4.Decompose(headWorld, out _, out Quaternion headRotation, out Vector3 headPosition)
+                || !float.IsFinite(eyeOffsetFromHead.X) || !float.IsFinite(eyeOffsetFromHead.Y)
+                || !float.IsFinite(eyeOffsetFromHead.Z) || Root is null)
+                return VrCalibrationResult.Failed("The headset pose is invalid.");
+
+            HumanoidComponent human = Humanoid;
+            SuspendCalibrationAnimationWriters();
+            human.PosePreviewMode = EHumanoidPosePreviewMode.TPose;
+            human.ApplyVrCanonicalTPose();
+
+            Vector3 forward = Vector3.Transform(-Vector3.UnitZ, headRotation);
+            forward.Y = 0f;
+            if (forward.LengthSquared() < 1e-8f)
+            {
+                forward = Root.WorldForward;
+                forward.Y = 0f;
+                if (forward.LengthSquared() < 1e-8f)
+                    forward = -Vector3.UnitZ;
+            }
+            forward = Vector3.Normalize(forward);
+            float yaw = MathF.Atan2(-forward.X, -forward.Z);
+            if (!human.TryGetVrBindBodyToEngine(out Matrix4x4 bindBodyToEngine))
+                return VrCalibrationResult.Failed("The avatar body facing basis is unavailable.");
+            Matrix4x4 bodyOrientation = bindBodyToEngine * Matrix4x4.CreateRotationY(yaw);
+            Quaternion bodyRotation = Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(bodyOrientation));
+            Root.SetWorldTranslationRotation(Root.WorldTranslation, bodyRotation);
+            Root.RecalculateMatrices(true);
+            bool hasMeasuredEyeOffset = eyeOffsetFromHead.LengthSquared() > 1e-10f;
+            TransformBase eyes = hasMeasuredEyeOffset
+                ? human.Head.Node?.Transform ?? Root
+                : human.EyesTarget.Node?.Transform ?? human.Head.Node?.Transform ?? Root;
+            eyes.RecalculateMatrices(true);
+            Vector3 eyesPosition = eyes.WorldTranslation;
+            if (hasMeasuredEyeOffset)
+                eyesPosition += Vector3.Transform(eyeOffsetFromHead, bodyRotation);
+            Root.SetWorldTranslationRotation(Root.WorldTranslation + headPosition - eyesPosition, bodyRotation);
+            Root.RecalculateMatrices(true);
+            return VrCalibrationResult.Completed();
+        }
+
+        /// <summary>Stops animation components from overwriting the displayed calibration pose.</summary>
+        public void SuspendCalibrationAnimationWriters()
+        {
+            if (_previewModeBeforeCalibration is not null)
+                return;
+            _previewModeBeforeCalibration = Humanoid.PosePreviewMode;
+            SuspendAnimationWriters(Humanoid.SceneNode);
+        }
+
+        /// <summary>Restore the animation preview state after capture or cancellation.</summary>
+        public void EndCalibrationPose()
+        {
+            if (_previewModeBeforeCalibration is not EHumanoidPosePreviewMode previous)
+                return;
+            Humanoid.PosePreviewMode = previous;
+            _previewModeBeforeCalibration = null;
+            for (int i = 0; i < _suspendedAnimationWriters.Count; i++)
+            {
+                var (component, wasActive, rootMode) = _suspendedAnimationWriters[i];
+                if (component is AnimStateMachineComponent stateMachine)
+                    stateMachine.RootMotionApplicationMode = rootMode;
+                else if (component is AnimationClipComponent clip)
+                    clip.RootMotionApplicationMode = rootMode;
+                component.IsActive = wasActive;
+            }
+            _suspendedAnimationWriters.Clear();
+        }
+
+        private void SuspendAnimationWriters(SceneNode node)
+        {
+            foreach (XRComponent component in node.GetComponents<XRComponent>())
+            {
+                EHumanoidRootMotionApplicationMode rootMode;
+                if (component is AnimStateMachineComponent stateMachine)
+                    rootMode = stateMachine.RootMotionApplicationMode;
+                else if (component is AnimationClipComponent clip)
+                    rootMode = clip.RootMotionApplicationMode;
+                else
+                    continue;
+                _suspendedAnimationWriters.Add((component, component.IsActive, rootMode));
+                component.IsActive = false;
+            }
+
+            foreach (TransformBase child in node.Transform.Children)
+                if (child.SceneNode is SceneNode childNode)
+                    SuspendAnimationWriters(childNode);
+        }
+
 
         public bool UpdateHeadTarget { get; set; } = true;
         public bool UpdateHipsTarget { get; set; } = true;

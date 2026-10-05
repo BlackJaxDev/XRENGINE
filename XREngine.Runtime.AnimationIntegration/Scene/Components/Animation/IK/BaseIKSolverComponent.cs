@@ -44,7 +44,7 @@ namespace XREngine.Components.Animation
             RegisterTick(ETickGroup.Late, ETickOrder.Animation, LateUpdate);
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, Update);
 
-            Initialize();
+            EnsureSolverInitialized();
         }
 
         protected override void OnComponentDeactivated()
@@ -56,7 +56,8 @@ namespace XREngine.Components.Animation
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, Update);
         }
 
-        private void Initialize()
+        /// <summary>Initialize references without advancing or applying a solver frame.</summary>
+        protected void EnsureSolverInitialized()
         {
             if (_componentInitiated)
                 return;

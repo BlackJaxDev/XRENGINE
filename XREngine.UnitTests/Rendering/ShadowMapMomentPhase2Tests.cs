@@ -125,13 +125,13 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         light.CascadedShadowMapTexture.SmallestAllowedMipmapLevel.ShouldBe(expectedSmallestMip);
         (light.CascadedShadowMapTexture.Name ?? string.Empty).ShouldContain(".Cascade.Desktop.ColorArray");
 
-        string vkTexture2D = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "Vulkan", "Objects", "Types", "Textures", "VkTexture2D.cs"));
-        string vkTexture2DArray = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "Vulkan", "Objects", "Types", "Textures", "VkTexture2DArray.cs"));
+        string vkTexture2D = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.Vulkan", "Rendering", "API", "Rendering", "Vulkan", "BackendObjects", "Textures", "VkTexture2D.cs"));
+        string vkTexture2DArray = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.Vulkan", "Rendering", "API", "Rendering", "Vulkan", "BackendObjects", "Textures", "VkTexture2DArray.cs"));
         string resourceDescriptorFactory = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Resources", "RenderResourceDescriptorFactory.cs"));
 
         vkTexture2D.ShouldContain("Data.AutoGenerateMipmaps || hasExplicitMipRange");
         vkTexture2DArray.ShouldContain("Data.AutoGenerateMipmaps || hasExplicitMipRange");
-        resourceDescriptorFactory.ShouldContain("if (texture.AutoGenerateMipmaps)");
+        resourceDescriptorFactory.ShouldContain("if (texture.AutoGenerateMipmaps || texture.SmallestAllowedMipmapLevel < 1000)");
         resourceDescriptorFactory.ShouldContain("texture.SmallestMipmapLevel + 1");
     }
 
@@ -295,18 +295,16 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
         string forwardBindings = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Lights3DCollection.ForwardLighting.cs"));
         string deferredBindings = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Pipelines", "Commands", "Features", "VPRC_LightCombinePass.cs"));
 
-        directionalSource.ShouldContain("program.Uniform(names.CascadeSplits, cascadeSplits);");
-        directionalSource.ShouldContain("program.Uniform(names.CascadeBlendWidths, cascadeBlendWidths);");
-        directionalSource.ShouldContain("program.Uniform(names.CascadeBiasMin, cascadeBiasMins);");
-        directionalSource.ShouldContain("program.Uniform(names.CascadeBiasMax, cascadeBiasMaxes);");
-        directionalSource.ShouldContain("program.Uniform(names.CascadeReceiverOffsets, cascadeReceiverOffsets);");
-        directionalSource.ShouldContain("program.Uniform(names.CascadeMatrices, cascadeMatrices);");
-        directionalSource.ShouldContain("program.Uniform(names.IndexedCascadeSplits[i], cascadeSplits[i]);");
+        directionalSource.ShouldContain("Cascade payloads are published by the consuming pass as immutable");
+        directionalSource.ShouldContain("DirectionalShadowGpuRecord SSBO data");
+        directionalSource.ShouldContain("names.CascadeCount,");
+        cascadeSource.ShouldContain("CopyPublishedCascadeMatrices(");
+        deferredBindings.ShouldContain("DirectionalShadowGpuRecord");
 
-        cascadeSource.ShouldContain("SteamVR and ordinary Vulkan sessions exercise the atlas toggle");
-        cascadeSource.ShouldContain("Grouped atlas rendering is still gated separately");
-        cascadeSource.ShouldContain("grouped atlas path");
-        cascadeSource.ShouldContain("sequential");
+        cascadeSource.ShouldContain("CanUseDirectionalCascadeShadowAtlasForCurrentBackend(int cascadeCount)");
+        cascadeSource.ShouldContain("return !IsKnownMonadoOpenXrRuntime();");
+        cascadeSource.ShouldContain("CanRenderGroupedCascadeShadowAtlasTiles(");
+        cascadeSource.ShouldContain("CreateLegacyCascadeShadowRenderPlan(source, cascadeCount)");
         cascadeSource.ShouldNotContain("if (IsVulkanDirectionalShadowBackend())\r\n                return false;");
         cascadeSource.ShouldNotContain("CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)\r\n                return CreateSequentialCascadeShadowRenderPlan(state, requestedMode, backend, cascadeCount, DirectionalCascadeShadowFallbackReason.VulkanLayeredRenderingDisabled);");
         cascadeSource.ShouldContain("private void RenderCascadeShadowMaps(");
@@ -331,7 +329,7 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
     [Test]
     public void VulkanTextureArrayPartialAttachmentLayouts_TransitionPerLayerForSampling()
     {
-        string vkTextureSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "API", "Rendering", "Vulkan", "Objects", "Types", "Textures", "VkImageBackedTexture.cs"));
+        string vkTextureSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.Vulkan", "Rendering", "API", "Rendering", "Vulkan", "BackendObjects", "Textures", "VkImageBackedTexture.cs"));
 
         vkTextureSource.ShouldContain("if (_hasPartialAttachmentLayouts)");
         vkTextureSource.ShouldContain("TryTransitionPartialAttachmentLayoutsTo(newLayout)");
@@ -424,8 +422,7 @@ public sealed class ShadowMapMomentPhase2Tests : GpuTestBase
             dir = Path.GetDirectoryName(dir) ?? dir;
         }
 
-        Assert.Inconclusive($"Repository source file not found: {relativePath}");
-        return string.Empty;
+        throw new FileNotFoundException($"Repository source file not found: {relativePath}");
     }
 
     private class TestRenderingHostServices : DispatchProxy

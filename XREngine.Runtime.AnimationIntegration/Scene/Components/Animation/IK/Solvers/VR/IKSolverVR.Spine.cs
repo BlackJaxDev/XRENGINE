@@ -645,7 +645,7 @@ namespace XREngine.Components.Animation
                 if (_chestGoal != null)
                 {
                     _chestGoal.RecalculateMatrices(true);
-                    _goalPositionChest = _chestGoal.WorldTranslation;
+                    _goalPositionChest = _chestGoal.WorldTranslation + _chestGoal.WorldForward;
                 }
 
                 if (_hipsTarget != null)
@@ -733,6 +733,8 @@ namespace XREngine.Components.Animation
             private void CalculateChestTargetRotation(VirtualBone rootBone, ArmSolver[] arms)
             {
                 _chestTargetRotation = _headRotation * _headRelativeChestRotation;
+                if (_chestGoal is not null && _chestGoalWeight > 0f)
+                    _chestTargetRotation = Quaternion.Slerp(_chestTargetRotation, _chestGoal.WorldRotation, Math.Clamp(_chestGoalWeight, 0f, 1f));
 
                 Vector3 v = XRMath.QuaternionToEuler(_headRelativeChestRotation).Each(float.RadiansToDegrees);
                 //Debug.Out($"Chest target rotation: {v.X}, {v.Y}, {v.Z}");

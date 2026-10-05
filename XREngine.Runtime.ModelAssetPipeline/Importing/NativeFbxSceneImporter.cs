@@ -30,39 +30,31 @@ internal static class NativeFbxSceneImporter
     private const long DefaultMaterialCacheKey = long.MinValue;
     private const string ImportedContentBasisNodeName = "FbxImportedContentBasis";
 
-    private sealed class MeshChunkBuilder(int materialSlot, int initialVertexCapacity, int initialIndexCapacity)
+    /// <summary>
+    /// One material slot's mesh chunk (at most 65,536 vertices). Polygon vertices
+    /// are written straight into a packed mesh source, so the import never holds
+    /// per-vertex objects, weight dictionaries or blendshape vertex copies.
+    /// </summary>
+    private sealed class MeshChunkBuilder(int materialSlot, XRMeshPackedSource source, int initialIndexCapacity)
     {
         public int MaterialSlot { get; } = materialSlot;
-        public List<Vertex> Vertices { get; } = new(Math.Max(4, initialVertexCapacity));
-        public List<ushort> Indices { get; } = new(Math.Max(6, initialIndexCapacity));
+        public XRMeshPackedSource Source { get; } = source;
+        public List<int> Indices { get; } = new(Math.Max(6, initialIndexCapacity));
 
         public bool CanAppendPolygon(int polygonVertexCount)
-            => Vertices.Count + polygonVertexCount <= ushort.MaxValue + 1;
+            => Source.VertexCount + polygonVertexCount <= ushort.MaxValue + 1;
 
-        public void AppendPolygon(ReadOnlySpan<Vertex> polygonVertices)
+        /// <summary>Fans the polygon whose vertices were just appended into triangles.</summary>
+        public void AppendPolygonIndices(int baseVertex, int polygonVertexCount)
         {
-            int polygonVertexCount = polygonVertices.Length;
             if (polygonVertexCount < 3)
                 return;
 
-            int requiredVertexCapacity = Vertices.Count + polygonVertexCount;
-            if (Vertices.Capacity < requiredVertexCapacity)
-                Vertices.Capacity = requiredVertexCapacity;
-
-            int triangleIndexCount = (polygonVertexCount - 2) * 3;
-            int requiredIndexCapacity = Indices.Count + triangleIndexCount;
-            if (Indices.Capacity < requiredIndexCapacity)
-                Indices.Capacity = requiredIndexCapacity;
-
-            int baseVertex = Vertices.Count;
-            for (int vertexIndex = 0; vertexIndex < polygonVertexCount; vertexIndex++)
-                Vertices.Add(polygonVertices[vertexIndex]);
-
             for (int triangleIndex = 1; triangleIndex < polygonVertexCount - 1; triangleIndex++)
             {
-                Indices.Add((ushort)baseVertex);
-                Indices.Add((ushort)(baseVertex + triangleIndex));
-                Indices.Add((ushort)(baseVertex + triangleIndex + 1));
+                Indices.Add(baseVertex);
+                Indices.Add(baseVertex + triangleIndex);
+                Indices.Add(baseVertex + triangleIndex + 1);
             }
         }
     }
@@ -626,6 +618,8 @@ internal static class NativeFbxSceneImporter
         FbxLayerElement<Vector3>? normalLayer = meshGeometry.Normals.Count > 0 ? meshGeometry.Normals[0] : null;
         FbxLayerElement<Vector3>? tangentLayer = meshGeometry.Tangents.Count > 0 ? meshGeometry.Tangents[0] : null;
         string[]? blendShapeNames = blendShapeChannels.Count > 0 ? BuildBlendshapeNames(blendShapeChannels) : null;
+        int[] shapeIndexByChannel = BuildShapeIndexByChannel(blendShapeChannels, blendShapeNames);
+        PackedVertexScratch scratch = new(meshGeometry, blendShapeNames?.Length ?? 0);
 
         int polygonVertexStart = 0;
         int polygonIndex = 0;
@@ -636,46 +630,42 @@ internal static class NativeFbxSceneImporter
                 cancellationToken.ThrowIfCancellationRequested();
 
                 int polygonVertexCount = CountPolygonVertexCount(polygonVertexIndices, polygonVertexStart);
-                Vertex[] rentedPolygonVertices = ArrayPool<Vertex>.Shared.Rent(polygonVertexCount);
+                int materialSlot = ResolveMaterialSlot(meshGeometry.Materials, polygonIndex, polygonVertexStart, nodeMaterials.Count);
+                List<MeshChunkBuilder> chunks = buildersByMaterialSlot[materialSlot] ??= [];
+                MeshChunkBuilder chunk = chunks.Count > 0 && chunks[^1].CanAppendPolygon(polygonVertexCount)
+                    ? chunks[^1]
+                    : CreateChunk(chunks, materialSlot, polygonVertexIndices.Count - polygonVertexStart, polygonVertexCount);
+                int baseVertex = chunk.Source.VertexCount;
                 int polygonVertexIndex = polygonVertexStart;
                 int localPolygonVertexIndex = 0;
-                try
+                while (polygonVertexIndex < polygonVertexIndices.Count)
                 {
-                    while (polygonVertexIndex < polygonVertexIndices.Count)
-                    {
-                        int encodedControlPointIndex = polygonVertexIndices[polygonVertexIndex];
-                        bool endOfPolygon = encodedControlPointIndex < 0;
-                        int controlPointIndex = endOfPolygon ? ~encodedControlPointIndex : encodedControlPointIndex;
-                        rentedPolygonVertices[localPolygonVertexIndex++] = CreateVertex(
-                            meshGeometry,
-                            intermediateNode.GeometryTransform,
-                            controlPointIndex,
-                            polygonVertexIndex,
-                            polygonIndex,
-                            normalLayer,
-                            tangentLayer,
-                            flipUvY,
-                            skinWeightsByControlPoint,
-                            blendShapeChannels);
-                        polygonVertexIndex++;
-                        if (endOfPolygon)
-                            break;
-                    }
-
-                    int materialSlot = ResolveMaterialSlot(meshGeometry.Materials, polygonIndex, polygonVertexStart, nodeMaterials.Count);
-                    List<MeshChunkBuilder> chunks = buildersByMaterialSlot[materialSlot] ??= [];
-                    MeshChunkBuilder chunk = chunks.Count > 0 && chunks[^1].CanAppendPolygon(localPolygonVertexIndex)
-                        ? chunks[^1]
-                        : CreateChunk(chunks, materialSlot, polygonVertexIndices.Count - polygonVertexStart, localPolygonVertexIndex);
-                    chunk.AppendPolygon(rentedPolygonVertices.AsSpan(0, localPolygonVertexIndex));
-
-                    polygonVertexStart = polygonVertexIndex;
-                    polygonIndex++;
+                    int encodedControlPointIndex = polygonVertexIndices[polygonVertexIndex];
+                    bool endOfPolygon = encodedControlPointIndex < 0;
+                    int controlPointIndex = endOfPolygon ? ~encodedControlPointIndex : encodedControlPointIndex;
+                    AppendPolygonVertex(
+                        chunk.Source,
+                        scratch,
+                        meshGeometry,
+                        intermediateNode.GeometryTransform,
+                        controlPointIndex,
+                        polygonVertexIndex,
+                        polygonIndex,
+                        normalLayer,
+                        tangentLayer,
+                        flipUvY,
+                        skinWeightsByControlPoint,
+                        blendShapeChannels,
+                        shapeIndexByChannel);
+                    localPolygonVertexIndex++;
+                    polygonVertexIndex++;
+                    if (endOfPolygon)
+                        break;
                 }
-                finally
-                {
-                    ArrayPool<Vertex>.Shared.Return(rentedPolygonVertices, clearArray: true);
-                }
+
+                chunk.AppendPolygonIndices(baseVertex, localPolygonVertexIndex);
+                polygonVertexStart = polygonVertexIndex;
+                polygonIndex++;
             }
         }
 
@@ -701,17 +691,11 @@ internal static class NativeFbxSceneImporter
                 for (int chunkIndex = 0; chunkIndex < chunks.Count; chunkIndex++)
                 {
                     MeshChunkBuilder chunk = chunks[chunkIndex];
-                    if (chunk.Vertices.Count == 0 || chunk.Indices.Count == 0)
+                    if (chunk.Source.VertexCount == 0 || chunk.Indices.Count == 0)
                         continue;
 
-                    XRMesh xrMesh = new(chunk.Vertices, chunk.Indices);
-                    if (skinWeightsByControlPoint is not null && skinWeightsByControlPoint.Count > 0)
-                        xrMesh.RebuildSkinningBuffersFromVertices();
-                    if (blendShapeNames is not null)
-                    {
-                        xrMesh.BlendshapeNames = blendShapeNames;
-                        xrMesh.RebuildBlendshapeBuffersFromVertices();
-                    }
+                    chunk.Source.BlendshapeNames = blendShapeNames;
+                    XRMesh xrMesh = new(chunk.Source, chunk.Indices);
                     SubMesh subMesh = new(new SubMeshLOD(material, xrMesh, 0.0f)
                     {
                         GenerateAsync = generateMeshRenderersAsync,
@@ -753,11 +737,19 @@ internal static class NativeFbxSceneImporter
 
         return subMeshes;
 
-        static MeshChunkBuilder CreateChunk(List<MeshChunkBuilder> chunks, int materialSlot, int remainingPolygonVertexCount, int polygonVertexCount)
+        MeshChunkBuilder CreateChunk(List<MeshChunkBuilder> chunks, int materialSlot, int remainingPolygonVertexCount, int polygonVertexCount)
         {
             int vertexCapacity = Math.Min(ushort.MaxValue + 1, Math.Max(polygonVertexCount, remainingPolygonVertexCount));
             int indexCapacity = Math.Max(6, (Math.Max(3, polygonVertexCount) - 2) * 3);
-            MeshChunkBuilder chunk = new(materialSlot, vertexCapacity, indexCapacity);
+            MeshChunkBuilder chunk = new(
+                materialSlot,
+                new XRMeshPackedSource(
+                    normalLayer is not null,
+                    tangentLayer is not null,
+                    meshGeometry.TextureCoordinates.Count,
+                    meshGeometry.Colors.Count,
+                    vertexCapacity),
+                indexCapacity);
             chunks.Add(chunk);
             return chunk;
         }
@@ -808,43 +800,56 @@ internal static class NativeFbxSceneImporter
         subMesh.CullingBounds = CalculateSkinnedBindPoseCullingBounds(mesh, meshWorldMatrix, inverseBasisWorld);
     }
 
+    /// <summary>
+    /// Bind-pose bounds in the runtime basis, from the mesh's packed positions
+    /// and Core4 + spill influences (bind matrices from UtilizedBones).
+    /// </summary>
     private static AABB CalculateSkinnedBindPoseCullingBounds(XRMesh mesh, Matrix4x4 meshWorldMatrix, Matrix4x4 inverseBasisWorld)
     {
-        Vertex[]? vertices = mesh.Vertices;
-        if (vertices is not { Length: > 0 })
+        int vertexCount = mesh.VertexCount;
+        if (vertexCount <= 0 ||
+            !AdvancedPackedVertexCodec.HasReadableAttributes(mesh) ||
+            !XRMeshSkinningInfluenceReader.TryCreate(mesh, out XRMeshSkinningInfluenceReader reader))
         {
             Matrix4x4 localFromMesh = meshWorldMatrix * inverseBasisWorld;
             return mesh.Bounds.Transformed(point => Vector3.Transform(point, localFromMesh));
         }
 
-        Vector3 min = TransformSkinnedBindPositionToBasisLocal(vertices[0], meshWorldMatrix, inverseBasisWorld);
-        Vector3 max = min;
-
-        for (int vertexIndex = 1; vertexIndex < vertices.Length; vertexIndex++)
+        (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] bones = mesh.UtilizedBones;
+        Span<int> boneIndices = stackalloc int[reader.MaxInfluenceCount];
+        Span<float> weights = stackalloc float[reader.MaxInfluenceCount];
+        Vector3 min = default;
+        Vector3 max = default;
+        for (int vertexIndex = 0; vertexIndex < vertexCount; vertexIndex++)
         {
-            Vector3 localPosition = TransformSkinnedBindPositionToBasisLocal(vertices[vertexIndex], meshWorldMatrix, inverseBasisWorld);
+            Vector3 position = mesh.GetPosition((uint)vertexIndex);
+            int influenceCount = reader.ReadInfluences(vertexIndex, boneIndices, weights);
+            Vector3 worldPosition;
+            if (influenceCount > 0)
+            {
+                worldPosition = Vector3.Zero;
+                for (int influence = 0; influence < influenceCount; influence++)
+                {
+                    (TransformBase bone, Matrix4x4 inverseBind) = bones[boneIndices[influence]];
+                    worldPosition += Vector3.Transform(position, inverseBind * bone.BindMatrix) * weights[influence];
+                }
+            }
+            else
+            {
+                worldPosition = Vector3.Transform(position, meshWorldMatrix);
+            }
+
+            Vector3 localPosition = Vector3.Transform(worldPosition, inverseBasisWorld);
+            if (vertexIndex == 0)
+            {
+                min = max = localPosition;
+                continue;
+            }
             min = Vector3.Min(min, localPosition);
             max = Vector3.Max(max, localPosition);
         }
 
         return new AABB(min, max);
-    }
-
-    private static Vector3 TransformSkinnedBindPositionToBasisLocal(Vertex vertex, Matrix4x4 meshWorldMatrix, Matrix4x4 inverseBasisWorld)
-    {
-        Vector3 worldPosition;
-        if (vertex.Weights is { Count: > 0 } weights)
-        {
-            worldPosition = Vector3.Zero;
-            foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) influence) in weights)
-                worldPosition += Vector3.Transform(vertex.Position, influence.bindInvWorldMatrix * bone.BindMatrix) * influence.weight;
-        }
-        else
-        {
-            worldPosition = Vector3.Transform(vertex.Position, meshWorldMatrix);
-        }
-
-        return Vector3.Transform(worldPosition, inverseBasisWorld);
     }
 
     private static int CountPolygonVertexCount(IReadOnlyList<int> polygonVertexIndices, int polygonVertexStart)
@@ -874,7 +879,38 @@ internal static class NativeFbxSceneImporter
         return [.. names];
     }
 
-    private static Vertex CreateVertex(
+    /// <summary>Reusable per-mesh scratch for packing polygon vertices.</summary>
+    private sealed class PackedVertexScratch(FbxMeshGeometry meshGeometry, int shapeCount)
+    {
+        public Vector2[] TexCoords { get; } = new Vector2[meshGeometry.TextureCoordinates.Count];
+        public Vector4[] Colors { get; } = new Vector4[meshGeometry.Colors.Count];
+        /// <summary>Shapes already added for the current vertex; the first channel of a name wins.</summary>
+        public bool[] ShapeAdded { get; } = new bool[shapeCount];
+    }
+
+    /// <summary>
+    /// Maps each blendshape channel to its index in the unique blendshape names;
+    /// channels without a name in the list map to -1.
+    /// </summary>
+    private static int[] BuildShapeIndexByChannel(
+        IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels,
+        string[]? blendShapeNames)
+    {
+        int[] result = new int[blendShapeChannels.Count];
+        for (int channel = 0; channel < result.Length; channel++)
+            result[channel] = blendShapeNames is null
+                ? -1
+                : Array.IndexOf(blendShapeNames, blendShapeChannels[channel].Name);
+        return result;
+    }
+
+    /// <summary>
+    /// Appends one polygon vertex with its attributes, its control point's skin
+    /// influences and its control point's blendshape deltas to a packed source.
+    /// </summary>
+    private static void AppendPolygonVertex(
+        XRMeshPackedSource source,
+        PackedVertexScratch scratch,
         FbxMeshGeometry meshGeometry,
         Matrix4x4 geometryTransform,
         int controlPointIndex,
@@ -884,92 +920,72 @@ internal static class NativeFbxSceneImporter
         FbxLayerElement<Vector3>? tangentLayer,
         bool flipUvY,
         IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint,
-        IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels)
+        IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels,
+        int[] shapeIndexByChannel)
     {
         Vector3 position = controlPointIndex >= 0 && controlPointIndex < meshGeometry.ControlPoints.Count
             ? Vector3.Transform(meshGeometry.ControlPoints[controlPointIndex], geometryTransform)
             : Vector3.Zero;
 
-        Vertex vertex = new(position);
         Vector3 baseNormal = Vector3.Zero;
         bool hasNormal = false;
-        Vector3 baseTangent = Vector3.Zero;
-        bool hasTangent = false;
-
         if (TryResolveLayerValue(normalLayer, controlPointIndex, polygonVertexIndex, polygonIndex, out Vector3 normal)
             && normal.LengthSquared() > 0.0f)
         {
             baseNormal = Vector3.Normalize(Vector3.TransformNormal(normal, geometryTransform));
-            vertex.Normal = baseNormal;
             hasNormal = true;
         }
 
+        Vector3 baseTangent = Vector3.Zero;
         if (TryResolveLayerValue(tangentLayer, controlPointIndex, polygonVertexIndex, polygonIndex, out Vector3 tangent)
             && tangent.LengthSquared() > 0.0f)
-        {
             baseTangent = Vector3.Normalize(Vector3.TransformNormal(tangent, geometryTransform));
-            vertex.Tangent = baseTangent;
-            hasTangent = true;
-        }
 
-        if (meshGeometry.TextureCoordinates.Count > 0)
+        for (int set = 0; set < scratch.TexCoords.Length; set++)
         {
-            List<Vector2> textureCoordinateSets = new(meshGeometry.TextureCoordinates.Count);
-            foreach (FbxLayerElement<Vector2> layer in meshGeometry.TextureCoordinates)
-            {
-                Vector2 textureCoordinate = ResolveLayerValue(layer, controlPointIndex, polygonVertexIndex, polygonIndex, Vector2.Zero);
-                if (flipUvY)
-                    textureCoordinate.Y = 1.0f - textureCoordinate.Y;
-                textureCoordinateSets.Add(textureCoordinate);
-            }
-            vertex.TextureCoordinateSets = textureCoordinateSets;
+            Vector2 textureCoordinate = ResolveLayerValue(meshGeometry.TextureCoordinates[set], controlPointIndex, polygonVertexIndex, polygonIndex, Vector2.Zero);
+            if (flipUvY)
+                textureCoordinate.Y = 1.0f - textureCoordinate.Y;
+            scratch.TexCoords[set] = textureCoordinate;
         }
+        for (int set = 0; set < scratch.Colors.Length; set++)
+            scratch.Colors[set] = ResolveLayerValue(meshGeometry.Colors[set], controlPointIndex, polygonVertexIndex, polygonIndex, Vector4.One);
 
-        if (meshGeometry.Colors.Count > 0)
-        {
-            List<Vector4> colorSets = new(meshGeometry.Colors.Count);
-            foreach (FbxLayerElement<Vector4> layer in meshGeometry.Colors)
-                colorSets.Add(ResolveLayerValue(layer, controlPointIndex, polygonVertexIndex, polygonIndex, Vector4.One));
-            vertex.ColorSets = colorSets;
-        }
+        source.AddVertex(position, baseNormal, new Vector4(baseTangent, 1.0f), scratch.TexCoords, scratch.Colors);
 
         if (skinWeightsByControlPoint is not null
             && controlPointIndex >= 0
-            && skinWeightsByControlPoint.TryGetValue(controlPointIndex, out Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights)
-            && weights.Count > 0)
+            && skinWeightsByControlPoint.TryGetValue(controlPointIndex, out Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights))
         {
-            vertex.Weights = new Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>(weights.Count);
             foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) data) in weights)
-                vertex.Weights[bone] = data;
+                source.AddInfluence(source.AddBone(bone, data.bindInvWorldMatrix), data.weight);
         }
 
-        if (blendShapeChannels.Count > 0 && controlPointIndex >= 0)
+        if (blendShapeChannels.Count == 0 || controlPointIndex < 0)
+            return;
+
+        Array.Clear(scratch.ShapeAdded);
+        for (int channelIndex = 0; channelIndex < blendShapeChannels.Count; channelIndex++)
         {
-            foreach (FbxBlendShapeChannelBinding channel in blendShapeChannels)
-            {
-                bool hasPositionDelta = channel.PositionDeltasByControlPoint.TryGetValue(controlPointIndex, out Vector3 positionDelta);
-                bool hasNormalDelta = channel.NormalDeltasByControlPoint.TryGetValue(controlPointIndex, out Vector3 normalDelta);
-                if (!hasPositionDelta && !hasNormalDelta)
-                    continue;
+            int shapeIndex = shapeIndexByChannel[channelIndex];
+            if (shapeIndex < 0 || scratch.ShapeAdded[shapeIndex])
+                continue;
 
-                Vector3 absolutePosition = vertex.Position + (hasPositionDelta ? Vector3.TransformNormal(positionDelta, geometryTransform) : Vector3.Zero);
-                Vector3? absoluteNormal = hasNormal
-                    ? Vector3.Normalize(baseNormal + (hasNormalDelta ? Vector3.TransformNormal(normalDelta, geometryTransform) : Vector3.Zero))
-                    : null;
+            FbxBlendShapeChannelBinding channel = blendShapeChannels[channelIndex];
+            bool hasPositionDelta = channel.PositionDeltasByControlPoint.TryGetValue(controlPointIndex, out Vector3 positionDelta);
+            bool hasNormalDelta = channel.NormalDeltasByControlPoint.TryGetValue(controlPointIndex, out Vector3 normalDelta);
+            if (!hasPositionDelta && !hasNormalDelta)
+                continue;
 
-                vertex.Blendshapes ??= [];
-                vertex.Blendshapes.Add((
-                    channel.Name,
-                    new VertexData
-                    {
-                        Position = absolutePosition,
-                        Normal = absoluteNormal,
-                        Tangent = hasTangent ? baseTangent : null,
-                    }));
-            }
+            scratch.ShapeAdded[shapeIndex] = true;
+            Vector3 shapePositionDelta = hasPositionDelta ? Vector3.TransformNormal(positionDelta, geometryTransform) : Vector3.Zero;
+            // A shape normal is the renormalized base normal plus its delta; the
+            // stored delta is its difference to the base normal.
+            Vector3 shapeNormalDelta = hasNormal
+                ? Vector3.Normalize(baseNormal + (hasNormalDelta ? Vector3.TransformNormal(normalDelta, geometryTransform) : Vector3.Zero)) - baseNormal
+                : Vector3.Zero;
+            source.AddBlendshapeDelta(shapeIndex, shapePositionDelta, shapeNormalDelta, Vector3.Zero);
         }
-
-        return vertex;
     }
 
     private static Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> BuildSkinWeightsByControlPoint(
@@ -1103,7 +1119,7 @@ internal static class NativeFbxSceneImporter
                 };
             }
 
-            // CreateVertex copies influences, so this import-only entry can be shared.
+            // Packing reads influences without keeping them, so this import-only entry can be shared.
             weightsByControlPoint.Add(controlPointIndex, rigidWeights);
             unweightedCount++;
         }

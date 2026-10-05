@@ -95,6 +95,21 @@ namespace XREngine.Components.Scene.Mesh
             base.OnComponentDeactivated();
         }
 
+        /// <summary>
+        /// Destroys the owned <see cref="Meshes"/> list. The list is a registered engine object
+        /// whose change handlers reference this component, so the global object cache would
+        /// otherwise keep a destroyed component and its meshes alive.
+        /// </summary>
+        protected override void OnDestroying()
+        {
+            EventList<RenderableMesh> meshes = Meshes;
+            meshes.PostAnythingAdded -= Meshes_PostAnythingAdded;
+            meshes.PostAnythingRemoved -= Meshes_PostAnythingRemoved;
+            meshes.Destroy(true);
+            RenderedObjects = [];
+            base.OnDestroying();
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);

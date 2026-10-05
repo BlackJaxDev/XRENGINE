@@ -21,6 +21,8 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
 {
     private readonly RuntimeWorldRenderState _state;
     private readonly ConcurrentQueue<(TransformBase Transform, Matrix4x4 Matrix)> _pendingMatrices = [];
+    private readonly Lock _collectPublicationLock = new();
+    private bool _collectPublicationOpen;
     private PhysicsDebugFrameRenderer _physicsDebugRenderer = new();
     private long _nextEditPhysicsDebugCollectionTimestamp;
     private Func<object?>? _targetWorld;
@@ -60,6 +62,8 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
     public object? GameModeObject => _gameMode?.Invoke();
     public IRuntimeAmbientSettings? AmbientSettings => _state.AmbientSettings;
     public IReadOnlyList<SceneNode> RootNodes => _rootNodes?.Invoke() ?? [];
+    public ReadOnlySpan<SceneNode> RootNodeSnapshot
+        => WorldContext is RuntimeWorld world ? world.RootNodes.Snapshot : [];
     public bool PreviewOctrees => GetSettings()?.PreviewOctrees ?? false;
     public bool PreviewQuadtrees => GetSettings()?.PreviewQuadtrees ?? false;
 
@@ -99,12 +103,37 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
             _pendingMatrices.Enqueue((transform, worldMatrix));
     }
 
+    /// <summary>
+    /// Opens or closes collect-time publication for the owning host's render session.
+    /// </summary>
+    /// <remarks>
+    /// The host opens publication only after the visual scene is initialized and its
+    /// roots are active, and closes it before deactivating roots and tearing the scene
+    /// down. Closing waits for any in-flight <see cref="GlobalPreCollectVisible"/> call,
+    /// so teardown never overlaps collect-thread scene mutation. While closed, staged
+    /// renderable and matrix changes stay queued for the next session.
+    /// </remarks>
+    public void SetCollectPublicationOpen(bool open)
+    {
+        lock (_collectPublicationLock)
+            _collectPublicationOpen = open;
+    }
+
     public void GlobalPreCollectVisible()
     {
-        RuntimeEngine.Rendering.Stats.FrameOutputs.RecordSceneSnapshot();
-        ApplyRenderMatrixChanges();
-        RenderableMesh.ProcessPendingRenderMatrixUpdates();
-        VisualScene.GlobalCollectVisible();
+        lock (_collectPublicationLock)
+        {
+            // Callers outside the host's timer subscription, such as XR runtimes that
+            // republish late transforms before stereo collection, must not mutate a
+            // scene whose session is closed.
+            if (!_collectPublicationOpen)
+                return;
+
+            RuntimeEngine.Rendering.Stats.FrameOutputs.RecordSceneSnapshot();
+            ApplyRenderMatrixChanges();
+            RenderableMesh.ProcessPendingRenderMatrixUpdates();
+            VisualScene.GlobalCollectVisible();
+        }
     }
 
     public void GlobalCollectVisible() => Lights.CollectVisibleItems();

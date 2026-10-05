@@ -94,35 +94,25 @@ public static class XRMeshToModelingDocumentConverter
                 boneIndexByTransform[sourceBone.tfm] = i;
         }
 
+        // Weights come from the packed Core4 + spill buffers, whose bone indices
+        // address UtilizedBones and therefore the skin bones listed above.
         List<List<ModelingSkinWeight>> skinWeights = new(mesh.VertexCount);
+        bool packed = XRMeshSkinningInfluenceReader.TryCreate(mesh, out XRMeshSkinningInfluenceReader reader);
+        int influenceCapacity = packed ? reader.MaxInfluenceCount : 1;
+        int[] boneScratch = new int[influenceCapacity];
+        float[] weightScratch = new float[influenceCapacity];
         for (int i = 0; i < mesh.VertexCount; i++)
         {
-            Vertex? vertex = i < mesh.Vertices.Length ? mesh.Vertices[i] : null;
-            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? vertexWeights = vertex?.Weights;
-
-            if (vertexWeights is null || vertexWeights.Count == 0)
+            int influenceCount = packed ? reader.ReadInfluences(i, boneScratch, weightScratch) : 0;
+            if (influenceCount == 0)
             {
                 skinWeights.Add([]);
                 continue;
             }
 
-            List<ModelingSkinWeight> modeledWeights = new(vertexWeights.Count);
-            foreach (var pair in vertexWeights)
-            {
-                TransformBase? transform = pair.Key;
-                if (!boneIndexByTransform.TryGetValue(transform, out int boneIndex))
-                {
-                    boneIndex = skinBones.Count;
-                    boneIndexByTransform[transform] = boneIndex;
-                    skinBones.Add(new ModelingSkinBone
-                    {
-                        Name = transform.Name,
-                        InverseBindMatrix = pair.Value.bindInvWorldMatrix
-                    });
-                }
-
-                modeledWeights.Add(new ModelingSkinWeight(boneIndex, pair.Value.weight));
-            }
+            List<ModelingSkinWeight> modeledWeights = new(influenceCount);
+            for (int influence = 0; influence < influenceCount; influence++)
+                modeledWeights.Add(new ModelingSkinWeight(boneScratch[influence], weightScratch[influence]));
 
             modeledWeights.Sort((left, right) => left.BoneIndex.CompareTo(right.BoneIndex));
             skinWeights.Add(modeledWeights);
@@ -153,55 +143,40 @@ public static class XRMeshToModelingDocumentConverter
             });
         }
 
+        // Every channel gets a zero delta per vertex; the packed active list then
+        // supplies the full-precision deltas of the vertices each shape moves.
         for (int vertexIndex = 0; vertexIndex < mesh.VertexCount; vertexIndex++)
         {
-            Vertex? vertex = vertexIndex < mesh.Vertices.Length ? mesh.Vertices[vertexIndex] : null;
-            Vector3 basePosition = vertex?.Position ?? mesh.GetPosition((uint)vertexIndex);
-            Vector3 baseNormal = vertex?.Normal ?? (mesh.HasNormals ? mesh.GetNormal((uint)vertexIndex) : Vector3.Zero);
-            Vector3 baseTangent = vertex?.Tangent ?? (mesh.HasTangents ? mesh.GetTangent((uint)vertexIndex) : Vector3.Zero);
-
             for (int channelIndex = 0; channelIndex < channels.Count; channelIndex++)
             {
                 ModelingBlendshapeChannel channel = channels[channelIndex];
-                Vector3 positionDelta = Vector3.Zero;
-                Vector3 normalDelta = Vector3.Zero;
-                Vector3 tangentDelta = Vector3.Zero;
+                channel.PositionDeltas.Add(Vector3.Zero);
+                channel.NormalDeltas?.Add(Vector3.Zero);
+                channel.TangentDeltas?.Add(Vector3.Zero);
+            }
+        }
 
-                if (TryGetBlendshapeVertexData(vertex, channel.Name, out VertexData blendshapeData))
+        if (XRMeshBlendshapeActiveListReader.TryCreate(mesh, out XRMeshBlendshapeActiveListReader reader))
+        {
+            for (int vertexIndex = 0; vertexIndex < mesh.VertexCount; vertexIndex++)
+            {
+                reader.GetVertexEntries(vertexIndex, out int first, out int count);
+                for (int entry = first; entry < first + count; entry++)
                 {
-                    positionDelta = blendshapeData.Position - basePosition;
+                    reader.ReadEntry(entry, out int channelIndex, out Vector3 position, out Vector3 normal, out Vector3 tangent);
+                    if ((uint)channelIndex >= (uint)channels.Count)
+                        continue;
+                    ModelingBlendshapeChannel channel = channels[channelIndex];
+                    channel.PositionDeltas[vertexIndex] = position;
                     if (channel.NormalDeltas is not null)
-                        normalDelta = (blendshapeData.Normal ?? Vector3.Zero) - baseNormal;
+                        channel.NormalDeltas[vertexIndex] = normal;
                     if (channel.TangentDeltas is not null)
-                        tangentDelta = (blendshapeData.Tangent ?? Vector3.Zero) - baseTangent;
+                        channel.TangentDeltas[vertexIndex] = tangent;
                 }
-
-                channel.PositionDeltas.Add(positionDelta);
-                channel.NormalDeltas?.Add(normalDelta);
-                channel.TangentDeltas?.Add(tangentDelta);
             }
         }
 
         document.BlendshapeChannels = channels;
-    }
-
-    private static bool TryGetBlendshapeVertexData(Vertex? vertex, string blendshapeName, out VertexData data)
-    {
-        data = new VertexData();
-        if (vertex?.Blendshapes is null)
-            return false;
-
-        for (int i = 0; i < vertex.Blendshapes.Count; i++)
-        {
-            var blendshape = vertex.Blendshapes[i];
-            if (string.Equals(blendshape.name, blendshapeName, StringComparison.Ordinal))
-            {
-                data = blendshape.data;
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static ModelingMeshMetadata BuildMetadata(XRMesh mesh)

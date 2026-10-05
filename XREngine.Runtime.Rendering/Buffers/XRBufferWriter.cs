@@ -69,11 +69,18 @@ public ref struct XRBufferWriter<T> where T : unmanaged
         ThrowIfUnavailable();
 
         XRDataBuffer buffer = _buffer!;
-        buffer.CommitWriterRanges<T>(
-            _elementOffset,
-            _elementCount,
-            _dirtyRanges,
-            _options);
+        try
+        {
+            buffer.CommitWriterRanges<T>(
+                _elementOffset,
+                _elementCount,
+                _dirtyRanges,
+                _options);
+        }
+        finally
+        {
+            buffer.EndClientWriter();
+        }
 
         _committed = true;
         _disposed = true;
@@ -85,6 +92,7 @@ public ref struct XRBufferWriter<T> where T : unmanaged
     public void Cancel()
     {
         ThrowIfTerminal();
+        _buffer?.EndClientWriter();
         _cancelled = true;
         _disposed = true;
         _span = default;
@@ -106,6 +114,7 @@ public ref struct XRBufferWriter<T> where T : unmanaged
                 Cancel();
                 break;
             case XRBufferWriterDisposeBehavior.RequireExplicitCommit:
+                _buffer.EndClientWriter();
                 _disposed = true;
                 _span = default;
                 _dirtyRanges = null;

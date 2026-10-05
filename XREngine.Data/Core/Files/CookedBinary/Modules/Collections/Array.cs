@@ -47,6 +47,7 @@ public static partial class CookedBinarySerializer
             return true;
         }
 
+#if !XRE_PUBLISHED
         public override CookedBinarySchemaNode? TryBuildValueSchema(CookedBinarySchemaBuilder builder, string name, Type? declaredType, object value, Type runtimeType, bool allowCustom)
         {
             if (!runtimeType.IsArray || value is not Array array)
@@ -78,5 +79,6 @@ public static partial class CookedBinarySerializer
             node.Notes = "repeated for each array element";
             return builder.FinalizeNode(node, allowUnknownChildren: true);
         }
+#endif
     }
 }

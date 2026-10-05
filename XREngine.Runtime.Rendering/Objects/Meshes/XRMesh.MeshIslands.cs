@@ -18,7 +18,7 @@ public partial class XRMesh
         if (maxTrianglesPerPartition <= 0 ||
             Type != EPrimitiveType.Triangles ||
             _triangles is not { Count: > 1 } triangles ||
-            Vertices is not { Length: > 0 })
+            !HasReadablePositions())
         {
             return [this];
         }
@@ -119,8 +119,9 @@ public partial class XRMesh
             return [this];
 
         List<XRMesh> meshes = new(partitions.Count);
+        using XRMeshVertexView source = XRMeshVertexView.Open(this);
         for (int partitionIndex = 0; partitionIndex < partitions.Count; partitionIndex++)
-            meshes.Add(CreateTriangleSubsetMesh(partitions[partitionIndex], "Partition", partitionIndex));
+            meshes.Add(CreateTriangleSubsetMesh(source.Vertices, partitions[partitionIndex], "Partition", partitionIndex));
         return meshes;
     }
 
@@ -335,7 +336,7 @@ public partial class XRMesh
     /// </summary>
     public IReadOnlyList<XRMesh> SeparateTriangleIslands()
     {
-        if (Type != EPrimitiveType.Triangles || _triangles is not { Count: > 1 } triangles || Vertices is not { Length: > 0 })
+        if (Type != EPrimitiveType.Triangles || _triangles is not { Count: > 1 } triangles || !HasReadablePositions())
             return [this];
 
         Dictionary<Vector3, List<int>> trianglesByPosition = BuildTrianglePositionMap(triangles);
@@ -343,7 +344,10 @@ public partial class XRMesh
         Queue<int> pending = new();
         List<int> islandTriangleIndices = new(triangles.Count);
         List<XRMesh> islands = [];
-
+        // Materialized only once a second island proves the mesh splits.
+        XRMeshVertexView? source = null;
+        try
+        {
         for (int triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
         {
             if (visited[triangleIndex])
@@ -367,7 +371,13 @@ public partial class XRMesh
             if (islandTriangleIndices.Count == triangles.Count)
                 return [this];
 
-            islands.Add(CreateTriangleSubsetMesh(islandTriangleIndices, "Island", islands.Count));
+            source ??= XRMeshVertexView.Open(this);
+            islands.Add(CreateTriangleSubsetMesh(source.Vertices, islandTriangleIndices, "Island", islands.Count));
+        }
+        }
+        finally
+        {
+            source?.Dispose();
         }
 
         return islands.Count <= 1 ? [this] : islands;
@@ -388,9 +398,15 @@ public partial class XRMesh
     }
 
     private Vector3 GetTrianglePointPosition(int vertexIndex)
-        => vertexIndex >= 0 && vertexIndex < Vertices.Length
-            ? Vertices[vertexIndex].Position
+        => vertexIndex >= 0 && vertexIndex < VertexCount
+            ? GetPosition((uint)vertexIndex)
             : Vector3.Zero;
+
+    private bool HasReadablePositions()
+        => VertexCount > 0 &&
+           (Interleaved
+               ? InterleavedVertexBuffer?.ClientSideSource is not null
+               : PositionsBuffer?.ClientSideSource is not null);
 
     private static void AddTrianglePosition(
         Vector3 position,
@@ -449,19 +465,23 @@ public partial class XRMesh
     private static float GetAxis(in Vector3 value, int axis)
         => axis == 0 ? value.X : axis == 1 ? value.Y : value.Z;
 
-    private XRMesh CreateTriangleSubsetMesh(IReadOnlyList<int> triangleIndices, string label, int subsetIndex)
+    private XRMesh CreateTriangleSubsetMesh(
+        Vertex[] sourceVertices,
+        IReadOnlyList<int> triangleIndices,
+        string label,
+        int subsetIndex)
     {
         List<VertexTriangle> trianglePrimitives = new(triangleIndices.Count);
         for (int index = 0; index < triangleIndices.Count; index++)
         {
             IndexTriangle triangle = _triangles![triangleIndices[index]];
             trianglePrimitives.Add(new VertexTriangle(
-                CopyVertexForIsland(Vertices[triangle.Point0]),
-                CopyVertexForIsland(Vertices[triangle.Point1]),
-                CopyVertexForIsland(Vertices[triangle.Point2])));
+                CopyVertexForIsland(sourceVertices[triangle.Point0]),
+                CopyVertexForIsland(sourceVertices[triangle.Point1]),
+                CopyVertexForIsland(sourceVertices[triangle.Point2])));
         }
 
-        XRMesh island = new(trianglePrimitives)
+        XRMesh island = new(trianglePrimitives, out Vertex[] islandVertices)
         {
             Name = string.IsNullOrWhiteSpace(Name) ? $"{label} {subsetIndex}" : $"{Name} {label} {subsetIndex}",
             AllowBVHGeneration = AllowBVHGeneration,
@@ -473,14 +493,14 @@ public partial class XRMesh
         };
 
         ESkinningShaderConvention skinningConvention = SkinningShaderConvention;
-        if (HasAnyVertexWeights(island.Vertices))
+        if (HasAnyVertexWeights(islandVertices))
         {
-            island.RebuildSkinningBuffersFromVertices();
+            island.RebuildSkinningBuffersFromVertices(islandVertices);
             island.SkinningShaderConvention = skinningConvention;
         }
 
         if (HasBlendshapes)
-            island.RebuildBlendshapeBuffersFromVertices();
+            island.RebuildBlendshapeBuffersFromVertices(islandVertices);
 
         return island;
     }

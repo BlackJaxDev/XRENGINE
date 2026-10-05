@@ -22,5 +22,16 @@ namespace XREngine.Rendering.Models
             get => _meshes;
             set => SetField(ref _meshes, value ?? []);
         }
+
+        /// <summary>
+        /// Destroys the owned submesh list. It is a registered engine object, so the global
+        /// object cache would otherwise keep the submeshes, their meshes and CPU vertex data
+        /// reachable after this model is destroyed.
+        /// </summary>
+        protected override void OnDestroying()
+        {
+            _meshes.Destroy(true);
+            base.OnDestroying();
+        }
     }
 }

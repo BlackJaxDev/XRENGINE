@@ -14,6 +14,12 @@ public static partial class CookedBinarySerializer
             if (value is not IList list)
                 return false;
 
+            if (IsDefaultImmutableArray(value, runtimeType))
+            {
+                writer.Write((byte)CookedBinaryTypeMarker.Null);
+                return true;
+            }
+
             writer.Write((byte)CookedBinaryTypeMarker.List);
             WriteTypeName(writer, runtimeType);
             writer.Write(list.Count);
@@ -39,6 +45,10 @@ public static partial class CookedBinarySerializer
             if (value is not IList list)
                 return false;
 
+            // A default immutable array is written as the null marker alone, already counted.
+            if (IsDefaultImmutableArray(value, runtimeType))
+                return true;
+
             calculator.AddBytes(SizeOfTypeName(runtimeType));
             calculator.AddBytes(sizeof(int));
             foreach (object? item in list)
@@ -46,10 +56,14 @@ public static partial class CookedBinarySerializer
             return true;
         }
 
+#if !XRE_PUBLISHED
         public override CookedBinarySchemaNode? TryBuildValueSchema(CookedBinarySchemaBuilder builder, string name, Type? declaredType, object value, Type runtimeType, bool allowCustom)
         {
             if (value is not IList list)
                 return null;
+
+            if (IsDefaultImmutableArray(value, runtimeType))
+                return builder.FinalizeNullNode(builder.NewNode(name, "value", runtimeType.FullName ?? runtimeType.Name), runtimeType, "default immutable array; cooked serializer emits null");
 
             var node = builder.NewNode(name, "value", runtimeType.FullName ?? runtimeType.Name);
             node.Marker = CookedBinaryTypeMarker.List.ToString();
@@ -77,5 +91,6 @@ public static partial class CookedBinarySerializer
             node.Notes = "repeated for each list entry";
             return builder.FinalizeNode(node, allowUnknownChildren: true);
         }
+#endif
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
@@ -13,7 +14,7 @@ internal sealed class VulkanLaneRecordingContextTable
     private const int LaneCount = 11; // Matches EVulkanAcceptedFrameLane values
     private readonly int _maxFrameSlots;
     private readonly VulkanLaneRecordingContext[,] _contexts;
-    private readonly ConcurrentDictionary<ulong, VulkanLaneRecordingContext> _activeByHandle = new();
+    private readonly ConcurrentDictionary<ulong, (VulkanLaneRecordingContext Context, ulong Generation)> _activeByHandle = new();
 
     public VulkanLaneRecordingContextTable(int maxFrameSlots = 16)
     {
@@ -45,10 +46,20 @@ internal sealed class VulkanLaneRecordingContextTable
         ulong recordingGeneration)
     {
         VulkanLaneRecordingContext context = GetContext(lane, frameSlot);
-        context.Begin(commandBuffer, recordingGeneration);
+        if (context.IsActive)
+            throw new InvalidOperationException("A Vulkan recording lane cannot begin another command buffer while its current recording is active.");
+        RemoveRegistration(context.CommandBufferHandle, context, context.RecordingGeneration);
         ulong handle = unchecked((ulong)commandBuffer.Handle);
-        if (handle != 0)
-            _activeByHandle[handle] = context;
+        if (handle == 0)
+            throw new ArgumentException("A live command buffer is required.", nameof(commandBuffer));
+        if (TryGetActiveContext(commandBuffer, out _))
+            throw new InvalidOperationException("A Vulkan command buffer already belongs to an active recording lane.");
+        context.Begin(commandBuffer, recordingGeneration);
+        if (!_activeByHandle.TryAdd(handle, (context, recordingGeneration)))
+        {
+            context.End();
+            throw new InvalidOperationException("Vulkan recording lane ownership changed while registering the command buffer.");
+        }
         return context;
     }
 
@@ -61,14 +72,44 @@ internal sealed class VulkanLaneRecordingContextTable
             return false;
         }
 
-        return _activeByHandle.TryGetValue(handle, out context);
+        if (_activeByHandle.TryGetValue(handle, out var registration))
+        {
+            context = registration.Context;
+            if (context.IsActive && context.CommandBufferHandle == handle &&
+                context.RecordingGeneration == registration.Generation)
+                return true;
+            // A reused lane object may now belong to another handle. Remove
+            // only this obsolete registration; never end its current owner.
+            RemoveRegistration(handle, context, registration.Generation);
+        }
+        context = null;
+        return false;
+    }
+
+    public bool TryGetActiveContext(CommandBuffer commandBuffer, ulong recordingGeneration, out VulkanLaneRecordingContext? context)
+    {
+        if (!TryGetActiveContext(commandBuffer, out context))
+            return false;
+        if (context!.RecordingGeneration != recordingGeneration)
+            throw new InvalidOperationException("A Vulkan recording lane does not belong to the command buffer's current recording generation.");
+        return true;
+    }
+
+    /// <summary>Detaches the exact command owner when recording is abandoned, reset or destroyed.</summary>
+    public void AbandonContext(CommandBuffer commandBuffer)
+    {
+        if (TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? context))
+            EndContext(context!);
     }
 
     public void EndContext(VulkanLaneRecordingContext context)
     {
         ulong handle = context.CommandBufferHandle;
-        if (handle != 0)
-            _activeByHandle.TryRemove(handle, out _);
-        context.End();
+        if (RemoveRegistration(handle, context, context.RecordingGeneration))
+            context.End();
     }
+
+    private bool RemoveRegistration(ulong handle, VulkanLaneRecordingContext context, ulong generation)
+        => handle != 0 && _activeByHandle.TryRemove(
+            new KeyValuePair<ulong, (VulkanLaneRecordingContext Context, ulong Generation)>(handle, (context, generation)));
 }

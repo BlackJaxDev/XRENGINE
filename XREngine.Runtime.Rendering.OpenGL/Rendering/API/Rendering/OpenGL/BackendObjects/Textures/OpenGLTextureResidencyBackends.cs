@@ -729,13 +729,37 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     long uploadBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
 
                     SparseTextureStreamingTransitionRequest transitionRequest = BuildSparseTransitionRequest(residentData, pageSelection);
+                    bool uploadBytesRecorded = false;
 
                     void CompleteSparseTransition(SparseTextureStreamingTransitionResult transitionResult)
                     {
+                        if (!transitionResult.AdmissionDeferred && !uploadBytesRecorded &&
+                            (!cancellationToken.IsCancellationRequested || transitionResult.ExposureDeferred))
+                        {
+                            RecordUploadBytes(uploadBytes);
+                            uploadBytesRecorded = true;
+                        }
+
                         if (cancellationToken.IsCancellationRequested
                             || (shouldAcceptResult is not null && !shouldAcceptResult()))
                         {
+                            if (transitionResult.ExposureDeferred)
+                            {
+                                if (transitionResult.DiscardDeferred is { } discard)
+                                    discard(transitionResult);
+                                else
+                                    onError?.Invoke(new InvalidOperationException("A deferred sparse transition has no originating discard owner."));
+                            }
                             ReportCanceled("during finalization");
+                            return;
+                        }
+
+                        if (transitionResult.AdmissionDeferred)
+                        {
+                            RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
+                                RetrySparseTransition,
+                                $"TextureStreaming.RetrySparseTransition[{target.Name}]",
+                                RenderThreadJobKind.TextureUpload);
                             return;
                         }
 
@@ -768,6 +792,37 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                         onFinished?.Invoke(target);
                     }
 
+                    bool RetrySparseTransition()
+                    {
+                        if (cancellationToken.IsCancellationRequested
+                            || (shouldAcceptResult is not null && !shouldAcceptResult()))
+                        {
+                            ReportCanceled("before sparse retry");
+                            return true;
+                        }
+
+                        if (!TryEnterSparseTransitionScheduleBudget())
+                            return false;
+
+                        Interlocked.Increment(ref s_inFlightUploadCount);
+                        try
+                        {
+                            SparseTextureStreamingTransitionResult result = target.ApplySparseTextureStreamingTransition(transitionRequest);
+                            if (result.AdmissionDeferred)
+                            {
+                                ReleaseSparseTransitionScheduleBudget();
+                                return false;
+                            }
+
+                            CompleteSparseTransition(result);
+                            return true;
+                        }
+                        finally
+                        {
+                            ExitSharedUpload();
+                        }
+                    }
+
                     // A promotion (requesting a finer mip than what is currently resident) can use
                     // the async upload path only when the OpenGL wrapper already has a complete,
                     // published sparse state. Initial loads and storage recreates fall back to the
@@ -776,7 +831,6 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     bool allowAsyncUpload = transitionRequest.RequestedBaseMipLevel < target.SparseTextureStreamingResidentBaseMipLevel && TryEnterSharedUpload();
                     if (allowAsyncUpload)
                     {
-                        RecordUploadBytes(uploadBytes);
                         bool asyncScheduled = RuntimeRenderingHostServices.Assets.TryScheduleSparseTextureStreamingTransitionAsync(
                             target,
                             transitionRequest,
@@ -809,8 +863,9 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     Interlocked.Increment(ref s_inFlightUploadCount);
                     try
                     {
-                        RecordUploadBytes(uploadBytes);
                         SparseTextureStreamingTransitionResult transitionResult = target.ApplySparseTextureStreamingTransition(transitionRequest);
+                        if (transitionResult.AdmissionDeferred)
+                            ReleaseSparseTransitionScheduleBudget();
                         CompleteSparseTransition(transitionResult);
                     }
                     finally
@@ -913,6 +968,12 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
             if (Interlocked.CompareExchange(ref s_sparseTransitionScheduleCountThisFrame, currentCount + 1, currentCount) == currentCount)
                 return true;
         }
+    }
+
+    private static void ReleaseSparseTransitionScheduleBudget()
+    {
+        if (Volatile.Read(ref s_sparseTransitionScheduleFrameTicks) == RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks)
+            Interlocked.Decrement(ref s_sparseTransitionScheduleCountThisFrame);
     }
 
     private static void ExitSharedUpload()

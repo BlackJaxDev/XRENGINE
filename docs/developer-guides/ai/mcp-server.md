@@ -497,6 +497,10 @@ before any successful response.
 
 ### Viewport Sequence Capture Sessions
 
+Image analysis resamples each captured frame to exact analysis dimensions. The
+image codec does not preserve aspect ratio implicitly; contact-sheet layout
+calculates its contained thumbnail dimensions before requesting the resize.
+
 Temporal captures use an asynchronous session so an MCP request does not remain open for the duration of capture and exceed the server's request timeout. Start a session, poll it by `capture_id`, and optionally cancel it. Only one sequence capture may be active for a given viewport at a time.
 
 `start_viewport_sequence_capture` requires exactly one stop condition:
@@ -555,6 +559,22 @@ Generated from `McpToolRegistry.Tools` via:
 ```powershell
 pwsh Tools/Reports/generate_mcp_docs.ps1
 ```
+
+### Targeting Live Owned Objects
+
+Generic inspection resolves scene nodes, transforms and components in the active
+world before consulting global caches. Assets can share persistent IDs with
+dormant edit/play snapshots. To select an exact owned instance, pass `object_id`
+for its live component and `object_path` to `get_object_properties`,
+`set_object_property` or `invoke_method`, for example `Material` or
+`Material.Shaders[0].Source`.
+
+A supplied path requires an active-world root and never falls back to a cached
+root. Paths support instance properties, fields and nonnegative array/list
+indices, with at most 16 member steps and 1,024 characters. Null, destroyed,
+out-of-range and non-engine terminal values fail explicitly. Static method calls
+cannot use `object_path`. Responses retain the root ID and path separately from
+the target's type and optional persistent ID.
 
 <!-- MCP_TOOL_TABLE:START -->
 
@@ -669,6 +689,9 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_vulkan_frame_op_trace` | Return the latest Vulkan frame-op trace snapshot. Requires launching with XRE_VULKAN_FRAMEOP_TRACE=1. |
 | `get_vulkan_gpu_counter_diagnostics` | Return the latest opt-in raw Vulkan GPU counter evidence captured by the zero-readback diagnostics gate. |
 | `get_vulkan_live_resource_owners` | Group live tracked Vulkan native resources by object type and registering owner, largest groups first. Cold diagnostic for locating retained-resource growth; do not poll per frame. |
+| `get_vulkan_memory_statistics` | Return the Vulkan memory allocator's statistics (VMA JSON: usage per heap and memory type, block counts and sizes; with detailed_map, every block and allocation). Cold diagnostic for attributing GPU and mapped memory; do not poll per frame. |
+| `get_vulkan_resource_planner_states` | List the Vulkan renderer's retained resource-planner states (published table and each OpenXR planner with its nested table) with their keys and the physical image memory each allocator holds. Cold diagnostic for attributing duplicated render targets; runs on the render thread between frames. |
+| `get_world_tick_telemetry` | Read cumulative world tick counters: tick group dispatches, pending registration cost and the costliest kinds of tick callback. Set XRE_WORLD_TICK_TELEMETRY=1 before editor launch to enable observation; compare two reads to observe a window. |
 | `get_zero_readback_material_table_diagnostics` | Return the fixed per-pass zero-readback material-table gate reached by the latest render frame. |
 | `import_scene` | Import a scene asset from disk and add it to the active world. |
 | `import_third_party_asset` | Import a third-party file into game assets. External Unity prefabs are converted directly to native .asset output without copying or modifying their source project. |
@@ -714,7 +737,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `read_game_script` | Read the contents of a .cs script file from the game project's assets directory. |
 | `redo` | Redo the most recently undone editor change. |
 | `reload_asset` | Force-reload an asset from disk after external edits. Specify by asset GUID or file path. |
-| `reload_renderer_shaders` | Invalidate all loaded shader dependency roots while retaining each backend's last-good programs and pipelines. |
+| `reload_renderer_shaders` | Queue loaded shader reloads, refreshing clean disk-backed roots while preserving unsaved and generated sources and each backend's last-good programs. |
 | `remove_component` | Remove a component from a scene node. |
 | `rename_game_asset` | Rename or move a file or directory within the game project's assets directory. |
 | `rename_game_script` | Rename or move a .cs script file within the game project's assets directory. |

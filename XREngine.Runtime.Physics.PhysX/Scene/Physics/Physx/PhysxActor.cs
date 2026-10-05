@@ -67,6 +67,9 @@ namespace XREngine.Scene.Physics.Physx
                 var prev = ActorPtr->GetActorFlags();
                 ActorPtr->SetActorFlagsMut(value);
                 PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(ActorFlags), $"{prev} -> {value}");
+                if (prev.HasFlag(PxActorFlags.DisableSimulation) && !value.HasFlag(PxActorFlags.DisableSimulation)
+                    && this is PhysxDynamicRigidBody dynamicBody)
+                    dynamicBody.TryApplyPendingKinematicTarget();
             }
         }
 
@@ -79,6 +82,8 @@ namespace XREngine.Scene.Physics.Physx
             }
             ActorPtr->SetActorFlagMut(flag, value);
             PhysxObjectLog.Modified(this, (nint)ActorPtr, nameof(SetActorFlag), $"{flag}={value}");
+            if (flag == PxActorFlag.DisableSimulation && !value && this is PhysxDynamicRigidBody dynamicBody)
+                dynamicBody.TryApplyPendingKinematicTarget();
         }
 
         public byte DominanceGroup
@@ -224,8 +229,11 @@ namespace XREngine.Scene.Physics.Physx
                 return;
 
             PhysxObjectLog.Released(this, (nint)actorPtr);
+            OnBeforeNativeRelease();
             actorPtr->ReleaseMut();
         }
+
+        protected virtual void OnBeforeNativeRelease() { }
 
         public void Destroy(bool wakeOnLostTouch = false)
         {
@@ -239,6 +247,8 @@ namespace XREngine.Scene.Physics.Physx
         public void OnAddedToScene(PhysxScene physxScene)
         {
             PhysxObjectLog.Modified(this, (nint)ActorPtr, "OnAddedToScene", $"scene=0x{(nint)physxScene.ScenePtr:X}");
+            if (this is PhysxDynamicRigidBody dynamicBody)
+                dynamicBody.TryApplyPendingKinematicTarget();
             AddedToScene?.Invoke(physxScene);
             if (this is PhysxRigidActor rigid)
                 rigid.RefreshShapeFilterData();

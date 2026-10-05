@@ -40,7 +40,7 @@ public static class ModelingDocumentToXRMeshConverter
         };
         mesh.Triangles = BuildTriangleList(ordering.TriangleIndices);
 
-        ApplySkinningAndBlendshapeChannels(mesh, document, ordering.NewToOldVertexMap);
+        ApplySkinningAndBlendshapeChannels(mesh, vertices, document, ordering.NewToOldVertexMap);
 
         if (mesh.VertexCount != convertedVertexCount)
         {
@@ -85,9 +85,19 @@ public static class ModelingDocumentToXRMeshConverter
         }
     }
 
-    private static void ApplySkinningAndBlendshapeChannels(XRMesh mesh, ModelingMeshDocument document, int[]? newToOldVertexMap)
+    /// <summary>
+    /// Writes the document's skin weights and blendshape channels onto the
+    /// construction vertices (mesh order) and packs them into the mesh's
+    /// skinning and blendshape buffers, the mesh's only copy of that data.
+    /// </summary>
+    private static void ApplySkinningAndBlendshapeChannels(
+        XRMesh mesh,
+        List<Vertex> vertices,
+        ModelingMeshDocument document,
+        int[]? newToOldVertexMap)
     {
         ArgumentNullException.ThrowIfNull(mesh);
+        ArgumentNullException.ThrowIfNull(vertices);
         ArgumentNullException.ThrowIfNull(document);
 
         if (document.SkinBones is { Count: > 0 } skinBones && document.SkinWeights is { Count: > 0 } skinWeights)
@@ -109,7 +119,7 @@ public static class ModelingDocumentToXRMeshConverter
 
             mesh.UtilizedBones = utilizedBones;
 
-            for (int i = 0; i < mesh.Vertices.Length; i++)
+            for (int i = 0; i < vertices.Count; i++)
             {
                 int sourceIndex = newToOldVertexMap?[i] ?? i;
                 if (sourceIndex < 0 || sourceIndex >= skinWeights.Count)
@@ -118,7 +128,7 @@ public static class ModelingDocumentToXRMeshConverter
                 List<ModelingSkinWeight> sourceWeights = skinWeights[sourceIndex];
                 if (sourceWeights.Count == 0)
                 {
-                    mesh.Vertices[i].Weights = null;
+                    vertices[i].Weights = null;
                     continue;
                 }
 
@@ -133,18 +143,20 @@ public static class ModelingDocumentToXRMeshConverter
                     modeledWeights[bone] = (sourceWeight.Weight, inverseBind);
                 }
 
-                mesh.Vertices[i].Weights = modeledWeights.Count > 0 ? modeledWeights : null;
+                vertices[i].Weights = modeledWeights.Count > 0 ? modeledWeights : null;
             }
+
+            mesh.RebuildSkinningBuffersFromVertices(vertices);
         }
 
         if (document.BlendshapeChannels is { Count: > 0 } blendshapeChannels)
         {
             mesh.BlendshapeNames = [.. blendshapeChannels.Select(x => x.Name)];
 
-            for (int i = 0; i < mesh.Vertices.Length; i++)
+            for (int i = 0; i < vertices.Count; i++)
             {
                 int sourceIndex = newToOldVertexMap?[i] ?? i;
-                Vertex vertex = mesh.Vertices[i];
+                Vertex vertex = vertices[i];
                 List<(string name, VertexData data)> vertexBlendshapes = new(blendshapeChannels.Count);
 
                 for (int channelIndex = 0; channelIndex < blendshapeChannels.Count; channelIndex++)
@@ -169,6 +181,8 @@ public static class ModelingDocumentToXRMeshConverter
 
                 vertex.Blendshapes = vertexBlendshapes.Count > 0 ? vertexBlendshapes : null;
             }
+
+            mesh.RebuildBlendshapeBuffersFromVertices(vertices);
         }
     }
 

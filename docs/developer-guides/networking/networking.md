@@ -184,6 +184,7 @@ Common realtime message types:
 - `ReplicationDelta`
 
 Every new MemoryPackable realtime DTO must be registered in `NetworkingAotContractRegistry` and covered by serialization/AOT tests.
+Runtime.Core installs those static type contracts with its asset-service lease. Published type resolution requires this registration; names in the AOT metadata table alone do not root CLR types.
 
 ## Client Flow
 

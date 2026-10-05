@@ -162,6 +162,13 @@ namespace XREngine.Editor.Mcp
                 "Retrieved S13a publication telemetry.",
                 S13aPublicationTelemetry.CaptureSnapshot()));
 
+        [XRMcp(Name = "get_world_tick_telemetry", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Read cumulative world tick counters: tick group dispatches, pending registration cost and the costliest kinds of tick callback. Set XRE_WORLD_TICK_TELEMETRY=1 before editor launch to enable observation; compare two reads to observe a window.")]
+        public static Task<McpToolResponse> GetWorldTickTelemetryAsync(McpToolContext context)
+            => Task.FromResult(new McpToolResponse(
+                "Retrieved world tick telemetry.",
+                RuntimeWorldTickTelemetry.CaptureSnapshot()));
+
         [XRMcp(Name = "get_vulkan_live_resource_owners", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Group live tracked Vulkan native resources by object type and registering owner, largest groups first. Cold diagnostic for locating retained-resource growth; do not poll per frame.")]
         public static Task<McpToolResponse> GetVulkanLiveResourceOwnersAsync(
@@ -179,6 +186,70 @@ namespace XREngine.Editor.Mcp
             object snapshot = diagnostics.GetLiveResourceOwnerDiagnostics(top, collapseOwnerSuffix, out int groupCount);
             return Task.FromResult(new McpToolResponse(
                 $"Captured {groupCount} live Vulkan resource owner groups.", snapshot));
+        }
+
+        [XRMcp(Name = "get_vulkan_memory_statistics", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Return the Vulkan memory allocator's statistics (VMA JSON: usage per heap and memory type, block counts and sizes; with detailed_map, every block and allocation). Cold diagnostic for attributing GPU and mapped memory; do not poll per frame.")]
+        public static Task<McpToolResponse> GetVulkanMemoryStatisticsAsync(
+            McpToolContext context,
+            [McpName("detailed_map"), Description("Include every block and allocation. The document can be several megabytes.")] bool detailedMap = false,
+            [McpName("output_path"), Description("Optional file path. When set, the document is written there and only the path and size are returned.")] string? outputPath = null)
+        {
+            AbstractRenderer? renderer =
+                AbstractRenderer.Current ?? RuntimeEngine.Windows.FirstOrDefault()?.Renderer;
+            if (renderer?.BackendId != RendererBackendId.Vulkan ||
+                renderer is not IRenderBackendDiagnosticsCapability diagnostics)
+                return Task.FromResult(new McpToolResponse("No active Vulkan renderer.", isError: true));
+
+            string? statistics = diagnostics.GetMemoryAllocatorStatistics(detailedMap);
+            if (statistics is null)
+                return Task.FromResult(new McpToolResponse("The active Vulkan memory allocator does not provide statistics.", isError: true));
+
+            if (string.IsNullOrWhiteSpace(outputPath))
+                return Task.FromResult(new McpToolResponse("Captured Vulkan memory allocator statistics.", new { statistics }));
+
+            string fullPath = Path.GetFullPath(outputPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            File.WriteAllText(fullPath, statistics);
+            return Task.FromResult(new McpToolResponse(
+                "Wrote Vulkan memory allocator statistics.",
+                new { path = fullPath, characters = statistics.Length }));
+        }
+
+        [XRMcp(Name = "get_vulkan_resource_planner_states", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("List the Vulkan renderer's retained resource-planner states (published table and each OpenXR planner with its nested table) with their keys and the physical image memory each allocator holds. Cold diagnostic for attributing duplicated render targets; runs on the render thread between frames.")]
+        public static async Task<McpToolResponse> GetVulkanResourcePlannerStatesAsync(
+            McpToolContext context,
+            [McpName("timeout_ms"), Description("Maximum time to wait for the render thread.")] int timeoutMs = 5000,
+            CancellationToken token = default)
+        {
+            AbstractRenderer? renderer =
+                AbstractRenderer.Current ?? RuntimeEngine.Windows.FirstOrDefault()?.Renderer;
+            if (renderer?.BackendId != RendererBackendId.Vulkan ||
+                renderer is not IRenderBackendDiagnosticsCapability diagnostics)
+                return new McpToolResponse("No active Vulkan renderer.", isError: true);
+
+            TaskCompletionSource<object?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Engine.EnqueueRenderThreadTask(() =>
+            {
+                try
+                {
+                    completion.TrySetResult(diagnostics.GetResourcePlannerStateDiagnostics());
+                }
+                catch (Exception ex)
+                {
+                    completion.TrySetException(ex);
+                }
+            }, "MCP: Capture Vulkan resource planner states");
+
+            Task finished = await Task.WhenAny(completion.Task, Task.Delay(Math.Max(timeoutMs, 1), token));
+            if (finished != completion.Task)
+                return new McpToolResponse("Timed out waiting for the render thread.", isError: true);
+
+            object? snapshot = await completion.Task;
+            return snapshot is null
+                ? new McpToolResponse("The active Vulkan renderer does not provide planner diagnostics.", isError: true)
+                : new McpToolResponse("Captured Vulkan resource planner states.", snapshot);
         }
 
         [XRMcp(Name = "get_s13a_publication_trace", Permission = McpPermissionLevel.ReadOnly)]
@@ -787,6 +858,18 @@ namespace XREngine.Editor.Mcp
                             output_index = vulkanFrame.Identity.Output.OutputIndex,
                             output_generation = vulkanFrame.Identity.Output.OutputGeneration,
                             outcome = vulkanFrame.Outcome.ToString(),
+                            outcome_counts = new
+                            {
+                                completed = VulkanStats.GetVulkanFrameOutcomeCount(EVulkanFrameOutcome.Completed),
+                                deferred = VulkanStats.GetVulkanFrameOutcomeCount(EVulkanFrameOutcome.Deferred),
+                                skipped = VulkanStats.GetVulkanFrameOutcomeCount(EVulkanFrameOutcome.Skipped),
+                                rejected = VulkanStats.GetVulkanFrameOutcomeCount(EVulkanFrameOutcome.Rejected),
+                                failed = VulkanStats.GetVulkanFrameOutcomeCount(EVulkanFrameOutcome.Failed),
+                                command_record_completed = VulkanStats.GetVulkanCommandRecordOutcomeCount(EVulkanFrameOutcome.Completed),
+                                command_record_deferred = VulkanStats.GetVulkanCommandRecordOutcomeCount(EVulkanFrameOutcome.Deferred),
+                                command_record_rejected = VulkanStats.GetVulkanCommandRecordOutcomeCount(EVulkanFrameOutcome.Rejected),
+                                command_record_not_reached = VulkanStats.GetVulkanCommandRecordOutcomeCount(EVulkanFrameOutcome.NotReached),
+                            },
                             terminal_result = vulkanDiagnostics?.GetDesktopFrameTerminalDiagnostics(),
                             present_now_terminal = vulkanDiagnostics?.GetPresentNowTerminalDiagnostics(),
                             present_now_latest_failure = vulkanDiagnostics?.GetPresentNowFailureDiagnostics(),

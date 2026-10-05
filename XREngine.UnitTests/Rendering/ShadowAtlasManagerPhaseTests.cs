@@ -206,13 +206,15 @@ public sealed class ShadowAtlasManagerPhaseTests
         ShadowAtlasFrameData first = RunFrame(manager, 1u, requests);
         first.Metrics.ResidentTileCount.ShouldBe(4);
         first.Metrics.SkippedRequestCount.ShouldBe(0);
-        first.Generation.ShouldBe(1u);
+        first.LayoutGeneration.ShouldBeGreaterThan(0u);
+        first.PublicationGeneration.ShouldBeGreaterThan(0u);
         AssertNoResidentOverlaps(first);
         Dictionary<ShadowRequestKey, AllocationSignature> firstLayout = CaptureLayout(first);
 
         ShadowAtlasFrameData second = RunFrame(manager, 2u, requests);
         second.Metrics.ResidentTileCount.ShouldBe(4);
-        second.Generation.ShouldBe(1u);
+        second.LayoutGeneration.ShouldBe(first.LayoutGeneration);
+        second.PublicationGeneration.ShouldBeGreaterThan(first.PublicationGeneration);
         CaptureLayout(second).ShouldBe(firstLayout);
     }
 
@@ -326,7 +328,8 @@ public sealed class ShadowAtlasManagerPhaseTests
         partialDirtyRecordIndices.Count.ShouldBe(firstRecordIndices.Count);
         foreach (var pair in firstRecordIndices)
             partialDirtyRecordIndices[pair.Key].ShouldBe(pair.Value);
-        partialDirtyFrame.Generation.ShouldBe(firstFrame.Generation);
+        partialDirtyFrame.LayoutGeneration.ShouldBe(firstFrame.LayoutGeneration);
+        partialDirtyFrame.PublicationGeneration.ShouldBeGreaterThan(firstFrame.PublicationGeneration);
         partialDirtyFrame.TryGetAllocation(partialDirtyRequests[1].Key, out ShadowAtlasAllocation dirtyCascade).ShouldBeTrue();
         dirtyCascade.ActiveFallback.ShouldBe(ShadowFallbackMode.ContactOnly);
         dirtyCascade.LastRenderedFrame.ShouldBe(1u);
@@ -345,13 +348,20 @@ public sealed class ShadowAtlasManagerPhaseTests
             ShadowAtlasAllocation vkAllocation = AllocateSingleDirectionalCascade(RuntimeGraphicsApiKind.Vulkan);
 
             glAllocation.InnerPixelRect.ShouldBe(vkAllocation.InnerPixelRect);
+            float invPageSize = 1.0f / 1024.0f;
+            float expectedScaleX = (glAllocation.InnerPixelRect.Width - 1) * invPageSize;
+            float expectedScaleY = (glAllocation.InnerPixelRect.Height - 1) * invPageSize;
+            float expectedBiasX = (glAllocation.InnerPixelRect.X + 0.5f) * invPageSize;
+
+            glAllocation.UvScaleBias.X.ShouldBe(expectedScaleX, 0.000001f);
+            glAllocation.UvScaleBias.Y.ShouldBe(expectedScaleY, 0.000001f);
+            glAllocation.UvScaleBias.Z.ShouldBe(expectedBiasX, 0.000001f);
             glAllocation.UvScaleBias.X.ShouldBe(vkAllocation.UvScaleBias.X, 0.000001f);
             glAllocation.UvScaleBias.Y.ShouldBe(vkAllocation.UvScaleBias.Y, 0.000001f);
             glAllocation.UvScaleBias.Z.ShouldBe(vkAllocation.UvScaleBias.Z, 0.000001f);
 
-            float invPageSize = 1.0f / 1024.0f;
-            float expectedGlBiasY = glAllocation.InnerPixelRect.Y * invPageSize;
-            float expectedVkBiasY = 1.0f - ((vkAllocation.InnerPixelRect.Y + vkAllocation.InnerPixelRect.Height) * invPageSize);
+            float expectedGlBiasY = (glAllocation.InnerPixelRect.Y + 0.5f) * invPageSize;
+            float expectedVkBiasY = 1.0f - ((vkAllocation.InnerPixelRect.Y + vkAllocation.InnerPixelRect.Height - 0.5f) * invPageSize);
 
             glAllocation.UvScaleBias.W.ShouldBe(expectedGlBiasY, 0.000001f);
             vkAllocation.UvScaleBias.W.ShouldBe(expectedVkBiasY, 0.000001f);

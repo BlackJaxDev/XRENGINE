@@ -196,14 +196,14 @@ public class GpuRenderingBacklogTests
             {
                 [bone] = (1.0f, Matrix4x4.Identity),
             };
-            XRMesh mesh = new(
-                [
-                    new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), weights),
-                    new Vertex(new Vector3(0.05f, -0.05f, 0.0f), weights),
-                    new Vertex(new Vector3(0.0f, 0.05f, 0.0f), weights),
-                ],
-                new List<ushort> { 0, 1, 2 });
-            mesh.RebuildSkinningBuffersFromVertices();
+            Vertex[] vertices =
+            [
+                new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), weights),
+                new Vertex(new Vector3(0.05f, -0.05f, 0.0f), weights),
+                new Vertex(new Vector3(0.0f, 0.05f, 0.0f), weights),
+            ];
+            XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
+            mesh.RebuildSkinningBuffersFromVertices(vertices);
 
             RenderCommandMesh3D command = new(0)
             {
@@ -762,7 +762,7 @@ public class GpuRenderingBacklogTests
             .Replace("\r\n", "\n");
         string engineStats = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.cs")
             .Replace("\r\n", "\n");
-        string engineSettings = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.Settings.cs")
+        string engineSettings = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.Settings.cs")
             .Replace("\r\n", "\n");
         string renderCommands = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs")
             .Replace("\r\n", "\n");
@@ -852,7 +852,7 @@ public class GpuRenderingBacklogTests
     [Test]
     public void EditorProfilerPreferenceChanges_UseNarrowRenderPreferenceApply()
     {
-        string engineSettings = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.Settings.cs")
+        string engineSettings = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.Settings.cs")
             .Replace("\r\n", "\n");
         string mcpSettings = ReadWorkspaceFile("XREngine.Editor/Mcp/Actions/EditorMcpActions.Settings.cs")
             .Replace("\r\n", "\n");

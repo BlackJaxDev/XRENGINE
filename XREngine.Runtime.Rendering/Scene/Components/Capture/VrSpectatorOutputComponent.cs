@@ -164,6 +164,7 @@ public sealed class VrSpectatorOutputComponent : XRComponent
             _nextRefresh = quarantined ? long.MaxValue : Stopwatch.GetTimestamp() + Stopwatch.Frequency / 10;
             return false;
         }
+        _writer.CompleteBoundsWarmup();
         if (_writerHistoryVersion == _historyVersion)
             Volatile.Write(ref _published, _writer);
         _writer = null;

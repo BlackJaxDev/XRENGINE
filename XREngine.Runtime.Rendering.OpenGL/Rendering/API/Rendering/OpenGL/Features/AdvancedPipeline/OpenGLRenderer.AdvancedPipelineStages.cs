@@ -1,4 +1,3 @@
-using XREngine.Core.Files;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Shaders;
 using XREngine.Rendering.Shaders.Generator;
@@ -22,6 +21,8 @@ public partial class OpenGLRenderer
     private XRRenderProgram? _advancedShadeNativeOpaqueProgram;
     private XRRenderProgram? _advancedShadeBackgroundProgram;
     private string? _advancedStageProgramFailure;
+    private long _advancedStageProgramStateKey;
+    private string? _advancedStageProgramStateReason;
     private OpenGLAdvancedVisibilityOutputRegistry? _advancedOutputRegistry;
     private OpenGLAdvancedSceneTableUploader? _advancedSceneUploader;
     private OpenGLAdvancedVisibilityInputStorage? _advancedInputStorage;
@@ -102,6 +103,7 @@ public partial class OpenGLRenderer
         _advancedMsaaResolveProgram = null;
         _advancedMsaaResolveVao = 0u;
         _advancedStageProgramFailure = null;
+        _advancedStageProgramStateReason = null;
         _advancedStereoIndirectProgram = null;
         _advancedStereoRasterProgram = null;
         _advancedStereoMaskedRasterProgram = null;
@@ -339,14 +341,7 @@ public partial class OpenGLRenderer
             return false;
         }
 
-        if (!AreAdvancedStageProgramsLinked())
-        {
-            reason = "OpenGL Advanced stage programs are still compiling or linking.";
-            return false;
-        }
-
-        reason = "Ready";
-        return true;
+        return AreAdvancedStageProgramsLinked(out reason);
     }
 
     internal GLRenderProgram? GetAdvancedStageProgram(
@@ -380,38 +375,118 @@ public partial class OpenGLRenderer
         uint pushBinding = shaderPath.StartsWith("Advanced/Preparation/", StringComparison.Ordinal)
             ? 0u
             : 1u;
-        string source = ConvertOpenGlPushConstants(
-            InjectAdvancedPreamble(
-            ResolveAdvancedShaderSource(template),
-            AdvancedShaderAccessLibrary.BuildPreamble(
-                RuntimeGraphicsApiKind.OpenGL,
-                textureMode) + "\n#define XR_ADV_VISIBILITY_ARRAY 1\n" + defines),
-            pushBinding);
-        string sourcePath = string.IsNullOrWhiteSpace(template.Source.FilePath)
-            ? shaderPath
-            : template.Source.FilePath;
-        XRShader shader = new(EShaderType.Compute, new TextFile(sourcePath) { Text = source });
+        string preamble = AdvancedShaderAccessLibrary.BuildPreamble(
+            RuntimeGraphicsApiKind.OpenGL, textureMode) + "\n#define XR_ADV_VISIBILITY_ARRAY 1\n" + defines;
+        XRShader shader = CreateAdvancedSourceShader(
+            template,
+            EShaderType.Compute,
+            source => ConvertOpenGlPushConstants(InjectAdvancedPreamble(source, preamble), pushBinding));
         return new XRRenderProgram(true, false, shader) { Name = name };
     }
 
-    private bool AreAdvancedStageProgramsLinked()
-        => IsLinked(_advancedEarlyVisibilityProgram) &&
-           IsLinked(_advancedBuildIndirectProgram) &&
-           IsLinked(_advancedDepthPyramidProgram) &&
-           IsLinked(_advancedLateVisibilityProgram) &&
-           IsLinked(_advancedVisibilityRasterProgram) &&
-           IsLinked(_advancedVisibilityMaskedRasterProgram) &&
-           IsLinked(_advancedGtaoProgram) &&
-           IsLinked(_advancedClassifyTilesProgram) &&
-           IsLinked(_advancedBuildClassificationIndirectProgram) &&
-           IsLinked(_advancedBuildFroxelsProgram) &&
-           IsLinked(_advancedShadeNativeOpaqueProgram) &&
-           IsLinked(_advancedShadeBackgroundProgram);
+    /// <summary>
+    /// Polls every stage program on each evaluation. <see cref="GLRenderProgram.Use"/>
+    /// advances only its own program's asynchronous build, so stopping at the first
+    /// unlinked program would serialize the family's builds across evaluations.
+    /// Programs whose build failed or never started are reported apart from programs
+    /// that are still compiling or linking, and the first such program is named.
+    /// </summary>
+    private bool AreAdvancedStageProgramsLinked(out string reason)
+    {
+        ReadOnlySpan<XRRenderProgram?> programs =
+        [
+            _advancedEarlyVisibilityProgram,
+            _advancedBuildIndirectProgram,
+            _advancedDepthPyramidProgram,
+            _advancedLateVisibilityProgram,
+            _advancedVisibilityRasterProgram,
+            _advancedVisibilityMaskedRasterProgram,
+            _advancedGtaoProgram,
+            _advancedClassifyTilesProgram,
+            _advancedBuildClassificationIndirectProgram,
+            _advancedBuildFroxelsProgram,
+            _advancedShadeNativeOpaqueProgram,
+            _advancedShadeBackgroundProgram,
+        ];
 
+        int failedMask = 0;
+        int notStartedMask = 0;
+        int buildingMask = 0;
+        for (int i = 0; i < programs.Length; i++)
+        {
+            GLRenderProgram? glProgram = GenericToAPI<GLRenderProgram>(programs[i]);
+            if (glProgram is not null && glProgram.Use() && glProgram.IsLinked)
+                continue;
+
+            int bit = 1 << i;
+            if (glProgram is null || !glProgram.LinkReady)
+                notStartedMask |= bit;
+            else if (glProgram.IsAsyncBuildPending)
+                buildingMask |= bit;
+            else if (programs[i]!.ShaderMetadata.Backend.Stage == XRRenderProgram.EShaderProgramBackendStage.Failed)
+                failedMask |= bit;
+            else if (programs[i]!.ShaderMetadata.Backend.Stage == XRRenderProgram.EShaderProgramBackendStage.None)
+                notStartedMask |= bit;
+            else
+                buildingMask |= bit;
+        }
+
+        if ((failedMask | notStartedMask | buildingMask) == 0)
+        {
+            reason = "Ready";
+            return true;
+        }
+
+        // The family can stay unadmitted for many frames. Rebuild the reason only
+        // when the set of unready programs changes so polling does not allocate.
+        long stateKey = (uint)failedMask | ((long)(uint)notStartedMask << 16) | ((long)(uint)buildingMask << 32);
+        if (_advancedStageProgramStateReason is null || stateKey != _advancedStageProgramStateKey)
+        {
+            _advancedStageProgramStateKey = stateKey;
+            _advancedStageProgramStateReason = DescribeUnreadyAdvancedStagePrograms(
+                programs, failedMask, notStartedMask, buildingMask);
+        }
+        reason = _advancedStageProgramStateReason;
+        return false;
+    }
+
+    /// <summary>
+    /// Advances the program's asynchronous build and reports whether it is linked.
+    /// Callers that gate on several programs must poll each one rather than
+    /// short-circuit, or the builds proceed one evaluation at a time.
+    /// </summary>
     private bool IsLinked(XRRenderProgram? program)
     {
         GLRenderProgram? glProgram = GenericToAPI<GLRenderProgram>(program);
         return glProgram is not null && glProgram.Use() && glProgram.IsLinked;
+    }
+
+    private static string DescribeUnreadyAdvancedStagePrograms(
+        ReadOnlySpan<XRRenderProgram?> programs,
+        int failedMask,
+        int notStartedMask,
+        int buildingMask)
+    {
+        int failed = System.Numerics.BitOperations.PopCount((uint)failedMask);
+        int notStarted = System.Numerics.BitOperations.PopCount((uint)notStartedMask);
+        int building = System.Numerics.BitOperations.PopCount((uint)buildingMask);
+        string counts = $"{failed} failed, {notStarted} not started, {building} still compiling or linking, of {programs.Length}";
+
+        if (failedMask != 0)
+        {
+            XRRenderProgram program = programs[System.Numerics.BitOperations.TrailingZeroCount(failedMask)]!;
+            string? failure = program.ShaderMetadata.Backend.FailureReason;
+            return $"OpenGL Advanced stage program '{program.Name}' failed to build ({counts}): {(string.IsNullOrWhiteSpace(failure) ? "no failure reason recorded" : failure)}";
+        }
+
+        if (notStartedMask != 0)
+        {
+            int index = System.Numerics.BitOperations.TrailingZeroCount(notStartedMask);
+            return $"OpenGL Advanced stage program '{programs[index]?.Name ?? index.ToString()}' has not started building ({counts}).";
+        }
+
+        int first = System.Numerics.BitOperations.TrailingZeroCount(buildingMask);
+        return $"OpenGL Advanced stage programs are still compiling or linking ({counts}; first '{programs[first]?.Name}').";
     }
 
     private XRRenderProgram CreateAdvancedRasterProgram(
@@ -425,26 +500,20 @@ public partial class OpenGLRenderer
             AdvancedVisibilityShaderLibrary.Vertex, EShaderType.Vertex);
         XRShader fragmentTemplate = ShaderHelper.LoadEngineShader(
             masked ? AdvancedVisibilityShaderLibrary.MaskedFragment : AdvancedVisibilityShaderLibrary.OpaqueFragment, EShaderType.Fragment);
-        XRShader vertex = new(EShaderType.Vertex, new TextFile(
-            string.IsNullOrWhiteSpace(vertexTemplate.Source.FilePath)
-                ? AdvancedVisibilityShaderLibrary.Vertex
-                : vertexTemplate.Source.FilePath)
-        {
-            // The shared preamble declares record types. Required extensions
-            // must precede those declarations on desktop GL drivers.
-            Text = ConvertOpenGlPushConstants(InjectAdvancedPreamble(
-                ResolveAdvancedShaderSource(vertexTemplate).Replace(
-                    "#extension GL_ARB_shader_draw_parameters : require", string.Empty, StringComparison.Ordinal),
-                "#extension GL_ARB_shader_draw_parameters : require\n" +
-                (stereo ? "#extension GL_OVR_multiview2 : require\n#define XR_ADV_OPENGL_MULTIVIEW_RASTER 1\n" : string.Empty) + preamble), 2u)
-        });
-        XRShader fragment = new(EShaderType.Fragment, new TextFile(
-            string.IsNullOrWhiteSpace(fragmentTemplate.Source.FilePath)
-                ? AdvancedVisibilityShaderLibrary.OpaqueFragment
-                : fragmentTemplate.Source.FilePath)
-        {
-            Text = ConvertOpenGlPushConstants(InjectAdvancedPreamble(ResolveAdvancedShaderSource(fragmentTemplate), preamble), 2u)
-        });
+        // The shared preamble declares record types. Required extensions
+        // must precede those declarations on desktop GL drivers.
+        string vertexPreamble = "#extension GL_ARB_shader_draw_parameters : require\n" +
+            (stereo ? "#extension GL_OVR_multiview2 : require\n#define XR_ADV_OPENGL_MULTIVIEW_RASTER 1\n" : string.Empty) + preamble;
+        XRShader vertex = CreateAdvancedSourceShader(
+            vertexTemplate,
+            EShaderType.Vertex,
+            source => ConvertOpenGlPushConstants(InjectAdvancedPreamble(
+                source.Replace("#extension GL_ARB_shader_draw_parameters : require", string.Empty, StringComparison.Ordinal),
+                vertexPreamble), 2u));
+        XRShader fragment = CreateAdvancedSourceShader(
+            fragmentTemplate,
+            EShaderType.Fragment,
+            source => ConvertOpenGlPushConstants(InjectAdvancedPreamble(source, preamble), 2u));
         return new XRRenderProgram(true, false, vertex, fragment)
         {
             Name = stereo ? (masked ? "Advanced.Visibility.StereoRasterMasked" : "Advanced.Visibility.StereoRaster") :
@@ -462,8 +531,29 @@ public partial class OpenGLRenderer
         if (string.IsNullOrWhiteSpace(source))
             throw new InvalidOperationException("The Advanced shader asset has no GLSL source.");
         int start = 0;
-        while (start < source.Length && char.IsWhiteSpace(source[start]))
-            ++start;
+        while (start < source.Length)
+        {
+            if (char.IsWhiteSpace(source[start]))
+            {
+                ++start;
+                continue;
+            }
+            if (source.AsSpan(start).StartsWith("//", StringComparison.Ordinal))
+            {
+                int commentLineEnd = source.IndexOfAny(['\r', '\n'], start);
+                start = commentLineEnd < 0 ? source.Length : commentLineEnd;
+                continue;
+            }
+            if (source.AsSpan(start).StartsWith("/*", StringComparison.Ordinal))
+            {
+                int commentEnd = source.IndexOf("*/", start + 2, StringComparison.Ordinal);
+                if (commentEnd < 0)
+                    throw new InvalidOperationException("The Advanced shader asset has an unterminated opening comment.");
+                start = commentEnd + 2;
+                continue;
+            }
+            break;
+        }
         if (!source.AsSpan(start).StartsWith(version, StringComparison.Ordinal))
             throw new InvalidOperationException("The Advanced shader asset does not begin with a GLSL version directive.");
         int lineEnd = source.IndexOfAny(['\r', '\n'], start);
@@ -488,5 +578,19 @@ public partial class OpenGLRenderer
         if (!shader.TryGetResolvedSource(out string source, annotateIncludes: false, logFailures: true))
             throw new InvalidOperationException($"The Advanced shader '{shader.Source.FilePath}' has unresolved includes.");
         return source;
+    }
+
+    /// <summary>
+    /// Resolves the authored text and its includes on every invalidation before applying
+    /// the variant's immutable OpenGL specialization.
+    /// </summary>
+    private static XRShader CreateAdvancedSourceShader(
+        XRShader template,
+        EShaderType type,
+        Func<string, string> transform)
+    {
+        XRShader shader = new(type, template.Source, transform);
+        ResolveAdvancedShaderSource(shader);
+        return shader;
     }
 }

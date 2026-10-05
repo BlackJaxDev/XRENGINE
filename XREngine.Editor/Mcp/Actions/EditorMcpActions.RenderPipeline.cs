@@ -233,6 +233,31 @@ namespace XREngine.Editor.Mcp
             return viewport.LastRenderedTargetFBO;
         }
 
+        /// <summary>
+        /// Hand-off counters between the shadow atlas and the Advanced directional
+        /// shadow raster stage for the viewport's world, or null without a world.
+        /// </summary>
+        private static object? DescribeDirectionalShadowLane(XRViewport viewport)
+        {
+            if (viewport.World?.Lights?.ShadowAtlas is not { } atlas)
+                return null;
+
+            var lane = atlas.CaptureAdvancedDirectionalShadowLaneDiagnostics();
+            return new
+            {
+                enabled = lane.Enabled,
+                consumerReady = lane.ConsumerReady,
+                consumerFrameId = lane.ConsumerFrameId,
+                holdUntilFrameId = lane.HoldUntilFrameId,
+                deferredGroups = lane.DeferredGroups,
+                acceptedGroups = lane.AcceptedGroups,
+                rejectedGroups = lane.RejectedGroups,
+                unconsumedGroups = lane.UnconsumedGroups,
+                genericGroups = lane.GenericGroups,
+                lastDeclineReason = lane.LastDeclineReason,
+            };
+        }
+
         private static object BuildAdvancedProfileDiagnostics(XRViewport viewport)
         {
             XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
@@ -363,6 +388,7 @@ namespace XREngine.Editor.Mcp
                     pending = DescribeResourceMaterialization(instance.PendingGeneration),
                 },
                 temporalHistory = BuildTemporalHistoryDiagnostics(instance),
+                directionalShadowLane = DescribeDirectionalShadowLane(viewport),
                 resources = new
                 {
                     descriptorRevision = registry.DescriptorRevision,
@@ -698,7 +724,8 @@ namespace XREngine.Editor.Mcp
                     RenderPipeline? viewportPipeline = viewport.RenderPipeline;
                     AdvancedRenderPipelineOutputBinding advancedBinding =
                         viewport.RenderPipelineInstance.AdvancedOutputBinding;
-                    IRuntimeScreenSpaceUserInterface? ui = cameraComponent?.GetUserInterfaceOverlay();
+                    IRuntimeScreenSpaceUserInterface? ui = viewport.ScreenSpaceUserInterfaceOverride
+                        ?? cameraComponent?.GetUserInterfaceOverlay();
                     SceneNode? cameraNode = cameraComponent?.SceneNode;
                     activeWindowViewports.Add(new
                     {
@@ -746,6 +773,8 @@ namespace XREngine.Editor.Mcp
                         },
                         screenSpaceUi = ui is null ? null : new
                         {
+                            source = viewport.ScreenSpaceUserInterfaceOverride is not null
+                                ? "viewport_override" : "camera",
                             type = ui.GetType().FullName,
                             active = ui.IsActive,
                             screenSpace = ui.IsScreenSpace,
@@ -1514,7 +1543,7 @@ namespace XREngine.Editor.Mcp
             }
 
             using IDisposable? plannerScope = viewport.EnterRenderPipelineReadbackScope(instance);
-            if (plannerScope is null &&
+            if (renderer is VulkanRenderer && plannerScope is null &&
                 (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
                  ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport)))
             {

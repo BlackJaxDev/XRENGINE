@@ -48,7 +48,6 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     private readonly long[] _vulkanOpenXrSwapchainFormats = new long[RenderFrameViewSet.MaxViewCount];
     private readonly SwapchainUsageFlags[] _vulkanOpenXrSwapchainUsages = new SwapchainUsageFlags[RenderFrameViewSet.MaxViewCount];
     private readonly uint[] _vulkanOpenXrSwapchainSampleCounts = new uint[RenderFrameViewSet.MaxViewCount];
-    private readonly RenderFrameViewDescriptor[] _vulkanOpenXrBatchPlanViews = new RenderFrameViewDescriptor[RenderFrameViewSet.MaxViewCount];
     private readonly int[] _vulkanOpenXrStartupPrewarmFramesRemaining = CreateOpenXrStartupPrewarmFrameCounters();
     private readonly uint[] _vulkanOpenXrPrewarmWidths = new uint[RenderFrameViewSet.MaxViewCount];
     private readonly uint[] _vulkanOpenXrPrewarmHeights = new uint[RenderFrameViewSet.MaxViewCount];
@@ -104,10 +103,16 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
         }
 
         using IOpenXrNativeGraphicsBorrow native = Host.BorrowNativeGraphicsDispatch();
-        nint vulkanRequirements = native.GetInstanceProcAddress("xrGetVulkanGraphicsRequirementsKHR");
-        nint vulkan2Requirements = native.GetInstanceProcAddress("xrGetVulkanGraphicsRequirements2KHR");
-        nint vulkanDevice = native.GetInstanceProcAddress("xrGetVulkanGraphicsDeviceKHR");
-        nint vulkan2Device = native.GetInstanceProcAddress("xrGetVulkanGraphicsDevice2KHR");
+        bool enableAvailable = Host.IsInstanceExtensionEnabled(KhrVulkanEnable.ExtensionName);
+        bool enable2Available = Host.IsInstanceExtensionEnabled(KhrVulkanEnable2.ExtensionName);
+        nint vulkanRequirements = enableAvailable
+            ? native.GetInstanceProcAddress("xrGetVulkanGraphicsRequirementsKHR") : 0;
+        nint vulkan2Requirements = enable2Available
+            ? native.GetInstanceProcAddress("xrGetVulkanGraphicsRequirements2KHR") : 0;
+        nint vulkanDevice = enableAvailable
+            ? native.GetInstanceProcAddress("xrGetVulkanGraphicsDeviceKHR") : 0;
+        nint vulkan2Device = enable2Available
+            ? native.GetInstanceProcAddress("xrGetVulkanGraphicsDevice2KHR") : 0;
 
         bool useEnable2Binding = renderer.DeviceContext.InstanceCreatedThroughOpenXr &&
             renderer.DeviceContext.CreatedThroughOpenXr;
@@ -339,6 +344,8 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             return false;
         }
 
+        OpenXrViewDescriptorInlineArray viewStorage = default;
+        Span<RenderFrameViewDescriptor> views = viewStorage;
         for (int i = 0; i < viewCount; i++)
         {
             uint width = GetOpenXrSwapchainWidth((uint)i);
@@ -367,7 +374,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
                 format,
                 samples,
                 usage);
-            _vulkanOpenXrBatchPlanViews[i] = new RenderFrameViewDescriptor(
+            views[i] = new RenderFrameViewDescriptor(
                 (uint)i,
                 kind,
                 parentViewId,
@@ -378,7 +385,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
                 System.Numerics.Matrix4x4.Identity,
                 System.Numerics.Matrix4x4.Identity,
                 System.Numerics.Matrix4x4.Identity,
-                CreateOpenXrEyeFoveationContext((uint)i),
+                foveation,
                 $"OpenXR {kind}",
 Target:                 new RenderFrameViewTargetDescriptor(
                     ERenderLibrary.Vulkan,
@@ -392,7 +399,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     SupportsTransferDestinationLayout: (usage & SwapchainUsageFlags.TransferDstBit) != 0,
                     ResourceGeneration: attachmentSignature,
                     TemporalGeneration: GetOpenXrHistoryKey(kind)));
-            _vulkanOpenXrBatchPlanViews[i] = _vulkanOpenXrBatchPlanViews[i] with
+            views[i] = views[i] with
             {
                 SourceCameraIdentity = GetOpenXrEyeCamera((uint)i)?.RenderIdentity ?? 0UL,
             };
@@ -402,7 +409,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
             renderMode,
             EVrVisibilityPolicy.SharedFrameViewSet,
             visibilityGroupCount: 1,
-            _vulkanOpenXrBatchPlanViews.AsSpan(0, viewCount),
+            views[..viewCount],
             "OpenXR Vulkan runtime view family");
         RenderFrameViewBatchCapabilities capabilities = new(
             SupportsLayeredStereoPairs: supportsLayeredStereoPairs,

@@ -8,7 +8,6 @@ using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Scene;
 using XREngine.Scene.Physics;
-using XREngine.Scene.Physics.Physx;
 using XREngine.Scene.Transforms;
 
 namespace MonkeyBallVR;
@@ -67,6 +66,7 @@ public sealed class MonkeyBallGameComponent : XRComponent, IMonkeyBallGameInputT
     private bool? _pendingBallSimulationEnabled;
     private bool _possessionReadyRecorded;
     private bool _physicsRuntimeReadyRecorded;
+    private bool _pendingNativeInitialization;
     private MonkeyBallRoundState _state = MonkeyBallRoundState.Playing;
     private MonkeyBallRoundState _stateBeforePause = MonkeyBallRoundState.Playing;
 
@@ -224,11 +224,8 @@ public sealed class MonkeyBallGameComponent : XRComponent, IMonkeyBallGameInputT
         base.OnBeginPlay();
         ResolveSceneReferences();
         SubscribeToDiagnosticPhysicsSteps();
-        _physicsRuntimeReadyRecorded = RecordPhysicsRuntimeState();
+        _pendingNativeInitialization = true;
         RecordDirectionalShadowRuntimeState("resolved");
-        MonkeyBallRuntimeDiagnostics.RecordEvent(
-            "game-scene-references-resolved",
-            $"courseActor={_courseBody!.RigidBody is not null} ballActor={_ballBody!.RigidBody is not null}");
         _pawn!.PossessByLocalPlayer(ELocalPlayerIndex.One);
         MonkeyBallRuntimeDiagnostics.RecordEvent("game-pawn-possession-requested");
         RecordPossessionState();
@@ -299,16 +296,6 @@ public sealed class MonkeyBallGameComponent : XRComponent, IMonkeyBallGameInputT
         _directionalLight = root.FindFirstDescendantComponent<DirectionalLightComponent>()
             ?? throw new InvalidOperationException(
                 $"MonkeyBall world has no authored {nameof(DirectionalLightComponent)}.");
-        if (_courseBody.RigidBody is null)
-            throw new InvalidOperationException(
-                "MonkeyBall's cooked course body did not create a native rigid body. " +
-                "Verify cooked component activation and the active physics backend.");
-        if (_ballBody.RigidBody is null)
-            throw new InvalidOperationException(
-                "MonkeyBall's cooked ball body did not create a native rigid body. " +
-                "Verify cooked component activation and the active physics backend.");
-        _stageRotation = Quaternion.Normalize(_courseBody.RigidBody.Transform.rotation);
-
         _desktopCamera = cameraNode.GetComponent<CameraComponent>()
             ?? throw new InvalidOperationException(
                 $"MonkeyBall camera node '{DesktopCameraNodeName}' has no {nameof(CameraComponent)}.");
@@ -569,6 +556,25 @@ public sealed class MonkeyBallGameComponent : XRComponent, IMonkeyBallGameInputT
 
     private void PrePhysicsTick()
     {
+        if (_pendingNativeInitialization)
+        {
+            IAbstractDynamicRigidBody initialCourseActor = _courseBody?.RigidBody
+                ?? throw new InvalidOperationException(
+                    "MonkeyBall's cooked course body did not create a native rigid body. " +
+                    "Verify cooked component activation and the active physics backend.");
+            if (_ballBody?.RigidBody is null)
+                throw new InvalidOperationException(
+                    "MonkeyBall's cooked ball body did not create a native rigid body. " +
+                    "Verify cooked component activation and the active physics backend.");
+
+            _stageRotation = Quaternion.Normalize(initialCourseActor.Transform.rotation);
+            _physicsRuntimeReadyRecorded = RecordPhysicsRuntimeState();
+            MonkeyBallRuntimeDiagnostics.RecordEvent(
+                "game-scene-references-resolved",
+                "courseActor=True ballActor=True");
+            _pendingNativeInitialization = false;
+        }
+
         TryApplyPendingBallSimulationState();
         TryApplyPendingBallReset();
 
@@ -855,7 +861,7 @@ public sealed class MonkeyBallGameComponent : XRComponent, IMonkeyBallGameInputT
     private static bool IsActorInScene(
         IAbstractDynamicRigidBody? actor,
         AbstractPhysicsScene scene)
-        => actor is PhysxActor physxActor && ReferenceEquals(physxActor.Scene, scene);
+        => actor is IPhysicsSceneAttachedActor attachedActor && ReferenceEquals(attachedActor.AttachedScene, scene);
 
     private Vector3 GetBallPhysicsPosition()
         => RequireBallActor().Transform.position;

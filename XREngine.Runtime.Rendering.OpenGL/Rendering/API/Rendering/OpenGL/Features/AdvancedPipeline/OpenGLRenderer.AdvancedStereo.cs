@@ -46,7 +46,8 @@ public partial class OpenGLRenderer
             reason = _advancedStereoProgramFailure = $"OpenGL Advanced stereo program creation failed: {exception.Message}";
             return false;
         }
-        if (!IsLinked(_advancedStereoIndirectProgram) || !IsLinked(_advancedStereoRasterProgram) || !IsLinked(_advancedStereoMaskedRasterProgram))
+        // Non-short-circuit: each poll advances only its own program's build.
+        if (!(IsLinked(_advancedStereoIndirectProgram) & IsLinked(_advancedStereoRasterProgram) & IsLinked(_advancedStereoMaskedRasterProgram)))
         {
             reason = "OpenGL Advanced single-pass stereo programs are compiling or linking.";
             return false;

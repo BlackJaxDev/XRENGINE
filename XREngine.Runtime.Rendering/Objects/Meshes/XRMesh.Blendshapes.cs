@@ -20,8 +20,19 @@ public partial class XRMesh
         $"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer",
     ];
 
-    public void RebuildBlendshapeBuffersFromVertices()
+    /// <summary>
+    /// Packs the blendshape targets of <paramref name="sourceVertices"/> (one per
+    /// mesh vertex, in mesh order) against <see cref="BlendshapeNames"/> into the
+    /// active-list, sparse and quantized buffers. The mesh keeps no reference to
+    /// the source vertices.
+    /// </summary>
+    public void RebuildBlendshapeBuffersFromVertices(IReadOnlyList<Vertex> sourceVertices)
     {
+        ArgumentNullException.ThrowIfNull(sourceVertices);
+        if (sourceVertices.Count != VertexCount)
+            throw new ArgumentException(
+                $"Blendshape source has {sourceVertices.Count} vertices; mesh '{Name}' has {VertexCount}.",
+                nameof(sourceVertices));
         lock (_blendshapeBufferPreparationLock)
         {
         BufferCollection targetBuffers = Buffers;
@@ -33,14 +44,15 @@ public partial class XRMesh
         XRMesh? staging = null;
         try
         {
-            if (Vertices is { Length: > 0 } sourceVertices && HasBlendshapes)
+            if (sourceVertices.Count > 0 && HasBlendshapes)
             {
                 staging = new XRMesh(deferObjectCachePublication: true)
                 {
+                    VertexCount = VertexCount,
                     BlendshapeNames = BlendshapeNames,
                 };
                 using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
-                staging.PopulateBlendshapeBuffers(sourceVertices);
+                staging.PopulateBlendshapeBuffers((vertex, destination) => ReadVertexBlendshapeDeltas(sourceVertices[vertex], destination));
                 prepared = staging.CaptureBlendshapeBufferState();
                 KeyValuePair<string, XRDataBuffer>[] replacements = CreateBlendshapeBufferReplacements(prepared);
                 publication.Complete(
@@ -183,14 +195,49 @@ public partial class XRMesh
             replacements.Add(new KeyValuePair<string, XRDataBuffer>(buffer.AttributeName, buffer));
     }
 
-    private unsafe void PopulateBlendshapeBuffers(Vertex[] sourceList)
+    /// <summary>One blendshape's deltas (target minus base) for one vertex.</summary>
+    private readonly record struct BlendshapeVertexDelta(int Shape, Vector3 Position, Vector3 Normal, Vector3 Tangent);
+
+    /// <summary>
+    /// Supplies one vertex's blendshape deltas in ascending shape order. Zero
+    /// deltas may be included; they are not packed.
+    /// </summary>
+    private delegate void BlendshapeDeltaSource(int vertex, List<BlendshapeVertexDelta> destination);
+
+    /// <summary>
+    /// Converts a vertex's absolute blendshape targets into deltas against its
+    /// base attributes, in <see cref="BlendshapeNames"/> order.
+    /// </summary>
+    private void ReadVertexBlendshapeDeltas(Vertex vertex, List<BlendshapeVertexDelta> destination)
+    {
+        if (vertex.Blendshapes is null || vertex.Blendshapes.Count == 0)
+            return;
+
+        string[] blendshapeNames = BlendshapeNames ?? [];
+        Vector3 basePos = vertex.Position;
+        Vector3 baseNrm = vertex.Normal ?? Vector3.Zero;
+        Vector3 baseTan = vertex.Tangent ?? Vector3.Zero;
+        for (int bsInd = 0; bsInd < (int)BlendshapeCount; bsInd++)
+        {
+            if (!TryGetBlendshapeDataForVertex(vertex.Blendshapes, blendshapeNames, bsInd, out VertexData bsData))
+                continue;
+
+            destination.Add(new BlendshapeVertexDelta(
+                bsInd,
+                bsData.Position - basePos,
+                (bsData.Normal ?? Vector3.Zero) - baseNrm,
+                (bsData.Tangent ?? Vector3.Zero) - baseTan));
+        }
+    }
+
+    private unsafe void PopulateBlendshapeBuffers(BlendshapeDeltaSource deltaSource)
     {
         using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope();
 
         bool intVarType = RuntimeRenderingHostServices.Settings.UseIntegerUniformsInShaders;
-        string[] blendshapeNames = BlendshapeNames ?? [];
+        int sourceCount = VertexCount;
 
-        BlendshapeCounts = new XRDataBuffer(ECommonBufferType.BlendshapeCount.ToString(), EBufferTarget.ArrayBuffer, (uint)sourceList.Length,
+        BlendshapeCounts = new XRDataBuffer(ECommonBufferType.BlendshapeCount.ToString(), EBufferTarget.ArrayBuffer, (uint)sourceCount,
             intVarType ? EComponentType.Int : EComponentType.Float, 2, false, intVarType);
 
         List<Vector3> deltas = [Vector3.Zero];
@@ -199,8 +246,8 @@ public partial class XRMesh
         bool remapDeltas = RuntimeRenderingHostServices.Settings.RemapBlendshapeDeltas;
 
         int blendshapeDeltaIndicesIndex = 0;
-        int sourceCount = sourceList.Length;
         int blendshapeCount = (int)BlendshapeCount;
+        List<BlendshapeVertexDelta> vertexDeltas = [];
         List<IVector4>?[] sparseRecordsByShape = new List<IVector4>?[blendshapeCount];
         int affectedVertexCount = 0;
         int* countsInt = (int*)BlendshapeCounts.Address;
@@ -209,9 +256,10 @@ public partial class XRMesh
         for (int i = 0; i < sourceCount; i++)
         {
             int activeBlendshapeCountForThisVertex = 0;
-            var vtx = sourceList[i];
+            vertexDeltas.Clear();
+            deltaSource(i, vertexDeltas);
 
-            if (vtx.Blendshapes is null || vtx.Blendshapes.Count == 0)
+            if (vertexDeltas.Count == 0)
             {
                 if (intVarType)
                 {
@@ -226,25 +274,19 @@ public partial class XRMesh
                 continue;
             }
 
-            Vector3 basePos = vtx.Position;
-            Vector3 baseNrm = vtx.Normal ?? Vector3.Zero;
-            Vector3 baseTan = vtx.Tangent ?? Vector3.Zero;
-
-            for (int bsInd = 0; bsInd < blendshapeCount; bsInd++)
+            for (int deltaIndex = 0; deltaIndex < vertexDeltas.Count; deltaIndex++)
             {
-                if (!TryGetBlendshapeDataForVertex(vtx.Blendshapes, blendshapeNames, bsInd, out VertexData bsData))
+                BlendshapeVertexDelta vertexDelta = vertexDeltas[deltaIndex];
+                int bsInd = vertexDelta.Shape;
+                if ((uint)bsInd >= (uint)blendshapeCount)
                     continue;
 
                 bool anyData = false;
                 int posInd = 0, nrmInd = 0, tanInd = 0;
 
-                Vector3 tfmPos = bsData.Position;
-                Vector3 tfmNrm = bsData.Normal ?? Vector3.Zero;
-                Vector3 tfmTan = bsData.Tangent ?? Vector3.Zero;
-
-                Vector3 posDt = tfmPos - basePos;
-                Vector3 nrmDt = tfmNrm - baseNrm;
-                Vector3 tanDt = tfmTan - baseTan;
+                Vector3 posDt = vertexDelta.Position;
+                Vector3 nrmDt = vertexDelta.Normal;
+                Vector3 tanDt = vertexDelta.Tangent;
 
                 if (posDt.LengthSquared() > 0)
                 {
@@ -683,34 +725,46 @@ public partial class XRMesh
         return flags;
     }
 
+    /// <summary>
+    /// Bounds of the base positions plus every fully applied blendshape target
+    /// the tier evaluates, read from the packed position and active-list buffers.
+    /// </summary>
     public bool TryCalculateBlendshapeBounds(BlendshapeLodTier tier, out AABB bounds)
     {
-        if (Vertices is not { Length: > 0 } vertices)
+        int vertexCount = VertexCount;
+        bool readable = Interleaved
+            ? InterleavedVertexBuffer?.ClientSideSource is not null
+            : PositionsBuffer?.ClientSideSource is not null;
+        if (vertexCount <= 0 || !readable)
         {
             bounds = Bounds;
             return false;
         }
 
-        bounds = new AABB(vertices[0].Position, vertices[0].Position);
-        for (int vertexIndex = 0; vertexIndex < vertices.Length; vertexIndex++)
+        Vector3 first = GetPosition(0u);
+        bounds = new AABB(first, first);
+        for (uint vertexIndex = 0u; vertexIndex < (uint)vertexCount; vertexIndex++)
+            bounds.ExpandToInclude(GetPosition(vertexIndex));
+
+        if (tier.Evaluation == BlendshapeLodEvaluation.Disabled ||
+            !XRMeshBlendshapeActiveListReader.TryCreate(this, out XRMeshBlendshapeActiveListReader reader))
+            return true;
+
+        string[] names = BlendshapeNames;
+        for (int vertexIndex = 0; vertexIndex < vertexCount; vertexIndex++)
         {
-            Vertex vertex = vertices[vertexIndex];
-            bounds.ExpandToInclude(vertex.Position);
-
-            if (tier.Evaluation == BlendshapeLodEvaluation.Disabled || vertex.Blendshapes is null)
+            reader.GetVertexEntries(vertexIndex, out int firstEntry, out int count);
+            if (count == 0)
                 continue;
-
-            for (int shapeEntryIndex = 0; shapeEntryIndex < vertex.Blendshapes.Count; shapeEntryIndex++)
+            Vector3 basePosition = GetPosition((uint)vertexIndex);
+            for (int entry = firstEntry; entry < firstEntry + count; entry++)
             {
-                (string name, VertexData data) entry = vertex.Blendshapes[shapeEntryIndex];
-                if (entry.data is null)
+                reader.ReadEntry(entry, out int shapeIndex, out Vector3 positionDelta, out _, out _);
+                if ((uint)shapeIndex >= (uint)names.Length ||
+                    !ShouldIncludeBlendshapeInBounds(tier, shapeIndex, names[shapeIndex]))
                     continue;
 
-                int shapeIndex = ResolveBlendshapeIndex(entry.name, shapeEntryIndex);
-                if (!ShouldIncludeBlendshapeInBounds(tier, shapeIndex, entry.name))
-                    continue;
-
-                bounds.ExpandToInclude(entry.data.Position);
+                bounds.ExpandToInclude(basePosition + positionDelta);
             }
         }
 
@@ -724,19 +778,6 @@ public partial class XRMesh
 
         return Bounds.ContainsPoint(blendshapeBounds.Min, tolerance)
             && Bounds.ContainsPoint(blendshapeBounds.Max, tolerance);
-    }
-
-    private int ResolveBlendshapeIndex(string name, int fallbackIndex)
-    {
-        string[]? names = BlendshapeNames;
-        if (names is null)
-            return fallbackIndex;
-
-        for (int i = 0; i < names.Length; i++)
-            if (string.Equals(names[i], name, StringComparison.Ordinal))
-                return i;
-
-        return fallbackIndex;
     }
 
     private static bool ShouldIncludeBlendshapeInBounds(BlendshapeLodTier tier, int shapeIndex, string shapeName)

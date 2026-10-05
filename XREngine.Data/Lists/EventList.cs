@@ -44,6 +44,12 @@ namespace System.Collections.Generic
         private readonly List<T> _list;
         private ReaderWriterLockSlim? _lock;
 
+        /// <summary>
+        /// A list is part of its owner's state and is never resolved by ID, so it stays out of
+        /// the global object cache and is collected with its owner.
+        /// </summary>
+        protected override bool ParticipatesInObjectCache => false;
+
         public bool ThreadSafe
         {
             get => _lock != null;

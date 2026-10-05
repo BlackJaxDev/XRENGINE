@@ -13,8 +13,10 @@ public partial class XRMesh
     /// whose source geometry differs would make the atlas and descriptor table
     /// disagree, so the owner validation below rejects it explicitly.
     /// </summary>
+#if !XRE_PUBLISHED
     [RequiresUnreferencedCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
     [RequiresDynamicCode(RuntimeCookedBinarySerializer.ReflectionWarningMessage)]
+#endif
     public override void Reload(string filePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);

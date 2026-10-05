@@ -240,6 +240,27 @@ public static class S13aPublicationTelemetry
     private static long _advancedScenePublicationReuses;
     private static long _advancedScenePublicationPrepareTicks;
     private static long _advancedScenePublicationFailures;
+    private static long _advancedPlanDiscoveries;
+    private static long _advancedPlanOperations;
+    private static long _advancedPlanAdvancedOperations;
+    private static long _advancedPlanFamilies;
+    private static long _advancedPlanDiscoveryVisits;
+    private static long _advancedPlanFamilyScanVisits;
+    private static long _advancedPlanLeaseChecks;
+    private static long _advancedPlanDiscoveryTicks;
+    private static long _advancedPlanPreparationTicks;
+    private static long _advancedPlanGateWaitTicks;
+    private static long _advancedPlanAllocatedBytes;
+    private static long _advancedPlanSealCollections;
+    private static long _advancedPlanSealVisits;
+    /// <summary>Number of <see cref="S13aAdvancedFamilyStep"/> values.</summary>
+    public const int AdvancedFamilyStepCount = 28;
+    private static readonly long[] s_advancedFamilyStepCalls = new long[AdvancedFamilyStepCount];
+    private static readonly long[] s_advancedFamilyStepTicks = new long[AdvancedFamilyStepCount];
+    private static readonly long[] s_advancedFamilyStepBytes = new long[AdvancedFamilyStepCount];
+    private static long _advancedBinFreezeSorts;
+    private static long _advancedBinFreezeRecords;
+    private static long _advancedBinFreezeOrderViolations;
     private static long _publicationReused;
     private static long _publicationMissing;
     private static long _publicationExpired;
@@ -377,6 +398,99 @@ public static class S13aPublicationTelemetry
         Interlocked.Increment(ref existing ? ref _advancedSceneSlotHits : ref _advancedSceneSlotRealizations);
     }
 
+    /// <summary>
+    /// Records one primary-recording discovery of Advanced visibility families:
+    /// the sealed operations scanned, the Advanced operations among them, the
+    /// distinct families found, the headers the discovery scan visited, the ticks
+    /// spent discovering and then preparing every family inside the storage gate,
+    /// the ticks spent waiting for that gate, and the bytes the recording thread
+    /// allocated across discovery and preparation.
+    /// </summary>
+    internal static void AdvancedPlanDiscovery(int operations, int advancedOperations, int families,
+        int discoveryVisits, long discoveryTicks, long preparationTicks, long gateWaitTicks,
+        long allocatedBytes)
+    {
+        if (!Enabled) return;
+        Interlocked.Increment(ref _advancedPlanDiscoveries);
+        Interlocked.Add(ref _advancedPlanOperations, operations);
+        Interlocked.Add(ref _advancedPlanAdvancedOperations, advancedOperations);
+        Interlocked.Add(ref _advancedPlanFamilies, families);
+        Interlocked.Add(ref _advancedPlanDiscoveryVisits, discoveryVisits);
+        Interlocked.Add(ref _advancedPlanDiscoveryTicks, discoveryTicks);
+        Interlocked.Add(ref _advancedPlanPreparationTicks, preparationTicks);
+        Interlocked.Add(ref _advancedPlanGateWaitTicks, gateWaitTicks);
+        Interlocked.Add(ref _advancedPlanAllocatedBytes, allocatedBytes);
+    }
+
+    /// <summary>
+    /// Records the sealed operation headers one family preparation visited while
+    /// classifying and associating its stages, and the plan-lease checks it made.
+    /// </summary>
+    internal static void AdvancedPlanFamilyScan(int visits, int leaseChecks)
+    {
+        if (!Enabled) return;
+        Interlocked.Add(ref _advancedPlanFamilyScanVisits, visits);
+        Interlocked.Add(ref _advancedPlanLeaseChecks, leaseChecks);
+    }
+
+    /// <summary>
+    /// Records one sealed frame plan collecting its Advanced output reservations
+    /// and the operation headers that collection visited across every stream.
+    /// </summary>
+    internal static void AdvancedPlanSealCollection(int visits)
+    {
+        if (!Enabled) return;
+        Interlocked.Increment(ref _advancedPlanSealCollections);
+        Interlocked.Add(ref _advancedPlanSealVisits, visits);
+    }
+
+    /// <summary>
+    /// Starts timing one family-preparation step on the recording thread. The
+    /// returned probe is inert when observation is disabled.
+    /// </summary>
+    internal static StepProbe BeginAdvancedFamilyStep()
+        => Enabled
+            ? new StepProbe(true, Stopwatch.GetTimestamp(), GC.GetAllocatedBytesForCurrentThread())
+            : default;
+
+    /// <summary>
+    /// Accumulates elapsed ticks and bytes allocated by the current thread for
+    /// one <see cref="S13aAdvancedFamilyStep"/> when the probe is active.
+    /// </summary>
+    internal readonly struct StepProbe(bool active, long started, long allocatedBefore)
+    {
+        public void End(S13aAdvancedFamilyStep step)
+        {
+            if (!active) return;
+            int index = (int)step;
+            Interlocked.Increment(ref s_advancedFamilyStepCalls[index]);
+            Interlocked.Add(ref s_advancedFamilyStepTicks[index], Stopwatch.GetTimestamp() - started);
+            Interlocked.Add(ref s_advancedFamilyStepBytes[index],
+                GC.GetAllocatedBytesForCurrentThread() - allocatedBefore);
+        }
+    }
+
+    private static long[] CopyCounters(long[] source)
+    {
+        long[] copy = new long[source.Length];
+        for (int index = 0; index < source.Length; index++)
+            copy[index] = Interlocked.Read(ref source[index]);
+        return copy;
+    }
+
+    /// <summary>
+    /// Records one stable-bin freeze ordering: the records ordered and how many
+    /// adjacent pairs violate the full record comparison afterwards (always zero
+    /// for a correct sort).
+    /// </summary>
+    internal static void AdvancedBinFreezeOrder(int records, int violations)
+    {
+        if (!Enabled) return;
+        Interlocked.Increment(ref _advancedBinFreezeSorts);
+        Interlocked.Add(ref _advancedBinFreezeRecords, records);
+        Interlocked.Add(ref _advancedBinFreezeOrderViolations, violations);
+    }
+
     internal static LockBodyScope BeginLockBody() => new(Enabled ? Stopwatch.GetTimestamp() : 0L);
 
     internal readonly struct LockBodyScope(long started) : IDisposable
@@ -440,5 +554,16 @@ public static class S13aPublicationTelemetry
         Interlocked.Read(ref _advancedScenePublicationReuses),
         Interlocked.Read(ref _advancedScenePublicationPrepareTicks),
         Interlocked.Read(ref _advancedScenePublicationFailures),
-        Interlocked.Read(ref _advancedSceneSlotHits), Interlocked.Read(ref _advancedSceneSlotRealizations));
+        Interlocked.Read(ref _advancedSceneSlotHits), Interlocked.Read(ref _advancedSceneSlotRealizations),
+        Interlocked.Read(ref _advancedPlanDiscoveries), Interlocked.Read(ref _advancedPlanOperations),
+        Interlocked.Read(ref _advancedPlanAdvancedOperations), Interlocked.Read(ref _advancedPlanFamilies),
+        Interlocked.Read(ref _advancedPlanDiscoveryVisits), Interlocked.Read(ref _advancedPlanFamilyScanVisits),
+        Interlocked.Read(ref _advancedPlanLeaseChecks), Interlocked.Read(ref _advancedPlanDiscoveryTicks),
+        Interlocked.Read(ref _advancedPlanPreparationTicks), Interlocked.Read(ref _advancedPlanGateWaitTicks),
+        Interlocked.Read(ref _advancedPlanAllocatedBytes), Interlocked.Read(ref _advancedPlanSealCollections),
+        Interlocked.Read(ref _advancedPlanSealVisits),
+        CopyCounters(s_advancedFamilyStepCalls), CopyCounters(s_advancedFamilyStepTicks),
+        CopyCounters(s_advancedFamilyStepBytes),
+        Interlocked.Read(ref _advancedBinFreezeSorts), Interlocked.Read(ref _advancedBinFreezeRecords),
+        Interlocked.Read(ref _advancedBinFreezeOrderViolations));
 }

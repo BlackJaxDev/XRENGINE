@@ -88,6 +88,8 @@ When `AutoSequentialCaptureOnBeginPlay` is disabled, call `BeginSequentialCaptur
 
 When `UsePlacementBoundsModels` is enabled, the spawner distributes probes across the combined world bounds of the selected `ModelComponent` instances instead of deriving positions from `Spacing` and centered extents alone.
 
+Scene serialization writes a referenced object as a full copy, so the spawner serializes references by identity instead: `PlacementBoundsModels` is stored as `PlacementBoundsModelIds` and bound to the live model components of the spawner's world when it begins play, activates or builds its grid, and the generated probes are recorded in `SpawnedProbeNodeIds`. After deserialization, including a play-mode snapshot restore, the spawner re-adopts the child nodes with those identities instead of spawning a second grid beside them.
+
 ## Influence Regions
 
 ### Sphere Influence

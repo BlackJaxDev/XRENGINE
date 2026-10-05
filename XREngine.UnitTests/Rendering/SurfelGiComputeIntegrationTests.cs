@@ -16,13 +16,13 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public class SurfelGiComputeIntegrationTests : GpuTestBase
 {
-    private static string ShaderPath(params string[] parts)
-        => Path.Combine([ShaderBasePath, ..parts]);
+    private static string ShaderPath(string shaderFile)
+        => Path.Combine(ShaderBasePath, "Compute", "GI", "SurfelGI", shaderFile);
 
-    private static void InconclusiveIfMissing(string path)
+    private static void AssertShaderExists(string path)
     {
         if (!File.Exists(path))
-            Assert.Inconclusive($"Shader file not found: {path}");
+            Assert.Fail($"Required shader file not found: {path}");
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -283,8 +283,8 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = ShaderPath("Compute", "SurfelGI", shaderFile);
-            InconclusiveIfMissing(shaderPath);
+            string shaderPath = ShaderPath(shaderFile);
+            AssertShaderExists(shaderPath);
 
             uint shader = CompileComputeShader(gl, File.ReadAllText(shaderPath));
             shader.ShouldBeGreaterThan(0u);
@@ -316,8 +316,8 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = ShaderPath("Compute", "SurfelGI", "Init.comp");
-            InconclusiveIfMissing(shaderPath);
+            string shaderPath = ShaderPath("Init.comp");
+            AssertShaderExists(shaderPath);
 
             uint shader = CompileComputeShader(gl, File.ReadAllText(shaderPath));
             uint program = CreateComputeProgram(gl, shader);
@@ -368,8 +368,8 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = ShaderPath("Compute", "SurfelGI", "ResetGrid.comp");
-            InconclusiveIfMissing(shaderPath);
+            string shaderPath = ShaderPath("ResetGrid.comp");
+            AssertShaderExists(shaderPath);
 
             uint shader = CompileComputeShader(gl, File.ReadAllText(shaderPath));
             uint program = CreateComputeProgram(gl, shader);
@@ -419,8 +419,8 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = ShaderPath("Compute", "SurfelGI", "BuildGrid.comp");
-            InconclusiveIfMissing(shaderPath);
+            string shaderPath = ShaderPath("BuildGrid.comp");
+            AssertShaderExists(shaderPath);
 
             uint shader = CompileComputeShader(gl, File.ReadAllText(shaderPath));
             uint program = CreateComputeProgram(gl, shader);
@@ -540,8 +540,8 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = ShaderPath("Compute", "SurfelGI", "BuildGrid.comp");
-            InconclusiveIfMissing(shaderPath);
+            string shaderPath = ShaderPath("BuildGrid.comp");
+            AssertShaderExists(shaderPath);
 
             uint shader = CompileComputeShader(gl, File.ReadAllText(shaderPath));
             uint program = CreateComputeProgram(gl, shader);
@@ -614,7 +614,7 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
     }
 
     [Test]
-    public unsafe void SurfelGI_BuildGrid_Dispatch_WhenHasCulledCommands_UsesWorldMatrixForCellBinning()
+    public unsafe void SurfelGI_BuildGrid_Dispatch_WithTransformAtlas_UsesWorldMatrixForCellBinning()
     {
         var (gl, window) = CreateGLContext();
         if (gl == null || window == null)
@@ -633,8 +633,8 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = ShaderPath("Compute", "SurfelGI", "BuildGrid.comp");
-            InconclusiveIfMissing(shaderPath);
+            string shaderPath = ShaderPath("BuildGrid.comp");
+            AssertShaderExists(shaderPath);
 
             uint shader = CompileComputeShader(gl, File.ReadAllText(shaderPath));
             uint program = CreateComputeProgram(gl, shader);
@@ -642,20 +642,20 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
             uint surfelBuffer = CreateSsbo(gl, (nuint)(maxSurfels * (uint)Marshal.SizeOf<SurfelGpu>()), BufferUsageARB.DynamicDraw, 0);
             uint gridCounts = CreateSsbo(gl, (nuint)(cellCount * sizeof(uint)), BufferUsageARB.DynamicDraw, 3);
             uint gridIndices = CreateSsbo(gl, (nuint)(cellCount * maxPerCell * sizeof(uint)), BufferUsageARB.DynamicDraw, 4);
-            uint culledCommands = CreateSsbo(gl, (nuint)(48u * sizeof(float)), BufferUsageARB.DynamicDraw, 5);
+            uint transformAtlas = CreateSsbo(gl, (nuint)(16u * sizeof(float)), BufferUsageARB.DynamicDraw, 6);
 
             UploadSsbo(gl, surfelBuffer, new SurfelGpu[(int)maxSurfels]);
             UploadSsbo(gl, gridCounts, new uint[cellCount]);
             UploadSsbo(gl, gridIndices, new uint[cellCount * maxPerCell]);
 
-            // Provide a single world matrix at culled[0..15] in row-major order.
+            // Provide a single world matrix in the transform atlas, indexed by meta.z.
             // Translation in X by +1 moves local cell (0,0,0) into world cell (1,0,0).
-            var culled = new float[48];
-            culled[0] = 1f; culled[1] = 0f; culled[2] = 0f; culled[3] = tx;
-            culled[4] = 0f; culled[5] = 1f; culled[6] = 0f; culled[7] = 0f;
-            culled[8] = 0f; culled[9] = 0f; culled[10] = 1f; culled[11] = 0f;
-            culled[12] = 0f; culled[13] = 0f; culled[14] = 0f; culled[15] = 1f;
-            UploadSsbo(gl, culledCommands, culled);
+            var transform = new float[16];
+            transform[0] = 1f; transform[1] = 0f; transform[2] = 0f; transform[3] = tx;
+            transform[4] = 0f; transform[5] = 1f; transform[6] = 0f; transform[7] = 0f;
+            transform[8] = 0f; transform[9] = 0f; transform[10] = 1f; transform[11] = 0f;
+            transform[12] = 0f; transform[13] = 0f; transform[14] = 0f; transform[15] = 1f;
+            UploadSsbo(gl, transformAtlas, transform);
 
             // Local position is inside cell 0, but will be transformed into cell 1.
             WriteSurfel(gl, surfelBuffer, 0, new SurfelGpu
@@ -671,9 +671,8 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
             gl.UseProgram(program);
             SetUniform(gl, program, "maxSurfels", maxSurfels);
-            SetUniform(gl, program, "hasCulledCommands", true);
-            SetUniform(gl, program, "culledFloatCount", 48u);
-            SetUniform(gl, program, "culledCommandFloats", 48u);
+            SetUniform(gl, program, "useTransformAtlas", true);
+            SetUniform(gl, program, "transformAtlasCount", 16u);
             SetUniform(gl, program, "gridOrigin", Vector3.Zero);
             SetUniform(gl, program, "cellSize", 1f);
             SetUniformUVec3(gl, program, "gridDim", gridX, gridY, gridZ);
@@ -687,7 +686,7 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
             ReadUIntFromSsbo(gl, gridCounts, 1).ShouldBe(1u);
             ReadUIntFromSsbo(gl, gridIndices, maxPerCell).ShouldBe(0u);
 
-            gl.DeleteBuffer(culledCommands);
+            gl.DeleteBuffer(transformAtlas);
             gl.DeleteBuffer(surfelBuffer);
             gl.DeleteBuffer(gridCounts);
             gl.DeleteBuffer(gridIndices);
@@ -718,10 +717,10 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
         try
         {
-            string initPath = ShaderPath("Compute", "SurfelGI", "Init.comp");
-            string recyclePath = ShaderPath("Compute", "SurfelGI", "Recycle.comp");
-            InconclusiveIfMissing(initPath);
-            InconclusiveIfMissing(recyclePath);
+            string initPath = ShaderPath("Init.comp");
+            string recyclePath = ShaderPath("Recycle.comp");
+            AssertShaderExists(initPath);
+            AssertShaderExists(recyclePath);
 
             uint initShader = CompileComputeShader(gl, File.ReadAllText(initPath));
             uint initProgram = CreateComputeProgram(gl, initShader);
@@ -805,10 +804,10 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
         try
         {
-            string initPath = ShaderPath("Compute", "SurfelGI", "Init.comp");
-            string spawnPath = ShaderPath("Compute", "SurfelGI", "Spawn.comp");
-            InconclusiveIfMissing(initPath);
-            InconclusiveIfMissing(spawnPath);
+            string initPath = ShaderPath("Init.comp");
+            string spawnPath = ShaderPath("Spawn.comp");
+            AssertShaderExists(initPath);
+            AssertShaderExists(spawnPath);
 
             uint initShader = CompileComputeShader(gl, File.ReadAllText(initPath));
             uint initProgram = CreateComputeProgram(gl, initShader);
@@ -892,7 +891,7 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
     }
 
     [Test]
-    public unsafe void SurfelGI_Spawn_Dispatch_WhenHasCulledCommands_StoresObjectSpaceButBinsByWorldSpace()
+    public unsafe void SurfelGI_Spawn_Dispatch_WithTransformAtlas_StoresObjectSpaceButBinsByWorldSpace()
     {
         var (gl, window) = CreateGLContext();
         if (gl == null || window == null)
@@ -926,10 +925,10 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
         try
         {
-            string initPath = ShaderPath("Compute", "SurfelGI", "Init.comp");
-            string spawnPath = ShaderPath("Compute", "SurfelGI", "Spawn.comp");
-            InconclusiveIfMissing(initPath);
-            InconclusiveIfMissing(spawnPath);
+            string initPath = ShaderPath("Init.comp");
+            string spawnPath = ShaderPath("Spawn.comp");
+            AssertShaderExists(initPath);
+            AssertShaderExists(spawnPath);
 
             uint initShader = CompileComputeShader(gl, File.ReadAllText(initPath));
             uint initProgram = CreateComputeProgram(gl, initShader);
@@ -941,20 +940,20 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
             uint freeStackBuffer = CreateSsbo(gl, (nuint)(maxSurfels * sizeof(uint)), BufferUsageARB.DynamicDraw, 2);
             uint gridCounts = CreateSsbo(gl, (nuint)(cellCount * sizeof(uint)), BufferUsageARB.DynamicDraw, 3);
             uint gridIndices = CreateSsbo(gl, (nuint)(cellCount * maxPerCell * sizeof(uint)), BufferUsageARB.DynamicDraw, 4);
-            uint culledCommands = CreateSsbo(gl, (nuint)(48u * sizeof(float)), BufferUsageARB.DynamicDraw, 5);
+            uint transformAtlas = CreateSsbo(gl, (nuint)(16u * sizeof(float)), BufferUsageARB.DynamicDraw, 6);
 
             UploadSsbo(gl, surfelBuffer, new SurfelGpu[(int)maxSurfels]);
             UploadSsbo(gl, gridCounts, new uint[cellCount]);
             UploadSsbo(gl, gridIndices, new uint[cellCount * maxPerCell]);
 
-            // Provide a single model matrix (row-major) translating +X by 1.
+            // Provide a single model matrix in the transform atlas, indexed by transform ID.
             // Spawn should store localPos = inverse(model) * worldPos.
-            var culled = new float[48];
-            culled[0] = 1f; culled[1] = 0f; culled[2] = 0f; culled[3] = tx;
-            culled[4] = 0f; culled[5] = 1f; culled[6] = 0f; culled[7] = 0f;
-            culled[8] = 0f; culled[9] = 0f; culled[10] = 1f; culled[11] = 0f;
-            culled[12] = 0f; culled[13] = 0f; culled[14] = 0f; culled[15] = 1f;
-            UploadSsbo(gl, culledCommands, culled);
+            var transform = new float[16];
+            transform[0] = 1f; transform[1] = 0f; transform[2] = 0f; transform[3] = tx;
+            transform[4] = 0f; transform[5] = 1f; transform[6] = 0f; transform[7] = 0f;
+            transform[8] = 0f; transform[9] = 0f; transform[10] = 1f; transform[11] = 0f;
+            transform[12] = 0f; transform[13] = 0f; transform[14] = 0f; transform[15] = 1f;
+            UploadSsbo(gl, transformAtlas, transform);
 
             // Init stack.
             gl.UseProgram(initProgram);
@@ -978,9 +977,8 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
             const float cellSize = 1f;
 
             gl.UseProgram(spawnProgram);
-            SetUniform(gl, spawnProgram, "hasCulledCommands", true);
-            SetUniform(gl, spawnProgram, "culledFloatCount", 48u);
-            SetUniform(gl, spawnProgram, "culledCommandFloats", 48u);
+            SetUniform(gl, spawnProgram, "useTransformAtlas", true);
+            SetUniform(gl, spawnProgram, "transformAtlasCount", 16u);
             SetUniformIVec2(gl, spawnProgram, "resolution", res, res);
             SetUniformMat4(gl, spawnProgram, "invProjMatrix", Matrix4x4.Identity);
             SetUniformMat4(gl, spawnProgram, "cameraToWorldMatrix", Matrix4x4.Identity);
@@ -1039,7 +1037,7 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
             gl.DeleteTexture(albedoTex);
             gl.DeleteTexture(transformIdTex);
 
-            gl.DeleteBuffer(culledCommands);
+            gl.DeleteBuffer(transformAtlas);
             gl.DeleteBuffer(surfelBuffer);
             gl.DeleteBuffer(counterBuffer);
             gl.DeleteBuffer(freeStackBuffer);
@@ -1077,8 +1075,8 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
         try
         {
-            string spawnPath = ShaderPath("Compute", "SurfelGI", "Spawn.comp");
-            InconclusiveIfMissing(spawnPath);
+            string spawnPath = ShaderPath("Spawn.comp");
+            AssertShaderExists(spawnPath);
 
             uint spawnShader = CompileComputeShader(gl, File.ReadAllText(spawnPath));
             uint spawnProgram = CreateComputeProgram(gl, spawnShader);
@@ -1175,8 +1173,8 @@ public class SurfelGiComputeIntegrationTests : GpuTestBase
 
         try
         {
-            string shaderPath = ShaderPath("Compute", "SurfelGI", "Shade.comp");
-            InconclusiveIfMissing(shaderPath);
+            string shaderPath = ShaderPath("Shade.comp");
+            AssertShaderExists(shaderPath);
 
             uint shader = CompileComputeShader(gl, File.ReadAllText(shaderPath));
             uint program = CreateComputeProgram(gl, shader);

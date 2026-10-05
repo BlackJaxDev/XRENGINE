@@ -642,12 +642,22 @@ namespace XREngine
             if (!TryGetSourceTimestamp(filePath, out DateTime timestampUtc))
                 return false;
 
-            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(
-                assetType,
-                XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
-                $"{nameof(AssetManager)}.ThirdPartyCache",
-                $"Register a runtime factory for the asset type with {nameof(RuntimeCookedBinarySerializer)}.{nameof(RuntimeCookedBinarySerializer.RegisterRuntimeFactory)} so cached third-party assets are constructed without Activator.CreateInstance.");
-            if (Activator.CreateInstance(assetType) is not XRAsset asset)
+            XRAsset? asset;
+            if (RuntimeCookedBinarySerializer.TryCreateRegisteredRuntimeObject(assetType, out object? registered))
+            {
+                asset = registered as XRAsset
+                    ?? throw new InvalidOperationException($"The runtime factory for '{assetType.FullName}' did not return an asset.");
+            }
+            else
+            {
+                XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(
+                    assetType,
+                    XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                    $"{nameof(AssetManager)}.ThirdPartyCache",
+                    $"Register a runtime factory for the asset type with {nameof(RuntimeCookedBinarySerializer)}.{nameof(RuntimeCookedBinarySerializer.RegisterRuntimeFactory)} so cached third-party assets are constructed without Activator.CreateInstance.");
+                asset = Activator.CreateInstance(assetType) as XRAsset;
+            }
+            if (asset is null)
                 return false;
 
             asset.Name = Path.GetFileNameWithoutExtension(filePath);

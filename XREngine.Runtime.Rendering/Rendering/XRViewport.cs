@@ -134,6 +134,7 @@ namespace XREngine.Rendering
         /// Set to false to disable UI rendering for this viewport (e.g., for reflection cameras).
         /// </summary>
         private bool _allowUIRender = true;
+        private IRuntimeScreenSpaceUserInterface? _screenSpaceUserInterfaceOverride;
 
         /// <summary>
         /// When true, camera and pipeline settings may adjust this viewport's internal
@@ -801,7 +802,7 @@ namespace XREngine.Rendering
 
         /// <summary>
         /// When true, screen-space UI (HUD, menus, overlays) is rendered after the 3D scene.
-        /// The UI comes from the CameraComponent's UserInterfaceOverlay canvas.
+        /// The UI comes from the explicit viewport override or the camera's overlay canvas.
         /// Set to false to disable UI rendering for this viewport, useful for:
         /// - Reflection/refraction cameras that shouldn't show UI
         /// - Shadow map or depth-only rendering
@@ -811,6 +812,17 @@ namespace XREngine.Rendering
         {
             get => _allowUIRender;
             set => SetField(ref _allowUIRender, value);
+        }
+
+        /// <summary>
+        /// Explicitly owns this viewport's screen-space UI independently of its scene camera.
+        /// A non-null override replaces camera UI discovery; it is never assigned to the camera
+        /// or inherited by other viewports rendering that camera.
+        /// </summary>
+        public IRuntimeScreenSpaceUserInterface? ScreenSpaceUserInterfaceOverride
+        {
+            get => _screenSpaceUserInterfaceOverride;
+            set => SetField(ref _screenSpaceUserInterfaceOverride, value);
         }
 
         /// <summary>
@@ -1014,8 +1026,27 @@ namespace XREngine.Rendering
             _frameViewHistoryLedger.Clear();
             AssociatedPlayer = null;
             CameraComponent = null;
+            ScreenSpaceUserInterfaceOverride = null;
             Camera = null;
             Window = null;
+        }
+
+
+        /// <summary>Discards an exact private capture that was collected but never submitted.</summary>
+        internal void ResetUnsubmittedCapture()
+        {
+            _pendingExactOutputCollectionGeneration = 0UL;
+            _pendingExactOutputPackageGeneration = 0L;
+            _pendingExactOutputCommandCollection = null;
+            _renderingExactOutputCollectionGeneration = 0UL;
+            _renderingExactOutputCommandCollection = null;
+            _pendingFrameOutputPacing = default;
+            _renderingFrameOutputPacing = default;
+            _pendingFrameOutputSceneDue = false;
+            _renderingFrameOutputSceneDue = false;
+            TransferPendingFrameViewHistorySequence(sceneAccepted: false);
+            (MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands)
+                .ResetUnsubmittedCapture();
         }
 
         /// <summary>
@@ -1171,6 +1202,9 @@ namespace XREngine.Rendering
                     if (SetRenderPipelineFromCamera)
                         SynchronizeRenderPipelineFromActiveCamera();
                     Debug.Rendering($"[XRViewport] After EnsureViewportBoundToCamera: VP[{Index}] Camera.Viewports.Count={ActiveCamera?.Viewports.Count ?? -1}");
+                    break;
+                case nameof(ScreenSpaceUserInterfaceOverride):
+                    ResizeCameraComponentUI();
                     break;
                 case nameof(SetRenderPipelineFromCamera):
                     if (_setRenderPipelineFromCamera)
@@ -2763,7 +2797,7 @@ namespace XREngine.Rendering
         /// 
         /// The method checks several conditions before returning:
         /// - AllowUIRender must be true
-        /// - CameraComponent must have a UI overlay canvas
+        /// - The viewport override or camera must provide a UI overlay canvas
         /// - The canvas must be active and set to screen-space draw mode
         /// </summary>
         private static int s_vpResolveUIDiagCount = 0;
@@ -2804,6 +2838,9 @@ namespace XREngine.Rendering
 
         private IRuntimeScreenSpaceUserInterface? ResolveScreenSpaceUICanvas()
         {
+            if (ScreenSpaceUserInterfaceOverride is { } ownedUi)
+                return ownedUi.IsActive && ownedUi.IsScreenSpace ? ownedUi : null;
+
             var camComp = CameraComponent;
             if (camComp is null)
                 return null;
@@ -2818,7 +2855,7 @@ namespace XREngine.Rendering
 
             bool cameraIsInEditorScene = world.IsInEditorScene(camComp.SceneNode);
             IRuntimeScreenSpaceUserInterface? fallback = null;
-            foreach (var root in world.RootNodes)
+            foreach (var root in world.RootNodeSnapshot)
             {
                 if (root is null)
                     continue;
@@ -2862,14 +2899,14 @@ namespace XREngine.Rendering
                _renderPipeline.CompletedCommandChainForViewportThisFrame(this);
 
         /// <summary>
-        /// Returns the active screen-space UI already bound to this viewport's camera. This is a
+        /// Returns the active screen-space UI already bound to this viewport or its camera. This is a
         /// backend-preflight query, so it deliberately avoids fallback discovery and rebinding.
         /// </summary>
         internal bool TryGetActiveScreenSpaceUserInterface(
             out IRuntimeScreenSpaceUserInterface? userInterface)
         {
             userInterface = AllowUIRender
-                ? CameraComponent?.GetUserInterfaceOverlay()
+                ? ScreenSpaceUserInterfaceOverride ?? CameraComponent?.GetUserInterfaceOverlay()
                 : null;
             return userInterface is { IsActive: true, IsScreenSpace: true };
         }
@@ -3141,13 +3178,13 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
-        /// Updates the camera component's UI overlay canvas dimensions to match the viewport.
-        /// Called internally when the viewport resizes or camera component changes.
+        /// Updates the selected UI overlay canvas dimensions to match the viewport.
+        /// Called internally when the viewport resizes or its UI owner changes.
         /// Ensures screen-space UI elements are correctly positioned and scaled.
         /// </summary>
         private void ResizeCameraComponentUI()
         {
-            var overlay = CameraComponent?.GetUserInterfaceOverlay();
+            var overlay = ScreenSpaceUserInterfaceOverride ?? CameraComponent?.GetUserInterfaceOverlay();
             if (overlay is null)
                 return;
 

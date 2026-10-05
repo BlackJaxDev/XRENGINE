@@ -439,9 +439,9 @@ public sealed class BlendshapeGpuEfficiencyTests
             ("Jaw", CreateTarget(v2, new Vector3(-0.15f, 0.0f, 0.0f))),
         ];
 
-        XRMesh mesh = XRMesh.Create(new VertexTriangle(v0, v1, v2));
+        XRMesh mesh = XRMesh.Create([new VertexTriangle(v0, v1, v2)], out Vertex[] sourceVertices);
         mesh.BlendshapeNames = ["Smile", "Blink", "Jaw"];
-        mesh.RebuildBlendshapeBuffersFromVertices();
+        mesh.RebuildBlendshapeBuffersFromVertices(sourceVertices);
         return mesh;
     }
 
@@ -470,9 +470,9 @@ public sealed class BlendshapeGpuEfficiencyTests
             ("Jaw", CreateTarget(v2, laterUniqueDelta)),
         ];
 
-        XRMesh mesh = XRMesh.Create(new VertexTriangle(v0, v1, v2));
+        XRMesh mesh = XRMesh.Create([new VertexTriangle(v0, v1, v2)], out Vertex[] sourceVertices);
         mesh.BlendshapeNames = ["Smile", "Blink", "Jaw"];
-        mesh.RebuildBlendshapeBuffersFromVertices();
+        mesh.RebuildBlendshapeBuffersFromVertices(sourceVertices);
         return mesh;
     }
 

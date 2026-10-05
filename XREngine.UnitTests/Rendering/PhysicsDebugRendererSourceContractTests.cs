@@ -64,7 +64,7 @@ public sealed class PhysicsDebugRendererSourceContractTests
         string world = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/RuntimeWorldRenderer.cs");
         string lifecycle = ReadWorkspaceFile(
-            "XREngine.Runtime.Bootstrap/WorldHost/RuntimeWorldHost.cs");
+            "XREngine.Runtime.Host/WorldHost/RuntimeWorldHost.cs");
         world.ShouldContain("_physicsDebugRenderer.Dispose();");
         world.ShouldContain("_physicsDebugRenderer = new PhysicsDebugFrameRenderer();");
         lifecycle.ShouldContain("RenderWorld.ResetPhysicsDebugRenderer();");

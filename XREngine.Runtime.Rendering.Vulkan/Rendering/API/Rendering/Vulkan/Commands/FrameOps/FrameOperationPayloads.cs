@@ -63,7 +63,30 @@ internal readonly record struct VulkanAdvancedVisibilityOperationPayload(
 /// </summary>
 internal sealed class FrameOperationPayloadStore
 {
+    /// <summary>
+    /// Initial Advanced visibility operation rows for lanes that author Advanced
+    /// work. Each row is large (its request, input, state and closure columns),
+    /// and a frame issues one per stage phase, per view for per-view stages and
+    /// per deferred shadow cascade group, so demand is tens of rows rather than
+    /// the general payload budget.
+    /// </summary>
+    internal const int AdvancedVisibilityInitialCapacity = 64;
+
+    /// <summary>
+    /// Initial rows per opcode kind for fixed-capacity stores. The declared
+    /// general, mesh and texture capacities stay the admission maximum, but
+    /// most kinds see a handful of operations per frame, so every store
+    /// reserving the full budget per kind cost tens of megabytes per frame slot.
+    /// </summary>
+    internal const int InitialGeneralPayloadCapacity = 64;
+
+    /// <summary>Initial mesh-draw rows for fixed-capacity stores (see <see cref="InitialGeneralPayloadCapacity"/>).</summary>
+    internal const int InitialMeshPayloadCapacity = 1024;
+
     private readonly bool _fixedCapacity;
+    private readonly int _generalCapacity;
+    private readonly int _meshCapacity;
+    private readonly int _textureCapacity;
     private readonly EVulkanAcceptedFrameLane _lane;
     private readonly VulkanAdvancedVisibilityInputCopyTelemetry? _advancedVisibilityInputCopyTelemetry;
 
@@ -89,6 +112,14 @@ internal sealed class FrameOperationPayloadStore
     private readonly int _advancedVisibilityDrawCapacity;
     private readonly int _advancedVisibilityRangeCapacity;
     internal readonly VulkanAdvancedVisibilityInputStorage?[] AdvancedVisibilityInputs;
+    // Row-owned sealed binding snapshots for the compute-style opcodes. A row
+    // is refilled only when its frame slot is rebuilt after the previous frame
+    // retired, so no recording worker still reads the old content.
+    private ComputeDispatchSnapshot?[] _sealedMeshDrawSnapshots = [];
+    private ComputeDispatchSnapshot?[] _sealedIndirectDrawSnapshots = [];
+    private ComputeDispatchSnapshot?[] _sealedMeshTaskSnapshots = [];
+    private ComputeDispatchSnapshot?[] _sealedComputeDispatchSnapshots = [];
+    private ComputeDispatchSnapshot?[] _sealedComputeDispatchIndirectSnapshots = [];
 
     internal FrameOperationPayloadStore()
         : this(
@@ -123,30 +154,34 @@ internal sealed class FrameOperationPayloadStore
         _fixedCapacity = fixedCapacity;
         _lane = lane;
         _advancedVisibilityInputCopyTelemetry = advancedVisibilityInputCopyTelemetry;
-        TextureUploads = new TextureUploadPayload[textureCapacity];
-        Blits = new BlitPayload[generalCapacity];
-        Clears = new ClearPayload[generalCapacity];
-        TransformFeedbacks = new TransformFeedbackPayload[generalCapacity];
-        Queries = new QueryPayload[generalCapacity];
-        MeshDraws = new MeshDrawPayload[meshCapacity];
-        IndirectDraws = new IndirectDrawPayload[generalCapacity];
-        MeshTasks = new MeshTaskDispatchIndirectCountPayload[generalCapacity];
-        ComputeDispatches = new ComputeDispatchPayload[generalCapacity];
-        ComputeDispatchIndirects = new ComputeDispatchIndirectPayload[generalCapacity];
-        BufferCopies = new BufferCopyPayload[generalCapacity];
-        SubmissionMarkers = new SubmissionMarkerPayload[generalCapacity];
-        MemoryBarriers = new MemoryBarrierPayload[generalCapacity];
-        PublishedFramebuffers = new PublishFramebufferPayload[generalCapacity];
-        DlssUpscales = new DlssUpscalePayload[generalCapacity];
-        DlssFrameGenerations = new DlssFrameGenerationPayload[generalCapacity];
-        // UI/upload lanes reserve no Advanced input rows or ranges. Their
-        // generic operation budget must not reserve large unused Advanced
-        // payloads and closure objects. Active scene lanes retain their full
-        // fixed budget, including when the current scene happens to be empty.
+        _generalCapacity = generalCapacity;
+        _meshCapacity = meshCapacity;
+        _textureCapacity = textureCapacity;
+        int initialGeneral = Math.Min(generalCapacity, InitialGeneralPayloadCapacity);
+        TextureUploads = new TextureUploadPayload[Math.Min(textureCapacity, InitialGeneralPayloadCapacity)];
+        Blits = new BlitPayload[initialGeneral];
+        Clears = new ClearPayload[initialGeneral];
+        TransformFeedbacks = new TransformFeedbackPayload[initialGeneral];
+        Queries = new QueryPayload[initialGeneral];
+        MeshDraws = new MeshDrawPayload[Math.Min(meshCapacity, InitialMeshPayloadCapacity)];
+        IndirectDraws = new IndirectDrawPayload[initialGeneral];
+        MeshTasks = new MeshTaskDispatchIndirectCountPayload[initialGeneral];
+        ComputeDispatches = new ComputeDispatchPayload[initialGeneral];
+        ComputeDispatchIndirects = new ComputeDispatchIndirectPayload[initialGeneral];
+        BufferCopies = new BufferCopyPayload[initialGeneral];
+        SubmissionMarkers = new SubmissionMarkerPayload[initialGeneral];
+        MemoryBarriers = new MemoryBarrierPayload[initialGeneral];
+        PublishedFramebuffers = new PublishFramebufferPayload[initialGeneral];
+        DlssUpscales = new DlssUpscalePayload[initialGeneral];
+        DlssFrameGenerations = new DlssFrameGenerationPayload[initialGeneral];
+        // UI/upload lanes reserve no Advanced input rows or ranges, so they
+        // reserve no Advanced payloads or closure objects. Scene lanes start at
+        // a small row budget and grow at a new high-water mark (see
+        // EnsureAdvancedVisibilityCapacity).
         int advancedOperationCapacity =
             advancedVisibilityDrawCapacity == 0 && advancedVisibilityRangeCapacity == 0
                 ? 0
-                : generalCapacity;
+                : Math.Min(generalCapacity, AdvancedVisibilityInitialCapacity);
         AdvancedVisibilities = advancedOperationCapacity == 0
             ? Array.Empty<VulkanAdvancedVisibilityOperationPayload>()
             : new VulkanAdvancedVisibilityOperationPayload[advancedOperationCapacity];
@@ -159,6 +194,62 @@ internal sealed class FrameOperationPayloadStore
         _advancedVisibilityDrawCapacity = advancedVisibilityDrawCapacity;
         _advancedVisibilityRangeCapacity = advancedVisibilityRangeCapacity;
         AdvancedVisibilityInputs = new VulkanAdvancedVisibilityInputStorage?[VulkanAdvancedVisibilityOutputCapacity.Maximum];
+    }
+
+    /// <summary>
+    /// Seals an authoring binding snapshot into the reusable snapshot owned by
+    /// one payload row, so lowering does not allocate a new snapshot and its
+    /// collections for every compute-style operation of every frame. Immutable
+    /// binding artifacts are already detached and are returned unchanged.
+    /// </summary>
+    internal ComputeDispatchSnapshot SealBindingSnapshot(
+        EVulkanPrimaryPlanNodeKind kind,
+        int row,
+        ComputeDispatchSnapshot source)
+    {
+        if (source.IsImmutableBindingArtifact)
+            return source;
+
+        ComputeDispatchSnapshot sealedSnapshot = kind switch
+        {
+            EVulkanPrimaryPlanNodeKind.MeshDraw =>
+                RentSealedSnapshot(ref _sealedMeshDrawSnapshots, row, MeshDraws.Length),
+            EVulkanPrimaryPlanNodeKind.IndirectDraw =>
+                RentSealedSnapshot(ref _sealedIndirectDrawSnapshots, row, IndirectDraws.Length),
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount =>
+                RentSealedSnapshot(ref _sealedMeshTaskSnapshots, row, MeshTasks.Length),
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch =>
+                RentSealedSnapshot(ref _sealedComputeDispatchSnapshots, row, ComputeDispatches.Length),
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect =>
+                RentSealedSnapshot(ref _sealedComputeDispatchIndirectSnapshots, row, ComputeDispatchIndirects.Length),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "The opcode has no binding snapshot column."),
+        };
+        sealedSnapshot.CopySealedFrom(source);
+        return sealedSnapshot;
+    }
+
+    /// <summary>Detaches a draw for this store's payload row, sealing its binding snapshot into the row.</summary>
+    internal PendingMeshDraw SealDraw(
+        EVulkanPrimaryPlanNodeKind kind,
+        int row,
+        in PendingMeshDraw draw)
+        => draw.CreateSealedCopy(
+            draw.ProgramBindingSnapshot is { } snapshot
+                ? SealBindingSnapshot(kind, row, snapshot)
+                : null);
+
+    /// <summary>
+    /// Returns the row's reusable snapshot, growing the pool to the payload
+    /// column length at a new high-water mark.
+    /// </summary>
+    private static ComputeDispatchSnapshot RentSealedSnapshot(
+        ref ComputeDispatchSnapshot?[] pool,
+        int row,
+        int columnLength)
+    {
+        if (row >= pool.Length)
+            Array.Resize(ref pool, Math.Max(row + 1, columnLength));
+        return pool[row] ??= new ComputeDispatchSnapshot();
     }
 
     internal void ProvisionAdvancedVisibilityFamily(int bankIndex)
@@ -232,12 +323,12 @@ internal sealed class FrameOperationPayloadStore
     {
         switch (kind)
         {
-            case EVulkanPrimaryPlanNodeKind.TextureUpload: Ensure(ref TextureUploads, count); break;
+            case EVulkanPrimaryPlanNodeKind.TextureUpload: Ensure(ref TextureUploads, count, _textureCapacity); break;
             case EVulkanPrimaryPlanNodeKind.Blit: Ensure(ref Blits, count); break;
             case EVulkanPrimaryPlanNodeKind.Clear: Ensure(ref Clears, count); break;
             case EVulkanPrimaryPlanNodeKind.TransformFeedback: Ensure(ref TransformFeedbacks, count); break;
             case EVulkanPrimaryPlanNodeKind.Query: Ensure(ref Queries, count); break;
-            case EVulkanPrimaryPlanNodeKind.MeshDraw: Ensure(ref MeshDraws, count); break;
+            case EVulkanPrimaryPlanNodeKind.MeshDraw: Ensure(ref MeshDraws, count, _meshCapacity); break;
             case EVulkanPrimaryPlanNodeKind.IndirectDraw: Ensure(ref IndirectDraws, count); break;
             case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount: Ensure(ref MeshTasks, count); break;
             case EVulkanPrimaryPlanNodeKind.ComputeDispatch: Ensure(ref ComputeDispatches, count); break;
@@ -249,9 +340,7 @@ internal sealed class FrameOperationPayloadStore
             case EVulkanPrimaryPlanNodeKind.DlssUpscale: Ensure(ref DlssUpscales, count); break;
             case EVulkanPrimaryPlanNodeKind.DlssFrameGeneration: Ensure(ref DlssFrameGenerations, count); break;
             case EVulkanPrimaryPlanNodeKind.AdvancedVisibility:
-                Ensure(ref AdvancedVisibilities, count);
-                EnsureAdvancedVisibilityLateClosureCapacity(count);
-                EnsureAdvancedNativeComputeClosureCapacity(count);
+                EnsureAdvancedVisibilityCapacity(count);
                 break;
         }
     }
@@ -289,35 +378,63 @@ internal sealed class FrameOperationPayloadStore
         }
     }
 
-    private void Ensure<T>(ref T[] values, int count)
+    /// <summary>
+    /// Grows one opcode column to hold <paramref name="count"/> rows. A
+    /// fixed-capacity store grows only up to its declared capacity for the kind
+    /// (<paramref name="maximum"/>, the general capacity by default) and only
+    /// when a frame exceeds the previous high-water mark. Growth happens while
+    /// the plan is built, before sealing, and a slot is rebuilt only after its
+    /// previous frame retired, so no reader observes the replaced array.
+    /// </summary>
+    private void Ensure<T>(ref T[] values, int count, int maximum = -1)
     {
         if (values.Length >= count)
             return;
-        if (_fixedCapacity)
+        if (maximum < 0)
+            maximum = _generalCapacity;
+        if (_fixedCapacity && count > maximum)
             throw new VulkanAcceptedFramePlanCapacityException(
                 _lane,
-                values.Length,
+                maximum,
                 count);
 
-        Array.Resize(
-            ref values,
-            Math.Max(count, values.Length == 0 ? 4 : values.Length * 2));
+        int grown = Math.Max(count, values.Length == 0 ? 4 : values.Length * 2);
+        Array.Resize(ref values, _fixedCapacity ? Math.Min(grown, maximum) : grown);
     }
 
-    private void EnsureAdvancedVisibilityLateClosureCapacity(int count)
+    /// <summary>
+    /// Grows the Advanced visibility rows and their closure storage when a frame
+    /// exceeds the previous high-water mark, up to the general capacity on
+    /// fixed-capacity lanes (the same rule as <see cref="Ensure{T}"/>). Closure
+    /// objects already created are carried over. Lanes that reserve no Advanced
+    /// inputs still reject Advanced work.
+    /// </summary>
+    private void EnsureAdvancedVisibilityCapacity(int count)
     {
-        if (AdvancedVisibilityLateClosures.Length >= count)
+        if (AdvancedVisibilities.Length >= count)
             return;
-        if (_fixedCapacity)
+        bool reservesAdvanced = _advancedVisibilityDrawCapacity != 0 || _advancedVisibilityRangeCapacity != 0;
+        if (_fixedCapacity && (!reservesAdvanced || count > _generalCapacity))
             throw new VulkanAcceptedFramePlanCapacityException(
                 _lane,
-                AdvancedVisibilityLateClosures.Length,
+                reservesAdvanced ? _generalCapacity : AdvancedVisibilities.Length,
                 count);
 
+        int capacity = Math.Max(count, AdvancedVisibilities.Length == 0 ? 4 : AdvancedVisibilities.Length * 2);
+        if (_fixedCapacity)
+            capacity = Math.Min(capacity, _generalCapacity);
+        Array.Resize(ref AdvancedVisibilities, capacity);
+        GrowAdvancedVisibilityLateClosures(capacity);
+        GrowAdvancedNativeComputeClosures(capacity);
+    }
+
+    private void GrowAdvancedVisibilityLateClosures(int capacity)
+    {
+        if (AdvancedVisibilityLateClosures.Length >= capacity)
+            return;
+
         int previousLength = AdvancedVisibilityLateClosures.Length;
-        Array.Resize(
-            ref AdvancedVisibilityLateClosures,
-            Math.Max(count, previousLength == 0 ? 4 : previousLength * 2));
+        Array.Resize(ref AdvancedVisibilityLateClosures, capacity);
         for (int index = previousLength;
              index < AdvancedVisibilityLateClosures.Length;
              ++index)
@@ -336,17 +453,13 @@ internal sealed class FrameOperationPayloadStore
         return storage;
     }
 
-    private void EnsureAdvancedNativeComputeClosureCapacity(int count)
+    private void GrowAdvancedNativeComputeClosures(int capacity)
     {
-        if (AdvancedVisibilityNativeComputeClosures.Length >= count)
+        if (AdvancedVisibilityNativeComputeClosures.Length >= capacity)
             return;
-        if (_fixedCapacity)
-            throw new VulkanAcceptedFramePlanCapacityException(
-                _lane, AdvancedVisibilityNativeComputeClosures.Length, count);
 
         int previousLength = AdvancedVisibilityNativeComputeClosures.Length;
-        Array.Resize(ref AdvancedVisibilityNativeComputeClosures,
-            Math.Max(count, previousLength == 0 ? 4 : previousLength * 2));
+        Array.Resize(ref AdvancedVisibilityNativeComputeClosures, capacity);
         for (int index = previousLength;
              index < AdvancedVisibilityNativeComputeClosures.Length;
              ++index)

@@ -120,7 +120,8 @@ public partial class HumanoidComponent
 
     private void RefreshAvatarDefinition(
         AvatarHumanoidProfileBuilder.ProfileResult? profileResult,
-        bool reauthorGeneratedMetadata = false)
+        bool reauthorGeneratedMetadata = false,
+        bool regenerateCanonicalCorrections = false)
     {
         HumanoidAvatarDefinitionMetadata previous = AvatarDefinition;
         HumanoidAvatarSolverSettings solverSettings = BuildSolverSettings(previous);
@@ -134,7 +135,8 @@ public partial class HumanoidComponent
             solverSettings,
             bodyAxes,
             profileResult,
-            reauthorGeneratedMetadata);
+            reauthorGeneratedMetadata,
+            regenerateCanonicalCorrections);
         HumanoidAvatarBodyDefinition? bodyDefinition = previous.BodyDefinition is null
             || HumanoidAvatarBodyDefinitionFactory.IsGeneratedModelId(previous.BodyDefinition.ModelId)
             ? HumanoidAvatarBodyDefinitionFactory.CreateDefault(bindings)
@@ -657,7 +659,8 @@ public partial class HumanoidComponent
         HumanoidAvatarSolverSettings solverSettings,
         HumanoidAvatarBodyAxes bodyAxes,
         AvatarHumanoidProfileBuilder.ProfileResult? profileResult,
-        bool reauthorGeneratedMetadata = false)
+        bool reauthorGeneratedMetadata = false,
+        bool regenerateCanonicalCorrections = false)
     {
         EHumanoidAvatarBoneRole[] roles = Enum.GetValues<EHumanoidAvatarBoneRole>();
         var bindings = new HumanoidAvatarBoneBinding[roles.Length];
@@ -686,8 +689,13 @@ public partial class HumanoidComponent
                 && (preservesEditorBinding || !IsAutomaticProfileSource(Settings.ProfileSource));
             // Solver settings remain authored data. Generated corrections are
             // retained only when their exact authoring contract still matches.
-            preservesAuthoredCorrections[i] = preservesAuthoredSolverData
-                && preservesGeneratedCanonicalCorrections;
+            Quaternion storedCorrection = Quaternion.Identity;
+            bool hasStoredCorrection = node is not null
+                && TryGetNeutralPoseStoredRotation(node, out storedCorrection);
+            preservesAuthoredCorrections[i] = hasStoredCorrection
+                || !regenerateCanonicalCorrections
+                    && preservesAuthoredSolverData
+                    && preservesGeneratedCanonicalCorrections;
             BoneAxisMapping axisMapping = BoneAxisMapping.Default;
             bool hasAxisMapping = preservesAuthoredSolverData && oldBinding!.HasAxisMapping;
             if (hasAxisMapping)
@@ -718,10 +726,10 @@ public partial class HumanoidComponent
                     ? Math.Clamp(evidence!.Confidence, 0.0f, 1.0f)
                     : ResolveBoneConfidence(node, oldBinding, profileResult);
 
-            Quaternion canonicalCorrection = preservesAuthoredSolverData
-                ? NormalizeFiniteQuaternion(oldBinding!.CanonicalPoseCorrection)
-                : node is not null && TryGetNeutralPoseStoredRotation(node, out Quaternion storedCorrection)
-                    ? NormalizeFiniteQuaternion(storedCorrection)
+            Quaternion canonicalCorrection = hasStoredCorrection
+                ? NormalizeFiniteQuaternion(storedCorrection)
+                : preservesAuthoredSolverData && !regenerateCanonicalCorrections
+                    ? NormalizeFiniteQuaternion(oldBinding!.CanonicalPoseCorrection)
                     : Quaternion.Identity;
 
             bindings[i] = new HumanoidAvatarBoneBinding
