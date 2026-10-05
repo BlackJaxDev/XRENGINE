@@ -323,6 +323,8 @@ internal sealed partial class EngineMeshDiagnosticFixture
             catch { }
         }
 
+        if (_renderWorld is { } publicationOwner)
+            Attempt(() => publicationOwner.SetCollectPublicationOpen(false));
         Attempt(Engine.Time.Timer.Stop);
         Attempt(() => Engine.Time.Timer.CollectVisible -= CollectFrame);
         Attempt(() => Engine.Time.Timer.SwapBuffers -= SwapFrame);

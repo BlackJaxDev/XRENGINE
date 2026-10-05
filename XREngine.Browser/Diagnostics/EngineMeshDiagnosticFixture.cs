@@ -202,12 +202,14 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             Engine.Time.Timer.RenderFrame += RenderFrame;
             try
             {
+                _renderWorld.SetCollectPublicationOpen(true);
                 _viewport.AutomaticallyCollectVisible = true;
                 _viewport.AutomaticallySwapBuffers = true;
                 Engine.Time.Timer.StartCallerThreadLoop();
             }
             catch (Exception) when (!_unlit)
             {
+                _renderWorld.SetCollectPublicationOpen(false);
                 Engine.Time.Timer.CollectVisible -= CollectFrame;
                 Engine.Time.Timer.SwapBuffers -= SwapFrame;
                 Engine.Time.Timer.RenderFrame -= RenderFrame;
@@ -316,6 +318,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _renderWorld.SetCollectPublicationOpen(false);
         Engine.Time.Timer.Stop();
         Engine.Time.Timer.CollectVisible -= CollectFrame;
         Engine.Time.Timer.SwapBuffers -= SwapFrame;

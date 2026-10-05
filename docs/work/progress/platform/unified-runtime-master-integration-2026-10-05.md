@@ -76,3 +76,34 @@ These managed checks used the pinned .NET 10.0.401 SDK. They did not execute
 browser WebAssembly, Windows Editor publication, shader cooking or GPU rendering.
 Exact-commit CI and browser acceptance remain required after publication. No
 checklist row is closed by the merge alone.
+
+## Published integration and browser follow-up
+
+The merge was published as `ed3ec84a633c8ce83a8a47bf20246f14e9871221`.
+Its parents are the recorded WebGPU and master heads. Its Git tree matches the
+reviewed local tree. The reviewed UI input and shadow receiver changes followed
+in `e06c98a8d005ff09b69ed233ebb86e06d03f6fe9`.
+
+[CI run 37377991078](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37377991078)
+passed portable compilation, browser publication and shader cooking. The Linux
+browser check then found two integration faults. World lifecycle, asset delivery,
+audio and native Jolt checks passed. The independent GPU canary also passed;
+that result does not qualify engine rendering.
+
+- Master closes `RuntimeWorldRenderer` collection publication until its owner
+  opens it. `RuntimeWorldHost` already follows this contract. The direct browser
+  diagnostic owner did not, so queued model registrations never reached scene
+  collection. The approved fixture migration opens publication before starting
+  the caller loop and closes it before failure cleanup or disposal. Scene content,
+  draw assertions and time limits are unchanged.
+- Master binds the scene node in a component's base constructor. This makes
+  `IsActiveInHierarchy` true before the object initializer has supplied authored
+  light settings. Cooked shadow allocation and directional property/cascade
+  checks now also wait for world attachment. Activation still validates the final
+  configuration before applying stored shadow dimensions. Explicit material-use
+  checks, unsupported cascade/atlas diagnostics and desktop defaults remain.
+
+Independent source review passed for both repairs. The desktop platform and
+shared dependencies built with zero warnings and zero errors. The browser
+fixture migration remains subject to the next browser build and live run.
+These findings do not establish new rendering, performance or device acceptance.
