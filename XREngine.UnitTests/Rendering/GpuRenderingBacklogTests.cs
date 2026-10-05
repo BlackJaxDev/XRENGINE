@@ -196,14 +196,14 @@ public class GpuRenderingBacklogTests
             {
                 [bone] = (1.0f, Matrix4x4.Identity),
             };
-            XRMesh mesh = new(
-                [
-                    new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), weights),
-                    new Vertex(new Vector3(0.05f, -0.05f, 0.0f), weights),
-                    new Vertex(new Vector3(0.0f, 0.05f, 0.0f), weights),
-                ],
-                new List<ushort> { 0, 1, 2 });
-            mesh.RebuildSkinningBuffersFromVertices();
+            Vertex[] vertices =
+            [
+                new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), weights),
+                new Vertex(new Vector3(0.05f, -0.05f, 0.0f), weights),
+                new Vertex(new Vector3(0.0f, 0.05f, 0.0f), weights),
+            ];
+            XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
+            mesh.RebuildSkinningBuffersFromVertices(vertices);
 
             RenderCommandMesh3D command = new(0)
             {

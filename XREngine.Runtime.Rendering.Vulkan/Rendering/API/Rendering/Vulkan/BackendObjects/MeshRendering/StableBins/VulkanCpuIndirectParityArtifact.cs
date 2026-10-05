@@ -3,26 +3,28 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Fixed-capacity evidence artifact for validating CPU-direct indexed draws
-/// against a CPU-built indirect command stream. It is intentionally detached
-/// from lane resolution and command recording: a mismatch rejects only this
-/// diagnostic artifact and can never select a fallback submission path.
+/// Bounded evidence artifact for validating CPU-direct indexed draws against a
+/// CPU-built indirect command stream. It is intentionally detached from lane
+/// resolution and command recording: a mismatch rejects only this diagnostic
+/// artifact and can never select a fallback submission path. Storage is created
+/// only when a diagnostic profile builds the artifact and grows to the largest
+/// frozen stream seen, up to <see cref="Capacity"/>.
 /// </summary>
 internal sealed class VulkanCpuIndirectParityArtifact
 {
-    private readonly DrawIndexedIndirectCommand[] _indirectCommands;
-    private readonly VulkanDirectIndirectParityRecord[] _directRecords;
-    private readonly VulkanDirectIndirectParityRecord[] _indirectRecords;
+    private readonly int _maximumCapacity;
+    private DrawIndexedIndirectCommand[] _indirectCommands = [];
+    private VulkanDirectIndirectParityRecord[] _directRecords = [];
+    private VulkanDirectIndirectParityRecord[] _indirectRecords = [];
 
     internal VulkanCpuIndirectParityArtifact(int capacity)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(capacity);
-        _indirectCommands = new DrawIndexedIndirectCommand[capacity];
-        _directRecords = new VulkanDirectIndirectParityRecord[capacity];
-        _indirectRecords = new VulkanDirectIndirectParityRecord[capacity];
+        _maximumCapacity = capacity;
     }
 
-    internal int Capacity => _indirectCommands.Length;
+    /// <summary>Admission limit; the backing storage may currently be smaller.</summary>
+    internal int Capacity => _maximumCapacity;
     internal int Count { get; private set; }
     internal bool IsSealed { get; private set; }
     internal VulkanCpuIndirectParityFailure Failure { get; private set; }
@@ -58,10 +60,17 @@ internal sealed class VulkanCpuIndirectParityArtifact
         ReadOnlySpan<VulkanPreparedStableBinRecord> records)
     {
         Reset();
-        if (records.Length > _indirectCommands.Length)
+        if (records.Length > _maximumCapacity)
         {
             Failure = VulkanCpuIndirectParityFailure.CapacityExceeded;
             return false;
+        }
+        if (records.Length > _indirectCommands.Length)
+        {
+            int capacity = Math.Min(_maximumCapacity, Math.Max(records.Length, _indirectCommands.Length * 2));
+            Array.Resize(ref _indirectCommands, capacity);
+            Array.Resize(ref _directRecords, capacity);
+            Array.Resize(ref _indirectRecords, capacity);
         }
 
         for (int index = 0; index < records.Length; ++index)

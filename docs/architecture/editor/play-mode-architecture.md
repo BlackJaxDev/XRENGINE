@@ -46,6 +46,15 @@ canvases. Hidden editor roots remain outside gameplay begin/end callbacks. They 
 deactivated before the play visual scene is destroyed and reactivated immediately afterward
 so their rendering and input registrations are restored for Edit mode.
 
+When OpenXR possession selects a first-person or spectator camera, the desktop
+viewport retains the editor canvas through `ScreenSpaceUserInterfaceOverride`.
+Collection, buffer swapping, rendering, resize and backend preflight use that
+same explicit owner. The override belongs only to the desktop viewport; shared
+camera and eye-viewport UI remain untouched. The editor switcher restores the
+previous override when its ownership ends and releases editor UI on leaving
+Edit mode. This keeps live ImGui input and newly sized draw data available instead
+of leaving a retained, unresponsive Vulkan overlay on screen.
+
 ## Mode States
 
 ```
@@ -325,7 +334,11 @@ world settings go through the cooked binary format with snapshot callbacks
   instance, by identity and then by path, accepting only an asset of the
   referenced type. A path loaded as another type (a shader and its source
   file) is materialized directly as the requested type without replacing the
-  asset manager's existing path-cache entry.
+  asset manager's existing path-cache entry. An asset that the asset manager
+  does not hold and whose file does not exist is written by value instead
+  (`SnapshotAssetReference.HasLoadableFile`): imports create placeholder
+  textures for sources missing on this machine, and a reference to one could
+  never resolve.
 - **Text files the asset manager does not hold are written by value with
   their path.** Generated shader sources keep their canonical file's path for
   include resolution and program identity while holding generated text, which
@@ -335,13 +348,61 @@ world settings go through the cooked binary format with snapshot callbacks
   written, and resolved or restored, once however many objects share it.
 
 A restore owns the copy it creates. The next restore of the same scene
-destroys the roots it replaces and the render assets (render objects, and
-meshes with the buffers they own) the previous restore deserialized, since
-nothing else owns them and they would otherwise keep their renderer resources
-registered (`SnapshotRestoredContent`). The world as loaded before the first
-entry was not created by a restore and can share objects with other owners,
-such as import caches and engine defaults, so it is left alone: one extra copy
-remains for the rest of the session.
+destroys the roots it replaces and the render assets (render objects, meshes
+with the buffers they own, and the models whose submesh lists register those
+meshes) the previous restore deserialized, since nothing else owns them and
+they would otherwise keep their renderer resources registered
+(`SnapshotRestoredContent`). The world as loaded before the first entry was not
+created by a restore and can share objects with other owners, such as import
+caches and engine defaults, so it is left alone: one extra copy remains for the
+rest of the session.
+
+Once edit mode runs again, exiting play mode queues one compacting maintenance
+collection (`EngineMaintenanceGcReason.EditorExitedPlayMode`) as an app-thread
+job, which runs only between render frames. A round trip discards a whole world
+copy and its snapshot buffers; background collections neither compact nor
+return that memory, so without it committed memory climbs with every trip.
+
+Each transition also destroys and recreates the world's GPU scene. The shared
+Advanced deformation resources free every static generation bound to a
+destroyed scene the next time they select one
+(`AdvancedGpuDeformationResources.ReleaseGenerationsOfDestroyedScenes`).
+Before, all pooled generations kept the largest capacity any transition needed,
+plus their GPU copies and the destroyed scene's meshes, about 4.5 GB of commit
+after two round trips with the avatar.
+
+### Restored Objects Must Match Their Originals
+
+A restored object is new to every subsystem that caches derived state, so its
+deserialized form must produce the same derived state as the original:
+
+- **Meshes are buffers only.** The cooked mesh payload stores buffers and
+  `XRMesh` keeps no per-vertex objects. The Advanced canonical scene publisher
+  validates `VertexCount` against readable attribute buffers and packs its
+  records from them, so a restored mesh registers like the original.
+- **A cooked mesh must read back what it wrote.** The reader validates a payload
+  by walking it to the exact end of its bytes, and rejects implausible layouts
+  (up to 64 color and texture coordinate channels; FBX files can carry dozens of
+  color layers). The writer checks that the base object and the mesh payload
+  are exactly their calculated sizes and names the mesh if not.
+- **Generated uber variants are shared, not copied.** A generated variant has no
+  file path, so the capture inlines its source. On restore,
+  `UberShaderVariantBuilder.TryGetCachedVariant` matches the copy (type, source
+  path, generated text) to the live cached variant; the copy is destroyed and
+  the material references the live one, and the canonical shader is recovered
+  from the variant instead of reading `UberShader.frag` again. Without this every
+  round trip kept one ~450K-character source per material.
+- **Restores write properties through their setters.** A setter must therefore
+  attach behaviour only when the resulting state needs it. For example,
+  `XRMaterial` attaches its surface-emission uniform publisher only when the
+  material carries emission state. A `SettingUniforms` handler on every restored
+  material would move every shadow caster off the shared opaque caster material
+  (see [Frame Loop Design](../rendering/frame-loop-design.md#shadow-casters-are-the-dominant-motion-cost)).
+- **Runtime-only links are serialized by identity and rebound.** The light-probe
+  grid spawner (`LightProbeGridSpawnerComponent.SerializedIdentity`) writes the
+  IDs of its placement-bounds models and spawned probe nodes. After
+  deserialization it rebinds them, so a restored spawner adopts its restored
+  grid instead of retrying the spawn every update.
 
 Restored objects carry their captured identities, but the global object cache
 (`XRObjectBase.ObjectsCache`) keeps the object that registered an identity

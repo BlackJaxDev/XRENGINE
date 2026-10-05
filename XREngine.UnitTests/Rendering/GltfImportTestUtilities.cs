@@ -207,13 +207,13 @@ internal static class GltfImportTestUtilities
                         continue;
 
                     meshCount++;
-                    totalVertices += mesh.Vertices.LongLength;
+                    totalVertices += mesh.VertexCount;
 
                     int[]? indices = mesh.GetIndices();
                     if (indices is not null)
                         totalTriangles += indices.LongLength / 3;
                     else
-                        totalTriangles += mesh.Vertices.LongLength / 3;
+                        totalTriangles += mesh.VertexCount / 3;
 
                     if (mesh.HasSkinning)
                         skinCount++;
@@ -224,12 +224,11 @@ internal static class GltfImportTestUtilities
                             blendshapeNames.Add(blendshapeName);
                     }
 
-                    foreach (Vertex vertex in mesh.Vertices)
+                    // Skinning packing appends every bone referenced by a source vertex weight to
+                    // UtilizedBones, so it is the mesh's set of weighted bones.
+                    foreach ((TransformBase bone, _) in mesh.UtilizedBones)
                     {
-                        if (vertex.Weights is null)
-                            continue;
-
-                        foreach (TransformBase bone in vertex.Weights.Keys)
+                        if (bone is not null)
                             bones.Add(bone);
                     }
                 }

@@ -6,7 +6,7 @@ device-memory growth per transition are opened as S14g; see
 [Disposition](#disposition).
 
 Gate record for
-[S14d](../../todo/rendering/vulkan-stall-remediation-todo.md#s14d-publish-the-scene-after-a-play-exit)
+[S14d](../../todo/rendering/vulkan-stall-remediation-todo.md#evidence-index)
 under the todo document's one-by-one protocol. Opened by S14a's validation;
 the first observations are in the
 [S14a record](2026-09-27-s14a-play-transitions.md#after-an-exit-the-viewport-publishes-no-scene-frame-opened-as-s14d).

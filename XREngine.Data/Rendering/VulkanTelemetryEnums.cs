@@ -86,6 +86,7 @@ public enum EVulkanCpuStage
     PrimaryAdvancedClassificationOperation,
     PrimaryAdvancedAmbientOcclusionOperation,
     PrimaryAdvancedNativeShadingOperation,
+    PrimaryAdvancedDirectionalShadowOperation,
     PrimaryAdvancedCpuDirectDrawOperation,
     PrimaryAdvancedRasterLoweringOperation,
     PrimaryAdvancedRasterValidationOperation,

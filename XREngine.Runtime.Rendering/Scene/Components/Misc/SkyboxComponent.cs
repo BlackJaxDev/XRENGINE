@@ -1228,6 +1228,7 @@ namespace XREngine.Components.Scene.Mesh
                 MissingTextureFallback = EMissingTextureFallback.Black,
             };
 
+            XRMaterial? previousMaterial = _material;
             _material = new XRMaterial(
                 tex is not null ? [tex] : [],
                 [vertexShader, stereoVertexShader, fragmentShader])
@@ -1259,6 +1260,10 @@ namespace XREngine.Components.Scene.Mesh
                 _meshRenderer.Material = _material;
                 _meshRenderer.Name ??= "Skybox.Renderer";
             }
+
+            // The replaced material stays subscribed to the shared skybox shaders and keeps a
+            // binding publisher pointing at this component until it is destroyed.
+            previousMaterial?.Destroy();
 
             UpdateRenderCommand();
         }
@@ -1428,10 +1433,15 @@ namespace XREngine.Components.Scene.Mesh
             // immutable fullscreen mesh alive until final component destruction.
             if (_renderCommand is not null)
                 _renderCommand.Mesh = null;
+            // The renderer and material must be destroyed with the mesh. The renderer's backend
+            // wrappers hold slots in shared program caches, and the material stays subscribed to
+            // the shared skybox shaders; either would keep the destroyed world reachable.
+            _meshRenderer?.Destroy();
+            _meshRenderer = null;
             _mesh?.Destroy();
             _mesh = null;
+            _material?.Destroy();
             _material = null;
-            _meshRenderer = null;
         }
 
         protected override void OnDestroying()

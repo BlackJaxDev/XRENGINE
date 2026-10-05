@@ -79,8 +79,16 @@ namespace XREngine
                     private static long _vrRenderFrameIntervalTicks;
                     private static long _lastFrameVrRenderFrameIntervalTicks;
                     private static int _vrFrameStatsActivity;
+                    private static bool _lastFrameHadVrWork;
 
                     // Render-matrix stats use a separate swap cycle aligned with SwapBuffers phase.
+
+                    /// <summary>
+                    /// Whether the last window frame included VR render work. VR values are retained
+                    /// across frames without it, so consumers that combine them with per-frame
+                    /// counters must check this first.
+                    /// </summary>
+                    public static bool LastFrameHadVrWork => Volatile.Read(ref _lastFrameHadVrWork);
 
                     public static int VrLeftEyeDraws => _lastFrameVrLeftEyeDraws;
                     public static int VrRightEyeDraws => _lastFrameVrRightEyeDraws;
@@ -158,6 +166,7 @@ namespace XREngine
                     internal static void SnapshotAndReset()
                     {
                         bool hasVrFrameStats = Interlocked.Exchange(ref _vrFrameStatsActivity, 0) != 0;
+                        Volatile.Write(ref _lastFrameHadVrWork, hasVrFrameStats);
                         if (hasVrFrameStats)
                             PublishFrameScopedStats();
                         else if (!RuntimeEngine.VRState.IsInVR && !RuntimeEngine.Rendering.State.IsStereoPass)

@@ -624,7 +624,7 @@ namespace XREngine.Rendering
                     return;
 
                 slotAcquired = false;
-                TextureUploadScheduler.Instance.ReleaseUploadSlot();
+                TextureUploadScheduler.Instance.ReleaseUploadSlot(texture, workItem);
             }
 
             void CleanupProgressiveUpload(bool releaseRuntimeOwnership = true)
@@ -674,6 +674,7 @@ namespace XREngine.Rendering
             int lockMipLevel = texture.StreamingLockMipLevel;
             bool hasLock = lockMipLevel >= 0 && lockMipLevel < smallestResidentMip;
             bool seedUploaded = !hasLock;
+            bool openGlOwnsBudget = backend == RuntimeGraphicsApiKind.OpenGL;
             double activeUploadMilliseconds = 0.0;
 
             bool UploadProgressive()
@@ -700,7 +701,7 @@ namespace XREngine.Rendering
                         if (HasHigherPriorityProgressiveUpload(texture, workItem))
                             return false;
 
-                        if (!TextureUploadScheduler.Instance.TryAcquireUploadSlot())
+                        if (!TextureUploadScheduler.Instance.TryAcquireUploadSlot(texture, workItem))
                         {
                             if (!waitLogged)
                             {
@@ -742,17 +743,22 @@ namespace XREngine.Rendering
                         texture.LargestMipmapLevel = lockMipLevel;
                         texture.SmallestAllowedMipmapLevel = lockMipLevel;
                         long lockMipBytes = mipmaps[lockMipLevel].Data?.Length ?? 0;
-                        if (!RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, 0.25))
+                        if (!openGlOwnsBudget
+                            && !RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, 0.25))
                             return false;
 
-                        TextureUploadScheduler.Instance.RegisterBytesForCurrentFrame(lockMipBytes);
+                        if (!openGlOwnsBudget)
+                            TextureUploadScheduler.Instance.RegisterBytesForCurrentFrame(lockMipBytes);
                         long seedUploadStart = TextureRuntimeDiagnostics.StartTiming();
                         bool lockMipCompleted = texture.PushMipLevel(lockMipLevel);
                         double seedUploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(seedUploadStart);
                         activeUploadMilliseconds += seedUploadMilliseconds;
                         texture.RecordTextureUploadDuration(seedUploadMilliseconds);
-                        TextureRuntimeDiagnostics.RecordUploadDuration(seedUploadMilliseconds);
-                        RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, seedUploadMilliseconds);
+                        if (!openGlOwnsBudget)
+                        {
+                            TextureRuntimeDiagnostics.RecordUploadDuration(seedUploadMilliseconds);
+                            RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, seedUploadMilliseconds);
+                        }
                         if (!lockMipCompleted)
                             return false;
 
@@ -811,7 +817,7 @@ namespace XREngine.Rendering
                     }
 
                     long nextMipBytes = mipmaps[nextMipToUpload].Data?.Length ?? 0;
-                    if (TextureUploadScheduler.Instance.WouldExceedFrameByteBudget(nextMipBytes))
+                    if (!openGlOwnsBudget && TextureUploadScheduler.Instance.WouldExceedFrameByteBudget(nextMipBytes))
                     {
                         if (!budgetWaitLogged)
                         {
@@ -823,18 +829,23 @@ namespace XREngine.Rendering
                     }
 
                     budgetWaitLogged = false;
-                    if (!RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, 0.25))
+                    if (!openGlOwnsBudget
+                        && !RenderWorkBudgetCoordinator.TryConsume(RenderWorkSubsystem.TextureUpload, 0.25))
                         return false;
 
-                    TextureUploadScheduler.Instance.RegisterBytesForCurrentFrame(nextMipBytes);
+                    if (!openGlOwnsBudget)
+                        TextureUploadScheduler.Instance.RegisterBytesForCurrentFrame(nextMipBytes);
 
                     long uploadStart = TextureRuntimeDiagnostics.StartTiming();
                     bool mipCompleted = texture.PushMipLevel(nextMipToUpload);
                     double uploadMilliseconds = TextureRuntimeDiagnostics.ElapsedMilliseconds(uploadStart);
                     activeUploadMilliseconds += uploadMilliseconds;
                     texture.RecordTextureUploadDuration(uploadMilliseconds);
-                    TextureRuntimeDiagnostics.RecordUploadDuration(uploadMilliseconds);
-                    RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, uploadMilliseconds);
+                    if (!openGlOwnsBudget)
+                    {
+                        TextureRuntimeDiagnostics.RecordUploadDuration(uploadMilliseconds);
+                        RenderWorkBudgetCoordinator.RecordCompleted(RenderWorkSubsystem.TextureUpload, uploadMilliseconds);
+                    }
                     if (mipCompleted)
                     {
                         mipmaps[nextMipToUpload].StreamingPBO = null;
@@ -2024,7 +2035,18 @@ namespace XREngine.Rendering
             writer.WriteValue(SizedInternalFormat);
 
             WriteGrabPass(writer, GrabPass);
+            EnsureResidentPixelsForSerialization();
             WriteMipmaps(writer, Mipmaps);
+        }
+
+        /// <summary>
+        /// Serialized mips carry pixels; a streamed texture whose pixels were
+        /// released after upload reloads them from its streaming source first.
+        /// </summary>
+        private void EnsureResidentPixelsForSerialization()
+        {
+            if (!TryRestoreReleasedResidentPixels(out string? failureReason))
+                throw new InvalidOperationException($"Cannot serialize texture '{Name}': {failureReason}");
         }
 
 #if !XRE_PUBLISHED
@@ -2058,6 +2080,7 @@ namespace XREngine.Rendering
             size += CookedBinarySerializer.CalculateSize(SizedInternalFormat);
 
             size += CalculateGrabPassSize(GrabPass);
+            EnsureResidentPixelsForSerialization();
             size += CalculateMipmapSize(Mipmaps);
 
             return size;

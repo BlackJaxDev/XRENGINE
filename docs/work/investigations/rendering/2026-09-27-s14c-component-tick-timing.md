@@ -3,7 +3,7 @@
 Status: Validated (September 27, 2026).
 
 Gate record for
-[S14c](../../todo/rendering/vulkan-stall-remediation-todo.md#s14c-restore-per-component-tick-timing)
+[S14c](../../todo/rendering/vulkan-stall-remediation-todo.md#evidence-index)
 under the todo document's one-by-one protocol. Opened by the
 [S14 gate record](2026-09-27-s14-core-update-owner.md). Evidence root:
 `Build/_AgentValidation/20260927-095558-s14-core-update/` (ignored and

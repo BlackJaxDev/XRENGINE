@@ -2,7 +2,7 @@
 
 Date: 2026-09-21
 Base revision: `cd58220514ae6455af68a9526f2fa32d8d127e4a`
-Scope: [S08 in the Vulkan stall remediation TODO](../../todo/rendering/vulkan-stall-remediation-todo.md#s08-prepare-indices-before-draw-admission)
+Scope: [S08 in the Vulkan stall remediation TODO](../../todo/rendering/vulkan-stall-remediation-todo.md#evidence-index)
 Status: **Validated after PR #75 merged into the working branch.**
 Test clearance: not granted; no regression tests added or modified.
 

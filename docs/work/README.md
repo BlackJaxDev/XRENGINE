@@ -32,6 +32,7 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 
 | Area | Status | Canonical doc | Notes |
 |---|---|---|---|
+| Editor memory reduction | Active | [todo/rendering/optimization/editor-memory-reduction-todo.md](todo/rendering/optimization/editor-memory-reduction-todo.md) | Ordered checklist to bring the OpenXR editor under 8 GB: capacity-sized renderer arrays, per-vertex mesh model to packed buffers, mesh and texture CPU copies, texture compression and budget, render-target audit, heap fragmentation. |
 | Shadow and pipeline validation failures | Open | [todo/rendering/shadow-and-pipeline-validation-failures-todo.md](todo/rendering/shadow-and-pipeline-validation-failures-todo.md) | All 50 failed cases from the October 2 shadow and pipeline validation runs, observed diagnostics, rerun commands, and the strict shader-loading parity prerequisite. |
 | Control plane managed server instances | Planned | [todo/networking/control-plane-managed-server-instances-todo.md](todo/networking/control-plane-managed-server-instances-todo.md) | Service/host supervision, verified world startup, player admission/accounting, authoritative synchronization, client workflow, restart recovery, and public hosting. |
 | Default render pipeline V2 | Active | [todo/COMPLETED/default-render-pipeline-v2-todo.md](todo/COMPLETED/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
@@ -130,6 +131,7 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 - [todo/COMPLETED/default-render-pipeline-v2-todo.md](todo/COMPLETED/default-render-pipeline-v2-todo.md)
 - [todo/rendering/default-pipeline-depth-of-field-todo.md](todo/rendering/default-pipeline-depth-of-field-todo.md)
 - [todo/rendering/global-illumination/ddgi-implementation-todo.md](todo/rendering/global-illumination/ddgi-implementation-todo.md)
+- [todo/rendering/optimization/editor-memory-reduction-todo.md](todo/rendering/optimization/editor-memory-reduction-todo.md)
 - [todo/rendering/optimization/engine-rendering-optimization-roadmap.md](todo/rendering/optimization/engine-rendering-optimization-roadmap.md)
 - [todo/assets/fbx-import-export-todo.md](todo/assets/fbx-import-export-todo.md)
 - [todo/forward-depth-normal-transform-id-todo.md](todo/forward-depth-normal-transform-id-todo.md)

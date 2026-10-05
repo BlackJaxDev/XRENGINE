@@ -33,6 +33,11 @@ internal static class EditorOpenXrPawnSwitcher
     private static IRuntimeRenderWorld? _vrPawnWorld;
     private static EditorWorldIntegration? _vrEditorIntegration;
     private static EVrDesktopView _desktopView = EVrDesktopView.FirstPerson;
+    private static XRViewport? _editorUiViewport;
+    private static IRuntimeRenderWorld? _editorUiWorld;
+    private static IRuntimeScreenSpaceUserInterface? _editorUiCanvas;
+    private static IRuntimeScreenSpaceUserInterface? _previousEditorUiOverride;
+    private static bool _monitoringEditorUi;
 
     public static bool IsRequested => _requested;
     public static EVrDesktopView DesktopView => _desktopView;
@@ -92,10 +97,13 @@ internal static class EditorOpenXrPawnSwitcher
 
         _initialized = true;
         RuntimeEngine.VRState.OpenXRSessionRunningChanged += OnOpenXRSessionRunningChanged;
+        Engine.PlayMode.StateChanged += OnPlayModeStateChanged;
     }
 
     public static void Configure(UnitTestingWorldSettings settings)
     {
+        StopMonitoringEditorUi();
+        ReleaseDesktopEditorUi();
         _configured = settings.VR.AllowDesktopEditing && settings.VR.Mode != UnitTestingVrLaunchMode.OpenVR;
         _startsOnLaunch = settings.VR.Mode is UnitTestingVrLaunchMode.MonadoOpenXR or UnitTestingVrLaunchMode.OpenXR;
         _requested = _configured && _startsOnLaunch;
@@ -170,6 +178,7 @@ internal static class EditorOpenXrPawnSwitcher
 
     private static void ApplyDesktopView()
     {
+        SynchronizeDesktopEditorUi();
         if (_vrPawn?.SceneNode?.GetComponent<VRPlayerCharacterComponent>() is not { } player)
             return;
 
@@ -256,6 +265,109 @@ internal static class EditorOpenXrPawnSwitcher
         Engine.EnqueueUpdateThreadTask(SynchronizePawnControl);
     }
 
+    private static void OnPlayModeStateChanged(EPlayModeState state)
+        => Engine.EnqueueUpdateThreadTask(SynchronizeDesktopEditorUi);
+
+    private static XRViewport? ResolveDesktopViewport()
+    {
+        XRViewport? viewport = RuntimePlayerControllerServices.Current?
+            .GetLocalPlayer(ELocalPlayerIndex.One)?.Viewport as XRViewport;
+        if (viewport is null || viewport.Window is null ||
+            ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
+            ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport) ||
+            ReferenceEquals(viewport, RuntimeEngine.VRState.StereoViewport))
+            return null;
+
+        return viewport;
+    }
+
+    private static void SynchronizeDesktopEditorUi()
+    {
+        if (!_configured || !_requested || !Engine.PlayMode.IsEditing ||
+            RuntimeEngine.VRState.OpenXRApi?.IsSessionRunning != true ||
+            _vrPawnWorld is not { } world ||
+            !ReferenceEquals(ResolveDesktopViewport()?.World, world))
+        {
+            ReleaseDesktopEditorUi();
+            return;
+        }
+
+        BindDesktopEditorUi(world);
+    }
+
+    private static void BindDesktopEditorUi(IRuntimeRenderWorld world)
+    {
+        XRViewport? viewport = ResolveDesktopViewport();
+        PawnComponent? desktopPawn = ReferenceEquals(_desktopPawnWorld, world) &&
+            _desktopPawn is { } cached && IsDesktopPawn(cached, world)
+                ? cached
+                : null;
+        CameraComponent? camera = desktopPawn?.CameraComponent as CameraComponent;
+        IRuntimeScreenSpaceUserInterface? canvas = camera?.GetUserInterfaceOverlay();
+        if (viewport is null || !ReferenceEquals(viewport.World, world) ||
+            camera is null || !world.IsInEditorScene(camera.SceneNode) ||
+            canvas is not { IsScreenSpace: true } ||
+            canvas is XRComponent canvasComponent && !world.IsInEditorScene(canvasComponent.SceneNode))
+        {
+            ReleaseDesktopEditorUi();
+            return;
+        }
+
+        if (ReferenceEquals(_editorUiViewport, viewport) &&
+            ReferenceEquals(_editorUiWorld, world) &&
+            ReferenceEquals(_editorUiCanvas, canvas))
+        {
+            // Keep this lease until teardown even if another owner replaces its value.
+            return;
+        }
+
+        ReleaseDesktopEditorUi();
+        if (ReferenceEquals(viewport.ScreenSpaceUserInterfaceOverride, canvas))
+            return;
+
+        _previousEditorUiOverride = viewport.ScreenSpaceUserInterfaceOverride;
+        _editorUiViewport = viewport;
+        _editorUiWorld = world;
+        _editorUiCanvas = canvas;
+        viewport.ScreenSpaceUserInterfaceOverride = canvas;
+    }
+
+    private static void ReleaseDesktopEditorUi()
+    {
+        XRViewport? viewport = _editorUiViewport;
+        IRuntimeScreenSpaceUserInterface? canvas = _editorUiCanvas;
+        IRuntimeScreenSpaceUserInterface? previous = _previousEditorUiOverride;
+        ForgetDesktopEditorUiOwnership();
+        if (viewport is not null && ReferenceEquals(viewport.ScreenSpaceUserInterfaceOverride, canvas))
+            viewport.ScreenSpaceUserInterfaceOverride = previous;
+    }
+
+    private static void ForgetDesktopEditorUiOwnership()
+    {
+        _editorUiViewport = null;
+        _editorUiWorld = null;
+        _editorUiCanvas = null;
+        _previousEditorUiOverride = null;
+    }
+
+    private static void StartMonitoringEditorUi()
+    {
+        if (_monitoringEditorUi)
+            return;
+
+        Engine.Time.Timer.UpdateFrame += SynchronizeDesktopEditorUi;
+        _monitoringEditorUi = true;
+    }
+
+    private static void StopMonitoringEditorUi()
+    {
+        if (!_monitoringEditorUi)
+            return;
+
+        Engine.Time.Timer.UpdateFrame -= SynchronizeDesktopEditorUi;
+        _monitoringEditorUi = false;
+    }
+
     /// <summary>Creates and retires temporary scene objects only on the update thread.</summary>
     private static void SynchronizePawnControl()
     {
@@ -270,6 +382,8 @@ internal static class EditorOpenXrPawnSwitcher
         {
             if (!running)
                 DestroyOwnedVrPawn();
+            else
+                ReleaseDesktopEditorUi();
             return;
         }
 
@@ -296,12 +410,17 @@ internal static class EditorOpenXrPawnSwitcher
                     TryAttachDesktopAvatar(world);
 
                 _vrPawn.PossessByLocalPlayer(ELocalPlayerIndex.One);
+                StartMonitoringEditorUi();
                 ApplyDesktopView();
                 return;
             }
 
             if (_vrPawn is null && _ownedVrRoot is null)
+            {
+                StopMonitoringEditorUi();
+                ReleaseDesktopEditorUi();
                 return;
+            }
 
             PawnComponent? desktopPawn = ResolveDesktopPawn(world);
             if (desktopPawn is null)
@@ -326,6 +445,8 @@ internal static class EditorOpenXrPawnSwitcher
         }
         catch (Exception ex)
         {
+            StopMonitoringEditorUi();
+            ReleaseDesktopEditorUi();
             LastError = $"Could not switch editor pawn: {ex.Message}";
             _requested = false;
             RuntimeEngine.VRState.StopOpenXR();
@@ -335,6 +456,8 @@ internal static class EditorOpenXrPawnSwitcher
 
     private static void DestroyOwnedVrPawn()
     {
+        StopMonitoringEditorUi();
+        ReleaseDesktopEditorUi();
         _avatarLease?.Dispose();
         _avatarLease = null;
         if (_ownedVrRoot is { } root)

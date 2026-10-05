@@ -8,33 +8,50 @@ using VkBufferHandle = Silk.NET.Vulkan.Buffer;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Fixed-capacity current-frame stable-bin stream. It is built only after
-/// context coalescing and ingress finalization, then frozen before recording.
-/// This separates retained topology from frame-local visibility, payload, and
-/// late resource uses.
+/// Bounded current-frame stable-bin stream. It is built only after context
+/// coalescing and ingress finalization, then frozen before recording. This
+/// separates retained topology from frame-local visibility, payload, and late
+/// resource uses.
 /// </summary>
+/// <remarks>
+/// The declared capacities are admission limits. Storage starts at
+/// <see cref="InitialRowCapacity"/> rows and doubles on a new high-water mark,
+/// up to those limits, while the stream is rebuilt by its owning thread.
+/// Record/header columns grow only while the stream is mutable, so a frozen
+/// stream never replaces an array a recording worker reads. Payload-indexed
+/// scratch columns are rewritten by each build step that uses them and grow
+/// in that step.
+/// </remarks>
 internal sealed class VulkanPreparedStableBinStream
 {
-    private readonly VulkanPreparedStableBinRecord[] _records;
-    private readonly VulkanPreparedStableBinHeader[] _headers;
-    private readonly VulkanSealedBinSubmissionPlan?[] _sealScratchPlans;
-    private readonly byte[] _sealScratchPlanAssigned;
-    private readonly AdvancedIndirectRange[] _sealScratchRanges;
+    /// <summary>Rows allocated per column when a stream is created.</summary>
+    internal const int InitialRowCapacity = 256;
+
+    private readonly int _maximumRowCapacity;
+    private readonly int _maximumResourceUseCapacity;
+    // Record/header-indexed columns; all share one length (see EnsureRowCapacity).
+    private VulkanPreparedStableBinRecord[] _records;
+    private VulkanPreparedStableBinHeader[] _headers;
+    private VulkanSealedBinSubmissionPlan?[] _sealScratchPlans;
+    private byte[] _sealScratchPlanAssigned;
+    private AdvancedIndirectRange[] _sealScratchRanges;
+    private VulkanTemplateResourceManifest[] _manifestTemplates;
+    private VulkanTemplateResourceManifest?[] _visibilityAtlasManifests;
+    private VulkanResidentDrawDependency[] _visibilityManifestResourceSlab;
+    private VulkanTemplateNativeResourceUse[] _visibilityManifestNativeUseSlab;
+    private VulkanBinResourceManifest?[] _visibilityManifestViews;
+    private VulkanResidentDrawTemplate?[] _retainedTemplates;
+    // Payload-, draw- or ingress-indexed columns; all share one length (see
+    // EnsurePayloadCapacity).
+    private int[] _payloadIndexByIngressScratch;
+    private int[] _rangeIndexByPayloadScratch;
+    private AdvancedVisibilityPayload[] _visibilityRasterPayloads;
+    private byte[] _visibilityRasterPayloadWrites;
+    private AdvancedPreparedDrawDeformationRecord[] _deformationOverlay;
+    private byte[] _deformationOverlayWrites;
+    private FrameOpResourceUse[] _lateResourceUses;
     private readonly VulkanSealedBinExceptionSnapshot _sealedExceptions;
-    private readonly int[] _payloadIndexByIngressScratch;
-    private readonly int[] _rangeIndexByPayloadScratch;
-    private readonly VulkanTemplateResourceManifest[] _manifestTemplates;
-    private readonly VulkanTemplateResourceManifest[] _visibilityAtlasManifests;
-    private readonly VulkanResidentDrawDependency[] _visibilityManifestResourceSlab;
-    private readonly VulkanTemplateNativeResourceUse[] _visibilityManifestNativeUseSlab;
-    private readonly VulkanBinResourceManifest[] _visibilityManifestViews;
     private readonly VulkanCpuIndirectParityArtifact _cpuIndirectParity;
-    private readonly VulkanResidentDrawTemplate?[] _retainedTemplates;
-    private readonly AdvancedVisibilityPayload[] _visibilityRasterPayloads;
-    private readonly byte[] _visibilityRasterPayloadWrites;
-    private readonly AdvancedPreparedDrawDeformationRecord[] _deformationOverlay;
-    private readonly byte[] _deformationOverlayWrites;
-    private readonly FrameOpResourceUse[] _lateResourceUses;
     private readonly VulkanBinOrderedExceptionStream _exceptions;
     // One prepared raster pipeline per (coverage, meshlet, cull class) for the
     // duration of a single TryPrepareVisibilityRasterPipelines call: those are
@@ -46,9 +63,9 @@ internal sealed class VulkanPreparedStableBinStream
     private readonly bool[] _rasterPipelineScratchValid =
         new bool[RasterPipelineScratchCapacity];
     // Freeze ordering sorts these compact keys and applies the resulting
-    // permutation to the records in place; both live for the stream's lifetime.
-    private readonly VulkanPreparedStableBinSortKey[] _freezeSortKeys;
-    private readonly int[] _freezeSortOrder;
+    // permutation to the records in place; both are record-indexed columns.
+    private VulkanPreparedStableBinSortKey[] _freezeSortKeys;
+    private int[] _freezeSortOrder;
     private int _recordCount;
     private int _lateResourceUseCount;
     private int _headerCount;
@@ -61,47 +78,143 @@ internal sealed class VulkanPreparedStableBinStream
     {
         ArgumentOutOfRangeException.ThrowIfNegative(capacity);
         ArgumentOutOfRangeException.ThrowIfNegative(resourceUseCapacity);
-        _records = new VulkanPreparedStableBinRecord[capacity];
-        _headers = new VulkanPreparedStableBinHeader[capacity];
-        _sealScratchPlans = new VulkanSealedBinSubmissionPlan?[capacity];
-        _sealScratchPlanAssigned = new byte[capacity];
-        for (int index = 0; index < capacity; ++index)
-            _sealScratchPlans[index] = new VulkanSealedBinSubmissionPlan();
-        _sealScratchRanges = new AdvancedIndirectRange[capacity];
+        _maximumRowCapacity = capacity;
+        _maximumResourceUseCapacity = resourceUseCapacity;
+        int rows = Math.Min(capacity, InitialRowCapacity);
+        _records = new VulkanPreparedStableBinRecord[rows];
+        _headers = new VulkanPreparedStableBinHeader[rows];
+        // Submission plans are created on first use per header index (see
+        // RentSealScratchPlan), so a stream holds plans only up to its high-water
+        // header count instead of one per row.
+        _sealScratchPlans = new VulkanSealedBinSubmissionPlan?[rows];
+        _sealScratchPlanAssigned = new byte[rows];
+        _sealScratchRanges = new AdvancedIndirectRange[rows];
+        _manifestTemplates = new VulkanTemplateResourceManifest[rows];
+        _visibilityAtlasManifests = new VulkanTemplateResourceManifest?[rows];
+        _visibilityManifestResourceSlab = new VulkanResidentDrawDependency[checked(rows * 3)];
+        _visibilityManifestNativeUseSlab = new VulkanTemplateNativeResourceUse[checked(rows * 2)];
+        // Per-row manifests are created on first use (see VisibilityAtlasManifest
+        // and VisibilityManifestView), like the seal scratch plans.
+        _visibilityManifestViews = new VulkanBinResourceManifest?[rows];
+        _retainedTemplates = new VulkanResidentDrawTemplate?[rows];
+        _freezeSortKeys = new VulkanPreparedStableBinSortKey[rows];
+        _freezeSortOrder = new int[rows];
+        _payloadIndexByIngressScratch = new int[rows];
+        _rangeIndexByPayloadScratch = new int[rows];
+        _visibilityRasterPayloads = new AdvancedVisibilityPayload[rows];
+        _visibilityRasterPayloadWrites = new byte[rows];
+        _deformationOverlay = new AdvancedPreparedDrawDeformationRecord[rows];
+        _deformationOverlayWrites = new byte[rows];
+        _lateResourceUses = new FrameOpResourceUse[
+            capacity == 0 ? resourceUseCapacity : Math.Min(resourceUseCapacity, rows * (resourceUseCapacity / capacity))];
         _sealedExceptions = new VulkanSealedBinExceptionSnapshot(capacity);
-        _payloadIndexByIngressScratch = new int[capacity];
-        _rangeIndexByPayloadScratch = new int[capacity];
-        _manifestTemplates = new VulkanTemplateResourceManifest[capacity];
-        _visibilityAtlasManifests = new VulkanTemplateResourceManifest[capacity];
-        _visibilityManifestResourceSlab = new VulkanResidentDrawDependency[checked(capacity * 3)];
-        _visibilityManifestNativeUseSlab = new VulkanTemplateNativeResourceUse[checked(capacity * 2)];
-        _visibilityManifestViews = new VulkanBinResourceManifest[capacity];
-        for (int index = 0; index < capacity; ++index)
-        {
-            _visibilityAtlasManifests[index] =
-                new VulkanTemplateResourceManifest(3, 3);
-            _visibilityManifestViews[index] = VulkanBinResourceManifest.CreateStreamOwned(
-                _visibilityManifestResourceSlab,
-                _visibilityManifestNativeUseSlab);
-        }
         _cpuIndirectParity = new VulkanCpuIndirectParityArtifact(capacity);
-        _retainedTemplates = new VulkanResidentDrawTemplate?[capacity];
-        _visibilityRasterPayloads = new AdvancedVisibilityPayload[capacity];
-        _visibilityRasterPayloadWrites = new byte[capacity];
-        _deformationOverlay = new AdvancedPreparedDrawDeformationRecord[capacity];
-        _deformationOverlayWrites = new byte[capacity];
-        _lateResourceUses = new FrameOpResourceUse[resourceUseCapacity];
         _exceptions = new VulkanBinOrderedExceptionStream(capacity);
-        _freezeSortKeys = new VulkanPreparedStableBinSortKey[capacity];
-        _freezeSortOrder = new int[capacity];
     }
 
+    /// <summary>
+    /// Grows every record/header-indexed column to at least
+    /// <paramref name="rows"/> rows, doubling up to the declared capacity.
+    /// Only a mutable stream grows, so frozen readers never observe a replaced
+    /// array. Stream-owned manifest views are rebound to the grown slabs.
+    /// </summary>
+    private bool EnsureRowCapacity(int rows)
+    {
+        if (rows <= _records.Length)
+            return true;
+        if (_frozen || rows > _maximumRowCapacity)
+            return false;
+
+        int capacity = Math.Min(_maximumRowCapacity, Math.Max(rows, _records.Length * 2));
+        Array.Resize(ref _records, capacity);
+        Array.Resize(ref _headers, capacity);
+        Array.Resize(ref _sealScratchPlans, capacity);
+        Array.Resize(ref _sealScratchPlanAssigned, capacity);
+        Array.Resize(ref _sealScratchRanges, capacity);
+        Array.Resize(ref _manifestTemplates, capacity);
+        Array.Resize(ref _visibilityAtlasManifests, capacity);
+        Array.Resize(ref _visibilityManifestViews, capacity);
+        Array.Resize(ref _retainedTemplates, capacity);
+        Array.Resize(ref _freezeSortKeys, capacity);
+        Array.Resize(ref _freezeSortOrder, capacity);
+        Array.Resize(ref _visibilityManifestResourceSlab, checked(capacity * 3));
+        Array.Resize(ref _visibilityManifestNativeUseSlab, checked(capacity * 2));
+        for (int index = 0; index < _visibilityManifestViews.Length; ++index)
+            _visibilityManifestViews[index]?.RebindStreamSlabs(
+                _visibilityManifestResourceSlab,
+                _visibilityManifestNativeUseSlab);
+        return true;
+    }
+
+    /// <summary>
+    /// Grows the payload-, draw- and ingress-indexed scratch columns to at
+    /// least <paramref name="length"/> entries, up to the declared capacity.
+    /// New index-map entries read as unmapped (-1).
+    /// </summary>
+    private bool EnsurePayloadCapacity(int length)
+    {
+        int current = _deformationOverlay.Length;
+        if (length <= current)
+            return true;
+        if (length > _maximumRowCapacity)
+            return false;
+
+        int capacity = Math.Min(_maximumRowCapacity, Math.Max(length, current * 2));
+        Array.Resize(ref _payloadIndexByIngressScratch, capacity);
+        Array.Resize(ref _rangeIndexByPayloadScratch, capacity);
+        _payloadIndexByIngressScratch.AsSpan(current).Fill(-1);
+        _rangeIndexByPayloadScratch.AsSpan(current).Fill(-1);
+        Array.Resize(ref _visibilityRasterPayloads, capacity);
+        Array.Resize(ref _visibilityRasterPayloadWrites, capacity);
+        Array.Resize(ref _deformationOverlay, capacity);
+        Array.Resize(ref _deformationOverlayWrites, capacity);
+        return true;
+    }
+
+    /// <summary>
+    /// Grows the late resource-use column to hold <paramref name="count"/>
+    /// entries, doubling up to the declared capacity, while the stream is mutable.
+    /// </summary>
+    private bool EnsureLateResourceUseCapacity(int count)
+    {
+        if (count <= _lateResourceUses.Length)
+            return true;
+        if (_frozen || count > _maximumResourceUseCapacity)
+            return false;
+
+        Array.Resize(
+            ref _lateResourceUses,
+            Math.Min(_maximumResourceUseCapacity, Math.Max(count, _lateResourceUses.Length * 2)));
+        return true;
+    }
+
+    /// <summary>
+    /// Returns the reusable submission plan for a header slot, creating it the
+    /// first time that slot is sealed. Creation happens once per new high-water
+    /// header count; later frames reuse the same instance.
+    /// </summary>
+    private VulkanSealedBinSubmissionPlan RentSealScratchPlan(int headerIndex)
+        => _sealScratchPlans[headerIndex] ??= new VulkanSealedBinSubmissionPlan();
+
+    /// <summary>Returns the reusable visibility atlas manifest for a record row, creating it on first use.</summary>
+    private VulkanTemplateResourceManifest VisibilityAtlasManifest(int recordIndex)
+        => _visibilityAtlasManifests[recordIndex] ??= new VulkanTemplateResourceManifest(3, 3);
+
+    /// <summary>Returns the stream-owned manifest view for a header row, creating it on first use.</summary>
+    private VulkanBinResourceManifest VisibilityManifestView(int headerIndex)
+        => _visibilityManifestViews[headerIndex] ??= VulkanBinResourceManifest.CreateStreamOwned(
+            _visibilityManifestResourceSlab,
+            _visibilityManifestNativeUseSlab);
+
     internal int RecordCount => _recordCount;
-    internal int RecordCapacity => _records.Length;
+    /// <summary>Admission limit for records; storage may currently be smaller.</summary>
+    internal int RecordCapacity => _maximumRowCapacity;
     internal int LateResourceUseCount => _lateResourceUseCount;
-    internal int LateResourceUseCapacity => _lateResourceUses.Length;
+    /// <summary>Admission limit for late resource uses; storage may currently be smaller.</summary>
+    internal int LateResourceUseCapacity => _maximumResourceUseCapacity;
     internal int HeaderCount => _headerCount;
-    internal int HeaderCapacity => _headers.Length;
+    /// <summary>Admission limit for headers; storage may currently be smaller.</summary>
+    internal int HeaderCapacity => _maximumRowCapacity;
     internal int OrderedExceptionCount => _exceptions.Count;
     internal int OrderedExceptionCapacity => _exceptions.Capacity;
     internal bool IsFrozen => _frozen;
@@ -188,9 +301,9 @@ internal sealed class VulkanPreparedStableBinStream
         ReadOnlySpan<AdvancedDrawRecord> canonicalDraws =
             publication.Draws.PhysicalRecords;
         if (canonicalDraws.IsEmpty ||
-            canonicalDraws.Length > _deformationOverlay.Length)
+            !EnsurePayloadCapacity(canonicalDraws.Length))
         {
-            reason = "the canonical draw image exceeds the fixed deformation-overlay capacity";
+            reason = "the canonical draw image exceeds the deformation-overlay capacity";
             return false;
         }
         bool requiresDeformation = false;
@@ -482,7 +595,7 @@ internal sealed class VulkanPreparedStableBinStream
                 in native,
                 in context);
             VulkanTemplateResourceManifest manifest =
-                _visibilityAtlasManifests[payloadIndex];
+                VisibilityAtlasManifest(payloadIndex);
             manifest.ResetVisibilityGeometry(
                 in payload,
                 in preparedVertices,
@@ -505,7 +618,8 @@ internal sealed class VulkanPreparedStableBinStream
                         payload.Material.Index,
                         payload.Draw.Index,
                         native,
-                        geometryClosure),
+                        geometryClosure,
+                        canonicalDraw.Flags),
                     ReadOnlySpan<FrameOpResourceUse>.Empty))
             {
                 reason = "the canonical visibility stream exceeded its fixed capacity";
@@ -584,8 +698,9 @@ internal sealed class VulkanPreparedStableBinStream
         in VulkanPreparedStableBinRecord record,
         ReadOnlySpan<FrameOpResourceUse> lateResourceUses)
     {
-        if (_frozen || _recordCount == _records.Length ||
-            lateResourceUses.Length > _lateResourceUses.Length - _lateResourceUseCount)
+        if (_frozen ||
+            !EnsureRowCapacity(_recordCount + 1) ||
+            !EnsureLateResourceUseCapacity(_lateResourceUseCount + lateResourceUses.Length))
         {
             return false;
         }
@@ -783,17 +898,16 @@ internal sealed class VulkanPreparedStableBinStream
     internal void CopyFrom(VulkanPreparedStableBinStream source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        if (source._recordCount > _records.Length ||
-            source._headerCount > _headers.Length ||
-            source._headerCount > _visibilityManifestViews.Length ||
-            source._lateResourceUseCount > _lateResourceUses.Length ||
-            source._deformationOverlayCount > _deformationOverlay.Length ||
+        if (source._recordCount > _maximumRowCapacity ||
+            source._headerCount > _maximumRowCapacity ||
+            source._lateResourceUseCount > _maximumResourceUseCapacity ||
+            source._deformationOverlayCount > _maximumRowCapacity ||
             source._exceptions.Count > _exceptions.Capacity)
         {
             throw new VulkanAcceptedFramePlanCapacityException(
                 EVulkanAcceptedFrameLane.MainScene,
                 Math.Min(
-                    Math.Min(_records.Length, _lateResourceUses.Length),
+                    Math.Min(_maximumRowCapacity, _maximumResourceUseCapacity),
                     _exceptions.Capacity),
                 Math.Max(
                     Math.Max(source._recordCount, source._lateResourceUseCount),
@@ -801,6 +915,11 @@ internal sealed class VulkanPreparedStableBinStream
         }
 
         ThawForReuse();
+        // The checks above bound every count by the declared capacities, so
+        // growth of the thawed stream cannot fail.
+        EnsureRowCapacity(Math.Max(source._recordCount, source._headerCount));
+        EnsureLateResourceUseCapacity(source._lateResourceUseCount);
+        EnsurePayloadCapacity(source._deformationOverlayCount);
         source.Records.CopyTo(_records);
         for (int recordIndex = 0; recordIndex < source._recordCount; ++recordIndex)
         {
@@ -808,7 +927,7 @@ internal sealed class VulkanPreparedStableBinStream
             if (record.Template.IsValid)
                 continue;
             VulkanTemplateResourceManifest manifest =
-                _visibilityAtlasManifests[recordIndex];
+                VisibilityAtlasManifest(recordIndex);
             manifest.CopyFrom(record.TemplateManifest);
             _records[recordIndex] = record with { TemplateManifest = manifest };
         }
@@ -839,7 +958,7 @@ internal sealed class VulkanPreparedStableBinStream
                 int recordCount = header.RecordCount;
                 if (recordCount < 0 || header.RecordOffset < 0 ||
                     header.RecordOffset > _records.Length - recordCount ||
-                    !_visibilityManifestViews[headerIndex].TryCopyFrom(
+                    !VisibilityManifestView(headerIndex).TryCopyFrom(
                         manifest,
                         checked(header.RecordOffset * 3),
                         checked(recordCount * 3),
@@ -852,7 +971,7 @@ internal sealed class VulkanPreparedStableBinStream
                         _records.Length,
                         source._recordCount);
                 }
-                manifest = _visibilityManifestViews[headerIndex];
+                manifest = VisibilityManifestView(headerIndex);
                 header = header with { ResourceManifest = manifest };
             }
             if (header.SubmissionPlan is not { } sourcePlan)
@@ -862,7 +981,7 @@ internal sealed class VulkanPreparedStableBinStream
                 continue;
             }
             VulkanSealedBinSubmissionPlan destinationPlan =
-                _sealScratchPlans[headerIndex]!;
+                RentSealScratchPlan(headerIndex);
             destinationPlan.CopyFrom(sourcePlan, _sealedExceptions, manifest);
             _sealScratchPlanAssigned[headerIndex] = 1;
             _headers[headerIndex] = header with
@@ -925,7 +1044,7 @@ internal sealed class VulkanPreparedStableBinStream
             if (canonicalVisibility)
             {
                 if (_headerCount == _visibilityManifestViews.Length ||
-                    !_visibilityManifestViews[_headerCount].TryResetFromTemplates(
+                    !VisibilityManifestView(_headerCount).TryResetFromTemplates(
                         _manifestTemplates.AsSpan(0, templateCount),
                         checked(start * 3),
                         checked(templateCount * 3),
@@ -937,7 +1056,7 @@ internal sealed class VulkanPreparedStableBinStream
                         failure = VulkanBinResourceManifestFailure.CapacityExceeded;
                     return false;
                 }
-                manifest = _visibilityManifestViews[_headerCount];
+                manifest = VisibilityManifestView(_headerCount);
             }
             else if (!cache.TryGet(topologyGeneration, key, out manifest))
             {
@@ -1088,7 +1207,7 @@ internal sealed class VulkanPreparedStableBinStream
                     rangeDiagnosticPlan,
                     requestCpuSafetyNet,
                     _sealedExceptions,
-                    _sealScratchPlans[headerIndex]!,
+                    RentSealScratchPlan(headerIndex),
                     out VulkanSealedBinSubmissionPlan? plan,
                     out rejection))
             {
@@ -1240,8 +1359,8 @@ internal sealed class VulkanPreparedStableBinStream
         for (int recordIndex = 0; recordIndex < _recordCount; ++recordIndex)
         {
             VulkanPreparedStableBinRecord record = _records[recordIndex];
-            if ((uint)record.IngressIndex >=
-                (uint)_payloadIndexByIngressScratch.Length)
+            if (record.IngressIndex < 0 ||
+                !EnsurePayloadCapacity(record.IngressIndex + 1))
             {
                 rejection = VulkanSubmissionPlanRejectionReason.IndirectRangeUnresolved;
                 return false;
@@ -1396,7 +1515,7 @@ internal sealed class VulkanPreparedStableBinStream
         if (!_submissionPlansSealed ||
             _retainedTemplateCount != _recordCount ||
             sourcePayloads.IsEmpty ||
-            sourcePayloads.Length > _visibilityRasterPayloads.Length)
+            !EnsurePayloadCapacity(sourcePayloads.Length))
         {
             reason = "stable submission plans, resident-template leases, or source payload capacity are unavailable";
             return false;
@@ -1654,6 +1773,91 @@ internal sealed class VulkanPreparedStableBinStream
     }
 
     /// <summary>
+    /// Prepares one depth-only directional shadow pipeline per sealed bin header
+    /// for the directional shadow lane's atlas-page closure. The visibility
+    /// raster must already have sealed the bins and retained their templates;
+    /// only CPU-direct bins are admitted because the lane issues the frozen
+    /// indexed arguments itself.
+    /// </summary>
+    internal VulkanAdvancedVisibilityPipelineReadiness TryPrepareDirectionalShadowRasterPipelines(
+        VulkanAdvancedVisibilityPipelineRuntime visibilityPipelines,
+        in VulkanAdvancedVisibilityTargetClosure target,
+        out string reason)
+    {
+        ArgumentNullException.ThrowIfNull(visibilityPipelines);
+        if (!_submissionPlansSealed || !target.IsValid ||
+            target.Kind != EVulkanAdvancedVisibilityTargetKind.DirectionalShadow ||
+            _retainedTemplateCount != _recordCount)
+        {
+            reason = "stable submission plans, the atlas-page closure, or resident-template leases are unavailable";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+
+        VulkanVisibilityRasterPipeline opaque = default;
+        VulkanVisibilityRasterPipeline masked = default;
+        for (int headerIndex = 0; headerIndex < _headerCount; ++headerIndex)
+        {
+            VulkanPreparedStableBinHeader header = _headers[headerIndex];
+            if (!header.IsRasterReady)
+                continue;
+            if (header.SubmissionPlan!.ResolvedStrategy != EMeshSubmissionStrategy.CpuDirect)
+            {
+                reason = "the directional shadow lane records CPU-direct bins only";
+                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+            }
+            if (header.ShadowRasterPipeline.IsValid)
+            {
+                if (header.ShadowRasterPipeline.TargetClosure != target)
+                {
+                    reason = "one accepted stable-bin stream cannot target multiple atlas-page closures";
+                    return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+                }
+                if (header.ShadowRasterPipeline.ProgramLinkGeneration ==
+                    header.ShadowRasterPipeline.Program.LinkGeneration)
+                {
+                    continue;
+                }
+            }
+
+            EAdvancedMaterialCoverageMode coverage = header.IndirectRange.Key.Coverage;
+            if (coverage is not (EAdvancedMaterialCoverageMode.Opaque or EAdvancedMaterialCoverageMode.Masked))
+            {
+                reason = $"directional shadow coverage '{coverage}' has no lane program";
+                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+            }
+            bool maskedCoverage = coverage == EAdvancedMaterialCoverageMode.Masked;
+            VulkanVisibilityRasterPipeline shadow = maskedCoverage ? masked : opaque;
+            if (!shadow.IsValid)
+            {
+                VulkanAdvancedVisibilityPipelineReadiness programReadiness =
+                    visibilityPipelines.TryGetDirectionalShadowProgram(
+                        coverage,
+                        out VkRenderProgram program,
+                        out reason);
+                if (programReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                    return programReadiness;
+                if (!VulkanDirectionalShadowPipelineFactory.TryPrepare(
+                        program,
+                        in target,
+                        out shadow,
+                        out reason))
+                {
+                    return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+                }
+                if (maskedCoverage)
+                    masked = shadow;
+                else
+                    opaque = shadow;
+            }
+
+            _headers[headerIndex] = header with { ShadowRasterPipeline = shadow };
+        }
+
+        reason = "Ready";
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+    }
+
+    /// <summary>
     /// Maps a header's raster pipeline inputs to a per-call scratch slot, or -1
     /// for a coverage mode the visibility family does not prepare.
     /// </summary>
@@ -1741,8 +1945,8 @@ internal sealed class VulkanPreparedStableBinStream
             for (uint index = range.FirstPayloadIndex; index < end; ++index)
             {
                 int payloadIndex = indirectPayloadIndices[checked((int)index)];
-                if ((uint)payloadIndex >=
-                    (uint)_rangeIndexByPayloadScratch.Length)
+                if (payloadIndex < 0 ||
+                    !EnsurePayloadCapacity(payloadIndex + 1))
                 {
                     rejection = VulkanSubmissionPlanRejectionReason.IndirectRangeUnresolved;
                     return false;

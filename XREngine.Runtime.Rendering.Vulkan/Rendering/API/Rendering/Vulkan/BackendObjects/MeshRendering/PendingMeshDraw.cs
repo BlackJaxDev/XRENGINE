@@ -126,6 +126,13 @@ internal readonly record struct PendingMeshDraw(
     /// native binding dictionaries and indexed viewport arrays are snapshot data.
     /// </summary>
     internal PendingMeshDraw CreateSealedCopy()
+        => CreateSealedCopy(ProgramBindingSnapshot?.CreateSealedCopy());
+
+    /// <summary>
+    /// Detaches this draw for a sealed frame plan using an already sealed
+    /// binding snapshot, such as one owned by the plan's payload row.
+    /// </summary>
+    internal PendingMeshDraw CreateSealedCopy(ComputeDispatchSnapshot? sealedProgramBindingSnapshot)
         => this with
         {
             IndexedViewports = IndexedViewports is null
@@ -134,7 +141,7 @@ internal readonly record struct PendingMeshDraw(
             IndexedScissors = IndexedScissors is null
                 ? null
                 : (Rect2D[])IndexedScissors.Clone(),
-            ProgramBindingSnapshot = ProgramBindingSnapshot?.CreateSealedCopy(),
+            ProgramBindingSnapshot = sealedProgramBindingSnapshot,
         };
 
     internal VulkanAutoUniformPublicationSnapshot AutoUniformPublication

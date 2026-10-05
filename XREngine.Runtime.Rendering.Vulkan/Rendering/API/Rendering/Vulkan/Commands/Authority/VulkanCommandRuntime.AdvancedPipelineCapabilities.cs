@@ -31,6 +31,13 @@ internal sealed partial class VulkanCommandRuntime
         => Volatile.Read(ref _advancedVisibilityReservationGeneration) != 0 &&
            CanAdmitAdvancedVisibilityFamily();
 
+    /// <summary>
+    /// A live reservation generation allows stage intents to remain complete while
+    /// shader pipelines are temporarily recompiling. Exact bank ownership is checked on enqueue.
+    /// </summary>
+    internal bool HasAdvancedVisibilityReservationGeneration
+        => Volatile.Read(ref _advancedVisibilityReservationGeneration) != 0;
+
     internal bool TryReserveAdvancedVisibilityFamily(
         ulong outputId,
         out AdvancedVisibilityFamilyReservation reservation,
@@ -407,6 +414,24 @@ internal sealed partial class VulkanCommandRuntime
     internal VulkanAdvancedVisibilityPipelineReadiness GetAdvancedVisibilityPipelineReadiness(
         out string failureReason)
     {
+        VulkanAdvancedVisibilityPipelineReadiness availability =
+            GetAdvancedVisibilityPhysicalReadiness(out failureReason);
+        if (availability != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return availability;
+
+        // Target-specific image/view closure is sealed against the accepted
+        // frame plan. This poll only schedules or observes the generation-owned
+        // family preparation task; it never links or joins compiler work.
+        return ResourceRuntime.AdvancedVisibilityPipelines.GetReadiness(out failureReason);
+    }
+
+    /// <summary>
+    /// Checks device and realized resource availability without polling shader compilation.
+    /// Stage authoring records immutable work even when the sealed frame will retry at consumption.
+    /// </summary>
+    internal VulkanAdvancedVisibilityPipelineReadiness GetAdvancedVisibilityPhysicalReadiness(
+        out string failureReason)
+    {
         if (XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanAdvancedValidationForceUnavailable))
         {
             failureReason = $"Advanced visibility is unavailable because {XREngineEnvironmentVariables.VulkanAdvancedValidationForceUnavailable}=1 was requested for validation.";
@@ -435,10 +460,8 @@ internal sealed partial class VulkanCommandRuntime
             return VulkanAdvancedVisibilityPipelineReadiness.Missing;
         }
 
-        // Target-specific image/view closure is sealed against the accepted
-        // frame plan. This poll only schedules or observes the generation-owned
-        // family preparation task; it never links or joins compiler work.
-        return ResourceRuntime.AdvancedVisibilityPipelines.GetReadiness(out failureReason);
+        failureReason = "Ready";
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 
     internal ERvcDescriptorBackend RvcDescriptorBackend => ResourceRuntime.Descriptors.ActiveDescriptorBackend switch

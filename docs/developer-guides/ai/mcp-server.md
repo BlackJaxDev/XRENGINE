@@ -657,7 +657,7 @@ the target's type and optional persistent ID.
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
 | `get_network_runtime_measurements` | Read high-rate send, receive, pose application, and relay scope counters plus admission and rejection status. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
-| `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. Scene node, transform, and component IDs resolve against the active world before global object and asset caches, so duplicate snapshot IDs select the live object. |
+| `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
 | `get_openxr_runtime_diagnostics` | Read the current OpenXR session summary, exact submission ownership ledger and deferred swapchain retirement counters. Does not wait for GPU completion. |
 | `get_parent_types` | Walk the inheritance chain upward from a type, including interfaces. |
 | `get_prefab_structure` | Get the node hierarchy for a prefab source or variant. |
@@ -689,6 +689,8 @@ the target's type and optional persistent ID.
 | `get_vulkan_frame_op_trace` | Return the latest Vulkan frame-op trace snapshot. Requires launching with XRE_VULKAN_FRAMEOP_TRACE=1. |
 | `get_vulkan_gpu_counter_diagnostics` | Return the latest opt-in raw Vulkan GPU counter evidence captured by the zero-readback diagnostics gate. |
 | `get_vulkan_live_resource_owners` | Group live tracked Vulkan native resources by object type and registering owner, largest groups first. Cold diagnostic for locating retained-resource growth; do not poll per frame. |
+| `get_vulkan_memory_statistics` | Return the Vulkan memory allocator's statistics (VMA JSON: usage per heap and memory type, block counts and sizes; with detailed_map, every block and allocation). Cold diagnostic for attributing GPU and mapped memory; do not poll per frame. |
+| `get_vulkan_resource_planner_states` | List the Vulkan renderer's retained resource-planner states (published table and each OpenXR planner with its nested table) with their keys and the physical image memory each allocator holds. Cold diagnostic for attributing duplicated render targets; runs on the render thread between frames. |
 | `get_world_tick_telemetry` | Read cumulative world tick counters: tick group dispatches, pending registration cost and the costliest kinds of tick callback. Set XRE_WORLD_TICK_TELEMETRY=1 before editor launch to enable observation; compare two reads to observe a window. |
 | `get_zero_readback_material_table_diagnostics` | Return the fixed per-pass zero-readback material-table gate reached by the latest render frame. |
 | `import_scene` | Import a scene asset from disk and add it to the active world. |
@@ -735,7 +737,7 @@ the target's type and optional persistent ID.
 | `read_game_script` | Read the contents of a .cs script file from the game project's assets directory. |
 | `redo` | Redo the most recently undone editor change. |
 | `reload_asset` | Force-reload an asset from disk after external edits. Specify by asset GUID or file path. |
-| `reload_renderer_shaders` | Invalidate all loaded shader dependency roots while retaining each backend's last-good programs and pipelines. |
+| `reload_renderer_shaders` | Queue loaded shader reloads, refreshing clean disk-backed roots while preserving unsaved and generated sources and each backend's last-good programs. |
 | `remove_component` | Remove a component from a scene node. |
 | `rename_game_asset` | Rename or move a file or directory within the game project's assets directory. |
 | `rename_game_script` | Rename or move a .cs script file within the game project's assets directory. |

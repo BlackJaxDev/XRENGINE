@@ -29,6 +29,10 @@ public partial class GLTexture2D
         if (Data.MultiSample || Data.Resizable || Data.UsesOpenGlExternalMemoryImport)
             return SparseTextureStreamingTransitionResult.Unsupported("Sparse texture streaming only supports immutable non-multisampled 2D textures without external memory import.");
 
+        PrepareForBindlessHandle();
+        if (HasInFlightNativeOperation || !EnsureBindlessParametersMutable())
+            return SparseTextureStreamingTransitionResult.Retry("Sparse texture storage is retained by a native upload or bindless publication.");
+
         Generate();
 
         Debug.OpenGL(
@@ -490,26 +494,13 @@ public partial class GLTexture2D
         int numSparseLevels,
         long committedBytes)
     {
-        Data.SparseTextureStreamingEnabled = true;
-        Data.SparseTextureStreamingLogicalWidth = request.LogicalWidth;
-        Data.SparseTextureStreamingLogicalHeight = request.LogicalHeight;
-        Data.SparseTextureStreamingLogicalMipCount = request.LogicalMipCount;
-        Data.SparseTextureStreamingResidentBaseMipLevel = requestedBaseMipLevel;
-        Data.SparseTextureStreamingCommittedBaseMipLevel = committedBaseMipLevel;
-        Data.SparseTextureStreamingNumSparseLevels = numSparseLevels;
-        Data.SparseTextureStreamingCommittedBytes = committedBytes;
-        Data.SparseTextureStreamingResidentPageSelection = selection.Normalize();
-
-        Data.Mipmaps = request.ResidentMipmaps;
-        Data.AutoGenerateMipmaps = false;
-        Data.Resizable = false;
-        Data.SizedInternalFormat = request.SizedInternalFormat;
-        Data.LargestMipmapLevel = requestedBaseMipLevel;
-        Data.SmallestAllowedMipmapLevel = Math.Max(0, request.LogicalMipCount - 1);
-        Data.MinFilter = request.ResidentMipmaps.Length > 1
-            ? ETexMinFilter.LinearMipmapLinear
-            : ETexMinFilter.Linear;
-        Data.MagFilter = ETexMagFilter.Linear;
+        Data.PublishSparseTextureStreamingState(
+            request,
+            selection,
+            requestedBaseMipLevel,
+            committedBaseMipLevel,
+            numSparseLevels,
+            committedBytes);
 
         ClearInvalidation();
     }

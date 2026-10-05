@@ -298,51 +298,73 @@ internal sealed class ComputeDispatchSnapshot
         if (IsImmutableBindingArtifact)
             return this;
 
-        ComputeDispatchSnapshot copy = new(
-            new Dictionary<string, ProgramUniformValue>(Uniforms, StringComparer.Ordinal),
-            new Dictionary<uint, XRTexture>(Samplers),
-            new Dictionary<uint, string>(SamplerNamesByUnit),
-            new Dictionary<string, XRTexture>(SamplersByName, StringComparer.Ordinal),
-            new Dictionary<uint, ProgramImageBinding>(Images),
-            new Dictionary<uint, VulkanComputeBufferBinding>(Buffers),
-            new Dictionary<string, VulkanComputeBufferBinding>(BuffersByName, StringComparer.Ordinal));
-
-        foreach ((string name, VulkanRuntimeUniformPublication publication) in RuntimeUniformPublications)
-            copy.RuntimeUniformPublications.Add(name, publication);
-        foreach (string name in MutableLegacyUniformNames)
-            copy.MutableLegacyUniformNames.Add(name);
-        foreach (string name in RequiredSamplerNames)
-            copy.RequiredSamplerNames.Add(name);
-
-        copy._materialUniformBindings = _materialUniformBindings;
-        copy.AllowsMaterialBindingFastPath = AllowsMaterialBindingFastPath;
-        copy.HasPublishedBindingLayoutSignatures = HasPublishedBindingLayoutSignatures;
-        copy.UniformBindingLayoutSignature = UniformBindingLayoutSignature;
-        copy.SamplerUnitBindingLayoutSignature = SamplerUnitBindingLayoutSignature;
-        copy.SamplerNameBindingLayoutSignature = SamplerNameBindingLayoutSignature;
-        copy.ImageBindingLayoutSignature = ImageBindingLayoutSignature;
-        copy.BufferBindingLayoutSignature = BufferBindingLayoutSignature;
-        copy.RequiredSamplerPolicySignature = RequiredSamplerPolicySignature;
-        copy.DescriptorSetLayoutSignature = DescriptorSetLayoutSignature;
-        copy.ExactSamplerResourceSignature = ExactSamplerResourceSignature;
-        copy.RuntimeUniformNameSignature = RuntimeUniformNameSignature;
-        copy.RuntimeUniformValueSignature = RuntimeUniformValueSignature;
-        copy.PersistentEngineUniformSignature = PersistentEngineUniformSignature;
-        copy.PersistentEngineResourceSignature = PersistentEngineResourceSignature;
-        copy.StablePersistentEngineResourceSignature = StablePersistentEngineResourceSignature;
-        copy.HasMutableFrameSourceSamplerBindings = HasMutableFrameSourceSamplerBindings;
-        copy.MutableLegacyUniformNameSignature = MutableLegacyUniformNameSignature;
-        copy.MutableLegacyUniformValueSignature = MutableLegacyUniformValueSignature;
-        copy.RuntimeUniformPublicationLayoutSignature = RuntimeUniformPublicationLayoutSignature;
-        copy.TypedPublicationGenerations = TypedPublicationGenerations;
-        copy._publishedImageResourceSignature = _publishedImageResourceSignature;
-        copy._publishedBufferResourceSignature = _publishedBufferResourceSignature;
-        copy._publishedFrameSourcePipelineIdentity = _publishedFrameSourcePipelineIdentity;
-        copy.SetReadOnlyStorageBindings(ReadOnlyStorageBindings);
-        copy.SetMaterialTablePublication(_materialTablePublication);
-        copy.PreparedMaterialTableSignature = PreparedMaterialTableSignature;
-        copy.DescriptorSignatures.CopyFrom(DescriptorSignatures);
+        ComputeDispatchSnapshot copy = new();
+        copy.CopySealedFrom(this);
         return copy;
+    }
+
+    private static long s_sealedContentVersion;
+
+    /// <summary>
+    /// Identifies one sealed content image. Frame-plan payload rows reuse
+    /// their sealed snapshot when the slot is rebuilt, so replay-sensitive
+    /// signatures key a sealed snapshot by this version, not by its identity.
+    /// </summary>
+    internal long SealedContentVersion { get; private set; }
+
+    /// <summary>
+    /// Replaces this snapshot's content with a detached copy of
+    /// <paramref name="source"/>, reusing this instance's collection storage.
+    /// Only an owner whose previous content is no longer read (a frame-plan
+    /// payload row whose slot retired) may refill a snapshot.
+    /// </summary>
+    internal void CopySealedFrom(ComputeDispatchSnapshot source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        BeginNewContent();
+        CopyUniforms(source.Uniforms, Uniforms);
+        Copy(source.Samplers, Samplers);
+        Copy(source.SamplerNamesByUnit, SamplerNamesByUnit);
+        Copy(source.SamplersByName, SamplersByName);
+        Copy(source.Images, Images);
+        Copy(source.Buffers, Buffers);
+        Copy(source.BuffersByName, BuffersByName);
+        Copy(source.RuntimeUniformPublications, RuntimeUniformPublications);
+        MutableLegacyUniformNames.Clear();
+        foreach (string name in source.MutableLegacyUniformNames)
+            MutableLegacyUniformNames.Add(name);
+        foreach (string name in source.RequiredSamplerNames)
+            RequiredSamplerNames.Add(name);
+
+        _materialUniformBindings = source._materialUniformBindings;
+        AllowsMaterialBindingFastPath = source.AllowsMaterialBindingFastPath;
+        HasPublishedBindingLayoutSignatures = source.HasPublishedBindingLayoutSignatures;
+        UniformBindingLayoutSignature = source.UniformBindingLayoutSignature;
+        SamplerUnitBindingLayoutSignature = source.SamplerUnitBindingLayoutSignature;
+        SamplerNameBindingLayoutSignature = source.SamplerNameBindingLayoutSignature;
+        ImageBindingLayoutSignature = source.ImageBindingLayoutSignature;
+        BufferBindingLayoutSignature = source.BufferBindingLayoutSignature;
+        RequiredSamplerPolicySignature = source.RequiredSamplerPolicySignature;
+        DescriptorSetLayoutSignature = source.DescriptorSetLayoutSignature;
+        ExactSamplerResourceSignature = source.ExactSamplerResourceSignature;
+        RuntimeUniformNameSignature = source.RuntimeUniformNameSignature;
+        RuntimeUniformValueSignature = source.RuntimeUniformValueSignature;
+        PersistentEngineUniformSignature = source.PersistentEngineUniformSignature;
+        PersistentEngineResourceSignature = source.PersistentEngineResourceSignature;
+        StablePersistentEngineResourceSignature = source.StablePersistentEngineResourceSignature;
+        HasMutableFrameSourceSamplerBindings = source.HasMutableFrameSourceSamplerBindings;
+        MutableLegacyUniformNameSignature = source.MutableLegacyUniformNameSignature;
+        MutableLegacyUniformValueSignature = source.MutableLegacyUniformValueSignature;
+        RuntimeUniformPublicationLayoutSignature = source.RuntimeUniformPublicationLayoutSignature;
+        TypedPublicationGenerations = source.TypedPublicationGenerations;
+        _publishedImageResourceSignature = source._publishedImageResourceSignature;
+        _publishedBufferResourceSignature = source._publishedBufferResourceSignature;
+        _publishedFrameSourcePipelineIdentity = source._publishedFrameSourcePipelineIdentity;
+        SetReadOnlyStorageBindings(source.ReadOnlyStorageBindings);
+        SetMaterialTablePublication(source._materialTablePublication);
+        PreparedMaterialTableSignature = source.PreparedMaterialTableSignature;
+        DescriptorSignatures.CopyFrom(source.DescriptorSignatures);
+        SealedContentVersion = Interlocked.Increment(ref s_sealedContentVersion);
     }
 
     /// <summary>

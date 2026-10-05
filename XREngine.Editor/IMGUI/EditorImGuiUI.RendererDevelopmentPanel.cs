@@ -114,7 +114,7 @@ public static partial class EditorImGuiUI
             ImGui.BeginDisabled();
 
         if (ImGui.Button("Reload Shaders"))
-            _rendererDevelopmentActionError = $"Reloaded {service.ReloadShaders()} loaded shader source(s).";
+            _rendererDevelopmentActionError = $"Requested reload of {service.ReloadShaders()} loaded shader source(s).";
         ImGui.SameLine();
         if (ImGui.Button("Restart Renderer"))
             StartRendererOperation(service.RestartCurrentGenerationAsync(backendId, FirstFrameTimeout(preferences)));

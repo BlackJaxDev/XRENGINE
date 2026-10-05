@@ -277,17 +277,17 @@ public sealed class SnapshotDiagnosticsTests
         {
             [bone] = (1.0f, Matrix4x4.Identity),
         };
-        var mesh = new XRMesh(
-            [
-                new Vertex(Vector3.Zero, rootWeights),
-                new Vertex(Vector3.UnitX, boneWeights),
-                new Vertex(Vector3.UnitY, boneWeights),
-            ],
-            new List<ushort> { 0, 1, 2 })
+        Vertex[] vertices =
+        [
+            new Vertex(Vector3.Zero, rootWeights),
+            new Vertex(Vector3.UnitX, boneWeights),
+            new Vertex(Vector3.UnitY, boneWeights),
+        ];
+        var mesh = new XRMesh(vertices, new List<ushort> { 0, 1, 2 })
         {
             Name = "Snapshot Skinned Mesh",
         };
-        mesh.RebuildSkinningBuffersFromVertices();
+        mesh.RebuildSkinningBuffersFromVertices(vertices);
 
         ModelComponent component = visualNode.AddComponent<ModelComponent>()!;
         component.Model = new Model(new SubMesh(mesh, material: null));

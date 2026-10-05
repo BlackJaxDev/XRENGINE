@@ -4237,6 +4237,83 @@ namespace XREngine.Components.Lights
             };
         }
 
+        /// <summary>
+        /// Publishes one grouped cascade allocation as an Advanced directional
+        /// shadow lane request: the depth-only atlas page, one inner tile
+        /// rectangle and one world-to-clip matrix per cascade, in the viewport
+        /// order the grouped layered pass uses. The lane keeps the grouped
+        /// eligibility rules so both paths agree on the cascades, matrices and
+        /// tiles they render.
+        /// </summary>
+        internal bool TryBuildAdvancedDirectionalShadowLaneRequest(
+            in ShadowAtlasGroupedDirectionalCascadeAllocation group,
+            XRFrameBuffer atlasFbo,
+            ulong renderFrameId,
+            AdvancedDirectionalShadowLaneRequest request,
+            out string? declineReason)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            if (!CastsShadows ||
+                !EnableCascadedShadows ||
+                !CanRenderDirectionalCascadesForCurrentBackend() ||
+                World is null)
+                return DeclineCascadeAtlasRender(out declineReason, "Cascaded shadows are disabled for this light or backend.");
+            if (group.CascadeCount <= 0 ||
+                group.Members is null ||
+                group.Members.Length < group.CascadeCount)
+                return DeclineCascadeAtlasRender(out declineReason, "The grouped cascade allocation is incomplete.");
+            if (atlasFbo.Width <= 0 || atlasFbo.Height <= 0)
+                return DeclineCascadeAtlasRender(out declineReason, "The atlas page framebuffer has no extent.");
+
+            ShadowRequestSource source = group.Source == ShadowRequestSource.Default
+                ? ShadowRequestSource.Desktop
+                : group.Source;
+            DirectionalCascadeSourceState sourceState = GetCascadeSourceState(source);
+            int cascadeCount = GetPublishedCascadeViewportCount(source, sourceState.Viewports);
+            if (cascadeCount <= 0)
+                return DeclineCascadeAtlasRender(out declineReason, "No published cascade viewports.");
+
+            DirectionalCascadeShadowRenderPlan plan = CreateAtlasCascadeShadowRenderPlan(source, cascadeCount, hasGroupedAtlasAllocation: true);
+            PublishCascadeShadowRenderPlan(plan);
+            if (!plan.IsLayered)
+            {
+                LogCascadeRenderModeFallbackIfNeeded(plan);
+                return DeclineCascadeAtlasRender(out declineReason, "The cascade render plan is not layered.");
+            }
+
+            Span<Matrix4x4> publishedMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
+            int publishedMatrixCount = CopyPublishedCascadeMatrices(source, publishedMatrices);
+            Span<Matrix4x4> orderedMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
+            Span<BoundingRectangle> orderedRects = stackalloc BoundingRectangle[MaxCascadeRenderCount];
+            int groupedCount = Math.Min(group.CascadeCount, MaxCascadeRenderCount);
+            for (int i = 0; i < groupedCount; i++)
+            {
+                ShadowAtlasGroupedAllocationMember member = group.Members[i];
+                if ((uint)member.ViewportScissorIndex >= (uint)groupedCount ||
+                    (uint)member.CascadeIndex >= (uint)publishedMatrixCount ||
+                    member.InnerPixelRect.Width <= 0 ||
+                    member.InnerPixelRect.Height <= 0)
+                {
+                    return DeclineCascadeAtlasRender(out declineReason, "A grouped cascade member has no published matrix or tile.");
+                }
+
+                orderedMatrices[member.ViewportScissorIndex] = publishedMatrices[member.CascadeIndex];
+                orderedRects[member.ViewportScissorIndex] = member.InnerPixelRect;
+            }
+
+            // The generic layered pass clears every tile to 1.0 and tests Lequal:
+            // shadow cameras keep normal depth regardless of the scene camera.
+            request.Reset(atlasFbo, group.LightId, renderFrameId, reversedDepth: false, depthClearValue: 1.0f);
+            for (int i = 0; i < groupedCount; i++)
+            {
+                if (!request.TryAddCascade(in orderedRects[i], in orderedMatrices[i]))
+                    return DeclineCascadeAtlasRender(out declineReason, "The lane request rejected a cascade tile.");
+            }
+
+            declineReason = null;
+            return true;
+        }
+
         private XRMaterial ShadowAtlasMaterial => _shadowAtlasMaterial ??= CreateShadowAtlasMaterial();
 
         private XRMaterial CreateShadowAtlasMaterial()

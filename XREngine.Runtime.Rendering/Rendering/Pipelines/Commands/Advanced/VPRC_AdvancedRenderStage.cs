@@ -1,5 +1,6 @@
 using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Shadows;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -53,6 +54,12 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return;
         }
 
+        if (Stage == EAdvancedRenderStage.DirectionalShadowRaster)
+        {
+            ExecuteDirectionalShadowRaster(state, in world);
+            return;
+        }
+
         if (Stage is not (EAdvancedRenderStage.VisibilityPreparation or
             EAdvancedRenderStage.VisibilityRaster or
             EAdvancedRenderStage.DepthPyramidAndLateVisibility or
@@ -68,148 +75,23 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return;
         }
 
-        AdvancedRenderPipelineOutputBinding binding =
-            ActivePipelineInstance.AdvancedOutputBinding;
-        AdvancedVisibilityFamilyReservation reservation = binding.Reservation;
-        if (AbstractRenderer.Current is not IRuntimeRendererHost renderer)
-        {
-            ReportExecutionPrerequisiteRejection("The active renderer does not expose the runtime renderer host contract.");
-            return;
-        }
-        if (ActivePipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost familyHost)
-        {
-            string pipelineType = ActivePipelineInstance.Pipeline?.GetType().FullName ?? "null";
-            ReportExecutionPrerequisiteRejection($"The active pipeline does not host the Advanced stage family (actual: {pipelineType}).");
-            return;
-        }
-        AdvancedRenderPipeline pipeline = familyHost.AdvancedStageFamilyDefinition;
-        AdvancedPreparationPublication publication =
-            AdvancedSharedPreparationService.Instance.Acquire(
-                world,
-                state.FrameViewSet,
-                pipeline.RequiredPreparationConsumers);
-        bool requiresAmbientOcclusion =
-            Stage == EAdvancedRenderStage.AmbientOcclusion;
-        bool requiresNativeOpaqueShading =
-            Stage == EAdvancedRenderStage.NativeOpaqueShading;
-        bool isMinimalVisibilityOutput =
-            pipeline.IsMinimalVisibilityOutput;
-        IAdvancedAmbientOcclusionProvider? ambientOcclusionProvider = pipeline.AmbientOcclusionProvider;
-        bool enableBuiltInAmbientOcclusion =
-            !isMinimalVisibilityOutput &&
-            pipeline.EnableBuiltInAmbientOcclusion &&
-            ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true };
-        if (requiresAmbientOcclusion && !isMinimalVisibilityOutput &&
-            ambientOcclusionProvider is not null &&
-            ambientOcclusionProvider is not AdvancedDepthGtaoProvider)
-        {
-            ReportAdmissionRejection($"Ambient occlusion provider '{ambientOcclusionProvider.ProviderName}' has no native Advanced compute implementation.");
-            return;
-        }
-        GlobalIlluminationPlan giPlan = GlobalIlluminationPlan ?? pipeline.GlobalIlluminationPlan;
-        bool enableLightProbesAndIbl = !isMinimalVisibilityOutput && giPlan.RequiresNativeProbeIblBindings;
-        bool requiresMaterialSurfaceExports = !isMinimalVisibilityOutput && giPlan.RequiresNativeMaterialSurfaceExports;
-        if (requiresNativeOpaqueShading && !isMinimalVisibilityOutput &&
-            !giPlan.IsDisabled && !giPlan.IsSupported)
-        {
-            ReportAdmissionRejection(giPlan.Support.Diagnostic);
-            return;
-        }
-
-        // Output binding can be first evaluated while the native device and its
-        // advanced resource generation are still coming online. Keep the
-        // configured Advanced source intact and retry here, at the first
-        // renderer-owned stage boundary, rather than permanently suppressing
-        // every native stage after that transient admission failure.
-        if (!binding.IsBound ||
-            !renderer.IsAdvancedVisibilityFamilyReservationCurrent(in reservation))
-        {
-            XRViewport? viewport = state.WindowViewport
-                ?? ActivePipelineInstance.LastWindowViewport;
-            if (viewport is null)
-            {
-                ReportAdmissionRejection("No viewport is available to refresh the Advanced output binding.");
-                return;
-            }
-
-            RuntimeEngine.Rendering.RefreshRenderPipelineOutputBinding(viewport);
-            binding = ActivePipelineInstance.AdvancedOutputBinding;
-            reservation = binding.Reservation;
-            if (!binding.IsBound ||
-                !renderer.IsAdvancedVisibilityFamilyReservationCurrent(in reservation))
-            {
-                string reason = binding.FailureReason
-                    ?? "The Advanced output binding remained unbound or stale after refresh.";
-                ReportAdmissionRejection(reason);
-                return;
-            }
-        }
-
-        if (!renderer.TryGetBackendCapability<IAdvancedVisibilityStageBackendCapability>(
-                out IAdvancedVisibilityStageBackendCapability? visibility) ||
+        if (!TryBuildStageRequest(
+                state,
+                in world,
+                reportRejections: true,
+                out AdvancedVisibilityStageBackendRequest request,
+                out IAdvancedVisibilityStageBackendCapability? visibility,
+                out IRuntimeRendererHost? renderer,
+                out _) ||
             visibility is null ||
-            !visibility.SupportsAdvancedVisibilityStage(Stage))
+            renderer is null)
         {
-            ReportStageCapabilityRejection();
             return;
         }
-
-        uint samples = RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa
-            ? AdvancedRenderPipeline.ResolveEffectiveMsaaSampleCount() : 1u;
-        bool multisampleRaster = samples > 1u && Stage is (EAdvancedRenderStage.VisibilityPreparation or
-            EAdvancedRenderStage.VisibilityRaster or EAdvancedRenderStage.DepthPyramidAndLateVisibility);
-        string targetName = multisampleRaster ? AdvancedVisibilityResourceNames.FrameBufferMultisample : AdvancedVisibilityResourceNames.FrameBuffer;
-        if (!ActivePipelineInstance.Resources.TryGetFrameBuffer(
-                targetName,
-                out XRFrameBuffer? target) ||
-            target is null)
-        {
-            ReportExecutionPrerequisiteRejection(
-                $"The active resource generation has no realized '{targetName}' target.");
-            Debug.Out(
-                $"Advanced visibility stage '{Stage}' has no realized '{targetName}' target in the active resource generation.");
-            return;
-        }
-
-        AdvancedVisibilityStageBackendRequest request = new(
-            Stage,
-            EAdvancedVisibilityStageBackendPhase.Complete,
-            reservation,
-            publication,
-            AdvancedSharedPreparationService.Instance.Extractor,
-            world.FrameId,
-            state.TemporalAuthoringViewSet ?? state.FrameViewSet ?? throw new InvalidOperationException(
-                "Advanced visibility requires an immutable frame view set."),
-            target,
-            multisampleRaster ? AdvancedVisibilityResourceNames.IdentityMultisample : AdvancedVisibilityResourceNames.Identity,
-            multisampleRaster ? AdvancedVisibilityResourceNames.MetadataMultisample : AdvancedVisibilityResourceNames.Metadata,
-            multisampleRaster ? AdvancedVisibilityResourceNames.SelectionMultisample : AdvancedVisibilityResourceNames.Selection,
-            multisampleRaster ? AdvancedVisibilityResourceNames.DepthStencilMultisample : AdvancedVisibilityResourceNames.DepthStencil,
-            AdvancedAmbientOcclusionContract.ResourceName,
-            AdvancedVisibilityResourceNames.CurrentDepthPyramid,
-            pipeline.ShadingDebugView,
-            RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required ||
-            binding.Request.OffscreenIntent.HasValue,
-            enableBuiltInAmbientOcclusion,
-            enableLightProbesAndIbl,
-            RequiresMaterialSurfaceExports: requiresMaterialSurfaceExports,
-            IsMinimalVisibilityOutput: isMinimalVisibilityOutput,
-            SceneDatabase: world.GpuScene.AdvancedSharedDatabase);
-
-        // The rendering command collection swaps this only at the frame
-        // boundary. Retain the published package identity in the native
-        // request so a backend never reconstructs view state from mutable
-        // cameras while authoring GPU work.
-        request = request with
-        {
-            BackendReadyPackage = ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage,
-            FroxelDepthSlices = pipeline.FroxelDepthSlices,
-            MsaaSampleCount = samples,
-            HasAuthoredBackground = ActivePipelineInstance.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.Background),
-        };
 
         if (Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
         {
+            uint samples = request.MsaaSampleCount;
             EnqueueLatePhase(
                 visibility,
                 request with
@@ -271,6 +153,303 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 request.Phase,
                 EAdvancedProfileStageDiagnosticState.BackendEnqueueAccepted,
                 "The backend accepted this stage phase for authoring; submission and GPU completion remain separate receipts.");
+    }
+
+    /// <summary>
+    /// Resolves the family identity every native stage shares (output binding,
+    /// preparation publication, GI and AA flags, visibility targets) into one
+    /// backend request. Rejections are reported through the stage diagnostics
+    /// only when <paramref name="reportRejections"/> is set; the directional
+    /// shadow lane treats them as a reason to keep cascades on the generic path.
+    /// </summary>
+    private bool TryBuildStageRequest(
+        XRRenderPipelineInstance.RenderingState state,
+        in RenderWorldSnapshot world,
+        bool reportRejections,
+        out AdvancedVisibilityStageBackendRequest request,
+        out IAdvancedVisibilityStageBackendCapability? visibility,
+        out IRuntimeRendererHost? renderer,
+        out string? failureReason)
+    {
+        request = default;
+        visibility = null;
+        renderer = null;
+        failureReason = null;
+
+        AdvancedRenderPipelineOutputBinding binding =
+            ActivePipelineInstance.AdvancedOutputBinding;
+        AdvancedVisibilityFamilyReservation reservation = binding.Reservation;
+        if (AbstractRenderer.Current is not IRuntimeRendererHost rendererHost)
+        {
+            failureReason = "The active renderer does not expose the runtime renderer host contract.";
+            if (reportRejections)
+                ReportExecutionPrerequisiteRejection(failureReason);
+            return false;
+        }
+        renderer = rendererHost;
+        if (ActivePipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost familyHost)
+        {
+            string pipelineType = ActivePipelineInstance.Pipeline?.GetType().FullName ?? "null";
+            failureReason = $"The active pipeline does not host the Advanced stage family (actual: {pipelineType}).";
+            if (reportRejections)
+                ReportExecutionPrerequisiteRejection(failureReason);
+            return false;
+        }
+        AdvancedRenderPipeline pipeline = familyHost.AdvancedStageFamilyDefinition;
+        AdvancedPreparationPublication publication =
+            AdvancedSharedPreparationService.Instance.Acquire(
+                world,
+                state.FrameViewSet,
+                pipeline.RequiredPreparationConsumers);
+        bool requiresAmbientOcclusion =
+            Stage == EAdvancedRenderStage.AmbientOcclusion;
+        bool requiresNativeOpaqueShading =
+            Stage == EAdvancedRenderStage.NativeOpaqueShading;
+        bool isMinimalVisibilityOutput =
+            pipeline.IsMinimalVisibilityOutput;
+        IAdvancedAmbientOcclusionProvider? ambientOcclusionProvider = pipeline.AmbientOcclusionProvider;
+        bool enableBuiltInAmbientOcclusion =
+            !isMinimalVisibilityOutput &&
+            pipeline.EnableBuiltInAmbientOcclusion &&
+            ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true };
+        if (requiresAmbientOcclusion && !isMinimalVisibilityOutput &&
+            ambientOcclusionProvider is not null &&
+            ambientOcclusionProvider is not AdvancedDepthGtaoProvider)
+        {
+            failureReason = $"Ambient occlusion provider '{ambientOcclusionProvider.ProviderName}' has no native Advanced compute implementation.";
+            if (reportRejections)
+                ReportAdmissionRejection(failureReason);
+            return false;
+        }
+        GlobalIlluminationPlan giPlan = GlobalIlluminationPlan ?? pipeline.GlobalIlluminationPlan;
+        bool enableLightProbesAndIbl = !isMinimalVisibilityOutput && giPlan.RequiresNativeProbeIblBindings;
+        bool requiresMaterialSurfaceExports = !isMinimalVisibilityOutput && giPlan.RequiresNativeMaterialSurfaceExports;
+        if (requiresNativeOpaqueShading && !isMinimalVisibilityOutput &&
+            !giPlan.IsDisabled && !giPlan.IsSupported)
+        {
+            failureReason = giPlan.Support.Diagnostic;
+            if (reportRejections)
+                ReportAdmissionRejection(failureReason);
+            return false;
+        }
+
+        // Only preparation may refresh an output binding. Later stages must use
+        // the same reservation or wait for the next frame, keeping authored
+        // native stage families complete across a transient admission change.
+        if (!binding.IsBound ||
+            !rendererHost.IsAdvancedVisibilityFamilyReservationCurrent(in reservation))
+        {
+            if (Stage != EAdvancedRenderStage.VisibilityPreparation)
+            {
+                failureReason = "The Advanced output binding was unavailable before visibility preparation in this frame.";
+                if (reportRejections)
+                    ReportAdmissionRejection(failureReason);
+                return false;
+            }
+
+            XRViewport? viewport = state.WindowViewport
+                ?? ActivePipelineInstance.LastWindowViewport;
+            if (viewport is null)
+            {
+                failureReason = "No viewport is available to refresh the Advanced output binding.";
+                if (reportRejections)
+                    ReportAdmissionRejection(failureReason);
+                return false;
+            }
+
+            RuntimeEngine.Rendering.RefreshRenderPipelineOutputBinding(viewport);
+            binding = ActivePipelineInstance.AdvancedOutputBinding;
+            reservation = binding.Reservation;
+            if (!binding.IsBound ||
+                !rendererHost.IsAdvancedVisibilityFamilyReservationCurrent(in reservation))
+            {
+                failureReason = binding.FailureReason
+                    ?? "The Advanced output binding remained unbound or stale after refresh.";
+                if (reportRejections)
+                    ReportAdmissionRejection(failureReason);
+                return false;
+            }
+        }
+
+        if (!rendererHost.TryGetBackendCapability<IAdvancedVisibilityStageBackendCapability>(
+                out IAdvancedVisibilityStageBackendCapability? stageBackend) ||
+            stageBackend is null ||
+            !stageBackend.SupportsAdvancedVisibilityStage(Stage))
+        {
+            failureReason = "The active Advanced visibility backend does not support this stage.";
+            if (reportRejections)
+                ReportStageCapabilityRejection();
+            return false;
+        }
+        visibility = stageBackend;
+
+        uint samples = RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa
+            ? AdvancedRenderPipeline.ResolveEffectiveMsaaSampleCount() : 1u;
+        bool multisampleRaster = samples > 1u && Stage is (EAdvancedRenderStage.VisibilityPreparation or
+            EAdvancedRenderStage.VisibilityRaster or EAdvancedRenderStage.DepthPyramidAndLateVisibility);
+        string targetName = multisampleRaster ? AdvancedVisibilityResourceNames.FrameBufferMultisample : AdvancedVisibilityResourceNames.FrameBuffer;
+        if (!ActivePipelineInstance.Resources.TryGetFrameBuffer(
+                targetName,
+                out XRFrameBuffer? target) ||
+            target is null)
+        {
+            failureReason = $"The active resource generation has no realized '{targetName}' target.";
+            if (reportRejections)
+            {
+                ReportExecutionPrerequisiteRejection(failureReason);
+                Debug.Out(
+                    $"Advanced visibility stage '{Stage}' has no realized '{targetName}' target in the active resource generation.");
+            }
+            return false;
+        }
+
+        request = new(
+            Stage,
+            EAdvancedVisibilityStageBackendPhase.Complete,
+            reservation,
+            publication,
+            AdvancedSharedPreparationService.Instance.Extractor,
+            world.FrameId,
+            state.TemporalAuthoringViewSet ?? state.FrameViewSet ?? throw new InvalidOperationException(
+                "Advanced visibility requires an immutable frame view set."),
+            target,
+            multisampleRaster ? AdvancedVisibilityResourceNames.IdentityMultisample : AdvancedVisibilityResourceNames.Identity,
+            multisampleRaster ? AdvancedVisibilityResourceNames.MetadataMultisample : AdvancedVisibilityResourceNames.Metadata,
+            multisampleRaster ? AdvancedVisibilityResourceNames.SelectionMultisample : AdvancedVisibilityResourceNames.Selection,
+            multisampleRaster ? AdvancedVisibilityResourceNames.DepthStencilMultisample : AdvancedVisibilityResourceNames.DepthStencil,
+            AdvancedAmbientOcclusionContract.ResourceName,
+            AdvancedVisibilityResourceNames.CurrentDepthPyramid,
+            pipeline.ShadingDebugView,
+            RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required ||
+            binding.Request.OffscreenIntent.HasValue,
+            enableBuiltInAmbientOcclusion,
+            enableLightProbesAndIbl,
+            RequiresMaterialSurfaceExports: requiresMaterialSurfaceExports,
+            IsMinimalVisibilityOutput: isMinimalVisibilityOutput,
+            SceneDatabase: world.GpuScene.AdvancedSharedDatabase);
+
+        // The rendering command collection swaps this only at the frame
+        // boundary. Retain the published package identity in the native
+        // request so a backend never reconstructs view state from mutable
+        // cameras while authoring GPU work.
+        request = request with
+        {
+            BackendReadyPackage = ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage,
+            FroxelDepthSlices = pipeline.FroxelDepthSlices,
+            MsaaSampleCount = samples,
+            HasAuthoredBackground = ActivePipelineInstance.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.Background),
+        };
+        return true;
+    }
+
+    /// <summary>
+    /// Consumes the directional cascade groups the shadow atlas deferred during
+    /// this frame's scheduled-tile pass and records each one as a depth-only
+    /// pass over this family's canonical bins. When the lane is unavailable
+    /// the atlas keeps the generic path. Enqueue acceptance remains subject to
+    /// preparation and submission; a later failure must reject its receipt.
+    /// </summary>
+    private void ExecuteDirectionalShadowRaster(
+        XRRenderPipelineInstance.RenderingState state,
+        in RenderWorldSnapshot world)
+    {
+        using IDisposable? passScope = PushRenderGraphPass(Descriptor.PassName);
+        XRViewport? viewport = state.WindowViewport ?? ActivePipelineInstance.LastWindowViewport;
+        ShadowAtlasManager? atlas = viewport?.World?.Lights?.ShadowAtlas;
+        if (atlas is null)
+        {
+            PublishStageDiagnostic(
+                EAdvancedVisibilityStageBackendPhase.Complete,
+                EAdvancedProfileStageDiagnosticState.CommandScopeReached,
+                "No shadow atlas is reachable from the active viewport; cascade groups stay on the generic path.");
+            return;
+        }
+
+        string? unavailableReason = null;
+        AdvancedVisibilityStageBackendRequest template = default;
+        IAdvancedVisibilityStageBackendCapability? visibility = null;
+        bool ready = ShadowAtlasManager.AdvancedDirectionalShadowLaneEnabled;
+        if (!ready)
+            unavailableReason = "The Advanced directional shadow lane is disabled by XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE.";
+        else if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.CpuDirect)
+        {
+            ready = false;
+            unavailableReason = "The directional shadow lane records CPU-direct draws; GPU-driven submission strategies keep the generic path.";
+        }
+        else if (!TryBuildStageRequest(
+                     state,
+                     in world,
+                     reportRejections: false,
+                     out template,
+                     out visibility,
+                     out _,
+                     out unavailableReason) ||
+                 visibility is null)
+        {
+            ready = false;
+        }
+
+        atlas.NotifyAdvancedDirectionalShadowLaneConsumer(
+            RuntimeEngine.Rendering.State.RenderFrameId,
+            ready,
+            unavailableReason);
+
+        int accepted = 0;
+        int rejected = 0;
+        string? lastRejection = null;
+        while (atlas.TryDequeuePendingAdvancedDirectionalShadowGroup(
+                   out AdvancedDirectionalShadowLaneRequest lane))
+        {
+            if (!ready || lane.PageFrameBuffer is not { } page)
+            {
+                atlas.CompleteAdvancedDirectionalShadowGroup(
+                    lane,
+                    accepted: false,
+                    unavailableReason ?? "The deferred cascade group has no atlas page.");
+                rejected++;
+                continue;
+            }
+
+            AdvancedVisibilityStageBackendRequest request = template with
+            {
+                Target = page,
+                DirectionalShadowLane = lane,
+            };
+            bool enqueued = visibility!.TryEnqueueAdvancedVisibilityStage(in request, out string failure);
+            atlas.CompleteAdvancedDirectionalShadowGroup(lane, enqueued, enqueued ? null : failure);
+            if (enqueued)
+            {
+                accepted++;
+                continue;
+            }
+
+            rejected++;
+            lastRejection = failure;
+        }
+
+        if (rejected > 0)
+        {
+            PublishStageDiagnostic(
+                EAdvancedVisibilityStageBackendPhase.Complete,
+                EAdvancedProfileStageDiagnosticState.BackendEnqueueRejected,
+                lastRejection ?? unavailableReason);
+        }
+        else if (accepted > 0)
+        {
+            PublishStageDiagnostic(
+                EAdvancedVisibilityStageBackendPhase.Complete,
+                EAdvancedProfileStageDiagnosticState.BackendEnqueueAccepted,
+                "The backend accepted every deferred directional cascade group.");
+        }
+        else
+        {
+            PublishStageDiagnostic(
+                EAdvancedVisibilityStageBackendPhase.Complete,
+                EAdvancedProfileStageDiagnosticState.CommandScopeReached,
+                ready
+                    ? "No directional cascade group was deferred to the lane this frame."
+                    : unavailableReason);
+        }
     }
 
     private void EnqueueLatePhase(
@@ -417,6 +596,27 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 : context.GetOrCreateSyntheticPass(
                     LateVisibilityRasterPassName,
                     ERenderGraphPassStage.Graphics).PassIndex);
+        else if (descriptor.Stage == EAdvancedRenderStage.DirectionalShadowRaster)
+            // The lane draws the family's sealed bins after the visibility raster
+            // and late raster have retained them; it writes an external atlas page.
+            builder.DependsOn(usesMultisampleVisibility
+                ? context.GetOrCreateSyntheticPass(
+                    MultisampleVisibilityResolvePassName,
+                    ERenderGraphPassStage.Graphics).PassIndex
+                : context.GetOrCreateSyntheticPass(
+                    LateVisibilityRasterPassName,
+                    ERenderGraphPassStage.Graphics).PassIndex);
+        else if (descriptor.Stage == EAdvancedRenderStage.NativeOpaqueShading)
+        {
+            builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
+            // Native shading samples the directional atlas the lane may have written.
+            AdvancedRenderStageDescriptor shadowStage =
+                AdvancedRenderPipelineFrameContract.GetDescriptor(
+                    EAdvancedRenderStage.DirectionalShadowRaster);
+            builder.DependsOn(context.GetOrCreateSyntheticPass(
+                shadowStage.PassName,
+                shadowStage.RenderGraphStage).PassIndex);
+        }
         else if (stageIndex > 0)
             builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
     }
@@ -520,6 +720,10 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                         .ReadWriteBuffer(
                             AdvancedVisibilityResourceNames.Counters(slot));
                 }
+                break;
+
+            case EAdvancedRenderStage.DirectionalShadowRaster:
+                // The directional atlas page is light-owned, not a pipeline resource.
                 break;
 
             case EAdvancedRenderStage.VisibilityRaster:

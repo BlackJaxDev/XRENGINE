@@ -372,7 +372,13 @@ public struct LayeredShadowUniformState : IEquatable<LayeredShadowUniformState>
            MathF.Abs(matrix.M34) <= 1.0e-6f &&
            MathF.Abs(matrix.M44 - 1.0f) <= 1.0e-6f;
 
-    private static bool IntersectsHomogeneousClipVolume(
+    /// <summary>
+    /// Conservative world-space AABB test against one homogeneous clip volume:
+    /// the box is rejected only when all eight corners lie outside the same
+    /// clip plane. Shared by the generic layered shadow pass and the Advanced
+    /// directional shadow lane so both draw the same caster set per cascade.
+    /// </summary>
+    internal static bool IntersectsHomogeneousClipVolume(
         in AABB bounds,
         in Matrix4x4 viewProjection,
         bool depthZeroToOne)

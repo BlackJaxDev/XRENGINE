@@ -106,6 +106,93 @@ public partial class XRTexture2D
         SparseTextureStreamingResidentPageSelection = SparseTextureStreamingPageSelection.Full;
     }
 
+    /// <summary>
+    /// Retires sparse storage metadata and rebases its retained resident mip chain
+    /// for a subsequent dense upload as one canonical source publication.
+    /// </summary>
+    internal void RetireSparseTextureStreamingStorage()
+    {
+        lock (_importedSourceMetadataWriteSync)
+        {
+            bool rebaseResidentChain = SparseTextureStreamingEnabled &&
+                SparseTextureStreamingResidentBaseMipLevel >= 0 &&
+                SparseTextureStreamingResidentBaseMipLevel < SparseTextureStreamingLogicalMipCount &&
+                LargestMipmapLevel == SparseTextureStreamingResidentBaseMipLevel &&
+                Mipmaps is { Length: > 0 };
+            int residentMaximumMip = rebaseResidentChain
+                ? (int)Math.Clamp(
+                    (long)SmallestAllowedMipmapLevel - SparseTextureStreamingResidentBaseMipLevel,
+                    0L, Mipmaps.Length - 1L)
+                : 0;
+            // Native retirement can be triggered by a synchronous property
+            // notification inside an existing imported-source publication.
+            bool ownsPublication = (ImportedSourceMetadataEpoch & 1UL) == 0UL;
+            if (ownsPublication)
+                BeginImportedSourceMetadataWrite();
+            try
+            {
+                ClearSparseTextureStreamingState();
+                if (rebaseResidentChain)
+                {
+                    LargestMipmapLevel = 0;
+                    SmallestAllowedMipmapLevel = residentMaximumMip;
+                    PublishCanonicalSourceContentMutation();
+                }
+            }
+            finally
+            {
+                if (ownsPublication)
+                    CompleteImportedSourceMetadataWrite();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Publishes a completed sparse resident image as one imported-source metadata
+    /// transaction, so canonical readers observe its mip range and content generation together.
+    /// </summary>
+    internal void PublishSparseTextureStreamingState(
+        SparseTextureStreamingTransitionRequest request,
+        SparseTextureStreamingPageSelection selection,
+        int requestedBaseMipLevel,
+        int committedBaseMipLevel,
+        int numSparseLevels,
+        long committedBytes)
+    {
+        lock (_importedSourceMetadataWriteSync)
+        {
+            BeginImportedSourceMetadataWrite();
+            try
+            {
+                SparseTextureStreamingEnabled = true;
+                SparseTextureStreamingLogicalWidth = request.LogicalWidth;
+                SparseTextureStreamingLogicalHeight = request.LogicalHeight;
+                SparseTextureStreamingLogicalMipCount = request.LogicalMipCount;
+                SparseTextureStreamingResidentBaseMipLevel = requestedBaseMipLevel;
+                SparseTextureStreamingCommittedBaseMipLevel = committedBaseMipLevel;
+                SparseTextureStreamingNumSparseLevels = numSparseLevels;
+                SparseTextureStreamingCommittedBytes = committedBytes;
+                SparseTextureStreamingResidentPageSelection = selection;
+
+                Mipmaps = request.ResidentMipmaps;
+                AutoGenerateMipmaps = false;
+                Resizable = false;
+                SizedInternalFormat = request.SizedInternalFormat;
+                LargestMipmapLevel = requestedBaseMipLevel;
+                SmallestAllowedMipmapLevel = Math.Max(0, request.LogicalMipCount - 1);
+                MinFilter = request.ResidentMipmaps.Length > 1
+                    ? ETexMinFilter.LinearMipmapLinear
+                    : ETexMinFilter.Linear;
+                MagFilter = ETexMagFilter.Linear;
+                PublishCanonicalSourceContentMutation();
+            }
+            finally
+            {
+                CompleteImportedSourceMetadataWrite();
+            }
+        }
+    }
+
     internal static int GetLogicalMipCount(uint sourceWidth, uint sourceHeight)
         => XRTexture.GetSmallestMipmapLevel(sourceWidth, sourceHeight) + 1;
 

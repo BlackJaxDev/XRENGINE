@@ -71,7 +71,8 @@ public partial class XRMesh
         size += CalculateCpuMeshletDescriptorArraySize(payload.Meshlets.ToArray());
         size += CalculateUInt32ArraySize(payload.VertexIndices.ToArray());
         size += CalculateByteArraySize(payload.TriangleIndices.ToArray());
-        size += CalculateMeshletVertexArraySize(payload.Vertices.ToArray());
+        if (payload.PayloadVersion <= MeshletPayload.LastPayloadVersionWithVertexStream)
+            size += sizeof(int); // empty legacy vertex stream
         size += sizeof(int) * 4; // stats
         return size;
     }
@@ -103,7 +104,8 @@ public partial class XRMesh
         WriteCpuMeshletDescriptors(writer, payload.Meshlets.ToArray());
         WriteUInt32Array(writer, payload.VertexIndices.ToArray());
         WriteByteArray(writer, payload.TriangleIndices.ToArray());
-        WriteMeshletVertices(writer, payload.Vertices.ToArray());
+        if (payload.PayloadVersion <= MeshletPayload.LastPayloadVersionWithVertexStream)
+            writer.Write(0); // empty legacy vertex stream
         writer.Write(payload.Stats.MeshletCount);
         writer.Write(payload.Stats.VertexReferenceCount);
         writer.Write(payload.Stats.TriangleByteCount);
@@ -138,7 +140,10 @@ public partial class XRMesh
         CpuMeshletDescriptor[] meshlets = ReadCpuMeshletDescriptors(reader);
         uint[] vertexIndices = ReadUInt32Array(reader);
         byte[] triangleIndices = ReadByteArray(reader);
-        MeshletVertex[] vertices = ReadMeshletVertices(reader);
+        // Older payloads stored a per-vertex copy that runtime never needs.
+        if (payloadVersion <= MeshletPayload.LastPayloadVersionWithVertexStream &&
+            !TrySkipMeshletVertices(reader))
+            throw new InvalidDataException("The meshlet vertex stream has an invalid bounded element count.");
         MeshOptimizerMeshletStats stats = new(
             reader.ReadInt32(),
             reader.ReadInt32(),
@@ -150,6 +155,11 @@ public partial class XRMesh
 
         if (payloadVersion < 3 && state == MeshletPayloadState.Present && meshlets.Length == 0)
             state = MeshletPayloadState.Empty;
+
+        // Version 3 differs from the current layout only by the skipped vertex
+        // stream, so its payloads stay runtime compatible without a recook.
+        if (payloadVersion == MeshletPayload.LastPayloadVersionWithVertexStream)
+            payloadVersion = MeshletPayload.CurrentPayloadVersion;
 
         MeshletPayload payload = new()
         {
@@ -171,7 +181,6 @@ public partial class XRMesh
             Meshlets = meshlets.ToImmutableArray(),
             VertexIndices = vertexIndices.ToImmutableArray(),
             TriangleIndices = triangleIndices.ToImmutableArray(),
-            Vertices = vertices.ToImmutableArray(),
             Stats = stats,
         };
         payload.ValidatePortablePayload();
@@ -198,7 +207,7 @@ public partial class XRMesh
             || !TrySkipCpuMeshletDescriptors(reader)
             || !TrySkipUInt32Array(reader)
             || !TrySkipByteArray(reader)
-            || !TrySkipMeshletVertices(reader))
+            || (payloadVersion <= MeshletPayload.LastPayloadVersionWithVertexStream && !TrySkipMeshletVertices(reader)))
         {
             return false;
         }
@@ -270,9 +279,6 @@ public partial class XRMesh
 
     private static long CalculateByteArraySize(byte[]? values)
         => sizeof(int) + (values?.Length ?? 0);
-
-    private static long CalculateMeshletVertexArraySize(MeshletVertex[]? values)
-        => sizeof(int) + (long)(values?.Length ?? 0) * (sizeof(float) * 16);
 
     private static void WriteMeshletSettings(RuntimeCookedBinaryWriter writer, MeshletGenerationSettingsSnapshot settings)
     {
@@ -444,63 +450,12 @@ public partial class XRMesh
         return reader.ReadBytes(count);
     }
 
-    private static void WriteMeshletVertices(RuntimeCookedBinaryWriter writer, MeshletVertex[]? vertices)
-    {
-        int count = vertices?.Length ?? 0;
-        writer.Write(count);
-        if (count == 0)
-            return;
-
-        for (int i = 0; i < count; i++)
-        {
-            MeshletVertex vertex = vertices![i];
-            WriteVector4(writer, vertex.Position);
-            WriteVector4(writer, vertex.Normal);
-            WriteVector2(writer, vertex.TexCoord);
-            WriteVector2(writer, vertex.Padding);
-            WriteVector4(writer, vertex.Tangent);
-        }
-    }
-
-    private static MeshletVertex[] ReadMeshletVertices(RuntimeCookedBinaryReader reader)
-    {
-        int count = reader.ReadInt32();
-        if (count == 0)
-            return [];
-
-        ValidateArrayCount(count, sizeof(float) * 16, reader.Remaining, "meshlet vertex");
-
-        MeshletVertex[] vertices = new MeshletVertex[count];
-        for (int i = 0; i < count; i++)
-        {
-            vertices[i] = new MeshletVertex
-            {
-                Position = ReadVector4(reader),
-                Normal = ReadVector4(reader),
-                TexCoord = ReadVector2(reader),
-                Padding = ReadVector2(reader),
-                Tangent = ReadVector4(reader),
-            };
-        }
-
-        return vertices;
-    }
-
     private static void ValidateArrayCount(int count, int elementSize, long remainingBytes, string streamName)
     {
         long byteCount = count < 0 ? -1L : (long)count * elementSize;
         if (count < 0 || byteCount > remainingBytes || byteCount > MaxStandaloneMeshletPayloadBytes)
             throw new InvalidDataException($"The {streamName} stream has an invalid bounded element count.");
     }
-
-    private static void WriteVector2(RuntimeCookedBinaryWriter writer, Vector2 value)
-    {
-        writer.Write(value.X);
-        writer.Write(value.Y);
-    }
-
-    private static Vector2 ReadVector2(RuntimeCookedBinaryReader reader)
-        => new(reader.ReadSingle(), reader.ReadSingle());
 
     private static void WriteVector4(RuntimeCookedBinaryWriter writer, Vector4 value)
     {

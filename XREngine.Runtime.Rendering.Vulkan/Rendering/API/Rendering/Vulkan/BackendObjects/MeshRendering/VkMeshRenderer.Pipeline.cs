@@ -859,6 +859,17 @@ internal unsafe partial class VkMeshRenderer
 			_pipelines.Clear();
 		}
 
+		// A retired shared pipeline can still sit in the local lookup under a key
+		// whose layout handle value the driver has since reused. Drop the local
+		// lookup once per retirement wave; the shared cache no longer holds them.
+		long pipelineRetirementGeneration =
+			BackendContext.Resources.PipelineManager.SharedGraphicsPipelineRetirementGeneration;
+		if (pipelineRetirementGeneration != _observedPipelineRetirementGeneration)
+		{
+			_pipelines.Clear();
+			_observedPipelineRetirementGeneration = pipelineRetirementGeneration;
+		}
+
 		// Check pipeline cache before creating a new pipeline object
 		if (_pipelines.TryGetValue(key, out pipeline) && pipeline.Handle != 0)
 		{
@@ -1366,8 +1377,7 @@ internal unsafe partial class VkMeshRenderer
 					EProgramStageMask.GeometryShaderBit |
 					EProgramStageMask.TaskShaderBit |
 					EProgramStageMask.MeshShaderBit |
-					EProgramStageMask.FragmentShaderBit,
-					colorAttachmentCount);
+					EProgramStageMask.FragmentShaderBit);
 
 				if (graphicsStages.Length == 0)
 					throw new InvalidOperationException("graphics pipeline creation requires at least one graphics shader stage.");
@@ -1389,13 +1399,11 @@ internal unsafe partial class VkMeshRenderer
 					EProgramStageMask.TessEvaluationShaderBit |
 					EProgramStageMask.GeometryShaderBit |
 					EProgramStageMask.TaskShaderBit |
-					EProgramStageMask.MeshShaderBit,
-					colorAttachmentCount);
+					EProgramStageMask.MeshShaderBit);
 
 				PipelineShaderStageCreateInfo[] fragmentStages = VulkanGraphicsPipelineFactory.GetGraphicsPipelineLibraryStages(
 					program,
-					EProgramStageMask.FragmentShaderBit,
-					colorAttachmentCount);
+					EProgramStageMask.FragmentShaderBit);
 
 		ReadOnlySpan<VertexInputBindingDescription> vertexBindings = visibilityVertexInput.IsValid
 			? visibilityVertexInput.Bindings

@@ -4,7 +4,7 @@ Status: Validated for its gate (September 27, 2026); the exit exception's
 cause is open as S14e. Predeclaration written before any change.
 
 Gate record for
-[S14a](../../todo/rendering/vulkan-stall-remediation-todo.md#s14a-keep-the-world-live-across-play-mode-transitions)
+[S14a](../../todo/rendering/vulkan-stall-remediation-todo.md#evidence-index)
 under the todo document's one-by-one protocol. Opened by the
 [S14 gate record](2026-09-27-s14-core-update-owner.md), which holds the entry
 evidence. Evidence root: `Build/_AgentValidation/20260927-095558-s14-core-update/`

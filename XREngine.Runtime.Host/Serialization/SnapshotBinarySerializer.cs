@@ -1,6 +1,7 @@
 using XREngine.Data.Runtime.AotParity;
 using XREngine.Core.Files;
 using XREngine.Rendering;
+using XREngine.Rendering.Models;
 using XREngine.Scene;
 
 namespace XREngine;
@@ -64,8 +65,8 @@ internal static class SnapshotBinarySerializer
     /// <param name="payload">A payload written by <see cref="Serialize{T}(T)"/>.</param>
     /// <param name="createdRenderAssets">
     /// Receives, in creation order, the assets the read creates that hold renderer resources:
-    /// render objects, and meshes with the buffers they own. Assets resolved from references
-    /// are loaded instances with other owners and are not included.
+    /// render objects, meshes with the buffers they own, and models with their submesh lists.
+    /// Assets resolved from references are loaded instances with other owners and are not included.
     /// </param>
     public static T? Deserialize<T>(byte[]? payload, List<XRAsset>? createdRenderAssets = null) where T : class
     {
@@ -123,9 +124,17 @@ internal static class SnapshotBinarySerializer
                 return ResolveAssetReference(reference);
             case SnapshotTextFile text:
                 return text.ToTextFile();
-            case GenericRenderObject or XRMesh:
+            case XRShader shader when UberShaderVariantBuilder.TryGetCachedVariant(shader, out XRShader? live):
+                // A generated uber variant is inlined because it has no file path.
+                // Share the live cached instance instead of keeping one copy of its
+                // source per material per round trip. The live instance is never
+                // tracked as restored content, so the next restore cannot destroy it.
+                shader.Destroy(now: true);
+                return live;
+            case GenericRenderObject or XRMesh or Model:
                 // The reader created this asset: resolved assets arrive as references and
-                // leave above as the loaded instance.
+                // leave above as the loaded instance. Models are included because their
+                // registered submesh list keeps the copy's meshes reachable until destroyed.
                 t_createdRenderAssets?.Add((XRAsset)value);
                 return value;
             default:
@@ -156,12 +165,23 @@ internal static class SnapshotBinarySerializer
             return true;
         }
 
+        bool heldByAssetManager = IsAssetManagerInstance(asset);
+
         // A text file can claim a path while holding other text (a generated shader source
         // keeps its canonical file's path), and a reference resolves only to the asset
         // manager's own instance, so any other text file is written by value.
-        if (asset is TextFile && !IsAssetManagerInstance(asset))
+        if (asset is TextFile && !heldByAssetManager)
         {
             reason = "text file the asset manager does not hold";
+            return true;
+        }
+
+        // A reference resolves through the asset manager or by loading its file. An asset
+        // with neither, such as the placeholder an import creates for a texture whose source
+        // is missing on this machine, cannot be restored by reference.
+        if (!heldByAssetManager && !SnapshotAssetReference.HasLoadableFile(asset.FilePath))
+        {
+            reason = "asset manager does not hold it and its file is missing";
             return true;
         }
 

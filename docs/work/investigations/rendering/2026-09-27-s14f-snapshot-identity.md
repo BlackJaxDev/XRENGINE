@@ -6,7 +6,7 @@ restored shaders keep their sources; see [Disposition](#disposition). Global
 identity lookups after a restore remain as described below.
 
 Gate record for
-[S14f](../../todo/rendering/vulkan-stall-remediation-todo.md#s14f-keep-object-identity-across-play-mode-snapshots)
+[S14f](../../todo/rendering/vulkan-stall-remediation-todo.md#evidence-index)
 under the todo document's one-by-one protocol. Opened by S14a's validation;
 see the [S14a record](2026-09-27-s14a-play-transitions.md#snapshot-identity-and-cost-opened-as-s14f).
 Evidence root: `Build/_AgentValidation/20260927-095558-s14-core-update/`

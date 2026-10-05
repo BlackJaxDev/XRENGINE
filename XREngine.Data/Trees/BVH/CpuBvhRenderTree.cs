@@ -808,6 +808,8 @@ public sealed partial class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : cla
             bool boundsChanged = current.BoundsRevision != _boundsRevision;
             if (!topologyChanged && !boundsChanged)
             {
+                // A snapshot still read during the publication that superseded it is released here once its readers finish.
+                ReleaseSupersededSnapshots(current);
                 _lastUpdate = CpuBvhUpdateKind.Clean;
                 _lastRebuildReason = CpuBvhRebuildReason.None;
                 ReportSwapTiming(swapSummary);
@@ -854,6 +856,7 @@ public sealed partial class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : cla
 
             long updateTicks = Stopwatch.GetTimestamp() - updateStart;
             PublishSnapshot(staging);
+            ReleaseSupersededSnapshots(staging);
             _forceTopologyRebuild = false;
             _pendingRebuildReason = CpuBvhRebuildReason.None;
             swapSummary = swapSummary with
@@ -1044,6 +1047,27 @@ public sealed partial class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : cla
         _pendingRebuildReason = reason;
     }
 
+    /// <summary>
+    /// Drops item references from snapshots built for an older topology. Readers only use the
+    /// published snapshot and re-check it after registering, and a snapshot with another topology
+    /// is rebuilt or cloned before reuse, so its items are unreachable through the tree; holding
+    /// them would keep removed render infos and the scenes that own them alive. Snapshots of the
+    /// current topology keep their contents for incremental refits.
+    /// </summary>
+    private void ReleaseSupersededSnapshots(Snapshot current)
+    {
+        for (int i = 0; i < _snapshots.Length; i++)
+        {
+            Snapshot snapshot = _snapshots[i];
+            if (ReferenceEquals(snapshot, current) ||
+                snapshot.TopologyRevision == current.TopologyRevision ||
+                Volatile.Read(ref snapshot.ReaderCount) != 0)
+                continue;
+
+            snapshot.ReleaseItems();
+        }
+    }
+
     private Snapshot AcquireStagingSnapshot(Snapshot current)
     {
         long waitStart = Stopwatch.GetTimestamp();
@@ -1170,6 +1194,10 @@ public sealed partial class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : cla
         for (int i = snapshot.NodeCount - 1; i >= 0; i--)
             RecomputeNodeMetrics(snapshot, i);
         snapshot.ConfigureNodeHandles();
+
+        // Partitioning leaves copies of item records in the scratch range; release them
+        // so a later, smaller build cannot keep removed items reachable.
+        Array.Clear(snapshot.ScratchEntries, 0, snapshot.EntryCount);
     }
 
     private bool TryFindSahSplit(
@@ -2073,6 +2101,9 @@ public sealed partial class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : cla
 
     private sealed class Snapshot(CpuBvhRenderTree<T> owner)
     {
+        /// <summary>Topology revision of a released snapshot; the tree's revisions start at zero.</summary>
+        private const long ReleasedTopologyRevision = -1;
+
         private int _markGeneration;
         private int[] _dirtyMarks = [];
         private int[] _ancestorMarks = [];
@@ -2121,6 +2152,11 @@ public sealed partial class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : cla
 
         public void ResetForBuild(int itemCapacity, int stableIdCapacity)
         {
+            // Entries and unbounded items reference tree items. A rebuild only rewrites
+            // the new count, so clear the previous range: stale slots would otherwise keep
+            // removed render infos, and the scenes that own them, alive indefinitely.
+            Array.Clear(Entries, 0, EntryCount);
+            Array.Clear(UnboundedItems, 0, UnboundedCount);
             EnsureEntryCapacity(itemCapacity);
             EnsureMapCapacity(stableIdCapacity);
             Array.Fill(EntryByStableId, -1);
@@ -2129,6 +2165,24 @@ public sealed partial class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : cla
             EntryCount = 0;
             UnboundedCount = 0;
             RootIndex = -1;
+        }
+
+        /// <summary>
+        /// Clears item references and marks the snapshot unusable for incremental refits, so the
+        /// next use rebuilds or clones it.
+        /// </summary>
+        public void ReleaseItems()
+        {
+            if (EntryCount == 0 && UnboundedCount == 0 && TopologyRevision == ReleasedTopologyRevision)
+                return;
+
+            Array.Clear(Entries, 0, EntryCount);
+            Array.Clear(UnboundedItems, 0, UnboundedCount);
+            EntryCount = 0;
+            UnboundedCount = 0;
+            NodeCount = 0;
+            RootIndex = -1;
+            TopologyRevision = ReleasedTopologyRevision;
         }
 
         public void EnsureNodeCapacity(int requested)
@@ -2181,12 +2235,18 @@ public sealed partial class CpuBvhRenderTree<T> : I3DRenderTree<T> where T : cla
 
         public void CloneFrom(Snapshot source)
         {
+            int previousEntryCount = EntryCount;
+            int previousUnboundedCount = UnboundedCount;
             EnsureEntryCapacity(source.EntryCount + source.UnboundedCount);
             EnsureMapCapacity(source.EntryByStableId.Length);
             EnsureNodeCapacity(source.NodeCount);
             Array.Copy(source.Nodes, Nodes, source.NodeCount);
             Array.Copy(source.Entries, Entries, source.EntryCount);
             Array.Copy(source.UnboundedItems, UnboundedItems, source.UnboundedCount);
+            if (previousEntryCount > source.EntryCount)
+                Array.Clear(Entries, source.EntryCount, previousEntryCount - source.EntryCount);
+            if (previousUnboundedCount > source.UnboundedCount)
+                Array.Clear(UnboundedItems, source.UnboundedCount, previousUnboundedCount - source.UnboundedCount);
             Array.Copy(source.EntryByStableId, EntryByStableId, source.EntryByStableId.Length);
             Array.Copy(source.LeafByStableId, LeafByStableId, source.LeafByStableId.Length);
             RootIndex = source.RootIndex;

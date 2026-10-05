@@ -421,7 +421,7 @@ in publication callbacks. This closes the elevated-capture item: the measured
 callback owner is absent from a fresh elevated trace of the final binary, and
 the residual profile is recorded for S13c-S13g rather than attributed here.
 
-The September 24 [remaining closeout work](../../todo/rendering/vulkan-stall-remediation-todo.md#september-24-handoff-remaining-closeout-work)
+The September 24 [remaining closeout work](../../todo/rendering/vulkan-stall-remediation-todo.md#evidence-index)
 is the consolidated resumption checklist. Later automated screenshot/log
 collection is awaiting review and does not satisfy the final-binary observer
 gate. The world snapshot attempt failed before restoration; its missing

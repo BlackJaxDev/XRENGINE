@@ -989,6 +989,7 @@ namespace XREngine.Rendering.OpenGL
 
                 int layerCount = Math.Clamp(state.DirectionalCascadeShadowLayerCount, 0, s_directionalCascadeViewProjectionMatrixUniformNames.Length);
                 vertexProgram.Uniform("CascadeLayerCount", layerCount);
+                vertexProgram.Uniform("DirectionalCascadeTargetMask", layerCount <= 0 ? 0 : (1 << layerCount) - 1);
                 for (int i = 0; i < layerCount; i++)
                 {
                     if (state.TryGetDirectionalCascadeShadowMatrix(i, out Matrix4x4 matrix))
@@ -1006,8 +1007,9 @@ namespace XREngine.Rendering.OpenGL
 
                 if (material.HasSettingShadowUniformHandlers)
                     material.OnSettingShadowUniforms(vertexProgram.Data);
-                else
-                    SetDirectionalCascadeLayeredUniforms(vertexProgram);
+
+                // Scoped targets must remain aligned after material callbacks publish light-wide data.
+                SetDirectionalCascadeLayeredUniforms(vertexProgram);
             }
 
             private static void SetPointLightLayeredUniforms(GLRenderProgram vertexProgram)

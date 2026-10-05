@@ -12,6 +12,12 @@ public partial class XRMesh
      => new(prims);
     public static XRMesh Create<T>(IEnumerable<T> prims) where T : VertexPrimitive
         => new(prims);
+    /// <summary>
+    /// Creates a mesh from primitives and returns its source vertex per mesh
+    /// vertex, for packing skinning and blendshapes from the same order.
+    /// </summary>
+    public static XRMesh Create<T>(IEnumerable<T> prims, out Vertex[] sourceVertices) where T : VertexPrimitive
+        => new(prims, out sourceVertices);
     public static XRMesh CreateTriangles(params Vector3[] positions)
         => new(positions.SelectEvery(3, x => new VertexTriangle(x[0], x[1], x[2])));
     public static XRMesh CreateTriangles(IEnumerable<Vector3> positions)
@@ -27,6 +33,13 @@ public partial class XRMesh
     public static XRMesh CreatePoints(IEnumerable<Vector3> positions)
         => new(positions.Select(x => new Vertex(x)));
 
+    /// <summary>
+    /// Builds an indexed triangle mesh whose vertex order is exactly the
+    /// enumeration order of <paramref name="vertices"/>. Only the packed
+    /// attribute buffers are kept; pack skinning and blendshapes from the same
+    /// vertex list with <see cref="RebuildSkinningBuffersFromVertices"/> and
+    /// <see cref="RebuildBlendshapeBuffersFromVertices"/>.
+    /// </summary>
     public XRMesh(IEnumerable<Vertex> vertices, List<ushort> triangleIndices)
         : this(deferObjectCachePublication: true)
     {
@@ -80,7 +93,6 @@ public partial class XRMesh
                 PopulateVertexData(vertexActions, sourceVertices, VertexCount, dataTransform,
                     RuntimeRenderingHostServices.Settings.PopulateVertexDataInParallel);
 
-                    Vertices = sourceVertices;
                     publication.Complete();
                     preparationSucceeded = true;
                 }
@@ -102,8 +114,22 @@ public partial class XRMesh
     }
 
     public XRMesh(IEnumerable<object?> primitives)
+        : this(primitives, out _)
+    {
+    }
+
+    /// <summary>
+    /// Builds a mesh from vertex primitives, deduplicating identical vertices.
+    /// <paramref name="sourceVertices"/> receives the source vertex of every mesh
+    /// vertex in final order, for packing skinning and blendshapes with
+    /// <see cref="RebuildSkinningBuffersFromVertices"/> and
+    /// <see cref="RebuildBlendshapeBuffersFromVertices"/>. The mesh itself keeps
+    /// only its packed buffers.
+    /// </summary>
+    public XRMesh(IEnumerable<object?> primitives, out Vertex[] sourceVertices)
         : this(deferObjectCachePublication: true)
     {
+        sourceVertices = [];
         try
         {
             using (RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication())
@@ -222,7 +248,7 @@ public partial class XRMesh
 
                 if (remapper?.ImplementationTable is null)
                 {
-                    Vertices = sourceList;
+                    sourceVertices = sourceList;
                 }
                 else
                 {
@@ -230,7 +256,7 @@ public partial class XRMesh
                     for (int i = 0; i < firstAppearanceArray.Length; i++)
                         compactVertices[i] = sourceList[firstAppearanceArray[i]];
 
-                    Vertices = compactVertices;
+                    sourceVertices = compactVertices;
                 }
                     publication.Complete();
                     preparationSucceeded = true;

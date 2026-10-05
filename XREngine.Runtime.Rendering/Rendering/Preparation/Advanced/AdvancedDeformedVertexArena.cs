@@ -8,6 +8,13 @@ namespace XREngine.Rendering;
 /// offsets, explicit boundary growth, and completion-driven generation
 /// retirement. Ordinary acquisition performs no allocation.
 /// </summary>
+/// <remarks>
+/// GPU deformation writes its own output buffers and uses only the arena's
+/// offsets and generations. The CPU vertex storage (one array per frame slot at
+/// full capacity) is therefore allocated on the first CPU access
+/// (<see cref="GetCurrentVertices"/>, <see cref="GetPreviousVertices"/>); growth
+/// and retirement keep the same generation bookkeeping without it.
+/// </remarks>
 public sealed class AdvancedDeformedVertexArena
 {
     private readonly AdvancedDeformedVertexArenaOptions _options;
@@ -22,7 +29,9 @@ public sealed class AdvancedDeformedVertexArena
     private readonly ulong[] _slotSubmissionValues;
     private readonly byte[][][] _retiredStorage;
     private readonly ulong[] _retiredCompletionValues;
-    private byte[][] _storage;
+    // Retired-generation marker for growth while no CPU storage exists.
+    private static readonly byte[][] NoCpuStorage = [];
+    private byte[][]? _storage;
     private AdvancedFrameSlotPair _slots;
     private uint _vertexCapacity;
     private uint _nextVertexOffset;
@@ -44,7 +53,6 @@ public sealed class AdvancedDeformedVertexArena
         _options = options;
         _vertexCapacity = options.InitialVertexCapacity;
         _pendingVertexCapacity = _vertexCapacity;
-        _storage = CreateStorage(options.FrameSlotCount, _vertexCapacity);
         _slotSubmissionValues = new ulong[options.FrameSlotCount];
 
         int ownerTableCapacity = NextPowerOfTwo(
@@ -279,7 +287,7 @@ public sealed class AdvancedDeformedVertexArena
         ThrowIfFrameClosed();
         ValidateSlice(slice, _slots.Current);
         return MemoryMarshal.Cast<byte, AdvancedDeformedVertex>(
-            _storage[_slots.Current].AsSpan())
+            EnsureCpuStorage()[_slots.Current].AsSpan())
             .Slice(
                 checked((int)slice.CurrentVertexOffset),
                 checked((int)slice.VertexCount));
@@ -290,7 +298,7 @@ public sealed class AdvancedDeformedVertexArena
     {
         ThrowIfFrameClosed();
         return MemoryMarshal.Cast<byte, AdvancedDeformedVertex>(
-            _storage[slice.PreviousFrameSlot])
+            EnsureCpuStorage()[slice.PreviousFrameSlot])
             .Slice(
                 checked((int)slice.PreviousVertexOffset),
                 checked((int)Math.Min(
@@ -351,18 +359,22 @@ public sealed class AdvancedDeformedVertexArena
         if (retiredSlot < 0)
             return false;
 
-        byte[][] replacement = CreateStorage(
-            _options.FrameSlotCount,
-            requestedCapacity);
-        int copyBytes = checked((int)((ulong)_vertexCapacity * VertexStride));
-        for (int slot = 0; slot < _storage.Length; slot++)
-            Buffer.BlockCopy(_storage[slot], 0, replacement[slot], 0, copyBytes);
+        byte[][] retired = _storage ?? NoCpuStorage;
+        if (_storage is not null)
+        {
+            byte[][] replacement = CreateStorage(
+                _options.FrameSlotCount,
+                requestedCapacity);
+            int copyBytes = checked((int)((ulong)_vertexCapacity * VertexStride));
+            for (int slot = 0; slot < _storage.Length; slot++)
+                Buffer.BlockCopy(_storage[slot], 0, replacement[slot], 0, copyBytes);
+            _storage = replacement;
+        }
 
-        _retiredStorage[retiredSlot] = _storage;
+        _retiredStorage[retiredSlot] = retired;
         _retiredCompletionValues[retiredSlot] =
             MaximumSubmissionCompletionValue();
         _retiredGenerationCount++;
-        _storage = replacement;
         _vertexCapacity = requestedCapacity;
         _pendingVertexCapacity = requestedCapacity;
         _storageGeneration++;
@@ -476,6 +488,9 @@ public sealed class AdvancedDeformedVertexArena
             maximum = Math.Max(maximum, _slotSubmissionValues[i]);
         return maximum;
     }
+
+    private byte[][] EnsureCpuStorage()
+        => _storage ??= CreateStorage(_options.FrameSlotCount, _vertexCapacity);
 
     private static byte[][] CreateStorage(
         int slotCount,

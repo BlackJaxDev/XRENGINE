@@ -907,7 +907,7 @@ Restoration was never attempted. Add bounded diagnostic detail, reproduce only
 the snapshot call, and fix the identified serialization contract before retrying
 world replacement. This is not evidence of a Vulkan resource-lifetime defect.
 
-The [remaining closeout work](../../todo/rendering/vulkan-stall-remediation-todo.md#september-24-handoff-remaining-closeout-work)
+The [remaining closeout work](../../todo/rendering/vulkan-stall-remediation-todo.md#evidence-index)
 is the current resumption checklist, including required evidence and ordering.
 The current work session is wrapped up with the isolated editor stopped;
 S13a/S13b remain **Blocked**, and screenshot/log review and test clearance remain

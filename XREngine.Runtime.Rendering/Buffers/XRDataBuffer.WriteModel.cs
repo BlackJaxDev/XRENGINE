@@ -283,7 +283,18 @@ public partial class XRDataBuffer
 
     private unsafe XRBufferWriter<T> AllocCore<T>(uint elementOffset, uint count, XRBufferWriteOptions options) where T : unmanaged
     {
-        EnsureWritableRegion<T>(elementOffset, count, options, out DataSource source);
+        // The writer stays open until Commit or Cancel ends it (EndClientWriter).
+        BeginClientWriter();
+        DataSource source;
+        try
+        {
+            EnsureWritableRegion<T>(elementOffset, count, options, out source);
+        }
+        catch
+        {
+            EndClientWriter();
+            throw;
+        }
         uint elementSize = (uint)Unsafe.SizeOf<T>();
         ulong byteOffset = (ulong)elementOffset * elementSize;
         if (byteOffset > int.MaxValue || count > int.MaxValue)
@@ -462,14 +473,19 @@ public partial class XRDataBuffer
         XRBufferResolvedRoute resolvedRoute,
         bool readyForGpuUse)
     {
+        bool uploadCurrent;
         lock (_writeModelSync)
         {
             _pendingWriterUpload = hasPendingUpload || !readyForGpuUse;
-            if (!hasPendingUpload && readyForGpuUse && uploadedBytes >= (ulong)Length)
+            uploadCurrent = !hasPendingUpload && readyForGpuUse && uploadedBytes >= (ulong)Length;
+            if (uploadCurrent)
                 _uploadedRevision = _revision;
             if (resolvedRoute != XRBufferResolvedRoute.Unknown)
                 _lastResolvedRoute = resolvedRoute;
         }
+
+        if (uploadCurrent)
+            QueueClientSpillIfEligible();
     }
 
     internal void ReportDeviceAddressDowngrade(string reason)
@@ -515,7 +531,7 @@ public partial class XRDataBuffer
         if (copyExisting && _clientSideSource is not null && oldLength > 0u)
             Memory.Move(newSource.Address, _clientSideSource.Address, Math.Min(oldLength, newByteLength));
 
-        _clientSideSource?.Dispose();
+        DisposeReleasedClientSource(_clientSideSource);
         _clientSideSource = newSource;
         _elementCount = newElementCount;
         ClearGpuCompressedPayload();
@@ -547,6 +563,7 @@ public partial class XRDataBuffer
         Span<XRBufferDirtyRange> uploadStorage = stackalloc XRBufferDirtyRange[DefaultDirtyRangeCollapseThreshold];
         int uploadRangeCount;
         ulong committedRevision;
+        NoteClientWrite();
         lock (_writeModelSync)
         {
             committedRevision = ++_revision;

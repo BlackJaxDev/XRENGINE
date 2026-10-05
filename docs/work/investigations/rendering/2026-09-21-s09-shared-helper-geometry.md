@@ -2,7 +2,7 @@
 
 Date: 2026-09-21
 Base revision: `ab02793f9`
-Scope: [S09 in the Vulkan stall remediation TODO](../../todo/rendering/vulkan-stall-remediation-todo.md#s09-share-helper-geometry-only-when-justified)
+Scope: [S09 in the Vulkan stall remediation TODO](../../todo/rendering/vulkan-stall-remediation-todo.md#evidence-index)
 Status: **Validated for fullscreen helper geometry.**
 Test clearance: not granted; no regression tests were added or run.
 

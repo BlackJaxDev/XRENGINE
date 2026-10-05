@@ -97,6 +97,41 @@ backend reports that the committed data is resident and ready. Dirty ranges are
 merged, and they collapse to a full upload when range count or byte coverage
 crosses the buffer thresholds.
 
+## Client Copy
+
+`ClientCopyPolicy` (`EXRBufferClientCopyPolicy`) decides what happens to the CPU
+copy once every backend reports the current revision uploaded:
+
+- `Retain` keeps it in private memory.
+- `ReleaseAfterUpload` moves a copy of 256 KiB or more into a copy-on-write
+  mapping of a delete-on-close session spill file
+  (`XRBufferClientSpill`, `XRBufferSpilledDataSource`). Only static-usage
+  buffers spill. The spill runs on a background timer a few seconds after the
+  upload settles. It is abandoned if any explicit write ran during it: scoped
+  writers (open from `Alloc` to `Commit`/`Cancel`), dirty commits,
+  `PushData`/`PushSubData` and the `Set*`/`SetDataRaw*` setters all count, and
+  bulk setters hold `XRDataBufferClientWriteScope` for their whole duration.
+  The timer leases the private copy while writing the file: disposing,
+  resizing or growing the buffer meanwhile hands the copy's disposal to the
+  spill. Writes through a pointer taken from `Address` before a spill are not
+  tracked; take the pointer when writing. A clone of a spilled buffer gets its
+  own private copy. The buffer keeps its metadata and a valid
+  `Address`; reads page in from the file cache and writes copy only the touched
+  pages into private memory. The bytes leave the private working set, but
+  Windows charges a copy-on-write view to commit for its full size, so commit
+  (`PrivateUsage`) does not fall.
+- `Default` uses the engine setting `MeshBufferClientCopyPolicy` (default
+  `ReleaseAfterUpload`) for mesh-owned buffers and `Retain` for the rest.
+
+Buffers that only the GPU writes keep no CPU copy at all: construct them with
+`allocateClientSideSource: false` and set `GpuProduced`. Backends size their
+storage from `Length`, and `Resize` changes only the element count.
+
+`XRDataBuffer.DescribeClientMemory()` (MCP `invoke_method`) sums client bytes by
+attribute name, and `XRBufferClientSpill.Describe()` reports spilled bytes and
+failures. `DataSourceMemoryStatistics.Describe()` reports all native memory
+owned by `DataSource` instances, including bytes freed by finalizers.
+
 ## Upload Allocators And Rings
 
 `IXRBufferUploadAllocator` is the backend-neutral upload allocation contract.

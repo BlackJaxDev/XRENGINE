@@ -492,6 +492,7 @@ namespace XREngine
                     Controller.RaisePostExitPlay();
 
                     Debug.Out("Exited play mode");
+                    ScheduleExitPlayMaintenanceGc();
                 }
                 catch (Exception ex)
                 {
@@ -501,6 +502,23 @@ namespace XREngine
 
                 return Task.CompletedTask;
             }
+
+            /// <summary>
+            /// Reclaims a play session's garbage once edit mode runs again. A round trip discards a
+            /// whole world copy and its snapshot buffers, much of it on the large object heap, and
+            /// background collections neither compact nor release that memory, so committed memory
+            /// would otherwise climb with every trip. The collection runs as an app-thread job,
+            /// which executes only between render frames.
+            /// </summary>
+            private static void ScheduleExitPlayMaintenanceGc()
+                => Engine.EnqueueAppThreadTask(
+                    static () => Engine.RequestMaintenanceGarbageCollection(new EngineMaintenanceGcRequest(
+                        EngineMaintenanceGcReason.EditorExitedPlayMode,
+                        "Play session world copy released.",
+                        Generation: GC.MaxGeneration,
+                        CompactLargeObjectHeap: true,
+                        WaitForPendingFinalizers: true)),
+                    "PlayMode.ExitMaintenanceGc");
 
             /// <summary>
             /// Toggles between edit and play mode.

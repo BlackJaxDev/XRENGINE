@@ -172,14 +172,14 @@ public sealed class RenderableMeshBoundsTests
             [boneNode.Transform] = (1.0f, Matrix4x4.Identity),
         };
 
-        XRMesh mesh = new(
-            [
-                new Vertex(new Vector3(-0.25f, 0.0f, 0.0f)) { Weights = weights },
-                new Vertex(new Vector3(0.25f, 0.0f, 0.0f)) { Weights = weights },
-                new Vertex(new Vector3(0.0f, 0.5f, 0.0f)) { Weights = weights },
-            ],
-            new List<ushort> { 0, 1, 2 });
-        mesh.RebuildSkinningBuffersFromVertices();
+        Vertex[] vertices =
+        [
+            new Vertex(new Vector3(-0.25f, 0.0f, 0.0f)) { Weights = weights },
+            new Vertex(new Vector3(0.25f, 0.0f, 0.0f)) { Weights = weights },
+            new Vertex(new Vector3(0.0f, 0.5f, 0.0f)) { Weights = weights },
+        ];
+        XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
+        mesh.RebuildSkinningBuffersFromVertices(vertices);
 
         AABB authoredBounds = new(new Vector3(-3.0f, -2.0f, -1.0f), new Vector3(3.0f, 2.0f, 1.0f));
         SubMesh subMesh = new(new SubMeshLOD(new XRMaterial(), mesh, 0.0f))
@@ -367,7 +367,7 @@ public sealed class RenderableMeshBoundsTests
         RenderableMesh.SkinnedBoneCullingVolume[] volumes = RenderableMesh.BuildSkinnedBoneCullingVolumes(mesh, boneA);
         AABB viewBounds = AABB.FromCenterSize(Vector3.Zero, new Vector3(1.0f));
 
-        Vector3 blendedPosition = ComputeSkinnedPosition(mesh.Vertices[0]);
+        Vector3 blendedPosition = ComputeSkinnedPosition(mesh, 0);
         viewBounds.ContainsPoint(blendedPosition).ShouldBeTrue();
         EachIndividualBoneBoxShouldBeOutsideView(volumes, viewBounds);
 
@@ -391,7 +391,7 @@ public sealed class RenderableMeshBoundsTests
         MoveBone(boneA, new Vector3(12.0f, 0.0f, 0.0f));
         MoveBone(boneB, new Vector3(-12.0f, 0.0f, 0.0f));
 
-        Vector3 blendedPosition = ComputeSkinnedPosition(mesh.Vertices[0]);
+        Vector3 blendedPosition = ComputeSkinnedPosition(mesh, 0);
         viewBounds.ContainsPoint(blendedPosition).ShouldBeTrue();
         EachIndividualBoneBoxShouldBeOutsideView(volumes, viewBounds);
 
@@ -425,17 +425,17 @@ public sealed class RenderableMeshBoundsTests
             [boneB] = (1.0f, Matrix4x4.Identity),
         };
 
-        XRMesh mesh = new(
-            [
-                new Vertex(new Vector3(-0.5f, -0.5f, 0.0f)) { Weights = weightsA },
-                new Vertex(new Vector3(0.5f, -0.5f, 0.0f)) { Weights = weightsA },
-                new Vertex(new Vector3(0.0f, 0.5f, 0.0f)) { Weights = weightsA },
-                new Vertex(new Vector3(-0.25f, -0.25f, 0.0f)) { Weights = weightsB },
-                new Vertex(new Vector3(0.25f, -0.25f, 0.0f)) { Weights = weightsB },
-                new Vertex(new Vector3(0.0f, 0.25f, 0.0f)) { Weights = weightsB },
-            ],
-            new List<ushort> { 0, 1, 2, 3, 4, 5 });
-        mesh.RebuildSkinningBuffersFromVertices();
+        Vertex[] vertices =
+        [
+            new Vertex(new Vector3(-0.5f, -0.5f, 0.0f)) { Weights = weightsA },
+            new Vertex(new Vector3(0.5f, -0.5f, 0.0f)) { Weights = weightsA },
+            new Vertex(new Vector3(0.0f, 0.5f, 0.0f)) { Weights = weightsA },
+            new Vertex(new Vector3(-0.25f, -0.25f, 0.0f)) { Weights = weightsB },
+            new Vertex(new Vector3(0.25f, -0.25f, 0.0f)) { Weights = weightsB },
+            new Vertex(new Vector3(0.0f, 0.25f, 0.0f)) { Weights = weightsB },
+        ];
+        XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2, 3, 4, 5 });
+        mesh.RebuildSkinningBuffersFromVertices(vertices);
         return mesh;
     }
 
@@ -446,27 +446,27 @@ public sealed class RenderableMeshBoundsTests
             [bone] = (1.0f, Matrix4x4.Identity),
         };
 
-        XRMesh mesh = new(
-            [
-                new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), weights),
-                new Vertex(new Vector3(0.05f, -0.05f, 0.0f), weights),
-                new Vertex(new Vector3(0.0f, 0.05f, 0.0f), weights),
-            ],
-            new List<ushort> { 0, 1, 2 });
-        mesh.RebuildSkinningBuffersFromVertices();
+        Vertex[] vertices =
+        [
+            new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), weights),
+            new Vertex(new Vector3(0.05f, -0.05f, 0.0f), weights),
+            new Vertex(new Vector3(0.0f, 0.05f, 0.0f), weights),
+        ];
+        XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
+        mesh.RebuildSkinningBuffersFromVertices(vertices);
         return mesh;
     }
 
     private static XRMesh CreateTwoBoneBlendedMesh(TransformBase boneA, TransformBase boneB)
     {
-        XRMesh mesh = new(
-            [
-                new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), CreateEvenBlendWeights(boneA, boneB)),
-                new Vertex(new Vector3(0.05f, -0.05f, 0.0f), CreateEvenBlendWeights(boneA, boneB)),
-                new Vertex(new Vector3(0.0f, 0.05f, 0.0f), CreateEvenBlendWeights(boneA, boneB)),
-            ],
-            new List<ushort> { 0, 1, 2 });
-        mesh.RebuildSkinningBuffersFromVertices();
+        Vertex[] vertices =
+        [
+            new Vertex(new Vector3(-0.05f, -0.05f, 0.0f), CreateEvenBlendWeights(boneA, boneB)),
+            new Vertex(new Vector3(0.05f, -0.05f, 0.0f), CreateEvenBlendWeights(boneA, boneB)),
+            new Vertex(new Vector3(0.0f, 0.05f, 0.0f), CreateEvenBlendWeights(boneA, boneB)),
+        ];
+        XRMesh mesh = new(vertices, new List<ushort> { 0, 1, 2 });
+        mesh.RebuildSkinningBuffersFromVertices(vertices);
         return mesh;
     }
 
@@ -495,8 +495,18 @@ public sealed class RenderableMeshBoundsTests
     private static void RecalculateForCulling(TransformBase transform)
         => transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
 
-    private static Vector3 ComputeSkinnedPosition(Vertex vertex)
+    /// <summary>
+    /// CPU-skins one mesh vertex from its packed position and weights. Weights decode from
+    /// the 8-bit packed buffers, so the result is within one quantization step of the source.
+    /// </summary>
+    private static Vector3 ComputeSkinnedPosition(XRMesh mesh, int vertexIndex)
     {
+        using XRMeshVertexView view = XRMeshVertexView.Open(
+            mesh,
+            EXRMeshVertexViewContent.Positions | EXRMeshVertexViewContent.Weights,
+            vertexIndex,
+            count: 1);
+        Vertex vertex = view.Vertices[0];
         Vector3 result = Vector3.Zero;
         foreach ((TransformBase bone, (float weight, Matrix4x4 bindInvWorldMatrix) data) in vertex.Weights!)
             result += Vector3.Transform(vertex.Position, data.bindInvWorldMatrix * bone.WorldMatrix) * data.weight;

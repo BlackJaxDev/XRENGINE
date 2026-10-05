@@ -13,6 +13,9 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
     private static readonly VulkanVisibilityVertexInputSnapshot s_vertexInput =
         CreateVertexInput();
 
+    /// <summary>Packed canonical vertex ABI shared by every lane that draws the geometry atlas.</summary>
+    internal static VulkanVisibilityVertexInputSnapshot VertexInput => s_vertexInput;
+
     internal static bool TryPrepare(
         VkRenderProgram program,
         EAdvancedMaterialCoverageMode coverage,
@@ -222,7 +225,7 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
         return true;
     }
 
-    private static bool ValidateVertexInputs(
+    internal static bool ValidateVertexInputs(
         VkRenderProgram program,
         out string reason)
     {

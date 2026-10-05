@@ -135,6 +135,10 @@ public readonly record struct SparseTextureStreamingTransitionRequest(
     Mipmap2D[] ResidentMipmaps,
     SparseTextureStreamingPageSelection PageSelection = default);
 
+/// <summary>
+/// Reports sparse admission and GPU exposure separately. A deferred upload retains
+/// its originating native owner so cancellation can retire its fence without publication.
+/// </summary>
 public readonly record struct SparseTextureStreamingTransitionResult(
     bool Applied,
     bool UsedSparseResidency,
@@ -144,8 +148,22 @@ public readonly record struct SparseTextureStreamingTransitionResult(
     long CommittedBytes,
     bool ExposureDeferred = false,
     nint FenceSync = 0,
-    string? FailureReason = null)
+    bool AdmissionDeferred = false,
+    string? FailureReason = null,
+    Action<SparseTextureStreamingTransitionResult>? DiscardDeferred = null)
 {
+    /// <summary>Retains the decoded request while native ownership prevents a safe retry.</summary>
+    public static SparseTextureStreamingTransitionResult Retry(string? reason = null)
+        => new(
+            Applied: false,
+            UsedSparseResidency: false,
+            RequestedBaseMipLevel: 0,
+            CommittedBaseMipLevel: 0,
+            NumSparseLevels: 0,
+            CommittedBytes: 0L,
+            AdmissionDeferred: true,
+            FailureReason: reason);
+
     public static SparseTextureStreamingTransitionResult Unsupported(string? reason = null)
         => new(
             Applied: false,

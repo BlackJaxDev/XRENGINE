@@ -22,6 +22,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
 - [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)
+- [Vulkan Pipeline Compilation, Readiness And Depth-Only Coverage](architecture/rendering/vulkan-pipeline-compilation.md)
 - [CPU Scene BVH](architecture/rendering/cpu-scene-bvh.md)
 - [GPU Scene BVH](architecture/rendering/gpu-scene-bvh.md)
 - [Scene Architecture](architecture/scene/overview.md)

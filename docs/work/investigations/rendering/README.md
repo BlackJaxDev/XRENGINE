@@ -7,6 +7,23 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Current focus
 
+- [OpenXR stereo flicker and render-target duplication](2026-10-04-openxr-stereo-flicker-and-target-duplication.md)
+  records the stale descriptor sets behind the alternating HUD, the stereo
+  pipeline target set held three times by the resource planner, the
+  VR View measurement method, and the remaining startup transition black.
+- [Editor memory retention across Play round trips](2026-10-04-editor-memory-retention.md)
+  records the retention chains that kept every Play copy alive, the fixed-cost
+  reductions, desktop/OpenXR measurements, and the remaining OpenXR mapped
+  memory, shader-variant duplication and per-frame allocation work.
+- [Disk-backed shader root reload](2026-10-04-shader-root-reload.md)
+  investigates stale top-level source after file notifications and preservation
+  of unsaved edits and generated shader sources.
+- [OpenGL admission and measurement](2026-10-03-s16a-opengl-admission.md)
+  records upload, timing readback and source-reload fixes, shadow fixture
+  attribution, and the validated visible-geometry measurement gate.
+- [Directional shadow canonical lane](2026-10-03-s15b-directional-shadow-lane.md)
+  records motion-frame improvements, cold-start readiness and submission-retry
+  corrections, and the remaining masked-shadow parity gate.
 - [Advanced pipeline (Vulkan) directional shadows — Resolved](advanced-vulkan-dirlight-shadows-2026-10-02.md)
   records the cascade slope-bias unit mismatch that made every receiver lit, the
   back-facing and footprint bias corrections, and the still-intermittent

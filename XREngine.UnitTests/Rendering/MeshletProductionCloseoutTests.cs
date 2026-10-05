@@ -262,7 +262,6 @@ public sealed class MeshletProductionCloseoutTests
             Meshlets = source.Meshlets,
             VertexIndices = source.VertexIndices,
             TriangleIndices = triangleIndices,
-            Vertices = source.Vertices,
             Stats = source.Stats,
         };
 

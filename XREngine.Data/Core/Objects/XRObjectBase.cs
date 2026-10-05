@@ -69,6 +69,16 @@ namespace XREngine.Data.Core
         public XRObjectBase() => Generate();
 
         /// <summary>
+        /// False for objects that are reached only through their owner and never resolved by ID,
+        /// such as internal collections. They stay out of the global object cache, which holds
+        /// every registered object strongly until it is destroyed: an owner discarded without
+        /// destroying them would otherwise leave them, and everything their handlers reference,
+        /// reachable for the rest of the process. Overrides must return a constant because the
+        /// base constructor reads this before derived construction runs.
+        /// </summary>
+        protected virtual bool ParticipatesInObjectCache => true;
+
+        /// <summary>
         /// Initializes an object without exposing it through the global cache. The most-derived
         /// constructor must enlist it in a publication scope or explicitly publish it.
         /// </summary>
@@ -98,7 +108,7 @@ namespace XREngine.Data.Core
             ClearDestroyQueuedFlag();
             _constructorObjectCachePublicationDeferred = false;
 
-            if (_suppressObjectCacheRegistrationDepth > 0)
+            if (_suppressObjectCacheRegistrationDepth > 0 || !ParticipatesInObjectCache)
             {
                 _isRegisteredInObjectCache = false;
                 return;

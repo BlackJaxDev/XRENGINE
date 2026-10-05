@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -69,6 +70,30 @@ public sealed class AdvancedGpuDeformationResourceTests
         resources.Publication.CurrentVertices.ElementCount
             .ShouldBeGreaterThanOrEqualTo(17u);
         resources.EndFrame(3UL);
+    }
+
+    [Test]
+    public void GenerationOfDestroyedSceneIsReleasedAtNextSelection()
+    {
+        using AdvancedGpuDeformationResources resources =
+            new(CreateOptions(initialVertexCapacity: 16u));
+        GPUScene first = new();
+        GPUScene second = new();
+
+        resources.TrySelectStaticGeneration(first, 1UL, 1UL).ShouldBeTrue();
+        resources.TrySelectStaticGeneration(second, 1UL, 1UL).ShouldBeTrue();
+        resources.ReleasedStaticGenerationCount.ShouldBe(0u);
+
+        // Play transitions destroy the world's GPU scene; its generation must not
+        // keep its capacity and meshes until it happens to be reassigned.
+        first.Destroy();
+        resources.TrySelectStaticGeneration(second, 1UL, 1UL).ShouldBeTrue();
+        resources.ReleasedStaticGenerationCount.ShouldBe(1u);
+
+        GPUScene third = new();
+        resources.TrySelectStaticGeneration(third, 1UL, 1UL).ShouldBeTrue();
+        second.Destroy();
+        third.Destroy();
     }
 
     private static AdvancedPreparationOptions CreateOptions(

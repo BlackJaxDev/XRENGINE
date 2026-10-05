@@ -41,6 +41,7 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     public bool ProcessMeshImportsAsynchronously => RuntimeRenderingHostServiceDefaults.ProcessMeshImportsAsynchronously;
     public bool AllowSkinning => RuntimeRenderingHostServiceDefaults.AllowSkinning;
     public bool CalculateSkinningInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateSkinningInComputeShader;
+    public EEngineQuality TextureQuality => EEngineQuality.Highest;
     public bool CalculateBlendshapesInComputeShader => RuntimeRenderingHostServiceDefaults.CalculateBlendshapesInComputeShader;
     public bool CalculateSkinnedBoundsInComputeShader => false;
     public bool SkinnedBoundsGpuDirectAabbWrite => false;

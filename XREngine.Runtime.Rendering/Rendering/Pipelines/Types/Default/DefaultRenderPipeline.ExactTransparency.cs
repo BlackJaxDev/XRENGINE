@@ -117,12 +117,14 @@ public partial class DefaultRenderPipeline
     private XRDataBuffer CreatePpllNodeBuffer()
     {
         uint nodeCapacity = ComputePpllNodeCapacity();
-        return new XRDataBuffer(PpllNodeBufferName, EBufferTarget.ShaderStorageBuffer, nodeCapacity, EComponentType.Struct, PpllNodeStrideBytes, false, false)
+        // Fragment shaders append the nodes; the CPU never reads or writes them.
+        return new XRDataBuffer(PpllNodeBufferName, EBufferTarget.ShaderStorageBuffer, nodeCapacity, EComponentType.Struct, PpllNodeStrideBytes, false, false, allocateClientSideSource: false)
         {
             Usage = EBufferUsage.DynamicCopy,
             BindingIndexOverride = 24u,
             DisposeOnPush = false,
             PadEndingToVec4 = true,
+            GpuProduced = true,
         };
     }
 

@@ -34,8 +34,10 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>Synchronizes access to <see cref="_programStates"/> and related mutable state.</summary>
         private readonly object _stateSync = new();
 
-        private readonly System.Collections.Concurrent.ConcurrentBag<DescriptorUpdateScratch>
-            _descriptorUpdateScratchPool = [];
+        // Shared by every material: a scratch is only held during one descriptor update, so the
+        // pool is bounded by concurrent publications instead of keeping one per material.
+        private static readonly System.Collections.Concurrent.ConcurrentBag<DescriptorUpdateScratch>
+            s_descriptorUpdateScratchPool = [];
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> MaterialDescriptorReadinessReasons =
             new(StringComparer.Ordinal);
         private readonly VulkanDescriptorPublicationTelemetry _descriptorPublicationTelemetry = new();
@@ -67,16 +69,16 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private DescriptorUpdateScratch RentDescriptorUpdateScratch()
+        private static DescriptorUpdateScratch RentDescriptorUpdateScratch()
         {
-            if (!_descriptorUpdateScratchPool.TryTake(out DescriptorUpdateScratch? scratch))
+            if (!s_descriptorUpdateScratchPool.TryTake(out DescriptorUpdateScratch? scratch))
                 scratch = new DescriptorUpdateScratch();
             scratch.Reset();
             return scratch;
         }
 
-        private void ReturnDescriptorUpdateScratch(DescriptorUpdateScratch scratch)
-            => _descriptorUpdateScratchPool.Add(scratch);
+        private static void ReturnDescriptorUpdateScratch(DescriptorUpdateScratch scratch)
+            => s_descriptorUpdateScratchPool.Add(scratch);
 
         /// <summary>
         /// Cached descriptor state per render program, keyed by <see cref="VkObject.BindingId"/>.

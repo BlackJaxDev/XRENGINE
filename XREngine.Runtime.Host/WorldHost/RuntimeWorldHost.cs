@@ -226,6 +226,7 @@ public sealed class RuntimeWorldHost : IDisposable
         Engine.Time.Timer.WorldSwapBuffers += RenderWorld.GlobalSwapBuffers;
         Engine.Time.Timer.PreCollectVisible += RenderWorld.GlobalPreCollectVisible;
         Engine.Time.Timer.CollectVisible += RenderWorld.GlobalCollectVisible;
+        RenderWorld.SetCollectPublicationOpen(true);
         _timeCallbacksLinked = true;
     }
 
@@ -234,6 +235,9 @@ public sealed class RuntimeWorldHost : IDisposable
         if (!_timeCallbacksLinked)
             return;
 
+        // Close publication first: direct callers such as OpenXR do not go through
+        // the timer subscription, and closing waits out any in-flight publication.
+        RenderWorld.SetCollectPublicationOpen(false);
         Engine.Time.Timer.UpdateFrame -= CoreWorld.Update;
         Engine.Time.Timer.PostUpdateFrame -= ProcessDirtyTransforms;
         Engine.Time.Timer.FixedUpdate -= CoreWorld.FixedUpdate;

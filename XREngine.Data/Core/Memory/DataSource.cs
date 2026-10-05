@@ -51,22 +51,22 @@ namespace XREngine.Data
         {
             External = false;
             Length = (uint)data.Length;
-            Address = Marshal.AllocHGlobal(data.Length);
+            Address = AllocateOwned(data.Length);
             Marshal.Copy(data, 0, Address, data.Length);
         }
         public unsafe DataSource(ReadOnlySpan<byte> data)
         {
             External = false;
             Length = (uint)data.Length;
-            Address = Marshal.AllocHGlobal(data.Length);
+            Address = AllocateOwned(data.Length);
             data.CopyTo(new Span<byte>((void*)Address, data.Length));
         }
         public DataSource(byte[] data, int offset, int length)
         {
             External = false;
-            int len = Math.Min(data.Length, length);
+            int len = Math.Min(data.Length - offset, length);
             Length = (uint)len;
-            Address = Marshal.AllocHGlobal(data.Length);
+            Address = AllocateOwned(len);
             Marshal.Copy(data, offset, Address, len);
         }
         public DataSource(VoidPtr address, uint length, bool copyInternal = false)
@@ -74,7 +74,7 @@ namespace XREngine.Data
             Length = length;
             if (copyInternal)
             {
-                Address = Marshal.AllocHGlobal((int)Length);
+                Address = AllocateOwned((int)Length);
                 Memory.Move(Address, address, length);
                 External = false;
             }
@@ -88,7 +88,7 @@ namespace XREngine.Data
         public DataSource(uint length, bool zeroMemory = false)
         {
             Length = length;
-            Address = Marshal.AllocHGlobal((int)Length);
+            Address = AllocateOwned((int)Length);
             if (zeroMemory)
                 Memory.Fill(Address, (uint)Length, 0);
             External = false;
@@ -99,6 +99,22 @@ namespace XREngine.Data
 
         public unsafe UnmanagedMemoryStream AsStream()
             => new((byte*)Address, Length);
+
+        /// <summary>
+        /// Size of the native block this source allocated and must free; zero for
+        /// external sources. Kept apart from <see cref="Length"/>, which callers may
+        /// shrink, so the accounting in <see cref="DataSourceMemoryStatistics"/>
+        /// releases exactly what was recorded.
+        /// </summary>
+        private long _ownedBytes;
+
+        private IntPtr AllocateOwned(int byteCount)
+        {
+            IntPtr address = Marshal.AllocHGlobal(byteCount);
+            _ownedBytes = byteCount;
+            DataSourceMemoryStatistics.RecordAllocation(byteCount);
+            return address;
+        }
 
         #region IDisposable Support
         private bool _disposedValue = false;
@@ -111,6 +127,8 @@ namespace XREngine.Data
                     if (!External && Address != null)
                     {
                         Marshal.FreeHGlobal(Address);
+                        DataSourceMemoryStatistics.RecordRelease(_ownedBytes, finalized: !disposing);
+                        _ownedBytes = 0;
                         Address = null;
                         Length = 0;
                     }
@@ -163,7 +181,11 @@ namespace XREngine.Data
             return floats;
         }
 
-        public DataSource Clone()
+        /// <summary>
+        /// Copies an owned source; an external source returns another view of the same
+        /// memory. Subclasses whose memory is owned but not allocated here override it.
+        /// </summary>
+        public virtual DataSource Clone()
         {
             if (External)
                 return new DataSource(Address, Length, false);

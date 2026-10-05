@@ -4,7 +4,7 @@ Status: Validated (September 27, 2026). Predeclaration written before the
 change; result and disposition below.
 
 Gate record for
-[S14b](../../todo/rendering/vulkan-stall-remediation-todo.md#s14b-stop-the-light-probe-grid-spawner-retrying-after-a-restore)
+[S14b](../../todo/rendering/vulkan-stall-remediation-todo.md#evidence-index)
 under the todo document's one-by-one protocol. Opened by the
 [S14 gate record](2026-09-27-s14-core-update-owner.md); the reproduction and
 the snapshot measurements are in the

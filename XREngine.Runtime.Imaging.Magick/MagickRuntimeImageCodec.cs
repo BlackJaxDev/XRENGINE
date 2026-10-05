@@ -10,13 +10,25 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
 {
     public RuntimeImage Decode(ReadOnlyMemory<byte> encodedImage)
     {
-        using MagickImage source = new(encodedImage.ToArray());
+        using MagickImage source = new(GetWholeArray(encodedImage));
         return DecodePixels(source);
     }
 
+    /// <summary>
+    /// The array behind <paramref name="encodedImage"/> when it spans the whole
+    /// array, so decoding a file read into one array does not copy it again.
+    /// </summary>
+    private static byte[] GetWholeArray(ReadOnlyMemory<byte> encodedImage)
+        => MemoryMarshal.TryGetArray(encodedImage, out ArraySegment<byte> segment) &&
+           segment.Array is { } array &&
+           segment.Offset == 0 &&
+           segment.Count == array.Length
+            ? array
+            : encodedImage.ToArray();
+
     public IReadOnlyList<RuntimeImage> DecodeFrames(ReadOnlyMemory<byte> encodedImage)
     {
-        using MagickImageCollection collection = new(encodedImage.ToArray());
+        using MagickImageCollection collection = new(GetWholeArray(encodedImage));
         RuntimeImage[] frames = new RuntimeImage[collection.Count];
         int completed = 0;
         try
