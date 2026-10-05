@@ -381,6 +381,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             capture is null)
             return;
 
+        XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Texture capture output");
+        IRuntimeDiagnosticCaptureFileOutput fileOutput = RuntimeDiagnosticCaptureFileOutput.Require();
+
         foreach (XRTexture tex in Resources.EnumerateTextureInstances())
         {
             var whd = tex.WidthHeightDepth;
@@ -398,9 +401,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     if (channelIndex > 0)
                         name += $" [{channelIndex + 1}]";
                     string fileName = $"{name}.png";
-                    string filePath = Path.Combine(exportDirPath, fileName);
-                    Utility.EnsureDirPathExists(exportDirPath);
-                    File.WriteAllBytes(filePath, RuntimeImageCodecs.Require().EncodePng(ownedImage));
+                    fileOutput.WritePngInDirectory(exportDirPath, fileName,
+                        RuntimeImageCodecs.Require().EncodePng(ownedImage));
                 }
 
                 _ = capture.TryCaptureTexture(tex, region, ProcessImage, 0, i);
@@ -419,6 +421,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             !renderer.TryGetBackendCapability<IRenderCaptureBackendCapability>(out var capture) ||
             capture is null)
             return;
+
+        XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Framebuffer capture output");
+        IRuntimeDiagnosticCaptureFileOutput fileOutput = RuntimeDiagnosticCaptureFileOutput.Require();
 
         foreach (XRFrameBuffer fbo in Resources.EnumerateFrameBufferInstances())
         {
@@ -440,9 +445,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     if (LayerIndex >= 0)
                         name += $"_layer{LayerIndex}";
                     string fileName = $"{name}.png";
-                    string filePath = Path.Combine(exportDirPath, fileName);
-                    Utility.EnsureDirPathExists(exportDirPath);
-                    File.WriteAllBytes(filePath, RuntimeImageCodecs.Require().EncodePng(ownedImage));
+                    fileOutput.WritePngInDirectory(exportDirPath, fileName,
+                        RuntimeImageCodecs.Require().EncodePng(ownedImage));
                 }
 
                 switch (Target)

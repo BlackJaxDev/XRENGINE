@@ -27,6 +27,7 @@ public static class DesktopPlatformBackend
         XREngine.Data.RuntimeAssemblyLoadingServices.Current = new DesktopRuntimeAssemblyLoader();
         XREngine.Core.Files.AssetFileSystemServices.Current = new DesktopAssetFileSystem();
         XREngine.Rendering.RuntimeClipboardServices.Current = new DesktopClipboardServices();
+        XREngine.Rendering.RuntimeDiagnosticCaptureFileOutput.Current = new DesktopDiagnosticCaptureFileOutput();
         RendererNativeCallbackBridge.EntryPoints = new Rendering.DesktopRendererNativeCallbackEntryPoints();
         RendererImGuiViewportCallbackBridge.EntryPoints = new Rendering.DesktopImGuiViewportEntryPoints();
     }

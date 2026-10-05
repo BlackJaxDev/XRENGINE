@@ -60,6 +60,22 @@ Independent texture-boundary review found two inherited wrappers that scheduled 
 
 The same inherited async-entry review also covers `XRShader` context-aware loading, import and reload. Those wrappers now perform source admission before delegating to the existing desktop background implementation. Stage cooked-companion changes retain the existing `SourceChanged` invalidation semantics, including retirement of an earlier program companion. The expanded production probe checks replacement, missing-stage identity, all inherited async admissions and resolver retirement. Its unique output assembly is `ShaderSourceBoundaryProbe`; historical generic `Probe` outputs are not used for this final run.
 
+## Diagnostic capture file output
+
+Rendering now encodes diagnostic PNG data and uses an optional host file output service for physical writes. The desktop backend installs the service during bootstrap, including headless bootstrap. `VPRC_CaptureFrame` checks host-file admission and selects the writer before synchronous readback when output is due. The desktop writer resolves the full path, creates its parent directory, writes the PNG, reopens that file for SHA-256, and writes indented metrics JSON after the metrics fields are set. Pipeline texture and framebuffer exports check their renderer capability first, then check host-file admission and select the writer before requesting asynchronous capture. The callbacks keep their existing naming, PNG encoding, image disposal, and timing. The desktop writer checks host-file admission when each output method runs, including after an asynchronous callback, so a retained desktop service rejects writes admitted after host-file access becomes unavailable. A synchronous write that was already admitted can finish after a concurrent source change. Browser hosts have no installed writer. This bounded change does not close UR02.03b or UR03.02.
+
+The synchronous host-file admission helper now retains the source binding's
+reader count without creating a read lease or linked cancellation source.
+It checks cancellation and source identity before and after the capability
+predicate, then releases the reader in `finally`. Actual read leases and
+publication reservations are unchanged. This removes new per-capture admission
+allocations; diagnostic image encoding and metrics still allocate their output.
+
+Independent source review passed for the output boundary and the admission
+helper. A Release build of the desktop platform leaf and its shared dependencies
+passed with zero warnings and zero errors. No capture-output runtime check or
+new test was run for this move.
+
 ## Network host-file transfer boundary
 
 `BaseNetworkingManager.SendFileAsync` and `ReceiveFileAsync` now reject operating-system paths before metadata, transport admission or file creation on browser, caller-thread, runtime-catalog and non-synchronous asset-source hosts. Both also recheck immediately before opening a file after an awaited transport operation. The diagnostic is `NetworkFileTransfer.HostFileUnavailable`; applications with an already opened stream retain the existing stream-transfer entry points when their installed transport supports them. The capability check does not add raw TCP support to the browser transport or change realtime WebSocket framing.
