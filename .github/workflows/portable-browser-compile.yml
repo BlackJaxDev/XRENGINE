@@ -702,6 +702,55 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Set up native package staging tools
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Publish the shared native networking fixture
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          $root = Join-Path $env:VALIDATION_ROOT 'network-kinematic-cli'
+          $native = Join-Path $root 'native'
+          $projectRoot = Join-Path $root 'project'
+          if (Test-Path -LiteralPath $root) { throw 'The native networking fixture must start empty.' }
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          dotnet run --project XREngine.Server/XREngine.Server.csproj --configuration Release --no-launch-profile -- `
+            --create-world-package $native --world-name NetworkKinematicWorld --network-kinematic `
+            2>&1 | Tee-Object -FilePath (Join-Path $root 'native-package.log')
+          if ($LASTEXITCODE -ne 0) { throw 'The native network world-package generator failed.' }
+          $shaders = Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU'
+          node Tools/BrowserSmoke/prepare-network-kinematic-project.mjs $native $shaders $projectRoot
+          if ($LASTEXITCODE -ne 0) { throw 'The native network project staging failed.' }
+          dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+            --build-project (Join-Path $projectRoot 'NetworkKinematic.xrproj') --build-configuration Release --build-platform BrowserWebGPU `
+            --output-subfolder browser-game 2>&1 | Tee-Object -FilePath (Join-Path $root 'editor-cli.log')
+          if ($LASTEXITCODE -ne 0) { throw 'The shared native network browser publisher failed.' }
+          $content = Join-Path $projectRoot 'Build/browser-game/content'
+          $catalog = Get-Content -LiteralPath (Join-Path $content 'manifest.json') -Raw | ConvertFrom-Json
+          $shared = Get-Content -LiteralPath (Join-Path $content 'world-package.json') -Raw | ConvertFrom-Json
+          $original = Get-Content -LiteralPath (Join-Path $native 'world-package.json') -Raw | ConvertFrom-Json
+          if ($catalog.startupWorld -ne '/game/World.asset' -or
+              $shared.metadata.browserStartupWorld -ne '/game/World.asset' -or
+              $shared.asset.worldId -ne $original.asset.worldId -or
+              $shared.asset.revisionId -ne $original.asset.revisionId -or
+              $shared.asset.contentHash -ne $original.asset.contentHash -or
+              (Get-FileHash -LiteralPath (Join-Path $content 'World.asset') -Algorithm SHA256).Hash -ne
+              (Get-FileHash -LiteralPath (Join-Path $native 'World.asset') -Algorithm SHA256).Hash) {
+            throw 'The browser fixture did not preserve its native world bytes and identity.'
+          }
+
+      - name: Preserve the shared native networking fixture
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-network-kinematic-bundle
+          path: ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Preserve Windows Editor CLI evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -713,6 +762,10 @@ jobs:
             ${{ env.VALIDATION_ROOT }}/advanced-rendering-parity-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/static-meshlet-gpu-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/static-meshlet-cpu-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/native-package.log
+            ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/project/Build/browser-game/content/world-package.json
             ${{ env.VALIDATION_ROOT }}/static-meshlet-gpu-cli/project/Build/browser-game/content/manifest.json
             ${{ env.VALIDATION_ROOT }}/static-meshlet-cpu-cli/project/Build/browser-game/content/manifest.json
             ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/editor-cli.log

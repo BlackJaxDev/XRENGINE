@@ -48,6 +48,11 @@ public static partial class BrowserEngineExports
     [JSExport]
     public static bool IsNetworkGameplayReady() => _session?.NetworkState == "ready";
 
+    /// <summary>Returns non-secret status from the currently running browser client session.</summary>
+    [JSExport]
+    public static string GetNetworkSimulationStatus()
+        => _session?.GetNetworkSimulationStatus() ?? "network=inactive";
+
     [JSExport]
     public static bool IsVoiceSupported() => false;
 

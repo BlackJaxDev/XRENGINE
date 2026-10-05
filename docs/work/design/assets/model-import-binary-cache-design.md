@@ -72,7 +72,7 @@ The repository now has the model-specific deterministic container, defensive rea
 | YAML `XRMesh` bridge | `XREngine.Runtime.Rendering/Serialization/XRMeshYamlTypeConverter.cs` | Continue composing the standalone mesh format from the shared sections. |
 | Per-submesh LOD/meshlet overrides | `XREngine.Runtime.Rendering/Rendering/Meshlets/MeshOptimizerSettings.cs` | Use as authored overrides when resolving import-time cook settings. |
 | LOD generation and `SubMeshLOD` runtime representation | `XREngine.Runtime.Rendering/Rendering/Meshlets/MeshOptimizerIntegration.cs` and `XREngine.Runtime.Rendering/Rendering/Models/Meshes/SubMeshLOD.cs` | Run deterministically during cold cooking and persist model-owned LOD tables/meshes. |
-| Runtime meshlet disk cache | `XREngine.Runtime.Rendering/Objects/Meshes/MeshletPayloadDiskCache.cs` | Retain as a non-model or repair cache; it is not primary for a model-cache hit. |
+| Runtime meshlet disk cache | `XREngine.Runtime.MeshProcessing.Meshoptimizer/Rendering/MeshletPayloadDiskCache.cs` | Retain as a currently dormant non-model or repair cache; it is not primary for a model-cache hit. |
 | GPU meshlet registration | `XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/` | Feed it cached CPU descriptors through the existing upload path. |
 
 The generic codec contract now uses typed read/write results. Animation and texture codecs retain cooperative fallback for legacy representations, while the registered model codec is exclusive: a model cache miss or rejection triggers source import and cannot deserialize or serialize a complete prefab graph through generic YAML.

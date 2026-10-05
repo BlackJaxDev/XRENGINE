@@ -23,6 +23,31 @@ world beneath `Assets` (native `World.asset` maps exactly to `/game/World.asset`
 bounded native input; select a byte-identical copy of its world as the project's
 startup asset at the same relative path, then use the normal `BrowserWebGPU` project build.
 
+For a small keyboard-driven network fixture, append `--network-kinematic` to that
+server command. It opts the package into a plain-transform pawn that captures
+W/A/S/D for the managed server's 5 m/s X/Z simulation and adds an authored
+replicated landmark. The landmark has no visual mesh; the shared package's
+self-contained asset rules currently exclude the native mesh and shader source
+representation. The default command still creates the empty baseline.
+
+`Tools/BrowserSmoke/prepare-network-kinematic-project.mjs` stages this generated
+native package, a previously cooked canonical shader directory, and a new
+project directory for the normal Editor CLI. It requires the original manifest
+and world only, checks the world entry's length/hash, and copies those exact
+bytes into the native input and browser startup locations. It neither cooks the
+world nor changes the publisher's admission checks. The Windows browser lane
+runs the real native generator and Editor publisher and compares their retained
+native world identity and bytes. This step starts no server or network session
+and installs no certificate.
+
+During a later real session, `BrowserEngineExports.GetNetworkSimulationStatus()`
+samples the current client state on demand. It exposes a pose only while the
+client is ready and the local controller matches that client's session, player
+and entity assignment. `clientAcknowledged` is the manager-wide input sequence
+telemetry, not a separate per-player watermark. Suspension or manager retirement
+does not expose the previous client's pose. The status contains no admission
+credential and is not a substitute for `IsNetworkGameplayReady()`.
+
 Derived game worlds, external asset dependencies, scalar object GUID/path
 references, asset read converters without explicit self-containment inspection,
 custom YAML shapes/tags, ambient game/engine roots and unsupported native bootstrap identifiers are
