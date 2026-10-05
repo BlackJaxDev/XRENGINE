@@ -1,0 +1,94 @@
+name: Owned native GPU profile once
+
+on:
+  push:
+    branches:
+      - codex/webgpu-readiness-audit
+    paths:
+      - .github/diagnostic-requests/owned-native-profile-20261005.json
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: owned-native-profile-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  profile:
+    name: Profile the approved Advanced Native control once
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out the immutable trigger commit
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up the pinned Node runtime
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: Tools/BrowserSmoke/package-lock.json
+
+      # The request push creates an inactive run. A coordinator first records this run ID and
+      # trigger commit, then commits the separate exact-run activation on the same branch.
+      # The activation path is not a workflow trigger. No credential reaches the browser step.
+      - name: Admit this run and verify the existing published bundle
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node Tools/BrowserSmoke/prepare-owned-native-profile.mjs
+
+      - name: Install pinned browser tooling
+        run: |
+          npm ci --prefix Tools/BrowserSmoke
+          cd Tools/BrowserSmoke
+          npx playwright install chromium
+
+      - name: Run the approved Advanced Native diagnostic
+        env:
+          XRE_OWNED_PROFILE_ACTIVATION_FILE: ${{ steps.prepare.outputs.activation_file }}
+          XRE_OWNED_PROFILE_GAME_PUBLISH: ${{ steps.prepare.outputs.game_publish }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/Build/_AgentValidation/00000000-000000-shared/owned-native-profile-once/report"
+          node Tools/BrowserSmoke/run.mjs \
+            --game-only --game-kind advanced-rendering-parity \
+            --game-publish "$XRE_OWNED_PROFILE_GAME_PUBLISH" \
+            --gpu-mode software --native-owned-profile-once \
+            --output "$GITHUB_WORKSPACE/Build/_AgentValidation/00000000-000000-shared/owned-native-profile-once/report" \
+            > /dev/null 2>&1
+
+      - name: Admit only the reviewed profile summary
+        id: sanitize
+        if: ${{ always() && steps.prepare.outcome == 'success' }}
+        env:
+          XRE_OWNED_PROFILE_ACTIVATION_FILE: ${{ steps.prepare.outputs.activation_file }}
+        run: node Tools/BrowserSmoke/sanitize-owned-native-profile.mjs
+
+      - name: Preserve the sanitized profile summary
+        if: ${{ always() && steps.sanitize.outputs.upload_allowed == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: owned-native-profile-once-summary
+          path: Build/_AgentValidation/00000000-000000-shared/owned-native-profile-once/report/owned-native-profile-summary.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove the preparation files
+        if: always()
+        env:
+          XRE_OWNED_PROFILE_PRIVATE_ROOT: ${{ steps.prepare.outputs.private_root }}
+        run: |
+          node --input-type=module -e '
+            import { promises as fs } from "node:fs";
+            import path from "node:path";
+            const root = process.env.XRE_OWNED_PROFILE_PRIVATE_ROOT;
+            if (!root) process.exit(0);
+            const temp = await fs.realpath(process.env.RUNNER_TEMP);
+            if (path.dirname(root) !== temp || !/^owned-native-profile-[A-Za-z0-9]{6}$/.test(path.basename(root)))
+              throw new Error("Preparation path is outside the owned runner directory.");
+            await fs.rm(root, { recursive: true, force: true });
+          '

@@ -3,6 +3,7 @@ import { browserLaunchOptions } from './smoke.config.mjs';
 import { captureGpuProcessState } from './gpu-diagnostics.mjs';
 import { startNativeCompileTrace } from './native-compile-trace.mjs';
 import { captureNativeProfileCapabilities } from './native-profile-capabilities.mjs';
+import { createOwnedGpuProfile } from './owned-gpu-profile.mjs';
 
 /** Passive capture: return every original WebGPU object/promise unchanged. Never retain WGSL in evidence. */
 export function installNativeCompileCapture() {
@@ -401,6 +402,10 @@ export async function runNativeCompileIsolation(chromium, origin, report, config
         controlRecipeSha256: result.recipeSha256, cleanup: {},
         interpretation: 'Compares the combined Uber helper/body and texture-bank difference. Timeouts are right-censored; neither result changes application checks.' };
     const control = result.replay?.cookedArtifact;
+    if (result.ownedGpuProfile?.requiresJobTermination) {
+        comparison.reason = 'Owned Native profiler cleanup could not be verified; requires ephemeral job termination.';
+        return;
+    }
     if (!comparison.controlBrowserClosed || !control || !result.compileWatchdog) {
         comparison.reason = 'Requires the verified native control to attempt compilation and fully close its owned browser.';
         return;
@@ -418,7 +423,7 @@ export async function runNativeCompileIsolation(chromium, origin, report, config
 async function runNativeCompileArm(chromium, origin, report, config, instrumentedPage, result, recipe, logName,
     comparison = null, controlResult = null) {
     result.launchOptions = browserLaunchOptions(config);
-    let browser, context, page, timer, compileTimer, trace;
+    let browser, context, page, timer, compileTimer, trace, ownedProfile;
     try {
         browser = await chromium.launch(result.launchOptions);
         result.browser = browser.version();
@@ -454,6 +459,7 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
         page.on('pageerror', () => { if (logs.length < 2000) logs.push({ type: 'pageerror', text: 'Diagnostic page error; source text omitted.' }); });
         if (config.nativeCompileTrace && !comparison)
             trace = await startNativeCompileTrace(browser, config.output, result);
+        if (!comparison) ownedProfile = createOwnedGpuProfile({ browser, page, config, result });
         let rejectCompileDeadline;
         const compileDeadline = new Promise((_, reject) => { rejectCompileDeadline = reject; });
         await page.exposeFunction('nativeCompileStarting', () => {
@@ -466,20 +472,34 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
             }, result.compileBudgetMs);
             trace?.mark('compile-start');
             trace?.startProcessCpuObservation(result.compileBudgetMs, result.compileWatchdog.startedAtNodeMonotonicMs);
+            ownedProfile?.begin();
         });
         // Also bound a wedged page/GPU IPC path, whose in-page timer might never run.
         const replay = page.evaluate(replayNativeCompile, { recipe,
             manifestUrl: `${origin}/__game/content/manifest.json`, compileBudgetMs: result.compileBudgetMs, comparison });
-        result.replay = await Promise.race([replay, compileDeadline, new Promise((_, reject) => {
+        result.replay = await Promise.race([replay, compileDeadline,
+            ...(ownedProfile ? [ownedProfile.fatal.then(() => {
+                throw new Error('Owned Native profiler cleanup requires immediate ephemeral job termination.');
+            })] : []), new Promise((_, reject) => {
             timer = setTimeout(() => reject(new Error('Native compile isolation page exceeded its 160000 ms total envelope.')), 160000);
         })]);
         result.status = result.replay.status;
     } catch (error) {
-        result.status = result.compileWatchdog?.expired ? 'compile-watchdog-timeout' : 'diagnostic-failed';
+        result.status = result.ownedGpuProfile?.requiresJobTermination ? 'aborted-for-profile-cleanup'
+            : result.compileWatchdog?.expired ? 'compile-watchdog-timeout' : 'diagnostic-failed';
         result.error = String(error).slice(0, 2048);
     } finally {
         clearTimeout(timer);
         clearTimeout(compileTimer);
+        await ownedProfile?.finish();
+        const fatalProfileCleanup = result.ownedGpuProfile?.requiresJobTermination === true;
+        if (fatalProfileCleanup) result.status = 'aborted-for-profile-cleanup';
+        const fatalBoundedCleanup = async (operation, milliseconds) => {
+            let cleanupTimer;
+            try { return await Promise.race([operation.then(() => true, () => false),
+                new Promise(resolve => { cleanupTimer = setTimeout(() => resolve(false), milliseconds); })]); }
+            finally { clearTimeout(cleanupTimer); }
+        };
         trace?.mark('node-cleanup-started');
         if (page && !result.replay) {
             let cleanupTimer;
@@ -488,20 +508,29 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
                     const probe = globalThis.nativeCompileIsolation;
                     probe?.dispose();
                     return probe?.snapshot() ?? null;
-                }), new Promise(resolve => { cleanupTimer = setTimeout(() => resolve(null), 1000); })]);
+                }), new Promise(resolve => { cleanupTimer = setTimeout(() => resolve(null), fatalProfileCleanup ? 250 : 1000); })]);
             } catch { /* Closing the owned process releases a wedged device. */ }
             finally { clearTimeout(cleanupTimer); }
         }
         if (page && result.replay) result.cleanup.deviceDestroyed = result.replay.cleanup.deviceDestroyed === true;
-        if (trace) await trace.finish();
+        if (trace) {
+            if (fatalProfileCleanup) await fatalBoundedCleanup(trace.finish(), 250);
+            else await trace.finish();
+        }
         if (context) {
             let closeTimer;
             try {
                 result.cleanup.contextClosed = await Promise.race([context.close().then(() => true, () => false),
-                    new Promise(resolve => { closeTimer = setTimeout(() => resolve(false), 1000); })]);
+                    new Promise(resolve => { closeTimer = setTimeout(() => resolve(false), fatalProfileCleanup ? 250 : 1000); })]);
             } finally { clearTimeout(closeTimer); }
         }
-        if (browser) await browser.close().then(() => { result.cleanup.browserClosed = true; }, () => { result.cleanup.browserClosed = false; });
-        if (trace) await trace.browserClosed(result.cleanup.browserClosed === true);
+        if (browser) {
+            if (fatalProfileCleanup) result.cleanup.browserClosed = await fatalBoundedCleanup(browser.close(), 750);
+            else await browser.close().then(() => { result.cleanup.browserClosed = true; }, () => { result.cleanup.browserClosed = false; });
+        }
+        if (trace) {
+            if (fatalProfileCleanup) await fatalBoundedCleanup(trace.browserClosed(result.cleanup.browserClosed === true), 250);
+            else await trace.browserClosed(result.cleanup.browserClosed === true);
+        }
     }
 }
