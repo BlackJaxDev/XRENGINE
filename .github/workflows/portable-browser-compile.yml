@@ -9,6 +9,7 @@ on:
       - '.github/diagnostic-requests/network-walkthrough-20261005.json'
       - '.github/diagnostic-activations/network-walkthrough-20261005.json'
       - '.github/diagnostic-activations/ui-frame-trace-20261006.json'
+      - '.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json'
       - 'docs/work/**/*.md'
   pull_request:
   workflow_dispatch:
@@ -998,6 +999,7 @@ jobs:
             trace_args+=(--baseline-publish "$VALIDATION_ROOT/published-cpu-baseline")
           fi
           if [[ "${{ steps.ui_frame_trace.outputs.armed }}" == "true" ]]; then
+            export DEBUG=''
             trace_args+=(--ui-frame-trace)
           fi
           node Tools/BrowserSmoke/run.mjs --game-only --game-kind "$GAME_KIND" --game-publish "$VALIDATION_ROOT/published-game" --gpu-mode software --output "$VALIDATION_ROOT/game-evidence" "${trace_args[@]}" > >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stdout.log") 2> >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stderr.log" >&2)

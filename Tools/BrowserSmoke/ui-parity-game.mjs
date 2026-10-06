@@ -390,6 +390,17 @@ export async function uiParityGameCheck(browser, origin, report, config, instrum
             // Publish partial evidence before any capture/expectation can throw.
             // Require the existing frame-clock witness before Playwright's stable-element
             // wait, which itself cannot finish while browser animation frames are stalled.
+            if (name === 'initial' && iteration === 0 && config.uiFrameTrace) {
+                const ready = await page.evaluate(() => {
+                    const state = globalThis.uiParityRead?.();
+                    return state?.state === 'running' && state.controls.length === 17 && state.proxies.length === 17
+                        && state.controls.find(control => control.name === 'Clip enabled')?.checked === 1
+                        && document.querySelector('[role="checkbox"][aria-label="Clip enabled"]')?.getAttribute('aria-checked') === 'true';
+                });
+                assert(ready, 'The UI trace requires the running player, 17 controls and proxies, and the checked toggle.');
+                frameTrace = await startUiFrameTrace(browser, report, config.uiFrameTracePermit);
+                assertTraceActive();
+            }
             try { await frames(page, 2); }
             finally { if (name === 'initial') await frameTrace?.finish('initial-checkpoint'); }
             assertTraceActive();
@@ -468,8 +479,6 @@ export async function uiParityGameCheck(browser, origin, report, config, instrum
                     await route.abort('failed');
                 }
             }, { times: 1 });
-            if (iteration === 0 && config.uiFrameTrace)
-                frameTrace = await startUiFrameTrace(browser, report, config.uiFrameTracePermit);
             assertTraceActive();
             await page.goto(`${origin}/__game/index.html`, { waitUntil: 'domcontentloaded' });
             assertTraceActive();
