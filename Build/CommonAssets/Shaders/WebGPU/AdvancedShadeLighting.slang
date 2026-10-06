@@ -453,7 +453,7 @@ float4 XR_ADV_FetchShadow(XRAdvancedShadowRecord record, XRAdvancedTextureRecord
 
 float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, XRAdvancedSurface surface, float3 N, float3 L,
 #if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
-    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+    __constref XRAdvancedPreparedShadowPrimitive preparedPrimitive,
 #endif
     out uint reason)
 {
@@ -558,7 +558,7 @@ float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, XRAdvancedSurface
 
 float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surface, float3 N, float3 L,
 #if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
-    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+    __constref XRAdvancedPreparedShadowPrimitive preparedPrimitive,
 #endif
     out uint reason)
 {
@@ -760,7 +760,7 @@ float3 XR_ADV_EvaluateLight(
     float specularIntensity,
     bool engineSurface,
 #if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
-    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+    __constref XRAdvancedPreparedShadowPrimitive preparedPrimitive,
 #endif
     bool receiveShadows)
 {

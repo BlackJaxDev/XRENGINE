@@ -809,3 +809,22 @@ entry point, extra entry, name, and workgroup were rejected. The previous
 helper rejected all 14 MSAA descriptors and accepted all 14 single-sample
 descriptors, which reproduces the live failure. Independent review passed the
 sample-specific correction. These checks did not start another browser.
+
+The prepared shadow primitive now passes through seven Slang `__constref`
+consumer parameters. The pinned Slang 2026.8 [parser](https://github.com/shader-slang/slang/blob/v2026.8/source/slang/slang-parser.cpp#L10218),
+[borrow lowering](https://github.com/shader-slang/slang/blob/v2026.8/source/slang/slang-lower-to-ir.cpp#L3225),
+and [WGSL legalization](https://github.com/shader-slang/slang/blob/v2026.8/source/slang/slang-emit.cpp#L1972)
+support this source-level form. The cook packaged all 28 native programs. Its
+ABI, entry points, layouts, defines, features, and limits match the saved CI
+cook. All 12 packet-free WGSL files are identical.
+Independent review found seven function-pointer signatures and direct
+forwarding in each of the 16 packet programs, with only the existing sample
+local packet variable. After reversing the pointer syntax, each emitted WGSL
+file is identical to its baseline. The command, log, comparison, and hashes
+are under
+`Build/_AgentValidation/00000000-000000-shared/shadow-primitive-borrow/`.
+[Run 37543918054](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37543918054)
+predates this change and tested the no-decals selection. Native pipeline
+creation was still pending for 37.34 seconds at the 45-second startup limit.
+Its three small-profile OFF captures passed; the full profile did not run.
+The source cook does not prove an ON runtime result or a startup-time benefit.
