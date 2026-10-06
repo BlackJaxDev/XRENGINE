@@ -276,9 +276,49 @@ them. It resolves the complete batch before releasing task continuations.
 The existing request, description, and initial-image budgets remain in force.
 
 This change can make a resource that completed between frames available in the
-next frame's preparation. No runtime timing result exists for this change yet.
-The existing CI run must establish whether it reduces the observed resize
-delay and meets the unchanged capture deadline.
+next frame's preparation.
+
+[Run 37487901613](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37487901613)
+on `f10b19414633e3ac95d0ba1f33183dd2a69da39e` accepted the initial OFF capture
+and both OFF resizes within their unchanged 10-second capture budgets. The
+first resize produced an 813-by-459 PNG for an 813-by-457 backing surface;
+the second produced an 893-by-504 PNG for an 893-by-502 backing surface.
+Both inspected PNGs show the receiver and occluders. Both passed stable
+pre/post geometry, projection alignment, and exterior-background checks.
+They contained 14,839 and 18,156 colorful pixels, with zero exterior mismatch
+pixels and maximum projection-edge errors of 0.802 and 0.473 pixels.
+Their SHA-256 values are
+`49a9862da14828e2ca077a34ba5c69c765acf7d13f349f3ee35157e63fcd8198`
+and `b519b908491a32d52c2515d4f0573cc66497be13a91cea69b9c8e2e67f1be59e`.
+
+For the first resize, the 2,277 ms checkpoint still showed a profile mismatch
+and one JavaScript-ready texture receipt. At 5,011 ms, the profile mismatch
+was false. The renderer was preparing three draws and ten commands, with
+three JavaScript-ready binding-group receipts. Production completion and
+last sequence were both 1,077, with no pending production scopes at that
+sample. The first resized native consumer enqueue occurred approximately
+5,328.9 ms after capture start, compared with 7,475.4 ms in `4d06`.
+This single CI comparison supports the intended receipt progression; it is
+not a deterministic performance measurement. Successful captures retain no
+exact total duration, and the second resize has no four-checkpoint series.
+
+The explicit GPU qualification checkpoints advanced from completed serial
+905 for the initial image to 1,103 and 1,299 after the two resizes. The
+selected consumer remained `engine-advanced-shade-native-no-modifiers`.
+Present draws advanced from 20 after the first resize to 29 after the second,
+and native dispatches from 40 to 58. No device error was retained. The image
+worker reported acknowledged shutdown.
+
+The shadow check then failed its unchanged browser-failure assertion after
+the OFF action, before either ON run. The browser log contains 42
+`net::ERR_ABORTED` request failures and no crash; all 42 events occurred during
+startup, before the first resize. The failure-only delivery snapshot was
+ready with all 349 essential assets verified and zero failed reads, cancelled
+reads, active requests, or queued reads. These counters do not establish the
+ownership or cause of the browser cancellations. Request-failure rejection
+remains unchanged, and ON/OFF shadow parity remains unqualified.
+The inspected artifact is `11425618833`, ZIP SHA-256
+`e5035921e4d1f95f8e7a19ef237a1ae492b6661ab45701258e2a7147fbabfa45`.
 
 ## Saved PNG analysis outside the player
 
@@ -341,6 +381,35 @@ All three source files passed `node --check`, and the scoped diff check
 passed. Independent source review found no blocker after termination
 acknowledgement and unexpected worker exit handling were made explicit.
 
+## Shadow-only response revalidation candidate
+
+[Playwright issue 42742](https://github.com/microsoft/playwright/issues/42742)
+reports complete page-side stream reads followed by `ERR_ABORTED` events with
+the same Playwright 1.63.0 and Chromium 153.0.8010.12 versions. Its synthetic
+`no-cache` control reports normal completion. The report has no application
+cancellation code, but its response framing differs from this fixture. It
+supports a transport-diagnostic hypothesis; it does not prove the cause of
+each event in this run. Canceling an already closed reader does not invoke the
+underlying source cancellation under the
+[Streams cancellation algorithm](https://streams.spec.whatwg.org/#readable-stream-cancel).
+No production stream cleanup change was made on that hypothesis.
+
+The smoke server now selects `Cache-Control: no-cache` only for the
+`advanced-shadow-parity` case and its `/__game/content/manifest.json`,
+`/__baseline/content/manifest.json`, and corresponding
+`content/payload/<64 lowercase hex>.bin` paths. Every other path and game
+retains `no-store`. Body bytes, content lengths, MIME types, path containment,
+and payload hash checks are unchanged. Each OFF/ON page still uses a fresh
+browser context. Existing request routing remains enabled; Playwright
+[documents that routing disables HTTP cache](https://playwright.dev/docs/api/class-browsercontext#browser-context-route).
+The server still serves full bodies and has no conditional-response branch.
+
+The strict request-failure assertion, browser error checks, capture deadline,
+image checks, and GPU completion checks remain unchanged. This is a bounded
+test-server candidate, not a change to the published player's cache policy or
+a claim that aborted requests are harmless. The next exact-commit CI run must
+qualify the candidate. ON/OFF shadow parity remains open.
+
 ## Validation and next step
 
 The source and saved runtime artifacts were inspected. No new runtime or test
@@ -353,9 +422,9 @@ The later saved run identified the screenshot phase. The bounded page-clip
 correction passed `node --check`, the scoped `git diff --check`, and independent
 source review with no blocking finding. Pre/post samples cannot exclude a
 transient change that returns to the original geometry between samples. The
-next authorized shadow run must establish whether capture completes and image
-qualification remains valid. Source checks do not prove that the timeout,
-request failures, or shadow parity are fixed.
+later runtime results described above establish bounded OFF capture for the
+`f10b1941` run. Source checks alone do not prove runtime qualification;
+request failures and ON/OFF shadow parity remain open.
 
 The later `d7fe4e8` artifacts were inspected without a new local runtime or
 test run. The production paragraph placement passed independent source review
