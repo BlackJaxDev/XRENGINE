@@ -8,7 +8,9 @@ import { createOwnedGpuProfile } from './owned-gpu-profile.mjs';
 /** Passive capture: return every original WebGPU object/promise unchanged. Never retain WGSL in evidence. */
 export function installNativeCompileCapture(additionalPasses = []) {
     const shadowPasses = ['shade-native-depth', 'shade-native-depth-msaa',
-        'shade-surface-exports-depth', 'shade-surface-exports-depth-msaa'];
+        'shade-surface-exports-depth', 'shade-surface-exports-depth-msaa',
+        'shade-native-depth-no-decals', 'shade-native-depth-no-decals-msaa',
+        'shade-surface-exports-depth-no-decals', 'shade-surface-exports-depth-no-decals-msaa'];
     if (!Array.isArray(additionalPasses) || additionalPasses.length > shadowPasses.length ||
         additionalPasses.some(pass => !shadowPasses.includes(pass)) ||
         new Set(additionalPasses).size !== additionalPasses.length)
@@ -17,6 +19,8 @@ export function installNativeCompileCapture(additionalPasses = []) {
         'shade-native', 'shade-native-no-modifiers',
         'shade-native-msaa', 'shade-native-no-modifiers-msaa',
         'shade-surface-exports-no-modifiers', 'shade-surface-exports-no-modifiers-msaa',
+        'shade-native-no-decals', 'shade-native-no-decals-msaa',
+        'shade-surface-exports-no-decals', 'shade-surface-exports-no-decals-msaa',
         ...additionalPasses,
     ].map(pass => [`engine-advanced-${pass}`, pass]));
     const adapters = new WeakMap(), devices = new WeakMap(), bindings = new WeakMap();
@@ -254,7 +258,11 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
             };
             const selectedPass = String(recipe.pipeline?.label ?? '').replace(/^engine-advanced-/, '');
             if (!['shade-native', 'shade-native-no-modifiers', 'shade-native-msaa', 'shade-native-no-modifiers-msaa',
-                'shade-surface-exports-no-modifiers', 'shade-surface-exports-no-modifiers-msaa'].includes(selectedPass)
+                'shade-surface-exports-no-modifiers', 'shade-surface-exports-no-modifiers-msaa',
+                'shade-native-no-decals', 'shade-native-depth-no-decals',
+                'shade-native-no-decals-msaa', 'shade-native-depth-no-decals-msaa',
+                'shade-surface-exports-no-decals', 'shade-surface-exports-depth-no-decals',
+                'shade-surface-exports-no-decals-msaa', 'shade-surface-exports-depth-no-decals-msaa'].includes(selectedPass)
                 || recipe.pipeline.label !== `engine-advanced-${selectedPass}`)
                 throw new Error('Native compile isolation captured an unsupported native program label.');
             let { shader, sourceEntry, descriptor } = await readArtifact(selectedPass);
@@ -264,8 +272,9 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
                 || descriptor.source?.sha256 !== recipe.module.sha256 || descriptor.source?.byteLength !== recipe.module.byteLength)
                 throw new Error('Native compile isolation published descriptor/source does not match the observed module and entry point.');
             result.selectedPass = selectedPass;
-            if (selectedPass.includes('-no-modifiers')) {
-                const basePass = selectedPass.replace('-no-modifiers', '');
+            if (selectedPass.includes('-no-modifiers') || selectedPass.includes('-no-decals')) {
+                const noDecals = selectedPass.includes('-no-decals');
+                const basePass = selectedPass.replace(noDecals ? '-no-decals' : '-no-modifiers', '');
                 const { shader: baseShader, sourceEntry: baseSourceEntry, descriptor: base } = await readArtifact(basePass);
                 if (base.name !== `engine-advanced-${basePass}` || base.pass !== basePass ||
                     base.semanticSchemaIdentity !== 'xrengine.engine.compute.v1' ||
@@ -280,15 +289,23 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
                     if (JSON.stringify(canonical(actual)) !== JSON.stringify(canonical(expected)))
                         throw new Error(`Native compile isolation selected ${label} differs from its full-program control.`);
                 };
-                equal(descriptor.semanticSchemaIdentity, 'xrengine.engine.native-unmodified.v1', 'schema identity');
+                equal(descriptor.semanticSchemaIdentity, noDecals ?
+                    'xrengine.engine.native-no-decals.v1' : 'xrengine.engine.native-unmodified.v1', 'schema identity');
                 equal(descriptor.schemaVersion, 3, 'schema version');
                 equal(descriptor.target, 'WebGPUWgsl', 'target');
                 equal(descriptor.sourceLanguage, 'Slang', 'source language');
                 equal(descriptor.workgroupSize, [16, 16, 1], 'workgroup size');
                 equal(descriptor.layout?.vertexBuffers, [], 'vertex buffers');
-                const expectedBindings = selectedPass === 'shade-native-no-modifiers-msaa' ? 40 : 41;
+                const expectedBindings = selectedPass.startsWith('shade-native-') &&
+                    selectedPass.endsWith('-msaa') ? 40 : 41;
                 equal(descriptor.layout?.bindings?.length, expectedBindings, 'binding count');
-                equal(descriptor.defines, [...base.defines, 'XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1'], 'schema defines');
+                equal(descriptor.defines, [...base.defines, noDecals ?
+                    'XR_ADV_NATIVE_DECALS_ABSENT_SCHEMA_VERSION=1' :
+                    'XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1'], 'schema defines');
+                if (noDecals && (!descriptor.defines.includes('XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1') ||
+                    selectedPass.includes('-depth-') && !descriptor.defines.includes('XR_ADV_DEPTH_COMPARISON_BANK=1') ||
+                    descriptor.defines.includes('XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1')))
+                    throw new Error('Native compile isolation selected decal-free program lost its shadow schema.');
                 equal(descriptor.layout, base.layout, 'complete binding layout');
                 for (const key of ['schemaVersion', 'compilerIdentity', 'sourceLanguage', 'matrixLayout', 'coordinates',
                     'entryPoints', 'workgroupSize', 'requiredFeatures', 'requiredLimits', 'includes', 'sourceMap', 'pipeline', 'specialization'])
@@ -338,7 +355,7 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
                     comparison.controlArtifact, 'same-manifest control identity');
                 result.controlArtifact = comparison.controlArtifact;
                 const selectedDescriptor = descriptor, expected = comparison.contract;
-                const controlDescriptor = selectedPass === 'shade-native-no-modifiers'
+                const controlDescriptor = ['shade-native-no-modifiers', 'shade-native-no-decals'].includes(selectedPass)
                     ? (await readArtifact('shade-native')).descriptor : selectedDescriptor;
                 ({ shader, sourceEntry, descriptor } = await readArtifact(expected.pass));
                 for (const key of ['name', 'pass', 'semanticSchemaIdentity', 'entryPoints', 'workgroupSize'])
@@ -485,12 +502,14 @@ export async function runNativeCompileIsolation(chromium, origin, report, config
         freshBrowserProcess: true, applicationBrowserClosed: true, controlBrowserClosed: result.cleanup.browserClosed === true,
         controlRecipeSha256: result.recipeSha256, cleanup: {},
         interpretation: 'Compares the combined Uber helper/body and texture-bank difference. Timeouts are right-censored; neither result changes application checks.' };
-    if (record.pass !== 'shade-native' && record.pass !== 'shade-native-no-modifiers') {
+    if (!['shade-native', 'shade-native-no-modifiers', 'shade-native-no-decals'].includes(record.pass)) {
         comparison.reason = `The observed ${record.pass} program has no equivalent x1 full-native Uber comparison contract.`;
         return;
     }
     if (record.pass === 'shade-native-no-modifiers')
         comparison.interpretation = 'Compares the selected no-modifiers native program with Uber x1. The full native x1 descriptor and layout are verified; the two compiled programs differ in modifier specialization and Uber texture-bank/body. Timeouts are right-censored; neither result changes application checks.';
+    if (record.pass === 'shade-native-no-decals')
+        comparison.interpretation = 'Compares the selected no-decals native program with Uber x1. The full native x1 descriptor and layout are verified; the two compiled programs differ in decal specialization and Uber texture-bank/body. Timeouts are right-censored; neither result changes application checks.';
     const control = result.replay?.cookedArtifact;
     if (result.ownedGpuProfile?.requiresJobTermination) {
         comparison.reason = 'Owned Native profiler cleanup could not be verified; requires ephemeral job termination.';

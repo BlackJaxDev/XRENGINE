@@ -157,8 +157,35 @@ async function publishedShadowArtifacts(root, state) {
         return result;
     };
     const programs = {};
-    for (const pass of ['shade-native-depth', 'shade-native', 'shade-native-no-modifiers'])
+    for (const pass of ['shade-native-depth', 'shade-native', 'shade-native-no-modifiers',
+        'shade-native-no-decals', 'shade-native-depth-no-decals',
+        'shade-native-no-decals-msaa', 'shade-native-depth-no-decals-msaa',
+        'shade-surface-exports-no-decals', 'shade-surface-exports-depth-no-decals',
+        'shade-surface-exports-no-decals-msaa', 'shade-surface-exports-depth-no-decals-msaa'])
         programs[pass] = await pipeline(pass);
+    for (const pass of ['shade-native-no-decals', 'shade-native-depth-no-decals',
+        'shade-native-no-decals-msaa', 'shade-native-depth-no-decals-msaa',
+        'shade-surface-exports-no-decals', 'shade-surface-exports-depth-no-decals',
+        'shade-surface-exports-no-decals-msaa', 'shade-surface-exports-depth-no-decals-msaa']) {
+        const optional = programs[pass].descriptor;
+        const fullPass = pass.replace('-no-decals', '');
+        const full = programs[fullPass]?.descriptor ?? (await pipeline(fullPass)).descriptor;
+        const expectedBindings = pass.startsWith('shade-native-') && pass.endsWith('-msaa') ? 40 : 41;
+        const sourceDependencies = value => value.dependencies.filter(dependency => !dependency.path.endsWith('.recipe.json'));
+        assert(full.name === `engine-advanced-${fullPass}` &&
+            full.semanticSchemaIdentity === 'xrengine.engine.compute.v1' &&
+            optional.semanticSchemaIdentity === 'xrengine.engine.native-no-decals.v1' &&
+            optional.layout.bindings.length === expectedBindings &&
+            equal(optional.defines, [...full.defines, 'XR_ADV_NATIVE_DECALS_ABSENT_SCHEMA_VERSION=1']) &&
+            optional.defines.includes('XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1') &&
+            (!pass.includes('-depth-') || optional.defines.includes('XR_ADV_DEPTH_COMPARISON_BANK=1')) &&
+            !optional.defines.includes('XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1') &&
+            ['entryPoints', 'workgroupSize', 'layout', 'requiredFeatures', 'requiredLimits',
+                'compilerIdentity', 'sourceLanguage', 'matrixLayout', 'coordinates', 'includes',
+                'sourceMap', 'pipeline', 'specialization'].every(field => equal(optional[field], full[field])) &&
+            equal(sourceDependencies(optional), sourceDependencies(full)),
+        `BrowserSmoke.ShadowArtifact: ${pass} differs from its full native program.`);
+    }
     programs.directional = await material('OpaqueShadowDepth', 'depth', 'depth-normal-v1', 'engine-shadow-depth');
     programs.point = await material('OpaquePointShadowDepth', 'point-shadow-depth', 'radial-r16f-v1', 'engine-point-shadow-depth');
     return { receipt, programs };
@@ -286,8 +313,9 @@ export function installShadowGpuObservation() {
         const name = value.pipeline.label;
         // Ordinary native stages are counted by the shared observer. Retain only this shadow family's calls.
         if (value.kind === 'raster' && !['engine-shadow-depth', 'engine-point-shadow-depth'].includes(name) ||
-            value.kind === 'compute' && !['engine-advanced-shade-native-depth', 'engine-advanced-shade-native',
-                'engine-advanced-shade-native-no-modifiers'].includes(name)) return;
+            value.kind === 'compute' && !['engine-advanced-shade-native-depth',
+                'engine-advanced-shade-native-depth-no-decals', 'engine-advanced-shade-native',
+                'engine-advanced-shade-native-no-modifiers', 'engine-advanced-shade-native-no-decals'].includes(name)) return;
         const indirect = operation.includes('Indirect');
         if (value.draws.length >= limit) { evidence.overflow++; return; }
         value.draws.push({ pipelineId: value.pipeline.id, operation,
@@ -387,8 +415,10 @@ function selectedShadowNative(submissions, state, allowPending = false) {
     const labels = Object.keys(submissions.compute).filter(label =>
         /^engine-advanced-shade-(?:native|surface-exports|uber-native)/.test(label) && submissions.compute[label] > 0);
     if (allowPending && labels.length === 0) return null;
-    assert(labels.length === 1 && (state === 'on' ? labels[0] === 'engine-advanced-shade-native-depth' :
-        ['engine-advanced-shade-native', 'engine-advanced-shade-native-no-modifiers'].includes(labels[0])),
+    assert(labels.length === 1 && (state === 'on' ?
+        ['engine-advanced-shade-native-depth', 'engine-advanced-shade-native-depth-no-decals'].includes(labels[0]) :
+        ['engine-advanced-shade-native', 'engine-advanced-shade-native-no-modifiers',
+            'engine-advanced-shade-native-no-decals'].includes(labels[0])),
     `BrowserSmoke.ShadowNativeSelection: ${state} selected ${JSON.stringify(labels)}.`);
     return labels[0];
 }
@@ -1252,7 +1282,7 @@ async function shadowDeliverySnapshot(page, expectedPage) {
 }
 
 async function start(page, origin, mount) {
-    await page.addInitScript(installNativeCompileCapture, ['shade-native-depth']);
+    await page.addInitScript(installNativeCompileCapture, ['shade-native-depth', 'shade-native-depth-no-decals']);
     await page.addInitScript(installAdvancedSubmissionObservation);
     await page.addInitScript(installShadowGpuObservation);
     await page.goto(`${origin}/${mount}/index.html`, { waitUntil: 'domcontentloaded' });

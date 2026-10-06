@@ -99,12 +99,12 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
             frame.AuthoredDecalCommandSignature != AuthoredDecalCommandSignature(in request))
         { reason = "WebGPU.Advanced.ClassificationMissing: shade requires the same frozen view, scene slot, and GPU classification generation."; return false; }
         if (request.MsaaSampleCount == 4) return TryShadeMultisample(in request, instance, visibility, frame, out reason);
-        bool modifiersAbsent = HasModifierAbsentPrograms(instance, in request, frame);
-        WebGpuRenderProgram native = Program(instance, modifiersAbsent ? "shade-native-no-modifiers" : frame.DepthComparisonBank ? "shade-native-depth" : "shade-native");
+        EWebGpuAdvancedNativeShadingFamily nativeFamily = SelectNativeFamily(instance, in request, frame);
+        WebGpuRenderProgram native = Program(instance, NativePass(frame, nativeFamily, false, false));
         WebGpuRenderProgram? uberNative = frame.HasUberRaster ? UberProgram(instance, frame.DepthComparisonBank, false, false) : null;
         WebGpuRenderProgram? uberExports = frame.HasUberRaster && request.RequiresMaterialSurfaceExports ? UberProgram(instance, frame.DepthComparisonBank, false, true) : null;
         WebGpuRenderProgram background = Program(instance, "shade-background");
-        WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, modifiersAbsent ? "shade-surface-exports-no-modifiers" : frame.DepthComparisonBank ? "shade-surface-exports-depth" : "shade-surface-exports") : null;
+        WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, NativePass(frame, nativeFamily, false, true)) : null;
         WebGpuRenderProgram? exportBackground = request.RequiresMaterialSurfaceExports ? Program(instance, "shade-background-exports") : null;
         bool ready = Prepare(native) & Prepare(background);
         if (exports is not null) ready &= Prepare(exports) & Prepare(exportBackground!);
@@ -235,6 +235,14 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
             "shade-native-no-modifiers-msaa" => "advanced::shade-native-no-modifiers-msaa",
             "shade-surface-exports-no-modifiers" => "advanced::shade-surface-exports-no-modifiers",
             "shade-surface-exports-no-modifiers-msaa" => "advanced::shade-surface-exports-no-modifiers-msaa",
+            "shade-native-no-decals" => "advanced::shade-native-no-decals",
+            "shade-native-depth-no-decals" => "advanced::shade-native-depth-no-decals",
+            "shade-native-no-decals-msaa" => "advanced::shade-native-no-decals-msaa",
+            "shade-native-depth-no-decals-msaa" => "advanced::shade-native-depth-no-decals-msaa",
+            "shade-surface-exports-no-decals" => "advanced::shade-surface-exports-no-decals",
+            "shade-surface-exports-depth-no-decals" => "advanced::shade-surface-exports-depth-no-decals",
+            "shade-surface-exports-no-decals-msaa" => "advanced::shade-surface-exports-no-decals-msaa",
+            "shade-surface-exports-depth-no-decals-msaa" => "advanced::shade-surface-exports-depth-no-decals-msaa",
             "shade-uber-native" => "advanced::shade-uber-native",
             "shade-uber-native-depth" => "advanced::shade-uber-native-depth",
             "shade-uber-native-msaa" => "advanced::shade-uber-native-msaa",

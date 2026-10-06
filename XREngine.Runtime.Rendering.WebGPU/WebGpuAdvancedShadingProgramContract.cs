@@ -11,19 +11,47 @@ internal static class WebGpuAdvancedShadingProgramContract
         "advanced::shade-native-no-modifiers", "advanced::shade-surface-exports-no-modifiers",
         "advanced::shade-native-no-modifiers-msaa", "advanced::shade-surface-exports-no-modifiers-msaa",
     ];
+    internal static readonly string[] DecalAbsentBindings =
+    [
+        "advanced::shade-native-no-decals", "advanced::shade-native-depth-no-decals",
+        "advanced::shade-native-no-decals-msaa", "advanced::shade-native-depth-no-decals-msaa",
+        "advanced::shade-surface-exports-no-decals", "advanced::shade-surface-exports-depth-no-decals",
+        "advanced::shade-surface-exports-no-decals-msaa", "advanced::shade-surface-exports-depth-no-decals-msaa",
+    ];
 
     internal static void Validate(ShaderProgramArtifact artifact, string pass)
     {
-        if (pass == "shade-msaa-resolve") { WebGpuAdvancedMsaaProgramContract.Validate(artifact, pass); return; }
+        if (pass == "shade-msaa-resolve")
+        {
+            if (HasDecalAbsentDefine(artifact)) throw Invalid();
+            WebGpuAdvancedMsaaProgramContract.Validate(artifact, pass);
+            return;
+        }
         string requestedPass = pass;
         bool modifiersAbsent = pass is "shade-native-no-modifiers" or "shade-surface-exports-no-modifiers" or
             "shade-native-no-modifiers-msaa" or "shade-surface-exports-no-modifiers-msaa";
+        bool decalsAbsent = pass is "shade-native-no-decals" or "shade-native-depth-no-decals" or
+            "shade-native-no-decals-msaa" or "shade-native-depth-no-decals-msaa" or
+            "shade-surface-exports-no-decals" or "shade-surface-exports-depth-no-decals" or
+            "shade-surface-exports-no-decals-msaa" or "shade-surface-exports-depth-no-decals-msaa";
         if (modifiersAbsent) pass = pass switch
         {
             "shade-native-no-modifiers" => "shade-native",
             "shade-surface-exports-no-modifiers" => "shade-surface-exports",
             "shade-native-no-modifiers-msaa" => "shade-native-msaa",
             "shade-surface-exports-no-modifiers-msaa" => "shade-surface-exports-msaa",
+            _ => throw Invalid(),
+        };
+        if (decalsAbsent) pass = pass switch
+        {
+            "shade-native-no-decals" => "shade-native",
+            "shade-native-depth-no-decals" => "shade-native-depth",
+            "shade-native-no-decals-msaa" => "shade-native-msaa",
+            "shade-native-depth-no-decals-msaa" => "shade-native-depth-msaa",
+            "shade-surface-exports-no-decals" => "shade-surface-exports",
+            "shade-surface-exports-depth-no-decals" => "shade-surface-exports-depth",
+            "shade-surface-exports-no-decals-msaa" => "shade-surface-exports-msaa",
+            "shade-surface-exports-depth-no-decals-msaa" => "shade-surface-exports-depth-msaa",
             _ => throw Invalid(),
         };
         bool uberRaster = pass.StartsWith("shade-uber-", StringComparison.Ordinal);
@@ -47,13 +75,18 @@ internal static class WebGpuAdvancedShadingProgramContract
         if (uberRaster && artifact.SemanticSchemaIdentity != "xrengine.engine.uber-raster-consumer.v2") throw Invalid();
         if (modifiersAbsent && (artifact.SemanticSchemaIdentity != "xrengine.engine.native-unmodified.v1" ||
             artifact.ComputeEntryPoint != (multisample ? "advancedShadeNativeMsaa" : "advancedShadeNative"))) throw Invalid();
+        if (decalsAbsent && (artifact.SemanticSchemaIdentity != "xrengine.engine.native-no-decals.v1" ||
+            artifact.ComputeEntryPoint != (multisample ? "advancedShadeNativeMsaa" : "advancedShadeNative"))) throw Invalid();
+        if (HasDecalAbsentDefine(artifact) != decalsAbsent ||
+            (artifact.SemanticSchemaIdentity == "xrengine.engine.native-no-decals.v1") != decalsAbsent)
+            throw Invalid();
         if (artifact.Pass != requestedPass || artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.Resources.Length != count ||
             artifact.ComputeEntryPoint is null || artifact.VertexEntryPoint is not null || artifact.FragmentEntryPoint is not null ||
             artifact.ComputeWorkgroupSize != (finalize ? new ShaderComputeWorkgroupSize(64, 1, 1) : new ShaderComputeWorkgroupSize(16, 16, 1)))
             throw Invalid();
         if (native)
         {
-            if (!HasNativeSchemas(artifact, exports, depthBank, uberRaster, modifiersAbsent))
+            if (!HasNativeSchemas(artifact, exports, depthBank, uberRaster, modifiersAbsent, decalsAbsent))
                 throw new NotSupportedException("WebGPU.Advanced.NativeSchemaMismatch: recook native shading and exports with engine-surface schema 5, Uber-base schema 1, the 36-table scene directory, authored-basis/decal/shadow/AO schema 1, and the selected texture-bank contract.");
             for (uint binding = 0; binding < 7; binding++) Require(artifact, 0, binding, "read-only-storage", 4);
             Require(artifact, 0, 7, "uniform", 944, "FrozenView");
@@ -98,7 +131,30 @@ internal static class WebGpuAdvancedShadingProgramContract
         }
     }
 
-    private static bool HasNativeSchemas(ShaderProgramArtifact artifact, bool exports, bool depthBank, bool uberRaster, bool modifiersAbsent)
+    private static bool HasDecalAbsentDefine(ShaderProgramArtifact artifact)
+    {
+        if (artifact.DescriptorBytes.IsDefaultOrEmpty) return false;
+        Utf8JsonReader reader = new(artifact.DescriptorBytes.AsSpan());
+        while (reader.Read())
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName || reader.CurrentDepth != 1) continue;
+            if (!reader.ValueTextEquals("defines"u8))
+            {
+                if (!reader.Read()) return false;
+                reader.Skip();
+                continue;
+            }
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray) return false;
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                if (reader.TokenType == JsonTokenType.String &&
+                    reader.ValueSpan.StartsWith("XR_ADV_NATIVE_DECALS_ABSENT_SCHEMA_VERSION"u8))
+                    return true;
+            return false;
+        }
+        return false;
+    }
+
+    private static bool HasNativeSchemas(ShaderProgramArtifact artifact, bool exports, bool depthBank, bool uberRaster, bool modifiersAbsent, bool decalsAbsent)
     {
         if (artifact.SourceLanguage != "Slang" || artifact.DescriptorBytes.IsDefaultOrEmpty) return false;
         // Program validation also runs while recording. Inspect the retained,
@@ -114,11 +170,11 @@ internal static class WebGpuAdvancedShadingProgramContract
                 continue;
             }
             if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray) return false;
-            bool schemaSeen = false, exportsSeen = false, shadowSeen = false, depthSeen = false, ambientOcclusionSeen = false, decalsSeen = false, basisSeen = false, uberSeen = false, directorySeen = false, rasterSeen = false, modifiersAbsentSeen = false;
+            bool schemaSeen = false, exportsSeen = false, shadowSeen = false, depthSeen = false, ambientOcclusionSeen = false, decalsSeen = false, basisSeen = false, uberSeen = false, directorySeen = false, rasterSeen = false, modifiersAbsentSeen = false, decalsAbsentSeen = false;
             while (reader.Read())
             {
                 if (reader.TokenType == JsonTokenType.EndArray)
-                    return modifiersAbsentSeen == modifiersAbsent && rasterSeen == uberRaster && schemaSeen && basisSeen && uberSeen && directorySeen && shadowSeen && ambientOcclusionSeen && decalsSeen && exportsSeen == exports && depthSeen == depthBank;
+                    return modifiersAbsentSeen == modifiersAbsent && decalsAbsentSeen == decalsAbsent && rasterSeen == uberRaster && schemaSeen && basisSeen && uberSeen && directorySeen && shadowSeen && ambientOcclusionSeen && decalsSeen && exportsSeen == exports && depthSeen == depthBank;
                 if (reader.TokenType != JsonTokenType.String) return false;
                 if (reader.ValueTextEquals("XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=6"u8))
                 {
@@ -129,6 +185,11 @@ internal static class WebGpuAdvancedShadingProgramContract
                 {
                     if (!modifiersAbsent || modifiersAbsentSeen) return false;
                     modifiersAbsentSeen = true;
+                }
+                else if (reader.ValueTextEquals("XR_ADV_NATIVE_DECALS_ABSENT_SCHEMA_VERSION=1"u8))
+                {
+                    if (!decalsAbsent || decalsAbsentSeen || modifiersAbsentSeen || rasterSeen) return false;
+                    decalsAbsentSeen = true;
                 }
                 else if (reader.ValueTextEquals("XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION=2"u8))
                 {

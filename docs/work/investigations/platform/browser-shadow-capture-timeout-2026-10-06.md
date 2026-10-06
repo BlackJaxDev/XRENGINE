@@ -716,5 +716,77 @@ cases ran against the exact shipping `shadow-image-worker.mjs` source without
 a codec guard change. CI remains pinned to Node 22. These checks ran no
 browser or GPU workload. Independent source review found no blocking geometry,
 GPU, or lifetime issue. A later authorized runtime run remains necessary.
-No runtime result exists for the added small profile at the time of this note.
-Full-size shadow coverage remains open.
+The later small-profile result is recorded below. Full-size shadow coverage
+remains open.
+
+## Native shading with shadows and no decals
+
+The saved small-profile run under
+`Build/_AgentValidation/00000000-000000-shared/small-shadow-profile-publication/runtime-1e5/`
+passed the first shadow OFF image and two OFF resizes. The first shadow ON
+start failed its 45-second deadline while the native
+`engine-advanced-shade-native-depth` compute pipeline was pending for
+37.2 seconds. The exact selected descriptor is
+`efc4c15b7c14dc2f7e76633e7b6695e4f8507666f669ade963d665d84ec68d22`.
+Its 379,453-byte WGSL has SHA-256
+`084e8517586fcbf7b094e1a55686f7bed23b880840f18bcf60b3503edbc54353`.
+The source cook is under the adjacent `native-cook-7e/` directory. The full
+shader includes decal evaluation even when the frozen publication has no
+selected decals. This makes decal code size a candidate cause of the longer
+ON pipeline creation. The evidence does not establish the compiler's internal
+cause or a corrected startup time.
+
+The bounded production specialization selects eight optional native programs
+with `xrengine.engine.native-no-decals.v1`. Each program retains its exact
+full counterpart's ABI, shadow logic, depth comparison bank, surface exports,
+and multisample mode. The new define removes only the decal evaluator. Both
+original decal call points still validate the authored selection range when
+the authored-decal flag is set, including an empty range with an invalid
+offset. Selection requires a published package, matching nonzero global and
+material sequences, zero selected authored decals, and no enabled generic
+decal in the complete physical range for the view. Shadow lights and the
+depth comparison bank remain eligible. The existing no-modifiers family takes
+priority when its proof and companion programs are complete. A selected
+family stays fixed while pipeline preparation is pending. Missing optional
+programs use the full family; a present malformed program fails installation.
+
+The saved runtime result predates this specialization. No new ON runtime
+qualification or performance result is claimed here. The strict startup,
+shadow parity, image, and request-failure checks still apply.
+
+The isolated .NET 10.0.401 ShaderCooker build completed with no warnings or
+errors. The final Slang 2026.8 cook packaged the 20 existing programs and
+eight new variants. Its exact command, build log, cook log, manifest, and
+per-variant comparison are under
+`Build/_AgentValidation/00000000-000000-shared/small-shadow-profile-publication/native-cook-no-decals/`.
+All 20 existing WGSL SHA-256 values match `native-cook-7e/`. Each new
+variant has the same reflected layout, entry point, workgroup, required
+features, and limits as its full counterpart. The generated WGSL retains
+`XR_ADV_EvaluateShadow`, `XR_WEB_ShadowCoordinate`, and standalone shadow
+sampling. It has no `XR_ADV_ApplyDecalToSurface`,
+`XR_ADV_ApplyDecalToReceiverNormal`, or `XR_ADV_TryNextDecal` evaluator.
+The depth/no-decals WGSL is 344,507 bytes; its full counterpart is
+379,453 bytes. These static checks do not establish a browser startup time
+or shadow image parity.
+
+The final isolated WebGPU Release build completed with no warnings or errors.
+Its log is
+`Build/_AgentValidation/00000000-000000-shared/shadow-decal-specialization/native-build-final.log`.
+Independent production source review found no blocking issue in the frozen
+decal proof, companion selection, or shader contract. The selected family
+keeps its sample and surface-export requirements during pending preparation;
+a later classified frame can select a new complete family when those
+requirements change. The passing build, cook, and source review do not prove
+the shadow ON runtime result. That validation remains open.
+
+The CI inventory now requires all 28 named native artifacts. The eight new
+companions must match their full counterpart's layout, coordinate contract,
+entry point, workgroup, dependencies, features, and limits, with the exact
+additional define and semantic identity. The shadow harness recognizes the
+exact depth/no-decals program and still requires real shadow production and
+consumption. The existing compile diagnostic recognizes the same companions;
+this change does not enable another trace or change a deadline. Node syntax,
+PowerShell parsing, and checks against the cooked artifacts passed. Negative
+descriptor cases rejected changed coordinates, matrix layout, pass, schema,
+target, and missing shadow defines. Independent review of these three checks
+found no remaining issue. Runtime acceptance remains separate.

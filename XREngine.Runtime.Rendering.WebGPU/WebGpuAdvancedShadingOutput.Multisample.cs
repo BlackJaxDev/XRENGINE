@@ -10,12 +10,12 @@ internal sealed partial class WebGpuAdvancedShadingOutput
     private bool TryShadeMultisample(in AdvancedVisibilityStageBackendRequest request, XRRenderPipelineInstance instance,
         WebGpuAdvancedVisibilityFrame visibility, WebGpuAdvancedShadingFrame frame, out string reason)
     {
-        bool modifiersAbsent = HasModifierAbsentPrograms(instance, in request, frame);
-        WebGpuRenderProgram native = Program(instance, modifiersAbsent ? "shade-native-no-modifiers-msaa" : frame.DepthComparisonBank ? "shade-native-depth-msaa" : "shade-native-msaa");
+        EWebGpuAdvancedNativeShadingFamily nativeFamily = SelectNativeFamily(instance, in request, frame);
+        WebGpuRenderProgram native = Program(instance, NativePass(frame, nativeFamily, true, false));
         WebGpuRenderProgram? uberNative = frame.HasUberRaster ? UberProgram(instance, frame.DepthComparisonBank, true, false) : null;
         WebGpuRenderProgram? uberExports = frame.HasUberRaster && request.RequiresMaterialSurfaceExports ? UberProgram(instance, frame.DepthComparisonBank, true, true) : null;
         WebGpuRenderProgram resolve = Program(instance, "shade-msaa-resolve");
-        WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, modifiersAbsent ? "shade-surface-exports-no-modifiers-msaa" : frame.DepthComparisonBank ? "shade-surface-exports-depth-msaa" : "shade-surface-exports-msaa") : null;
+        WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, NativePass(frame, nativeFamily, true, true)) : null;
         WebGpuRenderProgram? clearExports = request.RequiresMaterialSurfaceExports ? Program(instance, "shade-background-exports-msaa") : null;
         bool ready = Prepare(native) & Prepare(resolve);
         if (exports is not null) ready &= Prepare(exports) & Prepare(clearExports!);

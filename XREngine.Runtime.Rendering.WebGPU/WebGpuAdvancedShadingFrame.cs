@@ -34,6 +34,12 @@ internal sealed class WebGpuAdvancedShadingFrame : IDisposable
     internal int AuthoredDecalCount;
     internal bool DepthComparisonBank;
     internal bool NativeModifiersAbsent;
+    internal bool NativeDecalsAbsent;
+    internal EWebGpuAdvancedNativeShadingFamily SelectedNativeFamily;
+    internal uint SelectedNativeFamilySampleCount;
+    internal bool SelectedNativeFamilyRequiresExports;
+    internal uint SelectedNativeFamilyFrameSequence;
+    internal ulong SelectedNativeFamilyPreparationGeneration;
     internal bool HasUberRaster;
     internal uint Width;
     internal uint Height;
