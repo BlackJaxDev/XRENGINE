@@ -15,6 +15,7 @@ $repo = (Resolve-Path -LiteralPath $RepoRoot).Path.TrimEnd('\')
 $run = [IO.Path]::GetFullPath($RunRoot).TrimEnd('\')
 $nodeExe = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $ghExe = (Get-Command gh.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$dotnetExe = if ($Mode -eq 'Prepare') { (Get-Command dotnet.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source } else { $null }
 $gate = Join-Path $PSScriptRoot 'admit-network-walkthrough.mjs'
 $nodeScript = Join-Path $PSScriptRoot 'run-real-network-walkthrough.mjs'
 $producer = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'producer.json') -Raw | ConvertFrom-Json
@@ -354,6 +355,39 @@ foreach ($pair in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
 }
 $runtimeEnvironmentEntries.Sort([StringComparer]::OrdinalIgnoreCase)
 $runtimeEnvironment = [string]::Join([char]0, $runtimeEnvironmentEntries) + [char]0 + [char]0
+$buildEnvironmentEntries = [Collections.Generic.List[string]]::new($runtimeEnvironmentEntries)
+$buildEnvironmentEntries.AddRange([string[]] @(
+    'DOTNET_GENERATE_ASPNET_CERTIFICATE=false', 'DOTNET_CLI_TELEMETRY_OPTOUT=1', 'DOTNET_NOLOGO=1',
+    'DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true', 'MSBUILDDISABLENODEREUSE=1'))
+$buildEnvironmentEntries.Sort([StringComparer]::OrdinalIgnoreCase)
+$buildEnvironment = [string]::Join([char]0, $buildEnvironmentEntries) + [char]0 + [char]0
+$buildEvidence = [ordered]@{}
+function Invoke-OwnedNativeBuild($Job, [string] $Name, [string] $Project, [string[]] $ExtraArguments) {
+    # Builds share the invocation clock and leave the original browser/cleanup
+    # windows inside the 30-minute preparation step. Logs remain private.
+    $log = Join-Path $run "private-workers/build-$Name.log"
+    $evidence = [ordered]@{ result = 'incomplete'; exitCode = $null; remainingChildren = 0; allExited = $false }
+    $buildEvidence[$Name] = $evidence
+    $arguments = @('build', $Project, '--configuration', 'Release', '--disable-build-servers', '-m:1', '-nr:false',
+        '-p:UseSharedCompilation=false', '-p:MSBuildEnableWorkloadResolver=false',
+        '-fileLogger', "-fileLoggerParameters:LogFile=$log;Verbosity=minimal") + $ExtraArguments
+    if ($invocationWatch.Elapsed.TotalMinutes -ge 25) { throw 'NativeBuildBudgetExceeded' }
+    $Job.Start($dotnetExe, $arguments, $repo, $buildEnvironment)
+    while (-not $Job.Wait(1000)) {
+        if ($invocationWatch.Elapsed.TotalMinutes -ge 25) { throw 'NativeBuildBudgetExceeded' }
+        if ((Test-Path -LiteralPath $log) -and (Get-Item -LiteralPath $log).Length -gt 4MB) { throw 'NativeBuildLogBoundExceeded' }
+    }
+    $evidence.exitCode = $Job.ExitCode
+    $evidence.remainingChildren = $Job.Active
+    if ($Job.Active -gt 0) { $Job.Terminate() }
+    $exitWatch = [Diagnostics.Stopwatch]::StartNew()
+    while ($Job.Active -gt 0 -and $exitWatch.Elapsed.TotalSeconds -lt 5) { Start-Sleep -Milliseconds 100 }
+    $evidence.allExited = $Job.Active -eq 0
+    if (-not $evidence.allExited) { throw 'NativeBuildExitUnconfirmed' }
+    if ((Test-Path -LiteralPath $log) -and (Get-Item -LiteralPath $log).Length -gt 4MB) { throw 'NativeBuildLogBoundExceeded' }
+    if ($evidence.exitCode -ne 0) { $evidence.result = 'failed'; throw 'Normal native build failed.' }
+    $evidence.result = 'passed'
+}
 $site = Join-Path $run 'published-site'
 $archive = Join-Path $run 'approved-publisher-artifact.zip'
 $serverExe = Join-Path $repo 'XREngine.Server\bin\Release\net10.0-windows10.0.26100.0\XREngine.Server.exe'
@@ -361,6 +395,8 @@ $serviceExe = Join-Path $repo 'XREngine.ControlPlane.Service\bin\Release\net10.0
 $certificateThumbprint = $null
 $certificateJob = $null
 $preflightJob = $null
+$serverBuildJob = $null
+$serviceBuildJob = $null
 $trustAttemptConsumed = $false
 $ownedJob = $null
 $liveWatch = $null
@@ -395,14 +431,13 @@ try {
        artifactDigest = ('sha256:' + $producer.artifactSha256); archiveBytes = $artifact.size_in_bytes;
        packageVerification = $verification } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $run 'artifact-provenance.public.json')
     $supervisorStage = 'BuildServer'
-    & dotnet build XREngine.Server/XREngine.Server.csproj --configuration Release `
-        --disable-build-servers -m:1 -nr:false -p:UseSharedCompilation=false -p:MSBuildEnableWorkloadResolver=false `
-        -p:XREngineRendererBackends=None -p:XREngineIncludeVulkanBackend=false -p:XREngineIncludeOpenGlBackend=false
-    if ($LASTEXITCODE -ne 0) { throw 'Normal Server build failed.' }
+    New-Item -ItemType Directory -Path (Join-Path $run 'private-workers') -ErrorAction Stop | Out-Null
+    $serverBuildJob = [WalkthroughOwnedJob]::new()
+    Invoke-OwnedNativeBuild $serverBuildJob 'server' 'XREngine.Server/XREngine.Server.csproj' @(
+        '-p:XREngineRendererBackends=None', '-p:XREngineIncludeVulkanBackend=false', '-p:XREngineIncludeOpenGlBackend=false')
     $supervisorStage = 'BuildService'
-    & dotnet build XREngine.ControlPlane.Service/XREngine.ControlPlane.Service.csproj --configuration Release `
-        --disable-build-servers -m:1 -nr:false -p:UseSharedCompilation=false -p:MSBuildEnableWorkloadResolver=false
-    if ($LASTEXITCODE -ne 0) { throw 'Normal ControlPlane.Service build failed.' }
+    $serviceBuildJob = [WalkthroughOwnedJob]::new()
+    Invoke-OwnedNativeBuild $serviceBuildJob 'service' 'XREngine.ControlPlane.Service/XREngine.ControlPlane.Service.csproj' @()
     if (-not (Test-Path -LiteralPath $serverExe -PathType Leaf) -or -not (Test-Path -LiteralPath $serviceExe -PathType Leaf)) { throw 'Normal executables missing.' }
     # Same published runtime and strict real first-frame gate, before any trust
     # consumption/mutation. The browser must close cleanly before continuing.
@@ -488,7 +523,7 @@ try {
     $cleanupErrors = [Collections.Generic.List[string]]::new()
     # Handles pin ownership; no PID/name search or environment/private-file read.
     try {
-        foreach ($jobToStop in @($preflightJob, $certificateJob, $ownedJob)) {
+        foreach ($jobToStop in @($serverBuildJob, $serviceBuildJob, $preflightJob, $certificateJob, $ownedJob)) {
             if ($jobToStop) {
                 if ($jobToStop.Active -gt 0) { $jobToStop.Terminate() }
                 while ($jobToStop.Active -gt 0 -and $cleanupWatch.Elapsed.TotalSeconds -lt 30) { Start-Sleep -Milliseconds 100 }
@@ -497,7 +532,11 @@ try {
         }
         $cleanup.allOwnedProcessesExited = $true
     } catch { $cleanupErrors.Add('OwnedJobExitUnconfirmed') }
-    finally { if ($preflightJob) { $preflightJob.Dispose() }; if ($certificateJob) { $certificateJob.Dispose() }; if ($ownedJob) { $ownedJob.Dispose() } }
+    finally {
+        foreach ($jobToDispose in @($serverBuildJob, $serviceBuildJob, $preflightJob, $certificateJob, $ownedJob)) {
+            if ($jobToDispose) { $jobToDispose.Dispose() }
+        }
+    }
     # Local certificate and file operations are isolated too: a hung provider or
     # filesystem cannot hold the supervisor indefinitely. Stop after 25 seconds.
     $cleanupJob = $null
@@ -524,7 +563,7 @@ try {
     $cleanup.errors = @($cleanupErrors)
     $cleanup | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $run 'cleanup.public.json')
     @{ result = $(if ($phaseSucceeded -and $cleanupErrors.Count -eq 0) { 'passed' } else { 'failed' });
-       mode = $Mode; stage = $supervisorStage; trustAttemptConsumed = $trustAttemptConsumed; certificateMutationReached = ($null -ne $certificateJob); cleanup = $cleanup } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $run 'supervisor-result.public.json')
+       mode = $Mode; stage = $supervisorStage; trustAttemptConsumed = $trustAttemptConsumed; certificateMutationReached = ($null -ne $certificateJob); builds = $buildEvidence; cleanup = $cleanup } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $run 'supervisor-result.public.json')
     if ($cleanupErrors.Count) { throw 'Cleanup incomplete: retain this runner privately; no retry/upload/reuse. Consult cleanup.public.json.' }
 }
 
