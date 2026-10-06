@@ -464,17 +464,16 @@ no-URL claim was incorrect for those process logs.
 The original request `7c47e15a-8186-430c-bc15-56736d2d8a6f` is retired. Do not
 reuse its activation record or its consumed one-run approval. The separately
 approved replacement uses request `3e875a33-496f-4054-a609-af4970a51fe1` and
-`.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json`. Its source
-authorization permits only the single non-forced push immediately after
-`f0d323533ebfa92ccaca01b63bd16fca98e8a36d`. A separate activation record must
-bind that source commit and its exact workflow run before any capture can start.
-The original UI assertions and deadlines remain active.
+`.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json`. This request
+is also consumed. Its source authorization is disabled and its activation record
+is retired. Do not rearm or rerun either consumed request. No further capture is
+authorized. The original UI assertions and deadlines remain active.
 
 The first activation for this replacement reached preparation in
 [run 37427839671, job 112166466744](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37427839671/job/112166466744).
 The empty `DEBUG` import check failed before the persistent claim, browser launch
-or trace. That activation record is retired. The capture allowance remains unused;
-the corrected source needs a new exact source/run activation. Its failure artifact
+or trace. That activation record was retired and left the capture allowance unused
+at that point. Its failure artifact
 is `editor-ui-parity-browser-qualification`, ID `11397631830`, SHA-256
 `a2ccba410c6c931d7ce1656488853c57520b7cba670fce9d0aff43d862b2983a`.
 
@@ -482,9 +481,25 @@ The next activation selected source `1eb898c77020a15012fdb918b2cfdac2db4577c6`,
 which preceded the required native DLL staging correction. GitHub superseded
 [run 37437468558](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37437468558)
 before any job started. The completed run is cancelled and has zero jobs. It
-created no claim, browser or trace, and its activation record is retired. The
-source now binds to the corrected prerequisite commit above. The same single
-capture allowance remains unused.
+created no claim, browser or trace. Its activation record was retired, and the
+capture allowance remained unused at that point.
+
+The replacement capture was consumed by
+[run 37439311782, job 112216652475](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37439311782/job/112216652475).
+The player reached the loaded initial checkpoint. `Tracing.start` did not
+acknowledge within its three-second start bound, so the recorder aborted with
+`stage: start` and `reason: Budget`. It retained 32 sanitized events and 23,304
+accounted input bytes. Stop and completion were acknowledged. The session
+detached and the owned browser exited; no shutdown uncertainty was reported.
+Drain time was 41.4348 ms. The four-file report/log artifact contains no raw trace,
+browser debug log or WebSocket control URL.
+
+The trace is incomplete. Its abort assertion stopped the UI diagnostic before
+the ordinary initial two-frame check, so it does not establish the cause of the
+original frame stall or UI acceptance. All recording, drain, size and assertion
+limits remain unchanged. The replacement artifact is
+`editor-ui-parity-browser-qualification`, ID `11403577899`, SHA-256
+`a421ef20f51e44b09cd7dcfa03b6d5751145a5b58890e60c44f9b13ab73f705b`.
 
 The original capture artifact is `editor-ui-parity-browser-qualification`, ID
 `11390519203`, SHA-256
