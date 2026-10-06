@@ -421,7 +421,9 @@ does not receive that token.
 The trace uses an owned Playwright browser server bound to loopback, with the
 same browser launch settings. The approved replacement requires `DEBUG=''`
 before Node imports Playwright. This suppresses browser debug logging that could
-retain the temporary loopback control URL. Launch and connection errors use
+retain the temporary loopback control URL. The pinned Playwright dependency
+deletes an empty `DEBUG` value during import, so the later claim accepts an empty
+or absent value. Every nonempty value remains rejected. Launch and connection errors use
 fixed diagnostic codes. If launch fails before Playwright returns the owned
 process handle, the report marks cleanup as unverified. A five-second Node exit
 deadline invokes Playwright's existing cleanup hook for its own child process
@@ -464,10 +466,19 @@ reuse its activation record or its consumed one-run approval. The separately
 approved replacement uses request `3e875a33-496f-4054-a609-af4970a51fe1` and
 `.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json`. Its source
 authorization permits only the single non-forced push immediately after
-`add42c95ff39937585aa94d5c2b9659b40434956`. A separate activation record must
+`9bcbda0790f5ebe2ddc4874561e823dbb2aed8ca`. A separate activation record must
 bind that source commit and its exact workflow run before any capture can start.
 The original UI assertions and deadlines remain active.
-The retained artifact is `editor-ui-parity-browser-qualification`, ID
+
+The first activation for this replacement reached preparation in
+[run 37427839671, job 112166466744](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37427839671/job/112166466744).
+The empty `DEBUG` import check failed before the persistent claim, browser launch
+or trace. That activation record is retired. The capture allowance remains unused;
+the corrected source needs a new exact source/run activation. Its failure artifact
+is `editor-ui-parity-browser-qualification`, ID `11397631830`, SHA-256
+`a2ccba410c6c931d7ce1656488853c57520b7cba670fce9d0aff43d862b2983a`.
+
+The original capture artifact is `editor-ui-parity-browser-qualification`, ID
 `11390519203`, SHA-256
 `ca089afa7d6d86916ba5939f9960427fbfca90cc83638c869769157c84d618b5`.
 
