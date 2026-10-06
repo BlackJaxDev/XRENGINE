@@ -452,6 +452,9 @@ float4 XR_ADV_FetchShadow(XRAdvancedShadowRecord record, XRAdvancedTextureRecord
 #include "AdvancedShadeStandaloneShadows.slang"
 
 float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, XRAdvancedSurface surface, float3 N, float3 L,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+#endif
     out uint reason)
 {
     reason = XR_ADV_SHADOW_OK;
@@ -483,7 +486,11 @@ float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, XRAdvancedSurface
         return 1.0;
     }
     if ((record.flags & 512u) != 0u)
-        return XR_WEB_SampleStandaloneShadow(record, textureRecord, textureReference, surface, N, reason);
+        return XR_WEB_SampleStandaloneShadow(record, textureRecord, textureReference, surface, N,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+            preparedPrimitive,
+#endif
+            reason);
     float3 position = surface.worldPosition;
     float3 receiverPosition = position + N * max(record.depthBiasAndFilter.z, 0.0);
     float3 coordinate;
@@ -550,6 +557,9 @@ float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, XRAdvancedSurface
 }
 
 float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surface, float3 N, float3 L,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+#endif
     out uint reason)
 {
     reason = XR_ADV_SHADOW_OK;
@@ -601,7 +611,11 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
         float3 unusedCoordinate;
         if (!XR_ADV_ProjectShadow(record, surface.worldPosition, unusedCoordinate)) continue;
         uint sampleReason;
-        float visibility = XR_ADV_SampleShadowRecord(record, surface, N, L, sampleReason);
+        float visibility = XR_ADV_SampleShadowRecord(record, surface, N, L,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+            preparedPrimitive,
+#endif
+            sampleReason);
         if (blending)
         {
             reason = max(reason, sampleReason);
@@ -745,6 +759,9 @@ float3 XR_ADV_EvaluateLight(
     float metallic,
     float specularIntensity,
     bool engineSurface,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+#endif
     bool receiveShadows)
 {
     XRAdvancedLightRecord light = XR_ADV_LoadLight(index);
@@ -772,7 +789,11 @@ float3 XR_ADV_EvaluateLight(
 #if defined(XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION)
     float visibility = 1.0;
 #else
-    float visibility = receiveShadows ? XR_ADV_EvaluateShadow(light, surface, N, L, reason) : 1.0;
+    float visibility = receiveShadows ? XR_ADV_EvaluateShadow(light, surface, N, L,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+        preparedPrimitive,
+#endif
+        reason) : 1.0;
 #endif
     shadowReason = max(shadowReason, reason);
     shadowVisibility = min(shadowVisibility, visibility);
@@ -811,6 +832,10 @@ void XR_ADV_EvaluateNativeOpaqueSample(
 #if !defined(XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION)
     standaloneShadowHelpersReady = false;
 #endif
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+    // Each sample owns a fresh packet, including after any earlier sample failed.
+    XRAdvancedPreparedShadowPrimitive preparedPrimitive = (XRAdvancedPreparedShadowPrimitive)0;
+#endif
     directDiffuse = float3(0.0);
     directSpecular = float3(0.0);
 
@@ -836,7 +861,11 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     XRAdvancedSurface surface = XR_ADV_InvalidSurface(
         identity, XR_ADV_RECONSTRUCTION_MATERIAL_NOT_RESIDENT);
     bool valid = resolved && metadataMatchesView &&
-        XR_ADV_TryReconstructSurface(identity, metadata, depth, samplePixelPosition, surface);
+        XR_ADV_TryReconstructSurface(identity, metadata, depth, samplePixelPosition,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+            preparedPrimitive,
+#endif
+            surface);
     if (!valid || surface.viewIndex != viewIndex ||
         (repair && (u_Push.flags & XR_ADV_SHADING_REQUIRED) != 0u))
     {
@@ -966,7 +995,11 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         uint lightCount = min(u_Push.lightCount, SceneCount(5u));
         for (uint lightIndex = 0u; lightIndex < lightCount; ++lightIndex)
             color += XR_ADV_EvaluateLight(lightIndex, surface, N, V, base.rgb,
-                roughness, metallic, rmse.z, engineSurface, true);
+                roughness, metallic, rmse.z, engineSurface,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+                preparedPrimitive,
+#endif
+                true);
         if ((u_Push.flags & 8u) != 0u)
         {
             float3 diffuseIndirect, specularIndirect;

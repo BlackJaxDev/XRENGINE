@@ -123,6 +123,33 @@ close the remaining physical I/O placement requirement.
 The targeted Data Release build passed with zero warnings and zero errors.
 No new test or runtime mapping probe was run for this admission correction.
 
+The archive and cooked-payload metadata probes now use the captured
+`IFileMappingBackend`. The desktop implementation keeps `File.Exists` behavior
+for archive paths and `FileInfo.Exists` followed by `FileInfo.Length` behavior
+for cooked payloads. Each caller validates its path and checks host-file access
+before it captures the backend. It then uses that same backend for metadata,
+file opening, and mapping. The `FileMap` facade checks host-file access again
+before it opens the file. Missing archives and payloads, oversized payloads,
+and empty payloads keep their existing results. An empty payload remains pooled
+and does not open a mapping. Parsing, mapped storage, disposal, and serialized
+bytes do not change when the desktop backend is installed. A host without an
+installed mapping backend now gets the mapping-service error before any file
+metadata result. This includes missing archives or payloads, the empty-payload
+return, and the oversized-payload exception, because no backend exists to
+perform those checks.
+
+External pre-v1 `IFileMappingBackend` implementations must add `FileExists` and
+`TryGetFileLength` and rebuild. `FileExists` must return the same result as
+`File.Exists`. `TryGetFileLength` must perform the equivalent of creating a
+`FileInfo`, checking `Exists`, and reading `Length` only when the file exists;
+it returns `false` for a missing file. Existing `OpenFile` and `Map` behavior
+remains required. This extraction moves the two physical metadata probes out
+of Data. Other shared file-I/O paths and `UR03.02b` remain open.
+
+The focused Data and Desktop platform Release builds passed with zero warnings
+and zero errors. Both used the existing restored package assets. No runtime
+mapping probe or new test was run for this extraction.
+
 ## HiZ diagnostic text output
 
 HiZ stage summaries and crash breadcrumbs now use the installed desktop

@@ -982,3 +982,44 @@ seconds. These runs are not a matched performance benchmark. They do not qualify
 selected shadows or decals, transitions between program families, numerical PBR
 values, native deformation, x4 MSAA, every submission mode, or hardware performance.
 Those acceptance requirements remain open.
+
+## Shared primitive inputs for lazy shadow helpers
+
+The full native shader now retains the successful main reconstruction's current
+clip/world vertices, decoded basis inputs and texture coordinates in an explicit
+sample-local packet. Lighting and shadow calls pass that packet as a function
+value. Shadow helpers interpolate that primitive at their original
+lazy call point. They no longer repeat scene-handle resolution, deformation
+selection, vertex loading or vertex decoding. Shared pure basis and texture
+coordinate functions preserve the main/helper arithmetic. Desktop GLSL and all
+buffer, binding and dispatch contracts remain unchanged.
+
+The packet becomes ready only after the main finite check and resets before
+each opaque sample's early returns, including x4 samples. Modifier-free and Uber
+raster consumers exclude the packet. Main source loads retain their rejection
+order. Each helper retains its own perspective derivatives, foveation scale,
+authored-basis rejection and original finite checks, including depth-derived
+position before the receiver replaces it with the interpolated position. The
+ordered decal normal evaluation, texture diagnostics and complete biased shadow
+coordinate derivatives remain at their existing lazy call points. Previous
+geometry and temporal output remain owned by the main reconstruction.
+
+Independent review of the final sample-local representation passed. The
+ShaderCooker Release build has zero warnings and errors, and all twenty
+canonical programs cook successfully. The existing WGSL private-global limit
+remains unchanged. The nineteen descriptor fields other than source and
+dependency hashes match the preceding twenty-program cook.
+
+Generated WGSL call-graph inspection shows that the eight full native/export
+shadow helpers no longer reach primitive lookup, deformation selection, vertex
+loads or basis-source loads. Receiver material/texture validation and ordered
+decal-normal evaluation remain reachable. Their helper graphs contain 94 named
+functions instead of 146. The sample-local packet is absent from the four
+modifier-free and eight Uber raster outputs.
+
+Shared pure interpolation changes the emitted WGSL in all twenty programs.
+Ordinary full native source grows from 367,990 to 379,524 bytes; ordinary
+modifier-free source grows from 278,216 to 282,827 bytes. The packet also increases
+live GPU state. These source results do not establish faster native compilation
+or rendered parity. The unchanged-deadline browser run and full selected
+shadow/decal/MSAA acceptance remain required.

@@ -41,6 +41,17 @@ namespace XREngine
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("File mapping");
             IFileMappingBackend backend = FileMappingServices.Required;
+            return FromFileCore(path, prot, offset, length, options, backend);
+        }
+
+        internal static FileMap FromFile(string path, FileMapProtect prot, IFileMappingBackend backend)
+        {
+            RuntimeAssetReadServices.EnsureHostFileAccess("File mapping");
+            return FromFileCore(path, prot, 0, 0, FileOptions.RandomAccess, backend);
+        }
+
+        private static FileMap FromFileCore(string path, FileMapProtect prot, long offset, long length, FileOptions options, IFileMappingBackend backend)
+        {
             FileStream stream = backend.OpenFile(path, prot == FileMapProtect.ReadWrite, options, ReportFallback);
             FileMap map;
             try
