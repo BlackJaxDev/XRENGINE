@@ -855,14 +855,22 @@ void XR_ADV_EvaluateNativeOpaqueSample(
 
     XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
     XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
-    bool uberSurface = XR_ADV_IsUberBaseMaterial(material);
-    bool engineSurface = XR_ADV_IsEngineSurfaceMaterial(material) || uberSurface;
+#if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
+    // Cohort admission routes only Uber receivers to this raster consumer.
+    if (!XR_ADV_IsUberBaseMaterial(material))
+    { textureFailure |= 1u << 17u; return; }
+    bool engineSurface = true;
+    uint uberPipeline = 15u;
+#else
+    // Uber receivers require their exact fragment producer and consumer.
+    if (XR_ADV_IsUberBaseMaterial(material))
+    { textureFailure |= 1u << 17u; return; }
+    bool engineSurface = XR_ADV_IsEngineSurfaceMaterial(material);
     uint engineSurfaceWord, engineSurfaceKind, engineSurfaceRoles;
-    bool nativeUnlitEngine = !uberSurface && XR_ADV_TryLoadEngineSurfaceHeader(material,
+    bool nativeUnlitEngine = XR_ADV_TryLoadEngineSurfaceHeader(material,
         engineSurfaceWord, engineSurfaceKind, engineSurfaceRoles) &&
         engineSurfaceKind >= XR_ADV_ENGINE_SURFACE_UNLIT_COLOR &&
         engineSurfaceKind <= XR_ADV_ENGINE_SURFACE_UNLIT_ARRAY_SLICE;
-    uint uberPipeline = 15u;
     if (!engineSurface && XR_ADV_IsProjectiveMirrorMaterial(material))
     {
         float3 mirrorColor;
@@ -872,6 +880,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         result.opacity = 1.0;
         return;
     }
+#endif
     if (!XR_ADV_IsStandardMaterial(material))
     {
         result.radiance = float3(1.0, 0.0, 1.0);
@@ -885,12 +894,11 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     float4 rmse;
     float3 emittedRadiance;
     float3 N;
-    if (uberSurface)
-    {
-        if (!XR_ADV_TryEvaluateUberBase(material, surface, base, rmse, N, emittedRadiance, uberPipeline))
-        { textureFailure |= 1u << 17u; return; }
-    }
-    else if (engineSurface)
+#if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
+    if (!XR_ADV_TryEvaluateUberBase(material, surface, base, rmse, N, emittedRadiance, uberPipeline))
+    { textureFailure |= 1u << 17u; return; }
+#else
+    if (engineSurface)
     {
         if (!XR_ADV_TryEvaluateEngineSurface(material, surface, base, rmse, N, emittedRadiance))
         {
@@ -926,34 +934,33 @@ void XR_ADV_EvaluateNativeOpaqueSample(
                 surface.bitangent * normalTex.y + N * normalTex.z);
         }
     }
+#endif
     float3 V = normalize(view.cameraPositionAndNear.xyz - surface.worldPosition);
     float roughness = clamp(rmse.x, engineSurface ? 0.0 : 0.04, 1.0);
     float metallic = clamp(rmse.y, 0.0, 1.0);
     float linearDepth = -XR_ADV_TransformRowVector(float4(surface.worldPosition, 1.0), view.view).z;
+#if !defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
     // Exact canonical overflow evaluation, with the same view/layer/volume tests.
-#if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
-    // Admission proves that no selected decal can affect this source-lit receiver.
-    if (!uberSurface)
+    // Uber admission separately proves that no selected decal affects its receiver.
+    if (!nativeUnlitEngine)
+        XR_ADV_ApplySelectedDecals(surface, base.rgb, N, roughness, metallic, rmse.z, emittedRadiance);
 #endif
-        if (!nativeUnlitEngine)
-            XR_ADV_ApplySelectedDecals(surface, base.rgb, N, roughness, metallic, rmse.z, emittedRadiance);
 
     float3 color = emittedRadiance;
-    bool unlit = uberSurface ? (uberPipeline & 1u) == 0u :
-        nativeUnlitEngine || (material.eligibilityFlags & 16u) != 0u;
-    if (uberSurface && (uberPipeline & 4u) == 0u) ambientOcclusion = 1.0;
 #if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
-    if (uberSurface) color += XR_ADV_UberRasterLighting;
-    else
-#endif
+    bool unlit = (uberPipeline & 1u) == 0u;
+    if ((uberPipeline & 4u) == 0u) ambientOcclusion = 1.0;
+    color += XR_ADV_UberRasterLighting;
+#else
+    bool unlit = nativeUnlitEngine || (material.eligibilityFlags & 16u) != 0u;
     if (unlit) color += base.rgb;
     else
     {
         uint lightCount = min(u_Push.lightCount, SceneCount(5u));
         for (uint lightIndex = 0u; lightIndex < lightCount; ++lightIndex)
             color += XR_ADV_EvaluateLight(lightIndex, surface, N, V, base.rgb,
-                roughness, metallic, rmse.z, engineSurface, !uberSurface || (uberPipeline & 2u) != 0u);
-        if ((u_Push.flags & 8u) != 0u && (!uberSurface || (uberPipeline & 8u) != 0u))
+                roughness, metallic, rmse.z, engineSurface, true);
+        if ((u_Push.flags & 8u) != 0u)
         {
             float3 diffuseIndirect, specularIndirect;
             XR_ADV_EvaluateProbeIbl(viewIndex, surface.worldPosition, N, V,
@@ -965,6 +972,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
                     max(dot(N, V), 0.0), ambientOcclusion, roughness);
         }
     }
+#endif
 
     uint debugView = (u_Push.flags >> 8u) & 255u;
     if (debugView == 1u) color = directDiffuse;

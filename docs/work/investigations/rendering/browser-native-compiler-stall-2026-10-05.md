@@ -86,3 +86,65 @@ outcomes on the cloud development environment and successful FIFO creation and
 verified deletion. Syntax and whitespace checks pass. That execution validates
 the diagnostic's unavailable-tool path and cleanup only; it cannot establish
 which prerequisite failed on the earlier Actions runner.
+
+## Exact integrated-source checks
+
+Run [37386054995](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37386054995)
+checks source `e4a90cf2f865a08421bb68c293d27616465e1558`. Portable startup and
+physics, the Windows Editor publisher, RollingBall, RenderingParity, modular
+pipelines, and the static CPU/GPU meshlet comparison pass. Advanced again
+exceeds the existing first-frame limit while native compute pipeline creation
+is pending. The UI job has a separate animation-frame failure after startup;
+neither failure is explained by the other.
+
+The Advanced evidence archive is artifact `11380387683`, 410,998 bytes,
+SHA-256 `37673a09a9607e9a55d803cb9fd203effedd57fe8a174d2767f945df24511a36`.
+Its unprivileged Chromium trace records shader-module creation in 124.452 ms.
+The Vulkan shader handle/SPIR-V span completes in 201.118 ms, including Tint
+SPIR-V generation in 97.533 ms and `vkCreateShaderModule` in 0.251 ms.
+Asynchronous compute pipeline initialization starts without a recorded end.
+These completed spans exclude WGSL parsing and Tint SPIR-V generation as the
+45-second software wait. They do not identify the pending native driver pass.
+
+The same source's genuine Windows Editor bundle also fails on Intel Arc xe-lpg,
+driver `32.0.101.8132`, in sandboxed Edge `154.0.4258.53` with fallback false.
+Its native WGSL is 410,012 bytes, SHA-256
+`a20f06b658dc75a875a1a9e1ef03bb8dff1204c9ac729972729a42f0a8d20e96`.
+Both application startup and isolated native/Uber compute pipeline creation
+remain pending at the original 45-second limit. No draw or shading dispatch
+was accepted. The software trace does not prove that this hardware driver
+waits in the same internal pass.
+
+The receiver normal/opacity specialization retained material and shadow
+semantics and passed all canonical cooks and ABI checks. The new exact-device
+results establish no compilation-time improvement. Earlier compile-only
+experiments that replaced shadow-plane bias or selected decals with no-ops
+helped isolate costly dependencies, but they are not valid rendering fixes
+and are not part of the shipping shader.
+
+## Existing recipe-family specialization
+
+The runtime already sends Uber cohorts to their raster-surface consumer and
+other admitted cohorts to the native material consumer. The shared source
+previously selected those mutually exclusive material paths from a runtime
+record, so each compiled program retained code that its admitted cohorts could
+not use. The existing Uber schema define now selects those paths at cook time.
+Each consumer explicitly rejects the wrong material family with the existing
+material-failure diagnostic bit.
+
+Native shading keeps engine and legacy materials, projective mirrors, ordered
+decals, shadow receiver reconstruction, direct lights, and probe lighting.
+Uber shading keeps its exact full-float raster surface and lighting exports,
+AO rules, debug outputs, opacity, velocity, and reactivity. Common reconstruction
+is unchanged. The cooker preserves declared parameters for the existing Uber
+consumer identity so unused texture bindings retain their exact ABI. No new
+recipe, schema, resource, runtime dispatch, desktop GLSL, or fallback is added.
+
+The narrow ShaderCooker Release build passes with zero warnings and errors.
+All 16 existing native/Uber, direct/export, depth, and x1/x4 companions cook.
+All 17 descriptor ABI fields match the exact prior cooked artifacts. The main
+native WGSL decreases from 410,012 to 368,171 bytes, and the Uber consumer from
+372,354 to 174,870 bytes. Generated function inventories retain the required
+native operations and remove the opposing material family's unreachable code.
+These source and cook results do not establish a faster native pipeline build.
+Browser compilation and rendered acceptance remain required at the new source.
