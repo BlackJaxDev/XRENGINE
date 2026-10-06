@@ -70,6 +70,8 @@ export function installWebGpuImports(runtime, renderers) {
         submitPreparedCommands: (id, handle) => renderer(id).commands.submitPreparedCommands(handle),
         submitEngineFrame: (id, commands, uniforms, storage, preparations, payload, resourceDescriptions, resourceReceipts) =>
             renderer(id).commands.submitEngineFrame(commands, uniforms, storage, preparations, payload, resourceDescriptions, resourceReceipts),
+        pollEngineResourceReceipts: (id, resourceReceipts) =>
+            renderer(id).commands.engineFrame.creation.poll(resourceReceipts),
         retireResource: (id, handle) => renderer(id).retireResource(handle),
         disposeRenderer: id => renderers.get(id)?.dispose()
     });

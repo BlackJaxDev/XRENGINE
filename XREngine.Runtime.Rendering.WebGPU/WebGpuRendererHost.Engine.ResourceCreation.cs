@@ -12,6 +12,7 @@ public sealed partial class WebGpuRendererHost
     private readonly List<WebGpuResourceRequest> _engineResourceRequests = new(64);
     private readonly List<WebGpuResourceRequest> _engineResourceBatch = new(64);
     private readonly List<int> _engineResourceAcknowledgements = new(64);
+    private readonly HashSet<int> _engineResourceReceiptHandles = [];
     private readonly byte[] _engineResourceReceipts = new byte[EngineResourceMaximumRequests * EngineResourceReceiptBytes];
     private int _engineResourceIdentity;
     private int _engineResourceSnapshotBytes;
@@ -274,9 +275,50 @@ public sealed partial class WebGpuRendererHost
         finally { writer?.Dispose(); }
     }
 
-    private void AcceptEngineResourceReceipts()
+    private void PollSubmittedEngineResources()
     {
-        _engineResourceAcknowledgements.Clear();
+        // A frozen batch may have reached JavaScript before its import threw. Retry it unchanged.
+        if (_engineResourceBatchPrepared) return;
+        _engineResourceBatch.Clear();
+        foreach (WebGpuResourceRequest request in _engineResourceRequests)
+        {
+            if (request.State != WebGpuResourceRequestState.Submitted) continue;
+            Span<byte> receipt = _engineResourceReceipts.AsSpan(_engineResourceBatch.Count * EngineResourceReceiptBytes, EngineResourceReceiptBytes);
+            receipt.Clear();
+            BinaryPrimitives.WriteInt32LittleEndian(receipt, request.Identity);
+            _engineResourceBatch.Add(request);
+        }
+        if (_engineResourceBatch.Count == 0) return;
+        try
+        {
+            WebGpuImports.PollEngineResourceReceipts(_session,
+                _engineResourceReceipts.AsSpan(0, _engineResourceBatch.Count * EngineResourceReceiptBytes));
+            AcceptEngineResourceReceipts(acknowledgementsSubmitted: false);
+        }
+        finally { _engineResourceBatch.Clear(); }
+    }
+
+    private void AcceptEngineResourceReceipts(bool acknowledgementsSubmitted = true)
+    {
+        _engineResourceReceiptHandles.Clear();
+        for (int index = 0; index < _engineResourceBatch.Count; index++)
+        {
+            WebGpuResourceRequest request = _engineResourceBatch[index];
+            ReadOnlySpan<byte> receipt = _engineResourceReceipts.AsSpan(index * EngineResourceReceiptBytes, EngineResourceReceiptBytes);
+            int identity = BinaryPrimitives.ReadInt32LittleEndian(receipt);
+            int state = BinaryPrimitives.ReadInt32LittleEndian(receipt[4..]);
+            int handle = BinaryPrimitives.ReadInt32LittleEndian(receipt[8..]);
+            int errorLength = BinaryPrimitives.ReadInt32LittleEndian(receipt[12..]);
+            if (identity != request.Identity || state is < 1 or > 4 || errorLength is < 0 or > 256 ||
+                (state == 2 ? handle <= 0 || errorLength != 0 : handle != 0) || state == 1 && errorLength != 0)
+                throw new InvalidOperationException("WebGPU.Resource.InvalidReceipt: executor returned an invalid physical-resource result.");
+            if (state == 2 && (handle < 0x10000 || (handle & 0xffff) == 0 ||
+                _resources.Contains(handle) || !_engineResourceReceiptHandles.Add(handle)))
+                throw new InvalidOperationException("WebGPU.Resource.InvalidReceipt: executor returned a duplicate or malformed physical-resource handle.");
+        }
+        _engineResourceReceiptHandles.Clear();
+        // A poll sends no acknowledgements. Keep those from earlier accepted batches.
+        if (acknowledgementsSubmitted) _engineResourceAcknowledgements.Clear();
         // Resolve every receipt before completing tasks; task continuations may queue the next DAG level.
         for (int index = 0; index < _engineResourceBatch.Count; index++)
         {
@@ -286,8 +328,6 @@ public sealed partial class WebGpuRendererHost
             int state = BinaryPrimitives.ReadInt32LittleEndian(receipt[4..]);
             int handle = BinaryPrimitives.ReadInt32LittleEndian(receipt[8..]);
             int errorLength = BinaryPrimitives.ReadInt32LittleEndian(receipt[12..]);
-            if (identity != request.Identity || state is < 1 or > 4 || errorLength is < 0 or > 256 || state == 2 && handle <= 0)
-                throw new InvalidOperationException("WebGPU.Resource.InvalidReceipt: executor returned an invalid physical-resource result.");
             if (request.State == WebGpuResourceRequestState.Cancelled)
             {
                 if (state == 2) RetireEngineResourceAfterFrame(Track(handle));
@@ -295,7 +335,6 @@ public sealed partial class WebGpuRendererHost
                 continue;
             }
             if (state == 1) { request.State = WebGpuResourceRequestState.Submitted; continue; }
-            _engineResourceAcknowledgements.Add(identity);
             if (state == 2)
             {
                 request.Handle = Track(handle);
@@ -307,6 +346,7 @@ public sealed partial class WebGpuRendererHost
                 request.Failure = Encoding.UTF8.GetString(receipt.Slice(16, errorLength));
                 request.State = WebGpuResourceRequestState.Failed;
             }
+            _engineResourceAcknowledgements.Add(identity);
         }
         _engineResourceBatchPrepared = false;
         _engineResourceDescriptions = "[]";
@@ -329,6 +369,7 @@ public sealed partial class WebGpuRendererHost
         _engineResourceRequests.Clear();
         _engineResourceBatch.Clear();
         _engineResourceAcknowledgements.Clear();
+        _engineResourceReceiptHandles.Clear();
         _engineResourceBatchPrepared = false;
         _engineResourceDescriptions = "[]";
     }

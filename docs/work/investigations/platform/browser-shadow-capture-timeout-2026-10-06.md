@@ -249,6 +249,37 @@ can affect scheduling, and samples cannot reconstruct every intervening frame.
 Production completion sequences must be compared with the retained engine
 frame sequence, not directly with the harness's queue-submit serials.
 
+## Early physical-resource receipt poll
+
+[Run 37478900636](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37478900636)
+recorded a later Advanced resize failure. At 1.835 and 5.053 seconds after
+resize, all GPU receipts had completed, but the Advanced profile was not
+committed. One JavaScript-ready texture/view remained retained. The first
+resized native enqueue appeared after 7.475 seconds. The capture then exceeded
+its 10-second deadline. These samples support a receipt-publication delay;
+they do not prove it was the only delay.
+
+Source inspection found a one-frame round trip after an asynchronous physical
+request completes. Frame N submits the request. If JavaScript marks it ready
+between frames, frame N+1 still sees the managed `Submitted` state during
+viewport preparation. The normal acceptance imports the ready receipt only at
+the end of frame N+1. Frame N+2 can then use the physical resource.
+
+The renderer now polls only already-submitted request identities once near the
+start of each frame, before viewport preparation. It skips the poll when a
+frozen creation batch must be retried unchanged. The poll calls no creation,
+cancellation, acknowledgement, submission, wait, or frame-sequence operation.
+It reuses retained receipt storage and sends no request JSON. Managed receipt
+handling validates the complete result batch before it changes request state.
+The poll keeps acknowledgements until the next normal frame acceptance sends
+them. It resolves the complete batch before releasing task continuations.
+The existing request, description, and initial-image budgets remain in force.
+
+This change can make a resource that completed between frames available in the
+next frame's preparation. No runtime timing result exists for this change yet.
+The existing CI run must establish whether it reduces the observed resize
+delay and meets the unchanged capture deadline.
+
 ## Saved PNG analysis outside the player
 
 [Run 37469658042](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37469658042)
