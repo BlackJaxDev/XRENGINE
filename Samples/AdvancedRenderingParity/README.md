@@ -44,7 +44,14 @@ change this authored sample.
 The Windows CI job publishes each staged project through the normal Editor CLI
 and saves both bundles. Each bundle has `shadow-comparison.json`, which binds
 the staged world hash to the published world payload hash and records hashes
-for the shared source and shader catalog. The Linux `advanced-shadow-parity`
+for the shared source and shader catalog. Before publication, the helper saves
+the path and hash of every staged project descriptor, asset, shader, and config
+file except the world. After publication, it checks those inputs again. A
+bounded verifier loads both cooked startup settings through the registered
+MemoryPack codec. It requires equal serialized bytes after it sets only the
+three transient settings IDs in the OFF copy to their ON values. The content
+manifests must match outside the two verified startup payloads.
+The Linux `advanced-shadow-parity`
 game entry loads the ON bundle and uses the OFF bundle as its same-scene
 reference through `--baseline-publish`. This checks live browser output within
 the existing game job deadline and assertions.
