@@ -41,6 +41,10 @@ internal static partial class WebGpuImports
         string resourceDescriptions,
         [JSMarshalAs<JSType.MemoryView>] Span<byte> resourceReceipts);
 
+    [JSImport("pollEngineResourceReceipts", "xrengine.webgpu")]
+    internal static partial void PollEngineResourceReceipts(int session,
+        [JSMarshalAs<JSType.MemoryView>] Span<byte> resourceReceipts);
+
     [JSImport("retireResource", "xrengine.webgpu")]
     internal static partial void RetireResource(int session, int handle);
 }

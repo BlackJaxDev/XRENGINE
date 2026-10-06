@@ -9,6 +9,7 @@ export class GpuEngineResourceCreation {
         this.bytes = new Uint8Array(maximumRequests * receiptBytes);
         this.view = new DataView(this.bytes.buffer);
         this.encoder = new TextEncoder();
+        this.receiptViews = new Map();
         this.disposed = false;
     }
 
@@ -67,15 +68,44 @@ export class GpuEngineResourceCreation {
                 this.create(request, update.args);
             }
         }
+        this.writeReceipts(receipts, length);
+    }
+
+    poll(receipts) {
+        this.commands.renderer._requireOwner();
+        const length = receipts?.byteLength;
+        if (this.disposed || !Number.isInteger(length) || length <= 0 ||
+            length > this.bytes.length || length % receiptBytes)
+            throw new RangeError('WebGPU.Resource.ReceiptCapacity: invalid retained receipt packet.');
+        receipts.copyTo(this.bytes);
+        for (let at = 0; at < length; at += receiptBytes) {
+            const id = this.view.getInt32(at, true);
+            const request = this.requests.get(id);
+            if (id < 1 || !request || !Number.isInteger(request.state) || request.state < 1 || request.state > 4 ||
+                request.state === 2 && (!Number.isSafeInteger(request.handle) || request.handle < 0x10000 ||
+                    request.handle > 0x7fffffff || !(request.handle & 0xffff)) ||
+                typeof request.error !== 'string' || request.state <= 2 && request.error !== '')
+                throw new Error('WebGPU.Resource.InvalidPoll: receipt identity or retained state is invalid.');
+        }
+        this.writeReceipts(receipts, length);
+    }
+
+    writeReceipts(receipts, length) {
         for (let at = 0; at < length; at += receiptBytes) {
             const request = this.requests.get(this.view.getInt32(at, true));
             this.view.setInt32(at + 4, request.state, true);
             this.view.setInt32(at + 8, request.state === 2 ? request.handle : 0, true);
             this.bytes.fill(0, at + 16, at + receiptBytes);
-            const error = this.encoder.encodeInto(request.error, this.bytes.subarray(at + 16, at + receiptBytes));
-            this.view.setInt32(at + 12, error.written, true);
+            const errorLength = request.error
+                ? this.encoder.encodeInto(request.error, this.bytes.subarray(at + 16, at + receiptBytes)).written : 0;
+            this.view.setInt32(at + 12, errorLength, true);
         }
-        receipts.set(this.bytes.subarray(0, length));
+        let view = this.receiptViews.get(length);
+        if (!view) {
+            view = this.bytes.subarray(0, length);
+            this.receiptViews.set(length, view);
+        }
+        receipts.set(view);
     }
 
     create(request, args) {
@@ -135,5 +165,6 @@ export class GpuEngineResourceCreation {
         this.disposed = true;
         for (const request of this.requests.values()) { request.cancelled = true; request.handle = 0; }
         this.requests.clear();
+        this.receiptViews.clear();
     }
 }

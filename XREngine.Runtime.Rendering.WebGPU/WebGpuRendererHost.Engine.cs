@@ -52,6 +52,7 @@ public sealed partial class WebGpuRendererHost
             IRuntimeRenderWorld? world = _engineViewport?.World;
             try
             {
+                PollSubmittedEngineResources();
                 RetireDestroyedMeshDeformations();
                 RetireObsoleteAutoExposureHistories();
                 bool ready;
