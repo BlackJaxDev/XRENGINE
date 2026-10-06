@@ -48,3 +48,9 @@ for the shared source and shader catalog. The Linux `advanced-shadow-parity`
 game entry loads the ON bundle and uses the OFF bundle as its same-scene
 reference through `--baseline-publish`. This checks live browser output within
 the existing game job deadline and assertions.
+
+The comparison accepts a capture only when the canvas bounds stay stable and
+the visible surfaces match the pinned scene projection. It rejects page strips,
+shifted scene origins, and mismatched ON/OFF alignment before it compares receiver
+pixels. Capture retries share one budget of at most ten seconds. A bad capture
+fails the check; it cannot supply shadow evidence.
