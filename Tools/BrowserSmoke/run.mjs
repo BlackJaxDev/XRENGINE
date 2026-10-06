@@ -13,6 +13,7 @@ import { renderingParityGameCheck } from './rendering-parity-game.mjs';
 import { uiParityGameCheck } from './ui-parity-game.mjs';
 import { claimUiFrameTrace, launchUiTraceBrowser, closeUiTraceBrowser } from './ui-frame-trace.mjs';
 import { advancedRenderingGameCheck } from './advanced-rendering-game.mjs';
+import { advancedShadowParityGameCheck } from './advanced-shadow-parity-game.mjs';
 import { modularPipelineGameCheck } from './modular-pipeline-game.mjs';
 import { staticMeshletParityGameCheck } from './static-meshlet-parity-game.mjs';
 import { runNativeCompileIsolation } from './native-compile-isolation.mjs';
@@ -1185,11 +1186,12 @@ async function publishedGameCheck(browser, origin, report, config) {
     const manifest = JSON.parse(await fs.readFile(path.join(config.gamePublish, 'content', 'manifest.json'), 'utf8'));
     const parity = config.gameKind === 'rendering-parity';
     const advanced = config.gameKind === 'advanced-rendering-parity';
+    const advancedShadow = config.gameKind === 'advanced-shadow-parity';
     const ui = config.gameKind === 'ui-parity';
     const modular = config.gameKind === 'modular-pipeline-parity';
     const meshlet = config.gameKind === 'static-meshlet-parity';
     const worldPath = ui ? '/game/Worlds/BrowserUiParityWorld.asset'
-        : advanced ? '/game/Worlds/AdvancedRenderingParityWorld.asset'
+        : advanced || advancedShadow ? '/game/Worlds/AdvancedRenderingParityWorld.asset'
         : modular ? '/game/Worlds/ModularPipelineParityWorld.asset'
         : meshlet ? '/game/Worlds/StaticMeshletParityWorld.asset'
         : parity ? '/game/Worlds/RenderingParityWorld.asset' : '/game/Worlds/RollingBallWorld.asset';
@@ -1213,6 +1215,8 @@ async function publishedGameCheck(browser, origin, report, config) {
         assert(manifest.assets?.some(entry => entry.path === '/engine/Fonts/Roboto/Roboto-Regular.cooked.asset'),
             'BrowserSmoke.UiFontMissing: the authored bitmap UI font must be published.');
         await uiParityGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
+    } else if (advancedShadow) {
+        await advancedShadowParityGameCheck(browser, origin, report, config, instrumentedPage, assertNoBrowserErrors);
     } else if (advanced) {
         for (const pass of ['visibility-pull', 'depth-pyramid', 'gtao', 'shade-classify', 'shade-native', 'present'])
             assert(manifest.pipelineArtifacts?.some(entry => entry.scope === 'advanced' && entry.pass === pass),

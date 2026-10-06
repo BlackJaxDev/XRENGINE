@@ -28,3 +28,23 @@ uses the shared canonical recipe inventory, including required Advanced native
 visibility and shading kernels. Qualification requires a saved-world reload,
 production publisher cook, and a live browser capture. A source or build check
 alone does not establish that the native frame was presented.
+
+The browser CI also stages a bounded shadow comparison from this saved world.
+`Tools/BrowserSmoke/prepare-advanced-shadow-comparison.mjs` makes two new
+projects under `Build/_AgentValidation`. Both use the same saved model, scripts,
+textures, startup settings, and canonical cooked shader catalog. The staged
+worlds add one directional and one point occluder with shared model geometry.
+Each light uses a separate 256 by 256 shadow map, with cascades, the shadow
+atlas, and contact shadows disabled. The point light uses sequential rendering.
+Both lights use eight samples for each PCSS stage. The OFF world differs from
+the ON world only in the two `CastsShadows` values. The helper checks the exact source and
+generated world hashes and refuses an existing output directory. It does not
+change this authored sample.
+
+The Windows CI job publishes each staged project through the normal Editor CLI
+and saves both bundles. Each bundle has `shadow-comparison.json`, which binds
+the staged world hash to the published world payload hash and records hashes
+for the shared source and shader catalog. The Linux `advanced-shadow-parity`
+game entry loads the ON bundle and uses the OFF bundle as its same-scene
+reference through `--baseline-publish`. This checks live browser output within
+the existing game job deadline and assertions.
