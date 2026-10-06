@@ -6,8 +6,20 @@ using XREngine.Rendering;
 namespace XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Writes diagnostic captures to desktop host files.</summary>
-internal sealed class DesktopDiagnosticCaptureFileOutput : IRuntimeDiagnosticCaptureFileOutput
+internal sealed class DesktopDiagnosticCaptureFileOutput : IRuntimeDiagnosticCaptureFileOutput, IRuntimeDiagnosticTextFileOutput
 {
+    public void EnsureDiagnosticLogDirectory(string directoryPath)
+    {
+        RuntimeAssetReadServices.EnsureHostFileAccess("Diagnostic log output");
+        Directory.CreateDirectory(directoryPath);
+    }
+
+    public void AppendDiagnosticLogText(string filePath, string text)
+    {
+        RuntimeAssetReadServices.EnsureHostFileAccess("Diagnostic log output");
+        File.AppendAllText(filePath, text);
+    }
+
     public void WritePngAndMetrics(string outputFilePath, byte[] pngBytes,
         RenderedOutputCaptureMetrics metrics,
         Func<RenderedOutputCaptureMetrics, string, string, DateTimeOffset, string> serializeMetrics)

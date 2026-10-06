@@ -14,4 +14,12 @@ public static class RuntimeDiagnosticCaptureFileOutput
     /// <summary>Gets the installed host writer or reports that file output is unavailable.</summary>
     public static IRuntimeDiagnosticCaptureFileOutput Require()
         => Current ?? throw new InvalidOperationException("Diagnostic capture file output is unavailable on this host.");
+
+    /// <summary>Gets the installed host writer with diagnostic text output support.</summary>
+    public static IRuntimeDiagnosticTextFileOutput RequireTextOutput()
+    {
+        IRuntimeDiagnosticCaptureFileOutput output = Require();
+        return output as IRuntimeDiagnosticTextFileOutput
+            ?? throw new InvalidOperationException("Installed diagnostic capture file output does not support diagnostic text files.");
+    }
 }

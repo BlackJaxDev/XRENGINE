@@ -81,6 +81,7 @@ public sealed unsafe class CookedPayloadOwner : MemoryManager<byte>
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         string fullPath = Path.GetFullPath(filePath);
+        RuntimeAssetReadServices.EnsureHostFileAccess("Cooked payload file mapping");
         FileInfo info = new(fullPath);
         if (!info.Exists)
             throw new FileNotFoundException($"File '{fullPath}' not found.", fullPath);
