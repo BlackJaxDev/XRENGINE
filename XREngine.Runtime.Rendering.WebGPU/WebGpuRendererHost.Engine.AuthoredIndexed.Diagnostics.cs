@@ -10,6 +10,7 @@ public sealed partial class WebGpuRendererHost
         RequireEngineFrameStatisticsBoundary();
         StringBuilder output = new();
         output.Append("{\"owner\":").Append(_session)
+            .Append(",\"backendGeneration\":").Append(BackendGeneration)
             .Append(",\"frameSequence\":").Append(_engineFrameSequence)
             .Append(",\"outputGeneration\":").Append(_submittedEngineSurfaceGeneration)
             .Append(",\"slotCapacity\":3")
