@@ -564,6 +564,84 @@ lifetime or predicate issue. These checks ran no browser or GPU workload.
 The change remains runtime-unqualified; bounded capture and ON/OFF shadow
 parity still require a later authorized runtime run.
 
+## Separate layout metrics and Chromium capture
+
+[Run 37517179081](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37517179081)
+on `1f0e1730581d54f8ca2e4b91f5cde4f39fd80a58` passed the initial OFF
+completion gate. The gate selected queue serial 1,201 and observed completion
+through 1,203. Its completion wait took 4,216 ms; native identity verification
+took 21 ms. The screenshot started at capture +4,276 ms and exhausted the
+remaining 5,724 ms of the same 10-second budget. No resize or pixel analysis
+ran. This evidence does not identify the blocked screenshot operation or its
+cause. The inspected artifact is `11439313901`, ZIP SHA-256
+`a3e33869387f11b8dd9dfbb23c4b48ff7a92ed401925226f31ca83dfcc4a5f5c`.
+
+The shadow helper now creates one public `CDPSession` after the completion
+gate and before the first attempt geometry read. It times
+`Page.getLayoutMetrics` and `Page.captureScreenshot` separately. The pinned
+[Playwright 1.63 screenshotter](https://github.com/microsoft/playwright/blob/v1.63.0/packages/playwright-core/src/server/screenshotter.ts#L189-L208)
+and [Chromium capture implementation](https://github.com/microsoft/playwright/blob/v1.63.0/packages/playwright-core/src/server/chromium/crPage.ts#L252-L274)
+define the preparation and clip conversion used for this diagnostic.
+The existing rounded viewport clip is translated by `visualViewport.pageX`
+and `pageY`. Dimensions use `floor(dimension / scale + 0.001)`. The command
+keeps PNG format, scale 1, `captureBeyondViewport: false`, and the other
+protocol defaults. Required visual metrics must be finite, with unit scale,
+zero offsets, and page coordinates that match the preceding scroll sample.
+Device pixel ratio must remain 1. Visual viewport width is not equated to
+`innerWidth`; a scrollbar gutter can make them differ.
+
+Each geometry read now checks the exact expected main-document URL supplied
+from the known origin and mount. It does not retain that URL in capture
+evidence. The document must contain one empty `HTMLCanvasElement` with the
+expected ID. Its font set must be loaded and contain no custom font faces.
+Editable inputs, text areas, contenteditable targets, design mode, iframe,
+frame, object, embed, fencedframe, and open shadow roots are rejected. The
+fixture's checkbox is permitted. This scan does not prove the absence of
+closed author shadow roots. The hash-bound controlled fixture creates none;
+generic inspection of closed roots is outside this helper.
+These read-only checks replace the omitted font wait and caret preparation
+for the controlled player fixture. The helper changes no caret, animation,
+background, color, renderer, or GPU state. The existing before/after numeric
+geometry equality remains exact. These samples cannot exclude a transient
+change that returns to the same state between reads.
+
+Session creation, metrics, capture, byte validation, output, image analysis,
+and acknowledged detach share the original absolute deadline. One session
+serves all attempts, with at most one owned protocol operation pending.
+Normal continuations check the deadline and closed state. A late metrics or
+capture reply cannot start another command, decode bytes, change evidence,
+or write a file. A late session creation can only request its owned detach.
+Detach is requested at most once. Failure cleanup waits only for time left
+in the original budget, preserves the primary error, and does not overlap
+a pending command. A successful capture requires detach acknowledgement
+before the deadline. Expiry leaves cleanup explicitly unverified; the
+existing owned context/browser teardown retires the remaining work.
+
+Public session creation, send, and detach cannot be forcibly cancelled.
+The deadline limits acceptance and dependent work, not the lifetime of a
+command already submitted to Chromium. Before base64 decode, the response
+must have at most 11,184,812 characters, a valid alphabet and padding, a
+multiple-of-four length, and at most 8,388,608 decoded bytes. The actual
+buffer length is checked again. A synchronous file write has checks before
+and after it. An OS write cannot be forcibly timed; a late return fails and
+starts no later capture work. A timely raw PNG stays available if a later
+step fails. The unchanged image worker still validates the PNG profile,
+pixels, alignment, reference, and receiver arithmetic. Full post-capture GPU
+qualification and browser-failure assertions remain in place.
+
+Source validation used Node `v24.19.0`; CI remains pinned to Node 22.
+`node --check` and the scoped `git diff --check` passed. Sixty-two scratch
+logical checks passed for session ownership, late and closed continuations,
+detach outcomes, primary errors, write overruns, preparation guards, viewport
+conversion, base64 limits, and geometry rejection. The saved failure PNG was
+byte-identical after base64 decode and output, with SHA-256
+`ec359da35f4feeb9b19f2f2a94f9d27aafba4e8255e31fb6df58f2f3f749d6b4`.
+This byte check did not qualify that full-page failure image as a canvas
+capture. No tracked test, browser run, runtime run, trace, install, or
+publication was added. Independent final source review and a later authorized
+runtime run remain necessary. This is a diagnostic split, not proof of a
+timeout fix, runtime parity, or performance.
+
 ## Validation and next step
 
 The source and saved runtime artifacts were inspected. No new runtime or test
