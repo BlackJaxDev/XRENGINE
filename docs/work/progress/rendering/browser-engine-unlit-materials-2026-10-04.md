@@ -145,3 +145,13 @@ including both distinct color render pipelines. This is saved-evidence analysis;
 the corrected live check still requires exact-commit CI. Three measured extents
 and eventual zero-resource teardown do not prove a steady-state resource bound
 for the blended candidate caches. That broader acceptance remains open.
+
+The corrected live restart comparison now passes on
+`6cbf90ba34bca26c95e3d486bfc76d71042942e9` in
+[run 37409898930, Linux job 112095749856](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37409898930/job/112095749856).
+The complete existing Linux qualification job succeeds with its count, alias,
+pixel, ownership, readback and teardown assertions retained. Artifact
+`browser-software-qualification`, ID `11389367075`, has SHA-256
+`c5aa8b0ac1a9f753796ff7f7df9169b292fb79f5651cdf22226f8a73e69ac706`.
+This fixes the fresh-context diagnostic comparison; it does not establish a
+long-running steady-state memory bound.
