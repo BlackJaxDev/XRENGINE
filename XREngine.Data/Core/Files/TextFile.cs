@@ -271,6 +271,7 @@ namespace XREngine.Core.Files
         public void SaveTo(string path)
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("Text file save");
+            IHostAssetFileOutput output = HostAssetFileOutputServices.Required;
             string text;
             Encoding encoding;
             long revision;
@@ -280,13 +281,14 @@ namespace XREngine.Core.Files
                 encoding = Encoding;
                 revision = _sourceMutationRevision;
             }
-            File.WriteAllText(path, text, encoding);
+            output.WriteAllText(path, text, encoding);
             RecordSavedText(path, text, revision);
         }
 
         public async Task SaveToAsync(string path)
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("Text file save");
+            IHostAssetFileOutput output = HostAssetFileOutputServices.Required;
             string text;
             Encoding encoding;
             long revision;
@@ -296,7 +298,7 @@ namespace XREngine.Core.Files
                 encoding = Encoding;
                 revision = _sourceMutationRevision;
             }
-            await File.WriteAllTextAsync(path, text, encoding).ConfigureAwait(false);
+            await output.WriteAllTextAsync(path, text, encoding).ConfigureAwait(false);
             RecordSavedText(path, text, revision);
         }
 

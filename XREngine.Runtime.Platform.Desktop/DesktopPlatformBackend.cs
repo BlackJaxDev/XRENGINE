@@ -22,6 +22,7 @@ public static class DesktopPlatformBackend
             NativeMethods.TryDetermineSystemCapsLockState(out bool enabled) ? enabled : null;
         RenderWorkerPlatformServices.HighPriorityInitializer = WindowsThreadQos.ApplyHighRenderPriority;
         XREngine.Data.FileMappingServices.Backend = new DesktopFileMappingBackend();
+        XREngine.Data.HostAssetFileOutputServices.Current = new DesktopHostAssetFileOutput();
         XREngine.Data.RuntimePlatformPaths.Current = new DesktopPlatformPaths();
         XREngine.Data.RuntimeProcessServices.Current = new DesktopProcessRunner();
         XREngine.Data.RuntimeProcessMemoryServices.WorkingSetBytesReader = DesktopProcessDiagnostics.ReadWorkingSetBytes;

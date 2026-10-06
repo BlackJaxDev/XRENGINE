@@ -191,12 +191,8 @@ namespace XREngine.Rendering.GI.DDGI
         public void Save(string filePath)
         {
             XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Baked DDGI asset save");
-            string? dir = Path.GetDirectoryName(filePath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-            using var fs = File.Create(filePath);
+            XREngine.Data.IHostAssetFileOutput output = XREngine.Data.HostAssetFileOutputServices.Required;
+            using Stream fs = output.CreateFileWithParentDirectory(filePath);
             Save(fs);
         }
 
