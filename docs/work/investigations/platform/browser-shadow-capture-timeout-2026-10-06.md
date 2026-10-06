@@ -249,6 +249,67 @@ can affect scheduling, and samples cannot reconstruct every intervening frame.
 Production completion sequences must be compared with the retained engine
 frame sequence, not directly with the harness's queue-submit serials.
 
+## Saved PNG analysis outside the player
+
+[Run 37469658042](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37469658042)
+on `883b1f8a` failed before resize. The first OFF attempt spent 2,364 ms
+scrolling, 48 ms reading geometry, 6,935 ms taking the page screenshot, and
+19 ms reading geometry again. Pixel inspection started with 633 ms left and
+timed out. Geometry was stable. The four resize checkpoints did not run.
+The saved 977-by-551 PNG is byte-identical to the accepted initial capture
+from `a9037c2`: SHA-256
+`e689725db8da363078aed195a5f4ce903cb4f9d28506a2b5b934146da646cd9e`.
+
+The old shadow analysis sent each screenshot back to the live page for
+`createImageBitmap`, a 2D canvas draw, and `getImageData`. Alignment decoded
+the same image again. ON/OFF comparison decoded both images again. This is
+additional browser work; the evidence does not establish which decoder
+operation, or whether GPU work, consumed the remaining capture time.
+
+The shadow helper now uses one owned Node worker and the PNG reader already
+bundled with the exact pinned `playwright-core@1.63.0`. The package exports
+`lib/utilsBundle` and `package.json`; the worker checks that version before
+using `PNG.sync.read`. No dependency or lockfile changes are required.
+The accepted screenshot subset has only IHDR, IDAT, and IEND chunks, 8-bit
+RGB or RGBA samples, no interlace or color metadata, valid CRCs, and entirely
+opaque pixels. Unsupported input fails. Encoded input is capped at 8 MiB
+before hashing or worker transfer. The decoded dimensions are restricted to
+the current fixture profiles: 977-by-551, 813-by-459, and 893-by-504, with
+backing sizes 977-by-550, 813-by-457, and 893-by-502 respectively.
+The last profile follows the current 940-pixel viewport: the observed
+15-pixel stable gutter and 32 pixels of body padding leave 893 CSS pixels;
+the 16:9 height is 502.3125, rounded to 502 backing pixels. At y=138.875,
+the existing clip rounding gives a 504-pixel screenshot height.
+
+The worker retains three OFF baselines and one current image, at most
+8,613,232 retained RGBA bytes. This cap does not include transient encoded
+input, decoder scratch buffers, or the image being replaced. Each image is
+decoded once and bound to its original PNG hash. The summary, projection,
+alignment, and receiver comparison arithmetic was moved without changing
+thresholds. ON/OFF arithmetic now runs with alignment inside the capture
+deadline; its existing acceptance assertions stay in their original places.
+No image analysis calls back into the page or renderer.
+
+One worker request can be pending. The parent and worker reject requests
+and results at or after the same absolute capture deadline. The encoded
+size guard and hash run inside the timed inspection step. A timeout starts
+worker termination, and late replies cannot qualify the capture. The
+10,000 ms capture budget is unchanged. Worker setup precedes player startup.
+Cleanup has a separate one-second cap and preserves the original failure.
+It reports success only after an acknowledged termination with a matching
+observed exit code; worker errors and unexpected exits remain unverified.
+
+Saved-image analysis through the worker reproduced every recorded summary
+and alignment field for the initial `883b1f8a` PNG (21,102 colorful pixels,
+accepted), the blank `a9037c2` resize (zero colorful pixels, rejected), and
+the displaced `d7fe4e8` resize (15,663 colorful pixels, rejected). Original
+PNG hashes were unchanged. These local analyses took approximately 106,
+52, and 41 ms; they are not runtime performance or parity qualification.
+No new browser, engine, trace, or test run was started.
+All three source files passed `node --check`, and the scoped diff check
+passed. Independent source review found no blocker after termination
+acknowledgement and unexpected worker exit handling were made explicit.
+
 ## Validation and next step
 
 The source and saved runtime artifacts were inspected. No new runtime or test
