@@ -8,6 +8,7 @@ import { installNativeCompileCapture } from './native-compile-isolation.mjs';
 function assert(condition, message) { if (!condition) throw new Error(message); }
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const hasSurface = pixels => pixels.colorfulLeft > 100;
+const shadowResizeObservers = new WeakMap();
 const worldPath = '/game/Worlds/AdvancedRenderingParityWorld.asset';
 const fixtureHashes = {
     on: '8f537639aa8260d935fda46c82a3ca4d4a983efbb37bf9c00fb17f8738e96f9b',
@@ -100,7 +101,8 @@ async function publishedShadowArtifacts(root, state) {
 /** Observes real resources, commands and submissions; retains at most 128 unique records per kind. */
 export function installShadowGpuObservation() {
     const limit = 128;
-    const evidence = { textures: [], modules: [], pipelines: [], submitted: [], shadowPasses: [], consumers: [],
+    const evidence = { timeOriginMs: performance.timeOrigin,
+        textures: [], modules: [], pipelines: [], submitted: [], shadowPasses: [], consumers: [],
         queueSubmits: 0, captureErrors: [], deviceErrors: [], overflow: 0, queueCompletions: 0, completedSerial: 0 };
     const textures = new WeakMap(), views = new WeakMap(), modules = new WeakMap(), pipelines = new WeakMap();
     const groups = new WeakMap(), passes = new WeakMap(), encoders = new WeakMap(), commands = new WeakMap();
@@ -235,9 +237,11 @@ export function installShadowGpuObservation() {
         if (value) commands.set(command, value);
     });
     const increment = (list, key, value, serial) => {
+        const now = performance.now();
         let current = list.find(item => item.key === key);
-        if (!current) current = record(list, { key, ...value, calls: 0, firstSerial: serial, lastSerial: serial });
-        if (current) { current.calls++; current.lastSerial = serial; }
+        if (!current) current = record(list, { key, ...value, calls: 0,
+            firstSerial: serial, lastSerial: serial, firstAtMs: now, lastAtMs: now });
+        if (current) { current.calls++; current.lastSerial = serial; current.lastAtMs = now; }
     };
     wrap(GPUQueue.prototype, 'submit', (owner, [buffers]) => {
         queue = owner;
@@ -471,7 +475,217 @@ export function inspectShadowCaptureImage({ data, width, height }, regions) {
         exteriorMismatchFraction, maximumEdgeError, edgeTolerancePixels: 3, backgroundToleranceRgb: 8 };
 }
 
-async function captureShadowSurface(page, config, name, failure, reference = null) {
+async function boundedShadowObservation(action, deadline, unavailable, failed = unavailable) {
+    if (Date.now() >= deadline) return unavailable;
+    let timer;
+    try {
+        const value = await Promise.race([action(deadline), new Promise(resolve => {
+            timer = setTimeout(() => resolve(unavailable), Math.max(0, deadline - Date.now()));
+        })]);
+        return Date.now() <= deadline ? value : unavailable;
+    } catch { return failed; }
+    finally { clearTimeout(timer); }
+}
+
+/** Observes the existing host on its next ordinary surface refresh, without invoking that refresh. */
+async function installShadowResizeObservation(page, expectedPage) {
+    if (shadowResizeObservers.has(page)) return;
+    const unavailable = { status: 'unavailable', reason: 'observer-install-unavailable' };
+    shadowResizeObservers.set(page, unavailable);
+    const result = await boundedShadowObservation(deadline => page.evaluate(async ({ expectedPage, deadline }) => {
+        const absent = reason => ({ status: 'unavailable', reason });
+        if (location.href !== expectedPage || document.querySelector('#status')?.dataset.state !== 'running')
+            return absent('running-module-unproven');
+        if (Date.now() >= deadline) return absent('observer-install-deadline');
+        // This running player has already evaluated this exact mount-relative module.
+        const { EngineCanvasHost } = await import(new URL('./engine-canvas-host.js', location.href).href);
+        if (Date.now() >= deadline) return absent('observer-install-deadline');
+        const prototype = EngineCanvasHost.prototype;
+        const original = prototype.syncSurface;
+        let host = null, epoch = null, session = null;
+        function observe(...args) {
+            try {
+                if (prototype.syncSurface === observe) prototype.syncSurface = original;
+                host = this; epoch = this.epoch; session = this.session;
+            } catch { host = null; }
+            return original.apply(this, args);
+        }
+        const integer = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+        const finite = value => Number.isFinite(value) && value >= 0 ? value : null;
+        const counters = (source, keys) => Object.fromEntries(keys.map(key => [key, integer(source?.[key])]));
+        const read = checkpointDeadline => {
+            if (Date.now() >= checkpointDeadline) return absent('checkpoint-deadline');
+            if (!host) return absent('host-unobserved');
+            if (host.epoch !== epoch || host.session !== session || host.canvas !== document.querySelector('#input-surface'))
+                return absent('host-owner-changed');
+            const frame = host.renderer?.commands?.engineFrame;
+            const scopes = frame?.scopes;
+            if (!frame || !scopes) return absent('frame-state-unavailable');
+            const utcMs = Date.now(), atMs = performance.now();
+            const stats = frame.getStatistics();
+            const active = [];
+            let activeCount = 0;
+            for (let index = 0; index < Math.min(scopes.receipts.length, 64); index++) {
+                const receipt = scopes.receipts[index];
+                if (!receipt.active) continue;
+                activeCount++;
+                if (active.length < 8) active.push({ sequence: integer(receipt.context.sequence),
+                    generation: integer(receipt.context.generation), remaining: integer(receipt.remaining),
+                    closed: Boolean(receipt.closed), submitted: Boolean(receipt.submitted) });
+            }
+            const requests = frame.creation.requests;
+            const requestSummary = { total: integer(requests.size), sampled: 0, omitted: 0,
+                // Index zero retains unknown values without copying their text or descriptors.
+                kindCounts: [0, 0, 0, 0, 0, 0, 0, 0], stateCounts: [0, 0, 0, 0, 0] };
+            for (const request of requests.values()) {
+                if (requestSummary.sampled >= 64) break;
+                requestSummary.sampled++;
+                requestSummary.kindCounts[Number.isInteger(request.kind) && request.kind >= 1 && request.kind <= 7 ? request.kind : 0]++;
+                requestSummary.stateCounts[Number.isInteger(request.state) && request.state >= 1 && request.state <= 4 ? request.state : 0]++;
+            }
+            requestSummary.omitted = Math.max(0, requests.size - requestSummary.sampled);
+            // A queued evaluation must not enter managed code after either observation deadline.
+            if (Date.now() >= checkpointDeadline) return absent('checkpoint-deadline');
+            let preparationState = null, renderingStatus = null, statusInputTruncated = false;
+            const advancedStages = { status: 'unavailable', records: [], omitted: 0, unrecognized: 0 };
+            const advancedPreparation = { status: 'unavailable', draws: null, published: null, generation: null,
+                deferralPresent: null, unrecognizedDeferral: null };
+            try {
+                const value = host.engine.GetCanvasPreparationState();
+                if ([-1, 0, 1].includes(value)) preparationState = value;
+            } catch { /* Missing managed state is explicit in the fixed snapshot. */ }
+            if (Date.now() >= checkpointDeadline) return absent('checkpoint-deadline');
+            try {
+                // The full engine text can contain descriptors and failures. Retain only validated fields.
+                const text = String(host.engine.GetCanvasRenderingStatus());
+                const raw = text.slice(0, 16384);
+                statusInputTruncated = text.length > raw.length;
+                const number = expression => {
+                    const value = expression.exec(raw)?.[1];
+                    return value === undefined ? null : integer(Number(value));
+                };
+                const profile = /(?:^|; )resource profile=([^;]*)/.exec(raw)?.[1] ?? '';
+                const display = /\bdisplay=(\d+)x(\d+)\b/.exec(profile);
+                const internal = /\binternal=(\d+)x(\d+)\b/.exec(profile);
+                const pending = /(?:^|; )pending draw=(True|False)(?=;|$)/.exec(raw)?.[1];
+                const decline = /; pipeline decline=([\s\S]*?); resource failure=/.exec(raw)?.[1];
+                const mismatch = decline === undefined ? null : decline.startsWith('Resources do not match the current frame profile.');
+                renderingStatus = JSON.stringify({
+                    renderer: /^Renderer=(Pending|Ready|Failed|Lost|Disposed|absent)(?=;|$)/.exec(raw)?.[1] ?? 'unavailable',
+                    pipeline: /(?:^|; )pipeline=(AdvancedRenderPipeline|DefaultRenderPipeline|absent)(?=;|$)/.exec(raw)?.[1] ?? 'other',
+                    renderFrame: number(/(?:^|; )render frame=(\d+)(?=;|$)/),
+                    draws: number(/(?:^|; )draws=(\d+)(?=;|$)/),
+                    commands: number(/(?:^|; )commands=(\d+)(?=;|$)/),
+                    pendingDraw: pending === undefined ? null : pending === 'True',
+                    retainedRequests: number(/(?:^|; )retained requests=(\d+)(?=\s|$)/),
+                    displayWidth: display ? integer(Number(display[1])) : null,
+                    displayHeight: display ? integer(Number(display[2])) : null,
+                    internalWidth: internal ? integer(Number(internal[1])) : null,
+                    internalHeight: internal ? integer(Number(internal[2])) : null,
+                    profileMismatch: mismatch,
+                    declinePresent: decline === undefined ? null : decline !== 'none',
+                    unrecognizedDecline: decline === undefined ? null : decline !== 'none' && !mismatch,
+                }).slice(0, 4096);
+                const stages = /; advanced stages=([\s\S]*?); advanced preparation=/.exec(raw)?.[1];
+                if (stages === 'none' || stages === 'unobserved') advancedStages.status = stages;
+                else if (stages !== undefined) {
+                    advancedStages.status = 'available';
+                    const stageNames = ['FrameBegin', 'Deformation', 'VisibilityPreparation', 'VisibilityRaster',
+                        'DepthPyramidAndLateVisibility', 'DirectionalShadowRaster', 'AmbientOcclusion', 'WorkClassification',
+                        'NativeOpaqueShading', 'LatePasses', 'TemporalAndPostProcessing', 'Output', 'UserInterface'];
+                    const phaseNames = ['Complete', 'LateCompute', 'LateRaster', 'MultisampleResolve'];
+                    const stateNames = ['NotObserved', 'CommandScopeReached', 'BackendEnqueueAccepted',
+                        'RejectedPrerequisite', 'RejectedAdmission', 'RejectedCapability', 'BackendEnqueueRejected'];
+                    const parts = stages.split(' | ');
+                    advancedStages.omitted = Math.max(0, parts.length - 16);
+                    for (const part of parts.slice(0, 16)) {
+                        const match = /^([^/=\s]+)\/([^/=\s]+)=([^/=\s]+) frame=(\d+) generation=(\d+) reason=([\s\S]*)$/.exec(part);
+                        const stage = stageNames.includes(match?.[1]) ? match[1] : 'unknown';
+                        const phase = phaseNames.includes(match?.[2]) ? match[2] : 'unknown';
+                        const state = stateNames.includes(match?.[3]) ? match[3] : 'unknown';
+                        if ([stage, phase, state].includes('unknown')) advancedStages.unrecognized++;
+                        const reasonPresent = match ? match[6] !== 'none' : null;
+                        advancedStages.records.push({ stage, phase, state,
+                            frame: match ? integer(Number(match[4])) : null,
+                            generation: match ? integer(Number(match[5])) : null,
+                            reasonPresent, unrecognizedReason: reasonPresent });
+                    }
+                }
+                const preparation = /; advanced preparation=([\s\S]*?); program preparation=/.exec(raw)?.[1];
+                if (preparation === 'unused') advancedPreparation.status = 'unused';
+                else if (preparation !== undefined) {
+                    const match = /^draws=(\d+), published=(True|False), generation=(\d+), deferral=([\s\S]*)$/.exec(preparation);
+                    if (match) Object.assign(advancedPreparation, { status: 'available',
+                        draws: integer(Number(match[1])), published: match[2] === 'True',
+                        generation: integer(Number(match[3])),
+                        deferralPresent: !['', 'none', 'None'].includes(match[4]),
+                        unrecognizedDeferral: !['', 'none', 'None'].includes(match[4]) });
+                }
+            }
+            catch { /* Do not include browser exception text. */ }
+            if (Date.now() >= checkpointDeadline) return absent('checkpoint-deadline');
+            return { status: 'available', reason: null, source: { utcMs, atMs, timeOriginMs: performance.timeOrigin,
+                host: { epoch: integer(epoch), session: integer(session), surfaceGeneration: integer(host.surfaceGeneration),
+                    drawable: Boolean(host.drawable), presented: Boolean(host.presented), rendererReady: Boolean(host.rendererReady),
+                    failed: Boolean(host.failed), recovering: Boolean(host.recovering),
+                    firstFrameSeconds: finite(host.firstFrameSeconds), admissionWaitSeconds: finite(host.admissionWaitSeconds) },
+                managed: { preparationState, renderingStatus, statusInputTruncated, advancedStages, advancedPreparation },
+                frame: counters(stats, ['bridgeCalls', 'submittedFrames', 'preparationOnlyFrames', 'preparationUploads',
+                    'preparationBytes', 'records', 'draws', 'storageUploads', 'commandBytes', 'uniformBytes', 'storageBytes']),
+                production: { completedSequence: integer(scopes.completedSequence), lastSequence: integer(frame.lastSequence),
+                    scopes: counters(stats.errorScopes, ['capacity', 'pending', 'peakPending', 'started', 'completed',
+                        'admissionDeferrals', 'capacityFailures', 'queueCompletionPromises', 'validationErrors',
+                        'outOfMemoryErrors', 'rejectedScopes']), activeReceipts: active,
+                    omittedActiveReceipts: Math.max(0, activeCount - active.length) }, requests: requestSummary } };
+        };
+        const cleanup = () => {
+            if (prototype.syncSurface === observe) prototype.syncSurface = original;
+            if (globalThis.advancedShadowReadResizeState === read) delete globalThis.advancedShadowReadResizeState;
+            if (globalThis.advancedShadowRestoreResizeObservation === cleanup) delete globalThis.advancedShadowRestoreResizeObservation;
+            host = null;
+        };
+        prototype.syncSurface = observe;
+        globalThis.advancedShadowReadResizeState = read;
+        globalThis.advancedShadowRestoreResizeObservation = cleanup;
+        return { status: 'available', reason: null };
+    }, { expectedPage, deadline }), Date.now() + 500, unavailable);
+    shadowResizeObservers.set(page, result);
+}
+
+async function readShadowResizeCheckpoint(page, diagnostics, name) {
+    const record = diagnostics.resizeCheckpoints?.[name];
+    if (!record || record.reason !== 'not-reached') return;
+    const now = Date.now(), deadline = diagnostics.startedAtUtcMs + diagnostics.budgetMs;
+    record.utcMs = now;
+    record.atMs = now - diagnostics.startedAtUtcMs;
+    record.remainingMs = Math.max(0, deadline - now);
+    record.readBudgetMs = Math.min(200, record.remainingMs);
+    if (now >= deadline) { record.reason = 'capture-deadline-exhausted'; record.elapsedMs = 0; return; }
+    if (shadowResizeObservers.get(page)?.status !== 'available') {
+        record.reason = 'host-observer-unavailable'; record.elapsedMs = 0; return;
+    }
+    const result = await boundedShadowObservation(checkpointDeadline => page.evaluate(checkpointDeadline => {
+        if (Date.now() >= checkpointDeadline) return { status: 'unavailable', reason: 'checkpoint-deadline' };
+        return globalThis.advancedShadowReadResizeState?.(checkpointDeadline) ??
+            { status: 'unavailable', reason: 'host-observer-unavailable' };
+    }, checkpointDeadline), Math.min(deadline, now + 200),
+    { status: 'unavailable', reason: 'checkpoint-read-timeout' },
+    { status: 'unavailable', reason: 'checkpoint-read-failed' });
+    record.status = result.status;
+    record.reason = result.reason;
+    record.source = result.source ?? null;
+    record.elapsedMs = Date.now() - now;
+}
+
+async function cleanupShadowResizeObservation(page) {
+    if (!shadowResizeObservers.has(page)) return;
+    await boundedShadowObservation(deadline => page.evaluate(deadline => {
+        if (Date.now() < deadline) globalThis.advancedShadowRestoreResizeObservation?.();
+    }, deadline), Date.now() + 200, null);
+    shadowResizeObservers.delete(page);
+}
+
+async function captureShadowSurface(page, config, name, failure, reference = null, observeResize = false) {
     const budget = Math.min(config.timeout, 10000);
     const startedAt = Date.now();
     const deadline = startedAt + budget;
@@ -484,6 +698,12 @@ async function captureShadowSurface(page, config, name, failure, reference = nul
         phases: Object.fromEntries(phases.map(phase => [phase, { attempt: null, phase, status: 'unrun',
             startedAtMs: null, elapsedMs: null, remainingMs: null }])),
         steps: [], omittedSteps: 0, before: unrun(), after: unrun(), clip: unrun(), latestSummary: unrun() };
+    if (observeResize) {
+        diagnostics.resizeObserver = shadowResizeObservers.get(page) ?? { status: 'unavailable', reason: 'not-installed' };
+        diagnostics.resizeCheckpoints = Object.fromEntries(['capture-start', 'first-blank', 'halfway', 'failure']
+            .map(name => [name, { status: 'unavailable', reason: 'not-reached', utcMs: null, atMs: null,
+                remainingMs: null, readBudgetMs: null, elapsedMs: null, source: null }]));
+    }
     const withCaptureEvidence = error => {
         const result = error instanceof Error ? error : new Error(String(error));
         diagnostics.elapsedMs = Date.now() - startedAt;
@@ -533,7 +753,10 @@ async function captureShadowSurface(page, config, name, failure, reference = nul
             viewportOffsetX: visualViewport?.offsetLeft ?? null, viewportOffsetY: visualViewport?.offsetTop ?? null };
     });
     let latest;
+    if (observeResize) await readShadowResizeCheckpoint(page, diagnostics, 'capture-start');
     do {
+        if (observeResize && Date.now() - startedAt >= budget / 2)
+            await readShadowResizeCheckpoint(page, diagnostics, 'halfway');
         diagnostics.attempt++;
         diagnostics.before = unrun();
         diagnostics.after = unrun();
@@ -583,7 +806,16 @@ async function captureShadowSurface(page, config, name, failure, reference = nul
         latest = { ...pixels, captureValidity: { accepted: stable && alignment.accepted && matchesReference, stable, matchesReference,
             before, after, clip, viewport, alignment } };
         diagnostics.latestSummary = { status: 'available', attempt: diagnostics.attempt, value: latest };
-        if (hasSurface(pixels) && latest.captureValidity.accepted && Date.now() <= deadline) return { image, pixels: latest };
+        if (observeResize && pixels.colorful === 0) await readShadowResizeCheckpoint(page, diagnostics, 'first-blank');
+        if (observeResize && Date.now() - startedAt >= budget / 2)
+            await readShadowResizeCheckpoint(page, diagnostics, 'halfway');
+        if (hasSurface(pixels) && latest.captureValidity.accepted && Date.now() <= deadline) {
+            if (observeResize) {
+                diagnostics.resizeCheckpoints.failure.reason = 'capture-completed';
+                latest.resizeCheckpoints = structuredClone(diagnostics.resizeCheckpoints);
+            }
+            return { image, pixels: latest };
+        }
         if (await step('read-status', () => page.locator('#status').getAttribute('data-state')) === 'failed')
             throw withCaptureEvidence(new Error(`BrowserSmoke.EngineFrameFailed: ${await step('read-failure-status',
                 () => page.locator('#status').textContent())}`));
@@ -750,6 +982,8 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
                 'BrowserSmoke.ShadowBrowserFailure: the page crashed or a request failed.');
         } catch (error) {
             hadFailure = true;
+            if (error?.shadowCapture?.resizeCheckpoints)
+                await readShadowResizeCheckpoint(page, error.shadowCapture, 'failure');
             const evidence = await page.evaluate(() => ({ failure: globalThis.advancedCanvasFailureEvidence ?? null,
                 nativeCompile: globalThis.advancedNativeCompileSnapshot?.() ?? null,
                 submissions: globalThis.advancedSubmissionSnapshot?.() ?? null,
@@ -761,6 +995,7 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
             await page.screenshot({ path: path.join(config.output, `${name}-failure.png`), fullPage: true }).catch(() => {});
             throw error;
         } finally {
+            await cleanupShadowResizeObservation(page);
             if (hadFailure) await context.close().catch(() => {});
             else await context.close();
         }
@@ -775,9 +1010,10 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
         baseline.resized = [];
         let prior = initial;
         for (let iteration = 0; iteration < widths.length; iteration++) {
+            if (iteration === 0) await installShadowResizeObservation(page, `${origin}/__baseline/index.html`);
             const extent = await resize(page, widths[iteration]);
             const image = await captureShadowSurface(page, config, `${name}-resized-${iteration}`,
-                'BrowserSmoke.ShadowOffResize: the authored OFF surface disappeared after resize.');
+                'BrowserSmoke.ShadowOffResize: the authored OFF surface disappeared after resize.', null, iteration === 0);
             const evidence = await snapshot(page);
             const qualification = assertShadowEvidence(evidence, offArtifacts.programs, 'off', extent, prior.gpu.completedSerial);
             baseline.resized.push({ ...image, extent });
