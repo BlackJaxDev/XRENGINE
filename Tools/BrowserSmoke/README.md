@@ -419,11 +419,21 @@ read-only GitHub token only while preparing the activation; the browser command
 does not receive that token.
 
 The trace uses an owned Playwright browser server bound to loopback, with the
-same browser launch settings. The recorded run exposed its temporary loopback
-control URL through Playwright process logging; see the retained-evidence limit
-below.
-Recording begins before the published page starts and ends at the first initial
-frame checkpoint. A 25-second stop timer and independent 29-second owned-process
+same browser launch settings. The approved replacement requires `DEBUG=''`
+before Node imports Playwright. This suppresses browser debug logging that could
+retain the temporary loopback control URL. Launch and connection errors use
+fixed diagnostic codes. If launch fails before Playwright returns the owned
+process handle, the report marks cleanup as unverified. A five-second Node exit
+deadline invokes Playwright's existing cleanup hook for its own child process
+group; it does not establish an observed child exit.
+Connection failure uses the same five-second deadline for owned process cleanup
+and forced Node exit. Verified child exit clears this guard. Failed cleanup
+retains the guard and reports a fixed cleanup-unverified code.
+Recording starts only after the shipping player is running, exactly 17 controls
+and native proxies are ready, and the shared checkbox is checked in both the
+engine and native DOM. It starts immediately before the initial checkpoint's
+existing two-frame witness and stops when that witness returns or fails. A
+25-second stop timer and independent 29-second owned-process
 watchdog keep the capture within its 30-second limit; uncertain shutdown aborts
 the diagnostic. Normal runs keep their existing launch path. The five-second
 frame check, 180-second Playwright setting and all app assertions remain.
@@ -438,7 +448,7 @@ The evidence artifact retains only the sanitized summary from this trace. No pri
 profiler or user computer is used. Source checks and mocked protocol results do
 not establish a successful capture or UI acceptance.
 
-The approved capture is consumed by [run 37412087888, job 112112789417](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37412087888/job/112112789417).
+The original capture is consumed by [run 37412087888, job 112112789417](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37412087888/job/112112789417).
 It reproduced the unchanged initial animation-frame failure. During drain, the
 16 MiB input limit stopped collection; Chromium also reported data loss. The
 summary retains 18,074 event counts and 4,096 sanitized records, so it is
@@ -449,10 +459,14 @@ written. The ordinary process log retains the temporary loopback control URL
 emitted by Playwright DEBUG. That browser endpoint is closed; the earlier
 no-URL claim was incorrect for those process logs.
 
-The source authorization is now disabled and its activation record is retired.
-Do not rerun or rearm this capture under the consumed one-run approval. A future
-capture needs new authorization and an independent review of process logging
-and event selection. The original UI assertions and deadlines remain active.
+The original request `7c47e15a-8186-430c-bc15-56736d2d8a6f` is retired. Do not
+reuse its activation record or its consumed one-run approval. The separately
+approved replacement uses request `3e875a33-496f-4054-a609-af4970a51fe1` and
+`.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json`. Its source
+authorization permits only the single non-forced push immediately after
+`add42c95ff39937585aa94d5c2b9659b40434956`. A separate activation record must
+bind that source commit and its exact workflow run before any capture can start.
+The original UI assertions and deadlines remain active.
 The retained artifact is `editor-ui-parity-browser-qualification`, ID
 `11390519203`, SHA-256
 `ca089afa7d6d86916ba5939f9960427fbfca90cc83638c869769157c84d618b5`.

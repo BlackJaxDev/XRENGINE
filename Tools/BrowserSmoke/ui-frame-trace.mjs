@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
 // Activation requires a separate review. A local command-line flag is insufficient.
-const authorization = Object.freeze({ enabled: false, requestId: '7c47e15a-8186-430c-bc15-56736d2d8a6f',
-    activationPath: '.github/diagnostic-activations/ui-frame-trace-20261006.json',
-    priorCommit: '1692757ed2bd6354c2d4a27a12ee5bd4cf98026b' });
+const authorization = Object.freeze({ enabled: true, requestId: '3e875a33-496f-4054-a609-af4970a51fe1',
+    activationPath: '.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json',
+    priorCommit: 'add42c95ff39937585aa94d5c2b9659b40434956' });
 export function getUiFrameTraceAuthorization() { return authorization; }
 const categories = Object.freeze(['gpu.dawn', 'gpu', 'viz', 'cc', 'blink']);
 const limits = Object.freeze({ recordingMs: 30000, drainMs: 5000, inputBytes: 16 * 1024 * 1024,
@@ -59,7 +59,7 @@ export async function claimUiFrameTrace(config) {
         && !config.gpuDiagnostics && !config.headed && !config.executablePath, 'ScopeRejected');
     requireTrace(process.platform === 'linux' && Number.isSafeInteger(process.getuid?.())
         && process.getuid() > 0 && process.getuid() === process.geteuid?.(), 'RunnerIdentityRejected');
-    requireTrace(process.env.DEBUG === 'pw:browser' && !process.env.SELENIUM_REMOTE_URL
+    requireTrace(process.env.DEBUG === '' && !process.env.SELENIUM_REMOTE_URL
         && (!process.env.PWDEBUG || process.env.PWDEBUG === '0'), 'BrowserEnvironmentRejected');
     const exact = { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'push', GITHUB_RUN_ATTEMPT: '1',
         GITHUB_REPOSITORY: 'BlackJaxDev/XRENGINE', GITHUB_REF: 'refs/heads/codex/webgpu-readiness-audit',
@@ -185,11 +185,25 @@ async function bounded(action, milliseconds) {
     } finally { clearTimeout(timer); }
 }
 
+function guardUiTraceExit(deadline, code) {
+    return setTimeout(() => {
+        process.stderr.write(`BrowserSmoke.UiFrameTrace: ${code}\n`);
+        process.exit(1);
+    }, Math.max(0, deadline - performance.now())).unref();
+}
+
 /** Retain the exact child process for bounded, unprivileged trace cleanup. */
 export async function launchUiTraceBrowser(chromium, options, permit) {
     requireTrace(permits.has(permit) && !launchedPermits.has(permit), 'LaunchPermitRejected');
     launchedPermits.add(permit);
-    const server = await chromium.launchServer({ ...options, host: '127.0.0.1', port: 0 });
+    let server;
+    try { server = await chromium.launchServer({ ...options, host: '127.0.0.1', port: 0 }); }
+    catch {
+        // A server bind failure can leave Chromium running without a returned handle.
+        // Allow bounded reporting, then invoke Playwright's own process-exit cleanup.
+        guardUiTraceExit(performance.now() + limits.drainMs, 'BrowserLaunchUnavailableCleanupUnverified');
+        fail('BrowserLaunchUnavailableCleanupUnverified');
+    }
     const child = server.process();
     let exited = child.exitCode !== null || child.signalCode !== null, resolveExit;
     const exit = new Promise(resolve => { resolveExit = resolve; });
@@ -222,7 +236,11 @@ export async function launchUiTraceBrowser(chromium, options, permit) {
         ownedBrowsers.set(browser, owner);
         return browser;
     } catch {
-        await owner.kill(performance.now() + limits.drainMs);
+        const deadline = performance.now() + limits.drainMs;
+        const guard = guardUiTraceExit(deadline, 'BrowserConnectionUnavailableCleanupUnverified');
+        try { await owner.kill(deadline); }
+        catch { fail('BrowserConnectionUnavailableCleanupUnverified'); }
+        clearTimeout(guard);
         fail('BrowserConnectionUnavailable');
     }
 }
@@ -239,7 +257,7 @@ export async function startUiFrameTrace(browser, report, permit) {
     requireTrace(permit && permits.delete(permit), 'PermitRejected');
     const owner = ownedBrowsers.get(browser);
     requireTrace(owner?.permit === permit, 'BrowserOwnerMissing');
-    const data = report.uiFrameTrace = { status: 'starting', recordingLimitMs: limits.recordingMs,
+    const data = report.uiFrameTrace = { status: 'starting', startCheckpoint: 'initial-loaded', recordingLimitMs: limits.recordingMs,
         drainLimitMs: limits.drainMs, inputLimitBytes: limits.inputBytes, summaryLimitBytes: limits.summaryBytes,
         recordLimit: limits.records, bufferKiB: limits.bufferKiB, categories: [...categories],
         argumentFilter: true, sampling: false, systrace: false, startAcknowledged: false,

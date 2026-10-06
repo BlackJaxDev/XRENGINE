@@ -120,8 +120,8 @@ async function main() {
     if (!authorization.enabled) return;
     const deadline = Date.now() + 20000;
     assert(sha(authorization.priorCommit) && authorization.activationPath ===
-        '.github/diagnostic-activations/ui-frame-trace-20261006.json' &&
-        authorization.requestId === '7c47e15a-8186-430c-bc15-56736d2d8a6f', 'SourcePolicyRejected');
+        '.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json' &&
+        authorization.requestId === '3e875a33-496f-4054-a609-af4970a51fe1', 'SourcePolicyRejected');
     const env = process.env;
     assert(process.platform === 'linux' && Number.isSafeInteger(process.getuid?.())
         && process.getuid() > 0 && process.getuid() === process.geteuid?.(), 'RunnerIdentityRejected');
