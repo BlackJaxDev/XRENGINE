@@ -658,12 +658,15 @@ async function installShadowResizeObservation(page, expectedPage) {
 async function readShadowResizeCheckpoint(page, diagnostics, name) {
     const record = diagnostics.resizeCheckpoints?.[name];
     if (!record || record.reason !== 'not-reached') return;
+    // Claim before the first await: the midpoint timer and capture loop share this slot.
+    record.reason = 'checkpoint-read-pending';
     const now = Date.now(), deadline = diagnostics.startedAtUtcMs + diagnostics.budgetMs;
     record.utcMs = now;
     record.atMs = now - diagnostics.startedAtUtcMs;
     record.remainingMs = Math.max(0, deadline - now);
     record.readBudgetMs = Math.min(200, record.remainingMs);
     if (now >= deadline) { record.reason = 'capture-deadline-exhausted'; record.elapsedMs = 0; return; }
+    if (page.isClosed()) { record.reason = 'page-closed'; record.elapsedMs = 0; return; }
     if (shadowResizeObservers.get(page)?.status !== 'available') {
         record.reason = 'host-observer-unavailable'; record.elapsedMs = 0; return;
     }
@@ -674,6 +677,8 @@ async function readShadowResizeCheckpoint(page, diagnostics, name) {
     }, checkpointDeadline), Math.min(deadline, now + 200),
     { status: 'unavailable', reason: 'checkpoint-read-timeout' },
     { status: 'unavailable', reason: 'checkpoint-read-failed' });
+    // Capture cleanup can seal an in-flight slot before its bounded read settles.
+    if (record.reason !== 'checkpoint-read-pending') return;
     record.status = result.status;
     record.reason = result.reason;
     record.source = result.source ?? null;
@@ -707,8 +712,19 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
             .map(name => [name, { status: 'unavailable', reason: 'not-reached', utcMs: null, atMs: null,
                 remainingMs: null, readBudgetMs: null, elapsedMs: null, source: null }]));
     }
+    let halfwayTimer, captureClosed = false;
+    const stopHalfwayCheckpoint = () => {
+        captureClosed = true;
+        clearTimeout(halfwayTimer);
+        const record = diagnostics.resizeCheckpoints?.halfway;
+        if (record?.reason === 'checkpoint-read-pending') {
+            record.reason = 'capture-ended-during-read';
+            record.elapsedMs = Date.now() - record.utcMs;
+        }
+    };
     const withCaptureEvidence = error => {
         const result = error instanceof Error ? error : new Error(String(error));
+        stopHalfwayCheckpoint();
         diagnostics.elapsedMs = Date.now() - startedAt;
         // Copy before browser evidence collection or cleanup can run. Pending work cannot change this record.
         result.shadowCapture = structuredClone(diagnostics);
@@ -756,81 +772,93 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
             viewportOffsetX: visualViewport?.offsetLeft ?? null, viewportOffsetY: visualViewport?.offsetTop ?? null };
     });
     let latest;
-    if (observeResize) await readShadowResizeCheckpoint(page, diagnostics, 'capture-start');
-    do {
-        if (observeResize && Date.now() - startedAt >= budget / 2)
-            await readShadowResizeCheckpoint(page, diagnostics, 'halfway');
-        diagnostics.attempt++;
-        diagnostics.before = unrun();
-        diagnostics.after = unrun();
-        diagnostics.clip = unrun();
-        await step('scroll-into-view', () => canvas.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) }));
-        const before = await step('geometry-before', geometry);
-        diagnostics.before = { status: 'available', attempt: diagnostics.attempt, value: before };
-        const viewport = page.viewportSize();
-        // Match Playwright 1.63's element screenshot rounding in document coordinates.
-        // Page screenshot clips use viewport coordinates and do not repeat element stability waits.
-        const left = Math.floor(before.x + before.scrollX + 1e-3);
-        const top = Math.floor(before.y + before.scrollY + 1e-3);
-        const clip = { x: left - before.scrollX, y: top - before.scrollY,
-            width: Math.ceil(before.x + before.scrollX + before.width - 1e-3) - left,
-            height: Math.ceil(before.y + before.scrollY + before.height - 1e-3) - top };
-        diagnostics.clip = { status: 'available', attempt: diagnostics.attempt, value: { ...clip, viewport } };
-        const image = await step('canvas-screenshot', () => {
-            assert(viewport && Object.values(before).every(Number.isFinite) &&
-                before.devicePixelRatio === 1 && before.viewportScale === 1 &&
-                before.viewportOffsetX === 0 && before.viewportOffsetY === 0 &&
-                before.viewportWidth === viewport.width && before.viewportHeight === viewport.height &&
-                before.width > 0 && before.height > 0 && clip.width > 0 && clip.height > 0 &&
-                clip.x >= 0 && clip.y >= 0 && clip.x + clip.width <= viewport.width && clip.y + clip.height <= viewport.height,
-            'BrowserSmoke.ShadowCaptureBounds: the complete canvas must fit the unscaled viewport without clipping.');
-            return page.screenshot({ path: path.join(config.output, `${name}.png`), clip, fullPage: false,
-                timeout: Math.max(1, deadline - Date.now()) });
+    if (observeResize) halfwayTimer = setTimeout(() => {
+        if (captureClosed) return;
+        void readShadowResizeCheckpoint(page, diagnostics, 'halfway').catch(() => {
+            const record = diagnostics.resizeCheckpoints.halfway;
+            if (record.reason !== 'checkpoint-read-pending') return;
+            record.reason = 'checkpoint-read-failed';
+            record.elapsedMs = Date.now() - record.utcMs;
         });
-        const after = await step('geometry-after', geometry);
-        diagnostics.after = { status: 'available', attempt: diagnostics.attempt, value: after };
-        let imageSha256;
-        const decoded = await step('inspect-pixels', () => {
-            assert(image.byteLength <= 8 * 1024 * 1024, 'BrowserSmoke.ShadowImageSize: encoded screenshot exceeds 8 MiB.');
-            imageSha256 = sha256(image);
-            return imageAnalysis.request('inspect', { slot, hash: imageSha256, png: image,
-                width: clip.width, height: clip.height, canvasWidth: before.bitmapWidth,
-                canvasHeight: before.bitmapHeight, cssWidth: after.width }, deadline);
-        });
-        const pixels = decoded.pixels;
-        const analyzed = await step('inspect-alignment', () => imageAnalysis.request('align', {
-            slot, hash: imageSha256, reference: reference ? { slot: reference.analysisSlot, hash: reference.imageSha256 } : null,
-        }, deadline));
-        const alignment = analyzed.alignment;
-        const stable = equal(before, after) && before.devicePixelRatio === 1 &&
-            equal(viewport, page.viewportSize()) && pixels.width === clip.width && pixels.height === clip.height &&
-            Math.abs(pixels.width - before.width) <= 2 && Math.abs(pixels.height - before.height) <= 2;
-        const matchesReference = !reference || reference.pixels.width === pixels.width &&
-            reference.pixels.height === pixels.height &&
-            equal(reference.pixels.captureValidity.alignment.observed, alignment.observed);
-        latest = { ...pixels, imageSha256, captureValidity: { accepted: stable && alignment.accepted && matchesReference, stable, matchesReference,
-            before, after, clip, viewport, alignment } };
-        diagnostics.latestSummary = { status: 'available', attempt: diagnostics.attempt, value: latest };
-        if (observeResize && pixels.colorful === 0) await readShadowResizeCheckpoint(page, diagnostics, 'first-blank');
-        if (observeResize && Date.now() - startedAt >= budget / 2)
-            await readShadowResizeCheckpoint(page, diagnostics, 'halfway');
-        if (hasSurface(pixels) && latest.captureValidity.accepted && Date.now() < deadline) {
-            if (observeResize) {
-                diagnostics.resizeCheckpoints.failure.reason = 'capture-completed';
-                latest.resizeCheckpoints = structuredClone(diagnostics.resizeCheckpoints);
+    }, Math.max(0, startedAt + budget / 2 - Date.now()));
+    try {
+        if (observeResize) await readShadowResizeCheckpoint(page, diagnostics, 'capture-start');
+        do {
+            if (observeResize && Date.now() - startedAt >= budget / 2)
+                await readShadowResizeCheckpoint(page, diagnostics, 'halfway');
+            diagnostics.attempt++;
+            diagnostics.before = unrun();
+            diagnostics.after = unrun();
+            diagnostics.clip = unrun();
+            await step('scroll-into-view', () => canvas.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) }));
+            const before = await step('geometry-before', geometry);
+            diagnostics.before = { status: 'available', attempt: diagnostics.attempt, value: before };
+            const viewport = page.viewportSize();
+            // Match Playwright 1.63's element screenshot rounding in document coordinates.
+            // Page screenshot clips use viewport coordinates and do not repeat element stability waits.
+            const left = Math.floor(before.x + before.scrollX + 1e-3);
+            const top = Math.floor(before.y + before.scrollY + 1e-3);
+            const clip = { x: left - before.scrollX, y: top - before.scrollY,
+                width: Math.ceil(before.x + before.scrollX + before.width - 1e-3) - left,
+                height: Math.ceil(before.y + before.scrollY + before.height - 1e-3) - top };
+            diagnostics.clip = { status: 'available', attempt: diagnostics.attempt, value: { ...clip, viewport } };
+            const image = await step('canvas-screenshot', () => {
+                assert(viewport && Object.values(before).every(Number.isFinite) &&
+                    before.devicePixelRatio === 1 && before.viewportScale === 1 &&
+                    before.viewportOffsetX === 0 && before.viewportOffsetY === 0 &&
+                    before.viewportWidth === viewport.width && before.viewportHeight === viewport.height &&
+                    before.width > 0 && before.height > 0 && clip.width > 0 && clip.height > 0 &&
+                    clip.x >= 0 && clip.y >= 0 && clip.x + clip.width <= viewport.width && clip.y + clip.height <= viewport.height,
+                'BrowserSmoke.ShadowCaptureBounds: the complete canvas must fit the unscaled viewport without clipping.');
+                return page.screenshot({ path: path.join(config.output, `${name}.png`), clip, fullPage: false,
+                    timeout: Math.max(1, deadline - Date.now()) });
+            });
+            const after = await step('geometry-after', geometry);
+            diagnostics.after = { status: 'available', attempt: diagnostics.attempt, value: after };
+            let imageSha256;
+            const decoded = await step('inspect-pixels', () => {
+                assert(image.byteLength <= 8 * 1024 * 1024, 'BrowserSmoke.ShadowImageSize: encoded screenshot exceeds 8 MiB.');
+                imageSha256 = sha256(image);
+                return imageAnalysis.request('inspect', { slot, hash: imageSha256, png: image,
+                    width: clip.width, height: clip.height, canvasWidth: before.bitmapWidth,
+                    canvasHeight: before.bitmapHeight, cssWidth: after.width }, deadline);
+            });
+            const pixels = decoded.pixels;
+            const analyzed = await step('inspect-alignment', () => imageAnalysis.request('align', {
+                slot, hash: imageSha256, reference: reference ? { slot: reference.analysisSlot, hash: reference.imageSha256 } : null,
+            }, deadline));
+            const alignment = analyzed.alignment;
+            const stable = equal(before, after) && before.devicePixelRatio === 1 &&
+                equal(viewport, page.viewportSize()) && pixels.width === clip.width && pixels.height === clip.height &&
+                Math.abs(pixels.width - before.width) <= 2 && Math.abs(pixels.height - before.height) <= 2;
+            const matchesReference = !reference || reference.pixels.width === pixels.width &&
+                reference.pixels.height === pixels.height &&
+                equal(reference.pixels.captureValidity.alignment.observed, alignment.observed);
+            latest = { ...pixels, imageSha256, captureValidity: { accepted: stable && alignment.accepted && matchesReference, stable, matchesReference,
+                before, after, clip, viewport, alignment } };
+            diagnostics.latestSummary = { status: 'available', attempt: diagnostics.attempt, value: latest };
+            if (observeResize && pixels.colorful === 0) await readShadowResizeCheckpoint(page, diagnostics, 'first-blank');
+            if (observeResize && Date.now() - startedAt >= budget / 2)
+                await readShadowResizeCheckpoint(page, diagnostics, 'halfway');
+            if (hasSurface(pixels) && latest.captureValidity.accepted && Date.now() < deadline) {
+                if (observeResize) {
+                    stopHalfwayCheckpoint();
+                    diagnostics.resizeCheckpoints.failure.reason = 'capture-completed';
+                    latest.resizeCheckpoints = structuredClone(diagnostics.resizeCheckpoints);
+                }
+                return { image, pixels: latest, imageSha256, analysisSlot: slot,
+                    receiverComparison: analyzed.comparison, comparedToHash: reference?.imageSha256 ?? null };
             }
-            return { image, pixels: latest, imageSha256, analysisSlot: slot,
-                receiverComparison: analyzed.comparison, comparedToHash: reference?.imageSha256 ?? null };
-        }
-        if (await step('read-status', () => page.locator('#status').getAttribute('data-state')) === 'failed')
-            throw withCaptureEvidence(new Error(`BrowserSmoke.EngineFrameFailed: ${await step('read-failure-status',
-                () => page.locator('#status').textContent())}`));
-        // Retry at the next browser frame, within the same capture budget. Do not add a fixed startup delay.
-        const remaining = deadline - Date.now();
-        if (remaining > 0) await step('next-animation-frame',
-            () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve))));
-    } while (Date.now() < deadline);
-    throw withCaptureEvidence(new Error(`${failure} Last canvas summary: ${JSON.stringify(latest)}`));
+            if (await step('read-status', () => page.locator('#status').getAttribute('data-state')) === 'failed')
+                throw withCaptureEvidence(new Error(`BrowserSmoke.EngineFrameFailed: ${await step('read-failure-status',
+                    () => page.locator('#status').textContent())}`));
+            // Retry at the next browser frame, within the same capture budget. Do not add a fixed startup delay.
+            const remaining = deadline - Date.now();
+            if (remaining > 0) await step('next-animation-frame',
+                () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve))));
+        } while (Date.now() < deadline);
+        throw withCaptureEvidence(new Error(`${failure} Last canvas summary: ${JSON.stringify(latest)}`));
+    } finally { stopHalfwayCheckpoint(); }
 }
 
 function compareReceiver(off, on, canvasExtent) {
