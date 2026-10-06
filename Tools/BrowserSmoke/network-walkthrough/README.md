@@ -126,3 +126,22 @@ suffix. The helper now requires that exact canonical URL. Source commit,
 clean-tree, artifact, and content-hash checks remain unchanged. This failed
 request is also retired without an activation or trust claim. A fresh helper
 static result and request review are required before another preparation.
+
+Preparation run `37399174427` on trigger
+`51adb83e4f07e400d601d92efb45263d7b68a579` passes the source, archive, and
+published-package checks, then fails the Server build because the pinned
+workload set is absent on this native-only runner. The two native build commands
+now set `MSBuildEnableWorkloadResolver=false` for that invocation. SDK pins and
+browser workload configuration are unchanged; no workload is installed here.
+The same commands disable persistent build servers, node reuse, and shared
+compilation so preparation does not retain compiler processes.
+The workflow also disables the SDK's automatic ASP.NET development-certificate
+generation before setup or build commands. The separately activated, bounded
+test certificate remains the only certificate operation in this workflow.
+
+The failure report confirms `certificateMutationReached:false`,
+`trustAttemptConsumed:false`, and complete owned-process/private-file cleanup
+without errors. The failed request is retired. Local SDK evaluation reproduces
+the workload-set failure without the property and resolves the original native
+target framework with it. This verifies SDK evaluation only; native compilation
+and browser preflight remain required on the next exact Windows preparation.
