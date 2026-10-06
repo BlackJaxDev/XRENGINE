@@ -80,9 +80,14 @@ async function startServer(config, requests) {
             const stat = await fs.stat(file);
             if (!stat.isFile()) { status = 404; throw new Error('Not a file'); }
             status = 200;
+            // Use no-cache only for shadow fixture content. The pinned browser can
+            // report aborted no-store streams after the page has consumed their bodies.
+            const shadowContent = config.gameKind === 'advanced-shadow-parity' &&
+                /^\/__(?:game|baseline)\/content\/(?:manifest\.json|payload\/[a-f0-9]{64}\.bin)$/.test(pathname);
             response.writeHead(status, {
                 'content-type': mime[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
-                'content-length': stat.size, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+                'content-length': stat.size, 'cache-control': shadowContent ? 'no-cache' : 'no-store',
+                'x-content-type-options': 'nosniff',
             });
             if (request.method === 'HEAD') response.end();
             else await pipeline(createReadStream(file), response);
