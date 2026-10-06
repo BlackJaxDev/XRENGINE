@@ -96,9 +96,12 @@ The exact published page is served on a fresh `http://127.0.0.1:<ephemeral>` ori
 The browser launch requests the Chromium sandbox with Playwright's
 `chromiumSandbox: true`. Earlier preparations inherited
 [Playwright's sandbox-off default](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-chromium-sandbox).
-The helper keeps the four software-mode arguments from `smoke.config.mjs` in
-their existing order. It appends `--use-webgpu-adapter=swiftshader` for this
-walkthrough only. The existing `--enable-unsafe-webgpu` flag
+For this walkthrough only, the helper requires the exact known software launch
+contract from `smoke.config.mjs`. It launches with `--enable-unsafe-webgpu` and
+`--use-webgpu-adapter=swiftshader`. It omits the inherited
+`--use-angle=swiftshader`, `--use-vulkan=swiftshader`, and
+`--enable-features=Vulkan` arguments. An unexpected shared launch contract
+fails before the browser starts. The retained `--enable-unsafe-webgpu` flag
 [allows CPU adapters](https://chromium.googlesource.com/chromium/src/+/ae047a7ca076abd0d10f856ff9bb59639b6d8de3/gpu/command_buffer/service/webgpu_decoder_impl.cc)
 and [bypasses Chromium's WebGPU adapter blocklist](https://developer.chrome.com/blog/supercharge-web-ai-testing).
 Use this mode only with the trusted loopback pages and the existing request
@@ -107,12 +110,23 @@ certificate trust.
 
 [Chromium 153.0.8010.12 GPU startup code](https://chromium.googlesource.com/codesearch/chromium/src/+/refs/tags/153.0.8010.12/gpu/ipc/service/gpu_init.cc)
 preloads `vk_swiftshader.dll` when the WebGPU adapter selector requests
-SwiftShader. [Chromium's WebGPU test configuration](https://chromium.googlesource.com/chromium/src/+/HEAD/third_party/blink/web_tests/FlagSpecificConfig)
+SwiftShader. [Chromium 153's WebGPU test configuration](https://github.com/chromium/chromium/blob/153.0.8010.12/third_party/blink/web_tests/FlagSpecificConfig)
 pairs that selector with `--enable-unsafe-webgpu`.
 [Dawn's test guide](https://dawn.googlesource.com/dawn/+/HEAD/webgpu-cts/README.md)
 also documents the selector. These source facts support a launch candidate.
 They do not prove that this runner used the sandbox or created a SwiftShader
 adapter.
+
+The [Chromium 153 Windows WebGPU decoder](https://github.com/chromium/chromium/blob/153.0.8010.12/gpu/command_buffer/service/webgpu_decoder_impl.cc#L1691-L1697)
+returns no adapter if ANGLE does not provide a D3D11 device. Its
+[ANGLE SwiftShader display](https://github.com/chromium/chromium/blob/153.0.8010.12/ui/gl/gl_display.cc#L259-L272)
+uses Vulkan, while the
+[D3D11 query](https://github.com/chromium/chromium/blob/153.0.8010.12/ui/gl/gl_angle_util_win.cc#L60-L74)
+requires a D3D11 extension. This is a source-supported explanation for the
+failed preparation. The published result has no raw GPU log or observed ANGLE
+backend, so it does not prove the cause. The narrowed launch lets Chromium
+select its normal ANGLE backend while the WebGPU selector still requests
+SwiftShader.
 
 After the real first-frame check passes, `BrowserEnvironmentProof` reads the
 current renderer device's `adapterInfo`. It does not request another adapter.
@@ -222,3 +236,12 @@ dedicated request, successful Windows static and preflight evidence, and the
 existing independent review before any exact-run activation. A passing source
 check or launch-option check is not runtime acceptance. No certificate mutation
 or trust action was reached in run `37404814127`.
+
+Preparation run `37411016127` on trigger
+`1692757ed2bd6354c2d4a27a12ee5bd4cf98026b` requested the sandbox and
+SwiftShader WebGPU selector. The published browser, Chromium 153.0.8010.12,
+failed with `AdapterUnavailable` before the first frame. The request labels do
+not establish the active ANGLE backend or GPU sandbox state. Both owned native
+builds passed with zero remaining children. Cleanup confirmed all owned
+processes exited and no certificate action or trust claim occurred. The new
+launch is a source candidate for a fresh preparation. It has no runtime pass.

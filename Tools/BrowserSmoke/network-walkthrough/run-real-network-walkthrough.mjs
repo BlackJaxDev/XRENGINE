@@ -262,9 +262,15 @@ try {
 
     stage('BrowserLaunch');
     const launchOptions = browserLaunchOptions({ gpuMode: 'software', headed: false, gpuDiagnostics: false });
+    const expectedArgs = ['--enable-unsafe-webgpu', '--use-angle=swiftshader',
+        '--use-vulkan=swiftshader', '--enable-features=Vulkan'];
+    requireCondition(Object.keys(launchOptions).length === 3 && launchOptions.headless === true &&
+        launchOptions.channel === 'chromium' && Array.isArray(launchOptions.args) &&
+        launchOptions.args.length === expectedArgs.length &&
+        launchOptions.args.every((arg, index) => arg === expectedArgs[index]), 'BrowserLaunchContractChanged');
     browser = await bounded('BrowserLaunch', () => chromium.launch({
         ...launchOptions,
-        args: [...launchOptions.args, '--use-webgpu-adapter=swiftshader'],
+        args: [launchOptions.args[0], '--use-webgpu-adapter=swiftshader'],
         chromiumSandbox: true,
         timeout: 30000, env: childEnvironment }), 35000);
     result.browserVersion = browser.version();
