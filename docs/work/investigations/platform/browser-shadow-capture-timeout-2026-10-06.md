@@ -790,3 +790,22 @@ PowerShell parsing, and checks against the cooked artifacts passed. Negative
 descriptor cases rejected changed coordinates, matrix layout, pass, schema,
 target, and missing shadow defines. Independent review of these three checks
 found no remaining issue. Runtime acceptance remains separate.
+
+[Run 37539269319](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37539269319)
+passed the real 28-artifact Windows cook and both shadow publications. All 28
+WGSL files matched the reviewed local cook. The native cook artifact
+`11448771127` has ZIP SHA-256
+`caf53e76b13c6b1ce83c176e122c60387c0cade85c0e28c137c6939e33cd010d`.
+The shadow check then failed before world startup. Its outer pipeline identity
+helper still required the single-sample `advancedShadeNative` entry point for
+the newly inspected MSAA companions, which use `advancedShadeNativeMsaa`.
+The helper now requires the exact entry point for the pass's sample form.
+The name, single-entry, workgroup, source hash, shader schema, resource layout,
+and real shadow assertions stay in place. This result gives no ON compile
+time or shadow comparison result for the new specialization.
+The corrected artifact and pipeline helpers passed all 28 real Windows-cooked
+descriptors, with descriptor and WGSL hashes checked. All 112 mutations of
+entry point, extra entry, name, and workgroup were rejected. The previous
+helper rejected all 14 MSAA descriptors and accepted all 14 single-sample
+descriptors, which reproduces the live failure. Independent review passed the
+sample-specific correction. These checks did not start another browser.
