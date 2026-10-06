@@ -483,7 +483,7 @@ async function captureShadowSurface(page, config, name, failure, reference = nul
         elapsedMs: null, attempt: 0, activePhase: null,
         phases: Object.fromEntries(phases.map(phase => [phase, { attempt: null, phase, status: 'unrun',
             startedAtMs: null, elapsedMs: null, remainingMs: null }])),
-        steps: [], omittedSteps: 0, before: unrun(), after: unrun(), latestSummary: unrun() };
+        steps: [], omittedSteps: 0, before: unrun(), after: unrun(), clip: unrun(), latestSummary: unrun() };
     const withCaptureEvidence = error => {
         const result = error instanceof Error ? error : new Error(String(error));
         diagnostics.elapsedMs = Date.now() - startedAt;
@@ -527,18 +527,40 @@ async function captureShadowSurface(page, config, name, failure, reference = nul
     const geometry = () => canvas.evaluate(element => {
         const bounds = element.getBoundingClientRect();
         return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
-            bitmapWidth: element.width, bitmapHeight: element.height, devicePixelRatio, scrollX, scrollY };
+            bitmapWidth: element.width, bitmapHeight: element.height, devicePixelRatio, scrollX, scrollY,
+            viewportWidth: innerWidth, viewportHeight: innerHeight,
+            viewportScale: visualViewport?.scale ?? null,
+            viewportOffsetX: visualViewport?.offsetLeft ?? null, viewportOffsetY: visualViewport?.offsetTop ?? null };
     });
     let latest;
     do {
         diagnostics.attempt++;
         diagnostics.before = unrun();
         diagnostics.after = unrun();
+        diagnostics.clip = unrun();
         await step('scroll-into-view', () => canvas.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) }));
         const before = await step('geometry-before', geometry);
         diagnostics.before = { status: 'available', attempt: diagnostics.attempt, value: before };
-        const image = await step('canvas-screenshot', () => canvas.screenshot({ path: path.join(config.output, `${name}.png`),
-            timeout: Math.max(1, deadline - Date.now()) }));
+        const viewport = page.viewportSize();
+        // Match Playwright 1.63's element screenshot rounding in document coordinates.
+        // Page screenshot clips use viewport coordinates and do not repeat element stability waits.
+        const left = Math.floor(before.x + before.scrollX + 1e-3);
+        const top = Math.floor(before.y + before.scrollY + 1e-3);
+        const clip = { x: left - before.scrollX, y: top - before.scrollY,
+            width: Math.ceil(before.x + before.scrollX + before.width - 1e-3) - left,
+            height: Math.ceil(before.y + before.scrollY + before.height - 1e-3) - top };
+        diagnostics.clip = { status: 'available', attempt: diagnostics.attempt, value: { ...clip, viewport } };
+        const image = await step('canvas-screenshot', () => {
+            assert(viewport && Object.values(before).every(Number.isFinite) &&
+                before.devicePixelRatio === 1 && before.viewportScale === 1 &&
+                before.viewportOffsetX === 0 && before.viewportOffsetY === 0 &&
+                before.viewportWidth === viewport.width && before.viewportHeight === viewport.height &&
+                before.width > 0 && before.height > 0 && clip.width > 0 && clip.height > 0 &&
+                clip.x >= 0 && clip.y >= 0 && clip.x + clip.width <= viewport.width && clip.y + clip.height <= viewport.height,
+            'BrowserSmoke.ShadowCaptureBounds: the complete canvas must fit the unscaled viewport without clipping.');
+            return page.screenshot({ path: path.join(config.output, `${name}.png`), clip, fullPage: false,
+                timeout: Math.max(1, deadline - Date.now()) });
+        });
         const after = await step('geometry-after', geometry);
         diagnostics.after = { status: 'available', attempt: diagnostics.attempt, value: after };
         const pixels = await step('inspect-pixels', () => inspectCanvas(page, null, image));
@@ -553,12 +575,13 @@ async function captureShadowSurface(page, config, name, failure, reference = nul
             return globalThis.advancedShadowInspectCaptureImage(context.getImageData(0, 0, surface.width, surface.height), regions);
         }, { encoded: image.toString('base64'), regions }));
         const stable = equal(before, after) && before.devicePixelRatio === 1 &&
+            equal(viewport, page.viewportSize()) && pixels.width === clip.width && pixels.height === clip.height &&
             Math.abs(pixels.width - before.width) <= 2 && Math.abs(pixels.height - before.height) <= 2;
         const matchesReference = !reference || reference.pixels.width === pixels.width &&
             reference.pixels.height === pixels.height &&
             equal(reference.pixels.captureValidity.alignment.observed, alignment.observed);
         latest = { ...pixels, captureValidity: { accepted: stable && alignment.accepted && matchesReference, stable, matchesReference,
-            before, after, alignment } };
+            before, after, clip, viewport, alignment } };
         diagnostics.latestSummary = { status: 'available', attempt: diagnostics.attempt, value: latest };
         if (hasSurface(pixels) && latest.captureValidity.accepted && Date.now() <= deadline) return { image, pixels: latest };
         if (await step('read-status', () => page.locator('#status').getAttribute('data-state')) === 'failed')
