@@ -54,6 +54,48 @@ const allowedEnvironment = new Set(['SYSTEMROOT','WINDIR','PATH','PATHEXT','TEMP
 const childEnvironment = Object.fromEntries(Object.entries(process.env)
     .filter(([key]) => allowedEnvironment.has(key.toUpperCase())));
 function requireCondition(condition, code) { if (!condition) throw new WalkthroughFailure(code); }
+// Classify the retained cold failure inside the page. Only fixed labels cross
+// the Playwright boundary; exception text, stacks, paths, and URLs stay private.
+function classifyColdBrowserFailure() {
+    const message = globalThis.__networkFixtureHost?.failure?.message;
+    const result = { present: typeof message === 'string', startupStage: 'other',
+        exceptionKind: 'other', engineCondition: 'other' };
+    if (typeof message !== 'string') return result;
+    const stages = new Set(['admit startup', 'open asset catalog', 'install published type metadata',
+        'install runtime asset services', 'initialize game registrations', 'load shader catalog',
+        'preload default UI font', 'load startup world', 'bind authored UI fonts',
+        'load startup settings', 'hydrate essential roots', 'configure game bootstrap',
+        'start engine world']);
+    const startup = /^(?:System\.InvalidOperationException: )?BrowserEngine\.StartupFailed \[([^\]\r\n]{1,64})\]: ([A-Za-z.]{1,64})(?::|$)/.exec(message);
+    if (startup) {
+        if (stages.has(startup[1])) result.startupStage = startup[1];
+        const kinds = new Map([
+            ['System.InvalidOperationException', 'InvalidOperation'],
+            ['System.IO.InvalidDataException', 'InvalidData'],
+            ['System.InvalidDataException', 'InvalidData'],
+            ['System.NotSupportedException', 'NotSupported'],
+            ['System.OperationCanceledException', 'OperationCanceled'],
+            ['System.IO.FileNotFoundException', 'FileNotFound'],
+            ['System.AggregateException', 'Aggregate'],
+        ]);
+        result.exceptionKind = kinds.get(startup[2]) ?? 'other';
+    }
+    const conditions = [
+        ['PublishedMetadataMissing', 'PublishedMetadata.Missing:'],
+        ['BrowserJoltMissing', 'Browser Jolt physics is not installed.'],
+        ['WorldPackageInvalid', 'AssetSource.WorldPackageInvalid:'],
+        ['StartupWorldMissing', 'AssetSource.StartupWorldMissing:'],
+        ['CanvasSessionUnavailable', 'WebGPU.EngineCanvas.SessionUnavailable:'],
+        ['DeviceAcquisitionTimeout', 'WebGPU device acquisition exceeded 20000 ms.'],
+        ['WebGpuUnavailable', 'WebGPU requires a secure context and navigator.gpu.'],
+        ['AdapterUnavailable', 'No WebGPU adapter is available.'],
+        ['CanvasContextUnavailable', 'WebGPU canvas context is unavailable.'],
+        ['CanvasFormatUnsupported', 'WebGPU.EngineCanvas.FormatUnsupported:'],
+    ];
+    for (const [kind, marker] of conditions)
+        if (message.includes(marker)) { result.engineCondition = kind; break; }
+    return result;
+}
 async function until(label, milliseconds, sample, good) {
     const expires = Math.min(Date.now() + milliseconds, cleanupDeadline ?? liveDeadline);
     while (Date.now() < expires) {
@@ -304,6 +346,8 @@ try {
                 hostPresent: !!host, rendererReady: host?.rendererReady === true, hostFailed: host?.failed === true,
                 sessionActive: host?.session > 0 };
         }), 1000).catch(() => ({ observationUnavailable: true }));
+        result.browser.coldFailure = await bounded('FailureClass', () => page.evaluate(classifyColdBrowserFailure), 1000)
+            .catch(() => ({ observationUnavailable: true }));
     }
     writeResult();
 } finally {

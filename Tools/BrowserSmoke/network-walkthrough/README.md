@@ -93,9 +93,24 @@ This design assumes the existing repository writers/coordinator, reviewed workfl
 
 The exact published page is served on a fresh `http://127.0.0.1:<ephemeral>` origin. Both modes require the existing `EngineCanvasHost` to report running/presented, `HasPresentedCanvasFrame()` true and preparation state 1; renderer initialization alone is insufficient. Preflight closes fully before trust. The live mode uses real focused W key events, real managed admission, worker simulation counters and a fresh post-suspension reservation/handoff. This does not claim exact server/client pose agreement or complete replay/mobile/expiry qualification.
 
+If the page fails, the browser probe reads the host's retained cold failure before cleanup. The public result contains only a presence flag and closed-list startup stage, exception kind, and engine condition labels. Unknown text maps to `other`. An absent host failure stays absent and does not identify a cause. The probe does not export page status text, exception text, stacks, request URLs, browser console records, or shader source. This classification does not change the first-frame gate or permit a network run after failed preparation.
+
 The service uses literal IPv4 loopback, advertises `localhost`, and issues `wss://localhost:15200/realtime`. The single certificate has SAN `DNS=localhost`, a nonexportable private key in `CurrentUser\My`, explicit UTC `NotBefore=now` rounded to certificate whole-second precision and `NotAfter=start+30 minutes`. Its positive validity interval is checked to be no more than 30 minutes before trust is added; the provider's default backdating is not used. Only its public certificate is added to `CurrentUser\Root`. The browser uses normal TLS validation; no ignored certificate errors, TLS flags, LocalMachine store, firewall change or signing certificate is used. The service accepts only the exact ephemeral page origin. A restrictive `connect-src` policy permits only that gateway plus same-origin/local blob/data requests; request routing and WebSocket observation add checks without proxying or replacing Chromium's WSS handshake.
 
 The outer supervisor starts its eight-minute clock before certificate creation, bounds that contained creation child to 20 seconds, then gives the live Node/service/browser job only the remaining time. Node has independent bounded callbacks and a hard exit. The native wrapper assigns processes atomically to Windows Job Objects through `PROC_THREAD_ATTRIBUTE_JOB_LIST`, retains exact handles and uses kill-on-close. No image-name kill or unpinned PID lookup controls teardown. The existing production worker's nested job is preserved with no breakaway flag.
+
+Preparation also starts each native build in its own owned Job Object. Both builds
+share the first 25 minutes of the invocation clock. This leaves the existing
+three-minute preflight and one-minute cleanup windows inside the 30-minute step.
+After each build's root exits, the helper records its exit code, stops remaining
+members of that exact job, and requires zero active members before continuing.
+The final cleanup check includes both build jobs. An uncertain exit blocks the
+prepared-state record and activation. The build environment is allowlisted and
+explicitly disables automatic SDK development-certificate creation. Private
+minimal build logs have a four-MiB checked bound and are deleted with the private
+working directory before prerequisite evidence is published. No build log is
+uploaded. Public build evidence contains only result, exit code, remaining child
+count and confirmed exit status.
 
 Cleanup waits up to 30 seconds for all owned members to exit, then gives a separate contained cleanup child 25 seconds to delete the exact Root entry, delete the exact My certificate with `-DeleteKey`, verify absence, and remove generated private worker/checkpoint files only after confirmed exit. A pending live cleanup marker replaces the earlier preparation marker before trust, so a hard interruption cannot make old successful cleanup evidence authorize uploads. The overall cleanup budget is one minute. The literal certificate/cleanup helper is regenerated from the verified wrapper in each phase; an old disk copy is never accepted as authority.
 
@@ -133,8 +148,9 @@ published-package checks, then fails the Server build because the pinned
 workload set is absent on this native-only runner. The two native build commands
 now set `MSBuildEnableWorkloadResolver=false` for that invocation. SDK pins and
 browser workload configuration are unchanged; no workload is installed here.
-The same commands disable persistent build servers, node reuse, and shared
-compilation so preparation does not retain compiler processes.
+The same commands disable persistent managed build servers, node reuse, and
+shared compilation. These flags do not contain all native compiler descendants;
+the next preparation exposed that separate gap, described below.
 The workflow also disables the SDK's automatic ASP.NET development-certificate
 generation before setup or build commands. The separately activated, bounded
 test certificate remains the only certificate operation in this workflow.
@@ -145,3 +161,18 @@ without errors. The failed request is retired. Local SDK evaluation reproduces
 the workload-set failure without the property and resolves the original native
 target framework with it. This verifies SDK evaluation only; native compilation
 and browser preflight remain required on the next exact Windows preparation.
+
+Preparation run `37402062022` on trigger
+`9bf5da9276caf9bdb82807033cc6242cbe757420` verifies the published package and
+builds the real Server and ControlPlane.Service with zero warnings and zero
+errors. The published browser then fails its first-frame gate. The old readiness
+booleans cannot identify the cause because host teardown resets them. The new
+closed-list cold-failure fields preserve a bounded cause classification without
+exporting the message.
+
+The result confirms that trust was not consumed and no certificate mutation
+occurred. The preflight Job Object closed, but GitHub later terminated native
+build descendants named `vctip` and `mspdbsrv`. The earlier cleanup flag therefore
+did not prove native-build process cleanup. Both builds now use the owned-job
+protocol above. Their fresh Windows containment and preflight evidence are still
+required. The failed request is retired; no activation was created or published.
