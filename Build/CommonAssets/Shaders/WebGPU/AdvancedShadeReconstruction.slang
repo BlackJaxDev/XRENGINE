@@ -569,7 +569,7 @@ float3 XR_ADV_ReconstructWorldPositionFromDepth(
 
 #if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
 bool XR_WEB_TryInterpolateShadowSurface(XRAdvancedSurface surface, float2 pixelCenter,
-    XRAdvancedPreparedShadowPrimitive prepared, out XRAdvancedSurface helper)
+    __constref XRAdvancedPreparedShadowPrimitive prepared, out XRAdvancedSurface helper)
 {
     // This surface is used only by receiver-normal evaluation. The main sample
     // retains ownership of color, previous geometry and temporal outputs.

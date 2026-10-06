@@ -31,7 +31,7 @@ static float3 standaloneShadowNormalY;
 
 bool XR_WEB_ReconstructShadowHelper(XRAdvancedSurface surface, float2 pixel,
 #if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
-    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+    __constref XRAdvancedPreparedShadowPrimitive preparedPrimitive,
 #endif
     out float3 position, out float3 normal)
 {
@@ -95,7 +95,7 @@ float3 XR_WEB_ShadowCoordinate(XRAdvancedShadowRecord record, float3 position, f
 
 float XR_WEB_ShadowPlaneBias(XRAdvancedShadowRecord record, XRAdvancedSurface surface,
 #if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
-    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+    __constref XRAdvancedPreparedShadowPrimitive preparedPrimitive,
 #endif
     float3 coordinate, float footprint, float mapWidth)
 {
@@ -203,7 +203,7 @@ float XR_WEB_SampleStandalonePoint(XRAdvancedShadowRecord record, XRAdvancedText
 float XR_WEB_SampleStandaloneShadow(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
     XRAdvancedEncodedTextureReference reference, XRAdvancedSurface surface, float3 normal,
 #if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
-    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+    __constref XRAdvancedPreparedShadowPrimitive preparedPrimitive,
 #endif
     out uint reason)
 {
