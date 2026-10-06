@@ -37,10 +37,10 @@ pixel summary. Unrun values are explicit; attempt numbers distinguish a prior
 complete summary from the current attempt. A copy is attached to the error
 before browser evidence collection and cleanup.
 
-The absolute 10-second deadline, capture operations, operation order,
-screenshot method, fixture geometry, comparison criteria, and all assertions
-remain unchanged. The change adds no browser request, trace, GPU readback,
-startup delay, retry allowance, or privilege.
+The diagnostic-only change kept the absolute 10-second deadline, capture
+operations, operation order, screenshot method, fixture geometry, comparison
+criteria, and all assertions unchanged. It added no browser request, trace,
+GPU readback, startup delay, retry allowance, or privilege.
 
 Only after a failure, the report also samples the current asset delivery
 counters after its unchanged browser evidence read. It does so only while the
@@ -85,6 +85,49 @@ rejects request failures remains in place. Cancellation ownership and
 completed asset reads require separate evidence before any exception can be
 considered.
 
+## Measured screenshot timeout and bounded correction
+
+[Run 37447198630, job 112228105199](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37447198630/job/112228105199)
+on source `e9fa29daf` retained the first OFF attempt's failing phase. Scroll
+completed in 2,294 ms, and geometry read completed in 32 ms. The element
+screenshot then exhausted its remaining 7,674 ms. Post-capture geometry and
+pixel inspection did not run. The inspected failure PNG still shows the
+receiver and both occluders. This establishes a screenshot-phase timeout;
+it does not identify the stalled operation inside Playwright or Chromium.
+
+Delivery was `ready`, with all 349 essential assets verified, zero failed or
+cancelled reads, and no active or queued requests. The 88 browser
+`ERR_ABORTED` events remain unclassified. Aggregate delivery success does not
+permit a request-failure exception.
+
+[Playwright 1.63's screenshot implementation](https://raw.githubusercontent.com/microsoft/playwright/v1.63.0/packages/playwright-core/src/server/screenshotter.ts)
+performs another element-stability wait inside an element screenshot after
+the harness has already scrolled and measured the canvas. Its page screenshot
+path omits that second element wait. Font, layout, and browser capture work
+still occurs. The correction uses this page path with a clip restricted to
+the complete canvas. Removing the duplicate wait is a source-supported change;
+the runtime evidence does not prove that wait caused the timeout.
+
+The clip uses the pinned
+[document rectangle rounding](https://raw.githubusercontent.com/microsoft/playwright/v1.63.0/packages/playwright-core/src/server/helper.ts):
+add scroll offsets to the measured canvas origin, floor near edges with
+`+0.001`, and ceil far edges with `-0.001`. Subtract the same scroll offsets
+to obtain the page screenshot's viewport clip. Chromium adds the visual
+viewport's page origin when it constructs the
+[capture rectangle](https://raw.githubusercontent.com/microsoft/playwright/v1.63.0/packages/playwright-core/src/server/chromium/crPage.ts).
+Unit visual-viewport scale and zero visual offset are required. The observed
+`x=16`, `y=202.875`, `width=977`, `height=549.5625`, and zero scroll produce
+`x=16`, `y=202`, `width=977`, `height=551`.
+
+The harness rejects clips outside the viewport instead of accepting
+Playwright's automatic clip trimming. It retains pre/post canvas, scroll,
+DPR, and viewport geometry and requires exact screenshot clip dimensions.
+The projection, exterior, reference alignment, surface, and receiver-effect
+checks remain in place. A changed size, position, scroll offset, DPR, or
+viewport cannot qualify the image. The original absolute 10-second budget,
+first scroll, step timing, failure evidence, and request-failure assertion
+remain unchanged. The correction starts no extra trace or GPU readback.
+
 ## Validation and next step
 
 The source and saved runtime artifacts were inspected. No new runtime or test
@@ -93,6 +136,10 @@ run was performed for this diagnostic change. `node --check` and the scoped
 in the capture timing change after the error-evidence access was made null-safe.
 Narrow independent review also found no blocking issue in the final
 delivery-counter snapshot with its absolute Node-side deadline.
-These checks do not prove that the timeout or request failures are fixed. The
-next authorized shadow run must identify the failed operation and its timings
-before capture behavior changes.
+The later saved run identified the screenshot phase. The bounded page-clip
+correction passed `node --check`, the scoped `git diff --check`, and independent
+source review with no blocking finding. Pre/post samples cannot exclude a
+transient change that returns to the original geometry between samples. The
+next authorized shadow run must establish whether capture completes and image
+qualification remains valid. Source checks do not prove that the timeout,
+request failures, or shadow parity are fixed.
