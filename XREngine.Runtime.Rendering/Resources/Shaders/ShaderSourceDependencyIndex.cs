@@ -17,7 +17,8 @@ internal static class ShaderSourceDependencyIndex
     }
 
     private sealed class PendingChange(ShaderSourceFileChange change, CancellationTokenSource cancellation,
-        IRuntimeShaderServices? sourceOwner, int serviceVersion)
+        IRuntimeShaderServices? sourceOwner, int serviceVersion,
+        IShaderSourceFileBackend fileBackend, int fileBackendGeneration)
     {
         public ShaderSourceFileChange Change { get; } = change;
         public CancellationTokenSource Cancellation { get; } = cancellation;
@@ -25,6 +26,8 @@ internal static class ShaderSourceDependencyIndex
         public IRuntimeShaderServices? SourceOwner { get; } = sourceOwner;
         public int SourceVersion { get; } = sourceOwner?.ShaderAssetCacheVersion ?? 0;
         public int ServiceVersion { get; } = serviceVersion;
+        public IShaderSourceFileBackend FileBackend { get; } = fileBackend;
+        public int FileBackendGeneration { get; } = fileBackendGeneration;
     }
 
     private readonly record struct PreparedRootRefresh(
@@ -32,7 +35,11 @@ internal static class ShaderSourceDependencyIndex
         long MutationRevision, long RequestRevision, string RefreshedText);
 
     private readonly record struct SourceOwnership(
-        IRuntimeShaderServices? Service, int ServiceVersion, int SourceVersion);
+        IRuntimeShaderServices? Service, int ServiceVersion, int SourceVersion,
+        IShaderSourceFileBackend FileBackend, int FileBackendGeneration);
+
+    private const string MissingFileBackendDiagnostic =
+        "ShaderSourceRefresh.HostFileBackendUnavailable: install a shader source file backend before disk refresh.";
 
     private static readonly object Sync = new();
     private static readonly Dictionary<string, List<WeakReference<XRShader>>> ShadersByPath =
@@ -106,6 +113,12 @@ internal static class ShaderSourceDependencyIndex
         string normalizedPath = NormalizePath(change.Path);
         if (normalizedPath.Length == 0)
             return;
+        if (!ShaderSourceFileBackendServices.TryCapture(out IShaderSourceFileBackend? fileBackend,
+                out int fileBackendGeneration))
+        {
+            ReportMissingFileBackend(sourceOwner);
+            return;
+        }
 
         ShaderSourceFileChange normalizedChange = change with
         {
@@ -114,7 +127,8 @@ internal static class ShaderSourceDependencyIndex
         };
 
         CancellationTokenSource cancellation = new();
-        PendingChange pending = new(normalizedChange, cancellation, sourceOwner, serviceVersion);
+        PendingChange pending = new(normalizedChange, cancellation, sourceOwner, serviceVersion,
+            fileBackend!, fileBackendGeneration);
         PendingChanges.AddOrUpdate(
             normalizedPath,
             pending,
@@ -144,11 +158,26 @@ internal static class ShaderSourceDependencyIndex
         if (!ShaderSourceResolver.CanAccessHostShaderFiles)
             return 0;
         IRuntimeShaderServices? service = RuntimeShaderServices.Current;
-        SourceOwnership ownership = new(service, RuntimeShaderServices.ServiceVersion, service?.ShaderAssetCacheVersion ?? 0);
+        if (!ShaderSourceFileBackendServices.TryCapture(out IShaderSourceFileBackend? fileBackend,
+                out int fileBackendGeneration))
+        {
+            ReportMissingFileBackend(service);
+            return 0;
+        }
+        SourceOwnership ownership = new(service, RuntimeShaderServices.ServiceVersion,
+            service?.ShaderAssetCacheVersion ?? 0, fileBackend!, fileBackendGeneration);
         XRShader[] shaders = CollectAllShaders();
         if (shaders.Length != 0)
             _ = Task.Run(() => PrepareManualRootRefreshesAsync(shaders, reason, ownership));
         return shaders.Length;
+    }
+
+    private static void ReportMissingFileBackend(IRuntimeShaderServices? service)
+    {
+        if (service is not null)
+            service.LogWarning(MissingFileBackendDiagnostic);
+        else
+            Debug.LogWarning(MissingFileBackendDiagnostic);
     }
 
     private static async Task PrepareManualRootRefreshesAsync(XRShader[] shaders, string reason, SourceOwnership ownership)
@@ -251,7 +280,8 @@ internal static class ShaderSourceDependencyIndex
             XRShader[] shaders = CollectChangedShaders(pending.Change.Path, pending.Change.PreviousPath);
             await PrepareAndPublishRootRefreshesAsync(
                 shaders, pending.Change.Path, pending.Change.Path,
-                new(pending.SourceOwner, pending.ServiceVersion, pending.SourceVersion), cancellationToken).ConfigureAwait(false);
+                new(pending.SourceOwner, pending.ServiceVersion, pending.SourceVersion,
+                    pending.FileBackend, pending.FileBackendGeneration), cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -269,10 +299,15 @@ internal static class ShaderSourceDependencyIndex
     }
 
     private static bool IsSourceOwnerCurrent(PendingChange pending)
-        => ShaderSourceResolver.CanAccessHostShaderFiles &&
-            pending.SourceVersion == (pending.SourceOwner?.ShaderAssetCacheVersion ?? 0) &&
-            pending.ServiceVersion == RuntimeShaderServices.ServiceVersion &&
-            ReferenceEquals(pending.SourceOwner, RuntimeShaderServices.Current);
+    {
+        if (!ShaderSourceFileBackendServices.IsCurrent(pending.FileBackend, pending.FileBackendGeneration) ||
+            !ShaderSourceResolver.CanAccessHostShaderFiles ||
+            pending.SourceVersion != (pending.SourceOwner?.ShaderAssetCacheVersion ?? 0) ||
+            pending.ServiceVersion != RuntimeShaderServices.ServiceVersion ||
+            !ReferenceEquals(pending.SourceOwner, RuntimeShaderServices.Current))
+            return false;
+        return ShaderSourceFileBackendServices.IsCurrent(pending.FileBackend, pending.FileBackendGeneration);
+    }
 
     private static async Task WaitForReadableStableFileAsync(PendingChange pending, CancellationToken cancellationToken)
     {
@@ -284,15 +319,10 @@ internal static class ShaderSourceDependencyIndex
                 return;
             try
             {
-                FileInfo file = new(pending.Change.Path);
-                if (file.Exists)
+                if (pending.FileBackend.TryGetReadableLength(pending.Change.Path, out long length))
                 {
-                    long length = file.Length;
-                    using FileStream stream = new(
-                        pending.Change.Path,
-                        FileMode.Open,
-                        FileAccess.Read,
-                        FileShare.ReadWrite | FileShare.Delete);
+                    if (!IsSourceOwnerCurrent(pending))
+                        return;
                     if (length == previousLength)
                         return;
 
@@ -382,10 +412,15 @@ internal static class ShaderSourceDependencyIndex
                 !source.TryCaptureDiskRefresh(path, out string baselineText,
                     out long mutationRevision, out long requestRevision, out Encoding encoding))
                 continue;
+            if (!TryAdmitSourceOwner(ownership))
+                return;
 
             try
             {
-                string refreshedText = await File.ReadAllTextAsync(path, encoding, cancellationToken).ConfigureAwait(false);
+                string refreshedText = await ownership.FileBackend.ReadAllTextAsync(
+                    path, encoding, cancellationToken).ConfigureAwait(false);
+                if (!TryAdmitSourceOwner(ownership))
+                    return;
                 prepared.Add(new PreparedRootRefresh(
                     shader, source, sourceIdentityRevision, path, baselineText,
                     mutationRevision, requestRevision, refreshedText));
@@ -459,8 +494,16 @@ internal static class ShaderSourceDependencyIndex
 
     private static bool TryAdmitSourceOwner(in SourceOwnership ownership)
     {
+        if (!ShaderSourceFileBackendServices.IsCurrent(
+                ownership.FileBackend, ownership.FileBackendGeneration))
+        {
+            Interlocked.Increment(ref _staleNotificationsRejected);
+            return false;
+        }
         if (RuntimeShaderServices.TryAdmitSourceInvalidation(
-                ownership.Service, ownership.ServiceVersion, ownership.SourceVersion))
+                ownership.Service, ownership.ServiceVersion, ownership.SourceVersion) &&
+            ShaderSourceFileBackendServices.IsCurrent(
+                ownership.FileBackend, ownership.FileBackendGeneration))
             return true;
         Interlocked.Increment(ref _staleNotificationsRejected);
         return false;
@@ -505,8 +548,12 @@ internal static class ShaderSourceDependencyIndex
         {
             if (!shaders[i].CanPublishSourceChanges)
                 continue;
-            if (!RuntimeShaderServices.TryAdmitSourceInvalidation(
-                sourceOwner.SourceOwner, sourceOwner.ServiceVersion, sourceOwner.SourceVersion))
+            if (!ShaderSourceFileBackendServices.IsCurrent(
+                    sourceOwner.FileBackend, sourceOwner.FileBackendGeneration) ||
+                !RuntimeShaderServices.TryAdmitSourceInvalidation(
+                    sourceOwner.SourceOwner, sourceOwner.ServiceVersion, sourceOwner.SourceVersion) ||
+                !ShaderSourceFileBackendServices.IsCurrent(
+                    sourceOwner.FileBackend, sourceOwner.FileBackendGeneration))
             {
                 Interlocked.Increment(ref _staleNotificationsRejected);
                 break;
