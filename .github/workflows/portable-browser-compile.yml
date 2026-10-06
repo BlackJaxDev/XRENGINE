@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: portable-browser-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'

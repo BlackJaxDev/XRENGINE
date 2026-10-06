@@ -138,7 +138,7 @@ $admitted = Get-Content -LiteralPath $AdmissionFile -Raw | ConvertFrom-Json
 Require-Equal ([IO.Path]::GetFullPath((Join-Path $repo $admitted.runRootRelative))) $run 'fixed run directory'
 foreach ($localPath in @($repo, $run, $PSCommandPath, $nodeScript)) { Assert-NoReparseAncestor $localPath }
 Set-Location -LiteralPath $repo
-Require-Equal ((& git remote get-url origin).Trim()) 'https://github.com/BlackJaxDev/XRENGINE.git' 'qualified checkout repository'
+Require-Equal ((& git remote get-url origin).Trim()) 'https://github.com/BlackJaxDev/XRENGINE' 'qualified checkout repository'
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect source repository.' }
 Require-Equal ((& git rev-parse HEAD).Trim()) $expectedCommit 'qualified engine source commit'
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect engine source.' }
