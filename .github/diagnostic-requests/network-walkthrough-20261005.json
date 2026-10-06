@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "requestId": "1b6a802b-34b4-4e71-9f85-a968334df1be",
+  "repository": "BlackJaxDev/XRENGINE",
+  "branch": "codex/webgpu-readiness-audit",
+  "workflowPath": ".github/workflows/browser-network-walkthrough-once.yml",
+  "helperCommit": "da16cabfab8759b453f33ebef150704ba35a4a94",
+  "sourceCommit": "e4a90cf2f865a08421bb68c293d27616465e1558",
+  "artifactSha256": "ad562f2b62ab3c24361056ecc90aa3a9e9f1458e83eeb11213898af1e6e11f50",
+  "createdUtc": "2026-10-06T01:21:15Z",
+  "expiresUtc": "2026-10-06T03:21:15Z",
+  "files": {
+    ".github/workflows/browser-network-walkthrough-once.yml": "d9c3d1c03cf158fd1914d2f0162c41e022169d567cf7218c67c920fce9175b2f",
+    "Tools/BrowserSmoke/network-walkthrough/Invoke-NetworkWalkthrough.ps1": "ce6e5af8fea50981046e542ff50124dbcc514100cdd2e702fba2d9c01452e6e5",
+    "Tools/BrowserSmoke/network-walkthrough/run-real-network-walkthrough.mjs": "526b6dcd6a80b4427fee5ed31aba924be43e86e9ad6ceee128a1d7faae687045",
+    "Tools/BrowserSmoke/network-walkthrough/admit-network-walkthrough.mjs": "b92dcfb27678d9c34738a7545810c9cbfb211fec9feddbcb0f1a46122d1e28ce",
+    "Tools/BrowserSmoke/network-walkthrough/Test-NetworkWalkthroughStatic.ps1": "787b27fea211bab17c938447605d8656208231f839be1b98285e29809efe9919",
+    "Tools/BrowserSmoke/network-walkthrough/producer.json": "b5526d422e392b722349a96ad9cc93acaae78bada99b12c70aa77aeb2d8a1237",
+    "Tools/BrowserSmoke/network-walkthrough/README.md": "a1a9a7133f9e503723bdbe99fcfe92c6b226be046dd40ebe809759749a8fe18a"
+  },
+  "preflightSeconds": 180,
+  "liveSeconds": 480,
+  "cleanupSeconds": 60,
+  "certificateMinutes": 30
+}
