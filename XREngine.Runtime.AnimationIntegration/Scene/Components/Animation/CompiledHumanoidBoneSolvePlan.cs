@@ -52,6 +52,7 @@ internal readonly struct CompiledHumanoidBoneSolvePlan
             zeroMuscleRotation,
             inverseRestJoint,
             Quaternion.Identity,
+            false,
             false)
     {
     }
@@ -78,7 +79,8 @@ internal readonly struct CompiledHumanoidBoneSolvePlan
         Quaternion zeroMuscleRotation,
         Quaternion inverseRestJoint,
         Quaternion jointBasisToZeroLocal,
-        bool hasContinuousJointBasis)
+        bool hasContinuousJointBasis,
+        bool hasAuthoredAxisMapping)
     {
         Role = role;
         Node = node;
@@ -102,6 +104,7 @@ internal readonly struct CompiledHumanoidBoneSolvePlan
         InverseRestJoint = inverseRestJoint;
         JointBasisToZeroLocal = jointBasisToZeroLocal;
         HasContinuousJointBasis = hasContinuousJointBasis;
+        HasAuthoredAxisMapping = hasAuthoredAxisMapping;
     }
 
     public EHumanoidAvatarBoneRole Role { get; }
@@ -123,6 +126,8 @@ internal readonly struct CompiledHumanoidBoneSolvePlan
     public bool PermitsTranslationDegreesOfFreedom { get; }
     public BoneAxisMapping AxisMapping { get; }
     public bool HasAxisMapping { get; }
+    /// <summary>Whether this mapping overrides the anatomical joint basis.</summary>
+    public bool HasAuthoredAxisMapping { get; }
     public CompiledHumanoidJointLimit JointLimit { get; }
     public EHumanoidAvatarBoneRole? SemanticParentRole { get; }
     public EHumanoidAvatarBoneRole? EffectiveParentRole { get; }

@@ -4,8 +4,9 @@ Updated: 2026-10-05. Runtime evidence cutoff: 2026-10-05.
 Owner: Rendering, with Profiler, Runtime Core, serialization and ImGui Editor owners below.
 Status: **Cumulative acceptance NOT PASSED. The original CPU/TSR report is open.**
 
-This checklist contains remaining work and conditions for reopening deferred
-work. Completed results and historical status reports are in the
+This checklist contains remaining work, conditions for reopening deferred
+work, and a short list of scoped fixes completed in this run. Detailed results
+and historical status reports are in the
 [result record](../../progress/rendering/vulkan-stall-remediation-results.md).
 Architecture is in [scene preparation and publication](../../../architecture/rendering/vulkan-scene-preparation-and-publication.md)
 and [editor background preparation](../../../architecture/editor/background-preparation.md).
@@ -25,19 +26,61 @@ Do not close broader contracts from a narrow stall result.
 
 ## Next Work
 
-The active Vulkan/OpenXR hardware regression takes priority. Start with cold
-and post-Play pipeline-admission gaps in the hardware worklist below. Preserve
-Advanced/CpuDirect Sponza and strict SinglePassStereo during isolation.
+### Completed fixes in this run
 
-The desktop target is above 100 fresh FPS during camera motion, with one
-directional light and no removed features. The latest interior route measures
-92.09-92.46 FPS with the shadow lane versus 33.65-33.74 generically. The target
-is unmet. Earlier exterior-route results do not close this gate.
+- [x] **Validate the exact XR package generation.** Scoped Monado package gate passed. See [results](../../progress/rendering/vulkan-stall-remediation-results.md#monado-package-consumption) and [investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md).
+- [x] **Keep the deferred-light color output attached.** Scoped stereo color-attachment gate passed. See [results](../../progress/rendering/vulkan-stall-remediation-results.md#deferred-stereo-color-attachment).
+- [x] **Grow compact stable-bin rows before writes.** Scoped stable-bin regression gate passed. See [results](../../progress/rendering/vulkan-stall-remediation-results.md#stable-bin-manifest-growth).
+- [x] **Qualify image-view retirement by creation generation.** Ownership-only Monado gate and focused 11/11 Release tests passed. See [results](../../progress/rendering/vulkan-stall-remediation-results.md#generation-qualified-image-view-ownership) and [investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#scoped-image-view-ownership-closeout).
+- [x] **Complete the approved final-window close without the engine timer.** The collapsed-host smoke and Vulkan native-close gates passed. Three cleared source-contract tests in `WindowOwnershipContractTests` pass with the existing window tests (37/37 in the focused run). See [results](../../progress/rendering/vulkan-stall-remediation-results.md#final-window-close-completion) and [investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#smoke-shutdown-delay-root-cause-and-fix).
+
+### Active and next work
+
+- [x] **Publish strict stereo temporal history only after queue acceptance.** Status: **Closed.** All live gates below passed on Monado. The user cleared focused tests on October 5. 14 new behavior and wiring test cases (`TemporalHistorySubmissionStateMachineTests`, `OpenXrTemporalHistoryPublicationTests`) pass in Release with zero warnings. See the [gate record](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#next-gate-accepted-temporal-history-publication) and the [second-host checks](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#accepted-publication-fault-and-coldwarm-renderdoc-checks).
+  - [x] Seal exact native history identities, require recorded resolve producers and both-eye history copies, and publish only after queue acceptance. Astra reviewed the source. The Release build passed with zero warnings and errors.
+  - [x] Recover after cold startup and a camera cut. Both eyes seeded generation two after the compatible-program admission gap. Keep that gap open as separate work.
+  - [x] Complete a 60-second warm liveness window with no failed recording outcomes. The 62.417-second window added 1,150 completed recordings and zero deferred recordings.
+  - [x] Complete a Play/Edit round trip and view both eye previews after recovery.
+  - [x] Restart the Monado session and finish normal teardown. Both runs balanced per-eye acquire/release counts, drained retired generations, and reported no device loss.
+  - [x] Prove that an injected submit rejection does not publish accepted history. The exact rejected frame has no stereo commit; both adjacent frames commit both eyes. The ring has no lost entries or diagnostic failures.
+  - [x] Prove that an injected recording failure does not publish accepted history. The rejected frame has no stereo commit, and recording resumes with complete both-eye commits.
+  - [x] Prove that an accepted-publication fault publishes history exactly once. The `FailAcceptedPublication` fault hit the strict submission at lifecycle frame 257. Render frame 782 committed exactly one pair, and later frames kept ready history. The OpenXR `Publish`-stage fault also committed exactly one pair for its dropped-layer frame.
+  - [x] Inspect cold and warm stereo RenderDoc captures for both-eye history color validity and defined output layers. The first TSR resolve reads `HistoryReady=0` on a discarded new history image. All 26 later captures read `HistoryReady=1` on the same image and copy into it after the resolve. Both eye layers are defined. History depth was not valid in these captures (it equaled current depth); the TSR history-depth order child fixes that. Output quality, exposure and lighting are not accepted and stay open under their own items.
+  - [x] Resolve the smoke-run editor shutdown delay. Root cause: the final-window close stopped the engine timer, then queued disposal on a render-thread job queue that only a timer dispatch drains (since `870987cfc`). The collapsed host now completes the approved close on the native window thread. The fixed `FailAcceptedPublication` smoke wrote its own summary with zero failures and exited normally. Vulkan `WM_CLOSE` also exits normally. OpenGL exposed a separate shared-context defect, tracked in the [separate findings checklist](vulkan-stall-separate-findings-todo.md).
+- [ ] **Accept TSR ordering and image quality.** Keep the broader visual and output gate open after history publication passes.
+  - [x] Order the TSR history-depth capture after the resolve. Status: **Validated** under a user-approved reduced scope; TSR test work is not cleared. The stereo eye is a `RvcRenderPipeline` that runs the Default chain, and the depth deferral applied only to Advanced. Now every TSR chain copies depth after the resolve. RenderDoc shows the copy after the resolve in 100% of changed captures. History depth no longer equals current depth, and it equals the previous frame's copied depth byte for byte. The stationary falsifier passes on a reduced sample (0.039% against a 0.53% limit; 2 control runs, 1 changed run). The accepted-history smoke on the changed binary and the desktop Default TSR checks on Vulkan and OpenGL pass. On desktop Vulkan, the rotation gizmo's rejected footprint in the captured mode-5 frame is gone; OpenGL was not checked. See the [gate record and results](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#tsr-history-depth-order-on-default-chain-paths).
+  - [ ] Confirm on the headset whether the reported ghosting changed. The order fix is valid, but RenderDoc evidence alone does not prove that it was the main ghosting source.
+- [x] **Exact VR pipeline selection.** OpenXR now renders only the selected view mode and pipeline family (`VrRenderPipeline`: Default, Advanced or Rvc). "Default" is a plain `DefaultRenderPipeline`. An unsupported pair submits no projection layer and names the reason. `RvcRenderPipeline` no longer hosts the Advanced family, and the desktop `AdvancedRenderPipelineMode` no longer affects eyes. A 10-case Vulkan Monado matrix matched the design: 7 supported cases created only the selected pipeline type and submitted frames, and 3 rejected cases submitted no layer with the named diagnostic. See the [design](../../design/rendering/vr-pipeline-selection-design.md).
+  - [ ] With test clearance, update the 3 factory-contract tests that still require an `RvcRenderPipeline` for every OpenXR eye, rename `EAdvancedStereoMode.RvcTwoPass`, and replace `AdvancedProductionCutoverContract.ProductionOpenXrPipelineName`.
+  - [ ] Decide the OpenVR contract. OpenVR does not read `VrRenderPipeline` and maps `ParallelCommandBufferRecording` to two-pass, and the engine default view mode is `ParallelCommandBufferRecording`.
+  - [ ] Implement Advanced for `SinglePassStereo` (layered eye resources and swapchain terminal write). Until then the pair is rejected.
+
+The active Vulkan/OpenXR hardware regression continues beyond these scoped
+fixes. After temporal history publication, resume the cold and post-Play
+pipeline-admission gaps below. Preserve the CpuDirect Sponza fixture and strict
+SinglePassStereo during isolation. The desktop camera uses the Advanced
+pipeline; the stereo eye runs the Default chain inside `RvcRenderPipeline`. Use Monado for OpenXR testing. The
+[current Monado investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md)
+tracks the current history-publication gate. Simulator results do not close
+physical headset and comfort gates.
+
+The October 5 second-host run completed the remaining temporal-history live
+checks on Monado, without a physical headset, and fixed the smoke shutdown
+delay. The TSR history-depth order child then passed its reduced live gate.
+All owned sessions and Monado services are stopped. The exact VR pipeline
+selection item is implemented and validated on Monado. Next, fix the OpenGL
+close crash, then resume the admission gaps.
+
+The desktop target remains above 100 fresh FPS during camera motion, with one
+directional light and no removed features. The latest interior route measured
+92.09-92.46 FPS with the shadow lane versus 33.65-33.74 FPS with the generic
+path. The target remains unmet. Earlier exterior-route results do not close this
+gate.
 
 After hardware isolation, resolve the invalid OpenGL control, run matched
-shadow/temporal comparisons, and continue allocation/lifetime and CPU/GPU
+shadow and temporal comparisons, and continue allocation, lifetime, and CPU/GPU
 attribution. The user waived replay of the unavailable original recording on
-October 3. This is not a fix or a reproduced result; live symptom evidence and
+October 3. This is not a fix or a reproduced result. Live symptom evidence and
 user confirmation remain required.
 
 ## OpenXR Stereo And Desktop Regression Worklist
@@ -270,19 +313,27 @@ Owner: Vulkan resource/command preparation.
   retry recovery limit before extending readiness coverage or introducing reuse.
   [Readiness evidence](../../investigations/rendering/2026-10-01-warmed-pipeline-readiness.md)
   defines the current scope.
-- [ ] When applicable targeted tests run, record the current build and failure
+
+### Standing Test Rules
+
+These rules apply to every item. They are not tasks.
+
+- When applicable targeted tests run, record the current build and failure
   status. Separate the historical 33 lifecycle/VR source-contract failures and
   five readiness source-text failures from new regressions. The older missing
   `IAdvancedGlobalIlluminationProvider` compile blocker was superseded by a later
   successful test build and the October 4 selected run (86/97 passing). The final
   upload selection passed 31/32. Preserve cohort-specific failure classifications;
   do not report an old compile failure or combine these counts into one total.
-- [ ] Obtain explicit clearance for any new test work after its live feature
+- Obtain explicit clearance for any new test work after its live feature
   validation. Prior focused closeout clearance is not blanket approval.
 
 ## Deferred Work: Conditions For Reopening
 
 These are conditional follow-ups. No implementation is active under these items.
+They are reopen conditions, not tasks, so they have no checkboxes. When a
+trigger occurs, copy the affected steps into the active work list as boxes.
+The S14 sections below follow the same rule.
 
 ### S12. Improve Shared Advanced Preparation Safely
 
@@ -291,7 +342,7 @@ The distinct-runtime-world gate is **Not Applicable** under the explicit
 Reopen if Advanced rendering supports different worlds in multiple windows/views,
 world load or Play creates a new runtime host, or `ReloadFromAsset` is implemented.
 
-- [ ] On that trigger, exercise distinct runtime owners across frames with retained
+- On that trigger, exercise distinct runtime owners across frames with retained
   GPU consumers, static/deformation generations, topology replacement and teardown.
   Prove bounded generations and completion-gated reuse. Same-owner snapshot/restore
   and first-wins same-frame publication do not prove this lifetime case. Do not
@@ -303,10 +354,10 @@ Reopen on material operation/family growth, scan allocation, repeated cost above
 0.05 ms/presentation, or separately attributed structural demand cost.
 [Measured deferral](../../investigations/rendering/2026-10-01-advanced-operation-metadata.md).
 
-- [ ] First audit existing sealed-plan, manifest and admitted-frame reuse. If the
+- First audit existing sealed-plan, manifest and admitted-frame reuse. If the
   entry condition holds, define a complete structural key: sealing revision,
   graph/planner generation, order/count, target backing and relevant view/AA state.
-- [ ] Keep current availability, frame-slot leases, output/reservation identity
+- Keep current availability, frame-slot leases, output/reservation identity
   and producer readiness live. Validate pass/order changes, multiple families,
   progressive admission, deferred/retried/superseded plans and malformed/stale
   rejection. Prove coverage and ordering without increased retention or encoding cost.
@@ -317,10 +368,10 @@ Broader reuse is deferred. Reopen only for measured costly evaluation that remai
 following the allocation correction.
 [Measured disposition](../../investigations/rendering/2026-10-01-warmed-pipeline-readiness.md).
 
-- [ ] Prove every mutation producer advances an exact dependency-generation key
+- Prove every mutation producer advances an exact dependency-generation key
   before consumption. Cover generated source, shader edits, layout/device
   recreation and capability changes. File events alone may be insufficient.
-- [ ] Validate unchanged polling, unrelated/dependent edits, rapid reload, failed
+- Validate unchanged polling, unrelated/dependent edits, rapid reload, failed
   compilation, Pending recovery, cancellation/stale completion and replacement.
   Keep pending-to-ready progress observable with an unchanged plan. Preserve
   zero foreground joins and exact retirement; never freeze Pending behind a cache.
@@ -331,28 +382,28 @@ Reopen only with a measured residual critical path and adequate concurrent-lifet
 proof. Prior approximate acquisition costs were below 0.10 ms/present.
 [Measured deferral and ownership review](../../investigations/rendering/2026-10-01-remaining-synchronization-gates.md).
 
-- [ ] Measure GPUScene mutation-lock and Vulkan Advanced storage-gate wait/hold
+- Measure GPUScene mutation-lock and Vulkan Advanced storage-gate wait/hold
   separately, with contender/owner identity, publication time and worker use.
   Long held work is not contention; sparse snapshots do not prove parallel use.
-- [ ] Select one owner. Review snapshot ownership, lock order, generation recheck,
+- Select one owner. Review snapshot ownership, lock order, generation recheck,
   commit/rollback, bounded retry/backpressure and retirement before a change.
   Preserve shared arena, rollback and preparation-scratch ownership.
-- [ ] If parallel recording is justified, use worker/frame-slot-owned command
+- If parallel recording is justified, use worker/frame-slot-owned command
   and descriptor pools, existing workers and suitable batch sizes. Preserve
   external Vulkan synchronization and deterministic publication order.
-- [ ] Exercise actual concurrent mutation, competing views/families, delayed
+- Exercise actual concurrent mutation, competing views/families, delayed
   completion, cancellation, resize, teardown and failures. Prove complete output,
   bounded progress and no deadlock, race, use-after-free or partial publication.
   Confirm another stage, retry queue or worker backlog did not absorb the cost.
 
 ### Other Measured Deferrals
 
-- [ ] Reopen warmed camera metadata caching only if repeated cost reaches its
+- Reopen warmed camera metadata caching only if repeated cost reaches its
   1.0 ms entry threshold. Retain script-generation and unload correctness.
-- [ ] Reopen debug/light-volume sharing or procedural fullscreen drawing only
+- Reopen debug/light-volume sharing or procedural fullscreen drawing only
   after separate duplication/cost evidence. Define topology, shader/view
   compatibility, consumer ownership and retirement before extending sharing.
-- [ ] Reopen historical backend divergence only with a reproduced differing
+- Reopen historical backend divergence only with a reproduced differing
   publication/notification/collection event and matched accepted output. Preserve
   the recorded Not Reproducible disposition until then.
 
@@ -364,15 +415,15 @@ Reopen when tick cost reaches 0.10 ms/update, pending application reaches 1.0 ms
 within a second, a callback reaches 1.0 ms mean, or registration churn occurs
 outside Play transitions. Run the following only after that trigger.
 
-- [ ] Profile actual callbacks, tick order, pending registration drain and callback
+- Profile actual callbacks, tick order, pending registration drain and callback
   identity. Do not use the unrelated legacy list or XREvent indices as world IDs.
-- [ ] If registration dominates, preserve ordered dispatch and define a coherent
+- If registration dominates, preserve ordered dispatch and define a coherent
   batch boundary, lock-owned snapshot sizing and activation/deactivation semantics
   before changing membership cost or adding a cap.
-- [ ] Validate duplicate registration, add/remove order, callback-time changes,
+- Validate duplicate registration, add/remove order, callback-time changes,
   bulk activation, Play transitions and teardown. Compare final membership and
   callback sequences as well as time.
-- [ ] If another callback/wait dominates, assign its exact owner. Verify probe/
+- If another callback/wait dominates, assign its exact owner. Verify probe/
   physics consumers, worker dependency and timer debt. Do not drop simulation
   steps or move app-thread publication from a broad world-update label alone.
 
@@ -381,14 +432,14 @@ Defer tick optimization if GC/descheduling or negligible update cost explains it
 
 ### S14e. Capture The Intermittent Play-Exit Exception
 
-- [ ] If `playmode-transitions.log` records another exit failure, fix the named
+- If `playmode-transitions.log` records another exit failure, fix the named
   cause and repeat full probe runs. Recovery and stack logging are retained;
   about 40 exits without recurrence do not prove the cause fixed. See the
   [exit record](../../investigations/rendering/2026-09-27-s14e-exit-exception.md).
 
 ### S14g. Close The Steady-State Gap After Play Round Trips
 
-- [ ] If short-lived output planner states grow, retire them when their output
+- If short-lived output planner states grow, retire them when their output
   is destroyed. Current shadow-viewport states hold no textures and remain
   bounded by the 12-state cap. The superseded-generation resource leak is fixed;
   this conditional metadata follow-up is separate from the later XR memory gate.
@@ -411,8 +462,6 @@ corrections are recorded in the
   or rejected-frame publication. Obtain exact post-admission/lifecycle bindings.
 - [ ] Verify deferred TAA/TSR consumes the correct immutable pipeline snapshot.
   A `TsrOutputTexture` label or quiet log does not establish correct history.
-- [ ] Give any isolated temporal defect its own fix and build/live/comparison gate.
-  Do not mask it with reduced feedback/quality, disabled picking or hidden warnings.
 - [ ] Resolve fine-edge TSR concerns and classify pipeline-replacement cold stalls.
   Attribute improvement on the reproducible live fixture and obtain the user's
   ghosting/performance confirmation. Original-recording replay is explicitly
@@ -421,33 +470,15 @@ corrections are recorded in the
 Gate: classify each case as validated, failing or unverified. A failing or
 unverified temporal result blocks closure of the original report.
 
+Rule: give any isolated temporal defect its own fix and build/live/comparison
+gate. Do not mask it with reduced feedback/quality, disabled picking or hidden
+warnings.
+
 ## Separate Issues Found During Validation
 
-These are carried forward from the closeout record. Reproduce their current
-state and assign a separate owner; they are not proven current stall causes.
-
-- [ ] Resolve world snapshot/restore calls that do not return after long settles.
-- [ ] Review YAML `OmitDefaults` dropping `false` on true-initialized booleans
-  without `[DefaultValue(true)]`.
-- [ ] Resolve shared material GUIDs in `duplicate_scene_node` clones.
-- [ ] Account for the roughly 7.5-second hover-highlight dirty traffic in stationary
-  automation. Record any suppression in both comparison conditions.
-- [ ] Review the bounded 1,024-entry deferred presentation ring retaining the
-  prior renderer generation until overwrite.
-- [ ] Track missing replacement-GI contract coverage with its owner and test policy.
-- [ ] Report unsupported canonical command rejection reasons/counts instead of
-  silently committing empty output; inspect `TryGetCanonicalCompatibilityReason`.
-- [ ] Attribute the bounded 320 extra descriptor sets caused by per-frame
-  auto-uniform arena-view identity on masked Sponza cascade casters.
-- [ ] Rename phase-named publication telemetry types, MCP tools and environment
-  variables by responsibility. Update docs and regenerate MCP documentation.
-- [ ] Attribute later Play restore cost of 0.8-1.0 seconds versus the earlier
-  0.25-0.33 seconds; investigate stair-stepped directional shadow boundaries.
-- [ ] Attribute capture sequences to the rendered camera snapshot, not the live
-  transform two frames ahead. Reconcile collect/render `TemporalHistoryValid` flags.
-- [ ] Investigate exposure settling after repeated history resets, black upper
-  sky with `klippad_sunrise_2_4k`, and per-launch environment-lighting variation.
-  Compare only matched maps or an explicit procedural-sky fixture.
+These issues are not proven stall causes. They are tracked in the
+[separate findings checklist](vulkan-stall-separate-findings-todo.md), each
+with its own owner.
 
 ## S16. Integrated Acceptance And Closeout
 

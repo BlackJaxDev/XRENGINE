@@ -553,9 +553,9 @@ public unsafe partial class OpenXRAPI
     #region Pipeline helpers
 
     /// <summary>
-    /// Returns an OpenXR-owned RVC pipeline without sharing the desktop pipeline instance.
-    /// Shared visual features are synchronized from the desktop/camera pipeline while output
-    /// topology remains owned by the OpenXR path.
+    /// Returns an OpenXR-owned eye pipeline of the selected VR family without sharing the
+    /// desktop pipeline instance. Shared visual features are synchronized from the
+    /// desktop/camera pipeline while output topology remains owned by the OpenXR path.
     /// </summary>
     private RenderPipeline GetOrCreateOpenXrPipeline(RenderPipeline? sourcePipeline, int eyeIndex)
     {
@@ -576,17 +576,13 @@ public unsafe partial class OpenXRAPI
         bool stereo,
         ref RenderPipeline? openXrPipeline)
     {
-        ERvcPipelineMode mode =
-            RuntimeEngine.Rendering.Settings.RvcPipelineMode;
-        if (openXrPipeline is not RvcRenderPipeline rvcPipeline ||
-            rvcPipeline.Stereo != stereo ||
-            rvcPipeline.RvcPipelineMode != mode)
-        {
+        EVrRenderPipeline family = RuntimeEngine.Rendering.Settings.VrRenderPipeline;
+        ERvcPipelineMode mode = RuntimeEngine.Rendering.Settings.RvcPipelineMode;
+        if (!OpenXrEyeRenderPipelineFactory.Matches(openXrPipeline, stereo, family, mode))
             openXrPipeline = CreateOpenXrPipeline(sourcePipeline, stereo);
-            rvcPipeline = (RvcRenderPipeline)openXrPipeline;
-        }
 
-        rvcPipeline.ApplyRuntimeSettings(RuntimeEngine.Rendering.Settings);
+        if (openXrPipeline is RvcRenderPipeline rvcPipeline)
+            rvcPipeline.ApplyRuntimeSettings(RuntimeEngine.Rendering.Settings);
         RenderPipelineFeatureSynchronizer.CopyPipelineFeatures(
             sourcePipeline,
             openXrPipeline);
@@ -597,14 +593,21 @@ public unsafe partial class OpenXRAPI
         RenderPipeline sourcePipeline,
         bool stereo)
     {
+        EVrRenderPipeline family = RuntimeEngine.Rendering.Settings.VrRenderPipeline;
+        ERvcPipelineMode mode = RuntimeEngine.Rendering.Settings.RvcPipelineMode;
         RenderPipeline created =
             RuntimeEngine.Rendering.NewOpenXrEyeRenderPipeline(stereo);
-        if (created is not RvcRenderPipeline)
+        if (!OpenXrEyeRenderPipelineFactory.Matches(created, stereo, family, mode))
         {
             throw new InvalidOperationException(
-                $"OpenXR eye pipeline factory returned '{created.GetType().FullName}' " +
-                $"instead of {nameof(RvcRenderPipeline)}.");
+                $"OpenXR eye pipeline factory returned {OpenXrEyeRenderPipelineFactory.Describe(created)} " +
+                $"for VR.RenderPipeline={family}, stereo={stereo}, RvcPipelineMode={mode}.");
         }
+
+        Debug.Rendering(
+            "[OpenXR] Created eye pipeline {0} for VR.RenderPipeline={1}.",
+            OpenXrEyeRenderPipelineFactory.Describe(created),
+            family);
 
         RenderPipelineFeatureSynchronizer.CopyPipelineFeatures(
             sourcePipeline,

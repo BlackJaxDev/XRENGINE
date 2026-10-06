@@ -24,6 +24,14 @@ The main boundaries are:
 
 Reuse the existing database, queues, packages, planners and leases. A second
 cache or publication service needs a measured cause and an ownership contract.
+
+Stable-bin record storage follows the compact accepted record count. A skipped
+payload does not consume a record row. Grow row storage before creating or
+reading its manifest, and preserve the separate payload index in the record.
+Growth is permitted only while the stream is mutable. Freezing retains array
+identity for recording readers; copying a stream creates destination-owned
+manifest state.
+
 See the [frame lifecycle](frame-lifecycle-and-dispatch-paths.md),
 [mesh submission contracts](mesh-submission-strategies.md), and
 [command recording architecture](vulkan-command-recording.md).
@@ -59,6 +67,19 @@ required mutations.
 Command-swap callbacks can delay that generation after the narrow frame-package
 publication scope has finished. `collect<-render` is previous-render
 backpressure. The intervals can overlap and must not be added.
+
+OpenXR consumption uses the generation of its exact published frame package.
+Its collection cadence can differ from the desktop engine cadence. Both
+per-eye and strict stereo entry points capture the effective command collection,
+package generation, and collection generation. They recheck that authority
+before authoring. They must not compare an XR package with the desktop consumed
+generation or suppress the other package compatibility checks.
+
+The collection read scope protects capture and revalidation only. Release it
+before pipeline execution, because a pipeline transition can rebuild command
+passes under the collection write lock. Render/swap phase exclusion protects
+the authoring interval. A rejected strict stereo invocation aborts captured
+operations before submission, including any independent UI operations.
 
 ## Retained Mesh And LOD Registration
 

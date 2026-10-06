@@ -697,11 +697,26 @@ public partial class HumanoidComponent
                     && preservesAuthoredSolverData
                     && preservesGeneratedCanonicalCorrections;
             BoneAxisMapping axisMapping = BoneAxisMapping.Default;
-            bool hasAxisMapping = preservesAuthoredSolverData && oldBinding!.HasAxisMapping;
-            if (hasAxisMapping)
+            bool hasSettingsAxisMapping = node is not null
+                && Settings.TryGetBoneAxisMapping(node.Name ?? string.Empty, out axisMapping);
+            bool hasAxisMapping = hasSettingsAxisMapping || preservesAuthoredSolverData && oldBinding!.HasAxisMapping;
+            if (!hasSettingsAxisMapping && hasAxisMapping)
                 axisMapping = oldBinding!.AxisMapping;
-            else if (node is not null)
-                hasAxisMapping = Settings.TryGetBoneAxisMapping(node.Name ?? string.Empty, out axisMapping);
+            bool changedSettingsAxisMapping = hasSettingsAxisMapping
+                && oldBinding is not null
+                && oldBinding.HasAxisMapping
+                && !oldBinding.AxisMapping.Equals(axisMapping);
+            bool profileListsAuthoredAxisMapping = hasSettingsAxisMapping
+                && profileResult?.AuthoredAxisMappingNodeNames.Contains(node!.Name ?? string.Empty) == true
+                && (oldBinding is null || oldBinding.HasAuthoredAxisMapping || changedSettingsAxisMapping);
+            bool newlyConfiguredAxisMapping = hasSettingsAxisMapping
+                && profileResult is null
+                && (oldBinding is null || !oldBinding.HasAxisMapping);
+            bool hasAuthoredAxisMapping = hasAxisMapping && !IsAutomaticProfileSource(Settings.ProfileSource)
+                && (profileListsAuthoredAxisMapping
+                    || changedSettingsAxisMapping
+                    || newlyConfiguredAxisMapping
+                    || oldBinding?.HasAuthoredAxisMapping == true && preservesPriorBinding);
 
             Matrix4x4 neutralLocal = node is null ? Matrix4x4.Identity : bone.LocalBindPose;
             Matrix4x4 neutralWorld = node is null
@@ -766,6 +781,7 @@ public partial class HumanoidComponent
                     : CreateDefaultJointLimit(role, node),
                 AxisMapping = hasAxisMapping ? axisMapping : BoneAxisMapping.Default,
                 HasAxisMapping = hasAxisMapping,
+                HasAuthoredAxisMapping = hasAuthoredAxisMapping,
                 MappingSource = mappingSource,
                 Confidence = confidence,
                 ImportedMetadataScore = evidenceMatches

@@ -239,7 +239,7 @@ public partial class AdvancedRenderPipeline
             var captureTsrHistory = tsrCommands.Add<VPRC_TemporalAccumulationPass>();
             captureTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.CaptureTsrHistoryColor;
             captureTsrHistory.ConfigureTsrHistoryTargets(
-                TsrAccumulationFBOName, TsrHistoryColorFBOName,
+                TsrAccumulationFBOName, TsrHistoryColorFBOName, TsrUpscaleFBOName,
                 TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataFBOName);
         }
         tsr.TrueCommands = tsrCommands;

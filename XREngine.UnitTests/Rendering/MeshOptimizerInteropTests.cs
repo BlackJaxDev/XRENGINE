@@ -532,8 +532,10 @@ public sealed class MeshOptimizerInteropTests
     public void MeshletTaskShader_ConsumesTaskRecordsAndSceneCullingInputs()
     {
         string shader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletCulling.task").Replace("\r\n", "\n");
+        string records = ReadWorkspaceFile("Build/CommonAssets/Shaders/Advanced/Generated/GPUSceneRecords.glslinc");
 
-        shader.ShouldContain("struct GpuMeshletTaskRecord");
+        shader.ShouldContain("#include \"Advanced/Generated/GPUSceneRecords.glslinc\"");
+        records.ShouldContain("struct GpuMeshletTaskRecord");
         shader.ShouldContain("layout(std430, binding = 9) readonly buffer VisibleMeshletTaskBuffer");
         shader.ShouldContain("layout(std430, binding = 10) readonly buffer VisibleMeshletTaskCountBuffer");
         shader.ShouldContain("layout(std430, binding = 12) readonly buffer DrawMetadataBuffer");
@@ -725,12 +727,14 @@ public sealed class MeshOptimizerInteropTests
     public void GpuMeshletPhase8_MaterialStateAndPassCoverageContractsAreExplicit()
     {
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs").Replace("\r\n", "\n");
+        string records = ReadWorkspaceFile("Build/CommonAssets/Shaders/Advanced/Generated/GPUSceneRecords.glslinc");
         string staticShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletRender.mesh").Replace("\r\n", "\n");
         string skinnedShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletRenderSkinned.mesh").Replace("\r\n", "\n");
         string staticExtShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletRenderExt.mesh").Replace("\r\n", "\n");
         string skinnedExtShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Meshlets/MeshletRenderSkinnedExt.mesh").Replace("\r\n", "\n");
 
-        hybridSource.ShouldContain("struct MaterialStateGpu");
+        hybridSource.ShouldContain("#include \\\"Advanced/Generated/GPUSceneRecords.glslinc\\\"");
+        records.ShouldContain("struct MaterialStateGpu");
         hybridSource.ShouldContain("MaterialStateBuffer");
         hybridSource.ShouldContain("XRE_LoadMaterialState");
         hybridSource.ShouldContain("state.TransparencyMode == XRE_TRANSPARENCY_MASKED");

@@ -12,38 +12,45 @@ public sealed class VulkanRuntimeManagerOwnershipTests
     [Test]
     public void Renderer_HasOneDescriptorAndPipelineManagerPerInstance()
     {
-        FieldInfo descriptorManager = typeof(VulkanRenderer)
-            .GetField("_descriptorManager", BindingFlags.Instance | BindingFlags.NonPublic)
+        FieldInfo resourceRuntime = typeof(VulkanRenderer)
+            .GetField("_resourceRuntime", BindingFlags.Instance | BindingFlags.NonPublic)
             .ShouldNotBeNull();
-        FieldInfo pipelineManager = typeof(VulkanRenderer)
-            .GetField("_pipelineManager", BindingFlags.Instance | BindingFlags.NonPublic)
+        PropertyInfo descriptorManager = typeof(VulkanResourceRuntime)
+            .GetProperty("Descriptors", BindingFlags.Instance | BindingFlags.NonPublic)
+            .ShouldNotBeNull();
+        PropertyInfo pipelineManager = typeof(VulkanResourceRuntime)
+            .GetProperty("PipelineManager", BindingFlags.Instance | BindingFlags.NonPublic)
             .ShouldNotBeNull();
 
-        descriptorManager.FieldType.ShouldBe(typeof(VulkanDescriptorManager));
-        pipelineManager.FieldType.ShouldBe(typeof(VulkanPipelineManager));
-        descriptorManager.IsInitOnly.ShouldBeTrue();
-        pipelineManager.IsInitOnly.ShouldBeTrue();
+        resourceRuntime.FieldType.ShouldBe(typeof(VulkanResourceRuntime));
+        resourceRuntime.IsInitOnly.ShouldBeTrue();
+        descriptorManager.PropertyType.ShouldBe(typeof(VulkanDescriptorManager));
+        pipelineManager.PropertyType.ShouldBe(typeof(VulkanPipelineManager));
+        descriptorManager.GetSetMethod(nonPublic: true).ShouldBeNull();
+        pipelineManager.GetSetMethod(nonPublic: true).ShouldBeNull();
     }
 
     [Test]
     public void Renderer_HasOneImGuiResourceAndTextureRegistryOwnerPerInstance()
     {
-        FieldInfo resources = typeof(VulkanRenderer)
+        FieldInfo outputRuntime = typeof(VulkanRenderer)
+            .GetField("_outputRuntime", BindingFlags.Instance | BindingFlags.NonPublic)
+            .ShouldNotBeNull();
+        FieldInfo resources = typeof(VulkanOutputRuntime)
             .GetField("_imguiResources", BindingFlags.Instance | BindingFlags.NonPublic)
             .ShouldNotBeNull();
-        FieldInfo textureRegistry = typeof(VulkanRenderer)
+        FieldInfo textureRegistry = typeof(VulkanOutputRuntime)
             .GetField("_imguiTextureRegistry", BindingFlags.Instance | BindingFlags.NonPublic)
             .ShouldNotBeNull();
-        FieldInfo drawData = typeof(VulkanRenderer)
+        FieldInfo drawData = typeof(VulkanOutputRuntime)
             .GetField("_imguiDrawData", BindingFlags.Instance | BindingFlags.NonPublic)
             .ShouldNotBeNull();
 
+        outputRuntime.FieldType.ShouldBe(typeof(VulkanOutputRuntime));
+        outputRuntime.IsInitOnly.ShouldBeTrue();
         resources.FieldType.ShouldBe(typeof(VulkanImGuiResources));
         textureRegistry.FieldType.ShouldBe(typeof(VulkanImGuiTextureRegistry));
         drawData.FieldType.ShouldBe(typeof(VulkanImGuiDrawDataCache));
-        resources.IsInitOnly.ShouldBeTrue();
-        textureRegistry.IsInitOnly.ShouldBeTrue();
-        drawData.IsInitOnly.ShouldBeTrue();
     }
 
     [Test]

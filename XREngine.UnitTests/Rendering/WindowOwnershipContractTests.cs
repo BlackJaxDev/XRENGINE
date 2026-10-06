@@ -172,21 +172,15 @@ public sealed class WindowOwnershipContractTests
     {
         string source = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
-        int automaticResizeStart = source.IndexOf(
-            "if (viewport.AllowAutomaticInternalResolution &&",
+        int generationStart = source.IndexOf(
+            "ShouldDeferResourceGenerationForInteractiveWindowResize(viewport) &&",
             StringComparison.Ordinal);
-        automaticResizeStart.ShouldBeGreaterThanOrEqualTo(0);
-        int renderScopeStart = source.IndexOf(
-            "using (RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(this))",
-            automaticResizeStart,
-            StringComparison.Ordinal);
-        renderScopeStart.ShouldBeGreaterThan(automaticResizeStart);
-
-        string automaticResizeBody = source[automaticResizeStart..renderScopeStart];
-
-        automaticResizeBody.ShouldContain(
-            "!ShouldDeferResourceGenerationForInteractiveWindowResize(viewport)");
-        automaticResizeBody.ShouldContain("viewport.SetInternalResolution");
+        generationStart.ShouldBeGreaterThanOrEqualTo(0);
+        int drainStart = source.IndexOf("DrainRetiredGenerations();", generationStart, StringComparison.Ordinal);
+        drainStart.ShouldBeGreaterThan(generationStart);
+        string generationPolicy = source[generationStart..drainStart];
+        generationPolicy.ShouldContain("IsResizeOnlyGenerationDelta(dragGeneration.Key, key)");
+        generationPolicy.ShouldContain("DiscardPendingGeneration(\"InteractiveResize\")");
     }
 
     [Test]
@@ -196,9 +190,9 @@ public sealed class WindowOwnershipContractTests
 
         int applyStart = source.IndexOf("private void ApplyFramebufferResize", StringComparison.Ordinal);
         applyStart.ShouldBeGreaterThanOrEqualTo(0);
-        int inputStart = source.IndexOf("private void Input_ConnectionChanged", applyStart, StringComparison.Ordinal);
-        inputStart.ShouldBeGreaterThan(applyStart);
-        string applyBody = source[applyStart..inputStart];
+        int applyEnd = source.IndexOf("#endregion", applyStart, StringComparison.Ordinal);
+        applyEnd.ShouldBeGreaterThan(applyStart);
+        string applyBody = source[applyStart..applyEnd];
 
         applyBody.ShouldContain("RecordPresentationAndOutputExtent(obj);");
         applyBody.ShouldNotContain("RecordAllRenderExtents(obj);");
@@ -206,7 +200,7 @@ public sealed class WindowOwnershipContractTests
 
         source.ShouldContain("private void TryCommitPendingFullInternalResizeAfterRender");
         source.ShouldContain("AreFullInternalResizeResourcesReady(pending)");
-        source.ShouldContain("pipelineInstance.PendingGeneration is not null");
+        source.ShouldContain("if (!pipelineInstance.IsCurrentResourceProfileReady(viewport))");
         source.ShouldContain("TryCommitPendingFullInternalExtent(");
         source.ShouldContain("XRWindow.CommitPendingFullInternalResize");
     }
@@ -233,23 +227,18 @@ public sealed class WindowOwnershipContractTests
     public void VulkanFrameSlotRetirementDrainsSwapchainDependentResourcesAfterSlotWait()
     {
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.ResourceRetirement.cs");
         string frameSlotRetirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.FrameSlots.Retirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.FrameSlots.Retirement.cs");
         string framebuffer = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Framebuffers/VkFrameBuffer.cs");
         string renderbuffer = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Buffers/VkRenderBuffer.cs");
 
-        retirement.ShouldContain("private readonly List<RetiredFramebuffer>[] _retiredFramebuffers");
-        retirement.ShouldContain("private readonly List<RetiredImageResourceEntry>[] _retiredImages");
-        retirement.ShouldContain("internal void RetireFramebuffer(Framebuffer framebuffer)");
-        retirement.ShouldContain("internal void RetireImageResources(");
-        retirement.ShouldContain("in RetiredImageResources resources");
-        retirement.ShouldContain("private void DrainRetiredFramebuffers");
-        retirement.ShouldContain("private void DrainRetiredImages");
-        framebuffer.ShouldContain("Renderer.RetireFramebuffer(_frameBuffer);");
-        renderbuffer.ShouldContain("Renderer.RetireImageResources(new RetiredImageResources(");
+        retirement.ShouldContain("ResourceRuntime.DrainRetiredFramebuffers(");
+        retirement.ShouldContain("ResourceRuntime.DrainRetiredImages(");
+        framebuffer.ShouldContain("BackendContext.Resources.Framebuffers.RetireFramebuffer(_frameBuffer");
+        renderbuffer.ShouldContain("BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(");
 
         int waitStart = frameSlotRetirement.IndexOf("private bool TryWaitCurrentFrameSlotAndDrainRetiredResources", StringComparison.Ordinal);
         waitStart.ShouldBeGreaterThanOrEqualTo(0);
@@ -257,58 +246,55 @@ public sealed class WindowOwnershipContractTests
 
         waitBody.ShouldContain("int frameSlot");
         waitBody.ShouldNotContain("_desktopFrameSlot");
-        waitBody.ShouldContain("WaitForTimelineValue(_graphicsTimelineSemaphore, slotWaitValue);");
-        waitBody.ShouldContain("DrainRetiredDescriptorPools();");
-        waitBody.ShouldContain("DrainRetiredPipelines();");
-        waitBody.ShouldContain("DrainRetiredBuffers();");
-        waitBody.ShouldContain("DrainRetiredFramebuffers();");
-        waitBody.ShouldContain("DrainRetiredImages();");
+        waitBody.ShouldContain("WaitForTimelineValue(_commandRuntime.Synchronization._graphicsTimelineSemaphore, slotWaitValue);");
+        waitBody.ShouldContain("ResourceRuntime.DrainRetiredDescriptorPools(");
+        waitBody.ShouldContain("ResourceRuntime.DrainRetiredPipelines(");
+        waitBody.ShouldContain("ResourceRuntime.DrainRetiredBuffers(");
+        waitBody.ShouldContain("ResourceRuntime.DrainRetiredFramebuffers(");
+        waitBody.ShouldContain("ResourceRuntime.DrainRetiredImages(");
     }
 
     [Test]
     public void VulkanMismatchedSwapchainPresentUsesValidatedPresentScaling()
     {
         string preflight = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Preflight.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.Preflight.cs");
         string swapchainPolicy = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.SwapchainPolicy.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.SwapchainPolicy.cs");
         string acquire = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Acquire.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.Acquire.cs");
         string presentation = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Presentation.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.Presentation.cs");
         string presentScaling = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.PresentScaling.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Swapchain/VulkanRenderer.PresentScaling.cs");
         string swapchain = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Output/Authority/VulkanDesktopSwapchainService.cs");
         string extensions = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.Instance.cs");
         string logicalDevice = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs");
 
-        presentScaling.ShouldContain("VK_KHR_get_surface_capabilities2");
-        presentScaling.ShouldContain("VK_EXT_surface_maintenance1");
-        presentScaling.ShouldContain("VK_EXT_swapchain_maintenance1");
-        extensions.ShouldContain("GetSurfaceCapabilities2ExtensionName");
-        extensions.ShouldContain("SurfaceMaintenance1ExtensionName");
-        extensions.ShouldContain("SwapchainMaintenance1ExtensionName");
+        extensions.ShouldContain("VK_KHR_get_surface_capabilities2");
+        extensions.ShouldContain("VK_EXT_surface_maintenance1");
+        logicalDevice.ShouldContain("VK_EXT_swapchain_maintenance1");
         logicalDevice.ShouldContain("PhysicalDeviceSwapchainMaintenance1FeaturesEXT");
-        logicalDevice.ShouldContain("_swapchainMaintenance1Enabled = enableSwapchainMaintenance1Feature;");
+        logicalDevice.ShouldContain("OutputRuntime.Desktop.Maintenance1Enabled = enableSwapchainMaintenance1Feature;");
 
-        presentScaling.ShouldContain("SurfacePresentScalingCapabilitiesEXT");
-        presentScaling.ShouldContain("PresentScalingFlagsKHR.StretchBitExt");
-        presentScaling.ShouldContain("SwapchainPresentScalingCreateInfoEXT");
-        presentScaling.ShouldContain("IsSwapchainPresentScalingExtentSupported");
-        swapchain.ShouldContain("TryGetSwapchainPresentScalingConfiguration(");
+        swapchain.ShouldContain("SurfacePresentScalingCapabilitiesEXT");
+        swapchain.ShouldContain("PresentScalingFlagsKHR.StretchBitExt");
+        swapchain.ShouldContain("SwapchainPresentScalingCreateInfoEXT");
+        swapchain.ShouldContain("TryGetPresentScalingConfiguration(");
         swapchain.ShouldContain("createInfo.PNext = &presentScalingCreateInfo;");
-        swapchain.ShouldContain("_swapchainPresentScalingActive = usePresentScaling;");
+        swapchain.ShouldContain("_output.Desktop.PresentScalingActive = usePresentScaling;");
+        presentScaling.ShouldContain("_outputRuntime.Desktop.PresentScalingActive");
 
         swapchainPolicy.ShouldContain("private bool CanPresentMismatchedSwapchainExtent(");
         preflight.ShouldContain("attempt.CanPresentMismatchedSwapchainExtent =");
-        swapchainPolicy.ShouldContain("Presenting through validated WSI scaling during interactive resize.");
+        swapchainPolicy.ShouldContain("OutputRuntime.Desktop.IsPresentScalingExtentSupported(");
         preflight.ShouldContain("!attempt.CanPresentMismatchedSwapchainExtent");
-        swapchainPolicy.ShouldContain("private bool ShouldKeepPresentScalingSwapchain(Result result, bool interactiveResize)");
-        acquire.ShouldContain("if (!ShouldKeepPresentScalingSwapchain(");
-        presentation.ShouldContain("if (!ShouldKeepPresentScalingSwapchain(");
+        swapchainPolicy.ShouldContain("internal bool ShouldKeepDesktopPresentScalingSwapchainCore(Result result, bool interactiveResize)");
+        acquire.ShouldContain("if (!ShouldKeepDesktopPresentScalingSwapchainCore(");
+        presentation.ShouldContain("if (!ShouldKeepDesktopPresentScalingSwapchainCore(");
     }
 
     [Test]
@@ -349,22 +335,23 @@ public sealed class WindowOwnershipContractTests
         string viewportRenderArea = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/State/VPRC_PushViewportRenderArea.cs");
         string imgui = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanImGuiOverlayCommandRecorder.cs");
 
         presentCommand.ShouldContain("renderer.MapWindowPresentationRegionToBackbuffer(region)");
         viewportRenderArea.ShouldContain("!UseInternalResolution &&");
         viewportRenderArea.ShouldContain("!externalRegion.HasValue &&");
         viewportRenderArea.ShouldContain("!outputRegion.HasValue &&");
         viewportRenderArea.ShouldContain("res = renderer.MapWindowPresentationRegionToBackbuffer(res);");
-        imgui.ShouldContain("_swapchainPresentScalingActive &&");
-        imgui.ShouldContain("XRWindow.IsInteractiveResizeInProgress");
-        imgui.ShouldContain("uint fbWidth = swapChainExtent.Width;");
-        imgui.ShouldContain("Vector2 snapshotToRasterScale");
-        imgui.ShouldContain("Vector2 clipScale = drawData.FramebufferScale * snapshotToRasterScale;");
+        imgui.ShouldContain("uint width = input.Target.Extent.Width;");
+        imgui.ShouldContain("uint height = input.Target.Extent.Height;");
+        imgui.ShouldContain("Vector2 scale = input.Snapshot.FramebufferScale * new Vector2(");
+        imgui.ShouldContain("width / (float)input.Snapshot.FramebufferWidth");
+        imgui.ShouldContain("height / (float)input.Snapshot.FramebufferHeight");
+        imgui.ShouldContain("(clip.X - input.Snapshot.DisplayPos.X) * scale.X");
     }
 
     [Test]
-    public void FailedRenderResourceGenerationFenceDoesNotPermanentlyBlockRetirementQueue()
+    public void FailedRenderResourceGenerationFenceRetainsResourcesUntilReplacementCompletes()
     {
         string source = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
@@ -380,31 +367,34 @@ public sealed class WindowOwnershipContractTests
         dequeueStart.ShouldBeGreaterThan(failureStart);
         string failurePath = source[failureStart..dequeueStart];
 
-        failurePath.ShouldContain("RetiredRenderResourceGenerationFenceFailed");
-        failurePath.ShouldContain("PrepareForPhysicalResourceDestruction");
-        failurePath.ShouldNotContain("return;");
+        failurePath.ShouldContain("renderer?.InsertGpuFence()");
+        failurePath.ShouldContain("if (replacementFence is null)");
+        failurePath.ShouldContain("retired.ReplaceFailedRetirementFence(replacementFence)");
+        failurePath.ShouldContain("return;");
+        failurePath.ShouldNotContain("DisposeGeneration(retired");
+        source[dequeueStart..].ShouldContain("DisposeGeneration(retired, retired.RetirementReason");
     }
 
     [Test]
     public void VulkanBlitRegionsClampToLiveSourceAndDestinationExtents()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.Blit.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.DrawComputeBlitServices.cs");
 
-        int buildStart = source.IndexOf("private static bool TryBuildImageBlit", StringComparison.Ordinal);
+        int buildStart = source.IndexOf("private static bool TryBuildPreparedImageBlit", StringComparison.Ordinal);
         buildStart.ShouldBeGreaterThanOrEqualTo(0);
-        int transitionStart = source.IndexOf("private void TransitionForBlit", buildStart, StringComparison.Ordinal);
+        int transitionStart = source.IndexOf("internal unsafe void TransitionPreparedImageForBlit", buildStart, StringComparison.Ordinal);
         transitionStart.ShouldBeGreaterThan(buildStart);
         string buildBody = source[buildStart..transitionStart];
 
         buildBody.ShouldContain("int sourceWidth = (int)Math.Max(source.Extent.Width, 1u);");
         buildBody.ShouldContain("int destinationWidth = (int)Math.Max(destination.Extent.Width, 1u);");
-        buildBody.ShouldContain("int srcX0 = ClampBlitOffset(inX, sourceWidth);");
-        buildBody.ShouldContain("int srcX1 = ClampBlitOffset((long)inX + inW, sourceWidth);");
-        buildBody.ShouldContain("int dstX0 = ClampBlitOffset(outX, destinationWidth);");
-        buildBody.ShouldContain("int dstX1 = ClampBlitOffset((long)outX + outW, destinationWidth);");
-        buildBody.ShouldContain("if (srcX1 <= srcX0 || srcY1 <= srcY0 || dstX1 <= dstX0 || dstY1 <= dstY0)");
-        buildBody.ShouldContain("private static int ClampBlitOffset(long value, int extent)");
+        buildBody.ShouldContain("int srcX0 = ClampPreparedBlitOffset(inX, sourceWidth);");
+        buildBody.ShouldContain("int srcX1 = ClampPreparedBlitOffset((long)inX + inW, sourceWidth);");
+        buildBody.ShouldContain("int dstX0 = ClampPreparedBlitOffset(outX, destinationWidth);");
+        buildBody.ShouldContain("int dstX1 = ClampPreparedBlitOffset((long)outX + outW, destinationWidth);");
+        buildBody.ShouldContain("if (srcX1 <= srcX0 || srcY1 <= srcY0 || dstX1 <= dstX0 || dstY1 <= dstY0 || layerCount == 0)");
+        buildBody.ShouldContain("private static int ClampPreparedBlitOffset(long value, int extent)");
     }
 
     [Test]
@@ -438,6 +428,115 @@ public sealed class WindowOwnershipContractTests
         disposeBody.ShouldContain("if (RuntimeEngine.IsRenderThread)");
         disposeBody.ShouldContain("DisposeExternalPumpRenderResources(reason);");
         disposeBody.ShouldContain("RuntimeEngine.EnqueueRenderThreadTask(");
+    }
+
+    [Test]
+    public void XRWindow_CollapsedHostApprovedCloseArmsPumpCompletionInsteadOfRenderThreadJob()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
+        int handlerStart = source.IndexOf("private bool HandleDesktopCloseRequested()", StringComparison.Ordinal);
+        handlerStart.ShouldBeGreaterThanOrEqualTo(0);
+        int completionStart = source.IndexOf("private bool TryCompleteApprovedNativeClose()", handlerStart, StringComparison.Ordinal);
+        completionStart.ShouldBeGreaterThan(handlerStart);
+        string handlerBody = source[handlerStart..completionStart];
+
+        int quiesce = handlerBody.IndexOf("QuiesceForWindowRendererTeardown(this)", StringComparison.Ordinal);
+        int closeInProgress = handlerBody.IndexOf("_approvedNativeCloseInProgress = true;", StringComparison.Ordinal);
+        int collapsedStart = handlerBody.IndexOf("if (!IsNativeEventPumpExternallyOwned)", StringComparison.Ordinal);
+        quiesce.ShouldBeGreaterThanOrEqualTo(0);
+        closeInProgress.ShouldBeGreaterThan(quiesce);
+        collapsedStart.ShouldBeGreaterThan(closeInProgress);
+
+        // The collapsed branch must end with its own approval return, before the external-pump job.
+        int collapsedReturn = handlerBody.IndexOf("return true;", collapsedStart, StringComparison.Ordinal);
+        collapsedReturn.ShouldBeGreaterThan(collapsedStart);
+        string collapsedBranch = handlerBody[collapsedStart..collapsedReturn];
+        string externalPumpPath = handlerBody[collapsedReturn..];
+
+        collapsedBranch.ShouldContain("Interlocked.Exchange(ref _approvedNativeCloseCompletionPending, 1);");
+        collapsedBranch.ShouldNotContain("EnqueueRenderThreadTask");
+        collapsedBranch.ShouldNotContain("Dispose(");
+        collapsedBranch.ShouldNotContain("RemoveWindow(");
+        handlerBody[..collapsedStart].ShouldNotContain("EnqueueRenderThreadTask");
+
+        externalPumpPath.ShouldContain("RuntimeEngine.EnqueueRenderThreadTask(");
+        externalPumpPath.ShouldContain("() => TryBeginExternalPumpDispose(\"DesktopClose\")");
+        externalPumpPath.ShouldContain("RenderThreadJobKind.RequiresGraphicsContext");
+
+        // The native close callback never disposes or unregisters the window inline.
+        handlerBody.ShouldNotContain("Dispose();");
+        handlerBody.ShouldNotContain("RemoveWindow(");
+    }
+
+    [Test]
+    public void XRWindow_HostPumpCompletesApprovedCloseBeforeAndAfterNativeEvents()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
+        int pumpStart = source.IndexOf("public void PumpNativeWindowEventsFromHost()", StringComparison.Ordinal);
+        pumpStart.ShouldBeGreaterThanOrEqualTo(0);
+        int nextMethod = source.IndexOf("private void ApplyVSyncModeOnRenderThread", pumpStart, StringComparison.Ordinal);
+        nextMethod.ShouldBeGreaterThan(pumpStart);
+        string pumpBody = source[pumpStart..nextMethod];
+
+        const string completionCheck = "if (TryCompleteApprovedNativeClose())\n                return;";
+        const string disposedGuard = "if (_isDisposed || _isDisposing)";
+        int firstCompletion = pumpBody.IndexOf(completionCheck, StringComparison.Ordinal);
+        int firstDisposedGuard = pumpBody.IndexOf(disposedGuard, StringComparison.Ordinal);
+        int nativePump = pumpBody.IndexOf("_desktopBackend?.PumpEvents();", StringComparison.Ordinal);
+        firstCompletion.ShouldBeGreaterThanOrEqualTo(0);
+        firstDisposedGuard.ShouldBeGreaterThan(firstCompletion);
+        nativePump.ShouldBeGreaterThan(firstDisposedGuard);
+
+        // A close approved inside PumpEvents completes after the native callback unwinds.
+        int secondCompletion = pumpBody.IndexOf(completionCheck, nativePump, StringComparison.Ordinal);
+        int secondDisposedGuard = pumpBody.IndexOf(disposedGuard, nativePump, StringComparison.Ordinal);
+        int snapshotPublish = pumpBody.IndexOf("PublishWindowSurfaceSnapshot(", StringComparison.Ordinal);
+        secondCompletion.ShouldBeGreaterThan(nativePump);
+        secondDisposedGuard.ShouldBeGreaterThan(secondCompletion);
+        snapshotPublish.ShouldBeGreaterThan(secondDisposedGuard);
+        pumpBody.IndexOf(completionCheck, secondCompletion + completionCheck.Length, StringComparison.Ordinal)
+            .ShouldBe(-1);
+    }
+
+    [Test]
+    public void XRWindow_ApprovedCloseCompletionQuiescesBeforeDisposeAndAlwaysRemovesWindow()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
+        int completionStart = source.IndexOf("private bool TryCompleteApprovedNativeClose()", StringComparison.Ordinal);
+        completionStart.ShouldBeGreaterThanOrEqualTo(0);
+        int nextMethod = source.IndexOf("private void OnFocusChanged", completionStart, StringComparison.Ordinal);
+        nextMethod.ShouldBeGreaterThan(completionStart);
+        string completionBody = source[completionStart..nextMethod];
+
+        int idleFastPath = completionBody.IndexOf("Volatile.Read(ref _approvedNativeCloseCompletionPending) == 0", StringComparison.Ordinal);
+        int consume = completionBody.IndexOf("Interlocked.Exchange(ref _approvedNativeCloseCompletionPending, 0) == 0", StringComparison.Ordinal);
+        int notPending = completionBody.IndexOf("return false;", StringComparison.Ordinal);
+        int tryStart = completionBody.IndexOf("            try\n            {", StringComparison.Ordinal);
+        int abandonedGuard = completionBody.IndexOf("!_renderer.IsShutdownTeardownAbandoned &&", StringComparison.Ordinal);
+        int quiesce = completionBody.IndexOf("RuntimeRenderingHostServices.Factories.QuiesceForWindowRendererTeardown(this)", StringComparison.Ordinal);
+        int abandonTeardown = completionBody.IndexOf("_renderer.AbandonShutdownTeardown();", StringComparison.Ordinal);
+        int dispose = completionBody.IndexOf("Dispose();", StringComparison.Ordinal);
+        int catchStart = completionBody.IndexOf("catch (Exception ex)", StringComparison.Ordinal);
+        int logException = completionBody.IndexOf("Debug.LogException(ex,", StringComparison.Ordinal);
+        int finallyStart = completionBody.IndexOf("            finally\n            {", StringComparison.Ordinal);
+        const string removeWindowCall = "RuntimeRenderingHostServices.Factories.RemoveWindow(this);";
+        int removeWindow = completionBody.IndexOf(removeWindowCall, StringComparison.Ordinal);
+        int completed = completionBody.LastIndexOf("return true;", StringComparison.Ordinal);
+
+        idleFastPath.ShouldBeGreaterThanOrEqualTo(0);
+        consume.ShouldBeGreaterThan(idleFastPath);
+        notPending.ShouldBeGreaterThan(consume);
+        tryStart.ShouldBeGreaterThan(notPending);
+        abandonedGuard.ShouldBeGreaterThan(tryStart);
+        quiesce.ShouldBeGreaterThan(abandonedGuard);
+        abandonTeardown.ShouldBeGreaterThan(quiesce);
+        dispose.ShouldBeGreaterThan(abandonTeardown);
+        catchStart.ShouldBeGreaterThan(dispose);
+        logException.ShouldBeGreaterThan(catchStart);
+        finallyStart.ShouldBeGreaterThan(logException);
+        removeWindow.ShouldBeGreaterThan(finallyStart);
+        completed.ShouldBeGreaterThan(removeWindow);
+        completionBody.IndexOf("RemoveWindow(", removeWindow + removeWindowCall.Length, StringComparison.Ordinal).ShouldBe(-1);
     }
 
     [Test]

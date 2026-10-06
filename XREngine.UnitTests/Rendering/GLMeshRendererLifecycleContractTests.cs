@@ -44,7 +44,7 @@ public sealed class GLMeshRendererLifecycleContractTests
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Shaders.cs");
 
         source.ShouldContain("private bool UseShaderPipelinesForThisRenderer()");
-        source.ShouldContain("=> RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines;");
+        source.ShouldContain("=> RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines && !Data.UsesMultiview;");
         source.ShouldContain("DestroyCombinedProgram();");
         source.ShouldContain("DestroySeparablePrograms();");
         source.ShouldContain("material.Data.EnsureShaderPipelineProgram();");

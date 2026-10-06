@@ -1516,6 +1516,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
            RuntimeEngine.VRState.IsOpenXRActive ||
            RuntimeEngine.VRState.OpenXRApi is not null;
     public EVrViewRenderMode VrViewRenderMode => RuntimeEngine.Rendering.Settings.VrViewRenderMode;
+    public EVrRenderPipeline VrRenderPipeline => RuntimeEngine.Rendering.Settings.VrRenderPipeline;
     public EVrMirrorMode VrMirrorMode => RuntimeEngine.Rendering.Settings.VrMirrorMode;
     public float GetVrOutputTargetRateHz(EVrOutputViewKind viewKind)
         => viewKind switch

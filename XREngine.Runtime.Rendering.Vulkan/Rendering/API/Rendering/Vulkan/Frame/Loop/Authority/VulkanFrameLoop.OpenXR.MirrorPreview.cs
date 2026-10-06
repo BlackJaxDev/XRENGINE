@@ -8,6 +8,7 @@ using System.Threading;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan.RenderGraph;
 
@@ -406,7 +407,9 @@ internal sealed partial class VulkanFrameLoop
                 renderRequest.ResourcePlannerStateIndex,
                 EVulkanOpenXrResourcePlannerPurpose.Mirror);
 
-            hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(in renderRequest, out recorded);
+            hasRecorded = TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(
+                in renderRequest, out recorded, renderPipelineInstance,
+                strictSpsTemporalHistory: true);
             if (!hasRecorded)
             {
                 if (renderRequest.RendersExternalSwapchainTarget)
@@ -544,7 +547,11 @@ internal sealed partial class VulkanFrameLoop
                 if (!trackerOwnsSubmission && hasPublish)
                     FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, submissionDisposition);
                 if (!trackerOwnsSubmission && hasRecorded)
+                {
+                    TemporalHistorySubmissionCandidate candidate = recorded.TemporalHistoryCandidate;
+                    VPRC_TemporalAccumulationPass.DiscardCandidate(in candidate);
                     FreeOpenXrRecordedEyeCommandBuffer(recorded);
+                }
     
                 if (!trackerOwnsSubmission)
                 {
@@ -614,9 +621,13 @@ internal sealed partial class VulkanFrameLoop
     private bool TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(
 
         in OpenXrEyeMirrorRenderRequest request,
-        out OpenXrRecordedEyeCommandBuffer recorded)
+        out OpenXrRecordedEyeCommandBuffer recorded,
+        XRRenderPipelineInstance? renderPipelineInstance = null,
+        bool strictSpsTemporalHistory = false)
     {
         recorded = default;
+        if (strictSpsTemporalHistory && renderPipelineInstance is null)
+            return false;
         if (request.TargetFrameBuffer is null || request.Extent.Width == 0 || request.Extent.Height == 0)
 
             return false;
@@ -625,6 +636,7 @@ internal sealed partial class VulkanFrameLoop
         bool ownsFrameDataSlot = false;
         bool recordingPublished = false;
         FrameOp[]? capturedOps = null;
+        TemporalHistorySubmissionCandidate temporalCandidate = default;
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(OutputRuntime.Desktop.Images?.Length ?? 0);
         uint recordImageIndex = ResolveOpenXrRecordImageIndex(
             request.ResourcePlannerStateIndex,
@@ -670,12 +682,41 @@ internal sealed partial class VulkanFrameLoop
                 request.ResourcePlannerStateIndex,
                 EVulkanOpenXrResourcePlannerPurpose.Mirror))
             {
+                bool strictTemporalCapture =
+                    strictSpsTemporalHistory && renderPipelineInstance is not null;
+                using TemporalHistoryCaptureScope temporalCapture = strictTemporalCapture
+                    ? VPRC_TemporalAccumulationPass.EnterStrictSpsCapture(renderPipelineInstance!)
+                    : default;
                 capturedOps = CaptureFrameOpsExcludingTextureUploads(request.EmitFrameOps, out _);
                 drainedFrameOps = true;
+                if (strictTemporalCapture &&
+                    !VPRC_TemporalAccumulationPass.TryGetStagedCandidate(
+                        renderPipelineInstance!, out temporalCandidate) &&
+                    temporalCapture.HasTemporalAttemptOrBlocked)
+                {
+                    RecordOpenXrRenderFailure(in request, "temporal-history-incomplete");
+                    return false;
+                }
                 FrameOp[] ops = VulkanCommandRuntime.FilterDiagnosticSkippedFrameOps(capturedOps);
                 if (ops.Length == 0)
                 {
-                    RecordOpenXrRenderFailure(in request, "empty-frame-operations");
+                    if (VulkanFrameDiagnosticsTraceEnabled &&
+                        _openXrFailureDiagnosticCount < 64 &&
+                        (_lastOpenXrFailureDiagnosticTimestamp == 0 ||
+                         Stopwatch.GetTimestamp() -
+                         _lastOpenXrFailureDiagnosticTimestamp >=
+                         Stopwatch.Frequency))
+                    {
+                        RecordOpenXrRenderFailure(
+                            in request,
+                            "empty-frame-operations",
+                            $"RawOps={capturedOps.Length} FilteredOps={ops.Length} " +
+                            $"RenderDecline={renderPipelineInstance?.LastRenderDeclineReason ?? "<none>"} " +
+                            $"ResourceFailure={renderPipelineInstance?.LastResourceGenerationFailure ?? "<none>"} " +
+                            $"ActiveGeneration={renderPipelineInstance?.ActiveGeneration?.Key.ToString() ?? "<none>"} " +
+                            $"PendingGeneration={renderPipelineInstance?.PendingGeneration?.Key.ToString() ?? "<none>"} " +
+                            $"SkippedResizeCatchUp={renderPipelineInstance?.SkippedResizeCatchUpThisFrame}");
+                    }
                     Debug.VulkanWarningEvery(
                         $"OpenXR.Vulkan.NoEyeMirrorFrameOps.{GetHashCode()}",
                         TimeSpan.FromSeconds(1),
@@ -730,7 +771,8 @@ internal sealed partial class VulkanFrameLoop
                 if (!PrewarmOpenXrFrameOpResources(
                         ops,
                         recordImageIndex,
-                        sealFrameManifest: true))
+                        sealFrameManifest: true,
+                        capacityOnly: strictSpsTemporalHistory))
                 {
                     RecordOpenXrRenderFailure(in request, "resource-prewarm");
                     return false;
@@ -788,6 +830,35 @@ internal sealed partial class VulkanFrameLoop
                         RenderGraphPlan = recordingPlannerGeneration.State.RenderGraphPlan,
                     },
                 };
+                VulkanTemporalHistoryNativeCoverage sealedTemporalCoverage = default;
+                if (temporalCandidate.IsValid)
+                {
+                    FrameOperationSequence temporalOperations =
+                        framePlan.GetNativeStaticOperationsForRecording();
+                    bool requiresReauthor = false;
+                    if (!_commandRuntime.TryResolveTemporalHistoryResources(
+                            framePlan,
+                            temporalOperations.Stream,
+                            in temporalCandidate,
+                            out TemporalHistorySubmissionCandidate rebasedCandidate,
+                            out TemporalHistoryResourceSet reads,
+                            out TemporalHistoryResourceSet writes,
+                            out sealedTemporalCoverage) ||
+                        !VPRC_TemporalAccumulationPass.TrySealCandidate(
+                            in rebasedCandidate,
+                            in reads,
+                            in writes,
+                            out TemporalHistorySubmissionCandidate sealedCandidate,
+                            out requiresReauthor))
+                    {
+                        RecordOpenXrRenderFailure(in request,
+                            requiresReauthor ? "temporal-history-reauthor" : "temporal-history-seal");
+                        return false;
+                    }
+
+                    temporalCandidate = sealedCandidate;
+                    sealedTemporalCoverage.Candidate = sealedCandidate;
+                }
                 EVrOutputViewKind viewKind = default;
                 EVrOutputViewKind indexedViewKind = default;
                 int outputIndex = -1;
@@ -926,7 +997,13 @@ internal sealed partial class VulkanFrameLoop
                     LogicalViewOperationsOverride: recordingOperations.Stream,
                     LogicalViewId: logicalViewId,
                     RecordingPlannerKey: recordingPlannerKey);
-                if (!_commandRuntime.TryRecordPreparedOpenXrMirror(
+                VulkanTemporalHistoryNativeCoverage nativeCoverage;
+                bool primaryRecorded;
+                VulkanImportedTexturePendingUpload[] uploads;
+                _commandRuntime.BeginTemporalHistoryRecording(in sealedTemporalCoverage);
+                try
+                {
+                    primaryRecorded = _commandRuntime.TryRecordPreparedOpenXrMirror(
                         in commandInput,
                         CreateOpenXrMirrorFrameContext(in request),
                         request.OpenXrViewIndex,
@@ -941,7 +1018,14 @@ internal sealed partial class VulkanFrameLoop
                         fallbackContext.ResourceGeneration,
                         fallbackContext.DescriptorGeneration,
                         out recorded,
-                        out VulkanImportedTexturePendingUpload[] uploads))
+                        out uploads);
+                }
+                finally
+                {
+                    nativeCoverage = _commandRuntime.EndTemporalHistoryRecording();
+                }
+
+                if (!primaryRecorded)
                 {
                     RecordOpenXrRenderFailure(in request, "primary-record");
                     return false;
@@ -950,6 +1034,27 @@ internal sealed partial class VulkanFrameLoop
                 if (uploads.Length != 0)
                     OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit
                         .AddRange(uploads);
+
+                if (temporalCandidate.IsValid)
+                {
+                    if (!VPRC_TemporalAccumulationPass.TryConfirmRecordedCandidate(
+                            in temporalCandidate,
+                            nativeCoverage.ColorLayerMask,
+                            nativeCoverage.DepthLayerMask,
+                            nativeCoverage.TsrColorLayerMask,
+                            nativeCoverage.MetadataLayerMask,
+                            nativeCoverage.ExposureLayerMask,
+                            nativeCoverage.TemporalResolveRecorded,
+                            nativeCoverage.TsrResolveRecorded,
+                            out TemporalHistorySubmissionCandidate recordedCandidate))
+                    {
+                        RecordOpenXrRenderFailure(in request, "temporal-history-native-coverage");
+                        return false;
+                    }
+
+                    recorded = recorded with { TemporalHistoryCandidate = recordedCandidate };
+                }
+
                 recordingPublished = true;
                 return true;
             }
@@ -972,6 +1077,8 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
+            if (!recordingPublished)
+                VPRC_TemporalAccumulationPass.DiscardCandidate(in temporalCandidate);
             if (capturedOps is not null)
             {
                 if (!recordingPublished)

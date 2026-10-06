@@ -132,7 +132,7 @@ public sealed class GizmoStencilStateIsolationTests
 
     private static string LoadOpenGlRendererFile(string fileName)
         => global::XREngine.UnitTests.SourceContractWorkspace.ReadFile(
-            $"XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/{fileName}");
+            $"XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Commands/{fileName}");
 
     private static string ResolveRepoRoot()
     {

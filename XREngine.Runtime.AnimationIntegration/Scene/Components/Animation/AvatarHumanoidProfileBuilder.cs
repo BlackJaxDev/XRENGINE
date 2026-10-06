@@ -41,6 +41,9 @@ namespace XREngine.Components.Animation
             /// Number of bones that fell back to default axis mapping.
             /// </summary>
             public int FallbackBoneCount { get; init; }
+
+            /// <summary>Node names with mappings supplied before this profile was built.</summary>
+            public IReadOnlySet<string> AuthoredAxisMappingNodeNames { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -137,6 +140,7 @@ namespace XREngine.Components.Animation
                 BoneEntries = entries,
                 ProfiledBoneCount = totalBones,
                 FallbackBoneCount = fallbackCount,
+                AuthoredAxisMappingNodeNames = new HashSet<string>(authoredMappings.Keys, StringComparer.OrdinalIgnoreCase),
             };
         }
 

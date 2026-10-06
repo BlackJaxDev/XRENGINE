@@ -137,7 +137,7 @@ public sealed class SerializedToonFeatureLossTests
         result.Diagnostics.Count(static diagnostic =>
                 diagnostic.Code == MaterialConversionDiagnosticCodes.ProFeatureDiscarded)
             .ShouldBe(
-                4,
+                3,
                 string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         result.Diagnostics.Select(static diagnostic => diagnostic.Message)
             .ShouldContain(static message => message.Contains("Grab Pass", StringComparison.Ordinal));
@@ -147,10 +147,10 @@ public sealed class SerializedToonFeatureLossTests
             .ShouldContain(static message => message.Contains("Blur", StringComparison.Ordinal));
         result.Diagnostics.Select(static diagnostic => diagnostic.Message)
             .ShouldContain(static message =>
-                message.Contains("common Toon surface", StringComparison.Ordinal));
+                message.Contains("Common Toon-compatible modules are preserved", StringComparison.Ordinal));
         material.IsUberFeatureEnabled("surface-extensions", defaultEnabled: false).ShouldBeTrue();
         material.IsUberFeatureEnabled("global-masks-themes", defaultEnabled: false).ShouldBeTrue();
-        material.IsUberFeatureEnabled("layered-emission", defaultEnabled: true).ShouldBeFalse();
+        material.IsUberFeatureEnabled("layered-emission", defaultEnabled: false).ShouldBeTrue();
         material.IsUberFeatureEnabled("detail-textures", defaultEnabled: true).ShouldBeFalse();
         material.IsUberFeatureEnabled("dissolve", defaultEnabled: true).ShouldBeFalse();
         material.IsUberFeatureEnabled("glitter", defaultEnabled: true).ShouldBeFalse();

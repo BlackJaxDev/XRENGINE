@@ -75,14 +75,7 @@ public sealed class SecondaryPassShaderContractTests
     [Test]
     public void VulkanShaderFixups_RewriteOpenGlVertexIdBuiltIn()
     {
-        string source = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "Vulkan",
-            "Shaders",
-            "VulkanShaderSourceFixups.cs"));
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderSourceFixups.cs");
 
         source.ShouldContain("Replace(\"gl_VertexID\", \"gl_VertexIndex\"");
     }
@@ -92,12 +85,7 @@ public sealed class SecondaryPassShaderContractTests
     {
         string gizmoLine = LoadShaderSource(Path.Combine("Common", "GizmoLine.gs"));
         string gizmoArrowHead = LoadShaderSource(Path.Combine("Common", "GizmoArrowHead.gs"));
-        string transformTool = ReadWorkspaceFile(Path.Combine(
-            "XREngine",
-            "Scene",
-            "Components",
-            "Editing",
-            "TransformTool3D.cs"));
+        string transformTool = ReadWorkspaceFile("XREngine.Editor/Scene/Components/Editing/TransformTool3D.cs");
 
         gizmoLine.ShouldContain("uniform float ScreenWidth;");
         gizmoLine.ShouldContain("uniform float ScreenHeight;");
@@ -119,33 +107,9 @@ public sealed class SecondaryPassShaderContractTests
     [Test]
     public void OpenGlBindBuffers_AllowsAttributeLessVertexIdPrograms()
     {
-        string meshRenderer = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "OpenGL",
-            "Types",
-            "Mesh Renderer",
-            "GLMeshRenderer.Buffers.cs"));
-        string renderProgram = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "OpenGL",
-            "Types",
-            "Meshes",
-            "GLRenderProgram.cs"));
-        string layoutResolver = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "OpenGL",
-            "Types",
-            "Meshes",
-            "GLShaderAttributeLayoutResolver.cs"));
+        string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Buffers.cs");
+        string renderProgram = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.cs");
+        string layoutResolver = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Shaders/GLShaderAttributeLayoutResolver.cs");
 
         meshRenderer.ShouldContain("program.UsesVertexIdOnlyVertexInput()");
         meshRenderer.ShouldContain("vertexAttributesBound == 0 && arrayBuffersSeen > 0 && !usesVertexIdOnlyVertexInput");
@@ -251,12 +215,14 @@ public sealed class SecondaryPassShaderContractTests
             "Rendering",
             "Pipelines",
             "Types",
+            "Default",
             "DefaultRenderPipeline.FBOs.cs"));
         string advancedPipeline = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
             "Rendering",
             "Pipelines",
             "Types",
+            "Advanced",
             "AdvancedRenderPipeline.FBOs.cs"));
         string atmosphereSky = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
@@ -289,20 +255,8 @@ public sealed class SecondaryPassShaderContractTests
             "Materials",
             "Options",
             "EUniformRequirements.cs"));
-        string openGlClipSpace = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "OpenGL",
-            "OpenGLRenderer.ClipSpace.cs"));
-        string openGlFramebuffer = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "OpenGL",
-            "OpenGLRenderer.Framebuffer.cs"));
+        string openGlClipSpace = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Commands/OpenGLRenderer.ClipSpace.cs");
+        string openGlFramebuffer = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Resources/Framebuffers/OpenGLRenderer.Framebuffer.cs");
         string screenSpaceUiCommand = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering",
             "Rendering",
@@ -313,12 +267,7 @@ public sealed class SecondaryPassShaderContractTests
             "XREngine.Runtime.Rendering",
             "Rendering",
             "XRViewport.cs"));
-        string ultralightGlDriver = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "UI",
-            "Ultralight",
-            "OpenGLGPUDriver.cs"));
+        string ultralightGlDriver = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/UI/Ultralight/OpenGLGPUDriver.cs");
         string vulkanState = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering.Vulkan",
             "Rendering",
@@ -345,45 +294,24 @@ public sealed class SecondaryPassShaderContractTests
             "Bootstrap",
             "Device",
             "VulkanDeviceContext.LogicalDeviceBootstrap.cs"));
-        string vulkanDepthClipControl = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "Vulkan",
-            "Types",
-            "VulkanDepthClipControlExt.cs"));
-        string vulkanPipeline = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "Vulkan",
-            "BackendObjects",
-            "MeshRendering",
-            "VkMeshRenderer.Pipeline.cs"));
-        string vulkanShaderTools = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "Vulkan",
-            "Shaders",
-            "VulkanShaderSourceFixups.cs"));
+        string vulkanDepthClipControl = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Types/VulkanDepthClipControlExt.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Types/PhysicalDeviceDepthClipControlFeaturesEXTNative.cs")
+            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Types/PipelineViewportDepthClipControlCreateInfoEXTNative.cs");
+        string vulkanPipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanGraphicsPipelineFactory.cs");
+        string vulkanShaderTools = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderSourceFixups.cs");
         string depthUtils = LoadShaderSource(Path.Combine("Snippets", "DepthUtils.glsl"));
         uniforms.ShouldContain("ClipSpaceYDirection");
         uniforms.ShouldContain("ClipDepthRange");
         uniformRequirements.ShouldContain("ClipSpacePolicy = 64");
         uniformRequirements.ShouldContain("[nameof(EEngineUniform.ClipSpaceYDirection)] = EUniformRequirements.ClipSpacePolicy");
         openGlClipSpace.ShouldContain("api.ClipControl(ToGLClipOrigin(yDirection), ToGLClipDepthRange(depthRange));");
-        vulkanState.ShouldContain("ClipDepthRange=NegativeOneToOne was requested");
-        vulkanState.ShouldContain("remapping vertex shader gl_Position.z");
         vulkanState.ShouldContain("Height = -(float)extent.Height");
         vulkanState.ShouldContain("ClipSpaceYDirection == ERenderClipSpaceYDirection.YDown");
         vulkanExtensions.ShouldContain("VulkanDepthClipControlExt.ExtensionName");
         vulkanDepthClipControl.ShouldContain("PhysicalDeviceDepthClipControlFeaturesEXTNative");
         vulkanDepthClipControl.ShouldContain("PipelineViewportDepthClipControlCreateInfoEXTNative");
         vulkanPipeline.ShouldContain("viewportState.PNext = &depthClipControlInfo;");
+        vulkanPipeline.ShouldContain("NegativeOneToOne = request.NativeNegativeOneToOneDepth");
         vulkanShaderTools.ShouldContain("XRENGINE_ApplyVulkanClipDepthRemap");
         vulkanShaderTools.ShouldContain("gl_Position.z = gl_Position.z * 0.5 + gl_Position.w * 0.5;");
         depthUtils.ShouldContain("uniform int ClipDepthRange;");
@@ -399,10 +327,11 @@ public sealed class SecondaryPassShaderContractTests
         screenSpaceUiCommand.ShouldContain("PushUiClipSpacePolicy");
         xrViewport.ShouldContain("PushUiClipSpacePolicy");
         ultralightGlDriver.ShouldContain("viewportHeight - gpuState.ScissorRect.Bottom");
-        vulkanImGui.ShouldContain("Viewport imguiViewport = CreateImGuiViewport(fbWidth, fbHeight);");
-        vulkanImGui.ShouldContain("Api.CmdSetViewport(commandBuffer, 0, 1, &imguiViewport);");
-        vulkanImGui.ShouldContain("private static Viewport CreateImGuiViewport(uint framebufferWidth, uint framebufferHeight)");
-        vulkanImGui.ShouldContain("Height = framebufferHeight");
+        vulkanImGui.ShouldContain("uint width = input.Target.Extent.Width;");
+        vulkanImGui.ShouldContain("uint height = input.Target.Extent.Height;");
+        vulkanImGui.ShouldContain("Height = height");
+        vulkanImGui.ShouldContain("encoder.Runtime.Api.CmdSetViewport(input.OverlayCommandBuffer, 0, 1, &viewport);");
+        vulkanImGui.ShouldContain("input.Snapshot.FramebufferScale * new Vector2(");
         vulkanShaderTools.ShouldContain("ApplyVulkanClipDepthRemapBeforeGeometryEmit");
         vulkanShaderTools.ShouldContain("ApplyVulkanClipDepthRemapToMeshPositionAssignments");
     }
@@ -410,15 +339,7 @@ public sealed class SecondaryPassShaderContractTests
     [Test]
     public void ClipDepthReconstructionPasses_UseRuntimeDepthRange()
     {
-        string openGlUniformBinding = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "OpenGL",
-            "Types",
-            "Meshes",
-            "GLRenderProgram.UniformBinding.cs"));
+        string openGlUniformBinding = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.UniformBinding.cs");
         string postProcess = LoadShaderSource(Path.Combine("Scene3D", "PostProcess.fs"));
         string volumetricFog = LoadShaderSource(Path.Combine("Scene3D", "VolumetricFog", "VolumetricFogScatter.fs"));
 
@@ -481,12 +402,13 @@ public sealed class SecondaryPassShaderContractTests
     public void SkyboxFragments_ConsumeInterpolatedWorldDirection(string shaderRelativePath)
     {
         string source = LoadShaderSource(shaderRelativePath);
-        bool normalizesWorldDirection =
-            source.Contains("vec3 dir = normalize(FragWorldDir);", StringComparison.Ordinal)
-            || source.Contains("vec3 dir = SafeNormalize3(FragWorldDir);", StringComparison.Ordinal);
+        string directionHelper = LoadShaderSource(Path.Combine("Snippets", "DDGIEnvironmentCapture.glsl"));
 
         source.ShouldContain("layout (location = 1) in vec3 FragWorldDir;");
-        normalizesWorldDirection.ShouldBeTrue();
+        source.ShouldContain("#pragma snippet \"DDGIEnvironmentCapture\"");
+        source.ShouldContain("vec3 dir = XRENGINE_DDGIEnvironmentDirection(FragWorldDir);");
+        directionHelper.ShouldContain("return normalize(interpolatedDirection);");
+        directionHelper.ShouldContain("XRENGINE_DecodeOcta(gl_FragCoord.xy * uDDGIEnvironmentInvResolution)");
         source.ShouldNotContain("GetWorldDirection(");
         source.ShouldNotContain("uniform mat4 InverseProjMatrix;");
         source.ShouldNotContain("uniform mat4 InverseViewMatrix;");
@@ -499,7 +421,7 @@ public sealed class SecondaryPassShaderContractTests
 
         source.ShouldContain("vec2 SafeNormalize2(vec2 v)");
         source.ShouldContain("vec3 SafeNormalize3(vec3 v)");
-        source.ShouldContain("vec3 dir = SafeNormalize3(FragWorldDir);");
+        source.ShouldContain("vec3 dir = XRENGINE_DDGIEnvironmentDirection(FragWorldDir);");
         source.ShouldNotContain("vec2 st = normalize(dir.xz)");
         source.ShouldNotContain("vec2 cloudUv = normalize(max(abs(dir.y), 0.06) * dir.xz)");
         source.ShouldNotContain("SafeNormalize2(dir.xz)");
@@ -607,9 +529,10 @@ public sealed class SecondaryPassShaderContractTests
             "Rendering",
             "Pipelines",
             "Types",
+            "Advanced",
             "AdvancedRenderPipeline.FBOs.cs"));
 
-        source.ShouldContain("PostProcessFBO.SettingUniforms += ApplyPostProcessProgramBindings;");
+        source.ShouldContain("frameBuffer.SettingUniforms += program => owner.ApplyPostProcessProgramBindings(material, program);");
     }
 
     [Test]
@@ -624,17 +547,9 @@ public sealed class SecondaryPassShaderContractTests
             "Rendering",
             "Pipelines",
             "Types",
+            "Default",
             "DefaultRenderPipeline.PostProcessing.cs"));
-        string descriptors = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "Vulkan",
-            "Objects",
-            "Types",
-            "MeshRenderer",
-            "VkMeshRenderer.Descriptors.cs"));
+        string descriptors = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.DescriptorImages.cs");
 
         flags.ShouldContain("public static volatile bool DiagPostProcess;");
         flags.ShouldContain(XREngineEnvironmentVariables.DiagPostProcess);
@@ -654,16 +569,7 @@ public sealed class SecondaryPassShaderContractTests
     [Test]
     public void VulkanUniformWriters_AcceptEngineColorStructsForVectorUniforms()
     {
-        string meshUniforms = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "Vulkan",
-            "Objects",
-            "Types",
-            "MeshRenderer",
-            "VkMeshRenderer.Uniforms.cs"));
+        string meshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
         string renderProgram = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering.Vulkan",
             "Rendering",
@@ -673,15 +579,7 @@ public sealed class SecondaryPassShaderContractTests
             "BackendObjects",
             "Programs",
             "VkRenderProgram.ComputeUniforms.cs"));
-        string material = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "Vulkan",
-            "Objects",
-            "Types",
-            "VkMaterial.cs"));
+        string material = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Materials/VkMaterial.cs");
 
         meshUniforms.ShouldContain("using XREngine.Data.Colors;");
         meshUniforms.ShouldContain("case ColorF3 c:");
@@ -700,52 +598,17 @@ public sealed class SecondaryPassShaderContractTests
     public void VulkanDepthStencilDescriptors_UseStencilOnlyViewForStencilSamplers()
     {
         string postProcessShader = LoadShaderSource(Path.Combine("Scene3D", "PostProcess.fs"));
-        string descriptorSource = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "Vulkan",
-            "Objects",
-            "Types",
-            "IVkImageDescriptorSource.cs"));
-        string imageBackedTexture = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "Vulkan",
-            "Objects",
-            "Types",
-            "Textures",
-            "VkImageBackedTexture.cs"));
-        string textureView = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "Vulkan",
-            "Objects",
-            "Types",
-            "Textures",
-            "VkTextureView.cs"));
-        string meshDescriptors = ReadWorkspaceFile(Path.Combine(
-            "XREngine.Runtime.Rendering",
-            "Rendering",
-            "API",
-            "Rendering",
-            "Vulkan",
-            "Objects",
-            "Types",
-            "MeshRenderer",
-            "VkMeshRenderer.Descriptors.cs"));
+        string descriptorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/IVkImageDescriptorSource.cs");
+        string imageBackedTexture = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string textureView = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
+        string meshDescriptors = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.DescriptorImages.cs");
 
         postProcessShader.ShouldContain("uniform usampler2D StencilView;");
         descriptorSource.ShouldContain("ImageView GetStencilOnlyDescriptorView()");
         imageBackedTexture.ShouldContain("ImageAspectFlags.StencilBit");
         imageBackedTexture.ShouldContain("GetStencilOnlyDescriptorView()");
         textureView.ShouldContain("private ImageView _stencilOnlyView;");
-        textureView.ShouldContain("GetAspectOnlyDescriptorView(ImageAspectFlags.StencilBit, ref _stencilOnlyView)");
+        textureView.ShouldContain("GetAspectOnlyDescriptorView(ImageAspectFlags.StencilBit, ref _stencilOnlyView, ref _stencilOnlyViewReference)");
         meshDescriptors.ShouldContain("RequiresStencilOnlyDescriptor(binding)");
         meshDescriptors.ShouldContain("source.TryGetDescriptorSnapshot(");
         meshDescriptors.ShouldContain("stencil-only");

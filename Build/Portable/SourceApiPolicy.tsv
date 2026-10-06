@@ -20,7 +20,6 @@ allow	XREngine.Runtime.Host/Engine/Engine.Settings.cs	GetProperty	Cold cached ed
 allow	XREngine.Runtime.Host/Settings/GameStartupSettings.Clone.cs	Activator.CreateInstance	Managed startup-settings clone preserving a configured derived type; untrimmed metadata only
 allow	XREngine.Runtime.Host/Settings/GameStartupSettings.Clone.cs	GetProperties	Managed startup-settings and override clone metadata; separate trim review required
 allow	XREngine.Browser/BrowserSceneEnvelope.cs	GetProperty	JsonElement wire-field access, not System.Type reflection
-allow	XREngine.Data/Core/Events/XRPersistentCall.cs	Type.GetType	Serialized event parameter identity resolution
 allow	XREngine.Data/Core/Events/XRPersistentCall.cs	GetMethods	Serialized event target overload resolution
 allow	XREngine.Data/Core/Reflection/XRLoadableTypeCatalog.cs	GetTypes	Cached loaded-assembly type inspection
 allow	XREngine.Data/Core/Reflection/XRLoadableTypeCatalog.cs	GetExportedTypes	Cached public type inspection
@@ -53,12 +52,9 @@ allow	XREngine.Runtime.Rendering/VideoStreaming/TwitchHlsStreamResolver.cs	GetPr
 allow	XREngine.Runtime.InputIntegration/Input/InputIntegrationPlayerControllerServices.cs	GetConstructor	Configured pawn controller constructor lookup
 allow	XREngine.Runtime.InputIntegration/Input/InputIntegrationPlayerControllerServices.cs	Activator.CreateInstance	Configured managed pawn controller creation
 allow	XREngine.Runtime.InputIntegration/BootstrapFlyableCameraFactory.Builders.cs	Type.GetType	Optional named flyable camera pawn lookup in loaded assemblies
-allow	XREngine.Animation/Serialization/AnimStateMachineSerialization.cs	GetProperty	Serialized state machine asset ID property metadata
 allow	XREngine.Animation/Serialization/AnimationPropertySerialization.cs	Activator.CreateInstance	Managed keyframe collection construction for serialized animation
 allow	XREngine.Animation/Serialization/AnimationPropertySerialization.cs	GetProperty	Named Keyframes property on authored animation type
-allow	XREngine.Animation/Serialization/AnimationPropertySerialization.cs	Type.GetType	Persisted animation property type identity lookup
 allow	XREngine.Animation/Serialization/AnimationCurveYamlTypeConverter.cs	GetProperty	Known asset ID property metadata for curve YAML
-allow	XREngine.Animation/Serialization/AnimationClipSerialization.cs	GetProperty	Known clip and animation member properties for serialization
 allow	XREngine.Runtime.Rendering.WebGPU/WebGpuRendererHost.Capabilities.cs	GetProperty	JsonElement browser capability manifest field lookup
 allow	XREngine.Runtime.Rendering/Serialization/XRMeshYamlTypeConverter.cs	GetProperty	Known mesh asset ID property metadata
 allow	XREngine.Runtime.Rendering/Serialization/XRMeshYamlTypeConverter.cs	Type.GetType	Persisted mesh type identity lookup
@@ -87,7 +83,6 @@ allow	XREngine.Data/Core/Reflection/XRTypeRedirectRegistry.cs	GetTypes	Developme
 allow	XREngine.Data/Core/Reflection/XRTypeRedirectRegistry.cs	GetCustomAttributes	Type redirect attribute metadata
 allow	XREngine.Data/Core/Objects/XRBase.cs	GetProperties	Clone property metadata in managed object graph
 allow	XREngine.Data/Core/Objects/OverrideableSettingsTracker.cs	GetProperties	Managed settings property snapshot
-allow	XREngine.Data/Core/Files/RuntimeCookedBinarySerializer.cs	GetProperty	Known asset ID property in cooked serializer
 allow	XREngine.Data/Core/Files/RuntimeCookedBinarySerializer.cs	Type.GetType	Persisted cooked type identity resolution
 allow	XREngine.Data/Core/Files/RuntimeCookedBinarySerializer.cs	GetAssemblies	Loaded assembly fallback for legacy cooked types; no dynamic assembly load
 allow	XREngine.Data/Core/Files/RuntimeCookedBinarySerializer.cs	GetUninitializedObject	Legacy managed cooked object materialization
@@ -120,7 +115,6 @@ allow	XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.SerializationAnd
 allow	XREngine.Runtime.Core/Core/Tools/ExpressionParser.cs	GetMethods	Managed expression provider method lookup
 allow	XREngine.Runtime.Core/Core/Tools/ExpressionParser.cs	GetProperties	Managed expression property enumeration
 allow	XREngine.Runtime.Core/Core/Tools/DelegateBuilder.cs	GetMethod	Delegate Invoke signature inspection
-allow	XREngine.Runtime.Core/Core/Tools/DelegateBuilder.cs	Activator.CreateInstance	Default managed value type argument creation
 allow	XREngine.Runtime.Core/Core/Serialization/TransformYamlTypeInspector.cs	GetProperties	YamlDotNet descriptor interface implementation
 allow	XREngine.Runtime.Core/Core/Serialization/TransformYamlTypeInspector.cs	GetProperty	YamlDotNet descriptor interface implementation
 allow	XREngine.Runtime.Core/Core/Serialization/TransformYamlTypeInspector.cs	GetCustomAttribute	YAML transform reference attribute on descriptor

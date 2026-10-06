@@ -45,6 +45,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Software Vulkan Correctness Validation](developer-guides/testing/software-vulkan-validation.md)
 - [Continuous Integration And Releases](developer-guides/ci-cd.md)
 - [Windows CI Build Preparation Investigation](work/investigations/platform/windows-ci-build-preparation-2026-10-05.md)
+- [Windows CI Test Coverage](developer-guides/testing/windows-ci.md)
 - [MCP Server Implementation](developer-guides/ai/mcp-server.md)
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
 - [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
@@ -116,6 +117,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Spectator and Calibration Feedback Validation](work/investigations/avatar/spectator-validation-2026-09-30.md)
 - [Vulkan Lifecycle Evidence Harness](work/testing/rendering/vulkan-lifecycle-evidence-harness.md)
 - [Vulkan Stall Remediation: Remaining Tasks](work/todo/rendering/vulkan-stall-remediation-todo.md)
+- [Vulkan Stall Separate Findings](work/todo/rendering/vulkan-stall-separate-findings-todo.md)
 - [Vulkan Stall Remediation Results](work/progress/rendering/vulkan-stall-remediation-results.md)
 - [Vulkan Stall Validation Protocol](work/testing/rendering/vulkan-stall-validation.md)
 - [Control Plane Managed Server Instances and Client Synchronization Todo](work/todo/networking/control-plane-managed-server-instances-todo.md)
@@ -123,6 +125,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Runtime Modularization Plan](work/design/runtime-modularization-plan.md)
 - [Texture Runtime, Streaming, And Virtual Texturing Design](work/design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
 - [Transparency And OIT Implementation Plan](work/design/rendering/transparency-and-oit-implementation-plan.md)
+- [Exact VR Pipeline Selection](work/design/rendering/vr-pipeline-selection-design.md)
 - [GPU Softbody Mesh Rigging Plan](work/design/rendering/gpu/gpu-softbody-mesh-rigging-plan.md)
 - [Production Rendering Pipeline Roadmap](work/todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
 

@@ -234,6 +234,12 @@ Full production RVC rejects OpenGL with a visible
 `UnsupportedOpenGlProductionPath` diagnostic. That policy keeps OpenGL useful as
 a correctness slice without letting it constrain the Vulkan architecture.
 
+VR uses `RvcRenderPipeline` only when `VrRenderPipeline` is `Rvc`, in
+`SinglePassStereo` or `ParallelCommandBufferRecording`. For that explicit
+selection, a resolution with any fallback reason (including `Off`) is a
+failure: OpenXR submits the frame with no projection layer and reports the
+reason. The pipeline never hosts the Advanced stage family.
+
 ## Renderer Capability Surface
 
 RVC asks the active renderer what it can really do through
@@ -510,7 +516,7 @@ a documented warm-cache policy.
 | `XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs` | Default renderer capability values for RVC. |
 | `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs` | Vulkan RVC descriptor backend, material table, visibility target, mask stencil, and production-feature reporting. |
 | `XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs` | Runtime render settings that select RVC and configure quality, reuse, foveation, light aggregation, and debug behavior. |
-| `XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs` and `XREngine.Runtime.Rendering/Rendering/Pipelines/Types/RvcRenderPipeline.cs` | Purpose-aware default pipeline selection and RVC pipeline settings application. |
+| `XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs`, `XREngine.Runtime.Rendering/Rendering/Pipelines/Types/OpenXrEyeRenderPipelineFactory.cs`, and `XREngine.Runtime.Rendering/Rendering/Pipelines/Types/RvcRenderPipeline.cs` | Purpose-aware default pipeline selection, exact VR eye family creation, and RVC pipeline settings application. |
 | `XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Rvc.cs` | Runtime stats sink for RVC counters and frame profile snapshots. |
 | `XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderingHostServices.cs` | Host-service surface for RVC settings, counters, frame profiles, and per-view GPU timing. |
 | `XREngine.Runtime.XR.OpenXR/OpenXRAPI.ViewConfiguration.cs` | Active OpenXR view configuration selection, quad probing, view setup, stereo/quad snapshots, visibility-mask function lookup, mesh fetch, and mask invalidation. |

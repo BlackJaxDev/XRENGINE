@@ -66,16 +66,8 @@ public sealed class RuntimeRenderingHostCapabilitySourceTests
 
     private static string FindWorkspaceDirectory(string directoryName)
     {
-        DirectoryInfo? directory = new(TestContext.CurrentContext.TestDirectory);
-        while (directory is not null)
-        {
-            string candidate = Path.Combine(directory.FullName, directoryName);
-            if (Directory.Exists(candidate))
-                return candidate;
-
-            directory = directory.Parent;
-        }
-
-        throw new DirectoryNotFoundException($"Could not locate workspace directory '{directoryName}'.");
+        string projectPath = SourceContractWorkspace.ResolveCanonicalFile(
+            Path.Combine(directoryName, $"{directoryName}.csproj"));
+        return Path.GetDirectoryName(projectPath)!;
     }
 }

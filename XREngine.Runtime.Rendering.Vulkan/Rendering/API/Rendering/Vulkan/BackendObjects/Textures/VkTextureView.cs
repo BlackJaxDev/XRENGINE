@@ -11,6 +11,9 @@ namespace XREngine.Rendering.Vulkan
         private ImageView _view;
         private ImageView _depthOnlyView;
         private ImageView _stencilOnlyView;
+        private VulkanInternedImageViewReference _viewReference;
+        private VulkanInternedImageViewReference _depthOnlyViewReference;
+        private VulkanInternedImageViewReference _stencilOnlyViewReference;
         private Sampler _sampler;
         private readonly object _viewLifetimeLock = new();
         private Format _format = Format.R8G8B8A8Unorm;
@@ -211,14 +214,20 @@ namespace XREngine.Rendering.Vulkan
                 ImageView view = requestedAspectMask switch
                 {
                     ImageAspectFlags.DepthBit => allowSynchronousUpload
-                        ? GetAspectOnlyDescriptorView(ImageAspectFlags.DepthBit, ref _depthOnlyView)
+                        ? GetAspectOnlyDescriptorView(ImageAspectFlags.DepthBit, ref _depthOnlyView, ref _depthOnlyViewReference)
                         : _depthOnlyView,
                     ImageAspectFlags.StencilBit => allowSynchronousUpload
-                        ? GetAspectOnlyDescriptorView(ImageAspectFlags.StencilBit, ref _stencilOnlyView)
+                        ? GetAspectOnlyDescriptorView(ImageAspectFlags.StencilBit, ref _stencilOnlyView, ref _stencilOnlyViewReference)
                         : _stencilOnlyView,
                     _ => requestedViewType is { } viewType && viewType != actualViewType
                         ? default
                         : _view
+                };
+                VulkanInternedImageViewReference viewReference = requestedAspectMask switch
+                {
+                    ImageAspectFlags.DepthBit => _depthOnlyViewReference,
+                    ImageAspectFlags.StencilBit => _stencilOnlyViewReference,
+                    _ => _viewReference,
                 };
 
                 if (!allowSynchronousUpload)
@@ -242,7 +251,7 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     bool ready = IsDescriptorReadyNoLock() &&
-                        view.Handle != 0 && IsViewBackedByCurrentImage(view);
+                        view.Handle != 0 && IsViewBackedByCurrentImage(view, viewReference);
                     snapshot = new(
                         _image, viewedSnapshot.Memory, view, actualViewType, _sampler, _format,
                         _aspect, _usage, _samples, _mipLevels, _arrayLayers, DescriptorGeneration,
@@ -267,7 +276,7 @@ namespace XREngine.Rendering.Vulkan
                     DescriptorGeneration,
                     ResolveTrackedImageLayoutNoLock(),
                     ResolveUsesAllocatorImageNoLock(),
-                    IsDescriptorReadyNoLock() && view.Handle != 0 && IsViewBackedByCurrentImage(view));
+                    IsDescriptorReadyNoLock() && view.Handle != 0 && IsViewBackedByCurrentImage(view, viewReference));
                 return snapshot.IsReady;
             }
         }
@@ -283,24 +292,27 @@ namespace XREngine.Rendering.Vulkan
                     (layered || _arrayLayers == 1) &&
                     IsDescriptorReadyNoLock() &&
                     _view.Handle != 0 &&
-                    IsViewBackedByCurrentImage(_view) &&
+                    IsViewBackedByCurrentImage(_view, _viewReference) &&
                     (view = _view).Handle != 0;
         }
         ImageView IVkImageDescriptorSource.GetDepthOnlyDescriptorView()
         {
             RefreshFromViewedTextureIfStale();
 
-            return GetAspectOnlyDescriptorView(ImageAspectFlags.DepthBit, ref _depthOnlyView);
+            return GetAspectOnlyDescriptorView(ImageAspectFlags.DepthBit, ref _depthOnlyView, ref _depthOnlyViewReference);
         }
 
         ImageView IVkImageDescriptorSource.GetStencilOnlyDescriptorView()
         {
             RefreshFromViewedTextureIfStale();
 
-            return GetAspectOnlyDescriptorView(ImageAspectFlags.StencilBit, ref _stencilOnlyView);
+            return GetAspectOnlyDescriptorView(ImageAspectFlags.StencilBit, ref _stencilOnlyView, ref _stencilOnlyViewReference);
         }
 
-        private ImageView GetAspectOnlyDescriptorView(ImageAspectFlags aspect, ref ImageView cached)
+        private ImageView GetAspectOnlyDescriptorView(
+            ImageAspectFlags aspect,
+            ref ImageView cached,
+            ref VulkanInternedImageViewReference cachedReference)
         {
             if (!BackendContext.IsDeviceOperational)
                 return default;
@@ -309,7 +321,7 @@ namespace XREngine.Rendering.Vulkan
                 (_aspect & (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))
                 return default;
 
-            if (cached.Handle != 0 && IsViewBackedByCurrentImage(cached))
+            if (cached.Handle != 0 && IsViewBackedByCurrentImage(cached, cachedReference))
                 return cached;
 
             if (_image.Handle == 0)
@@ -320,10 +332,14 @@ namespace XREngine.Rendering.Vulkan
                 if (!BackendContext.IsDeviceOperational)
                     return default;
 
-                if (cached.Handle != 0 && IsViewBackedByCurrentImage(cached))
+                if (cached.Handle != 0 && IsViewBackedByCurrentImage(cached, cachedReference))
                     return cached;
                 if (cached.Handle != 0)
+                {
+                    BackendContext.Resources.Images.ReleaseInternedView(cachedReference);
                     cached = default;
+                    cachedReference = default;
+                }
 
                 if (_image.Handle == 0)
                     return default;
@@ -339,19 +355,28 @@ namespace XREngine.Rendering.Vulkan
                     SubresourceRange = subresourceRange,
                 };
 
-                if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in depthViewInfo, "VkTextureView.AspectOnlyDescriptor", out cached))
+                if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in depthViewInfo, "VkTextureView.AspectOnlyDescriptor", out cachedReference))
                     return default;
+                cached = cachedReference.View;
                 return cached;
             }
         }
 
         private bool IsDescriptorReadyNoLock()
             => !IsDescriptorDirty &&
-                ((_view.Handle != 0 && IsViewBackedByCurrentImage(_view)) || _texelBufferView.Handle != 0);
+                ((_view.Handle != 0 && IsViewBackedByCurrentImage(_view, _viewReference)) || _texelBufferView.Handle != 0);
 
-        private bool IsViewBackedByCurrentImage(ImageView view)
+        private bool IsViewBackedByCurrentImage(
+            ImageView view,
+            in VulkanInternedImageViewReference reference)
         {
-            if (view.Handle == 0 || _image.Handle == 0)
+            if (view.Handle == 0 || _image.Handle == 0 ||
+                reference.View.Handle != view.Handle || !reference.IsValid)
+                return false;
+
+            ulong generation = BackendContext.Resources.Lifetime.Tracker.GetPublishedGeneration(
+                new VulkanResourceLifetimeKey(ObjectType.ImageView, view.Handle));
+            if (generation != reference.Generation)
                 return false;
 
             return BackendContext.Resources.Images.TryGetBackingImage(view, out Image backingImage) &&
@@ -429,7 +454,7 @@ namespace XREngine.Rendering.Vulkan
 
         protected override void DeleteObjectInternal()
         {
-            RetireOwnedViewsAndSampler();
+            ReleaseInternedViewsAndRetireSampler();
 
             _image = default;
             _sampler = default;
@@ -464,7 +489,7 @@ namespace XREngine.Rendering.Vulkan
         ImageView IVkFrameBufferAttachmentSource.GetAttachmentView(int mipLevel, int layerIndex)
         {
             RefreshFromViewedTextureIfStale();
-            return IsViewBackedByCurrentImage(_view) ? _view : default;
+            return IsViewBackedByCurrentImage(_view, _viewReference) ? _view : default;
         }
 
         bool IVkFrameBufferAttachmentSource.TryGetAttachmentExtent(int mipLevel, int layerIndex, out Extent2D extent)
@@ -805,6 +830,7 @@ namespace XREngine.Rendering.Vulkan
 
                 _image = default;
                 _view = default;
+                _viewReference = default;
                 _sampler = default;
                 _format = texelSource.DescriptorBufferFormat;
                 _aspect = ImageAspectFlags.None;
@@ -818,6 +844,8 @@ namespace XREngine.Rendering.Vulkan
                 _texelBufferFormat = texelSource.DescriptorBufferFormat;
                 _depthOnlyView = default;
                 _stencilOnlyView = default;
+                _depthOnlyViewReference = default;
+                _stencilOnlyViewReference = default;
 
                 if (_texelBufferView.Handle == 0)
                     throw new InvalidOperationException("Failed to resolve Vulkan texel buffer view handle.");
@@ -836,6 +864,8 @@ namespace XREngine.Rendering.Vulkan
             _texelBufferFormat = Format.Undefined;
             _depthOnlyView = default;
             _stencilOnlyView = default;
+            _depthOnlyViewReference = default;
+            _stencilOnlyViewReference = default;
 
             if (_image.Handle == 0)
                 throw new InvalidOperationException($"Viewed texture '{viewedTexture.GetDescribingName()}' has no Vulkan image handle.");
@@ -852,26 +882,35 @@ namespace XREngine.Rendering.Vulkan
                 SubresourceRange = subresourceRange,
             };
 
-            if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in viewInfo, "VkTextureView.View", out _view))
+            if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in viewInfo, "VkTextureView.View", out _viewReference))
                 throw new InvalidOperationException("Failed to create Vulkan texture view.");
+            _view = _viewReference.View;
 
-            // For depth/stencil formats with both aspects, create a depth-only view for
-            // sampled descriptors (Vulkan requires exactly one aspect in that case).
-            bool hasStencil = _format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
-            if (hasStencil && (_usage & ImageUsageFlags.SampledBit) != 0)
+            try
             {
-                ImageViewCreateInfo depthOnlyViewInfo = viewInfo with
+                // A depth/stencil descriptor samples one aspect at a time.
+                bool hasStencil = _format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
+                if (hasStencil && (_usage & ImageUsageFlags.SampledBit) != 0)
                 {
-                    SubresourceRange = viewInfo.SubresourceRange with
+                    ImageViewCreateInfo depthOnlyViewInfo = viewInfo with
                     {
-                        AspectMask = ImageAspectFlags.DepthBit,
-                    },
-                };
-                if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in depthOnlyViewInfo, "VkTextureView.DepthOnlyDescriptor", out _depthOnlyView))
-                    throw new InvalidOperationException("Failed to create depth-only descriptor view for texture view.");
-            }
+                        SubresourceRange = viewInfo.SubresourceRange with
+                        {
+                            AspectMask = ImageAspectFlags.DepthBit,
+                        },
+                    };
+                    if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in depthOnlyViewInfo, "VkTextureView.DepthOnlyDescriptor", out _depthOnlyViewReference))
+                        throw new InvalidOperationException("Failed to create depth-only descriptor view for texture view.");
+                    _depthOnlyView = _depthOnlyViewReference.View;
+                }
 
-            CreateSampler();
+                CreateSampler();
+            }
+            catch
+            {
+                ReleaseInternedViewsAndRetireSampler();
+                throw;
+            }
             }
         }
 
@@ -901,7 +940,7 @@ namespace XREngine.Rendering.Vulkan
             if (liveImage.Handle == _image.Handle &&
                 _view.Handle != 0 &&
                 _sampler.Handle != 0 &&
-                IsViewBackedByCurrentImage(_view))
+                IsViewBackedByCurrentImage(_view, _viewReference))
             {
                 HasUploadedData = true;
                 IsInvalidated = false;
@@ -920,7 +959,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (liveImage.Handle == _image.Handle &&
                     _view.Handle != 0 &&
-                    IsViewBackedByCurrentImage(_view))
+                    IsViewBackedByCurrentImage(_view, _viewReference))
                 {
                     if (_sampler.Handle == 0)
                         CreateSampler();
@@ -930,7 +969,7 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                RetireOwnedImageViews();
+                ReleaseInternedViews();
 
                 _image = liveImage;
                 _format = source.DescriptorFormat;
@@ -950,8 +989,10 @@ namespace XREngine.Rendering.Vulkan
                     SubresourceRange = subresourceRange,
                 };
 
-                if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in viewInfo, "VkTextureView.RefreshedView", out _view))
+                if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in viewInfo, "VkTextureView.RefreshedView", out _viewReference))
                     _view = default;
+                else
+                    _view = _viewReference.View;
 
                 bool hasStencil = _format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
                 if (_view.Handle != 0 && hasStencil && (_usage & ImageUsageFlags.SampledBit) != 0)
@@ -963,8 +1004,10 @@ namespace XREngine.Rendering.Vulkan
                             AspectMask = ImageAspectFlags.DepthBit,
                         },
                     };
-                    if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in depthOnlyViewInfo, "VkTextureView.RefreshedDepthOnlyDescriptor", out _depthOnlyView))
+                    if (!BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in depthOnlyViewInfo, "VkTextureView.RefreshedDepthOnlyDescriptor", out _depthOnlyViewReference))
                         _depthOnlyView = default;
+                    else
+                        _depthOnlyView = _depthOnlyViewReference.View;
                 }
 
                 if (_view.Handle != 0 && _sampler.Handle == 0)
@@ -1044,73 +1087,34 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void RetireOwnedViewsAndSampler()
+        private void ReleaseInternedViewsAndRetireSampler()
         {
             lock (_viewLifetimeLock)
             {
-                RetireOwnedImageViews();
+                ReleaseInternedViews();
                 DestroySampler();
             }
         }
 
-        private void RetireOwnedImageViews()
+        private void ReleaseInternedViews()
         {
-            if (_view.Handle == 0 &&
-                _depthOnlyView.Handle == 0 &&
-                _stencilOnlyView.Handle == 0)
+            if (!_viewReference.IsValid &&
+                !_depthOnlyViewReference.IsValid &&
+                !_stencilOnlyViewReference.IsValid)
             {
                 return;
             }
 
-            bool retirePrimary = BackendContext.Resources.Images.ReleaseInternedView(_view);
-            bool retireDepth = BackendContext.Resources.Images.ReleaseInternedView(_depthOnlyView);
-            bool retireStencil = BackendContext.Resources.Images.ReleaseInternedView(_stencilOnlyView);
-
-            int attachmentCount = 0;
-            if (retireDepth)
-                attachmentCount++;
-            if (retireStencil)
-                attachmentCount++;
-
-            ImageView[] attachmentViews = attachmentCount == 0 ? [] : new ImageView[attachmentCount];
-            int index = 0;
-            if (retireDepth)
-                attachmentViews[index++] = _depthOnlyView;
-            if (retireStencil)
-                attachmentViews[index] = _stencilOnlyView;
-
-            BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
-                default,
-                default,
-                retirePrimary ? _view : default,
-                attachmentViews,
-                default,
-                0), nameof(VkTextureView));
+            BackendContext.Resources.Images.ReleaseInternedView(_viewReference);
+            BackendContext.Resources.Images.ReleaseInternedView(_depthOnlyViewReference);
+            BackendContext.Resources.Images.ReleaseInternedView(_stencilOnlyViewReference);
 
             _view = default;
             _depthOnlyView = default;
             _stencilOnlyView = default;
-        }
-
-        private void RetireSingleImageView(ref ImageView view)
-        {
-            if (view.Handle == 0)
-                return;
-
-            if (!BackendContext.Resources.Images.ReleaseInternedView(view))
-            {
-                view = default;
-                return;
-            }
-
-            BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(
-                default,
-                default,
-                view,
-                [],
-                default,
-                0), nameof(VkTextureView));
-            view = default;
+            _viewReference = default;
+            _depthOnlyViewReference = default;
+            _stencilOnlyViewReference = default;
         }
 
         private void CreateSampler()

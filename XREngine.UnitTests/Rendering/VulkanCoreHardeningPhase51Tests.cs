@@ -144,14 +144,14 @@ public sealed class VulkanCoreHardeningPhase51Tests
     public void SwapchainAcquireAndSecondaryInheritance_MatchTheirExecutionScopes()
     {
         string extensions = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.Instance.cs");
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string secondaries = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
 
         extensions.ShouldContain("VK_EXT_swapchain_colorspace");
-        extensions.ShouldContain("IsInstanceExtensionAvailable(ExtSwapchainColorspaceExtensionName)");
+        extensions.ShouldContain("IsInstanceExtensionAvailable(api, \"VK_EXT_swapchain_colorspace\")");
         recording.ShouldContain("ImageLayout.Undefined => PipelineStageFlags.ColorAttachmentOutputBit");
         recording.ShouldContain("TryGetRecordedImageAccessState(");
         recording.ShouldContain("ImageLayout depthOldLayout = hasRecordedDepthState");

@@ -129,7 +129,7 @@ public sealed class VulkanBackendObjectRegistryTests
         };
         VulkanDeviceContext context = new();
         context.AttachInstance(
-            null!,
+            (Vk)RuntimeHelpers.GetUninitializedObject(typeof(Vk)),
             new Instance((nint)0x301),
             [],
             Vk.Version13,
@@ -147,6 +147,11 @@ public sealed class VulkanBackendObjectRegistryTests
     }
 
     private static VkObject<XRShader> CreateUninitializedShaderWrapper()
-        => (VkObject<XRShader>)RuntimeHelpers.GetUninitializedObject(
-            typeof(VkShader));
+    {
+        VkObject<XRShader> wrapper = (VkObject<XRShader>)RuntimeHelpers.GetUninitializedObject(typeof(VkShader));
+        typeof(VkObject<XRShader>)
+            .GetField("_data", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(wrapper, new XRShader());
+        return wrapper;
+    }
 }

@@ -27,6 +27,8 @@ internal static class VulkanDeviceCapabilityReporter
         "VK_EXT_memory_budget", "VK_EXT_memory_priority", "VK_KHR_acceleration_structure",
         "VK_KHR_ray_tracing_pipeline", "VK_KHR_ray_query", "VK_KHR_deferred_host_operations",
         "VK_EXT_device_generated_commands", "VK_NV_memory_decompression", "VK_NV_copy_memory_indirect",
+        "VK_EXT_swapchain_maintenance1", "VK_KHR_present_id", "VK_KHR_present_wait",
+        "VK_GOOGLE_display_timing",
         "VK_KHR_device_fault", "VK_EXT_device_fault", "VK_EXT_device_address_binding_report",
         "VK_NV_device_diagnostic_checkpoints", "VK_NV_device_diagnostics_config"
     ];

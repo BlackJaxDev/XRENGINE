@@ -25,7 +25,7 @@ public sealed class VulkanPhase3AcceptanceContractTests
 
         string environment = Read(
             "XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
-        string profile = Read("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
+        string profile = Read("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
         string runner = Read("Tools/Benchmarks/Invoke-VulkanPerf.ps1");
         environment.ShouldContain("XRE_GPU_DRIVEN_VALIDATION_CAPACITY_FLOOR");
         profile.ShouldContain("\"gpu_driven_validation_capacity_floor\"");
@@ -55,7 +55,7 @@ public sealed class VulkanPhase3AcceptanceContractTests
         table.MaterialDirtyRange.IndexCount.ShouldBe(1u);
         ReadUInt(table.Buffer, 2u, 0u).ShouldBe(7u);
         ReadUInt(table.Buffer, 2u, 1u).ShouldBe(8u);
-        ReadUInt(table.Buffer, 2u, 3u).ShouldBe(2u);
+        ReadUInt(table.Buffer, 2u, 4u).ShouldBe(2u);
         table.ActiveTextureHandles.ShouldBeEmpty();
 
         string material = Read(
@@ -89,14 +89,14 @@ public sealed class VulkanPhase3AcceptanceContractTests
             "XREngine.Benchmarks/VulkanPerformance/VulkanPerformanceEvaluator.cs");
 
         manager.ShouldContain("DepthNormalPrePassVariant");
-        manager.ShouldContain("RuntimeEngine.Rendering.State.OverrideMaterial");
+        manager.ShouldContain("return renderState?.OverrideMaterial ?? renderState?.GlobalMaterialOverride;");
         manager.ShouldContain("ReportDeclaredUnsupportedCompactPass(");
         pass.ShouldContain(
             "ResolveEffectiveGpuMaterial(material, overrideMaterial, useDepthNormalMaterialVariants)");
         scene.ShouldContain("return EGpuMaterialStateClass.Shadow;");
         shader.ShouldContain("RejectExactTransparentMultiview");
         shader.ShouldContain("domain != DOMAIN_EXACT");
-        viewPolicy.ShouldContain("RecordUnsupportedCompactPass(renderPass)");
+        viewPolicy.ShouldContain("RecordUnsupportedCompactPass(RenderPass)");
         evaluator.ShouldContain("\"UnsupportedCompactVariant\"");
     }
 
@@ -104,11 +104,11 @@ public sealed class VulkanPhase3AcceptanceContractTests
     public void DelayedDiagnosticsAndVisibilityBypass_KeepCurrentSubmissionGpuOwned()
     {
         string readback = Read(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.GpuStatsReadback.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.GpuStatsReadback.cs");
         string pass = Read(
             "XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
 
-        readback.ShouldContain("Api!.GetFenceStatus(device, slot.Fence)");
+        readback.ShouldContain("Api!.GetFenceStatus(_deviceContext.Device, slot.Fence)");
         readback.ShouldContain("RecordDelayedDiagnosticReadback(slot.ByteCount)");
         readback.ShouldNotContain("WaitForFences");
         pass.ShouldContain("VulkanDelayedCounterDiagnosticsEnabled");
@@ -133,7 +133,7 @@ public sealed class VulkanPhase3AcceptanceContractTests
             "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.GpuDriven.cs");
         string materialBindings = Read(
             "XREngine.Runtime.Rendering/Rendering/Materials/MaterialBindingLayout.cs");
-        string profile = Read("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
+        string profile = Read("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
         string measure = Read("Tools/Measure-GameLoopRenderPipeline.ps1");
         string evaluator = Read(
             "XREngine.Benchmarks/VulkanPerformance/VulkanPerformanceEvaluator.cs");
@@ -164,7 +164,7 @@ public sealed class VulkanPhase3AcceptanceContractTests
             "Tools/Benchmarks/Compare-VulkanPhase3Acceptance.ps1");
         string measure = Read("Tools/Measure-GameLoopRenderPipeline.ps1");
         string runner = Read("Tools/Benchmarks/Invoke-VulkanPerf.ps1");
-        string profile = Read("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
+        string profile = Read("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
         string settings1X = Read(
             "XREngine.Benchmarks/VulkanPerformance/Cohorts/phase3-active-1x.jsonc");
         string settings4X = Read(

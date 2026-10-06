@@ -625,6 +625,7 @@ public static partial class RuntimeEngine
                 private bool _logVRFrameTimes = false;
                 private bool _preferNVStereo = true;
                 private EVrViewRenderMode _vrViewRenderMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
+                private EVrRenderPipeline _vrRenderPipeline = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrRenderPipeline;
                 private EVrMirrorMode _vrMirrorMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrMirrorMode;
                 private bool _renderWindowsWhileInVR = true;
                 private bool _vrMirrorComposeFromEyeTextures = true;
@@ -2174,6 +2175,20 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// Selects the pipeline family for VR eye output. Together with
+                /// <see cref="VrViewRenderMode"/> it is one exact selection: an
+                /// unsupported pair renders no XR output and is never substituted.
+                /// </summary>
+                [Category("VR")]
+                [DisplayName("VR Render Pipeline")]
+                [Description("Selects the VR eye pipeline. Default is a plain DefaultRenderPipeline and runs in every view mode. Advanced runs in SequentialViews and ParallelCommandBufferRecording. Rvc runs in SinglePassStereo and ParallelCommandBufferRecording. An unsupported pair renders no XR output and reports a diagnostic; no other pipeline is used.")]
+                public EVrRenderPipeline VrRenderPipeline
+                {
+                    get => _vrRenderPipeline;
+                    set => SetField(ref _vrRenderPipeline, value);
+                }
+
+                /// <summary>
                 /// Legacy compatibility view of <see cref="VrViewRenderMode"/>.
                 /// </summary>
                 [Category("VR")]
@@ -2590,11 +2605,12 @@ public static partial class RuntimeEngine
 
                 /// <summary>
                 /// Controls disabled, capability-gated, required, and diagnostic selection
-                /// of the advanced render pipeline.
+                /// of the advanced render pipeline for desktop and offscreen outputs.
+                /// VR eyes use <see cref="VrRenderPipeline"/> instead.
                 /// </summary>
                 [Category("Rendering")]
                 [DisplayName("Advanced Render Pipeline")]
-                [Description("Controls advanced pipeline selection. Available falls back visibly, Required rejects unsupported configurations, and Diagnostic evaluates capabilities while retaining the legacy default pipeline.")]
+                [Description("Controls advanced pipeline selection for desktop and offscreen outputs. Available falls back visibly, Required rejects unsupported configurations, and Diagnostic evaluates capabilities while retaining the legacy default pipeline. VR eyes ignore this value and use VR Render Pipeline.")]
                 public EAdvancedRenderPipelineMode AdvancedRenderPipelineMode
                 {
                     get => _advancedRenderPipelineMode;
@@ -2603,9 +2619,10 @@ public static partial class RuntimeEngine
 
                 /// <summary>
                 /// Requested Retinal Visibility Cache mode. Non-oracle modes require the RVC GPU pass stack and otherwise report a visible fallback reason.
+                /// When <see cref="VrRenderPipeline"/> is <see cref="EVrRenderPipeline.Rvc"/>, Off or any mode that resolves to a fallback renders no XR output.
                 /// </summary>
                 [Category("RVC")]
-                [Description("Requested Retinal Visibility Cache mode. Non-oracle modes require the RVC GPU pass stack and otherwise report a visible fallback reason.")]
+                [Description("Requested Retinal Visibility Cache mode. Non-oracle modes require the RVC GPU pass stack and otherwise report a visible fallback reason. When VR Render Pipeline is Rvc, Off or any mode that falls back renders no XR output.")]
                 public ERvcPipelineMode RvcPipelineMode
                 {
                     get => _rvcPipelineMode;

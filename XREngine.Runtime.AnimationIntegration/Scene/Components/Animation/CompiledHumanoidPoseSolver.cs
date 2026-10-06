@@ -32,10 +32,10 @@ internal static class CompiledHumanoidPoseSolver
         Quaternion jointRotation;
         if (plan.HasContinuousJointBasis)
         {
-            centerRotation = CreateTangentRotation(centerDegrees);
+            centerRotation = CreateContinuousRotation(plan, centerDegrees);
             if (UsesCoupledFootSwing(plan.Role))
             {
-                jointRotation = CreateTangentRotation(centerDegrees + localDegrees);
+                jointRotation = CreateContinuousRotation(plan, centerDegrees + localDegrees);
             }
             else
             {
@@ -50,8 +50,8 @@ internal static class CompiledHumanoidPoseSolver
                     0.0f,
                     0.0f);
                 jointRotation = Quaternion.Normalize(
-                    CreateTangentRotation(centerDegrees + swingDegrees)
-                    * CreateTangentRotation(twistAxisDegrees));
+                    CreateContinuousRotation(plan, centerDegrees + swingDegrees)
+                    * CreateContinuousRotation(plan, twistAxisDegrees));
             }
         }
         else
@@ -60,12 +60,14 @@ internal static class CompiledHumanoidPoseSolver
             centerRotation = CreateOrderedRotation(centerDegrees, plan.RotationOrder);
             jointRotation = CreateOrderedRotation(jointDegrees, plan.RotationOrder);
         }
-        Quaternion result = Quaternion.Normalize(
-            plan.ZeroMuscleRotation
-            * plan.JointBasisToZeroLocal
-            * Quaternion.Inverse(centerRotation)
-            * jointRotation
-            * Quaternion.Inverse(plan.JointBasisToZeroLocal));
+        Quaternion jointDelta = Quaternion.Normalize(Quaternion.Inverse(centerRotation) * jointRotation);
+        Quaternion localDelta = plan.HasContinuousJointBasis && plan.HasAuthoredAxisMapping
+            ? jointDelta
+            : Quaternion.Normalize(
+                plan.JointBasisToZeroLocal
+                * jointDelta
+                * Quaternion.Inverse(plan.JointBasisToZeroLocal));
+        Quaternion result = Quaternion.Normalize(plan.ZeroMuscleRotation * localDelta);
         return Quaternion.Dot(result, plan.ZeroMuscleRotation) < 0.0f
             ? new Quaternion(-result.X, -result.Y, -result.Z, -result.W)
             : result;
@@ -120,6 +122,35 @@ internal static class CompiledHumanoidPoseSolver
         SetAxis(ref result, mapping.LeftRightAxis, leftRightDegrees * NormalizeSign(mapping.LeftRightSign));
         return result;
     }
+
+    /// <summary>
+    /// Applies authored local axes after the continuous joint delta is solved.
+    /// The quaternion vector stores signed half-angle components. A signed
+    /// axis assignment preserves their coupled rotation without Euler terms.
+    /// </summary>
+    private static Quaternion MapJointDeltaToAuthoredAxes(Quaternion jointDelta, BoneAxisMapping mapping)
+    {
+        Vector3 mapped = Vector3.Zero;
+        SetAxis(ref mapped, mapping.FrontBackAxis,
+            jointDelta.X * NormalizeSign(mapping.FrontBackSign) * HandednessSign(mapping.FrontBackAxis));
+        SetAxis(ref mapped, mapping.TwistAxis,
+            jointDelta.Y * NormalizeSign(mapping.TwistSign) * HandednessSign(mapping.TwistAxis));
+        SetAxis(ref mapped, mapping.LeftRightAxis,
+            jointDelta.Z * NormalizeSign(mapping.LeftRightSign) * HandednessSign(mapping.LeftRightAxis));
+        return Quaternion.Normalize(new Quaternion(mapped, jointDelta.W));
+    }
+
+    private static Quaternion CreateContinuousRotation(
+        in CompiledHumanoidBoneSolvePlan plan,
+        Vector3 degrees)
+    {
+        Quaternion rotation = CreateTangentRotation(degrees);
+        return plan.HasAuthoredAxisMapping
+            ? MapJointDeltaToAuthoredAxes(rotation, plan.AxisMapping)
+            : rotation;
+    }
+
+    private static float HandednessSign(int axis) => axis == 2 ? 1.0f : -1.0f;
 
     internal static Quaternion CreateRestJoint(in CompiledHumanoidJointLimit limit, EHumanoidAvatarRotationOrder order, Quaternion preRotation, Quaternion postRotation)
     {

@@ -535,7 +535,7 @@ public sealed class NativeFbxImporterTests
     }
 
     [Test]
-    public void NativeFbxSkinWeights_UseImportedMeshBindPoseInsteadOfClusterTransformMatrix()
+    public void NativeFbxSkinWeights_UseImportedMeshBindPoseWhenClusterTransformIsMissing()
     {
         SceneNode rootNode = new("Root");
         SceneNode meshNode = new(rootNode, "MeshNode");
@@ -559,7 +559,8 @@ public sealed class NativeFbxImporterTests
             TransformMatrix: clusterTransformMatrix,
             TransformLinkMatrix: importedBoneWorld,
             InverseBindMatrix: clusterTransformMatrix * inverseBoneWorld,
-            ControlPointWeights: new Dictionary<int, float> { [0] = 1.0f });
+            ControlPointWeights: new Dictionary<int, float> { [0] = 1.0f },
+            HasTransformMatrix: false);
         FbxSkinBinding skinBinding = new(
             GeometryObjectId: 3001,
             SkinObjectId: 3002,
@@ -575,7 +576,7 @@ public sealed class NativeFbxImporterTests
         MethodInfo method = importerType.GetMethod("BuildSkinWeightsByControlPoint", BindingFlags.NonPublic | BindingFlags.Static)!;
         var result = (Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>)method.Invoke(
             obj: null,
-            parameters: new object[] { skinBinding, importedMeshWorld, nodesByObjectId })!;
+            parameters: new object[] { skinBinding, meshNode.Transform, Matrix4x4.Identity, nodesByObjectId, 1 })!;
 
         result.ShouldContainKey(0);
         result[0].ShouldContainKey(boneNode.Transform);

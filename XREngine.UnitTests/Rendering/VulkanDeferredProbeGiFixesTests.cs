@@ -549,7 +549,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
         string environmentSource = ReadWorkspaceFile("XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
         string runtimeEffectiveSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEffectiveSettings.cs");
         string hostServicesSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSettingsServices.cs");
-        string editorPreferencesSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/EditorPreferences.cs");
+        string editorPreferencesSource = ReadWorkspaceFile("XREngine.Runtime.Host/Settings/EditorPreferences.cs");
 
         profileSource.ShouldContain("public enum EVulkanDiagnosticPreset");
         profileSource.ShouldContain("Off");
@@ -586,7 +586,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
         string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanDiagnosticOptions.cs");
         string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Validation.cs");
         string instanceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Instance.cs");
-        string extensionsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+        string extensionsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.Instance.cs");
         string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
 
         resolverSource.ShouldContain("FlagsForPreset");

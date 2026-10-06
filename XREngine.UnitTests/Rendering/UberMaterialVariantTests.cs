@@ -470,15 +470,17 @@ public sealed class UberMaterialVariantTests
                 uniform vec4 _Color;
                 """);
 
-            XRMaterial material = CreateUberMaterial(
+            TextFile generatedSource = TextFile.FromText(
                 """
                 #version 450 core
                 // XRENGINE_UBER_GENERATED_VARIANT
                 #define _Color vec4(1.0, 0.0, 0.0, 1.0)
-                """,
+                """);
+            generatedSource.FilePath = shaderPath;
+            generatedSource.Name = "UberShader.frag";
+            XRMaterial material = CreateUberMaterial(
+                generatedSource,
                 new ShaderVector4(new Vector4(1.0f, 0.0f, 0.0f, 1.0f), "_Color"));
-
-            material.GetShader(EShaderType.Fragment)!.Source.FilePath = shaderPath;
             material.EnsureUberStateInitialized();
 
             string activeSource = material.GetShader(EShaderType.Fragment)!.Source?.Text ?? string.Empty;
@@ -823,8 +825,8 @@ public sealed class UberMaterialVariantTests
         generatedSource.ShouldContain("layout(location = 22) in float FragViewIndex;");
         generatedSource.ShouldContain("mat4 XRENGINE_ResolvedForwardViewMatrix");
         generatedSource.ShouldContain("vec3 XRENGINE_ForwardShadowDebugColor");
-        generatedSource.ShouldContain("layout(binding = 9) uniform sampler2DArray DirectionalShadowAtlas;");
-        generatedSource.ShouldContain("layout(binding = 6) uniform sampler2D BRDF;");
+        generatedSource.ShouldContain("layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 9) uniform sampler2DArray DirectionalShadowAtlas;");
+        generatedSource.ShouldContain("layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 6) uniform sampler2D BRDF;");
         generatedSource.ShouldNotContain("BEGIN SNIPPET");
         generatedSource.ShouldNotContain("BEGIN INCLUDE");
     }
@@ -849,12 +851,12 @@ public sealed class UberMaterialVariantTests
         generatedSource.ShouldContain("XRENGINE_CalculateDirectPbrLightWithViewDir");
         generatedSource.ShouldNotContain("const vec2 XRENGINE_ShadowPoissonDisk[16]");
         generatedSource.ShouldNotContain("const vec3 XRENGINE_ShadowCubeKernel[20]");
-        generatedSource.ShouldNotContain("layout(binding = 9) uniform sampler2DArray DirectionalShadowAtlas;");
-        generatedSource.ShouldNotContain("layout(binding = 19) uniform samplerCube PointLightShadowMaps");
+        generatedSource.ShouldNotContain("layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 9) uniform sampler2DArray DirectionalShadowAtlas;");
+        generatedSource.ShouldNotContain("layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 19) uniform samplerCube PointLightShadowMaps");
         generatedSource.ShouldNotContain("ForwardContactDepthView");
-        generatedSource.ShouldNotContain("layout(binding = 6) uniform sampler2D BRDF;");
-        generatedSource.ShouldNotContain("layout(binding = 7) uniform sampler2DArray IrradianceArray;");
-        generatedSource.ShouldNotContain("layout(std430, binding = 0) readonly buffer LightProbePositions");
+        generatedSource.ShouldNotContain("layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 6) uniform sampler2D BRDF;");
+        generatedSource.ShouldNotContain("layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 7) uniform sampler2DArray IrradianceArray;");
+        generatedSource.ShouldNotContain("layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 0) readonly buffer LightProbePositions");
         generatedSource.ShouldNotContain("XRENGINE_ResolveProbeWeightsGrid");
         generatedSource.Length.ShouldBeLessThan(180_000);
     }
@@ -866,14 +868,15 @@ public sealed class UberMaterialVariantTests
         XRMaterial material = CreateUberMaterialFromFile(shaderPath, ModelAssetImporter.CreateDefaultForwardPlusUberShaderParameters());
 
         material.EnsureUberStateInitialized();
+        material.RenderOptions.RequiredEngineUniforms = EUniformRequirements.None;
         material.RequestUberVariantRebuild();
         WaitForActiveUberVariant(material);
 
         string generatedSource = GetFragmentSource(material);
         generatedSource.ShouldContain("XRENGINE_UBER_GENERATED_VARIANT");
         generatedSource.ShouldContain("fragData.finalColor = fragData.baseColor;");
-        generatedSource.ShouldNotContain("layout(binding = 9) uniform sampler2DArray DirectionalShadowAtlas;");
-        generatedSource.ShouldNotContain("layout(binding = 6) uniform sampler2D BRDF;");
+        generatedSource.ShouldNotContain("layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 9) uniform sampler2DArray DirectionalShadowAtlas;");
+        generatedSource.ShouldNotContain("layout(XRENGINE_FORWARD_DESCRIPTOR_SET binding = 6) uniform sampler2D BRDF;");
         generatedSource.ShouldNotContain("XRENGINE_CalculateAmbientPbr");
         generatedSource.ShouldNotContain("uniform sampler2D _BumpMap;");
         generatedSource.ShouldNotContain("uniform sampler2D _AlphaMask;");
@@ -1075,15 +1078,17 @@ public sealed class UberMaterialVariantTests
                 """;
             File.WriteAllText(shaderPath, canonicalSource);
 
-            XRMaterial material = CreateUberMaterial(
+            TextFile generatedSource = TextFile.FromText(
                 """
                 #version 450 core
                 // XRENGINE_UBER_GENERATED_VARIANT
                 #define _Color vec4(1.0, 0.0, 0.0, 1.0)
-                """,
+                """);
+            generatedSource.FilePath = shaderPath;
+            generatedSource.Name = "UberShader.frag";
+            XRMaterial material = CreateUberMaterial(
+                generatedSource,
                 new ShaderVector4(new Vector4(1.0f, 0.0f, 0.0f, 1.0f), "_Color"));
-
-            material.GetShader(EShaderType.Fragment)!.Source.FilePath = shaderPath;
             material.EnsureUberStateInitialized();
 
             string restoredSource = material.GetShader(EShaderType.Fragment)!.Source?.Text ?? string.Empty;

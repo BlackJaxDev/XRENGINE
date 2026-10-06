@@ -9,52 +9,47 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class ForwardDepthPrePassGBufferRestoreTests
 {
     [TestCase("DefaultRenderPipeline")]
-    public void ForwardDepthPrePass_RestoresDeferredGBufferBeforeLighting(string pipelineName)
+    public void ForwardDepthPrePass_SeedsSeparateSceneSurfaceBeforeLighting(string pipelineName)
     {
         string constants = LoadPipelineFile($"{pipelineName}.cs").Replace("\r\n", "\n");
         string textures = LoadPipelineFile($"{pipelineName}.Textures.cs").Replace("\r\n", "\n");
         string fbos = LoadPipelineFile($"{pipelineName}.FBOs.cs").Replace("\r\n", "\n");
         string commandChain = LoadPipelineFile($"{pipelineName}.CommandChain.cs").Replace("\r\n", "\n");
 
-        constants.ShouldContain("DeferredGBufferPreForwardCopyFBOName");
-        constants.ShouldContain("DeferredGBufferPreForwardNormalTextureName");
-        constants.ShouldContain("DeferredGBufferPreForwardDepthStencilTextureName");
-        textures.ShouldContain("CreateDeferredGBufferPreForwardNormalTexture");
-        textures.ShouldContain("CreateDeferredGBufferPreForwardDepthStencilTexture");
-        fbos.ShouldContain("CreateDeferredGBufferPreForwardCopyFBO");
-        fbos.ShouldContain("DeferredGBufferPreForwardNormalTextureName");
-        fbos.ShouldContain("DeferredGBufferPreForwardDepthStencilTextureName");
+        constants.ShouldContain("ForwardDepthPrePassFBOName");
+        constants.ShouldContain("ForwardPrePassNormalTextureName");
+        constants.ShouldContain("ForwardPrePassDepthStencilTextureName");
+        textures.ShouldContain("CreateForwardPrePassNormalTexture");
+        textures.ShouldContain("CreateForwardPrePassDepthStencilTexture");
+        fbos.ShouldContain("CreateForwardDepthPrePassFBO");
+        fbos.ShouldContain("ForwardPrePassNormalTextureName");
+        fbos.ShouldContain("ForwardPrePassDepthStencilTextureName");
 
         AssertContainsInOrder(
             commandChain,
+            "AppendDeferredGBufferPass(",
+            "AppendForwardDepthPrePass(",
             "AppendAmbientOcclusionResolve(",
-            "AppendForwardDepthPrePassGBufferRestore(",
             "AppendLightingPass(");
 
         string forwardPrePass = SliceMethod(commandChain, "private void AppendForwardDepthPrePass(ViewportRenderCommandContainer c)");
         AssertContainsInOrder(
             forwardPrePass,
-            "shareChoice.Add<VPRC_BlitFrameBuffer>().SetOptions(",
-            "ForwardDepthPrePassMergeFBOName,",
-            "DeferredGBufferPreForwardCopyFBOName,",
+            "surfaceCommands.Add<VPRC_BlitFrameBuffer>().SetOptions(",
+            "DeferredGBufferFBOName,",
+            "ForwardDepthPrePassFBOName,",
+            "EReadBufferMode.ColorAttachment1,",
             "blitColor: true,",
             "blitDepth: true,",
             "blitStencil: false,",
-            "shareIfElse.ConditionEvaluator");
-
-        string restorePrePass = SliceMethod(commandChain, "private void AppendForwardDepthPrePassGBufferRestore(ViewportRenderCommandContainer c)");
-        AssertContainsInOrder(
-            restorePrePass,
-            "restoreCommands.Add<VPRC_BlitFrameBuffer>().SetOptions(",
-            "DeferredGBufferPreForwardCopyFBOName,",
-            "ForwardDepthPrePassMergeFBOName,",
-            "blitColor: true,",
-            "blitDepth: true,",
-            "blitStencil: false,");
+            "prePassChoice.TrueCommands = CreateForwardPrePassSharedCommands();");
+        constants.ShouldContain("x.SetOptions(ForwardDepthPrePassFBOName, true, false, false, false)");
+        constants.ShouldContain("c.Add<VPRC_ForwardDepthNormalPrePass>().SetOptions(");
+        commandChain.ShouldNotContain("AppendForwardDepthPrePassGBufferRestore(");
     }
 
     [TestCase("DefaultRenderPipeline")]
-    public void ForwardDepthPrePass_SettingsArePipelineOwnedAndSizeDedicatedTargets(string pipelineName)
+    public void ForwardDepthPrePass_UsesPipelineSettingsAndFullInternalSceneSurface(string pipelineName)
     {
         string constants = LoadPipelineFile($"{pipelineName}.cs").Replace("\r\n", "\n");
         string textures = LoadPipelineFile($"{pipelineName}.Textures.cs").Replace("\r\n", "\n");
@@ -66,23 +61,21 @@ public sealed class ForwardDepthPrePassGBufferRestoreTests
         constants.ShouldContain("public bool ForwardPrePassSharesGBufferTargets");
         constants.ShouldContain("public EDepthNormalPrePassResolution ForwardDepthNormalPrePassResolution");
         constants.ShouldContain("[RenderPipelineCameraSetting(Order = 100)]");
-        constants.ShouldContain("GetDesiredFBOSizeForwardDepthNormalPrePass");
+        constants.ShouldContain("The default pipeline complete-scene depth+normal surface is always full internal resolution.");
 
-        commandChain.ShouldContain("prePassChoice.ConditionEvaluator");
-        commandChain.ShouldContain("ForwardDepthPrePassEnabled");
-        pipelineSource.ShouldContain("ConditionEvaluator = () => ForwardPrePassSharesGBufferTargets");
+        commandChain.ShouldContain("prePassChoice.ConditionEvaluator = ShouldRunForwardDepthPrePass;");
+        commandChain.ShouldContain("surfaceChoice.ConditionEvaluator = ShouldPrepareForwardSceneSurface;");
+        pipelineSource.ShouldNotContain("ConditionEvaluator = () => ForwardPrePassSharesGBufferTargets");
         resources.ShouldContain("builder.FrameBuffer(ForwardDepthPrePassFBOName)");
         resources.ShouldContain(".Factory(CreateForwardDepthPrePassFBO)");
-        resources.ShouldContain("builder.FrameBuffer(ForwardContactPrePassCopyFBOName)");
-        resources.ShouldContain(".Factory(CreateForwardContactPrePassCopyFBO)");
+        resources.ShouldContain("RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();");
+        resources.ShouldContain(".Color(0, ForwardPrePassNormalTextureName)");
+        resources.ShouldContain(".DepthStencil(ForwardPrePassDepthStencilTextureName)");
         pipelineSource.ShouldNotContain("EditorPreferences.Debug.ForwardDepthPrePassEnabled");
         pipelineSource.ShouldNotContain("EditorPreferences.Debug.ForwardPrePassSharesGBufferTargets");
 
-        textures.ShouldContain("GetDesiredFBOSizeForwardDepthNormalPrePass");
         textures.ShouldContain("CreateForwardPrePassDepthStencilTexture");
-        textures.ShouldContain("CreateForwardContactDepthStencilTexture");
         textures.ShouldContain("CreateForwardPrePassNormalTexture");
-        textures.ShouldContain("CreateForwardContactNormalTexture");
     }
 
     private static void AssertContainsInOrder(string source, params string[] expected)
@@ -121,7 +114,7 @@ public sealed class ForwardDepthPrePassGBufferRestoreTests
 
     private static string LoadPipelineFile(string fileName)
         => global::XREngine.UnitTests.SourceContractWorkspace.ReadFile(
-            $"XREngine.Runtime.Rendering/Rendering/Pipelines/Types/{fileName}");
+            $"XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/{fileName}");
 
     private static string ResolveRepoRoot()
     {

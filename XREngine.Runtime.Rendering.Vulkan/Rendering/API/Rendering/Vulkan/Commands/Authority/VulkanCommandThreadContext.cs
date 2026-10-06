@@ -29,6 +29,7 @@ internal sealed class VulkanCommandThreadContext
     public ForwardLightingBindingSnapshotCacheKey ForwardLightingSnapshotKey;
     public ComputeDispatchSnapshot? ForwardLightingSnapshot;
     public bool HasForwardLightingSnapshot;
+    public VulkanTemporalHistoryNativeCoverage TemporalHistoryCoverage;
 
     public void Reset()
     {
@@ -47,6 +48,7 @@ internal sealed class VulkanCommandThreadContext
         ForwardLightingSnapshotFrame = 0;
         ForwardLightingSnapshot = null;
         HasForwardLightingSnapshot = false;
+        TemporalHistoryCoverage = default;
         FrameOpWorkspace?.Reset();
         FrameOpWorkspace = null;
     }

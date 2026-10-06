@@ -29,7 +29,7 @@ public sealed class EditorPlayModeLifecycleContractTests
 
         string exitBody = source[exitStart..toggleStart];
         int snapshotRestore = exitBody.IndexOf("Controller.RaisePostSnapshotRestore(restoredTarget);", StringComparison.Ordinal);
-        int beginEditMode = exitBody.IndexOf("worldInstance.BeginEditMode().GetAwaiter().GetResult();", StringComparison.Ordinal);
+        int beginEditMode = exitBody.IndexOf("RuntimeWorldHostServices.Current?.BeginEditModeAsync(worldInstance)", StringComparison.Ordinal);
         int publishEditState = exitBody.IndexOf("State = EPlayModeState.Edit;", StringComparison.Ordinal);
 
         snapshotRestore.ShouldBeGreaterThanOrEqualTo(0);

@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Handles all temporal accumulation stages (begin, accumulate, commit) without relying on manual commands.
 /// </summary>
 [RenderPipelineScriptCommand]
-public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
+public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 {
     private const float TaaJitterScaleInTexels = 0.35f;
     private const float TsrJitterScaleInTexels = 0.20f;
@@ -63,6 +63,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         public bool PendingHistoryReady;
         public TemporalHistoryCoverage PendingHistoryCoverage;
         public TemporalHistoryGenerationTracker HistoryGeneration { get; } = new();
+        public TemporalHistorySubmissionState Submission { get; } = new();
         public StateObject? ActiveJitterHandle;
         public StateObject? ActiveRightEyeJitterHandle;
         public EVrTemporalHistoryPolicy HistoryIsolationPolicy = EVrTemporalHistoryPolicy.HeadsetShared;
@@ -288,9 +289,12 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         }
 
         public uint CommitFrame(in TemporalHistoryCoverage coverage)
+            => CommitCapturedFrame(in coverage, CurrentMatrixLayerMask);
+
+        public uint CommitCapturedFrame(in TemporalHistoryCoverage coverage, uint matrixLayerMask)
         {
             uint completedLayers = coverage.CompleteLayerMask
-                & CurrentMatrixLayerMask
+                & matrixLayerMask
                 & ExpectedLayerMask;
             uint incompleteLayers = ExpectedLayerMask & ~completedLayers;
             InvalidateReadyLayers(incompleteLayers);
@@ -404,8 +408,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         /// </summary>
         PopJitter,
         /// <summary>
-        /// Copies full-resolution TSR history color after the resolve. Advanced
-        /// rendering also captures current depth here so the resolve sees previous depth.
+        /// Runs after the TSR resolve. Copies full-resolution TSR history color and
+        /// optional metadata, then copies current depth into history depth. This order
+        /// keeps previous depth intact while the resolve reads it.
         /// </summary>
         CaptureTsrHistoryColor,
         Commit
@@ -418,8 +423,16 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     public string TemporalAccumulationFBOName { get; set; } = DefaultRenderPipeline.TemporalAccumulationFBOName;
     public string HistoryColorFBOName { get; set; } = DefaultRenderPipeline.HistoryCaptureFBOName;
     public string HistoryExposureFBOName { get; set; } = DefaultRenderPipeline.HistoryExposureFBOName;
+    /// <summary>The sampled depth view associated with the configured history destination.</summary>
+    public string HistoryDepthViewTextureName { get; set; } = DefaultRenderPipeline.HistoryDepthViewTextureName;
     public string TsrSourceFBOName { get; set; } = DefaultRenderPipeline.TsrUpscaleFBOName;
     public string TsrHistoryColorFBOName { get; set; } = DefaultRenderPipeline.TsrHistoryColorFBOName;
+    /// <summary>The FBO used by the TSR resolve quad that produces the copied color.</summary>
+    public string? TsrResolveQuadFBOName { get; private set; }
+    /// <summary>The optional left-eye quad that reads prior TSR history before the copy.</summary>
+    public string? TsrLeftHistoryReaderQuadFBOName { get; private set; }
+    /// <summary>The optional right-eye quad that reads prior TSR history before the copy.</summary>
+    public string? TsrRightHistoryReaderQuadFBOName { get; private set; }
     public string? TsrHistoryMetadataOutputFBOName { get; set; }
     public string? TsrHistoryMetadataFBOName { get; set; }
     /// <summary>Optional explicit reactive-mask input for a pipeline-specific resolve variant.</summary>
@@ -443,14 +456,29 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         return this;
     }
 
+    /// <summary>Set the TSR history targets and the quad passes that must finish before the copy.</summary>
+    /// <param name="sourceFboName">The FBO copied into color history. It can be a view of a resolve output.</param>
+    /// <param name="historyColorFboName">The destination FBO for color history.</param>
+    /// <param name="resolveQuadFboName">The source and destination FBO used by the TSR resolve quad.</param>
+    /// <param name="historyMetadataOutputFboName">The optional source FBO for history metadata.</param>
+    /// <param name="historyMetadataFboName">The optional destination FBO for history metadata.</param>
+    /// <param name="leftHistoryReaderQuadFboName">The optional left-eye quad that reads prior history.</param>
+    /// <param name="rightHistoryReaderQuadFboName">The optional right-eye quad that reads prior history.</param>
+    /// <returns>This command.</returns>
     public VPRC_TemporalAccumulationPass ConfigureTsrHistoryTargets(
         string sourceFboName,
         string historyColorFboName,
+        string resolveQuadFboName,
         string? historyMetadataOutputFboName = null,
-        string? historyMetadataFboName = null)
+        string? historyMetadataFboName = null,
+        string? leftHistoryReaderQuadFboName = null,
+        string? rightHistoryReaderQuadFboName = null)
     {
         TsrSourceFBOName = sourceFboName;
         TsrHistoryColorFBOName = historyColorFboName;
+        TsrResolveQuadFBOName = resolveQuadFboName;
+        TsrLeftHistoryReaderQuadFBOName = leftHistoryReaderQuadFboName;
+        TsrRightHistoryReaderQuadFBOName = rightHistoryReaderQuadFboName;
         TsrHistoryMetadataOutputFBOName = historyMetadataOutputFboName;
         TsrHistoryMetadataFBOName = historyMetadataFboName;
         return this;
@@ -460,6 +488,12 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     {
         if (ParentPipeline is null)
             return;
+
+        if (ReferenceEquals(s_strictCapturePipeline, ActivePipelineInstance) && s_strictCaptureBlocked)
+            return;
+
+        if (Phase is EPhase.Accumulate or EPhase.CaptureTsrHistoryColor)
+            RegisterStrictHistoryTargets(ActivePipelineInstance);
 
         switch (Phase)
         {
@@ -643,8 +677,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         }
 
         // History becomes usable only when color and depth cover every layer
-        // represented by this temporal view key. TSR records its separate
-        // full-resolution history color later in the command chain.
+        // represented by this temporal view key. For TSR, CaptureTsrHistoryColor
+        // records full-resolution history color and history depth later in the chain.
         RecordTemporalHistoryCaptured(historyColorSourceFbo, forwardFBO, historyColorFBO,
             depthCaptured: !deferTsrHistoryDepth);
     }
@@ -719,7 +753,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         if (openXrVulkanRuntimeSelected &&
             externalSwapchainTarget &&
             !RuntimeEngine.Rendering.State.IsStereoPass &&
-            !IsAdmittedRvcTwoPassEye())
+            !IsBoundAdvancedOpenXrEye())
         {
             reason = "external OpenXR Vulkan swapchain target";
             return EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain;
@@ -761,9 +795,14 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         return resolution.TemporalHistoryPolicy;
     }
 
-    private static bool IsAdmittedRvcTwoPassEye()
-        => CurrentRenderingPipeline?.AssignedPipeline is RvcRenderPipeline pipeline &&
-           pipeline.IsAdvancedTwoPassEyeFamilyActive;
+    /// <summary>
+    /// An Advanced OpenXR eye with a bound output owns its own per-eye history,
+    /// so an external swapchain target does not disable it.
+    /// </summary>
+    private static bool IsBoundAdvancedOpenXrEye()
+        => CurrentRenderingPipeline is { } instance &&
+           instance.AssignedPipeline is AdvancedRenderPipeline { IsOpenXrEyeProfile: true } &&
+           instance.AdvancedOutputBinding.IsBound;
 
     private static bool IsHistoryIsolationPolicyDisabled(EVrTemporalHistoryPolicy policy)
         => policy is EVrTemporalHistoryPolicy.Disabled
@@ -779,10 +818,17 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     private static bool ShouldRunInternalAccumulation(EAntiAliasingMode mode)
         => mode == EAntiAliasingMode.Taa;
 
-    private bool ShouldDeferTsrHistoryDepth(EAntiAliasingMode mode)
-        => mode == EAntiAliasingMode.Tsr
-        && (ParentPipeline is AdvancedRenderPipeline
-            || ParentPipeline is RvcRenderPipeline { IsAdvancedTwoPassEyeFamilyActive: true });
+    /// <summary>
+    /// The TSR resolve runs after Accumulate and reads history depth. Each chain that
+    /// runs a TSR resolve copies current depth after that resolve in
+    /// <see cref="EPhase.CaptureTsrHistoryColor"/>.
+    /// </summary>
+    /// <remarks>
+    /// The decision depends only on the anti-aliasing mode, so the execute and describe
+    /// paths cannot disagree because of the pipeline type or the selected command family.
+    /// </remarks>
+    private static bool ShouldDeferTsrHistoryDepth(EAntiAliasingMode mode)
+        => mode == EAntiAliasingMode.Tsr;
 
     internal static bool ShouldPopulateTemporalInput(EAntiAliasingMode mode)
         => mode is EAntiAliasingMode.Taa
@@ -796,6 +842,11 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         lock (state.MutationSync)
         {
+            if (ReferenceEquals(s_strictCaptureState, state))
+            {
+                state.Submission.ExposureReady = ready;
+                return;
+            }
             state.HistoryExposureReady = ready;
             // Deferred resolves must see exposure readiness without observing
             // the previous-frame matrices and jitter advanced by CPU commit.
@@ -1092,6 +1143,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     private static void ResetHistoryStorage(TemporalState state)
     {
+        InvalidateSubmissionHistory(state);
         state.ActiveJitterHandle?.Dispose();
         state.ActiveJitterHandle = null;
         state.ActiveRightEyeJitterHandle?.Dispose();
@@ -1107,6 +1159,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     private static void ResetEyeHistory(TemporalState state, int eyeIndex)
     {
+        InvalidateSubmissionHistory(state);
         uint layerMask = 1u << eyeIndex;
         state.HistoryGeneration.InvalidateLayers(layerMask);
         if (eyeIndex == 0)
@@ -1192,8 +1245,11 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         XRRenderPipelineInstance instance,
         TemporalState state)
     {
+        if (!TryBeginStrictHistoryCapture(instance, state))
+            return;
         state.PendingHistoryReady = false;
-        state.HistoryExposureReady = false;
+        if (!ReferenceEquals(s_strictCaptureState, state))
+            state.HistoryExposureReady = false;
         state.PendingHistoryCoverage.Clear();
         state.ResetReasonThisFrame = EOpenXrSmokeTemporalResetReason.None;
         state.CameraCutLayerMaskThisFrame = 0u;
@@ -1350,6 +1406,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             LogTemporalReseedPending(instance, state, reason);
         }
 
+        BindStrictHistoryBegin(instance, state);
         PublishTemporalUniformData(state, captureResolve: true);
         if ((instance.Pipeline is IAdvancedRenderStageFamilyHost ||
              RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.WebGPU) &&
@@ -1556,8 +1613,6 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         AbstractRenderer renderer = AbstractRenderer.Current
             ?? throw new InvalidOperationException("TSR history capture requires an active renderer.");
-        // The resolve has already sampled its history. Advanced rendering can
-        // now replace previous depth with raw current-frame depth.
         using (IDisposable? passScope = PushRenderGraphPass(TsrHistoryColorCopyPassName))
         {
             FrameBufferBlitSubmission colorSubmission = renderer.TryBlitFBOToFBO(
@@ -1591,6 +1646,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             }
         }
 
+        // The resolve and its optional history readers have read previous depth.
+        // Replace it with current depth now.
         if (deferDepth)
         {
             using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalHistoryDepthScopeName))
@@ -1604,7 +1661,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                     Debug.RenderingWarningEvery(
                         $"Temporal.TsrHistoryDepthRejected.{instance.InstanceId}",
                         TimeSpan.FromSeconds(1),
-                        "[Temporal] Advanced TSR history depth copy rejected: {0}",
+                        "[Temporal] TSR history depth copy rejected: {0}",
                         depthSubmission.Reason ?? "unspecified reason");
                     return;
                 }
@@ -1713,6 +1770,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         state.ActiveRightEyeJitterHandle?.Dispose();
         state.ActiveRightEyeJitterHandle = null;
 
+        if (TryStageStrictHistory(instance, state))
+            return;
+
         if (IsHistoryIsolationPolicyDisabled(state.HistoryIsolationPolicy))
         {
             state.PendingHistoryReady = false;
@@ -1789,13 +1849,14 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         ulong leftPreviousFingerprint,
         ulong rightPreviousFingerprint,
         ulong leftCurrentFingerprint,
-        ulong rightCurrentFingerprint)
+        ulong rightCurrentFingerprint,
+        ulong? acceptedRenderFrameId = null)
     {
         if (!Phase524bTemporalStateDiagnostics.Enabled)
             return;
 
-        ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
-        RecordTemporalEyeStateEvidence(
+        ulong renderFrameId = acceptedRenderFrameId ?? RuntimeEngine.Rendering.State.RenderFrameId;
+        OpenXrSmokeTemporalStateLedgerEntry leftEntry = CreateTemporalEyeStateEvidence(
             renderFrameId,
             instance.InstanceId,
             state,
@@ -1807,10 +1868,11 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             generation.LeftEyeHistoryReady,
             leftPreviousFingerprint,
             leftCurrentFingerprint);
+        Phase524bTemporalStateDiagnostics.Record(in leftEntry);
 
         if ((generation.ExpectedLayerMask & 0b10u) != 0u)
         {
-            RecordTemporalEyeStateEvidence(
+            OpenXrSmokeTemporalStateLedgerEntry rightEntry = CreateTemporalEyeStateEvidence(
                 renderFrameId,
                 instance.InstanceId,
                 state,
@@ -1822,10 +1884,11 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                 generation.RightEyeHistoryReady,
                 rightPreviousFingerprint,
                 rightCurrentFingerprint);
+            Phase524bTemporalStateDiagnostics.Record(in rightEntry);
         }
     }
 
-    private static void RecordTemporalEyeStateEvidence(
+    private static OpenXrSmokeTemporalStateLedgerEntry CreateTemporalEyeStateEvidence(
         ulong renderFrameId,
         int pipelineInstanceId,
         TemporalState state,
@@ -1846,7 +1909,7 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         ulong seededGeneration = eyeIndex == 0
             ? generation.LeftEyeSeededGeneration
             : generation.RightEyeSeededGeneration;
-        var entry = new OpenXrSmokeTemporalStateLedgerEntry(
+        return new OpenXrSmokeTemporalStateLedgerEntry(
             renderFrameId,
             pipelineInstanceId,
             eyeIndex,
@@ -1873,7 +1936,6 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             state.ResetReasonThisFrame,
             (state.CameraCutLayerMaskThisFrame & eyeMask) != 0u,
             (committedLayerMask & eyeMask) != 0u);
-        Phase524bTemporalStateDiagnostics.Record(entry);
     }
 
     private static ulong ComputeMatrixFingerprint(in Matrix4x4 matrix)
@@ -1951,19 +2013,26 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         if (Phase == EPhase.CaptureTsrHistoryColor)
         {
-            context.GetOrCreateSyntheticPass(TsrHistoryColorCopyPassName, ERenderGraphPassStage.Transfer)
+            RenderPassBuilder colorCopy = context.GetOrCreateSyntheticPass(TsrHistoryColorCopyPassName, ERenderGraphPassStage.Transfer)
                 .UseTransferSource(MakeFboColorResource(TsrSourceFBOName))
                 .UseTransferDestination(MakeFboColorResource(TsrHistoryColorFBOName));
+            AddTsrHistoryCaptureDependencies(context, colorCopy);
             if (TsrHistoryMetadataOutputFBOName is not null && TsrHistoryMetadataFBOName is not null)
-                context.GetOrCreateSyntheticPass(TsrHistoryMetadataCopyPassName, ERenderGraphPassStage.Transfer)
+            {
+                RenderPassBuilder metadataCopy = context.GetOrCreateSyntheticPass(TsrHistoryMetadataCopyPassName, ERenderGraphPassStage.Transfer)
                     .UseTransferSource(MakeFboColorResource(TsrHistoryMetadataOutputFBOName))
                     .UseTransferDestination(MakeFboColorResource(TsrHistoryMetadataFBOName));
+                AddTsrHistoryCaptureDependencies(context, metadataCopy);
+            }
             EAntiAliasingMode captureMode = context.ResourceProfile?.AntiAliasingMode
                 ?? ResolveAntiAliasingMode();
             if (ShouldDeferTsrHistoryDepth(captureMode))
-                context.GetOrCreateSyntheticPass(TemporalHistoryDepthCopyPassName, ERenderGraphPassStage.Transfer)
+            {
+                RenderPassBuilder depthCopy = context.GetOrCreateSyntheticPass(TemporalHistoryDepthCopyPassName, ERenderGraphPassStage.Transfer)
                     .UseTransferSource(MakeFboDepthResource(ForwardFBOName))
                     .UseTransferDestination(MakeFboDepthResource(HistoryColorFBOName));
+                AddTsrHistoryCaptureDependencies(context, depthCopy);
+            }
             return;
         }
 
@@ -1979,6 +2048,22 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             DescribeTaaAccumulation(context);
         else
             DescribeHistoryPassthrough(context, copyDepth: !ShouldDeferTsrHistoryDepth(antiAliasingMode));
+    }
+
+    private void AddTsrHistoryCaptureDependencies(RenderGraphDescribeContext context, RenderPassBuilder copyPass)
+    {
+        if (TsrResolveQuadFBOName is null)
+            throw new InvalidOperationException("TSR history capture requires the resolve quad identity.");
+
+        // The copy must follow the resolve and each optional prior-history reader.
+        copyPass.DependsOn(context.GetOrCreateSyntheticPass(
+            VPRC_RenderQuadToFBO.BuildQuadBlitPassName(TsrResolveQuadFBOName, TsrResolveQuadFBOName)).PassIndex);
+        if (TsrLeftHistoryReaderQuadFBOName is not null)
+            copyPass.DependsOn(context.GetOrCreateSyntheticPass(
+                VPRC_RenderQuadToFBO.BuildQuadBlitPassName(TsrLeftHistoryReaderQuadFBOName, TsrLeftHistoryReaderQuadFBOName)).PassIndex);
+        if (TsrRightHistoryReaderQuadFBOName is not null)
+            copyPass.DependsOn(context.GetOrCreateSyntheticPass(
+                VPRC_RenderQuadToFBO.BuildQuadBlitPassName(TsrRightHistoryReaderQuadFBOName, TsrRightHistoryReaderQuadFBOName)).PassIndex);
     }
 
     private void DescribeTemporalInputCopy(RenderGraphDescribeContext context)

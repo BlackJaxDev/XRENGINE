@@ -12,24 +12,24 @@ public sealed class VulkanCoreHardeningPhase524Tests
     public void IndirectCountSubmissionEnablesAndRequiresCoreIndirectFeatures()
     {
         string logicalDevice = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs");
         string extensions = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanExtensions.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceMutableCapabilities.cs");
 
         logicalDevice.ShouldContain("supportedFeatures.MultiDrawIndirect");
         logicalDevice.ShouldContain("deviceFeatures.MultiDrawIndirect = Vk.True");
         logicalDevice.ShouldContain("supportedFeatures.DrawIndirectFirstInstance");
         logicalDevice.ShouldContain("deviceFeatures.DrawIndirectFirstInstance = Vk.True");
         logicalDevice.ShouldContain("bool indirectCountCoreFeaturesReady =");
-        logicalDevice.ShouldContain("_supportsMultiDrawIndirect &&");
-        logicalDevice.ShouldContain("_supportsDrawIndirectFirstInstance;");
-        logicalDevice.ShouldContain("_usesCoreDrawIndirectCountCommands = true");
+        logicalDevice.ShouldContain("_deviceContext.MutableCapabilities._supportsMultiDrawIndirect &&");
+        logicalDevice.ShouldContain("_deviceContext.MutableCapabilities._supportsDrawIndirectFirstInstance;");
+        logicalDevice.ShouldContain("_deviceContext.MutableCapabilities._usesCoreDrawIndirectCountCommands = true");
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Recording/VulkanRenderer.DrawAndComputeRecording.cs");
         recording.ShouldContain("Api!.CmdDrawIndexedIndirectCount(");
-        recording.ShouldContain("else if (_khrDrawIndirectCount is not null)");
-        extensions.ShouldContain("private bool _supportsMultiDrawIndirect;");
-        extensions.ShouldContain("private bool _supportsDrawIndirectFirstInstance;");
+        recording.ShouldContain("else if (DeviceContext.ExtensionFunctions.KhrDrawIndirectCount is { } ext)");
+        extensions.ShouldContain("internal bool _supportsMultiDrawIndirect;");
+        extensions.ShouldContain("internal bool _supportsDrawIndirectFirstInstance;");
     }
 
     [Test]
@@ -344,7 +344,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     [Test]
     public void ProfilerExposesCompactionCacheAndContentionCounters()
     {
-        string capture = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
+        string capture = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
         foreach (string field in new[]
                  {
                      "vulkan_tracking_dependency_binds",
