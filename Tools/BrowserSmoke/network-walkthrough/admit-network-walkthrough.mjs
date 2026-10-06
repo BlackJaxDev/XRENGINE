@@ -104,7 +104,8 @@ async function inspect(staticResultPath, allowStaticOnly) {
         && comparison.commits?.length === comparison.total_commits && comparison.commits.at(-1)?.sha === current.triggerCommit
         && Array.isArray(comparison.files) && comparison.files.length < 300, 'PushComparisonUnverifiable');
     const changedRequest = comparison.files.find(file => file.filename === requestPath);
-    if (!changedRequest && allowStaticOnly) return { candidate: false, staticOnly: true };
+    if (allowStaticOnly && (!changedRequest || changedRequest.status === 'removed'))
+        return { candidate: false, staticOnly: true };
     requireValue(comparison.total_commits === 1 && comparison.files.length === 1 && changedRequest?.status === 'added', 'DedicatedNewRequestPushRequired');
     const bytes = await content(requestPath, current.triggerCommit);
     const request = canonicalJson(bytes, 'Request');

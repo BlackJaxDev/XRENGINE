@@ -13,8 +13,8 @@ $invocationWatch = [Diagnostics.Stopwatch]::StartNew()
 if (-not $IsWindows -or $PSVersionTable.PSVersion.Major -lt 7) { throw 'PowerShell 7 on the approved disposable Windows runner is required.' }
 $repo = (Resolve-Path -LiteralPath $RepoRoot).Path.TrimEnd('\')
 $run = [IO.Path]::GetFullPath($RunRoot).TrimEnd('\')
-$nodeExe = (Get-Command node.exe -CommandType Application).Source
-$ghExe = (Get-Command gh.exe -CommandType Application).Source
+$nodeExe = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$ghExe = (Get-Command gh.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $gate = Join-Path $PSScriptRoot 'admit-network-walkthrough.mjs'
 $nodeScript = Join-Path $PSScriptRoot 'run-real-network-walkthrough.mjs'
 $producer = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'producer.json') -Raw | ConvertFrom-Json

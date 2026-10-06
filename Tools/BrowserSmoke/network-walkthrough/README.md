@@ -7,7 +7,7 @@ The immutable publisher input is recorded in `producer.json`: engine commit `e4a
 ## Execution and approval boundaries
 
 1. Publish and independently review the inert helpers/workflow. The new workflow parses both PowerShell sources through AST APIs and compiles the owned-job C# literal without constructing its class or calling native methods. JavaScript is checked with `node --check`, never imported for static checking. Review the successful Windows static artifact before requesting preparation.
-2. The coordinator may add the one request record described below in a separate, single-commit push changing only that new record. The existing branch is `codex/webgpu-readiness-audit`. Source-only changes, ordinary pushes, PRs, forced/deleted branch events, dispatches, request edits, multi-commit pushes and reruns cannot authorize preparation or trust.
+2. The coordinator may add the one request record described below in a separate, single-commit push changing only that new record. The existing branch is `codex/webgpu-readiness-audit`. Source-only changes and request-file deletion run static checks only. Ordinary pushes, PRs, forced/deleted branch events, dispatches, request edits, multi-commit pushes and reruns cannot authorize preparation or trust.
 3. The same single non-matrix Windows job repeats static checking, checks out the exact qualified engine commit separately from the helpers, provisions only the previously approved locked tooling, verifies/downloads the exact artifact, builds real Server and ControlPlane.Service, and runs the actual published browser first-frame preflight without a certificate, service, bearer or handoff.
 4. `Prepare` returns only after the preflight browser/context and owned process tree have exited. Its state fingerprints every published-site file and every file in both native executable directories, plus the successful preflight and cleanup reports. The job uploads only the explicit sanitized prerequisite files, then waits read-only for at most ten minutes.
 5. The coordinator must inspect that exact prerequisite artifact and obtain the required independent security review before publishing the exact-run activation record. The activation binds the request, helper/workflow bytes, trigger commit, run/attempt 1/database job ID, runner, prepared-state hash, static-result hash, prerequisite artifact ID/digest, scope and expiry. No runner writes an activation, creates a credential or obtains repository write permission.
@@ -108,3 +108,12 @@ Only explicit public-result files are uploaded, never directories, archives, ser
 Machine/agent termination, failed provider calls or a certificate creation failure before its exact thumbprint is recorded can prevent provable cleanup. Those outcomes consume any attempted trust action, suppress final uploads when cleanup is uncertain, and require disposal or exact manual cleanup of the disposable runner before reuse. Certificate expiry is not proof of private-key deletion. Cancellation is not used as normal teardown; concurrency does not cancel an active run.
 
 Before activation, retain successful Windows AST/C# evidence, complete artifact/native/preflight evidence and an independent review of the exact final helper/workflow hashes. Source inspection or syntax checking alone does not prove Windows Job Object nesting, certificate-provider behavior, browser WSS, worker simulation or cleanup. The actual one-run walkthrough remains pending until its exact activation is published by the coordinator.
+
+Preparation run `37392995221` on trigger `5618fff2e3eb138596d7405afc9b5923ea7a2468`
+failed before request re-verification or run-directory creation. PowerShell
+resolved two installed `node.exe` applications and treated their combined
+paths as one command name. Node and GitHub CLI resolution now selects the first
+application in PATH order. No activation, service, preflight browser, or
+certificate action occurred. The failed request is retired. A later preparation
+requires a fresh reviewed request bound to the new helper bytes and successful
+Windows static evidence; the failed job and its admission are not reused.
