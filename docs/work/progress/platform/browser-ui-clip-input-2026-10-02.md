@@ -779,3 +779,43 @@ The mouse snapshot still carries the latest pointer position rather than
 separate coordinates on each button transition. Arbitrary multi-position
 gestures between frames, full activation lifecycle, physical IME and all
 input parity remain outside this evidence.
+
+## Physical UI acceptance and checkbox release correction
+
+The exact `e4a90cf2` Windows Editor bundle was checked in Edge
+`154.0.4258.53` on Intel Arc xe-lpg, driver `32.0.101.8132`. The adapter was
+physical, fallback was false, and the browser sandbox remained enabled.
+Startup, all 21 initial pixel checks, and all 17 accessible control proxies
+passed. The scene background and offscreen gap both produced the authored
+post-processed RGBA value `(70,120,157,255)`. Count and Offscreen each
+activated once; keyboard Enter/Space and touch activation also passed.
+
+The strict sequence stopped at the Clip enabled checkbox. One trusted mouse
+press and release focused that managed control, but its checked state stayed
+true and the action count stayed 6. The later strict cases and second strict
+iteration did not run. A separate settled sequence passed repeated Count
+activation, Offscreen activation, Single Line to Multiline focus and editing,
+read-only rejection, resize with retained text/count, and fresh reload. The
+default-size reload clipped the heading, so this evidence does not establish
+full responsive layout coverage.
+
+Source tracing found that `UIToggleComponent.RegisterInput` installed a raw
+mouse-release callback when the control gained focus. Mouse registration
+invalidated the current snapshot, reset its button state, and suppressed the
+held press until release. The control therefore gained focus without receiving
+the release needed by that callback. The component now subscribes once to its
+existing `InteractAction` during construction. Toggle activation then uses the
+canvas's accepted press, release target, clipping, and cancellation checks.
+The focused raw release mapping is removed. Direct accessibility activation
+still calls `Toggle` once. Automatic interaction also rejects an inactive or
+hidden target and a missing, inactive, or hidden canvas. This prevents stale
+gamepad focus from activating an unavailable checkbox. This correction does not change the fixture,
+assertions, time limits, serialized properties, or property-binding behavior.
+
+Independent source review passed. The combined Desktop/shared Release build
+passed with zero warnings and zero errors. The checkbox correction still needs
+fresh browser qualification.
+The exact `e4a90cf2` Linux UI job reached a presented frame with no resource or
+pipeline failure, then failed its animation-frame deadline before initial
+pixel acceptance. Its cause remains open. The hardware results above do not
+close that software-renderer failure.
