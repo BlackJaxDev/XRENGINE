@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
@@ -732,25 +733,91 @@ async function waitForShadowCaptureFrame(deadline) {
     }
 }
 
+/** Checks the fixture assumptions that make screenshot preparation unnecessary. */
+function readShadowCaptureGeometry(element, { deadline, expectedPage }) {
+    const requireTime = () => {
+        if (Date.now() >= deadline) throw new Error('BrowserSmoke.ShadowCaptureDeadline: geometry read expired.');
+    };
+    requireTime();
+    if (location.href !== expectedPage || window !== window.top || element.ownerDocument !== document ||
+        !(element instanceof HTMLCanvasElement) || document.querySelectorAll('#input-surface').length !== 1 ||
+        document.querySelector('#input-surface') !== element || element.hasChildNodes())
+        throw new Error('BrowserSmoke.ShadowCaptureDocument: require the expected main document and one empty canvas.');
+    if (document.fonts?.status !== 'loaded' || document.fonts.size !== 0)
+        throw new Error('BrowserSmoke.ShadowCaptureFonts: require loaded system fonts and no custom font faces.');
+    // A checkbox has no caret. Reject other input types unless they also cannot have one.
+    const nonCaretInputs = ['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'];
+    if (document.designMode !== 'off' || document.querySelector('textarea,[contenteditable],iframe,frame,object,embed,fencedframe') ||
+        [...document.querySelectorAll('input')].some(input => !nonCaretInputs.includes(input.type)) ||
+        [...document.querySelectorAll('*')].some(node => node.shadowRoot))
+        throw new Error('BrowserSmoke.ShadowCaptureCaret: require no editable caret targets or nested document roots.');
+    const bounds = element.getBoundingClientRect();
+    const result = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+        bitmapWidth: element.width, bitmapHeight: element.height, devicePixelRatio, scrollX, scrollY,
+        viewportWidth: innerWidth, viewportHeight: innerHeight,
+        viewportScale: visualViewport?.scale ?? null,
+        viewportOffsetX: visualViewport?.offsetLeft ?? null, viewportOffsetY: visualViewport?.offsetTop ?? null };
+    requireTime();
+    return result;
+}
+
+/** Matches the pinned Playwright 1.63 viewport clip translation at unit device scale. */
+function shadowProtocolClip(metrics, before, clip) {
+    const visual = metrics?.visualViewport;
+    assert(['offsetX', 'offsetY', 'pageX', 'pageY', 'clientWidth', 'clientHeight', 'scale']
+        .every(field => Number.isFinite(visual?.[field])) &&
+        (visual.zoom === undefined || Number.isFinite(visual.zoom)) &&
+        visual.scale === 1 && visual.offsetX === 0 && visual.offsetY === 0 &&
+        visual.pageX === before.scrollX && visual.pageY === before.scrollY &&
+        visual.clientWidth > 0 && visual.clientHeight > 0 && before.devicePixelRatio === 1,
+    'BrowserSmoke.ShadowCaptureMetrics: require finite, unscaled metrics that match the canvas scroll position.');
+    // The visual viewport excludes scrollbar gutters. It need not equal window.innerWidth.
+    return { x: visual.pageX + clip.x, y: visual.pageY + clip.y,
+        width: Math.floor(clip.width / visual.scale + 0.001),
+        height: Math.floor(clip.height / visual.scale + 0.001), scale: 1 };
+}
+
+/** Rejects oversized or malformed protocol data before allocating decoded PNG bytes. */
+function decodeShadowScreenshot(data, requireTime) {
+    requireTime();
+    assert(typeof data === 'string' && data.length > 0 && data.length <= 11184812 && data.length % 4 === 0,
+        'BrowserSmoke.ShadowImageEncoding: require bounded, padded base64 screenshot data.');
+    const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+    const decodedLength = data.length / 4 * 3 - padding;
+    assert(decodedLength <= 8388608 && !/[^A-Za-z0-9+/]/.test(data.slice(0, data.length - padding)) &&
+        (!padding || ('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+            .indexOf(data[data.length - padding - 1]) & (padding === 2 ? 15 : 3)) === 0),
+    'BrowserSmoke.ShadowImageEncoding: require valid base64 with at most 8 MiB of decoded data.');
+    requireTime();
+    const image = Buffer.from(data, 'base64');
+    requireTime();
+    assert(image.byteLength === decodedLength && image.byteLength <= 8388608,
+        'BrowserSmoke.ShadowImageSize: encoded screenshot exceeds 8 MiB or has an invalid decoded length.');
+    return image;
+}
+
 async function captureShadowSurface(page, config, imageAnalysis, slot, name, failure, captureContext,
     reference = null, observeResize = false) {
     const budget = Math.min(config.timeout, 10000);
     const startedAt = Date.now();
     const deadline = startedAt + budget;
-    const { programs, state, extent, afterSerial } = captureContext;
+    const { programs, state, extent, afterSerial, expectedPage } = captureContext;
     assert(programs && ['on', 'off'].includes(state) && Number.isSafeInteger(afterSerial) && afterSerial >= 0 &&
+        typeof expectedPage === 'string' && expectedPage.length > 0 &&
         (extent === null || Array.isArray(extent) && extent.length === 2 && extent.every(value => Number.isSafeInteger(value) && value > 0)),
-    'BrowserSmoke.ShadowCaptureContext: require programs, state, a valid extent, and the prior completed serial.');
+    'BrowserSmoke.ShadowCaptureContext: require programs, state, the expected page, a valid extent, and the prior completed serial.');
     const canvas = page.locator('#input-surface');
     const unrun = () => ({ status: 'unrun', attempt: null, value: null });
     const phases = ['wait-native-consumer', 'complete-native-consumer', 'verify-native-identity',
-        'scroll-into-view', 'geometry-before', 'canvas-screenshot', 'geometry-after',
+        'create-capture-session', 'scroll-into-view', 'geometry-before', 'layout-metrics', 'capture-screenshot',
+        'decode-screenshot', 'write-screenshot', 'geometry-after', 'detach-capture-session',
         'inspect-pixels', 'inspect-alignment', 'read-status', 'read-failure-status', 'next-animation-frame'];
     const diagnostics = { schema: 1, name, budgetMs: budget, startedAtUtcMs: startedAt,
         elapsedMs: null, attempt: 0, activePhase: null,
         phases: Object.fromEntries(phases.map(phase => [phase, { attempt: null, phase, status: 'unrun',
             startedAtMs: null, elapsedMs: null, remainingMs: null }])),
         steps: [], omittedSteps: 0, before: unrun(), after: unrun(), clip: unrun(), latestSummary: unrun(),
+        sessionCleanup: 'not-created',
         gate: { status: 'unrun', extent: null, afterSerial, selectedNative: null, selectedSerial: null, completedSerial: null } };
     if (observeResize) {
         diagnostics.resizeObserver = shadowResizeObservers.get(page) ?? { status: 'unavailable', reason: 'not-installed' };
@@ -759,8 +826,8 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
                 remainingMs: null, readBudgetMs: null, elapsedMs: null, source: null }]));
     }
     let halfwayTimer, captureClosed = false;
-    const stopHalfwayCheckpoint = () => {
-        captureClosed = true;
+    let captureSession = null, protocolPending = false, detachRequested = false;
+    const sealHalfwayCheckpoint = () => {
         clearTimeout(halfwayTimer);
         const record = diagnostics.resizeCheckpoints?.halfway;
         if (record?.reason === 'checkpoint-read-pending') {
@@ -768,19 +835,24 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
             record.elapsedMs = Date.now() - record.utcMs;
         }
     };
+    const stopHalfwayCheckpoint = () => {
+        captureClosed = true;
+        sealHalfwayCheckpoint();
+    };
     const withCaptureEvidence = error => {
         const result = error instanceof Error ? error : new Error(String(error));
         stopHalfwayCheckpoint();
         diagnostics.elapsedMs = Date.now() - startedAt;
-        // Copy before browser evidence collection or cleanup can run. Pending work cannot change this record.
+        // Copy after bounded session cleanup and before other browser evidence reads. Late replies cannot change it.
         result.shadowCapture = structuredClone(diagnostics);
         return result;
     };
-    const requireCaptureTime = () => {
-        if (captureClosed || Date.now() >= deadline)
+    const requireCaptureTime = (cleanup = false) => {
+        if ((!cleanup && captureClosed) || Date.now() >= deadline)
             throw new Error(`${failure} Canvas capture exceeded its ${budget} ms budget.`);
     };
-    const step = async (phase, action) => {
+    const step = async (phase, action, cleanup = false) => {
+        requireCaptureTime(cleanup);
         const stepStartedAt = Date.now();
         const remaining = deadline - stepStartedAt;
         const record = { attempt: diagnostics.attempt, phase, status: 'pending',
@@ -792,18 +864,20 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
         if (remaining <= 0) {
             record.status = 'not-started-budget';
             record.elapsedMs = 0;
-            throw withCaptureEvidence(new Error(`${failure} Canvas capture exceeded its ${budget} ms budget.`));
+            throw new Error(`${failure} Canvas capture exceeded its ${budget} ms budget.`);
         }
         let timer;
         let timedOut = false;
         try {
-            const result = await Promise.race([action(), new Promise((_, reject) => {
+            const timeout = new Promise((_, reject) => {
                 timer = setTimeout(() => {
                     timedOut = true;
                     reject(new Error(`${failure} Canvas capture exceeded its ${budget} ms budget.`));
-                }, remaining);
-            })]);
-            requireCaptureTime();
+                }, Math.max(0, deadline - Date.now()));
+            });
+            requireCaptureTime(cleanup);
+            const result = await Promise.race([action(), timeout]);
+            requireCaptureTime(cleanup);
             record.status = 'fulfilled';
             record.elapsedMs = Date.now() - stepStartedAt;
             diagnostics.activePhase = null;
@@ -811,20 +885,55 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
         } catch (error) {
             record.status = timedOut || Date.now() >= deadline || error?.code === 'SHADOW_IMAGE_DEADLINE' ? 'timed-out' : 'rejected';
             record.elapsedMs = Date.now() - stepStartedAt;
-            throw withCaptureEvidence(error);
+            stopHalfwayCheckpoint();
+            throw error;
         } finally { clearTimeout(timer); }
+    };
+    // The public API cannot cancel creation, send, or detach. A late creation owns only its detach.
+    const requestDetach = session => {
+        if (detachRequested) return Promise.resolve();
+        detachRequested = true;
+        try { return session.detach(); }
+        catch (error) { return Promise.reject(error); }
+    };
+    const createCaptureSession = async () => {
+        requireCaptureTime();
+        diagnostics.sessionCleanup = 'unverified';
+        const session = await page.context().newCDPSession(page);
+        if (captureClosed || Date.now() >= deadline) {
+            void requestDetach(session).catch(() => {});
+            requireCaptureTime();
+        }
+        captureSession = session;
+    };
+    const sendCaptureCommand = async (method, parameters) => {
+        requireCaptureTime();
+        assert(captureSession && !protocolPending && !detachRequested,
+            'BrowserSmoke.ShadowCaptureSession: require one available owned protocol session.');
+        protocolPending = true;
+        try {
+            const result = await captureSession.send(method, parameters);
+            requireCaptureTime();
+            protocolPending = false;
+            return result;
+        } catch (error) {
+            if (!captureClosed && Date.now() < deadline) protocolPending = false;
+            throw error;
+        }
+    };
+    const detachCaptureSession = async (cleanup = false) => {
+        // Do not overlap a pending protocol command or add a cleanup allowance after expiry.
+        if (!captureSession || protocolPending || detachRequested || Date.now() >= deadline) return;
+        await step('detach-capture-session', async () => {
+            requireCaptureTime(cleanup);
+            await requestDetach(captureSession);
+            requireCaptureTime(cleanup);
+            diagnostics.sessionCleanup = 'detached';
+        }, cleanup);
     };
     const geometry = () => {
         requireCaptureTime();
-        return canvas.evaluate((element, deadline) => {
-            if (Date.now() >= deadline) throw new Error('BrowserSmoke.ShadowCaptureDeadline: geometry read expired.');
-            const bounds = element.getBoundingClientRect();
-            return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
-                bitmapWidth: element.width, bitmapHeight: element.height, devicePixelRatio, scrollX, scrollY,
-                viewportWidth: innerWidth, viewportHeight: innerHeight,
-                viewportScale: visualViewport?.scale ?? null,
-                viewportOffsetX: visualViewport?.offsetLeft ?? null, viewportOffsetY: visualViewport?.offsetTop ?? null };
-        }, deadline);
+        return canvas.evaluate(readShadowCaptureGeometry, { deadline, expectedPage });
     };
     const nextFrame = async () => {
         requireCaptureTime();
@@ -861,6 +970,7 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
         await step('wait-native-consumer', async () => {
             for (;;) {
                 const observed = await readGate(false);
+                requireCaptureTime();
                 const selectedNative = selectedShadowNative(observed.submissions, state, true);
                 const consumers = selectedNative ? matchingShadowConsumers(observed.gpu, selectedNative,
                     gate.extent, afterSerial, observed.gpu.queueSubmits) : [];
@@ -889,6 +999,7 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
         await step('verify-native-identity', async () => {
             for (;;) {
                 const observed = await readGate(true);
+                requireCaptureTime();
                 const selectedNative = selectedShadowNative(observed.submissions, state);
                 assert(selectedNative === gate.selectedNative,
                     'BrowserSmoke.ShadowCaptureSelection: native selection changed before capture.');
@@ -937,18 +1048,24 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
     }, Math.max(0, startedAt + budget / 2 - Date.now()));
     try {
         if (observeResize) await readShadowResizeCheckpoint(page, diagnostics, 'capture-start');
+        requireCaptureTime();
         const initialGeometry = await step('geometry-before', geometry);
+        requireCaptureTime();
         diagnostics.before = { status: 'available', attempt: diagnostics.attempt, value: initialGeometry };
         await completeCurrentExtent(initialGeometry);
+        requireCaptureTime();
+        await step('create-capture-session', createCaptureSession);
         requireCaptureTime();
         do {
             if (observeResize && Date.now() - startedAt >= budget / 2)
                 await readShadowResizeCheckpoint(page, diagnostics, 'halfway');
+            requireCaptureTime();
             diagnostics.attempt++;
             diagnostics.before = unrun();
             diagnostics.after = unrun();
             diagnostics.clip = unrun();
             let before = await step('geometry-before', geometry);
+            requireCaptureTime();
             diagnostics.before = { status: 'available', attempt: diagnostics.attempt, value: before };
             let viewport = page.viewportSize();
             let capture = captureClip(before, viewport);
@@ -961,6 +1078,7 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
             } else {
                 await step('scroll-into-view', () => canvas.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) }));
                 before = await step('geometry-before', geometry);
+                requireCaptureTime();
                 diagnostics.before = { status: 'available', attempt: diagnostics.attempt, value: before };
                 viewport = page.viewportSize();
                 capture = captureClip(before, viewport);
@@ -969,27 +1087,47 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
                 'BrowserSmoke.ShadowCaptureExtent: canvas backing extent changed after the completion gate.');
             const { clip } = capture;
             diagnostics.clip = { status: 'available', attempt: diagnostics.attempt, value: { ...clip, viewport } };
-            const image = await step('canvas-screenshot', () => {
+            const protocolClip = await step('layout-metrics', async () => {
                 assert(capture.valid,
                 'BrowserSmoke.ShadowCaptureBounds: the complete canvas must fit the unscaled viewport without clipping.');
+                const metrics = await sendCaptureCommand('Page.getLayoutMetrics');
                 requireCaptureTime();
-                return page.screenshot({ path: path.join(config.output, `${name}.png`), clip, fullPage: false,
-                    timeout: Math.max(1, deadline - Date.now()) });
+                return shadowProtocolClip(metrics, before, clip);
             });
+            requireCaptureTime();
+            diagnostics.clip.value.protocolClip = protocolClip;
+            const encoded = await step('capture-screenshot', () => sendCaptureCommand('Page.captureScreenshot', {
+                format: 'png', clip: protocolClip, captureBeyondViewport: false,
+            }));
+            requireCaptureTime();
+            const image = await step('decode-screenshot', () => decodeShadowScreenshot(encoded?.data, requireCaptureTime));
+            requireCaptureTime();
+            await step('write-screenshot', () => {
+                requireCaptureTime();
+                // An OS write cannot be interrupted. A late return cannot qualify this capture or start more work.
+                writeFileSync(path.join(config.output, `${name}.png`), image);
+                requireCaptureTime();
+            });
+            requireCaptureTime();
             const after = await step('geometry-after', geometry);
+            requireCaptureTime();
             diagnostics.after = { status: 'available', attempt: diagnostics.attempt, value: after };
             let imageSha256;
             const decoded = await step('inspect-pixels', () => {
+                requireCaptureTime();
                 assert(image.byteLength <= 8 * 1024 * 1024, 'BrowserSmoke.ShadowImageSize: encoded screenshot exceeds 8 MiB.');
                 imageSha256 = sha256(image);
+                requireCaptureTime();
                 return imageAnalysis.request('inspect', { slot, hash: imageSha256, png: image,
                     width: clip.width, height: clip.height, canvasWidth: before.bitmapWidth,
                     canvasHeight: before.bitmapHeight, cssWidth: after.width }, deadline);
             });
+            requireCaptureTime();
             const pixels = decoded.pixels;
             const analyzed = await step('inspect-alignment', () => imageAnalysis.request('align', {
                 slot, hash: imageSha256, reference: reference ? { slot: reference.analysisSlot, hash: reference.imageSha256 } : null,
             }, deadline));
+            requireCaptureTime();
             const alignment = analyzed.alignment;
             const stable = equal(before, after) && before.devicePixelRatio === 1 &&
                 equal(viewport, page.viewportSize()) && pixels.width === clip.width && pixels.height === clip.height &&
@@ -1003,26 +1141,38 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
             if (observeResize && pixels.colorful === 0) await readShadowResizeCheckpoint(page, diagnostics, 'first-blank');
             if (observeResize && Date.now() - startedAt >= budget / 2)
                 await readShadowResizeCheckpoint(page, diagnostics, 'halfway');
+            requireCaptureTime();
             if (hasSurface(pixels) && latest.captureValidity.accepted && Date.now() < deadline) {
+                await detachCaptureSession();
+                requireCaptureTime();
+                assert(diagnostics.sessionCleanup === 'detached',
+                    'BrowserSmoke.ShadowCaptureCleanup: owned protocol session detach was not acknowledged.');
                 latest.captureGate = structuredClone(diagnostics.gate);
+                latest.captureSessionCleanup = diagnostics.sessionCleanup;
                 if (observeResize) {
-                    stopHalfwayCheckpoint();
+                    sealHalfwayCheckpoint();
                     diagnostics.resizeCheckpoints.failure.reason = 'capture-completed';
                     latest.resizeCheckpoints = structuredClone(diagnostics.resizeCheckpoints);
                 }
+                requireCaptureTime();
                 return { image, pixels: latest, imageSha256, analysisSlot: slot,
                     receiverComparison: analyzed.comparison, comparedToHash: reference?.imageSha256 ?? null };
             }
             if (await step('read-status', () => page.locator('#status').getAttribute('data-state')) === 'failed')
-                throw withCaptureEvidence(new Error(`BrowserSmoke.EngineFrameFailed: ${await step('read-failure-status',
-                    () => page.locator('#status').textContent())}`));
+                throw new Error(`BrowserSmoke.EngineFrameFailed: ${await step('read-failure-status',
+                    () => page.locator('#status').textContent())}`);
             // Retry at the next browser frame, within the same capture budget. Do not add a fixed startup delay.
             const remaining = deadline - Date.now();
             if (remaining > 0) await step('next-animation-frame', nextFrame);
         } while (Date.now() < deadline);
-        throw withCaptureEvidence(new Error(`${failure} Last canvas summary: ${JSON.stringify(latest)}`));
+        throw new Error(`${failure} Last canvas summary: ${JSON.stringify(latest)}`);
     } catch (error) {
-        throw error?.shadowCapture ? error : withCaptureEvidence(error);
+        stopHalfwayCheckpoint();
+        const failedPhase = diagnostics.activePhase;
+        // Preserve the capture error if bounded cleanup also fails.
+        try { await detachCaptureSession(true); } catch { /* Cleanup remains unverified. */ }
+        diagnostics.activePhase = failedPhase;
+        throw withCaptureEvidence(error);
     } finally { stopHalfwayCheckpoint(); }
 }
 
@@ -1175,7 +1325,8 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
         await run('off', 0, async (page, _events, name, detail) => {
             baseline.initial = await captureShadowSurface(page, config, imageAnalysis, 'off-initial', `${name}-playing`,
                 'BrowserSmoke.ShadowOffSurface: the authored OFF surface did not reach the canvas.',
-                { programs: offArtifacts.programs, state: 'off', extent: null, afterSerial: 0 });
+                { programs: offArtifacts.programs, state: 'off', extent: null, afterSerial: 0,
+                    expectedPage: `${origin}/__baseline/index.html` });
             baseline.initialExtent = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
             const initial = await snapshot(page);
             const initialQualification = assertShadowEvidence(initial, offArtifacts.programs, 'off', baseline.initialExtent);
@@ -1187,7 +1338,8 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
                 const extent = await resize(page, widths[iteration]);
                 const image = await captureShadowSurface(page, config, imageAnalysis, `off-${widths[iteration]}`, `${name}-resized-${iteration}`,
                     'BrowserSmoke.ShadowOffResize: the authored OFF surface disappeared after resize.',
-                    { programs: offArtifacts.programs, state: 'off', extent, afterSerial: prior.gpu.completedSerial }, null, iteration === 0);
+                    { programs: offArtifacts.programs, state: 'off', extent, afterSerial: prior.gpu.completedSerial,
+                        expectedPage: `${origin}/__baseline/index.html` }, null, iteration === 0);
                 const evidence = await snapshot(page);
                 const qualification = assertShadowEvidence(evidence, offArtifacts.programs, 'off', extent, prior.gpu.completedSerial);
                 baseline.resized.push({ ...image, extent });
@@ -1200,7 +1352,8 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
             report.advancedShadowIterations.push(result);
             const playing = await captureShadowSurface(page, config, imageAnalysis, 'current', `${name}-playing`,
                 'BrowserSmoke.ShadowSurface: the authored ON surface did not reach the canvas.',
-                { programs: onArtifacts.programs, state: 'on', extent: null, afterSerial: 0 }, baseline.initial);
+                { programs: onArtifacts.programs, state: 'on', extent: null, afterSerial: 0,
+                    expectedPage: `${origin}/__game/index.html` }, baseline.initial);
             const before = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
             assert(equal(before, baseline.initialExtent), 'BrowserSmoke.ShadowComparison: initial ON/OFF canvas extents differ.');
             result.playing = playing.pixels;
@@ -1212,7 +1365,8 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
             assert(equal(after, baseline.resized[iteration].extent), 'BrowserSmoke.ShadowComparison: resized ON/OFF canvas extents differ.');
             const resized = await captureShadowSurface(page, config, imageAnalysis, 'current', `${name}-resized`,
                 'BrowserSmoke.ShadowResize: the authored ON surface disappeared after resize.',
-                { programs: onArtifacts.programs, state: 'on', extent: after, afterSerial: result.initial.gpu.completedSerial },
+                { programs: onArtifacts.programs, state: 'on', extent: after, afterSerial: result.initial.gpu.completedSerial,
+                    expectedPage: `${origin}/__game/index.html` },
                 baseline.resized[iteration]);
             result.resized = resized.pixels;
             result.after = await snapshot(page);
