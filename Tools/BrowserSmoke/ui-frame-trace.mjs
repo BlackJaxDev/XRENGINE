@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 // Activation requires a separate review. A local command-line flag is insufficient.
 const authorization = Object.freeze({ enabled: true, requestId: '3e875a33-496f-4054-a609-af4970a51fe1',
     activationPath: '.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json',
-    priorCommit: '9bcbda0790f5ebe2ddc4874561e823dbb2aed8ca' });
+    priorCommit: 'f0d323533ebfa92ccaca01b63bd16fca98e8a36d' });
 export function getUiFrameTraceAuthorization() { return authorization; }
 const categories = Object.freeze(['gpu.dawn', 'gpu', 'viz', 'cc', 'blink']);
 const limits = Object.freeze({ recordingMs: 30000, drainMs: 5000, inputBytes: 16 * 1024 * 1024,

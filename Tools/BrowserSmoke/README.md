@@ -466,7 +466,7 @@ reuse its activation record or its consumed one-run approval. The separately
 approved replacement uses request `3e875a33-496f-4054-a609-af4970a51fe1` and
 `.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json`. Its source
 authorization permits only the single non-forced push immediately after
-`9bcbda0790f5ebe2ddc4874561e823dbb2aed8ca`. A separate activation record must
+`f0d323533ebfa92ccaca01b63bd16fca98e8a36d`. A separate activation record must
 bind that source commit and its exact workflow run before any capture can start.
 The original UI assertions and deadlines remain active.
 
@@ -477,6 +477,14 @@ or trace. That activation record is retired. The capture allowance remains unuse
 the corrected source needs a new exact source/run activation. Its failure artifact
 is `editor-ui-parity-browser-qualification`, ID `11397631830`, SHA-256
 `a2ccba410c6c931d7ce1656488853c57520b7cba670fce9d0aff43d862b2983a`.
+
+The next activation selected source `1eb898c77020a15012fdb918b2cfdac2db4577c6`,
+which preceded the required native DLL staging correction. GitHub superseded
+[run 37437468558](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37437468558)
+before any job started. The completed run is cancelled and has zero jobs. It
+created no claim, browser or trace, and its activation record is retired. The
+source now binds to the corrected prerequisite commit above. The same single
+capture allowance remains unused.
 
 The original capture artifact is `editor-ui-parity-browser-qualification`, ID
 `11390519203`, SHA-256
