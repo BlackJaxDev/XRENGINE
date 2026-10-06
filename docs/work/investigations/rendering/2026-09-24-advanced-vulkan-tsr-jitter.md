@@ -148,6 +148,19 @@ depth copy there would introduce a separate regression. Default still uses the
 shared framebuffer-axis displacement conversion, but a complete stable-grid
 conversion requires separating its overlay composition.
 
+Update 2026-10-05: the late depth copy now applies to Default. With the early
+copy, history depth was pre-overlay depth, while the resolve compared
+post-overlay depth. In the captured mode-5 frame, the rotation sphere's whole
+footprint failed the depth test. A desktop Vulkan A/B showed a solid rejected
+disk in control and only a thin silhouette ring after the change. A short
+moving sequence showed no visible trails. Inside the footprint, the test now
+compares sphere depth with sphere depth, so only neighborhood clipping limits
+ghosts behind it. Other depth-writing or untagged overlays, OpenGL, and
+measured motion trails were not tested, so the prediction is not disproved in
+general. The deferred-depth gate no longer depends on the pipeline type; it
+applies to every TSR frame in every chain. The de-jitter statement about the
+stable-output grid still applies. See the [Monado investigation](2026-10-05-vulkan-stall-monado.md#tsr-history-depth-order-on-default-chain-paths).
+
 An independent source review identified these pipeline differences; a bounded
 broker review confirmed the stable-color/raw-depth coordinate formulas. Neither
 review substitutes for live image validation.

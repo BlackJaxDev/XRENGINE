@@ -113,6 +113,8 @@ public static partial class EditorUnitTests
     {
         public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop; //Selects the VR launch path: Desktop, Emulated scene-only VR, Monado-backed OpenXR, vendor OpenVR, or vendor OpenXR.
         public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.SequentialViews; //Requests how VR eye views are rendered. OpenXR Vulkan SinglePassStereo strictly requires true layered multiview rendering and never falls back to per-eye rendering; unavailable capabilities are logged and the XR output is not rendered.
+        public EVrRenderPipeline RenderPipeline { get; set; } = EVrRenderPipeline.Default; //Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (SequentialViews and ParallelCommandBufferRecording), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.
+        public ERvcPipelineMode RvcPipelineMode { get; set; } = ERvcPipelineMode.Off; //Requested RVC mode when RenderPipeline is Rvc. Off, or a mode that the RVC resolver cannot run, renders no XR output.
         public bool PreviewStereoViews { get; set; } = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active.
         public bool AllowDesktopEditing { get; set; } = true; //When a VR pawn is active, keeps a desktop editing camera/pawn available.
         public UnitTestingVrFoveationSettings Foveation { get; set; } = new(); //Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback.

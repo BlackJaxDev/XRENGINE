@@ -903,6 +903,16 @@
           "description": "Requests how VR eye views are rendered. OpenXR Vulkan SinglePassStereo strictly requires true layered multiview rendering and never falls back to per-eye rendering; unavailable capabilities are logged and the XR output is not rendered.",
           "markdownDescription": "Supported values: `SequentialViews`, `SinglePassStereo`, `ParallelCommandBufferRecording`."
         },
+        "RenderPipeline": {
+          "$ref": "#/definitions/EVrRenderPipeline",
+          "description": "Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (SequentialViews and ParallelCommandBufferRecording), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.",
+          "markdownDescription": "Supported values: `Default`, `Advanced`, `Rvc`."
+        },
+        "RvcPipelineMode": {
+          "$ref": "#/definitions/ERvcPipelineMode",
+          "description": "Requested RVC mode when RenderPipeline is Rvc. Off, or a mode that the RVC resolver cannot run, renders no XR output.",
+          "markdownDescription": "Supported values: `Off`, `ForwardPlusOracle`, `VisibilityOnlyDebug`, `MaterialCache`, `SharedLighting`, `Full`."
+        },
         "PreviewStereoViews": {
           "type": "boolean",
           "description": "Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active."
@@ -947,6 +957,27 @@
         "ParallelCommandBufferRecording"
       ],
       "markdownDescription": "Supported values: `SequentialViews`, `SinglePassStereo`, `ParallelCommandBufferRecording`."
+    },
+    "EVrRenderPipeline": {
+      "type": "string",
+      "enum": [
+        "Default",
+        "Advanced",
+        "Rvc"
+      ],
+      "markdownDescription": "Supported values: `Default`, `Advanced`, `Rvc`."
+    },
+    "ERvcPipelineMode": {
+      "type": "string",
+      "enum": [
+        "Off",
+        "ForwardPlusOracle",
+        "VisibilityOnlyDebug",
+        "MaterialCache",
+        "SharedLighting",
+        "Full"
+      ],
+      "markdownDescription": "Supported values: `Off`, `ForwardPlusOracle`, `VisibilityOnlyDebug`, `MaterialCache`, `SharedLighting`, `Full`."
     },
     "UnitTestingVrFoveationSettings": {
       "type": "object",

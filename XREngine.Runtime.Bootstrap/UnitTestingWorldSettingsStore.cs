@@ -474,6 +474,22 @@ public static class UnitTestingWorldSettingsStore
             applied = true;
         }
 
+        if (TryGetEnumEnv(XREngineEnvironmentVariables.UnitTestVrRenderPipeline, out EVrRenderPipeline vrRenderPipeline))
+        {
+            settings.VR.RenderPipeline = vrRenderPipeline;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.RenderPipeline));
+            applied = true;
+        }
+
+        if (TryGetEnumEnv(XREngineEnvironmentVariables.UnitTestVrRvcPipelineMode, out ERvcPipelineMode vrRvcPipelineMode))
+        {
+            settings.VR.RvcPipelineMode = vrRvcPipelineMode;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR), nameof(UnitTestingVrSettings.RvcPipelineMode));
+            applied = true;
+        }
+
         if (TryGetEnumEnv(XREngineEnvironmentVariables.UnitTestVrFoveationMode, out EVrFoveationMode foveationMode))
         {
             settings.VR.Foveation.Mode = foveationMode;
@@ -936,6 +952,8 @@ public static class UnitTestingWorldSettingsStore
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestPreviewVrStereoViews)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestAllowDesktopEditingInVr)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrViewRenderMode)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrRenderPipeline)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrRvcPipelineMode)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrFoveationMode)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrFoveationQualityPreset)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestVrFoveationRequireRequested)

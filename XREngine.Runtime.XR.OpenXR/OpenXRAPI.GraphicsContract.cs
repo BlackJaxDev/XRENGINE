@@ -64,21 +64,23 @@ public unsafe partial class OpenXRAPI
             RuntimeRenderingHostServices.Presentation.EnableOpenXrVulkanParallelRendering,
             trueSinglePassStereoAvailable,
             rendersExternalSwapchainTargets: !trueSinglePassStereoAvailable,
-            trueSinglePassStereoUnavailableReason: trueSinglePassStereoUnavailableReason);
+            trueSinglePassStereoUnavailableReason: trueSinglePassStereoUnavailableReason,
+            requestedPipeline: RuntimeRenderingHostServices.Presentation.VrRenderPipeline);
         RecordSmokeViewRenderModeResolution(resolution);
 
         if (resolution.IsSupported)
             return true;
 
         Debug.RenderingWarningEvery(
-            $"OpenXR.ViewRenderMode.Unsupported.{backend}.{resolution.RequestedMode}",
+            $"OpenXR.ViewRenderMode.Unsupported.{backend}.{resolution.RequestedMode}.{resolution.RequestedPipeline}",
             TimeSpan.FromSeconds(5),
-            "[OpenXR] Unsupported VR.ViewRenderMode={0} for backend {1}. {2}",
+            "[OpenXR] Unsupported VR.ViewRenderMode={0} VR.RenderPipeline={1} for backend {2}. {3}",
             resolution.RequestedMode,
+            resolution.RequestedPipeline,
             backend,
             resolution.Diagnostic ?? "No fallback was applied.");
         RecordSmokeFailureOnce(
-            $"Unsupported VR.ViewRenderMode={resolution.RequestedMode} for backend {backend}. " +
+            $"Unsupported VR.ViewRenderMode={resolution.RequestedMode} VR.RenderPipeline={resolution.RequestedPipeline} for backend {backend}. " +
             $"{resolution.Diagnostic ?? "No fallback was applied."}");
         return false;
     }

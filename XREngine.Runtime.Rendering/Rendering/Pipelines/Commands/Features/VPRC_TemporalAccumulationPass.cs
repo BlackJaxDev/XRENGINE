@@ -408,8 +408,9 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
         /// </summary>
         PopJitter,
         /// <summary>
-        /// Copies full-resolution TSR history color after the resolve. Advanced
-        /// rendering also captures current depth here so the resolve sees previous depth.
+        /// Runs after the TSR resolve. Copies full-resolution TSR history color and
+        /// optional metadata, then copies current depth into history depth. This order
+        /// keeps previous depth intact while the resolve reads it.
         /// </summary>
         CaptureTsrHistoryColor,
         Commit
@@ -676,8 +677,8 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
         }
 
         // History becomes usable only when color and depth cover every layer
-        // represented by this temporal view key. TSR records its separate
-        // full-resolution history color later in the command chain.
+        // represented by this temporal view key. For TSR, CaptureTsrHistoryColor
+        // records full-resolution history color and history depth later in the chain.
         RecordTemporalHistoryCaptured(historyColorSourceFbo, forwardFBO, historyColorFBO,
             depthCaptured: !deferTsrHistoryDepth);
     }
@@ -752,7 +753,7 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
         if (openXrVulkanRuntimeSelected &&
             externalSwapchainTarget &&
             !RuntimeEngine.Rendering.State.IsStereoPass &&
-            !IsAdmittedRvcTwoPassEye())
+            !IsBoundAdvancedOpenXrEye())
         {
             reason = "external OpenXR Vulkan swapchain target";
             return EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain;
@@ -794,9 +795,14 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
         return resolution.TemporalHistoryPolicy;
     }
 
-    private static bool IsAdmittedRvcTwoPassEye()
-        => CurrentRenderingPipeline?.AssignedPipeline is RvcRenderPipeline pipeline &&
-           pipeline.IsAdvancedTwoPassEyeFamilyActive;
+    /// <summary>
+    /// An Advanced OpenXR eye with a bound output owns its own per-eye history,
+    /// so an external swapchain target does not disable it.
+    /// </summary>
+    private static bool IsBoundAdvancedOpenXrEye()
+        => CurrentRenderingPipeline is { } instance &&
+           instance.AssignedPipeline is AdvancedRenderPipeline { IsOpenXrEyeProfile: true } &&
+           instance.AdvancedOutputBinding.IsBound;
 
     private static bool IsHistoryIsolationPolicyDisabled(EVrTemporalHistoryPolicy policy)
         => policy is EVrTemporalHistoryPolicy.Disabled
@@ -812,10 +818,17 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
     private static bool ShouldRunInternalAccumulation(EAntiAliasingMode mode)
         => mode == EAntiAliasingMode.Taa;
 
-    private bool ShouldDeferTsrHistoryDepth(EAntiAliasingMode mode)
-        => mode == EAntiAliasingMode.Tsr
-        && (ParentPipeline is AdvancedRenderPipeline
-            || ParentPipeline is RvcRenderPipeline { IsAdvancedTwoPassEyeFamilyActive: true });
+    /// <summary>
+    /// The TSR resolve runs after Accumulate and reads history depth. Each chain that
+    /// runs a TSR resolve copies current depth after that resolve in
+    /// <see cref="EPhase.CaptureTsrHistoryColor"/>.
+    /// </summary>
+    /// <remarks>
+    /// The decision depends only on the anti-aliasing mode, so the execute and describe
+    /// paths cannot disagree because of the pipeline type or the selected command family.
+    /// </remarks>
+    private static bool ShouldDeferTsrHistoryDepth(EAntiAliasingMode mode)
+        => mode == EAntiAliasingMode.Tsr;
 
     internal static bool ShouldPopulateTemporalInput(EAntiAliasingMode mode)
         => mode is EAntiAliasingMode.Taa
@@ -1599,8 +1612,6 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
 
         AbstractRenderer renderer = AbstractRenderer.Current
             ?? throw new InvalidOperationException("TSR history capture requires an active renderer.");
-        // The resolve has already sampled its history. Advanced rendering can
-        // now replace previous depth with raw current-frame depth.
         using (IDisposable? passScope = PushRenderGraphPass(TsrHistoryColorCopyPassName))
         {
             FrameBufferBlitSubmission colorSubmission = renderer.TryBlitFBOToFBO(
@@ -1634,6 +1645,8 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
             }
         }
 
+        // The resolve and its optional history readers have read previous depth.
+        // Replace it with current depth now.
         if (deferDepth)
         {
             using (RenderPipelineGpuProfiler.Instance.StartScope(TemporalHistoryDepthScopeName))
@@ -1647,7 +1660,7 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
                     Debug.RenderingWarningEvery(
                         $"Temporal.TsrHistoryDepthRejected.{instance.InstanceId}",
                         TimeSpan.FromSeconds(1),
-                        "[Temporal] Advanced TSR history depth copy rejected: {0}",
+                        "[Temporal] TSR history depth copy rejected: {0}",
                         depthSubmission.Reason ?? "unspecified reason");
                     return;
                 }

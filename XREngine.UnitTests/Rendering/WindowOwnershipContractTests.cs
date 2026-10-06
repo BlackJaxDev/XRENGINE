@@ -431,6 +431,115 @@ public sealed class WindowOwnershipContractTests
     }
 
     [Test]
+    public void XRWindow_CollapsedHostApprovedCloseArmsPumpCompletionInsteadOfRenderThreadJob()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
+        int handlerStart = source.IndexOf("private bool HandleDesktopCloseRequested()", StringComparison.Ordinal);
+        handlerStart.ShouldBeGreaterThanOrEqualTo(0);
+        int completionStart = source.IndexOf("private bool TryCompleteApprovedNativeClose()", handlerStart, StringComparison.Ordinal);
+        completionStart.ShouldBeGreaterThan(handlerStart);
+        string handlerBody = source[handlerStart..completionStart];
+
+        int quiesce = handlerBody.IndexOf("QuiesceForWindowRendererTeardown(this)", StringComparison.Ordinal);
+        int closeInProgress = handlerBody.IndexOf("_approvedNativeCloseInProgress = true;", StringComparison.Ordinal);
+        int collapsedStart = handlerBody.IndexOf("if (!IsNativeEventPumpExternallyOwned)", StringComparison.Ordinal);
+        quiesce.ShouldBeGreaterThanOrEqualTo(0);
+        closeInProgress.ShouldBeGreaterThan(quiesce);
+        collapsedStart.ShouldBeGreaterThan(closeInProgress);
+
+        // The collapsed branch must end with its own approval return, before the external-pump job.
+        int collapsedReturn = handlerBody.IndexOf("return true;", collapsedStart, StringComparison.Ordinal);
+        collapsedReturn.ShouldBeGreaterThan(collapsedStart);
+        string collapsedBranch = handlerBody[collapsedStart..collapsedReturn];
+        string externalPumpPath = handlerBody[collapsedReturn..];
+
+        collapsedBranch.ShouldContain("Interlocked.Exchange(ref _approvedNativeCloseCompletionPending, 1);");
+        collapsedBranch.ShouldNotContain("EnqueueRenderThreadTask");
+        collapsedBranch.ShouldNotContain("Dispose(");
+        collapsedBranch.ShouldNotContain("RemoveWindow(");
+        handlerBody[..collapsedStart].ShouldNotContain("EnqueueRenderThreadTask");
+
+        externalPumpPath.ShouldContain("RuntimeEngine.EnqueueRenderThreadTask(");
+        externalPumpPath.ShouldContain("() => TryBeginExternalPumpDispose(\"DesktopClose\")");
+        externalPumpPath.ShouldContain("RenderThreadJobKind.RequiresGraphicsContext");
+
+        // The native close callback never disposes or unregisters the window inline.
+        handlerBody.ShouldNotContain("Dispose();");
+        handlerBody.ShouldNotContain("RemoveWindow(");
+    }
+
+    [Test]
+    public void XRWindow_HostPumpCompletesApprovedCloseBeforeAndAfterNativeEvents()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
+        int pumpStart = source.IndexOf("public void PumpNativeWindowEventsFromHost()", StringComparison.Ordinal);
+        pumpStart.ShouldBeGreaterThanOrEqualTo(0);
+        int nextMethod = source.IndexOf("private void ApplyVSyncModeOnRenderThread", pumpStart, StringComparison.Ordinal);
+        nextMethod.ShouldBeGreaterThan(pumpStart);
+        string pumpBody = source[pumpStart..nextMethod];
+
+        const string completionCheck = "if (TryCompleteApprovedNativeClose())\n                return;";
+        const string disposedGuard = "if (_isDisposed || _isDisposing)";
+        int firstCompletion = pumpBody.IndexOf(completionCheck, StringComparison.Ordinal);
+        int firstDisposedGuard = pumpBody.IndexOf(disposedGuard, StringComparison.Ordinal);
+        int nativePump = pumpBody.IndexOf("_desktopBackend?.PumpEvents();", StringComparison.Ordinal);
+        firstCompletion.ShouldBeGreaterThanOrEqualTo(0);
+        firstDisposedGuard.ShouldBeGreaterThan(firstCompletion);
+        nativePump.ShouldBeGreaterThan(firstDisposedGuard);
+
+        // A close approved inside PumpEvents completes after the native callback unwinds.
+        int secondCompletion = pumpBody.IndexOf(completionCheck, nativePump, StringComparison.Ordinal);
+        int secondDisposedGuard = pumpBody.IndexOf(disposedGuard, nativePump, StringComparison.Ordinal);
+        int snapshotPublish = pumpBody.IndexOf("PublishWindowSurfaceSnapshot(", StringComparison.Ordinal);
+        secondCompletion.ShouldBeGreaterThan(nativePump);
+        secondDisposedGuard.ShouldBeGreaterThan(secondCompletion);
+        snapshotPublish.ShouldBeGreaterThan(secondDisposedGuard);
+        pumpBody.IndexOf(completionCheck, secondCompletion + completionCheck.Length, StringComparison.Ordinal)
+            .ShouldBe(-1);
+    }
+
+    [Test]
+    public void XRWindow_ApprovedCloseCompletionQuiescesBeforeDisposeAndAlwaysRemovesWindow()
+    {
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs");
+        int completionStart = source.IndexOf("private bool TryCompleteApprovedNativeClose()", StringComparison.Ordinal);
+        completionStart.ShouldBeGreaterThanOrEqualTo(0);
+        int nextMethod = source.IndexOf("private void OnFocusChanged", completionStart, StringComparison.Ordinal);
+        nextMethod.ShouldBeGreaterThan(completionStart);
+        string completionBody = source[completionStart..nextMethod];
+
+        int idleFastPath = completionBody.IndexOf("Volatile.Read(ref _approvedNativeCloseCompletionPending) == 0", StringComparison.Ordinal);
+        int consume = completionBody.IndexOf("Interlocked.Exchange(ref _approvedNativeCloseCompletionPending, 0) == 0", StringComparison.Ordinal);
+        int notPending = completionBody.IndexOf("return false;", StringComparison.Ordinal);
+        int tryStart = completionBody.IndexOf("            try\n            {", StringComparison.Ordinal);
+        int abandonedGuard = completionBody.IndexOf("!_renderer.IsShutdownTeardownAbandoned &&", StringComparison.Ordinal);
+        int quiesce = completionBody.IndexOf("RuntimeRenderingHostServices.Factories.QuiesceForWindowRendererTeardown(this)", StringComparison.Ordinal);
+        int abandonTeardown = completionBody.IndexOf("_renderer.AbandonShutdownTeardown();", StringComparison.Ordinal);
+        int dispose = completionBody.IndexOf("Dispose();", StringComparison.Ordinal);
+        int catchStart = completionBody.IndexOf("catch (Exception ex)", StringComparison.Ordinal);
+        int logException = completionBody.IndexOf("Debug.LogException(ex,", StringComparison.Ordinal);
+        int finallyStart = completionBody.IndexOf("            finally\n            {", StringComparison.Ordinal);
+        const string removeWindowCall = "RuntimeRenderingHostServices.Factories.RemoveWindow(this);";
+        int removeWindow = completionBody.IndexOf(removeWindowCall, StringComparison.Ordinal);
+        int completed = completionBody.LastIndexOf("return true;", StringComparison.Ordinal);
+
+        idleFastPath.ShouldBeGreaterThanOrEqualTo(0);
+        consume.ShouldBeGreaterThan(idleFastPath);
+        notPending.ShouldBeGreaterThan(consume);
+        tryStart.ShouldBeGreaterThan(notPending);
+        abandonedGuard.ShouldBeGreaterThan(tryStart);
+        quiesce.ShouldBeGreaterThan(abandonedGuard);
+        abandonTeardown.ShouldBeGreaterThan(quiesce);
+        dispose.ShouldBeGreaterThan(abandonTeardown);
+        catchStart.ShouldBeGreaterThan(dispose);
+        logException.ShouldBeGreaterThan(catchStart);
+        finallyStart.ShouldBeGreaterThan(logException);
+        removeWindow.ShouldBeGreaterThan(finallyStart);
+        completed.ShouldBeGreaterThan(removeWindow);
+        completionBody.IndexOf("RemoveWindow(", removeWindow + removeWindowCall.Length, StringComparison.Ordinal).ShouldBe(-1);
+    }
+
+    [Test]
     public void RuntimeLocalPlayerViewport_ExposesSnapshotInputBindingWithoutThreadAffinedDeviceEscape()
     {
         string contract = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimePlayerViewportContracts.cs");
