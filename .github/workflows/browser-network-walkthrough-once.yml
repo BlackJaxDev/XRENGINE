@@ -73,7 +73,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           path: engine
-          ref: b64f65a7fd7d619e47ec3defdfaa6733a35bbb4b
+          ref: e4a90cf2f865a08421bb68c293d27616465e1558
           persist-credentials: false
 
       - name: Initialize only the recorded native project submodules
