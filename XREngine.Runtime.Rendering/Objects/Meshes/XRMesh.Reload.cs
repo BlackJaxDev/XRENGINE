@@ -21,8 +21,12 @@ public partial class XRMesh
     public override void Reload(string filePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
-        RuntimeAssetReadServices.EnsureHostFileAccess("Cooked mesh reload");
-        byte[] bytes = File.ReadAllBytes(filePath);
+        byte[] bytes;
+        using (RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture())
+        {
+            read.EnsureHostFileAccess("Cooked mesh reload");
+            bytes = read.ReadAllBytes(filePath);
+        }
         if (RuntimeCookedBinarySerializer.Deserialize(typeof(XRMesh), bytes) is not XRMesh loaded)
             throw new InvalidDataException($"Cooked mesh reload returned no XRMesh for '{filePath}'.");
 

@@ -217,6 +217,24 @@ jobs:
             if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing pinned Editor dependency: $file" }
           }
 
+      - name: Stage the pinned Editor shader compiler
+        shell: pwsh
+        run: |
+          $shaderCompiler = 'XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/xr_shaderc.dll'
+          $expectedHash = 'f5753bf8c64930c6170f681ce649cc4515468b5b4fc81aa552d0d79a47b42cff'
+          $expectedBytes = 5520896
+          $pointer = (& git show "HEAD:$shaderCompiler") -join "`n"
+          if ($LASTEXITCODE -ne 0 -or $pointer -notmatch "(?m)^oid sha256:$expectedHash$" -or
+              $pointer -notmatch "(?m)^size $expectedBytes$") {
+            throw 'The Editor shader compiler does not match the reviewed source pin.'
+          }
+          git lfs pull --include="$shaderCompiler" --exclude=""
+          if ($LASTEXITCODE -ne 0) { throw 'The pinned Editor shader compiler could not be fetched.' }
+          if ((Get-Item -LiteralPath $shaderCompiler).Length -ne $expectedBytes -or
+              (Get-FileHash -LiteralPath $shaderCompiler -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedHash) {
+            throw 'The staged Editor shader compiler does not match its recorded size and hash.'
+          }
+
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v6
         with:

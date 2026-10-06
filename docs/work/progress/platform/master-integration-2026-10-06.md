@@ -51,3 +51,25 @@ the merged source. The previous UI trace activation is bound to an older exact
 commit and run; it cannot authorize a capture from this merge. The unused
 replacement capture needs a fresh reviewed source and run binding. Held
 networking requests and the separate publisher-adapter proposal are excluded.
+
+## Windows publishing dependency
+
+Exact merge run [37436603887](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37436603887)
+built the Editor, then failed during Vulkan backend registration. The native
+loader could not load `xr_shaderc.dll`. The browser workflow used checkout's
+default `lfs: false`; the incoming DLL is an LFS pointer. Master's separate
+Windows workflow uses `lfs: true`.
+
+The bounded repair fetches only
+`XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/xr_shaderc.dll`.
+It first checks the committed pointer, then checks the delivered file's
+5,520,896-byte size and SHA-256
+`f5753bf8c64930c6170f681ce649cc4515468b5b4fc81aa552d0d79a47b42cff`.
+The revision and native loading behavior stay unchanged. Other LFS assets are
+not requested. A later successful Editor run must establish delivery and load;
+source review alone does not prove this result.
+
+The seven game jobs could not obtain their bundles after this publisher failure.
+Those failures do not establish seven separate rendering regressions. The bound
+UI capture cannot start without its published UI bundle; its allowance must be
+reconciled from the exact run before any new binding is made.
