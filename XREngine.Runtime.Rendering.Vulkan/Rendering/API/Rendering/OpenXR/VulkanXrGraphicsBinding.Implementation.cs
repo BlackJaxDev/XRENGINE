@@ -159,7 +159,8 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             VrViewRenderModeResolution viewRenderMode = VrViewRenderModeResolver.Resolve(
                 ERenderLibrary.Vulkan,
                 requestedViewMode,
-                projectAllowsParallel);
+                projectAllowsParallel,
+                requestedPipeline: RuntimeRenderingHostServices.Presentation.VrRenderPipeline);
             RecordSmokeViewRenderModeResolution(viewRenderMode);
 
             if (!viewRenderMode.IsSupported)
@@ -307,7 +308,8 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             RuntimeRenderingHostServices.Presentation.EnableOpenXrVulkanParallelRendering,
             trueSinglePassStereoAvailable,
             rendersExternalSwapchainTargets: !trueSinglePassStereoAvailable,
-            trueSinglePassStereoUnavailableReason: trueSinglePassStereoUnavailableReason);
+            trueSinglePassStereoUnavailableReason: trueSinglePassStereoUnavailableReason,
+            requestedPipeline: RuntimeRenderingHostServices.Presentation.VrRenderPipeline);
         RecordSmokeViewRenderModeResolution(resolution);
         LogOpenXrViewRenderModeResolution(backend, resolution);
 
@@ -315,14 +317,16 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             return true;
 
         Debug.RenderingWarningEvery(
-            $"OpenXR.ViewRenderMode.Unsupported.{backend}.{resolution.RequestedMode}",
+            $"OpenXR.ViewRenderMode.Unsupported.{backend}.{resolution.RequestedMode}.{resolution.RequestedPipeline}",
             TimeSpan.FromSeconds(5),
-            "[OpenXR] Unsupported VR.ViewRenderMode={0} for backend {1}. {2}",
+            "[OpenXR] Unsupported VR.ViewRenderMode={0} VR.RenderPipeline={1} for backend {2}. {3}",
             resolution.RequestedMode,
+            resolution.RequestedPipeline,
             backend,
             resolution.Diagnostic ?? "No fallback was applied.");
         RecordSmokeFailureOnce(
-            $"Unsupported VR.ViewRenderMode={resolution.RequestedMode} for backend {backend}. {resolution.Diagnostic ?? "No fallback was applied."}");
+            $"Unsupported VR.ViewRenderMode={resolution.RequestedMode} VR.RenderPipeline={resolution.RequestedPipeline} for backend {backend}. " +
+            $"{resolution.Diagnostic ?? "No fallback was applied."}");
         return false;
     }
 
@@ -578,7 +582,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         Debug.RenderingEvery(
             $"OpenXR.ViewRenderMode.Resolved.{backend}.{resolution.RequestedMode}.{resolution.EffectiveMode}",
             TimeSpan.FromSeconds(2),
-            "[OpenXR] ViewRenderMode requested={0} effective={1} backend={2} supported={3} path={4} temporalHistoryPolicy={5} parallelGate={6} swapchainFormats={7} trueStereoMultiviewSupport={8}",
+            "[OpenXR] ViewRenderMode requested={0} effective={1} backend={2} supported={3} path={4} temporalHistoryPolicy={5} parallelGate={6} swapchainFormats={7} trueStereoMultiviewSupport={8} renderPipeline={9}",
             resolution.RequestedMode,
             resolution.EffectiveMode,
             backend,
@@ -587,7 +591,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
             resolution.TemporalHistoryPolicy,
             RuntimeRenderingHostServices.Presentation.EnableOpenXrVulkanParallelRendering,
             DescribeOpenXrSwapchainFormats(backend),
-            DescribeOpenXrTrueStereoMultiviewSupport());
+            DescribeOpenXrTrueStereoMultiviewSupport(),
+            resolution.RequestedPipeline);
     }
 
     private string DescribeOpenXrSwapchainFormats(ERenderLibrary backend)

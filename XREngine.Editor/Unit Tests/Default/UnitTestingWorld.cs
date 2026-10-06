@@ -146,6 +146,8 @@ public static partial class EditorUnitTests
         if (groupedVrSpecified)
         {
             s.VrViewRenderMode = runtimeSettings.VR.ViewRenderMode;
+            s.VrRenderPipeline = runtimeSettings.VR.RenderPipeline;
+            s.RvcPipelineMode = runtimeSettings.VR.RvcPipelineMode;
             s.VrFoveationMode = runtimeSettings.VR.Foveation.Mode;
             s.VrFoveationQualityPreset = runtimeSettings.VR.Foveation.QualityPreset;
             s.VrFoveationRequireRequested = runtimeSettings.VR.Foveation.RequireRequested;
@@ -157,6 +159,7 @@ public static partial class EditorUnitTests
         Debug.Out(
             $"[UnitTestingWorld] Applied render toggles AllowSkinning={s.AllowSkinning} " +
             $"AllowShaderPipelines={s.AllowShaderPipelines} VrViewRenderMode={s.VrViewRenderMode} " +
+            $"VrRenderPipeline={s.VrRenderPipeline} RvcPipelineMode={s.RvcPipelineMode} " +
             $"VrFoveationMode={s.VrFoveationMode} RenderWindowsWhileInVR={s.RenderWindowsWhileInVR} " +
             $"VrMirrorMode={s.VrMirrorMode} " +
             $"VrMirrorComposeFromEyeTextures={s.VrMirrorComposeFromEyeTextures} " +

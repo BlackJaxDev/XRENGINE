@@ -110,6 +110,97 @@ history acceptance, TSR visual quality, 100 FPS, headset comfort, lighting
 parity, or cumulative report completion. The next scoped item is accepted
 strict-stereo temporal history, with the parked TSR ordering patch as a required
 dependency. Its pre-edit gate is recorded in the investigation.
+
+### Accepted Strict-Stereo Temporal History
+
+Status: **Closed.** The user cleared focused tests on October 5. Strict Vulkan single-pass
+stereo stages CPU temporal history and publishes it only through the tracker's
+native-submission-accepted transition. The parked TSR ordering patch is
+included as a required dependency.
+
+Every live gate passed on Monado. The earlier host covered the source review,
+Release build, cold startup and camera-cut recovery, the 60-second warm liveness
+window, Play/Edit, session restart, normal teardown, and the Submit and
+Recording rejections. A second host (October 5, source `4758666b4`) completed
+the remaining checks:
+
+- An accepted-publication fault (`FailAcceptedPublication`) hit the strict
+  submission and published history exactly once. Its render frame has exactly
+  one committed pair, and later frames keep ready history. An OpenXR
+  `Publish`-stage fault, which drops the layer after acceptance, also published
+  exactly once.
+- Cold and warm RenderDoc captures show `HistoryReady=0` on the first resolve
+  over a discarded new history image. All 26 later frames show `HistoryReady=1`
+  on the same image. Every history color copy follows the resolve. Both eye
+  layers are defined.
+- With the close fix below, a repeat of the fault run wrote the controller's
+  own smoke summary with zero failures. This is the first full smoke-suite pass
+  for the item.
+- 11 cleared test cases drive the CPU submission state machine and the tracker
+  claim without a device. They cover accept-once publication, kept seeds after
+  a discard, one outstanding candidate, and device-loss and camera-cut
+  invalidation. 3 source contracts check the publication call site, the
+  `finally` backstop, and device-loss routing. The focused Release run passed
+  37 of 37, with zero warnings.
+
+This does not establish TSR image quality, exposure, 100 FPS, or headset
+comfort. The captures showed a separate TSR history-depth ordering defect;
+see [TSR History-Depth Order](#tsr-history-depth-order) below. See the
+[investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#accepted-publication-fault-and-coldwarm-renderdoc-checks).
+
+### Final-Window Close Completion
+
+Status: **Validated** for the collapsed editor host on Vulkan. The OpenGL close
+defect stays **Pending** as a separate item.
+
+Since `870987cfc`, closing the final window stopped the engine timer and then
+queued window disposal as a render-thread job. Only a timer render dispatch
+drains that queue. The editor therefore never left `Engine.Run`, and the OpenXR
+smoke never wrote its summary. The collapsed host now completes an approved
+native close on the native window thread, after the close callback unwinds. It
+repeats the final-window quiesce first. The split-pump prototype keeps its job
+path.
+
+The design added the repeated quiesce. An adversarial review then approved it.
+The Release build had zero warnings. The fixed smoke exited normally 0.37
+seconds after `Engine.Run` returned. A Vulkan `WM_CLOSE` closed the editor in
+1.14 seconds. Existing focused tests passed all 20 window ownership contracts
+and the frame-boundary close contract; 8 vendor-upscale source contracts fail in
+files that this change does not touch. OpenGL
+close now reaches a separate shared-context defect: a
+worker thread releases a hidden window on the wrong thread, which terminates
+the process. That defect has its own checklist entry. The dirty-asset prompt,
+two-window shutdown, VRClient, and the split-pump prototype were not exercised.
+See the [investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#smoke-shutdown-delay-root-cause-and-fix).
+
+### TSR History-Depth Order
+
+Status: **Validated** under a user-approved reduced scope. TSR test work is not
+cleared.
+
+The strict OpenXR stereo eye is a `RvcRenderPipeline` that always runs the
+Default command chain. The TSR history-depth deferral applied only to the
+Advanced pipeline, so the stereo eye copied the current depth into history
+before the TSR resolve. In every warm control capture, history depth equaled
+current depth byte for byte. Depth-based history rejection could therefore
+never detect disocclusion. The deferral now depends only on the TSR mode, so
+every TSR chain copies depth after its resolve. The change also applies to
+desktop cameras that use `DefaultRenderPipeline` with TSR. On desktop Vulkan, it
+removes the rotation gizmo's rejected footprint; on OpenGL, only history
+readiness was checked.
+
+RenderDoc A/B on Monado: changed runs copy depth only after the resolve in 100%
+of TSR captures. History depth is the previous frame's copied depth, byte for
+byte. Readiness stays 0 cold and 1 warm. The stationary rejected fraction is
+0.039% in the one qualifying changed run, against 0.029% and 0.032% in 2
+control runs and a 0.53% limit. The accepted-history smoke on the changed
+binary, and desktop Default TSR on Vulkan and OpenGL, also pass. The desktop
+Vulkan gizmo A/B removed a solid rejected disk that control showed in the
+captured mode-5 frame. Dropped gates and their
+reasons are listed in the
+[investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#tsr-history-depth-order-on-default-chain-paths).
+This does not prove that the reported headset ghosting is fixed.
+
 ### Earlier Scoped Results
 
 IDs below preserve links to the active checklist and original investigations.

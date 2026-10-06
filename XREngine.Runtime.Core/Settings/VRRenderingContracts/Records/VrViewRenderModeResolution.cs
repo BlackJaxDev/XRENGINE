@@ -6,4 +6,5 @@ public readonly record struct VrViewRenderModeResolution(
     EVrViewRenderImplementationPath EffectiveImplementationPath,
     EVrTemporalHistoryPolicy TemporalHistoryPolicy,
     bool IsSupported,
-    string? Diagnostic);
+    string? Diagnostic,
+    EVrRenderPipeline RequestedPipeline = EVrRenderPipeline.Default);

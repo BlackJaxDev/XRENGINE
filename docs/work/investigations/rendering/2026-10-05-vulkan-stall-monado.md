@@ -846,6 +846,531 @@ smoke-run shutdown delay before claiming full smoke acceptance. New temporal
 test edits still need user clearance after the remaining live checks. The
 existing 11/11 focused ownership tests remain the completed test result.
 
+### Accepted-Publication Fault And Cold/Warm RenderDoc Checks
+
+These checks ran on a second Windows host with the RTX 3090 driver 617.14, the
+local Monado build under `Build/Deps/Monado`, and no physical headset. The
+source was `4758666b4`, Release x64, with a clean tracked tree. The named
+session `thm-apf` built once. All later runs in this section used `-NoBuild`
+with the same binaries. Hashes are in `reports/candidate-binaries-4758666b4.sha256`. Evidence
+is under `Build/_AgentValidation/20261005-183743-temporal-history-monado/`.
+The earlier run root on the first host is not available here.
+
+The private settings copy enables the deferred Sponza2 OBJ at translation
+(-20, 0, 0), disables the avatar import, selects `MonadoOpenXR`, strict
+SinglePassStereo, Advanced rendering, CpuDirect, TSR, eye previews, and the
+runtime-recommended 896 by 1007 eye size. The editor's Monado bootstrap started
+its own service with `SIMULATED_HMD_POSE_MODE=stationary` from the session
+environment. Each run stopped only that child service, by verified process ID.
+
+The earlier scratch bridge did not survive. A new reflection-only bridge,
+`temp-build/bridge/`, loads through MCP `invoke_method` with
+`System.Reflection.Assembly.LoadFrom`. After OpenXR teardown it locks the smoke
+controller's ledger, copies the frame ledger, and captures the full temporal
+ring. It writes JSON with the controller's own serializer settings. It does
+not finish the controller or change its exit result. A monitor enabled the ring
+through `XREnvironment.SetRuntimeOverride` after about 100 strict submissions
+and before the arm frame. It cleared the override after teardown.
+
+#### Observe control
+
+The `Observe` run used 256 warmup and 128 retained frames. The ring was enabled
+at lifecycle frame 129. The ring held 255 strict-stereo frames from pipeline 14.
+Each frame had exactly one committed pair, eyes 0 and 1, with every layer mask
+equal to three. Reset and seed generation stayed at one. The ring had zero
+overflow and zero submission diagnostic failures. The first armed ledger entry
+was `EyeWithPublish` at lifecycle frame 257. Teardown balanced 382 acquisitions
+and releases per eye. One generation drained, none remained pending or
+abandoned, and no device loss occurred.
+
+#### Accepted-publication fault
+
+`XRE_OPENXR_SUBMISSION_VALIDATION=FailAcceptedPublication` throws after a
+successful `vkQueueSubmit` and after lifetime, image-layout, and sealed-version
+publication. Source review showed that temporal history publishes after the
+gateway returns, through the tracker claim, and does not read the receipt's
+publication flag. The predeclared pass required one injected fault on the
+strict submission, one ledger entry with a failed publication flag, a
+displayed projection layer, and exactly one committed ring pair for that render
+frame, with no invalidation on later frames.
+
+The run passed each condition:
+
+- The request was `FailAcceptedPublication`, armed after lifecycle frame 256.
+  `injectedAcceptedPublicationFailureCount` and `publicationFailureCount` were
+  one. Pre-submit rejections and abandoned submissions were zero.
+- Serial 1, lifecycle frame 257, was the only flagged entry. Its shape was
+  `EyeWithPublish`, with two commands, one recorded command, and view mask one.
+  The receipt was a success: submission accepted and pins transferred, with
+  `postSubmissionPublicationSucceeded=false`. The entry later completed with
+  proven completion, retired, and had zero early-settlement violations.
+- The frame ledger maps lifecycle frame 257 to engine render frame 782. That
+  frame submitted its projection layer, with `endFrameResult` 0, one layer, and
+  no sequential fallback.
+- The ring has exactly two strict-stereo rows for render frame 782, one per
+  eye. Both rows committed all layer masks, with reset and seed generation one
+  and ready history before and after commit. No ring frame has a missing or
+  duplicate pair. Frames 776 through 791 keep generation one and ready history.
+- Teardown balanced 382 acquisitions and releases per eye, drained one
+  generation, and reported no device loss.
+
+This confirms the uncertain join: the ownership-ledger frame ID equals the
+frame-ledger lifecycle ID, and the candidate render frame equals the frame-ledger
+engine render frame.
+
+#### Projection-publication fault
+
+The gate wording can also mean the OpenXR projection fault after history
+acceptance, so this run also used `XRE_OPENXR_STRICT_SPS_FAILURE_STAGE=Publish`.
+The fault fired once at lifecycle frame 277 and was handled. That frame
+submitted no projection layer, with `endFrameResult` 0, no sequential
+fallback, and queue disposition `Completed`. The ring has exactly one committed
+pair for its render frame, 926. Frames 929 and 933 keep generation one and
+ready history. All 258 ring frames have exactly one pair. Teardown balanced
+382 acquisitions and releases per eye and drained one generation.
+
+Both post-acceptance faults therefore publish accepted history exactly once.
+The earlier Submit and Recording checks cover the pre-queue faults. As before,
+stationary matrices cannot prove matrix advancement independently.
+
+#### Cold and warm RenderDoc captures
+
+The RenderDoc run used the same binaries and fixture, with
+`ENABLE_VULKAN_RENDERDOC_CAPTURE=1` and `XRE_VULKAN_RENDERDOC_FRIENDLY=1`, and
+no smoke variables. Monado captures every XR frame while RenderDoc is loaded.
+RenderDoc also loaded into the Monado service. `RENDERDOC_CAPFILE` did not move
+the capture files. A guard script requested an orderly session exit after 40
+captures. The run produced 51 captures (6.87 GB), and teardown completed.
+
+Reflection names are stripped, so a structural scan found the TSR resolve. The
+match requires multiview `[0,1]`, one 2-layer RGBA16F output at 896 by 1007,
+and a sampled history color image of the same size at set 2, binding 5.
+`HistoryReady` is offset 0 of the set 0, binding 66 material block. The shader
+source order supports this. The only earlier uniforms, from
+`ScreenSpaceUtils`, are in the frame block at binding 64. The pass block at
+binding 65 holds the screen size.
+
+- Captures 2 through 24 have no draws. These are the startup no-layer frames.
+- Capture 25 holds the first stereo TSR resolve, at event 841. `HistoryReady`
+  is 0. History color image 4516 is discarded at event 831, read at 841, and
+  receives the history copy at 853.
+- Captures 26 through 51 all read `HistoryReady=1` on the same history image,
+  4516. Each reads the history first and copies into it after the resolve. None
+  discards it.
+- In warm capture 26, the history image before its copy has exactly the
+  statistics of capture 25's output. The history therefore holds the previous
+  accepted output.
+
+The exported TSR output layers for captures 25, 26, and 51 are defined in both
+eyes. They show the dark exterior brick wall and an overexposed exterior. A thin
+violet line sits at a different horizontal position in each eye, as parallax
+predicts. The earlier record traced this line to the debug capsule. The history
+image in capture 25 holds RenderDoc's discard pattern (0 to 1000), which TSR does
+not sample because `HistoryReady` is 0. Exposure and lighting remain open under
+their own items. These captures are diagnostic, not performance evidence.
+
+The selected captures are `renderdoc/tsr-cold-c25.rdc`,
+`renderdoc/tsr-warm-c26.rdc`, and `renderdoc/tsr-warm-c51.rdc`. The exported
+layers and scan results are in `renderdoc/` and
+`reports/renderdoc-scan-summary.txt`. The other 48 captures from this launch
+were deleted from the temporary RenderDoc folder. Older files there were not
+touched.
+
+#### New finding: TSR history depth is overwritten before the resolve
+
+All 27 TSR captures show the same order for history depth image 4559. Pass
+100040 blits this frame's depth image (4523) into 4559 at event 1332 (capture
+40), before the TSR resolve reads 4559 as `HistoryDepth` at event 1414. The
+blit belongs to the temporal-accumulate history capture (`HistoryCaptureFBO`,
+`HistoryDepthStencil`) of the Default command chain. The stereo
+`RvcRenderPipeline` runs that chain. A later root-cause review corrected this
+attribution. The stereo TSR resolve compares `DepthView` with `HistoryDepth` to
+reject history. With this order, the comparison uses this frame's depth twice
+and cannot detect disocclusion. This is a likely source of ghosting. It belongs
+to the open TSR ordering and image quality item. It does not affect
+accepted-history publication. This run did not change the code. The
+[history-depth order fix](#tsr-history-depth-order-on-default-chain-paths)
+later moved the copy after the resolve.
+
+### Smoke Shutdown Delay: Root Cause And Fix
+
+Status: **Validated for the collapsed editor host on Vulkan.** The user cleared
+focused tests on October 5; see the test record below. The OpenGL close path
+exposed a separate defect, recorded below.
+
+#### Reproduction and root cause
+
+All three runs on the frozen candidate reproduced the delay: the Observe,
+`FailAcceptedPublication`, and `Publish` runs. The process did not exit within
+the observed window after the smoke controller requested shutdown: about 45
+seconds for Observe and `FailAcceptedPublication`, and about 21 seconds for
+`Publish`. The summary was absent, and `editor_bootstrap.log` had no
+`Engine.Run returned normally.` line. MCP `get_time_state` reported
+`isRunning=false` with no terminal fault. `get_job_manager_state` held queued
+render-thread jobs at Normal priority that never drained: four in Observe and
+`Publish`, three in `FailAcceptedPublication`. The hung Observe process used
+one full core: 5.05 CPU-seconds in 5 seconds (`reports/observe-hang-cpu.json`).
+
+A 4-second `dotnet-trace` sample (`reports/observe-hang-stack-summary.txt`)
+found the main thread spinning in
+`RuntimeRenderThreadHost.BlockForCollapsedWindowRendering` →
+`PumpCollapsedWindowEvents`. The sample had no `EngineTimer` frames. The
+session manager's orderly stop also needed its 15-second force-stop.
+
+Source review confirmed the cause. `XRWindow.HandleDesktopCloseRequested`
+runs in the native close callback. For the final window, it calls
+`QuiesceForWindowRendererTeardown`, which stops the engine timer through
+`StopAndWait`. It then queued window disposal and `RemoveWindow` as the
+render-thread job `XRWindow.DesktopClose`. Render-thread jobs drain only inside
+`EngineTimer.DispatchRender` or `XRWindow.RenderFrame`. After the stop,
+`WaitToRender` returns at once and never dispatches. The window therefore
+stayed registered, the collapsed host loop never ended, and `Engine.Run` never
+returned. The controller writes its summary only after `Engine.Run` returns.
+
+Commit `870987cfc` (2026-09-29) introduced the defect. Before it, the close
+handler disposed the window synchronously after the quiesce. The new desktop
+backend refuses disposal inside its close callback, so the commit moved
+disposal to the job queue, which no longer drains at that point. The VRClient
+shutdown stall recorded on 2026-09-30 matches this root cause, but VRClient was
+not run again.
+
+#### Change
+
+`XRWindow.cs` only. When the native event pump is not externally owned (the
+collapsed host, which is the default), approval sets a pending flag and does
+not queue a job. `PumpNativeWindowEventsFromHost` completes the close before
+and after `PumpEvents`, on the native window thread, after the close callback
+unwinds. This is also the renderer thread. Completion runs the final-window
+quiesce again before `Dispose`, then calls `RemoveWindow` in a `finally`
+block. The final-window quiesce runs again at completion. `Engine.ShutDown`
+can approve several closes before the first one completes. Each approval then
+sees more than one registered window, so no approval runs the final-window
+quiesce. A `Volatile.Read` check skips the locked exchange
+when no close is pending. The split-pump prototype path keeps its job.
+
+Before the build, an adversarial review checked three lenses: thread and
+native lifetime, every close path, and root cause with existing source-contract
+tests. It confirmed the root cause and the completion placement. It found no
+test that asserts the removed job. It required the repeated quiesce, which the
+change now includes. The review is in `reports/shutdown-fix-review.json`, and
+the diff is in `reports/shutdown-fix-final.diff`. The Release build of
+`XREngine.Runtime.Rendering` had zero warnings and errors. Fixed binary hashes
+are in `reports/shutdown-fix-binaries.sha256`.
+
+#### Live validation
+
+- **Original trigger.** The `FailAcceptedPublication` smoke ran under Monado on
+  the fixed binaries. The controller wrote its own summary with zero failures
+  and zero warnings. `Engine.Run` returned at 19:49:32.357 and `ProcessExit`
+  fired 0.37 seconds later, with no force-stop. The summary holds the complete
+  temporal ring (1,400 entries, zero overflow) and the 128-frame ledger. It
+  repeats the accepted-publication result: lifecycle frame 257 maps to render
+  frame 856, with exactly one committed pair. Per-eye counts balance at 382,
+  one generation drained, and no device loss occurred. This is the first full
+  smoke-suite pass for the temporal-history item. The earlier exports were
+  diagnostic only.
+- **Native close on Vulkan.** A desktop session used `XRE_PROFILE_CAPTURE=1` to
+  bypass the dirty-asset prompt. The process ended 1.14 seconds after
+  `WM_CLOSE` was posted to the editor window (`reports/wm-close-results.json`).
+  `Engine.Run` returned normally and `ProcessExit` fired, with no unhandled
+  exception.
+- **Native close on OpenGL.** The window closed. At 19:53:16.888, two OpenGL
+  shared-context worker threads raised unhandled, terminating
+  `InvalidOperationException` instances ("Native desktop window access must
+  execute on its creating thread"). `Engine.Run` returned normally 34 ms later.
+  `ProcessExit` did not fire. The process ended 7.34 seconds after `WM_CLOSE`.
+  See the finding below.
+
+Not exercised: the dirty-asset prompt with Cancel then Close, two-window
+shutdown with the standalone ImGui file dialog, VRClient (OpenVR), and the
+split-pump prototype.
+
+Existing focused tests ran unchanged, in Release, over
+`WindowOwnershipContractTests` and `VulkanUpscaleBridgeTodoCompletionTests`.
+32 of 40 passed. All 20 `WindowOwnershipContractTests` cases passed, including
+`CollapsedWindowHost_PumpsNativeEventsBeforeEnteringRenderDispatch`. The close
+contract `WindowCloseRequests_AreDeferredToTheFrameBoundary` in
+`VulkanUpscaleBridgeTodoCompletionTests` also passed. The other 8 tests in that
+class failed. They assert DLSS, Streamline, vendor-upscale, build-target, and
+descriptor source strings in files that this change does not touch. They are existing source-contract
+drift, not regressions. The TRX is
+`reports/test-results/window-close-contracts.trx`. No test was added or
+changed in that run.
+
+#### Cleared focused tests
+
+The user cleared focused tests for accepted temporal history publication and
+for the close completion on October 5. The new tests are deterministic and need
+no device or window:
+
+- `TemporalHistorySubmissionStateMachineTests` drives the real stage, seal,
+  record, accept, discard, and device-loss calls. It checks five behaviors:
+  publication only after acceptance and only once, kept seed and matrices after
+  a discarded attempt, one outstanding candidate, device-loss invalidation by
+  owner, and camera-cut or reset invalidation.
+- `OpenXrTemporalHistoryPublicationTests` checks the tracker claim on a
+  reflection-built tracker: native acceptance first, one claim, ticket checks,
+  and exactly one eye candidate. Source contracts check the publication call
+  site after the queue gateway, the `finally` backstop, independence from the
+  receipt publication flag, and device-loss routing.
+- `WindowOwnershipContractTests` adds three close-completion contracts. They
+  cover the collapsed branch with no render-thread job, the completion checks
+  before and after `PumpEvents`, and quiesce before `Dispose` with
+  `RemoveWindow` in `finally`.
+
+The focused Release run passed 37 of 37 tests, with zero warnings. The TRX is
+`reports/test-results/cleared-focused-tests.trx`. No production code changed.
+
+#### New finding: OpenGL shared-context worker releases its native window on the wrong thread
+
+`GLSharedContext.Dispose` sets `_disposeResourcesOnWorkerExit` before it joins
+the worker. The worker's exit path calls `ReleaseStoppedResources(window)` on
+the worker thread while `_ownerWindow` is still set. This calls
+`EnqueueWindowThreadTask`, which runs the task inline in collapsed mode. So
+`DesktopSilkWindowBackend.Dispose` runs on the worker thread and its
+owner-thread assertion throws. The exception is unhandled and terminates the
+process.
+
+The assertion arrived with the new desktop backend in `870987cfc`. The stranded
+close hid this path until now. It is a separate OpenGL native-lifetime defect,
+and this change does not fix it. Before the shutdown fix, OpenGL close hung.
+Now it exits with a terminating worker exception.
+
+#### Remaining limits
+
+- **Split-pump prototype (`XRE_WINDOW_PUMP_HOST=sdl`).** Disposal still uses
+  the `XRWindow.DesktopClose`, `DisposeExternalPump.Render`, and
+  `RemoveExternalPumpWindow` render-thread jobs. These need a timer render
+  dispatch, so the final window close can still strand.
+- **Close request from another thread after a terminal timer fault.** A
+  `RequestClose` call such as `Engine.ShutDown` or the close prompt queues
+  `Viewport.CloseWindow`, which needs a timer render dispatch. Source review
+  shows that a native close (window button or `WM_CLOSE`) now completes after
+  such a fault. No live run exercised this case.
+- **Dead deferral flag.** `RuntimeEngine.IsDispatchingRenderFrame` is never
+  assigned. `RequestCloseOnRenderThread` therefore never defers, and Silk
+  `Close()` can run inside the render-thread job pump. This does not block the
+  fix, because completion waits for the next host pump.
+
+### TSR History-Depth Order On Default-Chain Paths
+
+Status: **Validated** under a user-approved reduced scope; results follow the
+gate record. The user ordered this item before the OpenGL close crash, which
+stays Pending.
+
+```text
+Item / owner / status:
+  TSR history-depth order / Rendering / Active at gate declaration (see
+  Results for the current status).
+Prior validated item and any approved reordering:
+  Accepted strict-stereo temporal history (Closed) and final-window close
+  completion (Validated, tests cleared). The user chose this item before the
+  OpenGL shared-context close crash.
+Hypothesis and disconfirming check:
+  The pipeline-type terms in ShouldDeferTsrHistoryDepth are the only reason a
+  Default-chain TSR frame writes HistoryDepthStencil before the resolve. The
+  strict OpenXR SPS eye is a stereo RvcRenderPipeline that always runs the
+  Default chain, so the Advanced-only deferral never applies to it. If the
+  predicate depends only on mode == Tsr, the single history-depth write of each
+  TSR frame moves after the resolve, and the resolve reads previous depth.
+  Rejected by: any depth blit into HistoryDepthStencil before the resolve draw;
+  a depth-aspect blit inside Temporal_HistoryPassthrough; HistoryDepth still
+  bitwise equal to DepthView at the resolve in warm frames.
+Baseline source/configuration/cache/scene identity:
+  Control: session thm-apf Release x64 binaries from 4758666b4 plus the
+  uncommitted XRWindow close-completion change
+  (reports/shutdown-fix-binaries.sha256; XREngine.Runtime.Rendering.dll
+  75712448…). Fixture: scratch/unit-world-monado-sps-tsr.jsonc (Sponza2
+  deferred at (-20,0,0), CpuDirect, TSR, strict SinglePassStereo, 896x1007 per
+  eye, Monado stationary pose). Entry evidence: renderdoc/capture40-eid1414.json
+  (resolve with 6 inputs in Default descriptor order and 1 output) and
+  reports/renderdoc-scan-summary.txt (27 of 27 TSR captures copy depth at
+  pass 100040 before the resolve).
+Change scope and dependency/lifetime invariants:
+  VPRC_TemporalAccumulationPass.cs only: ShouldDeferTsrHistoryDepth becomes
+  static and returns mode == Tsr; three comments and one warning text change.
+  Execute and describe use the one mode-only predicate. The depth copy keeps
+  its explicit DependsOn edges to the resolve and the mono-reference quads.
+  Accepted-publication roles, seals and coverage do not change. TAA, DLAA,
+  None and vendor-upscale frames do not change. No resource, descriptor,
+  shader, lock, thread or native lifetime changes. Known cost: on Vulkan, one
+  more managed BlitOp record per Default TSR frame (existing FrameOp pattern);
+  native blit count into HistoryCapture stays 2. The Default color passthrough
+  now uses the strict TryBlit path.
+Predeclared metrics, budgets, tolerance, repetitions and window:
+  A0 entry evidence (met). A1 Release and Debug builds, 0 warnings, 0 errors.
+  A2 RenderDoc order: >= 1 cold and >= 20 warm TSR captures; 100% have exactly
+  one HistoryDepthStencil blit after the resolve, no depth blit in the
+  passthrough, color copy after the resolve. A3 content: warm HistoryDepth not
+  bitwise equal to DepthView; adjacent-frame identity of copied depth; motion
+  difference at silhouettes. A4 HistoryReady 0 on the cold frame, 1 after.
+  A5 both eye layers defined. A6 Monado warm liveness: 3 changed and 3 control
+  runs, >= 60 s each, 0 failed/deferred outcomes or recordings, 0 temporal
+  seal/coverage render failures, completed outcomes/s >= 90% of control median.
+  A7 Debug warnings: 0 TSR history copy/coverage rejection warnings on Monado
+  SPS and desktop Default TSR. A8 Vulkan synchronization validation: no new
+  messages naming the history depth image versus control. A9 accepted-history
+  ring: exactly one complete pair per frame, 0 overflow, 0 diagnostic
+  failures. A10 teardown balanced, Play/Edit round trip, previews viewed.
+  A11 stationary falsifier (gating): rejected-pixel fraction in debug mode 5,
+  both eyes, >= 8 consecutive frames, 3 runs per condition, changed <= control
+  mean + max(3 SD, 0.5 pp); motion trail measurement is diagnostic only.
+  A12 desktop Default TSR on OpenGL and Vulkan: history ready, 0 warnings,
+  stationary change fraction within control + max(0.05 pp, 3 SD), rotation
+  sphere footprint at rest not worse, no new trail with a moving gizmo.
+  A13 OpenGL TSR -> TAA -> TSR live toggle recovers. A14 Vulkan Default TAA
+  order unchanged. A15 cost: native blit counts as stated; desktop median CPU
+  and GPU frame time within control + max(2%, control range), 3 runs per
+  condition per backend. A16 neighbor tests run unedited; failures must also
+  fail on a HEAD baseline.
+Changed source diff and validated binary/session identity:
+  reports/tsr-depth-fix.diff; changed XREngine.Runtime.Rendering.dll Release
+  6ed6419e… (temp-build/tsr-depth-release). A/B by swapping only that DLL in
+  session thm-apf; all other binaries identical.
+```
+
+Measurement rules from the design review: measure with TSR debug mode 0 for
+image quality. Do not use the HistoryWeight view as a Default metric, because
+Default debug views feed the TSR history. Measure warnings only in Debug,
+because Release compiles them out.
+
+#### Root cause
+
+The strict OpenXR SinglePassStereo eye is a stereo `RvcRenderPipeline`. Every
+OpenXR eye request creates an RVC pipeline, and a stereo RVC instance never
+selects the Advanced command family (`selected &= !Stereo`). It therefore runs
+the Default command chain. The unit-test `RenderPipeline` setting affects only
+the desktop camera. `ShouldDeferTsrHistoryDepth` deferred the depth copy only
+for `AdvancedRenderPipeline` and the RVC mono Advanced family. On the stereo
+eye, the accumulate passthrough copied color and current depth before the TSR
+resolve. The earlier finding called this the "Advanced temporal-accumulate"
+capture; it is the Default-chain capture inside the RVC pipeline. The kept
+captures confirm the Default chain: depth is D24S8 (Advanced uses
+Depth32fStencil8), and the TSR resolve uses the single-output variant.
+
+#### Change
+
+`VPRC_TemporalAccumulationPass.ShouldDeferTsrHistoryDepth` now returns
+`mode == Tsr` for every chain. The accumulate passthrough copies color only.
+`CaptureTsrHistoryColor` copies current depth after the resolve, with the
+existing explicit dependency edges. The change also affects every desktop
+camera that uses `DefaultRenderPipeline` with TSR. The Release build had zero
+warnings and errors. The diff is `reports/tsr-depth-fix.diff`.
+
+#### Scope decision
+
+The user approved a reduced live gate on October 5. The predeclared list
+(A0–A16) assumed a performance change. This is an ordering change with no new
+GPU work. The approved plan kept RenderDoc order and content (A2–A5), the
+stationary falsifier (A11, reduced to 2 control runs and 1 qualifying changed
+run), one accepted-history smoke run (A9, with teardown from A10), and a
+desktop Default TSR check on Vulkan and OpenGL with one control run each
+(reduced A12). The A12 rotation-gizmo check ran on desktop Vulkan only, because
+the 2026-09-24 investigation predicted a gizmo regression. A1 is met: the
+Release and Debug builds of the rendering project had zero warnings and errors
+(`reports/build-results.json`).
+
+The user approved these drops, with these reasons:
+
+- A6, the 3+3 liveness A/B: the accepted-history smoke also detects dropped or
+  duplicate eye frames.
+- A8, Vulkan synchronization validation: the Advanced chain already uses this
+  copy order every frame.
+- A13, the OpenGL AA toggle, and the third control and changed RenderDoc runs:
+  they repeat behavior that the kept checks show.
+- A15, the performance A/B: the change adds no GPU work. On Vulkan, it adds one
+  managed `BlitOp` allocation per Default TSR frame. This follows the existing
+  frame-operation pattern and was not measured.
+
+The approval covered the reduced plan as a whole. These reductions follow from
+it but were not named one by one:
+
+- A3: the moving-silhouette motion measurement was not run.
+- A7 and the A12 warning count: not measured, because Release compiles
+  warnings out.
+- A10: the Play/Edit round trip and the preview check were not run. Teardown
+  was checked.
+- A11: 2 control runs and 1 qualifying changed run, not 3 per condition.
+- A12: one complete run per condition and backend. The gizmo check did not run
+  on OpenGL.
+- A14: the Vulkan TAA order capture was not run.
+- A16: no HEAD-baseline test run.
+
+#### Results
+
+RenderDoc A/B on Monado strict SPS, Release, one DLL swapped
+(`reports/tsr-ab-summary.json`):
+
+| Run | TSR captures | Depth copy before / after resolve | Warm history depth equal to current depth | Adjacent-frame identity | Mode-5 window |
+| --- | --- | --- | --- | --- | --- |
+| control-1 | 44 | 44 / 0 | 43 of 43 | n/a | 21 frames, 0.029% |
+| control-2 | 40 | 40 / 0 | 39 of 39 | n/a | 8 frames, 0.032% |
+| changed-1 | 40 | 0 / 40 | 0 of 39 | 39 of 39 | 1 frame, 0.079% (below the 8-frame minimum; not gating) |
+| changed-2 | 50 | 0 / 50 | 0 of 49 | 49 of 49 | 25 frames, 0.039% |
+
+- Every run reads `HistoryReady=0` on its first TSR frame and 1 on every later
+  frame. Exported cold, warm and mode-5 eye layers of changed-2 are defined in
+  both eyes.
+- "Adjacent-frame identity" means the depth copied after frame N's resolve is
+  byte-for-byte the history depth at frame N+1's resolve.
+- The stationary falsifier passes on a reduced sample: 2 control runs and 1
+  changed run with at least 8 frames, not 3 per condition. The limit is control
+  mean + max(3 SD, 0.5 pp) = 0.53%, with the SD from 2 runs. Changed-2 is
+  0.039%. Changed-1's mode-5 window was lost to a
+  harness fault: per-eye set calls rebuilt the stereo camera state, so the
+  view returned to mode 0 after one frame. The guard then set only the stereo
+  viewport, once per capture.
+- Accepted-history smoke (`reports/tsr-observe-smoke-summary.json`; the loaded
+  rendering DLL was the changed `6ed6419e…`, per `reports/run-identity.json`):
+  all 261
+  strict-stereo frames commit exactly one complete pair, history is ready
+  before every commit, generation stays 1, and ring overflow and diagnostic
+  failures are 0. The summary has 0 failures and 0 warnings. All 128 retained
+  frames submitted their layer. Teardown balanced 383 per eye, one generation
+  drained, no device loss, and the process exited normally.
+- Desktop Default TSR (`reports/desk-*-{control,changed}.json`; DLL per run in
+  `reports/run-identity.json`): the HUD and camera report
+  `DefaultRenderPipeline`, `aa Tsr`. On Vulkan and OpenGL, every ring row is
+  ready before and after commit, with depth and TSR history committed, so the
+  strict copies were accepted. The mean frame-to-frame changed-pixel fraction
+  (whole viewport; a pixel counts when its largest channel difference is more
+  than 4) is 3.65% control and 2.49% changed on Vulkan, and 4.55% and 3.96% on
+  OpenGL (`reports/desk-stability.json`). Each value uses the 11 pairs of one
+  complete 12-frame sequence. Each changed run was a second attempt: the first
+  captured only 3 frames, so the `changedPercentMean` values in the changed
+  reports (2.70% and 4.19%) include those frames. The cause of the remaining
+  change was not identified.
+- Rotation gizmo, desktop Vulkan (`reports/gizmo-mode5-control-vs-changed.png`,
+  `reports/gizmo-mode5-measure.json`): in the captured control mode-5 frame,
+  the depth-only rotation sphere's whole footprint rejects history (solid red
+  disk; 0.50% of image pixels, 0.44% inside a box around the sphere). In
+  changed, only a thin ring at its silhouette rejects (0.007% of the image
+  inside the same box). Most of changed's 0.12% whole-image fraction is
+  scene-edge rejection outside the sphere (2,270 px; control has 1,363 px
+  there). The early copy stored depth from before the overlay, so it did not
+  match the sphere depth that the resolve compares. A short moving sequence
+  showed no visible trails in either variant.
+- Neighbor tests ran unedited: 367 of 414 passed. The 414 include the 37
+  cleared tests, which all passed. The 47 failures assert moved files, renamed
+  methods and changed shader text. One of them,
+  `DefaultPipelineVolumetricFog_CompositesAfterLateForwardWithTemporalProjection`,
+  reads `VPRC_TemporalAccumulationPass.cs`. The string it requires is also
+  absent at `4758666b4`. The other failures assert text in files that this
+  change does not touch. No test references a line this change removed. No
+  HEAD-baseline run was made, so source review is the only evidence that these
+  failures already existed.
+
+After the live gates, a final review corrected only comments and records. The
+code comments in `VPRC_TemporalAccumulationPass.cs` and `XRWindow.cs` changed;
+no executable code changed. The rebuilt Release rendering project had zero
+warnings, and the 37 focused tests passed
+(`reports/test-results/final-focused-tests.trx`). The final review findings and
+fixes are in `reports/final-review.json`.
+
+Status: **Validated** under the approved reduced scope. TSR test work has not
+been cleared. This result does not prove that the reported headset ghosting is
+fixed; that needs the user's confirmation on hardware.
+
 ## Independent Evidence Review
 
 A read-only broker review completed with requested and actual model

@@ -11,8 +11,10 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Retinal Visibility Cache pipeline entry point. Until the GPU cache passes are available,
 /// this runs the established Forward+ graph and exposes a loud capability resolution.
+/// It runs only the RVC command chain. VR selects it only through
+/// <see cref="EVrRenderPipeline.Rvc"/>.
 /// </summary>
-public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderStageFamilyHost
+public sealed class RvcRenderPipeline : DefaultRenderPipeline
 {
     private const RenderPipelineResourceUsage RvcSampledColorAttachment =
         RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment;
@@ -57,8 +59,6 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderSt
     private RvcCapabilityMatrix _lastRvcCapabilityMatrix;
     private RvcPipelineResolution _lastRvcResolution;
     private RvcPipelinePlan _lastRvcPlan;
-    private AdvancedRenderPipeline? _advancedStageFamily;
-    private bool _advancedTwoPassEyeFamilySelected;
 
     public RvcRenderPipeline() : this(stereo: false)
     {
@@ -72,53 +72,6 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderSt
     }
 
     public override string DebugName => "RvcRenderPipeline";
-
-    /// <summary>
-    /// Exposes diagnostics for the command family this RVC pipeline actually executes.
-    /// </summary>
-    public override IRenderPipelineEditorUIProvider? EditorUIProvider
-        => UsesAdvancedTwoPassEyeFamily()
-            ? GetAdvancedStageFamily().EditorUIProvider
-            : base.EditorUIProvider;
-
-    AdvancedRenderPipeline IAdvancedRenderStageFamilyHost.AdvancedStageFamilyDefinition
-        => GetAdvancedStageFamily();
-
-    /// <summary>
-    /// Selects the complete Advanced command/resource family for an already
-    /// admitted mono OpenXR eye output. Selection is structural: changing it
-    /// replaces the command chain before another resource generation is used.
-    /// </summary>
-    public void ConfigureAdvancedTwoPassEyeFamily(bool selected)
-    {
-        selected &= !Stereo;
-        if (!SetField(ref _advancedTwoPassEyeFamilySelected, selected))
-            return;
-
-        if (selected)
-        {
-            Debug.RenderingWarningEvery(
-                $"AdvancedPipeline.OpenXrTwoPassProfile.{GetHashCode()}",
-                TimeSpan.FromSeconds(30),
-                "[AdvancedPipeline] OpenXR two-pass eye family is active for {0}. " +
-                "The RVC-owned instance retains its own output reservation, persistent resource generation, frame-view history, and output-FBO terminal write. " +
-                "Late transparency and the full temporal/post family execute only through that eye-local owner; screen-space UI remains disabled.",
-                DebugName);
-        }
-
-        RebuildCommandChain();
-    }
-
-    /// <summary>
-    /// Refreshes the cached Advanced definition at the OpenXR binding boundary.
-    /// Camera-source feature synchronization updates this RVC pipeline over its
-    /// lifetime, while the definition intentionally does not subscribe to
-    /// runtime settings or perform work in hot stage execution.
-    /// </summary>
-    public void SynchronizeAdvancedStageFamilyFeatures()
-        => RenderPipelineFeatureSynchronizer.CopyPipelineFeatures(
-            this,
-            GetAdvancedStageFamily());
 
     [Category("RVC")]
     [DisplayName("Pipeline Mode")]
@@ -334,11 +287,6 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderSt
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
-        if (UsesAdvancedTwoPassEyeFamily())
-        {
-            return GetAdvancedStageFamily().GetAdvancedStageFamilyCommandChain(this);
-        }
-
         ViewportRenderCommandContainer commands = base.GenerateCommandChain();
         commands.Insert(0, new VPRC_AcquireAdvancedPreparation());
         AppendRvcPassCommands(commands);
@@ -361,12 +309,6 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderSt
 
     protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {
-        if (UsesAdvancedTwoPassEyeFamily())
-        {
-            GetAdvancedStageFamily().DescribeAdvancedStageFamilyResources(builder);
-            return;
-        }
-
         base.DescribeResources(builder);
         if ((((DefaultPipelineResourceFeature)builder.Profile.FeatureMask) & DefaultPipelineResourceFeature.RvcResourcesEnabled) != 0)
             DeclareRvcResources(builder);
@@ -385,39 +327,11 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline, IAdvancedRenderSt
         XRRenderPipelineInstance instance,
         XRViewport? viewport)
     {
-        if (UsesAdvancedTwoPassEyeFamily())
-        {
-            return GetAdvancedStageFamily()
-                .BuildResourceFeatureMaskForGenerationKey(instance, viewport);
-        }
-
         ulong mask = base.BuildResourceFeatureMaskForGenerationKey(instance, viewport);
         // A mode change that starts or stops planning RVC stages replaces the generation.
         if (RequiresRvcResources)
             mask |= (ulong)DefaultPipelineResourceFeature.RvcResourcesEnabled;
         return mask;
-    }
-
-    /// <summary>
-    /// The first Advanced XR slice is limited to the two independent mono eye
-    /// pipelines that OpenXR already owns. Layered and SPS instances stay on
-    /// the RVC oracle until their array-resource and terminal-write contracts
-    /// are independently admitted.
-    /// </summary>
-    private bool UsesAdvancedTwoPassEyeFamily()
-        => _advancedTwoPassEyeFamilySelected && !Stereo;
-
-    internal bool IsAdvancedTwoPassEyeFamilyActive
-        => UsesAdvancedTwoPassEyeFamily();
-
-    private AdvancedRenderPipeline GetAdvancedStageFamily()
-    {
-        if (_advancedStageFamily is { } family)
-            return family;
-
-        family = AdvancedRenderPipeline.CreateOpenXrTwoPassEyeStageFamily();
-        RenderPipelineFeatureSynchronizer.CopyPipelineFeatures(this, family);
-        return _advancedStageFamily = family;
     }
 
     private static void AppendRvcPassCommands(ViewportRenderCommandContainer commands)

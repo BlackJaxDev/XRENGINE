@@ -146,8 +146,13 @@ pipeline factory. Every request carries an explicit output purpose:
 
 - desktop scene requests use the standard capability policy, with the
   debug-opaque editor pipeline available only for desktop mono;
-- OpenXR eye requests always use an independently owned `RvcRenderPipeline`,
-  including `RvcPipelineMode.Off`, where the RVC additions are disabled;
+- OpenXR eye requests use an independently owned pipeline of the family that
+  `VrRenderPipeline` selects: a plain `DefaultRenderPipeline`, an
+  `AdvancedRenderPipeline` with the OpenXR eye profile, or an
+  `RvcRenderPipeline`. The desktop Advanced policy does not affect eyes. An
+  unsupported view mode and family pair submits no XR projection layer; no
+  other family runs (see the
+  [VR pipeline selection design](../../work/design/rendering/vr-pipeline-selection-design.md));
 - offscreen-capture requests use the standard capability policy and are not
   redirected by desktop debug or RVC settings.
 
@@ -186,8 +191,8 @@ material contents refresh behind stable bindings.
 ### Shared GPU Scene And Material Contract
 
 `AdvancedSharedGpuSceneDatabase` is the pipeline-neutral authority for the
-advanced scene and material schema. Desktop `AdvancedRenderPipeline` and
-OpenXR-eye `RvcRenderPipeline` consumers resolve the same draw, instance,
+advanced scene and material schema. Desktop and OpenXR-eye Advanced and RVC
+pipeline consumers resolve the same draw, instance,
 geometry, transform, deformation, render-state, editor-identity, material,
 kernel, and layout records. They do not share output-local resources, command
 recordings, frame-slot ownership, or temporal histories.
@@ -663,10 +668,12 @@ NDC motion `v`, and jitter `j`, sample current inputs at `U + T(j_current)`,
 color history at `H = U - T(v / 2)`, and raw previous depth at
 `H + T(j_previous)`. Check each history UV before clamping to its own extent.
 
-Keep previous depth intact until TSR finishes. The early Advanced passthrough
-copies color only; the post-TSR history command captures full-resolution unsharpened
-color, RGBA16F history metadata, and raw depth, recording coverage only after backend acceptance
-for all required layers. Rendergraph
+Keep previous depth intact until TSR finishes. In every chain that runs a TSR
+resolve, the early passthrough copies color only. The post-TSR history command
+copies full-resolution TSR history color, then raw depth, after the resolve and
+its optional history readers. In Advanced, the color source is the unsharpened
+accumulation, and the command also copies RGBA16F history metadata. Coverage is
+recorded only after backend acceptance for all required layers. Rendergraph
 transfers must describe the same lifetime.
 
 Advanced surface rejection pairs depth and velocity from the same source texel
@@ -737,9 +744,15 @@ broader jitter requires coverage reconstruction beyond the current depth-only
 surface association. Do not increase the footprint without matching stationary
 and moving thin-edge validation. TAA and Default TSR retain their patterns.
 
-Default retains its existing TSR grid and early depth capture because its later
-unjittered overlays can be untagged and can write depth. Do not enable Advanced's
-stable-output variant there without separating that overlay composition.
+Default retains its existing TSR grid, and it copies depth after the resolve
+like Advanced. History depth is therefore the post-overlay depth that the
+resolve compares. An early copy stores pre-overlay depth. A depth-writing
+overlay, such as the transform tool's rotation sphere, then fails the depth
+test in its whole footprint. Inside such a footprint, the test compares overlay
+depth with overlay depth, so only neighborhood clipping limits ghosts behind
+it. Default's later unjittered overlays can be untagged and can write depth. Do
+not enable Advanced's stable-output variant in Default until that overlay
+composition is separate.
 
 ---
 

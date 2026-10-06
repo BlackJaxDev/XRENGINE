@@ -6,6 +6,12 @@ public partial class AdvancedRenderPipeline
     private EAdvancedStageFamilyExecutionProfile _stageFamilyExecutionProfile;
 
     /// <summary>
+    /// True when this instance renders one mono OpenXR eye output.
+    /// </summary>
+    public bool IsOpenXrEyeProfile
+        => _stageFamilyExecutionProfile == EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye;
+
+    /// <summary>
     /// Stereo execution topology derived from the configured stage family and
     /// renderer. It cannot disagree with the immutable layered resource profile.
     /// </summary>

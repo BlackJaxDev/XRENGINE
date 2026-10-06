@@ -263,6 +263,37 @@ On Windows, `VR.Mode=MonadoOpenXR` honors the requested `Rendering.RenderBackend
 
 The repo-staged Windows Monado preview window has a right-click simulated HMD pose menu. It can switch between the default figure-eight transform test and a user-input HMD mode. In user-input mode, `W`/`S` move forward/back, `A`/`D` move left/right, `Q` moves up, `E` moves down, up/down arrows control elastic pitch, left/right arrows add persistent yaw, and `,`/`.` control elastic roll. Hold Shift while yawing to turn faster. Position, pitch, and roll ease back to their rest values when released.
 
+Select the VR eye rendering with two values. `VR.ViewRenderMode` selects the
+view mode, and `VR.RenderPipeline` selects the eye pipeline family. Only that
+exact pair renders the eyes. An unsupported pair submits no XR projection layer
+and logs `[OpenXR] Unsupported VR.ViewRenderMode=...` or
+`[OpenXR] VR pipeline selection rejected ...`. The engine never uses another view
+mode, pipeline or command chain instead.
+
+| `VR.ViewRenderMode` | `Default` | `Advanced` | `Rvc` |
+|---|---|---|---|
+| `SequentialViews` | Supported | Supported | Rejected |
+| `SinglePassStereo` | Supported | Rejected (not implemented yet) | Supported |
+| `ParallelCommandBufferRecording` (Vulkan only) | Supported | Supported | Supported |
+
+`Default` is a plain `DefaultRenderPipeline`. `Advanced` binds its eye output as
+required and ignores `XRE_ADVANCED_RENDER_PIPELINE_MODE`, which applies to
+desktop outputs only. `Rvc` also needs `VR.RvcPipelineMode`. `Off`, or a mode
+that the RVC resolver cannot run on the current device, rejects the frame. These
+values apply to OpenXR. The OpenVR path does not read `VR.RenderPipeline` yet.
+See the [VR pipeline selection design](../../work/design/rendering/vr-pipeline-selection-design.md).
+
+```jsonc
+{
+  "VR": {
+    "Mode": "MonadoOpenXR",
+    "ViewRenderMode": "SinglePassStereo",
+    "RenderPipeline": "Rvc",
+    "RvcPipelineMode": "ForwardPlusOracle"
+  }
+}
+```
+
 When VR is active, desktop output is controlled by `Rendering.VrMirrorMode`.
 The default performance posture is a cheap mirror: `BlitSubmittedEye` keeps
 `RenderWindowsWhileInVR=true` but composes the desktop window from the submitted
@@ -311,6 +342,9 @@ For script-driven launches, these process-scoped overrides select the lane witho
 - `XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR=0`
 - `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0`
 - `XRE_UNIT_TEST_OPENXR_RUNTIME_JSON=C:\path\to\openxr_monado.json`
+- `XRE_UNIT_TEST_VR_VIEW_RENDER_MODE=SequentialViews|SinglePassStereo|ParallelCommandBufferRecording`
+- `XRE_UNIT_TEST_VR_RENDER_PIPELINE=Default|Advanced|Rvc`
+- `XRE_UNIT_TEST_VR_RVC_PIPELINE_MODE=Off|ForwardPlusOracle|VisibilityOnlyDebug|MaterialCache|SharedLighting|Full`
 - `XRE_UNIT_TEST_RENDER_API=OpenGL|Vulkan` maps into `Rendering.RenderBackend`
 - `XRE_UNIT_TEST_RENDER_PIPELINE=AdvancedRenderPipeline` selects the Advanced pipeline for this process without changing the saved world settings. Pair it with `XRE_ADVANCED_RENDER_PIPELINE_MODE=Required` for validation that must fail visibly when an Advanced capability is unavailable.
 
