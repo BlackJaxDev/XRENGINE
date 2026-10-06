@@ -106,6 +106,7 @@ public sealed unsafe class PublishedArchiveHandle : IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(archiveFilePath);
         string fullPath = Path.GetFullPath(archiveFilePath);
+        RuntimeAssetReadServices.EnsureHostFileAccess("Archive mapping");
         // FileMap creates a missing file, so reject a missing archive before mapping.
         if (!File.Exists(fullPath))
             throw new FileNotFoundException($"Archive '{fullPath}' not found.", fullPath);

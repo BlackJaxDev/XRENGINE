@@ -102,3 +102,49 @@ channels and stream ownership against the prior implementation. The desktop
 platform leaf and shared dependencies built with zero warnings and zero errors.
 No runtime mapping probe or new test was run for this move. External backend
 implementations and browser execution remain outside this evidence.
+
+## Archive metadata admission
+
+`PublishedArchiveHandle.Open` and `CookedPayloadOwner.MapFile` now check the
+existing host-file capability after argument validation and path normalization,
+before `File.Exists` or `FileInfo` probes. This also guards the empty-file return
+that previously did not enter `FileMap`. Browser, caller-thread, and non-host
+asset-source callers fail before physical metadata access. The null/default
+source on an ordinary desktop retains its existing behavior.
+
+Missing, oversized, and empty files keep their existing permitted-host results.
+Archive parsing, mapping ownership, disposal, public signatures, and serialized
+bytes are unchanged. The successful guard creates no read lease or linked
+cancellation source. It admits the entry only; it does not hold a publication
+reservation across the later synchronous probes. Independent source review
+passed. The physical operations remain in Data, so this correction does not
+close the remaining physical I/O placement requirement.
+
+The targeted Data Release build passed with zero warnings and zero errors.
+No new test or runtime mapping probe was run for this admission correction.
+
+## HiZ diagnostic text output
+
+HiZ stage summaries and crash breadcrumbs now use the installed desktop
+diagnostic writer for directory creation and text appends. The shared caller
+checks host-file admission, then captures one writer with the optional
+`IRuntimeDiagnosticTextFileOutput` capability. The same instance serves path
+setup and append even if the installed writer changes during that operation.
+Desktop and headless bootstrap already install the implementing writer.
+External capture writers need this optional capability only when these text
+diagnostics are enabled. A missing writer or text capability fails explicitly
+outside the existing best-effort file-operation catches.
+Host-file-capable standalone hosts must now install that writer to use these
+diagnostics; the previous implementation wrote directly without one.
+
+The shared static path caches and their first-use current-directory selection
+remain unchanged. Stage summaries attempt directory creation before formatting
+on each flush; breadcrumbs attempt it only during their locked first path
+initialization. File names, line text, feature flags, locks, catches, and stats
+clearing keep their previous behavior. Desktop methods recheck host-file
+admission immediately before physical operations. The existing capture
+interface, scene/render work, and scheduling are unchanged. This extraction
+does not close the broader physical I/O inventory.
+
+The combined Desktop/shared Release build passed with zero warnings and zero
+errors. No new test or live diagnostic-file capture was run for this move.
