@@ -69,19 +69,22 @@ async function publishedShadowArtifacts(root, state) {
         const entries = manifest.pipelineArtifacts?.filter(entry => entry.scope === 'advanced' && entry.pass === pass) ?? [];
         assert(entries.length === 1, `BrowserSmoke.ShadowArtifact: expected one advanced::${pass}.`);
         const result = await artifact(entries[0]);
-        assert(result.descriptor.pipelineArtifact?.scope === 'advanced' &&
-            result.descriptor.pipelineArtifact?.pass === pass && result.descriptor.name === `engine-advanced-${pass}`,
+        assert(result.descriptor.name === `engine-advanced-${pass}` &&
+            result.descriptor.materialVariant === undefined &&
+            result.descriptor.entryPoints?.compute === 'advancedShadeNative' &&
+            Object.keys(result.descriptor.entryPoints).length === 1 &&
+            equal(result.descriptor.workgroupSize, [16, 16, 1]),
         'BrowserSmoke.ShadowArtifact: native pipeline identity disagrees.');
         return result;
     };
-    const material = async (semantic, pass, outputProfile) => {
+    const material = async (semantic, pass, outputProfile, name) => {
         const entries = manifest.materialVariants?.filter(entry => entry.semantic === semantic && entry.semanticVersion === 1 &&
             entry.target === 'WebGPUWgsl' && entry.pass === pass && entry.vertexProfile === 'static-position-v1' &&
             entry.outputProfile === outputProfile) ?? [];
         assert(entries.length === 1, `BrowserSmoke.ShadowArtifact: expected one ${semantic} caster.`);
         const result = await artifact(entries[0]);
         const variant = result.descriptor.materialVariant;
-        assert(variant?.semantic === semantic && variant.semanticVersion === 1 &&
+        assert(result.descriptor.name === name && variant?.semantic === semantic && variant.semanticVersion === 1 &&
             variant.vertexProfile === 'static-position-v1' && variant.outputProfile === outputProfile,
         'BrowserSmoke.ShadowArtifact: caster material identity disagrees.');
         return result;
@@ -89,8 +92,8 @@ async function publishedShadowArtifacts(root, state) {
     const programs = {};
     for (const pass of ['shade-native-depth', 'shade-native', 'shade-native-no-modifiers'])
         programs[pass] = await pipeline(pass);
-    programs.directional = await material('OpaqueShadowDepth', 'depth', 'depth-normal-v1');
-    programs.point = await material('OpaquePointShadowDepth', 'point-shadow-depth', 'radial-r16f-v1');
+    programs.directional = await material('OpaqueShadowDepth', 'depth', 'depth-normal-v1', 'engine-shadow-depth');
+    programs.point = await material('OpaquePointShadowDepth', 'point-shadow-depth', 'radial-r16f-v1', 'engine-point-shadow-depth');
     return { receipt, programs };
 }
 

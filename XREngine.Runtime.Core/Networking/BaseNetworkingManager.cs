@@ -1228,8 +1228,8 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
     public static async Task SendFileAsync(string filePath, string targetIP, int port, IProgress<double> progress)
     {
         RequireHostFileTransfer();
-        var fileInfo = new FileInfo(filePath);
-        long fileLength = fileInfo.Length;
+        IHostFileTransferBackend fileBackend = HostFileTransferServices.Required;
+        long fileLength = fileBackend.GetLength(filePath);
 
         using Stream ns = await NetworkTransportServices.Required.ConnectStreamAsync(targetIP, port);
 
@@ -1239,7 +1239,7 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
         byte[] buffer = new byte[8192];
         long totalSent = 0;
         RequireHostFileTransfer();
-        using FileStream fs = File.OpenRead(filePath);
+        using Stream fs = fileBackend.OpenRead(filePath);
         int bytesRead;
         while ((bytesRead = await fs.ReadAsync(buffer)) > 0)
         {
@@ -1269,6 +1269,7 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
     public static async Task ReceiveFileAsync(string filePath, int port, IProgress<double> progress)
     {
         RequireHostFileTransfer();
+        IHostFileTransferBackend fileBackend = HostFileTransferServices.Required;
         using Stream ns = await NetworkTransportServices.Required.AcceptStreamAsync(port);
         byte[] lengthBytes = new byte[8];
         await ns.ReadExactlyAsync(lengthBytes);
@@ -1276,7 +1277,7 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
         byte[] buffer = new byte[8192];
         long totalReceived = 0;
         RequireHostFileTransfer();
-        using FileStream fs = File.OpenWrite(filePath);
+        using Stream fs = fileBackend.OpenWrite(filePath);
         int bytesRead;
         while (totalReceived < fileLength && (bytesRead = await ns.ReadAsync(buffer)) > 0)
         {

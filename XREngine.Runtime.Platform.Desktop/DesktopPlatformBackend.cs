@@ -4,6 +4,7 @@ using XREngine.Execution;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Runtime.Platform.Desktop.Windowing;
+using XREngine.Networking;
 
 namespace XREngine.Runtime.Platform.Desktop;
 
@@ -26,6 +27,7 @@ public static class DesktopPlatformBackend
         XREngine.Data.RuntimeProcessMemoryServices.WorkingSetBytesReader = DesktopProcessDiagnostics.ReadWorkingSetBytes;
         XREngine.Data.RuntimeAssemblyLoadingServices.Current = new DesktopRuntimeAssemblyLoader();
         XREngine.Core.Files.AssetFileSystemServices.Current = new DesktopAssetFileSystem();
+        HostFileTransferServices.Current = new DesktopHostFileTransferBackend();
         XREngine.Rendering.RuntimeClipboardServices.Current = new DesktopClipboardServices();
         XREngine.Rendering.RuntimeDiagnosticCaptureFileOutput.Current = new DesktopDiagnosticCaptureFileOutput();
         RendererNativeCallbackBridge.EntryPoints = new Rendering.DesktopRendererNativeCallbackEntryPoints();

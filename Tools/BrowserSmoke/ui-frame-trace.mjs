@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 // Activation requires a separate review. A local command-line flag is insufficient.
 const authorization = Object.freeze({ enabled: true, requestId: '3e875a33-496f-4054-a609-af4970a51fe1',
     activationPath: '.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json',
-    priorCommit: 'add42c95ff39937585aa94d5c2b9659b40434956' });
+    priorCommit: '9bcbda0790f5ebe2ddc4874561e823dbb2aed8ca' });
 export function getUiFrameTraceAuthorization() { return authorization; }
 const categories = Object.freeze(['gpu.dawn', 'gpu', 'viz', 'cc', 'blink']);
 const limits = Object.freeze({ recordingMs: 30000, drainMs: 5000, inputBytes: 16 * 1024 * 1024,
@@ -59,7 +59,8 @@ export async function claimUiFrameTrace(config) {
         && !config.gpuDiagnostics && !config.headed && !config.executablePath, 'ScopeRejected');
     requireTrace(process.platform === 'linux' && Number.isSafeInteger(process.getuid?.())
         && process.getuid() > 0 && process.getuid() === process.geteuid?.(), 'RunnerIdentityRejected');
-    requireTrace(process.env.DEBUG === '' && !process.env.SELENIUM_REMOTE_URL
+    // Playwright's debug dependency deletes an empty DEBUG value during import.
+    requireTrace((process.env.DEBUG === undefined || process.env.DEBUG === '') && !process.env.SELENIUM_REMOTE_URL
         && (!process.env.PWDEBUG || process.env.PWDEBUG === '0'), 'BrowserEnvironmentRejected');
     const exact = { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'push', GITHUB_RUN_ATTEMPT: '1',
         GITHUB_REPOSITORY: 'BlackJaxDev/XRENGINE', GITHUB_REF: 'refs/heads/codex/webgpu-readiness-audit',
