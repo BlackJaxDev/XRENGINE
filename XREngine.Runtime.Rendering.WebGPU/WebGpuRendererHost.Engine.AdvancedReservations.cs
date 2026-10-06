@@ -52,6 +52,9 @@ public sealed partial class WebGpuRendererHost
             else
                 WebGpuAdvancedShadingProgramContract.Validate(artifact, pass);
         }
+        foreach (string binding in WebGpuAdvancedShadingProgramContract.ModifierAbsentBindings)
+            if (artifacts is not null && artifacts.TryResolve(binding, out ShaderProgramArtifact? artifact))
+                WebGpuAdvancedShadingProgramContract.Validate(artifact, artifact.Pass);
         SetField(ref _advancedPipelineArtifacts, artifacts, publishNotifications: false);
         SetField(ref _advancedProgramFailure, failure, publishNotifications: false);
         SetField(ref _advancedAmbientOcclusionProgramFailure,
@@ -103,6 +106,12 @@ public sealed partial class WebGpuRendererHost
                     return new(EAdvancedProductionExecutionState.Unsupported,
                         $"WebGPU.Advanced.DeviceLimit: '{binding}' requires {limit}>={required}.");
         }
+        foreach (string binding in WebGpuAdvancedShadingProgramContract.ModifierAbsentBindings)
+            if (_advancedPipelineArtifacts!.TryResolve(binding, out ShaderProgramArtifact? artifact))
+                foreach ((string limit, int required) in artifact.RequiredLimits)
+                    if (!HasAdvancedLimit(limit, required))
+                        return new(EAdvancedProductionExecutionState.Unsupported,
+                            $"WebGPU.Advanced.DeviceLimit: '{binding}' requires {limit}>={required}.");
         return new(EAdvancedProductionExecutionState.Admitted, "Ready");
     }
 

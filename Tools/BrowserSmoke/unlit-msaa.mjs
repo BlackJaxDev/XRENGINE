@@ -43,6 +43,22 @@ const sidecarNames = ['DepthStencil', 'WebNormalTexture', 'WebMsaaNormalTexture'
 
 function assert(condition, message) { if (!condition) throw new Error(message); }
 function same(left, right) { return JSON.stringify(left) === JSON.stringify(right); }
+function nativeProgramGroups(programs) {
+    // IDs are local to one context. Keep object multiplicity and label-sharing
+    // relationships when comparing fresh contexts, without comparing ordinals.
+    const groups = new Map();
+    for (const program of programs) {
+        const { kind, label, nativeId } = JSON.parse(program);
+        assert(typeof kind === 'string' && typeof label === 'string' &&
+            Number.isSafeInteger(nativeId) && nativeId > 0,
+        'BrowserSmoke.UnlitIndirectNativeIdentity: a native program has an invalid identity.');
+        let group = groups.get(nativeId);
+        if (!group) { group = []; groups.set(nativeId, group); }
+        group.push(JSON.stringify({ kind, label }));
+    }
+    // Preserve duplicate groups: equal labels can belong to distinct objects.
+    return [...groups.values()].map(group => JSON.stringify(group.sort())).sort();
+}
 function srgbToLinear(value) { return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4; }
 function display(hdr) {
     return [...hdr.slice(0, 3).map(value => Math.round(255 * Math.min(1, value * 1.6 / (value + 0.6)) ** (1 / 2.2))), 255];
@@ -990,7 +1006,8 @@ export async function unlitIndirectCheck(browser, origin, report, config, instru
                     if (index > 0) compareWarmStage(stage, record.stages[0], record.stages[index - 1]);
                     else {
                         assert((startupResidual === undefined || (profile.endsWith('-blended')
-                            ? same(stage.cacheOwnership.nativePrograms, startupResidual.nativePrograms)
+                            ? same(nativeProgramGroups(stage.cacheOwnership.nativePrograms),
+                                nativeProgramGroups(startupResidual.nativePrograms))
                             : same(stage.cacheOwnership.residual, startupResidual.residual))) &&
                             (catalog === undefined || same(catalog, stage.catalogIdentities)),
                         'BrowserSmoke.UnlitIndirectRestart: startup retained resources or changed cooked variants.');

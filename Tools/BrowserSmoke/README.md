@@ -385,6 +385,16 @@ This initial sample selects CPU-direct submission; it does not qualify meshlet,
 deformation, MSAA, desktop comparison or performance by association. The wrappers
 add diagnostic allocations, so this run is not steady-state allocation evidence.
 
+Native shading can select one of four optional companions when the frozen scene
+proves that selected shadows and decals are absent. The harness records the
+actual selected program, including its label, pass, entry point, descriptor and
+WGSL identity. CI requires the exact sixteen full companions and four optional
+companions. It checks every descriptor/source hash and length, then checks each
+optional schema, physical layout, limits and dependencies against its full
+counterpart. Missing optional companions leave the runtime on the full family;
+the current source cook is expected to include all twenty. These checks do not
+qualify shadow/decal rendering or dynamic selection by association.
+
 The `ui-parity` kind consumes the Editor-published
 `Samples/BrowserUiParity` world through the shipping player. It checks the
 shared control callbacks through their readonly status label, authored
@@ -400,7 +410,7 @@ Adding the fixture and harness does not establish a successful cook or browser r
 
 After a failed Advanced application check and successful closure of its browser,
 the harness starts a separate Chromium process with the same launch options.
-It verifies the published native shader against the recorded module hash and
+It verifies the actual selected native shader against the recorded module hash and
 replays the actual entry point, constants, explicit binding layouts and device
 requirements. This compile-only diagnostic has its own 45-second native compile
 bound and reports identity/timing without retaining shader source. It helps
@@ -411,7 +421,13 @@ existing published `advanced::shade-uber-native` consumer. It verifies the same
 manifest's control identity and the comparison's real schema, complete 40-entry
 binding contract, compiler and capability requirements. Both arms keep the same
 device requests and 45-second bounds. This compares a combined helper/body and
-texture-bank difference, not a substitute application material. Two timeouts
+texture-bank difference. When the selected control is the optional single-sample
+native companion, the harness first verifies its full counterpart's descriptor
+and WGSL, then checks the Uber contract against that full descriptor. The timing
+comparison therefore includes both modifier specialization and the Uber body/
+texture-bank difference. It does not execute a third GPU arm or substitute an
+application material. Profiles without the matching single-sample native ABI
+report the comparison as unavailable. Two timeouts
 are censored observations, and any missing artifact or contract mismatch leaves
 the comparison unavailable rather than changing the failed application check.
 

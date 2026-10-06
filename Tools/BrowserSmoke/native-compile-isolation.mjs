@@ -7,6 +7,11 @@ import { createOwnedGpuProfile } from './owned-gpu-profile.mjs';
 
 /** Passive capture: return every original WebGPU object/promise unchanged. Never retain WGSL in evidence. */
 export function installNativeCompileCapture() {
+    const nativePassByLabel = new Map([
+        'shade-native', 'shade-native-no-modifiers',
+        'shade-native-msaa', 'shade-native-no-modifiers-msaa',
+        'shade-surface-exports-no-modifiers', 'shade-surface-exports-no-modifiers-msaa',
+    ].map(pass => [`engine-advanced-${pass}`, pass]));
     const adapters = new WeakMap(), devices = new WeakMap(), bindings = new WeakMap();
     const layouts = new WeakMap(), modules = new WeakMap();
     const evidence = { timeOriginMs: performance.timeOrigin, calls: 0, records: [], captureErrors: [] };
@@ -95,11 +100,12 @@ export function installNativeCompileCapture() {
         const startedAtMs = performance.now();
         const promise = createCompute.apply(this, args);
         observe(() => {
-            if (args[0]?.label !== 'engine-advanced-shade-native') return;
+            const pass = nativePassByLabel.get(args[0]?.label);
+            if (!pass) return;
             evidence.calls++;
             if (evidence.records.length >= 4) return;
             const record = { startedAtMs, callReturnedAtMs: performance.now(), status: 'pending', elapsedMs: null,
-                recipeStatus: 'pending', recipe: null };
+                pass, recipeStatus: 'pending', recipe: null };
             evidence.records.push(record);
             void promise.then(() => {
                 record.status = 'fulfilled'; record.elapsedMs = performance.now() - startedAtMs;
@@ -239,12 +245,80 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
                 try { return { shader, sourceEntry, descriptor: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) }; }
                 finally { loader.releasePayload(bytes); }
             };
-            let { shader, sourceEntry, descriptor } = await readArtifact('shade-native');
-            if (descriptor.pass !== 'shade-native' || descriptor.target !== 'WebGPUWgsl'
+            const selectedPass = String(recipe.pipeline?.label ?? '').replace(/^engine-advanced-/, '');
+            if (!['shade-native', 'shade-native-no-modifiers', 'shade-native-msaa', 'shade-native-no-modifiers-msaa',
+                'shade-surface-exports-no-modifiers', 'shade-surface-exports-no-modifiers-msaa'].includes(selectedPass)
+                || recipe.pipeline.label !== `engine-advanced-${selectedPass}`)
+                throw new Error('Native compile isolation captured an unsupported native program label.');
+            let { shader, sourceEntry, descriptor } = await readArtifact(selectedPass);
+            if (descriptor.name !== recipe.pipeline.label || descriptor.pass !== selectedPass || descriptor.target !== 'WebGPUWgsl'
                 || descriptor.entryPoints?.compute !== recipe.compute.entryPoint
                 || sourceEntry.hash !== recipe.module.sha256 || sourceEntry.bytes !== recipe.module.byteLength
                 || descriptor.source?.sha256 !== recipe.module.sha256 || descriptor.source?.byteLength !== recipe.module.byteLength)
                 throw new Error('Native compile isolation published descriptor/source does not match the observed module and entry point.');
+            result.selectedPass = selectedPass;
+            if (selectedPass.includes('-no-modifiers')) {
+                const basePass = selectedPass.replace('-no-modifiers', '');
+                const { shader: baseShader, sourceEntry: baseSourceEntry, descriptor: base } = await readArtifact(basePass);
+                if (base.name !== `engine-advanced-${basePass}` || base.pass !== basePass ||
+                    base.semanticSchemaIdentity !== 'xrengine.engine.compute.v1' ||
+                    base.source?.sha256 !== baseSourceEntry.hash || base.source?.byteLength !== baseSourceEntry.bytes)
+                    throw new Error('Native compile isolation full-program control identity differs from its published source.');
+                const baseBytes = await loader.readVerifiedPayload(baseSourceEntry.url, baseSourceEntry.bytes,
+                    baseSourceEntry.hash, baseShader.source);
+                loader.releasePayload(baseBytes);
+                const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
+                    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
+                const equal = (actual, expected, label) => {
+                    if (JSON.stringify(canonical(actual)) !== JSON.stringify(canonical(expected)))
+                        throw new Error(`Native compile isolation selected ${label} differs from its full-program control.`);
+                };
+                equal(descriptor.semanticSchemaIdentity, 'xrengine.engine.native-unmodified.v1', 'schema identity');
+                equal(descriptor.schemaVersion, 3, 'schema version');
+                equal(descriptor.target, 'WebGPUWgsl', 'target');
+                equal(descriptor.sourceLanguage, 'Slang', 'source language');
+                equal(descriptor.workgroupSize, [16, 16, 1], 'workgroup size');
+                equal(descriptor.layout?.vertexBuffers, [], 'vertex buffers');
+                const expectedBindings = selectedPass === 'shade-native-no-modifiers-msaa' ? 40 : 41;
+                equal(descriptor.layout?.bindings?.length, expectedBindings, 'binding count');
+                equal(descriptor.defines, [...base.defines, 'XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1'], 'schema defines');
+                equal(descriptor.layout, base.layout, 'complete binding layout');
+                for (const key of ['schemaVersion', 'compilerIdentity', 'sourceLanguage', 'matrixLayout', 'coordinates',
+                    'entryPoints', 'workgroupSize', 'requiredFeatures', 'requiredLimits', 'includes', 'sourceMap', 'pipeline', 'specialization'])
+                    equal(descriptor[key], base[key], key);
+                const sourceDependencies = value => value.dependencies.filter(dependency => !dependency.path.endsWith('.recipe.json'));
+                equal(sourceDependencies(descriptor), sourceDependencies(base), 'source dependencies');
+                equal(recipe.pipeline, { label: descriptor.name }, 'pipeline descriptor');
+                equal(recipe.compute, { entryPoint: descriptor.entryPoints.compute }, 'compute stage');
+                equal(recipe.module.descriptor, { label: descriptor.name }, 'module descriptor');
+                const gpuBinding = value => {
+                    const entry = { binding: value.binding, visibility: 4 };
+                    if (['read-only-storage', 'storage', 'uniform'].includes(value.kind))
+                        entry.buffer = { type: value.kind, hasDynamicOffset: value.dynamic, minBindingSize: value.bytes };
+                    else if (value.kind.endsWith('-sampler'))
+                        entry.sampler = { type: value.kind.replace('-sampler', '') };
+                    else if (value.kind.startsWith('storage-texture-')) {
+                        const match = /^storage-texture-(2d|2d-array)-write-(.+)$/.exec(value.kind);
+                        if (!match) throw new Error('Native compile isolation selected storage texture shape is unsupported.');
+                        entry.storageTexture = { viewDimension: match[1], format: match[2], access: 'write-only' };
+                    } else {
+                        const match = /^texture-(?:(depth-multisampled-2d|depth-2d)|(multisampled-2d|2d-array|cube|2d)-(uint|sint|unfilterable-float|float))$/.exec(value.kind);
+                        if (!match) throw new Error('Native compile isolation selected texture shape is unsupported.');
+                        const dimension = match[1] ?? match[2];
+                        entry.texture = { viewDimension: dimension.includes('array') ? '2d-array' : dimension.includes('cube') ? 'cube' : '2d',
+                            sampleType: match[1] ? 'depth' : match[3], multisampled: dimension.includes('multisampled') };
+                    }
+                    return entry;
+                };
+                const expectedGroups = Array.from({ length: 3 }, () => ({ label: descriptor.name, entries: [] }));
+                for (const binding of descriptor.layout.bindings) expectedGroups[binding.group].entries.push(gpuBinding(binding));
+                equal(recipe.layout.bindGroupLayouts, expectedGroups, 'captured GPU binding layout');
+                equal(Object.keys(recipe.layout).sort(), ['bindGroupLayouts'], 'pipeline layout fields');
+                result.selectedContract = { basePass, schemaIdentity: descriptor.semanticSchemaIdentity,
+                    bindingCount: descriptor.layout.bindings.length, layoutVerified: true };
+                result.fullProgramControl = { descriptorIdentity: baseShader.identity, sha256: baseSourceEntry.hash,
+                    byteLength: baseSourceEntry.bytes, layoutVerified: true };
+            }
             if (comparison) {
                 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
                     ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
@@ -256,7 +330,9 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
                 requireEqual({ descriptorIdentity: shader.identity, sha256: sourceEntry.hash, byteLength: sourceEntry.bytes },
                     comparison.controlArtifact, 'same-manifest control identity');
                 result.controlArtifact = comparison.controlArtifact;
-                const controlDescriptor = descriptor, expected = comparison.contract;
+                const selectedDescriptor = descriptor, expected = comparison.contract;
+                const controlDescriptor = selectedPass === 'shade-native-no-modifiers'
+                    ? (await readArtifact('shade-native')).descriptor : selectedDescriptor;
                 ({ shader, sourceEntry, descriptor } = await readArtifact(expected.pass));
                 for (const key of ['name', 'pass', 'semanticSchemaIdentity', 'entryPoints', 'workgroupSize'])
                     requireEqual(descriptor[key], expected[key], key);
@@ -382,12 +458,13 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
 export async function runNativeCompileIsolation(chromium, origin, report, config, instrumentedPage) {
     const capture = report.advancedRenderingFailures?.find(value => value.nativeCompile)?.nativeCompile;
     if (!capture) return;
-    const record = capture.records.find(value => value.status === 'pending');
+    const pending = capture.records.filter(value => value.status === 'pending');
+    const record = pending.length === 1 ? pending[0] : null;
     const result = report.nativeCompileIsolation = { scope: 'Diagnostic only; does not change the failed application check.',
         status: 'skipped', reason: null, compileBudgetMs: 45000, freshBrowserProcess: true,
         applicationBrowserClosed: true, applicationCapture: capture, cleanup: {} };
-    if (capture.calls !== 1 || !record || record.recipeStatus !== 'ready') {
-        result.reason = 'Requires exactly one pending native compile with a complete captured recipe.';
+    if (!record || record.recipeStatus !== 'ready' || capture.captureErrors.length) {
+        result.reason = 'Requires one exact pending native compile with a complete captured recipe and no capture errors.';
         return;
     }
     result.recipe = record.recipe;
@@ -401,6 +478,12 @@ export async function runNativeCompileIsolation(chromium, origin, report, config
         freshBrowserProcess: true, applicationBrowserClosed: true, controlBrowserClosed: result.cleanup.browserClosed === true,
         controlRecipeSha256: result.recipeSha256, cleanup: {},
         interpretation: 'Compares the combined Uber helper/body and texture-bank difference. Timeouts are right-censored; neither result changes application checks.' };
+    if (record.pass !== 'shade-native' && record.pass !== 'shade-native-no-modifiers') {
+        comparison.reason = `The observed ${record.pass} program has no equivalent x1 full-native Uber comparison contract.`;
+        return;
+    }
+    if (record.pass === 'shade-native-no-modifiers')
+        comparison.interpretation = 'Compares the selected no-modifiers native program with Uber x1. The full native x1 descriptor and layout are verified; the two compiled programs differ in modifier specialization and Uber texture-bank/body. Timeouts are right-censored; neither result changes application checks.';
     const control = result.replay?.cookedArtifact;
     if (result.ownedGpuProfile?.requiresJobTermination) {
         comparison.reason = 'Owned Native profiler cleanup could not be verified; requires ephemeral job termination.';

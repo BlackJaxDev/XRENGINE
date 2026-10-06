@@ -6,10 +6,26 @@ namespace XREngine.Rendering.WebGPU;
 /// <summary>Checks fixed bank shape, storage access, uniform sizes, and GPU tile workgroup contracts before use.</summary>
 internal static class WebGpuAdvancedShadingProgramContract
 {
+    internal static readonly string[] ModifierAbsentBindings =
+    [
+        "advanced::shade-native-no-modifiers", "advanced::shade-surface-exports-no-modifiers",
+        "advanced::shade-native-no-modifiers-msaa", "advanced::shade-surface-exports-no-modifiers-msaa",
+    ];
+
     internal static void Validate(ShaderProgramArtifact artifact, string pass)
     {
         if (pass == "shade-msaa-resolve") { WebGpuAdvancedMsaaProgramContract.Validate(artifact, pass); return; }
         string requestedPass = pass;
+        bool modifiersAbsent = pass is "shade-native-no-modifiers" or "shade-surface-exports-no-modifiers" or
+            "shade-native-no-modifiers-msaa" or "shade-surface-exports-no-modifiers-msaa";
+        if (modifiersAbsent) pass = pass switch
+        {
+            "shade-native-no-modifiers" => "shade-native",
+            "shade-surface-exports-no-modifiers" => "shade-surface-exports",
+            "shade-native-no-modifiers-msaa" => "shade-native-msaa",
+            "shade-surface-exports-no-modifiers-msaa" => "shade-surface-exports-msaa",
+            _ => throw Invalid(),
+        };
         bool uberRaster = pass.StartsWith("shade-uber-", StringComparison.Ordinal);
         if (uberRaster) pass = pass switch
         {
@@ -29,13 +45,15 @@ internal static class WebGpuAdvancedShadingProgramContract
         int count = native ? (multisample && !exports ? 40 : 41) : classify ? 7 : finalize ? 3 : exports ? 5 : 6;
         if (uberRaster) count--;
         if (uberRaster && artifact.SemanticSchemaIdentity != "xrengine.engine.uber-raster-consumer.v2") throw Invalid();
+        if (modifiersAbsent && (artifact.SemanticSchemaIdentity != "xrengine.engine.native-unmodified.v1" ||
+            artifact.ComputeEntryPoint != (multisample ? "advancedShadeNativeMsaa" : "advancedShadeNative"))) throw Invalid();
         if (artifact.Pass != requestedPass || artifact.Target != ShaderCompileTarget.WebGPUWgsl || artifact.Resources.Length != count ||
             artifact.ComputeEntryPoint is null || artifact.VertexEntryPoint is not null || artifact.FragmentEntryPoint is not null ||
             artifact.ComputeWorkgroupSize != (finalize ? new ShaderComputeWorkgroupSize(64, 1, 1) : new ShaderComputeWorkgroupSize(16, 16, 1)))
             throw Invalid();
         if (native)
         {
-            if (!HasNativeSchemas(artifact, exports, depthBank, uberRaster))
+            if (!HasNativeSchemas(artifact, exports, depthBank, uberRaster, modifiersAbsent))
                 throw new NotSupportedException("WebGPU.Advanced.NativeSchemaMismatch: recook native shading and exports with engine-surface schema 5, Uber-base schema 1, the 36-table scene directory, authored-basis/decal/shadow/AO schema 1, and the selected texture-bank contract.");
             for (uint binding = 0; binding < 7; binding++) Require(artifact, 0, binding, "read-only-storage", 4);
             Require(artifact, 0, 7, "uniform", 944, "FrozenView");
@@ -80,7 +98,7 @@ internal static class WebGpuAdvancedShadingProgramContract
         }
     }
 
-    private static bool HasNativeSchemas(ShaderProgramArtifact artifact, bool exports, bool depthBank, bool uberRaster)
+    private static bool HasNativeSchemas(ShaderProgramArtifact artifact, bool exports, bool depthBank, bool uberRaster, bool modifiersAbsent)
     {
         if (artifact.SourceLanguage != "Slang" || artifact.DescriptorBytes.IsDefaultOrEmpty) return false;
         // Program validation also runs while recording. Inspect the retained,
@@ -96,16 +114,21 @@ internal static class WebGpuAdvancedShadingProgramContract
                 continue;
             }
             if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray) return false;
-            bool schemaSeen = false, exportsSeen = false, shadowSeen = false, depthSeen = false, ambientOcclusionSeen = false, decalsSeen = false, basisSeen = false, uberSeen = false, directorySeen = false, rasterSeen = false;
+            bool schemaSeen = false, exportsSeen = false, shadowSeen = false, depthSeen = false, ambientOcclusionSeen = false, decalsSeen = false, basisSeen = false, uberSeen = false, directorySeen = false, rasterSeen = false, modifiersAbsentSeen = false;
             while (reader.Read())
             {
                 if (reader.TokenType == JsonTokenType.EndArray)
-                    return rasterSeen == uberRaster && schemaSeen && basisSeen && uberSeen && directorySeen && shadowSeen && ambientOcclusionSeen && decalsSeen && exportsSeen == exports && depthSeen == depthBank;
+                    return modifiersAbsentSeen == modifiersAbsent && rasterSeen == uberRaster && schemaSeen && basisSeen && uberSeen && directorySeen && shadowSeen && ambientOcclusionSeen && decalsSeen && exportsSeen == exports && depthSeen == depthBank;
                 if (reader.TokenType != JsonTokenType.String) return false;
                 if (reader.ValueTextEquals("XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=6"u8))
                 {
                     if (schemaSeen) return false;
                     schemaSeen = true;
+                }
+                else if (reader.ValueTextEquals("XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1"u8))
+                {
+                    if (!modifiersAbsent || modifiersAbsentSeen) return false;
+                    modifiersAbsentSeen = true;
                 }
                 else if (reader.ValueTextEquals("XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION=2"u8))
                 {

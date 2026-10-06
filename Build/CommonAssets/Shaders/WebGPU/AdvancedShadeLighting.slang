@@ -384,6 +384,7 @@ bool XR_ADV_TrySampleProbe(XRAdvancedProbeRecord probe, float3 worldPosition, fl
 #define XR_ADV_SHADOW_OUTSIDE 5u
 #define XR_ADV_SHADOW_STALE_TILE 6u
 
+#if !defined(XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION)
 float XR_ADV_ShadowMomentBound(float2 moments, float receiver, float4 parameters)
 {
     if (receiver <= moments.x) return 1.0;
@@ -619,7 +620,7 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
     return 1.0;
 }
 
-
+#endif
 
 #include "AdvancedShadeDecals.slang"
 
@@ -768,7 +769,11 @@ float3 XR_ADV_EvaluateLight(
     }
     else return float3(0.0);
     uint reason = 0u;
+#if defined(XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION)
+    float visibility = 1.0;
+#else
     float visibility = receiveShadows ? XR_ADV_EvaluateShadow(light, surface, N, L, reason) : 1.0;
+#endif
     shadowReason = max(shadowReason, reason);
     shadowVisibility = min(shadowVisibility, visibility);
     float3 radiance = light.colorAndIntensity.rgb * light.colorAndIntensity.w * attenuation * visibility;
@@ -803,7 +808,9 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     // A multisample driver calls this function repeatedly in one invocation.
     shadowReason = XR_ADV_SHADOW_OK;
     shadowVisibility = 1.0;
+#if !defined(XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION)
     standaloneShadowHelpersReady = false;
+#endif
     directDiffuse = float3(0.0);
     directSpecular = float3(0.0);
 

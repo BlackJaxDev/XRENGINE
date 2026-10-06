@@ -2,6 +2,26 @@
 #error Native authored decal sampling requires schema version 1.
 #endif
 
+#if defined(XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION)
+#if XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION != 1
+#error Native absent-modifier sampling requires schema version 1.
+#endif
+
+void XR_ADV_ApplySelectedDecals(inout XRAdvancedSurface surface,
+    inout float3 albedo, inout float3 normal, inout float roughness, inout float metallic,
+    inout float specular, inout float3 emittedRadiance)
+{
+    // The frozen operation proves that no decal can sample. Keep the authored
+    // range check observable at the same call point, including an empty range.
+    if ((Parameters.flags & 16u) == 0u) return;
+    uint words, stride;
+    TextureBindings.GetDimensions(words, stride);
+    uint offset = Parameters.reserved0, count = Parameters.reserved1;
+    if (offset > words || count > words - offset)
+        textureFailure |= 1u << 17u;
+}
+#else
+
 #define XR_ADV_DECAL_ENABLED 1u
 #define XR_ADV_DECAL_AFFECT_NORMALS 2u
 #define XR_ADV_DECAL_AUTHORED_ALBEDO 4u
@@ -256,3 +276,4 @@ void XR_ADV_ApplySelectedDecalReceiverNormals(XRAdvancedSurface surface, inout f
     while (XR_ADV_TryNextDecal(cursor, authored, decalIndex))
         XR_ADV_ApplyDecalToReceiverNormal(decalIndex, surface, normal);
 }
+#endif

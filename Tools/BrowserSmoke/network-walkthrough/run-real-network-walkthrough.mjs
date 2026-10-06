@@ -46,6 +46,28 @@ async function bounded(label, work, limit = 10000) {
         })]);
     } finally { clearTimeout(timeout); }
 }
+async function gpuSandboxProof(browser) {
+    let session, finished = false;
+    const detach = attached => bounded('BrowserProofDetach', () => attached.detach(), 750).catch(() => null);
+    try {
+        return await bounded('BrowserProof', async () => {
+            const attached = await browser.newBrowserCDPSession();
+            if (finished) { await detach(attached); return null; }
+            session = attached;
+            const systemInfo = await session.send('SystemInfo.getInfo');
+            const sandboxed = systemInfo?.gpu?.auxAttributes?.sandboxed;
+            if (typeof sandboxed !== 'boolean')
+                throw new WalkthroughFailure('BrowserProofUnavailable');
+            return { gpuProcessSandboxed: sandboxed };
+        }, 5000);
+    } catch (error) {
+        if (error instanceof WalkthroughFailure) throw error;
+        throw new WalkthroughFailure('BrowserProofUnavailable');
+    } finally {
+        finished = true;
+        if (session) await detach(session);
+    }
+}
 // Do not inherit runner credentials, tracing, crash-dump switches, NODE_OPTIONS,
 // Playwright DEBUG settings, proxy credentials, or legacy XRE_* overrides.
 const allowedEnvironment = new Set(['SYSTEMROOT','WINDIR','PATH','PATHEXT','TEMP','TMP',
@@ -153,7 +175,8 @@ if (!preflightOnly) await fs.writeFile(serviceConfig, JSON.stringify({
 let service, browser, context, page, instanceId;
 const reservations = [];
 const result = { result: 'incomplete', packageId: manifest.packageId, buildVersion: manifest.buildVersion,
-    pageOrigin: origin, gpuMode: 'software', mode: preflightOnly ? 'preflight-only' : 'real-network',
+    pageOrigin: origin, gpuMode: 'software', chromiumSandboxRequested: true,
+    webGpuAdapterRequested: 'swiftshader', mode: preflightOnly ? 'preflight-only' : 'real-network',
     certificateMutationReached: !preflightOnly, stage: 'Starting', checks: {}, worker: {} };
 function writeResult() { writeFileSync(path.join(values.run, preflightOnly ? 'preflight-result.public.json' : 'nonsecret-result.json'), JSON.stringify(result, null, 2)); }
 function stage(name) { result.stage = name; writeResult(); }
@@ -238,8 +261,11 @@ try {
     }
 
     stage('BrowserLaunch');
+    const launchOptions = browserLaunchOptions({ gpuMode: 'software', headed: false, gpuDiagnostics: false });
     browser = await bounded('BrowserLaunch', () => chromium.launch({
-        ...browserLaunchOptions({ gpuMode: 'software', headed: false, gpuDiagnostics: false }),
+        ...launchOptions,
+        args: [...launchOptions.args, '--use-webgpu-adapter=swiftshader'],
+        chromiumSandbox: true,
         timeout: 30000, env: childEnvironment }), 35000);
     result.browserVersion = browser.version();
     context = await bounded('BrowserContext', () => browser.newContext({ viewport: { width: 1280, height: 900 },
@@ -287,6 +313,21 @@ try {
             && document.querySelector('#status')?.dataset.state === 'running';
     }, null, { timeout: 60000 });
     result.checks.publishedFirstFrame = true;
+    stage('BrowserEnvironmentProof');
+    const adapter = await bounded('BrowserAdapterProof', () => page.evaluate(() => {
+        const info = globalThis.__networkFixtureHost?.renderer?.device?.adapterInfo;
+        if (!info) return { adapter: 'unavailable' };
+        const fields = [info.description, info.device, info.vendor, info.architecture];
+        const adapter = fields.some(field => typeof field === 'string' && /swiftshader/i.test(field))
+            ? 'swiftshader' : 'other';
+        return { adapter, ...(typeof info.isFallbackAdapter === 'boolean'
+            ? { fallback: info.isFallbackAdapter } : {}) };
+    }), 3000);
+    result.checks.browserEnvironment = { ...adapter };
+    Object.assign(result.checks.browserEnvironment, await gpuSandboxProof(browser));
+    writeResult();
+    requireCondition(adapter.adapter === 'swiftshader', 'WebGpuAdapterNotSwiftShader');
+    requireCondition(result.checks.browserEnvironment.gpuProcessSandboxed === true, 'BrowserGpuSandboxNotProven');
     if (preflightOnly) requireCondition(!observedGateway && !unexpectedSocket, 'UnexpectedPreflightSocket');
     if (!preflightOnly) {
         stage('FirstJoin');
