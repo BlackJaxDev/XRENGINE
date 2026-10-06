@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { inspectCanvas } from './canvas-capture.mjs';
+import { Worker } from 'node:worker_threads';
+import { shadowReceiverRegions } from './shadow-image-math.mjs';
+export { shadowReceiverRegions, inspectShadowCaptureImage } from './shadow-image-math.mjs';
 import { installAdvancedSubmissionObservation } from './advanced-submission-observer.mjs';
 import { installNativeCompileCapture } from './native-compile-isolation.mjs';
 
@@ -17,6 +19,69 @@ const fixtureHashes = {
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
     ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const equal = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
+/** Owns one interruptible decoder and exactly three baseline slots plus the current image. */
+function createShadowImageAnalysis() {
+    const worker = new Worker(new URL('./shadow-image-worker.mjs', import.meta.url));
+    let pending = null, sequence = 0, stopped = null, failure = null;
+    let terminationRequested = false, unexpectedExit = false, exitCode = null;
+    const error = code => Object.assign(new Error(`BrowserSmoke.ShadowImageAnalysis: ${code}.`),
+        { code: code === 'deadline' ? 'SHADOW_IMAGE_DEADLINE' : 'SHADOW_IMAGE_ANALYSIS' });
+    const stop = () => {
+        if (!stopped) {
+            terminationRequested = true;
+            stopped = worker.terminate().then(code =>
+                !unexpectedExit && Number.isInteger(code) && exitCode === code, () => false);
+        }
+        return stopped;
+    };
+    const reject = code => {
+        failure = code;
+        if (pending) {
+            const current = pending;
+            pending = null;
+            clearTimeout(current.timer);
+            current.reject(error(code));
+        }
+        void stop();
+    };
+    worker.on('error', () => { unexpectedExit = true; reject('worker-failed'); });
+    worker.on('exit', code => {
+        exitCode = code;
+        if (!terminationRequested) { unexpectedExit = true; reject('worker-exited'); }
+    });
+    worker.on('message', message => {
+        if (!pending || message.id !== pending.id) return;
+        if (Date.now() >= pending.deadline) { reject('deadline'); return; }
+        if (message.error) { reject(message.error); return; }
+        const current = pending;
+        pending = null;
+        clearTimeout(current.timer);
+        current.resolve(message.result);
+    });
+    return {
+        request(operation, payload, deadline) {
+            if (failure || stopped) return Promise.reject(error(failure ?? 'worker-closed'));
+            if (pending) return Promise.reject(error('concurrent-analysis'));
+            if (Date.now() >= deadline) { reject('deadline'); return Promise.reject(error('deadline')); }
+            return new Promise((resolve, rejectRequest) => {
+                const current = { id: ++sequence, deadline, resolve, reject: rejectRequest, timer: null };
+                pending = current;
+                current.timer = setTimeout(() => { if (pending === current) reject('deadline'); },
+                    Math.max(0, deadline - Date.now()));
+                try { worker.postMessage({ id: current.id, operation, deadline, ...payload }); }
+                catch { reject('worker-send-failed'); }
+            });
+        },
+        async close() {
+            if (pending) reject('worker-closed');
+            let timer;
+            try {
+                return await Promise.race([stop(), new Promise(resolve => { timer = setTimeout(() => resolve(false), 1000); })]);
+            } finally { clearTimeout(timer); }
+        },
+    };
+}
 
 /** Binds the observation to the pinned fixture and the published, hash-checked programs. */
 async function publishedShadowArtifacts(root, state) {
@@ -412,68 +477,6 @@ function assertShadowEvidence(snapshot, programs, state, extent, afterSerial = 0
     return { selectedNative, production: matches, completedSerial: gpu.completedSerial };
 }
 
-/** Projection constants come from the two SHA-pinned worlds, not from sampled successful pixels. */
-export function shadowReceiverRegions(width, height, canvasWidth, canvasHeight) {
-    const scaleY = height / (2 * Math.tan(48 * Math.PI / 360));
-    const scaleX = width / (2 * Math.tan(48 * Math.PI / 360) * (canvasWidth / canvasHeight));
-    const project = (x, y, z) => [width / 2 + x * scaleX / (6.5 - z), height / 2 - y * scaleY / (6.5 - z)];
-    const box = (scale, translation, margin) => {
-        const topLeft = project(-1.95 * scale + translation[0], 1 * scale + translation[1], translation[2]);
-        const bottomRight = project(-0.75 * scale + translation[0], -1 * scale + translation[1], translation[2]);
-        return { left: topLeft[0] - margin, top: topLeft[1] - margin,
-            right: bottomRight[0] + margin, bottom: bottomRight[1] + margin };
-    };
-    // Four screenshot pixels exclude raster edges, AO fringes, and CSS outline rounding.
-    return { receiver: box(1, [0, 0, 0], -4),
-        occluders: [box(0.35, [-0.8775, 0, 1], 4), box(0.35, [0.23916667, 0.5, 1], 4)],
-        surfaces: [box(1, [0, 0, 0], 0), box(0.35, [-0.8775, 0, 1], 0), box(0.35, [0.23916667, 0.5, 1], 0)] };
-}
-
-/** Checks the full projected scene and its uniform exterior. No successful sample pixels define this mask. */
-export function inspectShadowCaptureImage({ data, width, height }, regions) {
-    const inside = (x, y, box, margin = 0) => x >= box.left - margin && x < box.right + margin &&
-        y >= box.top - margin && y < box.bottom + margin;
-    const surfaces = regions.surfaces;
-    const expected = { left: Math.min(...surfaces.map(box => box.left)), top: Math.min(...surfaces.map(box => box.top)),
-        right: Math.max(...surfaces.map(box => box.right)), bottom: Math.max(...surfaces.map(box => box.bottom)) };
-    const histogram = Array.from({ length: 3 }, () => new Uint32Array(256));
-    let exteriorPixels = 0;
-    // Exclude four edge pixels for fractional CSS outlines. The remaining exterior is authored empty space.
-    for (let y = 4; y < height - 4; y++) for (let x = 4; x < width - 4; x++) {
-        if (surfaces.some(box => inside(x + 0.5, y + 0.5, box, 4))) continue;
-        exteriorPixels++;
-        const offset = 4 * (y * width + x);
-        for (let channel = 0; channel < 3; channel++) histogram[channel][data[offset + channel]]++;
-    }
-    // Use the exterior median so this check does not assume an exact tonemapped clear-color value.
-    const background = histogram.map(values => {
-        let sum = 0;
-        for (let value = 0; value < values.length; value++) {
-            sum += values[value];
-            if (sum >= exteriorPixels / 2) return value;
-        }
-        return 0;
-    });
-    const observed = { left: width, top: height, right: 0, bottom: 0 };
-    let foregroundPixels = 0, exteriorMismatchPixels = 0;
-    for (let y = 4; y < height - 4; y++) for (let x = 4; x < width - 4; x++) {
-        const offset = 4 * (y * width + x);
-        if (Math.max(Math.abs(background[0] - data[offset]), Math.abs(background[1] - data[offset + 1]),
-            Math.abs(background[2] - data[offset + 2])) <= 8) continue;
-        foregroundPixels++;
-        observed.left = Math.min(observed.left, x);
-        observed.top = Math.min(observed.top, y);
-        observed.right = Math.max(observed.right, x + 1);
-        observed.bottom = Math.max(observed.bottom, y + 1);
-        if (!surfaces.some(box => inside(x + 0.5, y + 0.5, box, 4))) exteriorMismatchPixels++;
-    }
-    const maximumEdgeError = Math.max(...Object.keys(expected).map(edge => Math.abs(expected[edge] - observed[edge])));
-    const exteriorMismatchFraction = exteriorPixels ? exteriorMismatchPixels / exteriorPixels : 1;
-    return { accepted: exteriorPixels > 1000 && foregroundPixels > 100 &&
-            exteriorMismatchFraction <= 0.001 && maximumEdgeError <= 3,
-        expected, observed, background, foregroundPixels, exteriorPixels, exteriorMismatchPixels,
-        exteriorMismatchFraction, maximumEdgeError, edgeTolerancePixels: 3, backgroundToleranceRgb: 8 };
-}
 
 async function boundedShadowObservation(action, deadline, unavailable, failed = unavailable) {
     if (Date.now() >= deadline) return unavailable;
@@ -685,7 +688,7 @@ async function cleanupShadowResizeObservation(page) {
     shadowResizeObservers.delete(page);
 }
 
-async function captureShadowSurface(page, config, name, failure, reference = null, observeResize = false) {
+async function captureShadowSurface(page, config, imageAnalysis, slot, name, failure, reference = null, observeResize = false) {
     const budget = Math.min(config.timeout, 10000);
     const startedAt = Date.now();
     const deadline = startedAt + budget;
@@ -739,7 +742,7 @@ async function captureShadowSurface(page, config, name, failure, reference = nul
             diagnostics.activePhase = null;
             return result;
         } catch (error) {
-            record.status = timedOut ? 'timed-out' : 'rejected';
+            record.status = timedOut || error?.code === 'SHADOW_IMAGE_DEADLINE' ? 'timed-out' : 'rejected';
             record.elapsedMs = Date.now() - stepStartedAt;
             throw withCaptureEvidence(error);
         } finally { clearTimeout(timer); }
@@ -786,35 +789,38 @@ async function captureShadowSurface(page, config, name, failure, reference = nul
         });
         const after = await step('geometry-after', geometry);
         diagnostics.after = { status: 'available', attempt: diagnostics.attempt, value: after };
-        const pixels = await step('inspect-pixels', () => inspectCanvas(page, null, image));
-        const regions = shadowReceiverRegions(pixels.width, pixels.height, before.bitmapWidth, before.bitmapHeight);
-        const alignment = await step('inspect-alignment', () => page.evaluate(async ({ encoded, regions }) => {
-            const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
-            const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
-            const surface = new OffscreenCanvas(bitmap.width, bitmap.height);
-            const context = surface.getContext('2d', { willReadFrequently: true });
-            context.drawImage(bitmap, 0, 0);
-            bitmap.close();
-            return globalThis.advancedShadowInspectCaptureImage(context.getImageData(0, 0, surface.width, surface.height), regions);
-        }, { encoded: image.toString('base64'), regions }));
+        let imageSha256;
+        const decoded = await step('inspect-pixels', () => {
+            assert(image.byteLength <= 8 * 1024 * 1024, 'BrowserSmoke.ShadowImageSize: encoded screenshot exceeds 8 MiB.');
+            imageSha256 = sha256(image);
+            return imageAnalysis.request('inspect', { slot, hash: imageSha256, png: image,
+                width: clip.width, height: clip.height, canvasWidth: before.bitmapWidth,
+                canvasHeight: before.bitmapHeight, cssWidth: after.width }, deadline);
+        });
+        const pixels = decoded.pixels;
+        const analyzed = await step('inspect-alignment', () => imageAnalysis.request('align', {
+            slot, hash: imageSha256, reference: reference ? { slot: reference.analysisSlot, hash: reference.imageSha256 } : null,
+        }, deadline));
+        const alignment = analyzed.alignment;
         const stable = equal(before, after) && before.devicePixelRatio === 1 &&
             equal(viewport, page.viewportSize()) && pixels.width === clip.width && pixels.height === clip.height &&
             Math.abs(pixels.width - before.width) <= 2 && Math.abs(pixels.height - before.height) <= 2;
         const matchesReference = !reference || reference.pixels.width === pixels.width &&
             reference.pixels.height === pixels.height &&
             equal(reference.pixels.captureValidity.alignment.observed, alignment.observed);
-        latest = { ...pixels, captureValidity: { accepted: stable && alignment.accepted && matchesReference, stable, matchesReference,
+        latest = { ...pixels, imageSha256, captureValidity: { accepted: stable && alignment.accepted && matchesReference, stable, matchesReference,
             before, after, clip, viewport, alignment } };
         diagnostics.latestSummary = { status: 'available', attempt: diagnostics.attempt, value: latest };
         if (observeResize && pixels.colorful === 0) await readShadowResizeCheckpoint(page, diagnostics, 'first-blank');
         if (observeResize && Date.now() - startedAt >= budget / 2)
             await readShadowResizeCheckpoint(page, diagnostics, 'halfway');
-        if (hasSurface(pixels) && latest.captureValidity.accepted && Date.now() <= deadline) {
+        if (hasSurface(pixels) && latest.captureValidity.accepted && Date.now() < deadline) {
             if (observeResize) {
                 diagnostics.resizeCheckpoints.failure.reason = 'capture-completed';
                 latest.resizeCheckpoints = structuredClone(diagnostics.resizeCheckpoints);
             }
-            return { image, pixels: latest };
+            return { image, pixels: latest, imageSha256, analysisSlot: slot,
+                receiverComparison: analyzed.comparison, comparedToHash: reference?.imageSha256 ?? null };
         }
         if (await step('read-status', () => page.locator('#status').getAttribute('data-state')) === 'failed')
             throw withCaptureEvidence(new Error(`BrowserSmoke.EngineFrameFailed: ${await step('read-failure-status',
@@ -827,7 +833,7 @@ async function captureShadowSurface(page, config, name, failure, reference = nul
     throw withCaptureEvidence(new Error(`${failure} Last canvas summary: ${JSON.stringify(latest)}`));
 }
 
-async function compareReceiver(page, off, on, canvasExtent) {
+function compareReceiver(off, on, canvasExtent) {
     assert(off.pixels.width === on.pixels.width && off.pixels.height === on.pixels.height,
         'BrowserSmoke.ShadowComparison: ON/OFF capture dimensions differ.');
     assert(off.pixels.captureValidity?.accepted && on.pixels.captureValidity?.accepted &&
@@ -835,40 +841,10 @@ async function compareReceiver(page, off, on, canvasExtent) {
         [off, on].every(value => value.pixels.captureValidity.before.bitmapWidth === canvasExtent[0] &&
             value.pixels.captureValidity.before.bitmapHeight === canvasExtent[1]),
     'BrowserSmoke.ShadowComparison: ON/OFF images must align with the genuine canvas and pinned scene projection.');
-    const regions = shadowReceiverRegions(on.pixels.width, on.pixels.height, ...canvasExtent);
-    return page.evaluate(async ({ offPng, onPng, regions }) => {
-        const decode = async value => {
-            const bytes = Uint8Array.from(atob(value), character => character.charCodeAt(0));
-            const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
-            const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-            const context = canvas.getContext('2d', { willReadFrequently: true });
-            context.drawImage(bitmap, 0, 0);
-            bitmap.close();
-            return context.getImageData(0, 0, canvas.width, canvas.height);
-        };
-        const [baseline, current] = await Promise.all([decode(offPng), decode(onPng)]);
-        const inside = (x, y, box) => x >= box.left && x < box.right && y >= box.top && y < box.bottom;
-        let receiverPixels = 0, darkenedPixels = 0, brightenedPixels = 0, difference = 0;
-        let offColorful = 0, onColorful = 0;
-        const colorful = (data, offset) => Math.max(...data.slice(offset, offset + 3)) > 70 &&
-            Math.max(...data.slice(offset, offset + 3)) - Math.min(...data.slice(offset, offset + 3)) > 35;
-        for (let y = 0; y < current.height; y++) for (let x = 0; x < current.width; x++) {
-            if (!inside(x + 0.5, y + 0.5, regions.receiver) ||
-                regions.occluders.some(box => inside(x + 0.5, y + 0.5, box))) continue;
-            const offset = 4 * (y * current.width + x);
-            const delta = (baseline.data[offset] + baseline.data[offset + 1] + baseline.data[offset + 2] -
-                current.data[offset] - current.data[offset + 1] - current.data[offset + 2]) / 3;
-            receiverPixels++;
-            difference += delta;
-            if (delta > 5) darkenedPixels++;
-            if (delta < -5) brightenedPixels++;
-            if (colorful(baseline.data, offset)) offColorful++;
-            if (colorful(current.data, offset)) onColorful++;
-        }
-        return { regions, receiverPixels, darkenedPixels, brightenedPixels, offColorful, onColorful,
-            meanRgbDarkening: receiverPixels ? difference / receiverPixels : null,
-            darkenedFraction: receiverPixels ? darkenedPixels / receiverPixels : 0, thresholdRgb: 5 };
-    }, { offPng: off.image.toString('base64'), onPng: on.image.toString('base64'), regions });
+    assert(on.comparedToHash === off.imageSha256 && on.receiverComparison &&
+        equal(on.receiverComparison.regions, shadowReceiverRegions(on.pixels.width, on.pixels.height, ...canvasExtent)),
+    'BrowserSmoke.ShadowComparison: worker result must use the accepted baseline bytes and receiver regions.');
+    return on.receiverComparison;
 }
 
 function assertReceiverDifference(comparison, label) {
@@ -933,7 +909,6 @@ async function shadowDeliverySnapshot(page, expectedPage) {
 }
 
 async function start(page, origin, mount) {
-    await page.addInitScript({ content: `globalThis.advancedShadowInspectCaptureImage = (${inspectShadowCaptureImage.toString()});` });
     await page.addInitScript(installNativeCompileCapture, ['shade-native-depth']);
     await page.addInitScript(installAdvancedSubmissionObservation);
     await page.addInitScript(installShadowGpuObservation);
@@ -968,6 +943,7 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
     report.advancedShadowScope = 'Combined directional and point ON/OFF shadow effect on the pinned receiver; real 256px shadow production and full native consumption. Does not establish isolated point-shadow visual occlusion, exact PCSS or numeric material parity, native compile speed, or physical-GPU performance.';
     report.advancedShadowIterations = [];
     report.advancedShadowFailures = [];
+    const imageAnalysis = createShadowImageAnalysis();
     const widths = [860, 940];
     const baseline = {};
     const run = async (state, iteration, action) => {
@@ -1000,49 +976,61 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
             else await context.close();
         }
     };
-    await run('off', 0, async (page, _events, name, detail) => {
-        baseline.initial = await captureShadowSurface(page, config, `${name}-playing`,
-            'BrowserSmoke.ShadowOffSurface: the authored OFF surface did not reach the canvas.');
-        baseline.initialExtent = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
-        const initial = await snapshot(page);
-        const initialQualification = assertShadowEvidence(initial, offArtifacts.programs, 'off', baseline.initialExtent);
-        report.advancedShadowBaseline = { detail, playing: baseline.initial.pixels, initial, initialQualification, resized: [] };
-        baseline.resized = [];
-        let prior = initial;
-        for (let iteration = 0; iteration < widths.length; iteration++) {
-            if (iteration === 0) await installShadowResizeObservation(page, `${origin}/__baseline/index.html`);
-            const extent = await resize(page, widths[iteration]);
-            const image = await captureShadowSurface(page, config, `${name}-resized-${iteration}`,
-                'BrowserSmoke.ShadowOffResize: the authored OFF surface disappeared after resize.', null, iteration === 0);
-            const evidence = await snapshot(page);
-            const qualification = assertShadowEvidence(evidence, offArtifacts.programs, 'off', extent, prior.gpu.completedSerial);
-            baseline.resized.push({ ...image, extent });
-            report.advancedShadowBaseline.resized.push({ pixels: image.pixels, extent, evidence, qualification });
-            prior = evidence;
-        }
-    });
-    for (let iteration = 0; iteration < 2; iteration++) await run('on', iteration, async (page, _events, name, detail) => {
-        const result = { iteration, detail };
-        report.advancedShadowIterations.push(result);
-        const playing = await captureShadowSurface(page, config, `${name}-playing`,
-            'BrowserSmoke.ShadowSurface: the authored ON surface did not reach the canvas.', baseline.initial);
-        const before = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
-        assert(equal(before, baseline.initialExtent), 'BrowserSmoke.ShadowComparison: initial ON/OFF canvas extents differ.');
-        result.playing = playing.pixels;
-        result.initial = await snapshot(page);
-        result.initialQualification = assertShadowEvidence(result.initial, onArtifacts.programs, 'on', before);
-        result.comparison = await compareReceiver(page, baseline.initial, playing, before);
-        assertReceiverDifference(result.comparison, 'initial');
-        const after = await resize(page, widths[iteration]);
-        assert(equal(after, baseline.resized[iteration].extent), 'BrowserSmoke.ShadowComparison: resized ON/OFF canvas extents differ.');
-        const resized = await captureShadowSurface(page, config, `${name}-resized`,
-            'BrowserSmoke.ShadowResize: the authored ON surface disappeared after resize.', baseline.resized[iteration]);
-        result.resized = resized.pixels;
-        result.after = await snapshot(page);
-        result.resizeQualification = assertShadowEvidence(result.after, onArtifacts.programs, 'on', after,
-            result.initial.gpu.completedSerial);
-        result.resizedComparison = await compareReceiver(page, baseline.resized[iteration], resized, after);
-        assertReceiverDifference(result.resizedComparison, 'resized');
-        result.canvasSizes = { before, after };
-    });
+    let imageAnalysisFailed = false;
+    try {
+        report.advancedShadowImageAnalysis = await imageAnalysis.request('ready', {}, Date.now() + Math.min(config.timeout, 10000));
+        await run('off', 0, async (page, _events, name, detail) => {
+            baseline.initial = await captureShadowSurface(page, config, imageAnalysis, 'off-initial', `${name}-playing`,
+                'BrowserSmoke.ShadowOffSurface: the authored OFF surface did not reach the canvas.');
+            baseline.initialExtent = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
+            const initial = await snapshot(page);
+            const initialQualification = assertShadowEvidence(initial, offArtifacts.programs, 'off', baseline.initialExtent);
+            report.advancedShadowBaseline = { detail, playing: baseline.initial.pixels, initial, initialQualification, resized: [] };
+            baseline.resized = [];
+            let prior = initial;
+            for (let iteration = 0; iteration < widths.length; iteration++) {
+                if (iteration === 0) await installShadowResizeObservation(page, `${origin}/__baseline/index.html`);
+                const extent = await resize(page, widths[iteration]);
+                const image = await captureShadowSurface(page, config, imageAnalysis, `off-${widths[iteration]}`, `${name}-resized-${iteration}`,
+                    'BrowserSmoke.ShadowOffResize: the authored OFF surface disappeared after resize.', null, iteration === 0);
+                const evidence = await snapshot(page);
+                const qualification = assertShadowEvidence(evidence, offArtifacts.programs, 'off', extent, prior.gpu.completedSerial);
+                baseline.resized.push({ ...image, extent });
+                report.advancedShadowBaseline.resized.push({ pixels: image.pixels, extent, evidence, qualification });
+                prior = evidence;
+            }
+        });
+        for (let iteration = 0; iteration < 2; iteration++) await run('on', iteration, async (page, _events, name, detail) => {
+            const result = { iteration, detail };
+            report.advancedShadowIterations.push(result);
+            const playing = await captureShadowSurface(page, config, imageAnalysis, 'current', `${name}-playing`,
+                'BrowserSmoke.ShadowSurface: the authored ON surface did not reach the canvas.', baseline.initial);
+            const before = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
+            assert(equal(before, baseline.initialExtent), 'BrowserSmoke.ShadowComparison: initial ON/OFF canvas extents differ.');
+            result.playing = playing.pixels;
+            result.initial = await snapshot(page);
+            result.initialQualification = assertShadowEvidence(result.initial, onArtifacts.programs, 'on', before);
+            result.comparison = compareReceiver(baseline.initial, playing, before);
+            assertReceiverDifference(result.comparison, 'initial');
+            const after = await resize(page, widths[iteration]);
+            assert(equal(after, baseline.resized[iteration].extent), 'BrowserSmoke.ShadowComparison: resized ON/OFF canvas extents differ.');
+            const resized = await captureShadowSurface(page, config, imageAnalysis, 'current', `${name}-resized`,
+                'BrowserSmoke.ShadowResize: the authored ON surface disappeared after resize.', baseline.resized[iteration]);
+            result.resized = resized.pixels;
+            result.after = await snapshot(page);
+            result.resizeQualification = assertShadowEvidence(result.after, onArtifacts.programs, 'on', after,
+                result.initial.gpu.completedSerial);
+            result.resizedComparison = compareReceiver(baseline.resized[iteration], resized, after);
+            assertReceiverDifference(result.resizedComparison, 'resized');
+            result.canvasSizes = { before, after };
+        });
+    } catch (error) {
+        imageAnalysisFailed = true;
+        throw error;
+    } finally {
+        const stopped = await imageAnalysis.close();
+        report.advancedShadowImageAnalysis ??= { codec: 'unavailable' };
+        report.advancedShadowImageAnalysis.workerStopped = stopped;
+        if (!stopped && !imageAnalysisFailed) throw new Error('BrowserSmoke.ShadowImageCleanup: owned analysis worker did not stop within 1000 ms.');
+    }
 }
