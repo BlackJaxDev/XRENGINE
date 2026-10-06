@@ -14,4 +14,24 @@ The optional native networking bundle is separate from these nine artifacts. Reu
 
 Any missing source history, GitHub proof, artifact metadata, archive bytes, or safe extraction forces the full Windows path. A selector error after it writes `reuse=true` also forces the full path because the workflow checks the selector step outcome. Full-path steps keep the normal success condition. Evidence uploads that normally run on failure retain their `always()` condition on the full path.
 
-The code has local PowerShell syntax and bounded scratch-case checks. A hosted Windows run and a reused Linux run still need observation after review and publication.
+## Observed CI reuse (2026-10-06)
+
+The first hosted reuse ran in [workflow run 37533924633](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37533924633) at commit `1e5b83be0d312ba7e026820471ebdea6fdeaa6b0`. Its [Windows job 112515429595](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37533924633/job/112515429595) succeeded from 21:40:43 to 21:41:40 UTC (57 seconds). The selector ran from 21:41:04 to 21:41:34 UTC (30 seconds). It validated all nine original ZIPs from producer run 37528352338 before the workflow skipped the normal full-build steps.
+
+The producer's [Windows job 112498502946](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37528352338/job/112498502946) succeeded from 20:59:07 to 21:37:43 UTC (2,316 seconds). It published the bundles from commit `7e4059a71430a08df95b3d29b267fafbe2f54521`. The current run used commit `1e5b83be0d312ba7e026820471ebdea6fdeaa6b0`; the selector accepted its complete diff under the narrow browser-harness and documentation rules above. In this one observed run pair, the complete reused Windows job took 57 seconds and the complete full-publisher Windows job took 2,316 seconds. The selector step within the reused job took 30 seconds. This run pair does not guarantee future performance. It does show that the current harness reused bundles produced from the same editor-engine source.
+
+The [provenance artifact 11445444998](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37533924633/artifacts/11445444998) is named `editor-bundle-reuse-provenance`. It is 1,256 bytes. Its ZIP SHA-256 is `bd0436fa1b1ddc3cff6c730464342cb6558fcf51368a3b9b1d5a07be0326618d`. The record names both run and commit identities and records the validation checks. It confirms these original producer artifact IDs and ZIP digests:
+
+| Bundle | Producer artifact ID | ZIP SHA-256 |
+| --- | ---: | --- |
+| `windows-editor-rollingball-bundle` | [11445381360](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37528352338/artifacts/11445381360) | `a0e65f4d5f532b0dd8268f5c1d424c9a60ecbab10487ef1f4498a4b47c962992` |
+| `windows-editor-rendering-parity-bundle` | [11445930128](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37528352338/artifacts/11445930128) | `1d8cbf7e312e4ec4c444f1b02cbff81c32b0530bb46245cbb5cc995b5844e9ff` |
+| `windows-editor-advanced-rendering-parity-bundle` | [11446120118](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37528352338/artifacts/11446120118) | `e318d167e0204f6a6ed517082b8e104473775fd48ce9da8d26d660e2a8d874df` |
+| `windows-editor-advanced-shadow-parity-bundle` | [11445516005](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37528352338/artifacts/11445516005) | `e4e83fe5277c1e4c4f18e87c333d916c98dc8dc3841fc04ae63179213b2e3359` |
+| `windows-editor-advanced-shadow-parity-off-bundle` | [11445580909](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37528352338/artifacts/11445580909) | `95c3207484852ece7a2a86417b71ce4c83df330a41d477b29a38d751b1a2971b` |
+| `windows-editor-ui-parity-bundle` | [11446285451](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37528352338/artifacts/11446285451) | `2648961513b92ee79fcb0db41d50ee56b90cbd8495a1ebabd1c11bcb54bf2b12` |
+| `windows-editor-modular-pipeline-parity-bundle` | [11446191072](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37528352338/artifacts/11446191072) | `ba913149480c04703305426f5cd0f2aa8391907339cf0be86cacf152df4e8a54` |
+| `windows-editor-static-meshlet-parity-bundle` | [11445641631](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37528352338/artifacts/11445641631) | `f54d94e066071409e9e7599da9324e0d76f3c27089d20ad3560da7a6934f671a` |
+| `windows-editor-static-meshlet-parity-cpu-bundle` | [11446610435](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37528352338/artifacts/11446610435) | `6b84793dd31c0bd913675e5ce88b5eea719d4eec1ba4cecaef725f3033e935c2` |
+
+The reused consumers downloaded the original artifact IDs and verified their recorded sizes and SHA-256 digests before extraction. The shadow-enabled and shadow-disabled artifact download steps both succeeded. As of 21:44 UTC, five game jobs had passed: RollingBall, RenderingParity, AdvancedRenderingParity, Modular Pipeline, and Static Meshlet. The UI job had failed on the same frame-progress assertion. The shadow job and independent Linux build were still running. The overall run had not completed, so this evidence does not claim a full run pass.
