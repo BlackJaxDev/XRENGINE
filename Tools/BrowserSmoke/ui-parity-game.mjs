@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { canvasGeometry } from './canvas-capture.mjs';
+import { startUiFrameTrace } from './ui-frame-trace.mjs';
 
 const surface = '#input-surface';
 const reference = { width: 1280, height: 720 };
@@ -381,14 +382,17 @@ export async function uiParityGameCheck(browser, origin, report, config, instrum
         const { page, context, events } = await instrumentedPage(browser, origin, report, `ui-parity-${iteration}`, config);
         const result = { iteration, status: 'running', steps: [], counts: [0, 0, 0] };
         report.uiParityIterations.push(result);
-        let failed = false, touch;
+        let failed = false, touch, frameTrace;
+        const assertTraceActive = () => assert(!frameTrace?.aborted, 'The bounded UI trace stopped the diagnostic.');
         const checkpoint = async (name, witnesses = null) => {
             const record = { name, capture: `ui-parity-${iteration}-${name}.png` };
             result.steps.push(record);
             // Publish partial evidence before any capture/expectation can throw.
             // Require the existing frame-clock witness before Playwright's stable-element
             // wait, which itself cannot finish while browser animation frames are stalled.
-            await frames(page, 2);
+            try { await frames(page, 2); }
+            finally { if (name === 'initial') await frameTrace?.finish('initial-checkpoint'); }
+            assertTraceActive();
             record.geometry = await canvasGeometry(page, surface);
             // scrollIntoView may move the CSS rectangle; let the normal input sync reposition proxies.
             await frames(page, 2);
@@ -464,13 +468,20 @@ export async function uiParityGameCheck(browser, origin, report, config, instrum
                     await route.abort('failed');
                 }
             }, { times: 1 });
+            if (iteration === 0 && config.uiFrameTrace)
+                frameTrace = await startUiFrameTrace(browser, report, config.uiFrameTracePermit);
+            assertTraceActive();
             await page.goto(`${origin}/__game/index.html`, { waitUntil: 'domcontentloaded' });
+            assertTraceActive();
             assert(result.observationInstalled && !result.observationInstallError,
                 `Observer installation before the player entry failed: ${result.observationInstallError ?? 'entry script was not observed'}.`);
             // Only layout size is changed; the normal host owns backing allocation and resize delivery.
             await page.locator(surface).evaluate(canvas => { canvas.style.width = '1280px'; canvas.style.height = '720px'; });
+            assertTraceActive();
             await waitRunning(page);
+            assertTraceActive();
             result.startup = await page.locator('#status').evaluate(element => ({ state: element.dataset.state, detail: element.textContent }));
+            assertTraceActive();
             if (result.startup.state !== 'running') {
                 result.startup.capture = `ui-parity-${iteration}-startup-failure.png`;
                 try {
@@ -479,13 +490,16 @@ export async function uiParityGameCheck(browser, origin, report, config, instrum
             }
             assert(result.startup.state === 'running', `Authored player startup: ${result.startup.detail}`);
             result.startup.observation = await boundedObservation(read(page), 5000);
+            assertTraceActive();
             assert(!result.startup.observation.observationUnavailable,
                 `The running player did not reach the installed input observer: ${JSON.stringify(result.startup.observation.observation)}.`);
             await page.waitForFunction(() => globalThis.uiParityRead().controls.length >= 17);
+            assertTraceActive();
             // The shared toggle publishes its bound property on its normal late tick.
             await page.waitForFunction(() => globalThis.uiParityRead().controls
                 .find(control => control.name === 'Clip enabled')?.checked === 1 &&
                 document.querySelector('[role="checkbox"][aria-label="Clip enabled"]')?.getAttribute('aria-checked') === 'true');
+            assertTraceActive();
             const initial = await checkpoint('initial', pixelWitnesses());
             assert(initial.state.state === 'running' && /Browser\s*UI\s*Parity/i.test(initial.state.status), `Authored player startup: ${initial.state.status}`);
             assert(await page.locator('#manifest-url, #world-form').count() === 0, 'The diagnostic shell cannot qualify a shipping player.');
@@ -631,6 +645,7 @@ export async function uiParityGameCheck(browser, origin, report, config, instrum
             assertNoBrowserErrors(events);
             result.status = 'passed';
         } catch (error) {
+            await frameTrace?.finish('iteration-exit');
             failed = true; result.status = 'failed'; result.error = String(error);
             // Failure evidence must not wait for scrolling, stable element bounds,
             // or another animation frame from an already-stalled renderer.
@@ -644,6 +659,7 @@ export async function uiParityGameCheck(browser, origin, report, config, instrum
             ]);
             throw error;
         } finally {
+            await frameTrace?.finish('iteration-exit');
             // Secondary cleanup errors must never hide the original assertion or player failure.
             const cleanupErrors = [];
             try { await boundedObservation(page.evaluate(() => globalThis.uiParityCleanup?.()), 5000); }

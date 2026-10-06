@@ -11,6 +11,7 @@ import { runOfflineAudioProbe } from './audio-diagnostics.mjs';
 import { rollingBallGameCheck } from './rollingball-game.mjs';
 import { renderingParityGameCheck } from './rendering-parity-game.mjs';
 import { uiParityGameCheck } from './ui-parity-game.mjs';
+import { claimUiFrameTrace, launchUiTraceBrowser, closeUiTraceBrowser } from './ui-frame-trace.mjs';
 import { advancedRenderingGameCheck } from './advanced-rendering-game.mjs';
 import { modularPipelineGameCheck } from './modular-pipeline-game.mjs';
 import { staticMeshletParityGameCheck } from './static-meshlet-parity-game.mjs';
@@ -1233,12 +1234,14 @@ async function publishedGameCheck(browser, origin, report, config) {
 async function main() {
     const config = readConfig();
     if (config.help) { console.log(help); return; }
+    config.uiFrameTracePermit = await claimUiFrameTrace(config);
     config.output = path.resolve(config.output);
     await fs.mkdir(config.output, { recursive: true });
     const report = { schemaVersion: 1, passed: false, startedUtc: new Date().toISOString(),
         node: process.version, platform: process.platform, architecture: process.arch,
         playwright: require('playwright/package.json').version, gpuMode: config.gpuMode,
         gpuDiagnostics: config.gpuDiagnostics, nativeCompileTrace: config.nativeCompileTrace,
+        uiFrameTraceRequested: config.uiFrameTrace,
         executable: config.executablePath ? path.basename(config.executablePath) : 'playwright-managed-chromium',
         browserLogs: {}, externalRequests: [], requests: [], checks: [],
         scope: config.gameOnly
@@ -1260,13 +1263,18 @@ async function main() {
         server = hosted.server;
         origin = hosted.origin;
         report.launchArguments = browserLaunchOptions(config).args;
-        browser = await chromium.launch(browserLaunchOptions(config));
+        browser = config.uiFrameTrace
+            ? await launchUiTraceBrowser(chromium, browserLaunchOptions(config), config.uiFrameTracePermit)
+            : await chromium.launch(browserLaunchOptions(config));
         report.browser = browser.version();
         browser.on('disconnected', () => { report.browserDisconnected = {
             time: new Date().toISOString(), closeRequested: report.browserCloseRequested === true }; });
         if (config.gameOnly) {
             await check(gameCheckName,
                 () => publishedGameCheck(browser, hosted.origin, report, config));
+            if (config.uiFrameTrace) await check('ui-frame-trace-diagnostic', async () => {
+                assert(report.uiFrameTrace?.complete === true, 'BrowserSmoke.UiFrameTrace: the bounded trace is incomplete.');
+            });
             await check('local-delivery', async () => {
                 assert(report.externalRequests.length === 0, 'BrowserSmoke.ExternalRequest: the published application requested resources outside the loopback roots.');
                 assert(!report.requests.some(request => request.status >= 400), 'BrowserSmoke.HttpFailure: a served resource request failed; inspect requests in smoke-report.json.');
@@ -1340,7 +1348,8 @@ async function main() {
             if (report.advancedRenderingFailures?.length)
                 await captureGpuProcessState(browser, report, 'after-failed-advanced-application');
             report.browserCloseRequested = true;
-            await browser.close().catch(error => { report.cleanupError = String(error); report.passed = false; });
+            await (config.uiFrameTrace ? closeUiTraceBrowser(browser) : browser.close())
+                .catch(error => { report.cleanupError = String(error); report.passed = false; });
         }
         if (origin && !report.cleanupError && report.advancedRenderingFailures?.length) {
             try { await runNativeCompileIsolation(chromium, origin, report, config, instrumentedPage); }

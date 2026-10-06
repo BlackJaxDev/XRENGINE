@@ -408,6 +408,34 @@ Move/Rotate actions and full GPU retirement remain separate acceptance.
 Normal publication uses the existing Roboto font cook and includes its license.
 Adding the fixture and harness does not establish a successful cook or browser run.
 
+One separately approved `--ui-frame-trace` capture is limited to the first UI
+iteration on an exact non-forced branch push and workflow run, attempt one. The
+source policy, immutable activation record and private exclusive runner claim
+must agree before a browser opens. The workflow resolves the activation to a
+specific commit and verifies its bytes and complete run identity; missing or
+mismatched activation fails closed. Later pushes, reruns, other games and local
+command-line flags cannot activate this capture. The helper receives the existing
+read-only GitHub token only while preparing the activation; the browser command
+does not receive that token.
+
+The trace uses an owned Playwright browser server bound to loopback, with the
+same browser launch settings. Its private control endpoint is not logged.
+Recording begins before the published page starts and ends at the first initial
+frame checkpoint. A 25-second stop timer and independent 29-second owned-process
+watchdog keep the capture within its 30-second limit; uncertain shutdown aborts
+the diagnostic. Normal runs keep their existing launch path. The five-second
+frame check, 180-second Playwright setting and all app assertions remain.
+
+`ReportEvents` delivers trace batches in memory. The recorder immediately
+reduces them to fixed event classes, categories, phases, timing values and process/
+thread IDs. It does not write raw trace data, URLs, arguments or shader labels.
+The browser buffer is four MiB, cumulative input is capped at 16 MiB, and the
+sanitized summary is limited to one MiB and 4,096 records. Stop/cleanup has a
+five-second bound. Missing data, caps and cleanup uncertainty remain explicit.
+The evidence artifact retains only the sanitized summary from this trace. No privileged
+profiler or user computer is used. Source checks and mocked protocol results do
+not establish a successful capture or UI acceptance.
+
 After a failed Advanced application check and successful closure of its browser,
 the harness starts a separate Chromium process with the same launch options.
 It verifies the actual selected native shader against the recorded module hash and

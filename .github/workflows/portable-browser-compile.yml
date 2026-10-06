@@ -8,6 +8,7 @@ on:
     paths-ignore:
       - '.github/diagnostic-requests/network-walkthrough-20261005.json'
       - '.github/diagnostic-activations/network-walkthrough-20261005.json'
+      - '.github/diagnostic-activations/ui-frame-trace-20261006.json'
   pull_request:
   workflow_dispatch:
 
@@ -879,6 +880,14 @@ jobs:
           cd Tools/BrowserSmoke
           npx playwright install --with-deps chromium
 
+      - name: Prepare approved UI frame trace
+        id: ui_frame_trace
+        if: github.event_name == 'push' && github.repository == 'BlackJaxDev/XRENGINE' && github.ref == 'refs/heads/codex/webgpu-readiness-audit' && github.run_attempt == 1 && matrix.kind == 'ui-parity'
+        env:
+          GAME_KIND: ${{ matrix.kind }}
+          GH_TOKEN: ${{ github.token }}
+        run: node Tools/BrowserSmoke/prepare-ui-frame-trace.mjs
+
       - name: Qualify the Editor-published game in Chromium
         env:
           DEBUG: pw:browser
@@ -891,6 +900,9 @@ jobs:
           fi
           if [[ "$GAME_KIND" == "static-meshlet-parity" ]]; then
             trace_args+=(--baseline-publish "$VALIDATION_ROOT/published-cpu-baseline")
+          fi
+          if [[ "${{ steps.ui_frame_trace.outputs.armed }}" == "true" ]]; then
+            trace_args+=(--ui-frame-trace)
           fi
           node Tools/BrowserSmoke/run.mjs --game-only --game-kind "$GAME_KIND" --game-publish "$VALIDATION_ROOT/published-game" --gpu-mode software --output "$VALIDATION_ROOT/game-evidence" "${trace_args[@]}" > >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stdout.log") 2> >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stderr.log" >&2)
 
