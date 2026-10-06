@@ -411,6 +411,30 @@ internal static partial class Program
         List<string> defineValues = defines.Select(node => ScalarString(node, "define")).ToList();
         Require(defineValues.All(value => Regex.IsMatch(value, "^[A-Za-z_][A-Za-z0-9_]*(?:=[A-Za-z0-9_.+-]+)?$", RegexOptions.CultureInvariant)), $"{stageContext}: invalid Slang define.");
         Require(defineValues.Distinct(StringComparer.Ordinal).Count() == defineValues.Count, $"{stageContext}: duplicate Slang define.");
+        string passName = schema == 3 ? String(recipe, "pass") : string.Empty;
+        bool decalAbsentPass = passName is "shade-native-no-decals" or "shade-native-depth-no-decals" or
+            "shade-native-no-decals-msaa" or "shade-native-depth-no-decals-msaa" or
+            "shade-surface-exports-no-decals" or "shade-surface-exports-depth-no-decals" or
+            "shade-surface-exports-no-decals-msaa" or "shade-surface-exports-depth-no-decals-msaa";
+        bool decalAbsentDefine = defineValues.Any(value => value.StartsWith("XR_ADV_NATIVE_DECALS_ABSENT_SCHEMA_VERSION", StringComparison.Ordinal));
+        Require(decalAbsentDefine == decalAbsentPass &&
+            (decalAbsentPass || String(recipe, "semanticSchemaIdentity") != "xrengine.engine.native-no-decals.v1"),
+            $"{stageContext}: the absent-decal define and semantic identity require an exact native pass.");
+        if (decalAbsentPass)
+        {
+            bool multisample = passName.EndsWith("-msaa", StringComparison.Ordinal);
+            JsonObject entryPoints = Object(recipe["entryPoints"], "entryPoints");
+            JsonObject pipeline = Object(recipe["pipelineArtifact"], "pipelineArtifact");
+            Require(defineValues.Contains("XR_ADV_NATIVE_DECALS_ABSENT_SCHEMA_VERSION=1") &&
+                !defineValues.Any(value => value.StartsWith("XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION", StringComparison.Ordinal) ||
+                    value.StartsWith("XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION", StringComparison.Ordinal)) &&
+                String(recipe, "semanticSchemaIdentity") == "xrengine.engine.native-no-decals.v1" &&
+                String(recipe, "name") == "engine-advanced-" + passName &&
+                String(recipe, "source") == (multisample ? "AdvancedShadeNativeMsaa.slang" : "AdvancedShadeNative.slang") &&
+                entryPoints.Count == 1 && String(entryPoints, "compute") == (multisample ? "advancedShadeNativeMsaa" : "advancedShadeNative") &&
+                String(pipeline, "scope") == "advanced" && String(pipeline, "pass") == passName,
+                $"{stageContext}: absent-decal shading requires its exact identity, entry, source, and standalone schema.");
+        }
         string sourceRelative = RelativeSource(String(recipe, "source"), language);
         string sourcePath = ResolveInput(sourceRoot, sourceRelative);
         byte[] originalSource = ReadBounded(sourcePath, MaxSourceBytes);
@@ -533,7 +557,8 @@ internal static partial class Program
             SlangWgslOutput result = await CompileSlangWithContextAsync(stageContext, sourceRoot, sourceRelative, includeValues, defineValues, cancellationToken,
                 Object(recipe["entryPoints"], "entryPoints").ToDictionary(pair => pair.Key, pair => ScalarString(pair.Value, "entry point"), StringComparer.Ordinal),
                 preserveResourceParameters: uberBase || String(recipe, "semanticSchemaIdentity") is
-                    "xrengine.engine.uber-raster-consumer.v2" or "xrengine.engine.native-unmodified.v1");
+                    "xrengine.engine.uber-raster-consumer.v2" or "xrengine.engine.native-unmodified.v1" or
+                    "xrengine.engine.native-no-decals.v1");
             source = StrictUtf8.GetBytes(NormalizeLines(result.Source));
             compilerIdentity = result.CompilerIdentity;
             Require(Regex.IsMatch(compilerIdentity, "^slang/2026\\.8/[0-9a-f]{64}$", RegexOptions.CultureInvariant), $"{stageContext}: incompatible Slang compiler identity.");

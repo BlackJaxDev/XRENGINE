@@ -22,6 +22,8 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             // the previously accepted publication on a later frame.
             frame.DatabaseEpoch = 0;
             frame.NativeModifiersAbsent = false;
+            frame.NativeDecalsAbsent = false;
+            frame.SelectedNativeFamily = EWebGpuAdvancedNativeShadingFamily.Unselected;
             _globalCount = 0;
             PrepareAuthoredDecals(in request, snapshot, frame);
             uint view = request.NativeViewIndex;
@@ -109,6 +111,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             }
             frame.Materials.EnsureCapacity(checked(Math.Max(materials.Length, 1) * 4));
             frame.Materials.UploadPreparation(MemoryMarshal.AsBytes(frame.MaterialRows.AsSpan(0, Math.Max(materials.Length, 1))));
+            frame.NativeDecalsAbsent = AreNativeDecalsAbsent(snapshot, in request, frame);
             frame.NativeModifiersAbsent = AreNativeModifiersAbsent(snapshot, in request, frame);
             frame.DatabaseEpoch = snapshot.DatabaseEpoch; frame.MaterialGenerations = snapshot.MaterialPayloads.Generations;
             frame.ResourceGenerations = snapshot.ResourceGenerations; frame.ViewIndex = request.NativeViewIndex; frame.IblEnabled = request.EnableLightProbesAndIbl;

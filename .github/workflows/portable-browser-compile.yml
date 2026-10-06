@@ -485,13 +485,21 @@ jobs:
             'engine-advanced-shade-native-no-modifiers',
             'engine-advanced-shade-native-no-modifiers-msaa',
             'engine-advanced-shade-surface-exports-no-modifiers',
-            'engine-advanced-shade-surface-exports-no-modifiers-msaa'
+            'engine-advanced-shade-surface-exports-no-modifiers-msaa',
+            'engine-advanced-shade-native-no-decals',
+            'engine-advanced-shade-native-depth-no-decals',
+            'engine-advanced-shade-native-no-decals-msaa',
+            'engine-advanced-shade-native-depth-no-decals-msaa',
+            'engine-advanced-shade-surface-exports-no-decals',
+            'engine-advanced-shade-surface-exports-depth-no-decals',
+            'engine-advanced-shade-surface-exports-no-decals-msaa',
+            'engine-advanced-shade-surface-exports-depth-no-decals-msaa'
           )
           $selected = @($catalog.artifacts | Where-Object { $_.name -cin $expected })
           $names = @($selected | ForEach-Object { $_.name })
-          if ($selected.Count -ne 20 -or @($names | Sort-Object -Unique).Count -ne 20 -or
+          if ($selected.Count -ne 28 -or @($names | Sort-Object -Unique).Count -ne 28 -or
               @(Compare-Object -ReferenceObject $expected -DifferenceObject $names -CaseSensitive).Count -ne 0) {
-            throw 'Expected the exact twenty native shading companions.'
+            throw 'Expected the exact twenty-eight native shading companions.'
           }
           $descriptors = @{}
           foreach ($entry in $selected) {
@@ -518,26 +526,48 @@ jobs:
             'engine-advanced-shade-native-no-modifiers',
             'engine-advanced-shade-native-no-modifiers-msaa',
             'engine-advanced-shade-surface-exports-no-modifiers',
-            'engine-advanced-shade-surface-exports-no-modifiers-msaa'
+            'engine-advanced-shade-surface-exports-no-modifiers-msaa',
+            'engine-advanced-shade-native-no-decals',
+            'engine-advanced-shade-native-depth-no-decals',
+            'engine-advanced-shade-native-no-decals-msaa',
+            'engine-advanced-shade-native-depth-no-decals-msaa',
+            'engine-advanced-shade-surface-exports-no-decals',
+            'engine-advanced-shade-surface-exports-depth-no-decals',
+            'engine-advanced-shade-surface-exports-no-decals-msaa',
+            'engine-advanced-shade-surface-exports-depth-no-decals-msaa'
           )) {
             $optional = $descriptors[$name]
-            $full = $descriptors[$name.Replace('-no-modifiers', '')]
+            $noDecals = $name.Contains('-no-decals')
+            $suffix = if ($noDecals) { '-no-decals' } else { '-no-modifiers' }
+            $fullName = $name.Replace($suffix, '')
+            $full = $descriptors[$fullName]
+            $identity = if ($noDecals) { 'xrengine.engine.native-no-decals.v1' } else { 'xrengine.engine.native-unmodified.v1' }
+            $define = if ($noDecals) { 'XR_ADV_NATIVE_DECALS_ABSENT_SCHEMA_VERSION=1' } else { 'XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1' }
             if ($null -eq $optional -or $null -eq $full -or
                 $optional.name -cne $name -or
                 $optional.pass -cne $name.Replace('engine-advanced-', '') -or
-                $optional.semanticSchemaIdentity -cne 'xrengine.engine.native-unmodified.v1' -or
+                $full.name -cne $fullName -or $full.pass -cne $fullName.Replace('engine-advanced-', '') -or
+                $full.semanticSchemaIdentity -cne 'xrengine.engine.compute.v1' -or
+                $full.schemaVersion -ne 3 -or $full.target -cne 'WebGPUWgsl' -or
+                $optional.semanticSchemaIdentity -cne $identity -or
                 $optional.schemaVersion -ne 3 -or $optional.target -cne 'WebGPUWgsl' -or
                 $optional.sourceLanguage -cne 'Slang') {
               throw "Invalid optional native shading descriptor: $name"
             }
-            $expectedCount = if ($name -ceq 'engine-advanced-shade-native-no-modifiers-msaa') { 40 } else { 41 }
+            $expectedCount = if ($name -cin @('engine-advanced-shade-native-no-modifiers-msaa',
+                'engine-advanced-shade-native-no-decals-msaa', 'engine-advanced-shade-native-depth-no-decals-msaa')) { 40 } else { 41 }
             if ($optional.layout.bindings.Count -ne $expectedCount -or
                 (@($optional.workgroupSize) -join ',') -cne '16,16,1' -or
-                (@($optional.defines) -join '|') -cne ((@($full.defines) + @('XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1')) -join '|')) {
+                (@($optional.defines) -join '|') -cne ((@($full.defines) + @($define)) -join '|') -or
+                ($noDecals -and (@($optional.defines) -ccontains 'XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1')) -or
+                ($noDecals -and !(@($optional.defines) -ccontains 'XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1')) -or
+                ($noDecals -and $name.Contains('-depth-') -and
+                    !(@($optional.defines) -ccontains 'XR_ADV_DEPTH_COMPARISON_BANK=1'))) {
               throw "Invalid optional native shading schema or binding count: $name"
             }
             foreach ($field in @('entryPoints', 'workgroupSize', 'layout', 'requiredFeatures',
-                'requiredLimits', 'compilerIdentity', 'includes', 'sourceMap', 'pipeline', 'specialization')) {
+                'requiredLimits', 'compilerIdentity', 'matrixLayout', 'coordinates', 'includes',
+                'sourceMap', 'pipeline', 'specialization')) {
               if (($optional.$field | ConvertTo-Json -Depth 100 -Compress) -cne
                   ($full.$field | ConvertTo-Json -Depth 100 -Compress)) {
                 throw "Optional native shading $field differs from its full program: $name"

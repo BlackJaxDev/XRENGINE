@@ -20,6 +20,33 @@ void XR_ADV_ApplySelectedDecals(inout XRAdvancedSurface surface,
     if (offset > words || count > words - offset)
         textureFailure |= 1u << 17u;
 }
+#elif defined(XR_ADV_NATIVE_DECALS_ABSENT_SCHEMA_VERSION)
+#if XR_ADV_NATIVE_DECALS_ABSENT_SCHEMA_VERSION != 1
+#error Native absent-decal sampling requires schema version 1.
+#endif
+
+void XR_ADV_ValidateAbsentDecalSelection()
+{
+    // Keep the authored range check at each original evaluator call point.
+    if ((Parameters.flags & 16u) == 0u) return;
+    uint words, stride;
+    TextureBindings.GetDimensions(words, stride);
+    uint offset = Parameters.reserved0, count = Parameters.reserved1;
+    if (offset > words || count > words - offset)
+        textureFailure |= 1u << 17u;
+}
+
+void XR_ADV_ApplySelectedDecals(inout XRAdvancedSurface surface,
+    inout float3 albedo, inout float3 normal, inout float roughness, inout float metallic,
+    inout float specular, inout float3 emittedRadiance)
+{
+    XR_ADV_ValidateAbsentDecalSelection();
+}
+
+void XR_ADV_ApplySelectedDecalReceiverNormals(XRAdvancedSurface surface, inout float3 normal)
+{
+    XR_ADV_ValidateAbsentDecalSelection();
+}
 #else
 
 #define XR_ADV_DECAL_ENABLED 1u
