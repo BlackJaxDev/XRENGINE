@@ -117,3 +117,12 @@ application in PATH order. No activation, service, preflight browser, or
 certificate action occurred. The failed request is retired. A later preparation
 requires a fresh reviewed request bound to the new helper bytes and successful
 Windows static evidence; the failed job and its admission are not reused.
+
+Preparation run `37397520088` on trigger
+`24b7dfcefdfc9f509747a5f5f55e4e5370542516` passes request re-verification, then
+rejects the checkout URL before run-directory creation. The official checkout
+action records `https://github.com/BlackJaxDev/XRENGINE` without a `.git`
+suffix. The helper now requires that exact canonical URL. Source commit,
+clean-tree, artifact, and content-hash checks remain unchanged. This failed
+request is also retired without an activation or trust claim. A fresh helper
+static result and request review are required before another preparation.

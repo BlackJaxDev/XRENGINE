@@ -9,6 +9,16 @@ game result. This keeps Editor CLI execution and GPU qualification
 on runners that provide their required capabilities; the game is not republished
 or rewritten on Linux. The separate Linux engine-regression job remains intact.
 
+Each ref retains one active normal browser workflow run. A later source push
+does not cancel that run. The default concurrency queue keeps at most one
+pending run; a newly queued run replaces the previous pending run. This
+[GitHub concurrency policy](https://docs.github.com/en/actions/concepts/workflows-and-actions/concurrency)
+preserves an active qualification result while further implementation continues.
+It can delay qualification of a newer commit, so results must stay associated
+with their exact source SHA. All existing source/helper triggers, job time
+limits, and assertions remain. The isolated networking workflow keeps its
+separate admission and one-run activation checks.
+
 After saving the three browser bundles, the Windows job runs targeted
 RenderingState, FBO-binding, thread-isolation, and existing VulkanP1
 ownership checks, with their TRX results retained separately. The Linux game
