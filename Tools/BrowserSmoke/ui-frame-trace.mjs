@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
 // Activation requires a separate review. A local command-line flag is insufficient.
-const authorization = Object.freeze({ enabled: true, requestId: '7c47e15a-8186-430c-bc15-56736d2d8a6f',
+const authorization = Object.freeze({ enabled: false, requestId: '7c47e15a-8186-430c-bc15-56736d2d8a6f',
     activationPath: '.github/diagnostic-activations/ui-frame-trace-20261006.json',
     priorCommit: '1692757ed2bd6354c2d4a27a12ee5bd4cf98026b' });
 export function getUiFrameTraceAuthorization() { return authorization; }

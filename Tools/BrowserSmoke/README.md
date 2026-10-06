@@ -419,7 +419,9 @@ read-only GitHub token only while preparing the activation; the browser command
 does not receive that token.
 
 The trace uses an owned Playwright browser server bound to loopback, with the
-same browser launch settings. Its private control endpoint is not logged.
+same browser launch settings. The recorded run exposed its temporary loopback
+control URL through Playwright process logging; see the retained-evidence limit
+below.
 Recording begins before the published page starts and ends at the first initial
 frame checkpoint. A 25-second stop timer and independent 29-second owned-process
 watchdog keep the capture within its 30-second limit; uncertain shutdown aborts
@@ -435,6 +437,25 @@ five-second bound. Missing data, caps and cleanup uncertainty remain explicit.
 The evidence artifact retains only the sanitized summary from this trace. No privileged
 profiler or user computer is used. Source checks and mocked protocol results do
 not establish a successful capture or UI acceptance.
+
+The approved capture is consumed by [run 37412087888, job 112112789417](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37412087888/job/112112789417).
+It reproduced the unchanged initial animation-frame failure. During drain, the
+16 MiB input limit stopped collection; Chromium also reported data loss. The
+summary retains 18,074 event counts and 4,096 sanitized records, so it is
+incomplete and does not establish the cause of the stall. Stop and completion
+were acknowledged, the tracing session detached, and the owned browser exited.
+Recorded drain time is 743.8 ms. No raw trace stream or raw trace arguments were
+written. The ordinary process log retains the temporary loopback control URL
+emitted by Playwright DEBUG. That browser endpoint is closed; the earlier
+no-URL claim was incorrect for those process logs.
+
+The source authorization is now disabled and its activation record is retired.
+Do not rerun or rearm this capture under the consumed one-run approval. A future
+capture needs new authorization and an independent review of process logging
+and event selection. The original UI assertions and deadlines remain active.
+The retained artifact is `editor-ui-parity-browser-qualification`, ID
+`11390519203`, SHA-256
+`ca089afa7d6d86916ba5939f9960427fbfca90cc83638c869769157c84d618b5`.
 
 After a failed Advanced application check and successful closure of its browser,
 the harness starts a separate Chromium process with the same launch options.

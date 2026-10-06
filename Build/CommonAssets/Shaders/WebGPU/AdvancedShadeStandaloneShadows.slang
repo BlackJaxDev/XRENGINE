@@ -30,6 +30,9 @@ static float3 standaloneShadowNormalX;
 static float3 standaloneShadowNormalY;
 
 bool XR_WEB_ReconstructShadowHelper(XRAdvancedSurface surface, float2 pixel,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+#endif
     out float3 position, out float3 normal)
 {
     XRAdvancedSurface helper;
@@ -37,8 +40,12 @@ bool XR_WEB_ReconstructShadowHelper(XRAdvancedSurface surface, float2 pixel,
     normal = float3(0.0, 0.0, 1.0);
     // Extrapolate this primitive's own attributes across a helper lane. No
     // neighboring visibility/depth access, coverage test, or subgroup assumption.
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+    if (!XR_WEB_TryInterpolateShadowSurface(surface, pixel, preparedPrimitive, helper)) return false;
+#else
     if (!XR_ADV_TryReconstructSurface(surface.identity, surface.visibilityMetadata,
         surface.depth, pixel, helper)) return false;
+#endif
     helper.worldPosition = helper.interpolatedWorldPosition;
     position = helper.worldPosition;
     XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(helper.materialDenseIndex);
@@ -87,6 +94,9 @@ float3 XR_WEB_ShadowCoordinate(XRAdvancedShadowRecord record, float3 position, f
 }
 
 float XR_WEB_ShadowPlaneBias(XRAdvancedShadowRecord record, XRAdvancedSurface surface,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+#endif
     float3 coordinate, float footprint, float mapWidth)
 {
     if (record.depthBiasAndFilter.y <= 0.0) return 0.0;
@@ -98,15 +108,19 @@ float XR_WEB_ShadowPlaneBias(XRAdvancedShadowRecord record, XRAdvancedSurface su
         // Publish into the private invocation cache only after both calls finish.
         float3 positionX, normalX, positionY, normalY;
         bool valid = true;
-        // Keep one call site for the complete surface reconstruction instead
-        // of duplicating it. Both helper lanes still execute in X-then-Y order.
+        // Keep one call site for helper interpolation. Both helper lanes still
+        // execute in X-then-Y order, including when the first helper fails.
         [loop]
         for (uint axis = 0u; axis < 2u; axis++)
         {
             float2 offset = axis == 0u ? float2(sign.x, 0.0) : float2(0.0, sign.y);
             float3 position, normal;
             bool helperValid = XR_WEB_ReconstructShadowHelper(surface,
-                surface.samplePixelPosition + offset, position, normal);
+                surface.samplePixelPosition + offset,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+                preparedPrimitive,
+#endif
+                position, normal);
             valid = valid && helperValid;
             if (axis == 0u) { positionX = position; normalX = normal; }
             else { positionY = position; normalY = normal; }
@@ -187,7 +201,11 @@ float XR_WEB_SampleStandalonePoint(XRAdvancedShadowRecord record, XRAdvancedText
 }
 
 float XR_WEB_SampleStandaloneShadow(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
-    XRAdvancedEncodedTextureReference reference, XRAdvancedSurface surface, float3 normal, out uint reason)
+    XRAdvancedEncodedTextureReference reference, XRAdvancedSurface surface, float3 normal,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+    XRAdvancedPreparedShadowPrimitive preparedPrimitive,
+#endif
+    out uint reason)
 {
     reason = XR_ADV_SHADOW_OK;
     if (record.encoding != 0u || (record.flags & 224u) != 96u ||
@@ -228,7 +246,11 @@ float XR_WEB_SampleStandaloneShadow(XRAdvancedShadowRecord record, XRAdvancedTex
     if (clip.w <= 0.0 || !XR_ADV_IsFinite(clip)) { reason = XR_ADV_SHADOW_OUTSIDE; return 1.0; }
     float3 ndc = clip.xyz / clip.w;
     float3 coordinate = float3(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, ndc.z);
-    float slopeBias = XR_WEB_ShadowPlaneBias(record, surface, coordinate,
+    float slopeBias = XR_WEB_ShadowPlaneBias(record, surface,
+#if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
+        preparedPrimitive,
+#endif
+        coordinate,
         max(record.momentParameters.y, record.type == 1u ? 1.0 / mapSize.x : texelUv), mapSize.x);
     float receiver = coordinate.z - (constantBias + max(slopeBias, 0.0));
     if (record.type == 1u && axisDistance >= farZ || any(coordinate < float3(0.0)) || any(coordinate > float3(1.0)))

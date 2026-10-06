@@ -5,6 +5,21 @@ namespace XREngine.Runtime.Platform.Desktop;
 /// <summary>Opens desktop files and creates native mappings. The caller owns each stream.</summary>
 internal sealed class DesktopFileMappingBackend : IFileMappingBackend
 {
+    public bool FileExists(string path) => File.Exists(path);
+
+    public bool TryGetFileLength(string path, out long length)
+    {
+        FileInfo info = new(path);
+        if (!info.Exists)
+        {
+            length = 0;
+            return false;
+        }
+
+        length = info.Length;
+        return true;
+    }
+
     public FileStream OpenFile(string path, bool writable, FileOptions options, Action<string, string> reportFallback)
     {
         try
