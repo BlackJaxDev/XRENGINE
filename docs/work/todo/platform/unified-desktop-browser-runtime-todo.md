@@ -422,7 +422,7 @@ Sizes are rough planning estimates for one engineer: **S** is days, **M** is one
 | U0 reference checks | UR00 | 0 | Complete locally | Historical evidence and limits recorded |
 | Prerequisite integration | [Native subsystem checklist](native-subsystem-project-split-todo.md) | 35 | L | Remaining native subsystem acceptance; broader physics parity before any default-promotion consideration |
 | U1: engine boots | UR17, UR01, UR02, UR03 | 7 | L each; UR01 M | Complete full U1 world/component, asset and frame acceptance beyond the passing lifecycle probes; D1 and D6 are approved |
-| U2: engine renders | UR04, UR05, UR06 | 14 | UR04 XL, UR05 XL, UR06 L | Complete renderer/material coverage, generic meshlet producers, native decals and vertex displacement; qualify supported worlds and preserve desktop rendering; D7 is approved |
+| U2: engine renders | UR04, UR05, UR06 | 13 | UR04 XL, UR05 XL, UR06 L | Complete renderer/material coverage, generic meshlet producers, native decals and vertex displacement; qualify supported worlds and preserve desktop rendering; D7 is approved |
 | U3: project plays | UR07, UR08, UR09, UR10, UR11 | 6 | UR07 L, UR08 M, UR09 L, UR10 M, UR11 M | Complete packaged-editor publication and browser physics/audio/UI and authored-project comparison evidence; D2, D3 and D4 are approved |
 | U4: production | UR13, UR14, UR15, UR16 | 15 | M each | Complete measurements, recovery, CI/hosting and device evidence; D9, D11 and D12 are approved |
 | U5: networked client | UR12 | 1 | L | U3 |
