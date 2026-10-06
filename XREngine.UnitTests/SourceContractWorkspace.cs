@@ -123,10 +123,8 @@ internal static class SourceContractWorkspace
 
         string typeStem = GetTypeStem(fullPath);
         string projectRoot = ResolveProjectRoot(relativePath);
-        string[] relatedPaths = Directory
-            .EnumerateFiles(projectRoot, $"{typeStem}*.cs", SearchOption.AllDirectories)
+        string[] relatedPaths = EnumerateEligibleFiles(projectRoot, $"{typeStem}*.cs")
             .Where(path => IsTypeFamilyFile(path, typeStem))
-            .Where(path => !IsGeneratedOrValidationPath(path))
             .OrderBy(path => string.Equals(path, fullPath, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -161,6 +159,14 @@ internal static class SourceContractWorkspace
         => CombineSources(
             GetVulkanSourceFiles().Where(static file =>
                 file.Source.Contains("partial class VulkanRenderer", StringComparison.Ordinal)));
+
+    /// <summary>
+    /// Reads the files that contribute to the Vulkan command runtime.
+    /// </summary>
+    public static string ReadVulkanCommandRuntimeSource()
+        => CombineSources(
+            GetVulkanSourceFiles().Where(static file =>
+                file.Source.Contains("partial class VulkanCommandRuntime", StringComparison.Ordinal)));
 
     /// <summary>
     /// Reads the Vulkan source files containing any supplied contract marker.
@@ -237,9 +243,9 @@ internal static class SourceContractWorkspace
             return fullPath;
 
         string fileName = Path.GetFileName(relativePath);
-        string[] matches = Directory
-            .EnumerateFiles(RepositoryRoot, fileName, SearchOption.AllDirectories)
-            .Where(path => !IsGeneratedOrValidationPath(path))
+        string[] matches = Directory.EnumerateDirectories(RepositoryRoot, "XREngine.*", SearchOption.TopDirectoryOnly)
+            .Where(static path => (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0)
+            .SelectMany(path => EnumerateEligibleFiles(path, fileName))
             .Take(2)
             .ToArray();
         if (matches.Length == 1)
@@ -259,9 +265,7 @@ internal static class SourceContractWorkspace
 
         return
         [
-            .. Directory
-                .EnumerateFiles(projectRoot, "*.cs", SearchOption.AllDirectories)
-                .Where(path => !IsGeneratedOrValidationPath(path))
+            .. EnumerateEligibleFiles(projectRoot, "*.cs")
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .Select(path => new SourceFile(
                     Path.GetRelativePath(RepositoryRoot, path)
@@ -297,15 +301,36 @@ internal static class SourceContractWorkspace
         return Directory.Exists(projectRoot) ? projectRoot : RepositoryRoot;
     }
 
-    private static bool IsGeneratedOrValidationPath(string path)
+    /// <summary>
+    /// Finds source files without entering generated or external directories.
+    /// </summary>
+    private static IEnumerable<string> EnumerateEligibleFiles(string root, string searchPattern)
     {
-        string relativePath = Path.GetRelativePath(RepositoryRoot, path);
-        string[] segments = relativePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return segments.Any(segment =>
-            string.Equals(segment, "bin", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(segment, "obj", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(segment, "_AgentValidation", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(segment, "Submodules", StringComparison.OrdinalIgnoreCase));
+        Stack<string> pending = new();
+        pending.Push(root);
+        while (pending.TryPop(out string? directory))
+        {
+            foreach (string file in Directory.EnumerateFiles(directory, searchPattern, SearchOption.TopDirectoryOnly))
+                yield return file;
+
+            foreach (string child in Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                string name = Path.GetFileName(child);
+                if (name.Equals("bin", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("obj", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("_AgentValidation", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("Dependencies", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("Submodules", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals(".git", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals(".vs", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals(".codex", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("node_modules", StringComparison.OrdinalIgnoreCase) ||
+                    (File.GetAttributes(child) & FileAttributes.ReparsePoint) != 0)
+                    continue;
+
+                pending.Push(child);
+            }
+        }
     }
 
     private static string NormalizeLineEndings(string source)

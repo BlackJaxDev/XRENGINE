@@ -939,6 +939,7 @@ function Get-BinaryOwner([string]$fileOrPath) {
     $name = [System.IO.Path]::GetFileName($fileOrPath)
 
     switch -Regex ($name) {
+        '^xr_shaderc\.dll$' { return 'Google / Khronos / glslang contributors' }
         '^FastGltfBridge\.Native\.dll$' { return 'Sean Apeler (fastgltf) / simdjson authors' }
         '^VulkanMemoryAllocatorBridge\.Native\.dll$' { return 'Advanced Micro Devices, Inc. (GPUOpen)' }
         '^openvr_api\.dll$' { return 'Valve (OpenVR/SteamVR)' }
@@ -969,6 +970,7 @@ function Get-BinaryLicense([string]$fileOrPath) {
     $name = [System.IO.Path]::GetFileName($fileOrPath)
 
     switch -Regex ($name) {
+        '^xr_shaderc\.dll$' { return 'Apache-2.0 + BSD + MIT (see combined upstream notices)' }
         '^FastGltfBridge\.Native\.dll$' { return 'MIT (fastgltf) + Apache-2.0 (simdjson)' }
         '^VulkanMemoryAllocatorBridge\.Native\.dll$' { return 'MIT (Vulkan Memory Allocator)' }
         '^sl\.nis\.dll$' { return 'MIT (see ThirdParty/NVIDIA/SDK/win-x64/nis.license.txt)' }
@@ -999,6 +1001,7 @@ function Get-BinaryLicenseLink([string]$fileOrPath) {
     }
 
     switch -Regex ($name) {
+        '^xr_shaderc\.dll$' { return '../XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/xr_shaderc.license.txt' }
         '^VulkanMemoryAllocatorBridge\.Native\.dll$' { return '../Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator/LICENSE.txt' }
         '^sl\.nis\.dll$' { return '../ThirdParty/NVIDIA/SDK/win-x64/nis.license.txt' }
         '^nvngx_.*\.dll$' { return '../ThirdParty/NVIDIA/SDK/win-x64/nvngx_dlss.license.txt' }

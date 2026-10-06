@@ -45,6 +45,7 @@ public sealed class RvcRenderingContractTests
             AntiAliasingMode: EAntiAliasingMode.None,
             MsaaSampleCount: 1u,
             Stereo: stereo,
+            FeatureMask: (ulong)DefaultRenderPipeline.DefaultPipelineResourceFeature.RvcResourcesEnabled,
             ViewCount: viewCount);
 
         RenderPipelineResourceLayout layout =
@@ -476,7 +477,7 @@ public sealed class RvcRenderingContractTests
         string hostStatistics = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderStatisticsServices.cs");
         string hostPresentation = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderPresentationServices.cs");
         string rvcPass = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_RvcPass.cs");
-        string rendererHost = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRendererHost.cs");
+        string rendererHost = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRendererHost.Desktop.cs");
         string abstractRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs");
         string vulkanMeshlets = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Meshlets/VulkanRenderer.Meshlets.cs");
 

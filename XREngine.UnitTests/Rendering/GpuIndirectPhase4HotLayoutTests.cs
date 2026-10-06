@@ -11,37 +11,30 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class GpuIndirectPhase4HotLayoutTests
 {
     [Test]
-    public void Phase4_CoreHotLayoutState_SourceContracts_ArePresent()
+    public void CompactDrawIdState_UsesBoundedUIntBuffers()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs");
 
-        source.ShouldContain("public bool EnableHotCommandLayout { get; set; } = true;");
-        source.ShouldContain("private XRDataBuffer? _sourceHotCommandBuffer;");
-        source.ShouldContain("private XRDataBuffer? _culledHotCommandBuffer;");
-        source.ShouldContain("private XRDataBuffer? _occlusionCulledHotBuffer;");
-        source.ShouldContain("private bool _sourceCommandsUseHotLayout;");
-        source.ShouldContain("private bool _culledHotCommandsValid;");
-        source.ShouldContain("private static XRDataBuffer MakeHotCommandBuffer(string name, uint capacity)");
-        source.ShouldContain("private static bool IsShippingHotOnlyProfile()", Case.Insensitive);
-        source.ShouldContain("private static bool IsHotCommandLayoutEnabled()", Case.Insensitive);
-        source.ShouldContain("private static bool IsHotCommandLayoutRequired()", Case.Insensitive);
+        source.ShouldContain("private XRDataBuffer? _culledSceneToRenderBuffer;");
+        source.ShouldContain("private XRDataBuffer? _occlusionCulledBuffer;");
+        source.ShouldContain("private static XRDataBuffer MakeCulledSceneToRenderBuffer(");
+        source.ShouldContain("EComponentType.UInt,");
+        source.ShouldContain("StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read");
         source.ShouldContain("private static uint ComputeBoundedDoublingCapacity(uint currentCapacity, uint minimumRequired)");
     }
 
     [Test]
-    public void Phase4_CanonicalCullingHotPath_SourceContracts_ArePresent()
+    public void CanonicalCullingPath_UsesSceneMetadataAndCompactDrawIds()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.CullingAndSoA.cs");
         string shaderInitialization = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.ShadersAndInit.cs");
 
-        source.ShouldContain("private void BuildSourceHotCommandBuffer(GPUScene scene, uint inputCount)");
-        source.ShouldContain("_buildHotCommandsProgram.Uniform(\"InputCount\", (int)inputCount);");
-        source.ShouldContain("_cullingComputeShader.Uniform(\"UseHotCommands\", useHotCommands ? 1 : 0);");
-        source.ShouldContain("_cullingComputeShader.BindBuffer(_sourceHotCommandBuffer!, 9);");
-        source.ShouldContain("_cullingComputeShader.BindBuffer(_culledHotCommandBuffer!, 10);");
-        source.ShouldContain("_bvhFrustumCullProgram.Uniform(\"UseHotCommands\", useHotCommands ? 1u : 0u);");
+        source.ShouldContain("scene.CullControlBuffer.BindTo(_cullingComputeShader, 0);");
+        source.ShouldContain("scene.CullBoundsBuffer.BindTo(_cullingComputeShader, 1);");
+        source.ShouldContain("_cullingComputeShader.BindBuffer(dst, 2);");
+        source.ShouldContain("scene.CullControlBuffer.BindTo(_bvhFrustumCullProgram, 0);");
+        source.ShouldContain("scene.CullBoundsBuffer.BindTo(_bvhFrustumCullProgram, 1);");
         source.ShouldContain("_bvhFrustumCullProgram.BindBuffer(dst, 2);");
-        source.ShouldContain("_bvhFrustumCullProgram.BindBuffer(_culledHotCommandBuffer!, 10);");
         source.ShouldContain("FrustumCull(gpuCommands, camera, numCommands);");
         source.ShouldContain("BvhCull(gpuCommands, camera, numCommands);");
         source.ShouldNotContain("ShouldExtractSoAForCurrentPolicy");
@@ -52,26 +45,22 @@ public sealed class GpuIndirectPhase4HotLayoutTests
         shaderInitialization.ShouldContain("Compute/Culling/GPURenderCulling.comp");
         shaderInitialization.ShouldNotContain("GPURenderExtractSoA");
         shaderInitialization.ShouldNotContain("GPURenderCullingSoA");
-        source.ShouldContain("ShippingFast profile requires hot-command layout for frustum culling.");
-        source.ShouldContain("ShippingFast profile requires hot-command layout for BVH culling.");
     }
 
     [Test]
-    public void Phase4_OcclusionAndIndirectHotPath_SourceContracts_ArePresent()
+    public void OcclusionAndIndirectPath_ConsumeCompactDrawIds()
     {
         string occlusionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
         string indirectSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.IndirectAndMaterials.cs");
 
-        occlusionSource.ShouldContain("_hiZOcclusionProgram.Uniform(\"UseHotCommands\", useHotCommands ? 1 : 0);");
-        occlusionSource.ShouldContain("_hiZOcclusionProgram.BindBuffer(_culledHotCommandBuffer!, 9);");
-        occlusionSource.ShouldContain("_hiZOcclusionProgram.BindBuffer(_occlusionCulledHotBuffer!, 10);");
-        occlusionSource.ShouldContain("(_culledHotCommandBuffer, _occlusionCulledHotBuffer) = (_occlusionCulledHotBuffer, _culledHotCommandBuffer);");
+        occlusionSource.ShouldContain("_hiZOcclusionProgram.BindBuffer(CulledSceneToRenderBuffer!, 0);");
+        occlusionSource.ShouldContain("_hiZOcclusionProgram.BindBuffer(_occlusionCulledBuffer!, 1);");
+        occlusionSource.ShouldContain("scene.CullControlBuffer.BindTo(_hiZOcclusionProgram, 10u);");
+        occlusionSource.ShouldContain("scene.CullBoundsBuffer.BindTo(_hiZOcclusionProgram, 5);");
+        occlusionSource.ShouldContain("(_culledSceneToRenderBuffer, _occlusionCulledBuffer) = (_occlusionCulledBuffer, _culledSceneToRenderBuffer);");
 
-        indirectSource.ShouldContain("_indirectRenderTaskShader.Uniform(\"UseHotCommands\", _culledCommandsUseHotLayout ? 1 : 0);");
-        indirectSource.ShouldContain("? _culledHotCommandBuffer");
-        indirectSource.ShouldContain(": CulledSceneToRenderBuffer).BindTo(_indirectRenderTaskShader!, 9);");
-        indirectSource.ShouldContain("_buildHotCommandsProgram.Uniform(\"InputCount\", (int)inputCount);");
-        indirectSource.ShouldContain("ShippingFast requires hot command layout", Case.Insensitive);
+        indirectSource.ShouldContain("CulledSceneToRenderBuffer.BindTo(_indirectRenderTaskShader!, 0);");
+        indirectSource.ShouldContain("scene.MeshDataBuffer.BindTo(_indirectRenderTaskShader!, 2);");
     }
 
     [Test]
@@ -105,32 +94,28 @@ public sealed class GpuIndirectPhase4HotLayoutTests
     }
 
     [Test]
-    public void Phase4_ShaderHotLayoutContracts_ArePresent()
+    public void CompactDrawIdShaders_UseSceneStreamsAndBoundedOutput()
     {
-        string buildHot = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderBuildHotCommands.comp");
         string culling = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Culling/GPURenderCulling.comp");
         string occlusion = ReadWorkspaceFile("Build/CommonAssets/Shaders/Compute/Occlusion/GPURenderOcclusionHiZ.comp");
         string bvh = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/RenderPipeline/bvh_frustum_cull.comp");
 
-        buildHot.ShouldContain("uniform int InputCount;");
-        buildHot.ShouldContain("const uint HOT_UINTS = 20u;");
-
         culling.ShouldContain("layout(std430, binding = 0) readonly buffer DrawMetadataBuffer");
         culling.ShouldContain("layout(std430, binding = 1) readonly buffer BoundsBuffer");
-        culling.ShouldContain("layout(std430, binding = 2) writeonly buffer CulledCommandsBuffer");
-        culling.ShouldContain("layout(std430, binding = 10) writeonly buffer CulledHotCommandsBuffer");
-        culling.ShouldContain("uniform int UseHotCommands;");
+        culling.ShouldContain("layout(std430, binding = 2) writeonly buffer VisibleDrawIdsBuffer");
+        culling.ShouldContain("outDrawIds[outIndex] = meta.DrawID;");
 
-        occlusion.ShouldContain("layout(std430, binding = 9) readonly buffer InputHotCommandsBuffer");
-        occlusion.ShouldContain("layout(std430, binding = 10) writeonly buffer OutputHotCommandsBuffer");
-        occlusion.ShouldContain("uniform int UseHotCommands;");
+        occlusion.ShouldContain("layout(std430, binding = 0) buffer InputDrawIdsBuffer");
+        occlusion.ShouldContain("layout(std430, binding = 1) buffer OutputDrawIdsBuffer");
+        occlusion.ShouldContain("uint outputCapacity = min(uint(max(MaxOutputCommands, 0)), uint(outDrawIds.length()));");
+        occlusion.ShouldContain("outDrawIds[outIndex] = drawId;");
 
         bvh.ShouldContain("layout(std430, binding = 0) readonly buffer DrawMetadataBuffer");
         bvh.ShouldContain("layout(std430, binding = 1) readonly buffer BoundsBuffer");
-        bvh.ShouldContain("layout(std430, binding = 2) writeonly buffer CulledCommandsBuffer");
-        bvh.ShouldContain("layout(std430, binding = 10) writeonly buffer CulledHotCommandsBuffer");
-        bvh.ShouldContain("uniform uint UseHotCommands;");
+        bvh.ShouldContain("layout(std430, binding = 2) writeonly buffer VisibleDrawIdsBuffer");
+        bvh.ShouldContain("outDrawIds[outIndex] = meta.DrawID;");
 
+        WorkspacePathExists("Build/CommonAssets/Shaders/Compute/Indirect/GPURenderBuildHotCommands.comp").ShouldBeFalse();
         WorkspacePathExists("Build/CommonAssets/Shaders/Compute/Culling/GPURenderExtractSoA.comp").ShouldBeFalse();
         WorkspacePathExists("Build/CommonAssets/Shaders/Compute/Culling/GPURenderCullingSoA.comp").ShouldBeFalse();
         WorkspacePathExists("XREngine.Data/Core/Enums/EGpuCullingDataLayout.cs").ShouldBeFalse();

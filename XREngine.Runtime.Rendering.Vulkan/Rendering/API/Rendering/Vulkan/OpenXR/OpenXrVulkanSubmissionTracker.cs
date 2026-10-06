@@ -5,6 +5,7 @@ using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Pipelines.Commands;
 using VulkanSemaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
@@ -72,6 +73,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         public bool Retiring;
         public bool PendingCommit;
         public bool NativeSubmissionAccepted;
+        public bool TemporalHistoryCandidateClaimed;
         public bool Cancelled;
         public bool AbandonedAfterDeviceLoss;
         public int UploadSettlementIndex;
@@ -861,6 +863,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             entry.Retiring = false;
             entry.PendingCommit = false;
             entry.NativeSubmissionAccepted = false;
+            entry.TemporalHistoryCandidateClaimed = false;
             entry.Cancelled = false;
             entry.AbandonedAfterDeviceLoss = false;
             entry.UploadSettlementIndex = 0;
@@ -1355,6 +1358,44 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     }
 
     /// <summary>
+    /// Claims one recorded temporal candidate after native queue acceptance.
+    /// The caller publishes it after this tracker lock is released.
+    /// </summary>
+    internal bool TryClaimAcceptedTemporalHistoryCandidate(
+        in SubmissionAdmissionTicket ticket,
+        out TemporalHistorySubmissionCandidate candidate)
+    {
+        candidate = default;
+        lock (_gate)
+        {
+            for (int i = 0; i < _inFlight.Length; i++)
+            {
+                InFlightSubmission entry = _inFlight[i];
+                if (!entry.Active || !entry.PendingCommit ||
+                    !entry.NativeSubmissionAccepted || entry.TemporalHistoryCandidateClaimed ||
+                    entry.AdmissionSlotIndex != ticket.AdmissionSlotIndex ||
+                    entry.TicketGeneration != ticket.Generation)
+                    continue;
+
+                TemporalHistorySubmissionCandidate first = entry.HasFirst
+                    ? entry.FirstRecorded.TemporalHistoryCandidate
+                    : default;
+                TemporalHistorySubmissionCandidate second = entry.HasSecond
+                    ? entry.SecondRecorded.TemporalHistoryCandidate
+                    : default;
+                if (first.IsValid == second.IsValid)
+                    return false;
+
+                entry.TemporalHistoryCandidateClaimed = true;
+                candidate = first.IsValid ? first : second;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Opens an accepted submission to completion polling only after its caller
     /// has finished publication and receipt processing. A gateway exception
     /// deliberately leaves the committed entry pending so ownership remains
@@ -1745,6 +1786,17 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     {
         if (ShouldStopNormalSettlement(entry) || entry.NativeSubmissionAccepted)
             return false;
+
+        if (entry.HasFirst)
+        {
+            TemporalHistorySubmissionCandidate candidate = entry.FirstRecorded.TemporalHistoryCandidate;
+            VPRC_TemporalAccumulationPass.DiscardCandidate(in candidate);
+        }
+        if (entry.HasSecond)
+        {
+            TemporalHistorySubmissionCandidate candidate = entry.SecondRecorded.TemporalHistoryCandidate;
+            VPRC_TemporalAccumulationPass.DiscardCandidate(in candidate);
+        }
 
         bool settled = SettleUploads(entry, publish: false);
         if (settled && !ShouldStopNormalSettlement(entry))
@@ -2262,6 +2314,16 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             InFlightSubmission entry = _inFlight[i];
             if (!entry.AbandonedAfterDeviceLoss)
                 continue;
+            if (entry.HasFirst)
+            {
+                TemporalHistorySubmissionCandidate candidate = entry.FirstRecorded.TemporalHistoryCandidate;
+                VPRC_TemporalAccumulationPass.InvalidateCandidateForDeviceLoss(in candidate);
+            }
+            if (entry.HasSecond)
+            {
+                TemporalHistorySubmissionCandidate candidate = entry.SecondRecorded.TemporalHistoryCandidate;
+                VPRC_TemporalAccumulationPass.InvalidateCandidateForDeviceLoss(in candidate);
+            }
             ReleasePreparedInputsAfterDeviceLoss(entry);
             AbandonUploadsAfterDeviceLoss(entry);
             lock (_gate)

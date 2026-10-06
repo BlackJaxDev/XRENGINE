@@ -666,7 +666,7 @@ public sealed class OpenXrTimingPipelineContractTests
 
         lifetime.ShouldContain("VulkanImageViewLifetimeState ImageViews { get; } = new();");
         lifetime.ShouldContain("ConcurrentDictionary<ulong, string> LivePipelineLayoutHandles { get; } = new();");
-        imageLifetime.ShouldContain("internal void RegisterView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner)");
+        imageLifetime.ShouldContain("internal ulong RegisterView(ImageView imageView, in ImageViewCreateInfo createInfo, string owner)");
         imageLifetime.ShouldContain("Views.LiveHandles[imageView.Handle] = owner;");
         imageLifetime.ShouldContain("lifetime.Tracker.RegisterResource(");
         imageLifetime.ShouldContain("internal bool TryBeginDestroy(ImageView imageView, string owner)");
@@ -692,9 +692,9 @@ public sealed class OpenXrTimingPipelineContractTests
         openXr.ShouldContain("_resources.Images.RetireOwnedResources(");
         imageBackedTexture.ShouldContain("BackendContext.Resources.Images.RegisterView(");
         imageBackedTexture.ShouldContain("\"VkImageBackedTexture.View:");
-        textureView.ShouldContain("BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in viewInfo, \"VkTextureView.View\", out _view)");
-        textureView.ShouldContain("BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in depthOnlyViewInfo, \"VkTextureView.DepthOnlyDescriptor\", out _depthOnlyView)");
-        textureView.ShouldContain("BackendContext.Resources.Images.ReleaseInternedView(_view)");
+        textureView.ShouldContain("BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in viewInfo, \"VkTextureView.View\", out _viewReference)");
+        textureView.ShouldContain("BackendContext.Resources.Images.TryAcquireInternedView(BackendContext, in depthOnlyViewInfo, \"VkTextureView.DepthOnlyDescriptor\", out _depthOnlyViewReference)");
+        textureView.ShouldContain("BackendContext.Resources.Images.ReleaseInternedView(_viewReference)");
         textureView.ShouldContain("private readonly object _viewLifetimeLock = new();");
         // The owner label carries the program binding id so live-resource owner
         // summaries can attribute retained pipeline layouts to one generated program.
@@ -797,7 +797,7 @@ public sealed class OpenXrTimingPipelineContractTests
             "private bool TryActivateReusableDescriptorSetsForCapturedResources",
             "private bool TryActivateReusableDescriptorSetsFast");
 
-        capturedReuse.ShouldContain("DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint)");
+        capturedReuse.ShouldContain("DescriptorAllocationSlotsMatch(allocation, material, refreshFrameIndex, resourceFingerprint)");
         capturedReuse.ShouldContain("TryRefreshCapturedDescriptorAllocationResources");
         capturedReuse.ShouldContain("ComputeDescriptorResourceFingerprintDetails(material, BackendContext.Resources.Descriptors.FrameSlotCount, currentBindings)");
 
@@ -1178,7 +1178,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void OpenXrRuntimeNeutralBindingPaths_MatchSupportedProfileComponents()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.Input.RuntimeNeutral.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.XR.OpenXR/OpenXRAPI.Input.RuntimeNeutral.cs");
         string bindings = SliceMethod(source, "private void SuggestRuntimeNeutralBindings", "private void SuggestRuntimeBindingsForProfile");
         var supported = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
         {

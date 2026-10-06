@@ -80,11 +80,11 @@ public sealed class MaterialRenderPassContractTests
     }
 
     [Test]
-    public void PrefabSource_MaterialFactory_DelegatesToDeferredImporterFactory()
+    public void ModelPrefabLoader_MaterialFactory_DelegatesToDeferredImporterFactory()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Prefabs/XRPrefabSource.cs").Replace("\r\n", "\n");
+        string source = ReadWorkspaceFile("XREngine.Runtime.ModelAssetPipeline/Importing/ModelPrefabAssetLoadingServices.cs").Replace("\r\n", "\n");
 
-        source.ShouldContain("=> ModelAssetImporter.MakeMaterialDeferred(textureList, textures, name);");
+        source.ShouldContain("return ModelAssetImporter.MakeMaterialDeferred(textures, slots, name);");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

@@ -151,7 +151,8 @@ namespace XREngine
                             EVrViewRenderImplementationPath.SequentialViews,
                             EVrTemporalHistoryPolicy.Disabled,
                             true,
-                            null);
+                            null,
+                            RuntimeEngine.Rendering.Settings.VrRenderPipeline);
                     }
 
                     ERenderLibrary backend = RuntimeEngine.Rendering.State.IsVulkan
@@ -170,7 +171,8 @@ namespace XREngine
                         requestedMode,
                         RuntimeRenderingHostServices.Presentation.EnableOpenXrVulkanParallelRendering,
                         trueSinglePassStereoAvailable,
-                        rendersExternalSwapchainTargets: RuntimeEngine.VRState.IsOpenXRActive && !trueSinglePassStereoAvailable);
+                        rendersExternalSwapchainTargets: RuntimeEngine.VRState.IsOpenXRActive && !trueSinglePassStereoAvailable,
+                        requestedPipeline: RuntimeEngine.Rendering.Settings.VrRenderPipeline);
                 }
 
                 private static string CaptureActiveRenderBackend()

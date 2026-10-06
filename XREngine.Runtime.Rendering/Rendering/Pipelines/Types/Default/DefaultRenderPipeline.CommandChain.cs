@@ -938,7 +938,8 @@ public partial class DefaultRenderPipeline
             {
                 var tsrUpscale = new ViewportRenderCommandContainer(this);
                 AppendDiagnosticTextureCapture(tsrUpscale, "13b_PreTsrHistoryColor", TsrHistoryColorTextureName);
-                if (Stereo && IsPhase524bValidationEnabled())
+                bool includeMonoReference = Stereo && IsPhase524bValidationEnabled();
+                if (includeMonoReference)
                 {
                     using (tsrUpscale.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = TsrMonoReferenceFBO_SettingUniforms))
                         tsrUpscale.Add<VPRC_RenderQuadToFBO>()
@@ -958,7 +959,10 @@ public partial class DefaultRenderPipeline
                         .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.TsrUpscale());
                 var captureTsrHistory = tsrUpscale.Add<VPRC_TemporalAccumulationPass>();
                 captureTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.CaptureTsrHistoryColor;
-                captureTsrHistory.ConfigureTsrHistoryTargets(TsrUpscaleFBOName, TsrHistoryColorFBOName);
+                captureTsrHistory.ConfigureTsrHistoryTargets(
+                    TsrUpscaleFBOName, TsrHistoryColorFBOName, TsrUpscaleFBOName,
+                    leftHistoryReaderQuadFboName: includeMonoReference ? TsrMonoReferenceLeftFBOName : null,
+                    rightHistoryReaderQuadFboName: includeMonoReference ? TsrMonoReferenceRightFBOName : null);
                 AppendDiagnosticTextureCapture(tsrUpscale, "14_TsrOutput", TsrOutputTextureName);
                 AppendDiagnosticTextureCapture(tsrUpscale, "14b_TsrHistoryColor", TsrHistoryColorTextureName);
                 AppendDiagnosticDesktopFinalCapture(tsrUpscale, "15_FinalOutput", TsrOutputTextureName);

@@ -475,7 +475,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         bridgeEnvSource.ShouldContain("EVulkanUpscaleBridgeSurfaceSet.Exposure;");
         bridgeEnvSource.ShouldContain("disabled the OpenGL->Vulkan upscale bridge");
 
-        string engineRenderingSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.Preferences.cs").Replace("\r\n", "\n");
+        string engineRenderingSource = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.Preferences.cs").Replace("\r\n", "\n");
         engineRenderingSource.ShouldContain("InvalidateAllVulkanUpscaleBridges(\"anti-aliasing settings changed\");");
         engineRenderingSource.ShouldContain("NotifyVulkanUpscaleBridgeVendorSelectionChanged(\"NVIDIA DLSS preference changed\");");
         engineRenderingSource.ShouldContain("NotifyVulkanUpscaleBridgeVendorSelectionChanged(\"Intel XeSS preference changed\");");
@@ -507,7 +507,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         source.ShouldContain("if (!hasPreviousCommit)");
         source.ShouldContain("if (isDemotion)");
 
-        string hostSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs").Replace("\r\n", "\n");
+        string hostSource = ReadWorkspaceFile("XREngine.Runtime.Host/RenderingHost/Engine.RuntimeRenderingHostServices.cs").Replace("\r\n", "\n");
         hostSource.ShouldContain("public SparseTextureStreamingFinalizeResult FinalizeSparseTextureStreamingTransition(");
         hostSource.ShouldContain("capability.FinalizeSparseTextureStreamingTransition(texture, request, transitionResult)");
 
@@ -522,7 +522,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     {
         string windowSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs").Replace("\r\n", "\n");
         string editorSource = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.ImGui.cs").Replace("\r\n", "\n");
-        string engineLifecycleSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.Lifecycle.cs").Replace("\r\n", "\n");
+        string engineLifecycleSource = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.Lifecycle.cs").Replace("\r\n", "\n");
 
         windowSource.ShouldContain("private int _pendingCloseRequested;");
         windowSource.ShouldContain("public void RequestClose()");

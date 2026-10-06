@@ -86,14 +86,15 @@ public sealed class TonemappingShaderContractTests
     [Test]
     public void PipelineTonemappingStage_IsBacked_AndUsesTonemappingSettingsUniforms()
     {
+        string schemaSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PostProcessing/CommonPostProcessStages.cs").Replace("\r\n", "\n");
         string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
-        pipelineSource.ShouldContain("DescribeTonemappingStage(builder.Stage(TonemappingStageKey, \"Tonemapping\").BackedBy<TonemappingSettings>());");
-        pipelineSource.ShouldContain("visibilityCondition: IsMobius");
-        pipelineSource.ShouldContain("(tonemapping ?? new TonemappingSettings()).SetUniforms(program);");
+        schemaSource.ShouldContain("DescribeTonemappingStage(builder.Stage(StageKeys.Tonemapping, \"Tonemapping\").BackedBy<TonemappingSettings>());");
+        schemaSource.ShouldContain("visibilityCondition: IsMobius");
+        pipelineSource.ShouldContain("CommonPostProcessStages.AddStandardPipelineSchema(builder);");
+        pipelineSource.ShouldContain("(tonemapping ?? DefaultTonemappingSettings).SetUniforms(program);");
 
         string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
-        advancedPipelineSource.ShouldContain("DescribeTonemappingStage(builder.Stage(TonemappingStageKey, \"Tonemapping\").BackedBy<TonemappingSettings>());");
-        advancedPipelineSource.ShouldContain("visibilityCondition: IsMobius");
+        advancedPipelineSource.ShouldContain("CommonPostProcessStages.AddStandardPipelineSchema(builder);");
         advancedPipelineSource.ShouldContain("(tonemapping ?? new TonemappingSettings()).SetUniforms(program);");
     }
 
@@ -125,12 +126,13 @@ public sealed class TonemappingShaderContractTests
         stereoShaderSource.ShouldContain("ldrSceneColor = ApplyVignette(ldrSceneColor, uv);");
 
         string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
-        pipelineSource.ShouldContain("DescribeVignetteStage(builder.Stage(VignetteStageKey, \"Vignette\").BackedBy<VignetteSettings>());");
-        pipelineSource.ShouldContain(".IncludeStages(TonemappingStageKey, ColorGradingStageKey, VignetteStageKey);");
+        string schemaSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PostProcessing/CommonPostProcessStages.cs").Replace("\r\n", "\n");
+        schemaSource.ShouldContain("DescribeVignetteStage(builder.Stage(StageKeys.Vignette, \"Vignette\").BackedBy<VignetteSettings>());");
+        schemaSource.ShouldContain(".IncludeStages(StageKeys.Tonemapping, StageKeys.ColorGrading, StageKeys.Vignette);");
+        pipelineSource.ShouldContain("CommonPostProcessStages.AddStandardPipelineSchema(builder);");
 
         string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
-        advancedPipelineSource.ShouldContain("DescribeVignetteStage(builder.Stage(VignetteStageKey, \"Vignette\").BackedBy<VignetteSettings>());");
-        advancedPipelineSource.ShouldContain(".IncludeStages(TonemappingStageKey, ColorGradingStageKey, VignetteStageKey);");
+        advancedPipelineSource.ShouldContain("CommonPostProcessStages.AddStandardPipelineSchema(builder);");
     }
 
     [Test]

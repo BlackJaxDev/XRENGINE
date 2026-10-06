@@ -64,6 +64,11 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     EVrViewRenderMode VrViewRenderMode { get; }
 
     /// <summary>
+    /// Gets the requested VR eye pipeline family.
+    /// </summary>
+    EVrRenderPipeline VrRenderPipeline => RuntimeRenderingHostServiceDefaults.VrRenderPipeline;
+
+    /// <summary>
     /// Gets the active VR desktop mirror policy.
     /// </summary>
     EVrMirrorMode VrMirrorMode => RuntimeRenderingHostServiceDefaults.VrMirrorMode;

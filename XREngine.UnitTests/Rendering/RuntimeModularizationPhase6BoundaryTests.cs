@@ -19,6 +19,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
         "XREngine.Data",
         "XREngine.Editor",
         "XREngine.Runtime.Bootstrap",
+        "XREngine.Runtime.Host",
         "XREngine.Runtime.Core",
         "XREngine.Runtime.InputIntegration",
         "XREngine.Runtime.ModelAssetPipeline",
@@ -56,6 +57,12 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
                 ["XREngine.Animation", "XREngine.Data", "XREngine.Extensions", "XREngine.Fbx", "XREngine.Gltf", "XREngine.Runtime.Core", "XREngine.Runtime.Rendering"],
             ["XREngine.Runtime.ModelingIntegration"] =
                 ["XREngine.Data", "XREngine.Modeling", "XREngine.Runtime.Rendering"],
+            ["XREngine.Runtime.Host"] =
+            [
+                "XREngine.Animation", "XREngine.Audio", "XREngine.Data", "XREngine.Extensions",
+                "XREngine.Input", "XREngine.Runtime.AnimationIntegration", "XREngine.Runtime.AudioIntegration",
+                "XREngine.Runtime.Core", "XREngine.Runtime.InputIntegration", "XREngine.Runtime.Rendering",
+            ],
             ["XREngine.Runtime.Bootstrap"] =
             [
                 "XREngine.Animation",
@@ -76,6 +83,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
                 "XREngine.Runtime.AnimationIntegration",
                 "XREngine.Runtime.AudioIntegration",
                 "XREngine.Runtime.Core",
+                "XREngine.Runtime.Host",
                 "XREngine.Runtime.Diagnostics.Desktop",
                 "XREngine.Runtime.Imaging.Magick",
                 "XREngine.Runtime.InputIntegration",

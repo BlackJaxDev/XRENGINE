@@ -13,7 +13,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanShaderCrossCompiler : IRuntimeShaderCrossCompiler
 {
-    private static readonly Shaderc ShadercApi = Shaderc.GetApi();
+    private static readonly Shaderc ShadercApi = VulkanShaderCompilerLibrary.CreateApi();
 
     public static VulkanShaderCrossCompiler Instance { get; } = new();
 

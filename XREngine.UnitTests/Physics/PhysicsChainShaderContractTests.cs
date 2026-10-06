@@ -198,7 +198,9 @@ public sealed class PhysicsChainShaderContractTests
             .Replace("\r\n", "\n");
 
         component.ShouldNotContain("if (!state.DrivesCompleteBonePalette)\n                continue;");
-        component.ShouldContain("state.DrivesCompleteBonePalette,");
+        string renderingBridge = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/RuntimePhysicsChainRenderingBridge.cs")
+            .Replace("\r\n", "\n");
+        renderingBridge.ShouldContain("state.BoneMatrixElementCount, state.Complete,");
         palette.ShouldContain("if (!binding.DrivesCompleteBonePalette)");
         palette.ShouldContain("TryCopyBuffer(backend, copy, \"partial-palette-seed\")");
         palette.ShouldContain("PartialPaletteSeedCompletionPass");

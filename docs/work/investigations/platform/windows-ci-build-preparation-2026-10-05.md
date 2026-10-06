@@ -48,3 +48,82 @@ The first full solution build passed all other projects but failed the software-
 The subsequent full `XRENGINE.slnx` Release build, with isolated artifacts and no Vulkan SDK, passes with zero warnings and errors. The unit-test suite was not executed. Fresh hosted-runner confirmation remains outstanding.
 
 Hosted CI and user confirmation remain outstanding. The passing local builds do not establish a passing unit-test suite on a clean runner.
+
+## Hosted runner retry
+
+The user reported another failed run after committing the fixes.
+[Run 37363539476](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37363539476)
+targets commit `71ccb6a4fc7fc31647fc04f10e9c419811f68db4`. Its first attempt
+ended after about 15 minutes with no runner assigned and no steps executed.
+GitHub reported: "The job was not acquired by Runner of type hosted even after multiple attempts".
+This attempt provides no new build or test result. A retry was requested and
+accepted on 2026-10-05. Attempt 2 acquired a hosted runner and started checkout.
+Attempt 2 completed on 2026-10-05 at 22:33 UTC. Workload restoration, submodule
+builds, settings generation, restore, and the solution build all passed on the
+hosted runner. The unit-test step failed: 726 failed, 4,875 passed, and 12 skipped
+out of 5,613 tests. See [job 112000355423](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37363539476/job/112000355423).
+
+The test log includes SPIR-V 1.6 output rejected by a Vulkan 1.0 target,
+missing source-file paths and source-contract assertion failures, and playback
+device errors from NAudio. These failures need separate investigation. The
+passing build confirms the build fixes on the hosted runner, but the complete
+workflow still fails.
+
+GitHub reported an Actions incident on 2026-10-05 with delayed runner assignment
+and failed jobs. Its status update at 21:54 UTC reported that Actions was
+operating normally. This explains the first attempt's runner assignment failure;
+the second attempt reached the test suite and reported test failures.
+Source: [GitHub status](https://www.githubstatus.com/).
+
+## Test suite repair
+
+The complete TRX artifact has 5,778 cases: 4,875 passed, 726 failed, and 177 did
+not run. The console summary omits 165 of the cases that did not run.
+
+The user approved repair of the compiler, stale tests, fixtures, and identified
+behavior defects. The work is in progress. No passing full-suite result is
+claimed yet.
+
+- The native shaderc DLL supplied by Silk.NET 2.23.0 reproduces the shared
+  Vulkan 1.4 / SPIR-V 1.6 error in a minimal native compile. The same source
+  succeeds with shaderc 2026.4. The engine now packages that compiler with
+  pinned source revisions, archive checksums, rebuild instructions, and combined
+  upstream notices. Shader caches identify the exact packaged DLL.
+- Test contracts are being updated to the actual Runtime.Host and renderer
+  owners. The repairs retain behavior and safety checks rather than require
+  former filenames and private members.
+- Fixtures now account for required Vulkan API objects, execution scheduling,
+  material row layout, RVC feature selection, importer arguments, valid humanoid
+  skeletons, and the current pose-audit schema.
+- The full TRX summary is published in CI, including reasons that tests did not
+  run. Hardware and optional integration requirements are documented in the
+  [Windows CI guide](../../../developer-guides/testing/windows-ci.md).
+
+### Stopped at the user's request
+
+The final test-project Release build passed with zero warnings and errors.
+The final focused run covered the classes that failed the earlier full local
+run, plus the source workspace checks: 1,434 passed and 359 failed out of 1,793.
+This is a partial-suite result. The complete CI suite is not yet passing.
+The earlier full local run had 5,163 passed, 493 failed, and 124 not executed
+in its TRX report. Further repairs followed that full run.
+
+The packaged compiler passes the focused shader compile checks. Its DLL and
+license notices appear in both editor build and publish items. Material import,
+framebuffer binding, pose-audit schema, and several animation fixtures now pass.
+The configured upper-leg axis test still fails and needs a separate diagnosis.
+
+Remaining work includes stale source contracts, shared partial-type lookup
+that still depends on filenames, and renderer architecture checks. Three
+contracts need a behavior trace before changing their assertions: descriptor
+prewarm planner context, descriptor-write invalidation, and retired image-view
+rejection before native rendering. Existing architecture checks also report
+renderer state, thread-local state, public implementation types, and type
+placement. Do not remove these checks merely to make the suite pass.
+
+The unfinished parser experiment was removed before the final build. No new
+Roslyn dependency was added. No commit or push was performed. Existing user
+changes were retained. Disposable evidence remains under the existing root:
+`logs/tests-repair-build-8.log`, `reports/repair-wrap-up/repair-wrap-up.trx`,
+and `reports/repair-wrap-up-failures.json`. Resume from these results, then run
+the full suite and confirm the result on a fresh hosted runner.

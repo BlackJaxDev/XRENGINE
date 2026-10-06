@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Pipelines.Commands;
 using VulkanSemaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
@@ -284,6 +285,8 @@ internal sealed partial class VulkanCommandRuntime
             }
             long submitEnd = Stopwatch.GetTimestamp();
 
+            PublishAcceptedTemporalHistoryCandidate(in input);
+
             if (input.AdmissionTicket is { } receiptTicket)
                 OpenXrSubmissionTracker.ObserveSubmissionReceipt(
                     in receiptTicket,
@@ -468,6 +471,10 @@ internal sealed partial class VulkanCommandRuntime
         }
         finally
         {
+            // The native sink can accept a submission before an exception
+            // prevents the gateway from returning its receipt.
+            PublishAcceptedTemporalHistoryCandidate(in input);
+
             // The common tracked gateway commits an OpenXR ticket in the same
             // serialized transaction as successful vkQueueSubmit. An exception
             // before this method observes its receipt must therefore not cancel
@@ -512,6 +519,22 @@ internal sealed partial class VulkanCommandRuntime
                     commandBuffersCompleted);
             }
         }
+    }
+
+    private void PublishAcceptedTemporalHistoryCandidate(in VulkanOpenXrSubmissionInput input)
+    {
+        if (input.AdmissionTicket is not { } ticket ||
+            !OpenXrSubmissionTracker.TryClaimAcceptedTemporalHistoryCandidate(
+                in ticket, out TemporalHistorySubmissionCandidate candidate))
+            return;
+
+        if (!DeviceContext.IsOperational)
+        {
+            VPRC_TemporalAccumulationPass.InvalidateCandidateForDeviceLoss(in candidate);
+            return;
+        }
+
+        VPRC_TemporalAccumulationPass.AcceptCandidate(in candidate);
     }
 
     private unsafe void RetireOpenXrSubmission(

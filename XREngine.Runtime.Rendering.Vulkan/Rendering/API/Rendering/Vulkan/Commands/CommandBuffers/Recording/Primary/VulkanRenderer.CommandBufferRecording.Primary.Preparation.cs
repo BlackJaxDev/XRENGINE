@@ -136,7 +136,7 @@ namespace XREngine.Rendering.Vulkan
             return capacity;
         }
 
-        private static void MarkRequiredProducerSourceRanges(
+        private void MarkRequiredProducerSourceRanges(
             scoped ref PrimaryCommandBufferRecordingState state)
         {
             VulkanAcceptedFramePlan? acceptedPlan = state.AcceptedFramePlan;
@@ -148,9 +148,10 @@ namespace XREngine.Rendering.Vulkan
                     ref state.Ops.GetHeader(operationIndex);
                 ref readonly FrameOpContext operationContext =
                     ref state.Ops.GetContext(operationIndex);
-                if (operationContext.OutputCompletionReceiptId != 0UL &&
-                    acceptedPlan?.IsOutputCompletionBound(
-                        operationContext.OutputCompletionReceiptId) == true)
+                if ((operationContext.OutputCompletionReceiptId != 0UL &&
+                     acceptedPlan?.IsOutputCompletionBound(
+                         operationContext.OutputCompletionReceiptId) == true) ||
+                    IsTemporalResolveProducer(header.OriginalIndex))
                 {
                     int sourceIndex = header.OriginalIndex;
                     if ((uint)sourceIndex >=
@@ -2203,7 +2204,11 @@ namespace XREngine.Rendering.Vulkan
                 scratch.PipelineOptionalDeferredRequirementIndices;
             ulong manifestIdentity =
                 pipelineVariantManifest.CompatibilityIdentity;
-            if (scratch.PipelineDeferredManifestIdentity != manifestIdentity)
+            ulong previousManifestIdentity =
+                scratch.PipelineDeferredManifestIdentity;
+            int cursorBeforeReset = scratch.PipelinePrewarmRequirementCursor;
+            bool manifestReset = previousManifestIdentity != manifestIdentity;
+            if (manifestReset)
             {
                 scratch.PipelineDeferredManifestIdentity = manifestIdentity;
                 scratch.PipelinePrewarmRequirementCursor = 0;
@@ -2221,6 +2226,7 @@ namespace XREngine.Rendering.Vulkan
                 pipelineVariantManifest.Requirements.Count;
             int requirementCursor =
                 scratch.PipelinePrewarmRequirementCursor;
+            int cursorStart = requirementCursor;
             bool initialScanComplete =
                 scratch.PipelinePrewarmInitialScanComplete;
             int firstPendingRequirementIndex = -1;
@@ -2299,23 +2305,41 @@ namespace XREngine.Rendering.Vulkan
                 optionalRequirements,
                 pipelineVariantManifest);
 
-            if (!initialScanComplete)
+            if (!initialScanComplete || pendingRequirements.Count > 0)
             {
+                int contextRequirementIndex = firstPendingRequirementIndex >= 0
+                    ? firstPendingRequirementIndex
+                    : Math.Min(cursorStart, requirementCount - 1);
+                FrameOpContext operationContext = contextRequirementIndex >= 0
+                    ? recordingState.Ops.GetContext(
+                        pipelineVariantManifest.Requirements[
+                            contextRequirementIndex].OpIndex)
+                    : default;
+                string reason = !initialScanComplete
+                    ? "Graphics pipeline admission is continuing within its pre-recording CPU budget."
+                    : "Graphics pipeline compilation is still pending before vkBeginCommandBuffer.";
                 recordingState.RecordingDeferredReason =
-                    "Graphics pipeline admission is continuing within its pre-recording CPU budget.";
-                RecordPrimaryPipelineAdmissionDeferred(
-                    requirementCursor,
-                    requirementCount,
-                    pendingRequirements.Count,
-                    firstPendingRequirementIndex,
-                    firstPendingReason);
-                return false;
-            }
-
-            if (pendingRequirements.Count > 0)
-            {
-                recordingState.RecordingDeferredReason =
-                    "Graphics pipeline compilation is still pending before vkBeginCommandBuffer.";
+                    $"{reason} manifestPrevious=0x{previousManifestIdentity:X16} " +
+                    $"manifestCurrent=0x{manifestIdentity:X16} manifestReset={manifestReset} " +
+                    $"cursorBeforeReset={cursorBeforeReset} cursorStart={cursorStart} " +
+                    $"cursorEnd={requirementCursor} scanComplete={initialScanComplete} " +
+                    $"requirements={requirementCount} pending={pendingRequirements.Count} " +
+                    $"optional={optionalRequirements.Count} " +
+                    $"firstPending={firstPendingRequirementIndex} " +
+                    $"firstPendingReason={firstPendingReason} " +
+                    $"sliceElapsedMs={Stopwatch.GetElapsedTime(sliceStart).TotalMilliseconds:F3} " +
+                    $"ledger={scratch.AdmittedPipelinePreparationSignatures.Count} " +
+                    $"workClass={recordingState.Policy.WorkClass} " +
+                    $"readiness={recordingState.Policy.ReadinessPolicy} " +
+                    $"externalTarget={recordingState.Policy.IsExternalSwapchainTarget} " +
+                    $"sourceFrame={recordingState.Policy.SourceFrameId} " +
+                    $"pipeline={operationContext.PipelineIdentity} " +
+                    $"pipelineName={operationContext.PipelineInstance?.DebugName ?? "<none>"} " +
+                    $"viewport={operationContext.ViewportIdentity} " +
+                    $"output={operationContext.OutputTargetIdentity} " +
+                    $"outputName={operationContext.OutputTargetName ?? "<none>"} " +
+                    $"context={operationContext.ContextKind} " +
+                    $"contextId={operationContext.ContextId}.";
                 RecordPrimaryPipelineAdmissionDeferred(
                     requirementCursor,
                     requirementCount,

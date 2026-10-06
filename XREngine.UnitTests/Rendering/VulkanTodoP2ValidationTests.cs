@@ -259,32 +259,35 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
     {
         string prewarmSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs");
         string pipelineCacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCache.cs");
+        string pipelineManagerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineManager.cs");
         string meshPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
         string meshDrawSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
-        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
-        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string programSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Compute.cs");
+        string computePreparationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Recording/VulkanRenderer.ComputePreparation.cs");
+        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Draws.cs");
         string statsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs");
         string packetSource = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
-        string senderSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfilerSender.cs");
-        string editorSource = ReadWorkspaceFile("XRENGINE.Editor/EngineProfilerDataSource.cs");
+        string senderSource = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.ProfilerSender.cs");
+        string editorSource = ReadWorkspaceFile("XREngine.Editor/EngineProfilerDataSource.cs");
         string profilerUiSource = ReadWorkspaceFile("XREngine.Profiler.UI/ProfilerPanelRenderer.cs");
 
         prewarmSource.ShouldContain("VulkanPipelinePrewarmDatabase");
         prewarmSource.ShouldContain("CurrentVersion");
         prewarmSource.ShouldContain("CreateGraphicsEntry");
         prewarmSource.ShouldContain("CreateComputeEntry");
-        prewarmSource.ShouldContain("XREngineEnvironmentVariables.VulkanPipelinePrewarmCapture");
-        prewarmSource.ShouldContain("SaveVulkanPipelinePrewarmDatabase");
-        pipelineCacheSource.ShouldContain("InitializeVulkanPipelinePrewarmDatabase(properties)");
-        pipelineCacheSource.ShouldContain("SaveVulkanPipelinePrewarmDatabase()");
+        pipelineManagerSource.ShouldContain("XREngineEnvironmentVariables.VulkanPipelinePrewarmCapture");
+        pipelineManagerSource.ShouldContain("internal void SavePipelinePrewarmDatabase()");
+        pipelineCacheSource.ShouldContain("InitializePipelinePrewarmDatabase(properties)");
+        pipelineCacheSource.ShouldContain("SavePipelinePrewarmDatabase()");
 
         meshDrawSource.ShouldContain("IReadOnlyCollection<RenderPassMetadata>? passMetadata");
-        meshPipelineSource.ShouldContain("RecordVulkanGraphicsPipelineCacheMiss");
+        meshPipelineSource.ShouldContain("RecordGraphicsPipelineCacheMiss(");
         meshPipelineSource.ShouldContain("programPipelineHash");
         meshPipelineSource.ShouldContain("vertexLayoutHash");
-        commandBufferSource.ShouldContain("GetOrCreateComputePipeline(op.PassIndex, op.Context.PassMetadata)");
+        computePreparationSource.ShouldContain("program.TryGetOrRequestComputePipeline(");
+        computePreparationSource.ShouldContain("passIndex,\n            passMetadata,");
         commandBufferSource.ShouldContain("drawOp.Context.PassMetadata");
-        programSource.ShouldContain("RecordVulkanComputePipelineCacheMiss");
+        programSource.ShouldContain("manager.RecordComputePipelineCacheMiss(");
 
         statsSource.ShouldContain("RecordVulkanPipelineCacheMiss");
         statsSource.ShouldContain("VulkanPipelineCacheMissSummary");

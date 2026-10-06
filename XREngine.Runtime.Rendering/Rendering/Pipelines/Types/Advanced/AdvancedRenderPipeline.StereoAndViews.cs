@@ -8,6 +8,12 @@ public partial class AdvancedRenderPipeline
     private EAdvancedStageFamilyExecutionProfile _stageFamilyExecutionProfile;
 
     /// <summary>
+    /// True when this instance renders one mono OpenXR eye output.
+    /// </summary>
+    public bool IsOpenXrEyeProfile
+        => _stageFamilyExecutionProfile == EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye;
+
+    /// <summary>
     /// Stereo execution topology derived from the configured stage family and
     /// renderer. It cannot disagree with the immutable layered resource profile.
     /// </summary>
@@ -96,9 +102,7 @@ public partial class AdvancedRenderPipeline
             EAdvancedRenderStage.DepthPyramidAndLateVisibility or
             EAdvancedRenderStage.Output);
 
-    // The two-pass family is rebound to the physical RVC eye instance before
-    // execution. Its persistent resources and frame-view-history identity are
-    // consequently per eye, even though the command definition is cached.
+    // Each Advanced OpenXR eye owns its persistent resources and frame history.
     // Keep all temporal begin/accumulate/pop/commit predicates together.
     private bool AllowsPostAntiAliasing
         => true;

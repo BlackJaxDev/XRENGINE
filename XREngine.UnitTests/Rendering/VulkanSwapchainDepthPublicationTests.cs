@@ -86,23 +86,23 @@ public sealed class VulkanSwapchainDepthPublicationTests
     public void DeferredImageViewRetirement_IsQualifiedByHandleGeneration()
     {
         string entry = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.RetiredImageResourceEntry.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Resources/Retirement/VulkanRenderer.RetiredImageResourceEntry.cs");
+        string queue = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Retirement/VulkanResourceRetirementQueue.cs");
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
         string imageViews = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Textures/VulkanRenderer.ImageViewLifetime.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Images/VulkanImageResourceService.cs");
 
         entry.ShouldContain("ulong PrimaryViewGeneration");
         entry.ShouldContain("ulong[] AttachmentViewGenerations");
-        retirement.ShouldContain(
-            "HashSet<VulkanPinnedResourceGeneration> _retiredImageViewHandlesAll");
-        retirement.ShouldContain("primaryViewTicket.ResourceGeneration");
-        retirement.ShouldContain("TryBeginDestroyImageViewGeneration(");
+        queue.ShouldContain("HashSet<VulkanPinnedResourceGeneration> AllImageViewHandles");
+        imageViews.ShouldContain("primaryViewTicket.ResourceGeneration");
+        retirement.ShouldContain("TryTakeImageViewGeneration(");
         retirement.ShouldContain("entry.PrimaryViewGeneration");
         retirement.ShouldContain("entry.AttachmentViewGenerations");
-        imageViews.ShouldContain(
-            "TryBeginDestroyVulkanResourceGeneration(");
-        imageViews.ShouldContain("ulong expectedGeneration");
+        imageViews.ShouldContain("TakeImageViewForRetirement(ImageView view, ulong generation, int frameSlot)");
+        imageViews.ShouldContain("new VulkanResourceLifetimeKey(ObjectType.ImageView, view.Handle), generation");
     }
 
     [Test]

@@ -114,6 +114,8 @@ public static class BootstrapRenderSettings
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VR)))
         {
             renderSettings.VrViewRenderMode = settings.VR.ViewRenderMode;
+            renderSettings.VrRenderPipeline = settings.VR.RenderPipeline;
+            renderSettings.RvcPipelineMode = settings.VR.RvcPipelineMode;
             renderSettings.VrFoveationMode = settings.VR.Foveation.Mode;
             renderSettings.VrFoveationQualityPreset = settings.VR.Foveation.QualityPreset;
             renderSettings.VrFoveationRequireRequested = settings.VR.Foveation.RequireRequested;
@@ -131,6 +133,8 @@ public static class BootstrapRenderSettings
             $"[BootstrapRenderSettings] Applied AllowSkinning={renderSettings.AllowSkinning} " +
             $"AllowShaderPipelines={renderSettings.AllowShaderPipelines} " +
             $"VrViewRenderMode={renderSettings.VrViewRenderMode} " +
+            $"VrRenderPipeline={renderSettings.VrRenderPipeline} " +
+            $"RvcPipelineMode={renderSettings.RvcPipelineMode} " +
             $"VrFoveationMode={renderSettings.VrFoveationMode} " +
             $"OpenXrEyeResolution={renderSettings.OpenXrEyeResolutionPreset}x{renderSettings.OpenXrEyeResolutionScale:F2} " +
             $"OpenXrCustomEyeResolution={renderSettings.OpenXrCustomEyeResolutionWidth}x{renderSettings.OpenXrCustomEyeResolutionHeight} " +

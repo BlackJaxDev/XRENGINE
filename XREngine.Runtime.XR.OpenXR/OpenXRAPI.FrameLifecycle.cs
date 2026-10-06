@@ -100,6 +100,24 @@ public unsafe partial class OpenXRAPI
             return;
         }
 
+        if (!TryValidateOpenXrEyePipelineSelection(out string pipelineDiagnostic, out bool pipelinePending))
+        {
+            ReportOpenXrEyePipelineSelectionRejected(pipelineDiagnostic, pipelinePending);
+            var frameEndInfoNoLayers = new FrameEndInfo
+            {
+                Type = StructureType.FrameEndInfo,
+                DisplayTime = _frameState.PredictedDisplayTime,
+                EnvironmentBlendMode = EnvironmentBlendMode.Opaque,
+                LayerCount = 0,
+                Layers = null
+            };
+            var endResult = EndFrameWithTiming(in frameEndInfoNoLayers, ref endFrameAttempted);
+            if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
+                Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers; VR pipeline selection rejected) => {endResult}");
+
+            return;
+        }
+
         ResetOpenXrRvcFrameProfile();
 
         bool allEyesRendered;

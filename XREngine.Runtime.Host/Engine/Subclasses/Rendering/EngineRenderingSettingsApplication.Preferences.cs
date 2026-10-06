@@ -47,6 +47,7 @@ namespace XREngine
                     request,
                     AdvancedRenderPipelineMode,
                     capabilities,
+                    RuntimeEngine.Rendering.Settings.VrRenderPipeline,
                     RuntimeEngine.Rendering.Settings.RvcPipelineMode,
                     Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false);
             }
@@ -57,11 +58,31 @@ namespace XREngine
                 in AdvancedRenderPipelineCapabilities capabilities,
                 ERvcPipelineMode rvcMode,
                 bool useDebugOpaquePipeline)
+                => NewRenderPipeline(
+                    request,
+                    advancedMode,
+                    capabilities,
+                    RuntimeEngine.Rendering.Settings.VrRenderPipeline,
+                    rvcMode,
+                    useDebugOpaquePipeline);
+
+            /// <summary>
+            /// Creates a pipeline for <paramref name="request"/>. An OpenXR eye
+            /// uses only <paramref name="vrPipeline"/>; the desktop Advanced
+            /// policy never selects or replaces an eye pipeline.
+            /// </summary>
+            internal static RenderPipeline NewRenderPipeline(
+                RenderPipelineRequest request,
+                EAdvancedRenderPipelineMode advancedMode,
+                in AdvancedRenderPipelineCapabilities capabilities,
+                EVrRenderPipeline vrPipeline,
+                ERvcPipelineMode rvcMode,
+                bool useDebugOpaquePipeline)
             {
                 return request.Purpose switch
                 {
                     ERenderPipelinePurpose.OpenXrEye =>
-                        NewRvcRenderPipeline(request.Stereo, rvcMode),
+                        NewOpenXrEyeRenderPipeline(request.Stereo, vrPipeline, rvcMode),
                     ERenderPipelinePurpose.DesktopScene
                         when useDebugOpaquePipeline && !request.Stereo =>
                         new DebugOpaqueRenderPipeline(),
@@ -154,29 +175,39 @@ namespace XREngine
                 }
 
                 // OpenXR eye pipelines are explicit output-owned exceptions to
-                // camera source authority. Their lifecycle owns distinct RVC
-                // command chains and only copies compatible visual features.
+                // camera source authority. Only the selected VR family may run.
+                // A mismatched pipeline is replaced with the selected family,
+                // never adapted to another one.
                 if (request.Purpose == ERenderPipelinePurpose.OpenXrEye)
                 {
-                    if (pipeline is RvcRenderPipeline rvcPipeline &&
-                        rvcPipeline.Stereo == request.Stereo)
-                    {
-                        ApplyRvcSettings(rvcPipeline);
-                        rvcPipeline.SynchronizeAdvancedStageFamilyFeatures();
-                        ApplyOpenXrEyeAdvancedOutputBinding(
-                            viewport,
-                            rvcPipeline,
-                            request);
-                    }
-                    else if (!pipeline.OverrideProtected &&
-                             !viewport.SetRenderPipelineFromCamera)
+                    EVrRenderPipeline family = RuntimeEngine.Rendering.Settings.VrRenderPipeline;
+                    ERvcPipelineMode rvcMode = RuntimeEngine.Rendering.Settings.RvcPipelineMode;
+                    if (!OpenXrEyeRenderPipelineFactory.Matches(pipeline, request.Stereo, family, rvcMode))
                     {
                         viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
-                        viewport.RenderPipeline = NewRenderPipeline(request);
+                        // A family that has no pipeline for this topology keeps
+                        // the old pipeline. The OpenXR frame gate rejects it.
+                        if (!pipeline.OverrideProtected &&
+                            !viewport.SetRenderPipelineFromCamera &&
+                            OpenXrEyeRenderPipelineFactory.CanCreate(request.Stereo, family))
+                        {
+                            viewport.RenderPipeline = NewRenderPipeline(request);
+                        }
+                        return;
                     }
-                    else
+
+                    switch (pipeline)
                     {
-                        viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                        case AdvancedRenderPipeline advancedPipeline:
+                            ApplyOpenXrEyeAdvancedOutputBinding(viewport, advancedPipeline, request);
+                            break;
+                        case RvcRenderPipeline rvcPipeline:
+                            ApplyRvcSettings(rvcPipeline);
+                            viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                            break;
+                        default:
+                            viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                            break;
                     }
                     return;
                 }
@@ -279,15 +310,16 @@ namespace XREngine
             }
 
             /// <summary>
-            /// Binds a full Advanced family to one RVC-owned OpenXR eye only
-            /// after the renderer has reserved that exact mono output. An
-            /// unavailable Available-mode eye retains the complete Default
-            /// oracle chain; it never combines Default scene work with
-            /// Advanced late or terminal commands.
+            /// Binds one Advanced OpenXR eye pipeline to its reserved mono
+            /// output. VR selected Advanced explicitly, so the binding uses
+            /// Required semantics and ignores the desktop Advanced policy. A
+            /// failure is recorded as a rejected binding with its reason; the
+            /// OpenXR frame gate then submits no projection layer. No other
+            /// pipeline or command chain is used.
             /// </summary>
             private static void ApplyOpenXrEyeAdvancedOutputBinding(
                 XRViewport viewport,
-                RvcRenderPipeline pipeline,
+                AdvancedRenderPipeline pipeline,
                 in RenderPipelineRequest request)
             {
                 IRuntimeRendererHost? renderer = viewport.Window?.Renderer
@@ -295,34 +327,22 @@ namespace XREngine
                 AdvancedRenderPipelineCapabilities capabilities =
                     renderer?.GetAdvancedRenderPipelineCapabilities()
                     ?? AdvancedRenderPipelineCapabilities.NoRenderer;
-                EAdvancedRenderPipelineMode mode = AdvancedRenderPipelineMode;
+                const EAdvancedRenderPipelineMode mode = EAdvancedRenderPipelineMode.Required;
                 AdvancedVisibilityFamilyAdmission admission =
                     renderer?.GetAdvancedVisibilityFamilyAdmission() ??
                     new(
                         EAdvancedProductionExecutionState.Unsupported,
                         "No active renderer is available for Advanced OpenXR eye admission.");
 
-                AdvancedRenderPipelineSelectionResult selection;
-                AdvancedVisibilityFamilyReservation reservation;
-                string reservationFailureReason;
-                try
-                {
-                    selection = ResolveAdvancedRenderPipelineSelection(
-                        request,
-                        mode,
-                        capabilities,
-                        admission,
-                        renderer,
-                        retainConfiguredSource: false,
-                        out reservation,
-                        out reservationFailureReason);
-                }
-                catch
-                {
-                    pipeline.ConfigureAdvancedTwoPassEyeFamily(false);
-                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
-                    throw;
-                }
+                AdvancedRenderPipelineSelectionResult selection = ResolveAdvancedRenderPipelineSelection(
+                    request,
+                    mode,
+                    capabilities,
+                    admission,
+                    renderer,
+                    retainConfiguredSource: false,
+                    out AdvancedVisibilityFamilyReservation reservation,
+                    out string reservationFailureReason);
 
                 bool reservationCurrent = reservation.IsValid &&
                     reservation.OutputId == request.OutputId &&
@@ -333,13 +353,9 @@ namespace XREngine
                     reservationFailureReason =
                         "The Advanced OpenXR eye reservation was not current for the selected output.";
                 }
-                EAdvancedRenderPipelineOutputBindingState state = mode switch
+                EAdvancedRenderPipelineOutputBindingState state = admission.State switch
                 {
-                    EAdvancedRenderPipelineMode.Disabled =>
-                        EAdvancedRenderPipelineOutputBindingState.Disabled,
-                    EAdvancedRenderPipelineMode.Diagnostic =>
-                        EAdvancedRenderPipelineOutputBindingState.DiagnosticOnly,
-                    _ when admission.State == EAdvancedProductionExecutionState.PendingResources =>
+                    EAdvancedProductionExecutionState.PendingResources =>
                         EAdvancedRenderPipelineOutputBindingState.PendingResources,
                     _ when selection.SelectsAdvanced && reservationCurrent =>
                         EAdvancedRenderPipelineOutputBindingState.Bound,
@@ -348,10 +364,6 @@ namespace XREngine
                 string? failureReason = state switch
                 {
                     EAdvancedRenderPipelineOutputBindingState.Bound => null,
-                    EAdvancedRenderPipelineOutputBindingState.Disabled =>
-                        "Advanced OpenXR eye binding is disabled by policy.",
-                    EAdvancedRenderPipelineOutputBindingState.DiagnosticOnly =>
-                        "Advanced OpenXR eye binding is diagnostic-only by policy.",
                     EAdvancedRenderPipelineOutputBindingState.PendingResources => admission.Reason,
                     _ => reservationFailureReason,
                 };
@@ -376,18 +388,6 @@ namespace XREngine
                         FailureReason = cutover.Diagnostic,
                     };
                 }
-                if (cutover.ExecutionState == EAdvancedProductionExecutionState.Unsupported &&
-                    mode == EAdvancedRenderPipelineMode.Required)
-                {
-                    pipeline.ConfigureAdvancedTwoPassEyeFamily(false);
-                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
-                    Debug.RenderingError(
-                        "[AdvancedPipeline] Required OpenXR eye output unsupported. Output={0} Reason={1}",
-                        request.OutputId,
-                        cutover.Diagnostic);
-                    throw new AdvancedRenderPipelineNotSupportedException(selection, cutover.Diagnostic);
-                }
-
                 binding = binding with
                 {
                     CutoverStatus = cutover,
@@ -395,10 +395,6 @@ namespace XREngine
                         ? null
                         : binding.FailureReason ?? cutover.Diagnostic,
                 };
-                bool useAdvancedFamily = binding.State ==
-                    EAdvancedRenderPipelineOutputBindingState.Bound &&
-                    cutover.ExecutionState == EAdvancedProductionExecutionState.Admitted;
-                pipeline.ConfigureAdvancedTwoPassEyeFamily(useAdvancedFamily);
                 viewport.RenderPipelineInstance.ApplyAdvancedOutputBinding(in binding, renderer);
             }
 
@@ -495,9 +491,12 @@ namespace XREngine
 
                 RuntimeEngine.Rendering.Stats.RendererState.UpdateAdvancedPipelineContext(selection);
 
+                // An OpenXR eye reports a failed Required binding through its
+                // binding state, and the OpenXR frame gate rejects the frame.
                 if (selection.RequiresFailure &&
                     admission.State != EAdvancedProductionExecutionState.PendingResources &&
-                    !ShouldDeferExplicitAdvancedOffscreenBinding(request))
+                    !ShouldDeferExplicitAdvancedOffscreenBinding(request) &&
+                    request.Purpose != ERenderPipelinePurpose.OpenXrEye)
                 {
                     Debug.RenderingError(
                         "[AdvancedPipeline] Required output reservation failed. Output={0} Reason={1}",
@@ -543,12 +542,14 @@ namespace XREngine
                 => request.Purpose == ERenderPipelinePurpose.OffscreenCapture &&
                    request.OffscreenIntent.HasValue;
 
-            private static RvcRenderPipeline NewRvcRenderPipeline(
+            private static RenderPipeline NewOpenXrEyeRenderPipeline(
                 bool stereo,
-                ERvcPipelineMode mode)
+                EVrRenderPipeline family,
+                ERvcPipelineMode rvcMode)
             {
-                RvcRenderPipeline pipeline = new(stereo, mode);
-                ApplyRvcSettings(pipeline, mode);
+                RenderPipeline pipeline = OpenXrEyeRenderPipelineFactory.Create(stereo, family, rvcMode);
+                if (pipeline is RvcRenderPipeline rvcPipeline)
+                    ApplyRvcSettings(rvcPipeline, rvcMode);
                 return pipeline;
             }
 

@@ -112,7 +112,7 @@ public sealed class RendererHostContextTests
         typeof(OpenGLRenderer).GetConstructor([typeof(RendererHostContext)]).ShouldNotBeNull();
         typeof(VulkanRenderer).GetConstructor([typeof(RendererHostContext)]).ShouldNotBeNull();
         typeof(OpenGLRenderer).GetConstructor([typeof(XRWindow), typeof(bool), typeof(long)]).ShouldNotBeNull();
-        typeof(VulkanRenderer).GetConstructor([typeof(XRWindow), typeof(bool), typeof(long)]).ShouldNotBeNull();
+        typeof(VulkanRenderer).GetConstructor([typeof(XRWindow), typeof(bool), typeof(long)]).ShouldBeNull();
     }
 
     private abstract class TargetFirstRendererProbe : AbstractRenderer

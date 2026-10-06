@@ -470,7 +470,10 @@ public static partial class RuntimeEngine
                 ?? request.Purpose switch
                 {
                     ERenderPipelinePurpose.OpenXrEye =>
-                        new RvcRenderPipeline(request.Stereo, Settings.RvcPipelineMode),
+                        OpenXrEyeRenderPipelineFactory.Create(
+                            request.Stereo,
+                            Settings.VrRenderPipeline,
+                            Settings.RvcPipelineMode),
                     ERenderPipelinePurpose.DesktopScene =>
                         new AdvancedRenderPipeline(request.Stereo),
                     ERenderPipelinePurpose.OffscreenCapture =>

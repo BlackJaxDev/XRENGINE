@@ -10,44 +10,24 @@ public partial class AdvancedRenderPipeline
     AdvancedRenderPipeline IAdvancedRenderStageFamilyHost.AdvancedStageFamilyDefinition => this;
 
     /// <summary>
-    /// Returns this full Advanced frame family with every command rebound to
-    /// <paramref name="executionOwner"/>. This deliberately does not render
-    /// through another pipeline instance: all resource lookup, reservations,
-    /// and output authoring remain owned by that active instance.
+    /// Creates the Advanced pipeline for one mono OpenXR eye output. The
+    /// instance owns its command execution, resource generations, output
+    /// reservation, and frame lifecycle. It has no screen-space UI.
     /// </summary>
-    internal ViewportRenderCommandContainer GetAdvancedStageFamilyCommandChain(
-        RenderPipeline executionOwner)
-    {
-        ArgumentNullException.ThrowIfNull(executionOwner);
-        ViewportRenderCommandContainer commands = CommandChain;
-        commands.ParentPipeline = executionOwner;
-        return commands;
-    }
-
-    /// <summary>
-    /// Creates a definition-only Advanced family for an outer two-pass OpenXR
-    /// eye pipeline. The outer RVC pipeline remains the sole owner of command
-    /// execution, resource generations, output reservations, and frame
-    /// lifecycle.
-    /// </summary>
-    internal static AdvancedRenderPipeline CreateOpenXrTwoPassEyeStageFamily()
-    {
-        var family = new AdvancedRenderPipeline(
+    internal static AdvancedRenderPipeline CreateOpenXrEyePipeline()
+        => new(
             stereo: false,
             capabilityResult: null,
             offscreenProfile: null,
-            stageFamilyProfile: EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye,
-            subscribeToRuntimeSettings: false);
-        // The definition is cached across RVC command-chain rebuilds. Add its
-        // preparation acquire once here instead of mutating the shared root on
-        // every owning-pipeline rebuild.
-        family.CommandChain.Insert(0, new VPRC_AcquireAdvancedPreparation());
-        return family;
-    }
+            stageFamilyProfile: EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye);
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer commands = new(this);
+        // Both eyes acquire one shared world preparation before either eye
+        // consumes geometry.
+        if (IsOpenXrEyeProfile)
+            commands.Add<VPRC_AcquireAdvancedPreparation>();
         // Canvas and other nested producers must run before native/late scene consumers.
         commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
         if (!UsesMinimalVisibilityOutput && !Shaders.Compilation.WebPipelineRasterProgram.IsActive)
@@ -68,15 +48,6 @@ public partial class AdvancedRenderPipeline
 
         return commands;
     }
-
-    /// <summary>
-    /// Declares the complete resource family consumed by the Advanced command
-    /// chain. A composed owner uses these declarations without creating a
-    /// nested render-pipeline instance.
-    /// </summary>
-    internal void DescribeAdvancedStageFamilyResources(
-        RenderPipelineResourceLayoutBuilder builder)
-        => DescribeResources(builder);
 
     private void AppendStage(
         ViewportRenderCommandContainer commands,

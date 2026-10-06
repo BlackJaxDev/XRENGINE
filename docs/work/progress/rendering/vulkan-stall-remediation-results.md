@@ -4,7 +4,7 @@ Updated: 2026-10-05. Evidence cutoff: 2026-10-05.
 
 This record consolidates completed work and measured deferrals from the
 [remaining-work checklist](../../todo/rendering/vulkan-stall-remediation-todo.md).
-It does not report new runtime validation. The linked investigations retain
+Each result applies only to its stated scope. The linked investigations retain
 exact binaries, captures, measurements and case-level decisions.
 
 The cumulative gate remains **NOT PASSED**. The original long-recording and
@@ -36,6 +36,172 @@ owns the repeatable procedure and gate template.
   Summed parallel work and overlapping waits are not elapsed critical-path cost.
 
 ## Completed Work And Scoped Dispositions
+
+### Monado Package Consumption
+
+The October 5 strict stereo correction validates the captured XR package's
+collection generation instead of the desktop consumed generation. In the
+isolated Release fixture, submissions and both eye-preview frame IDs advanced
+through camera changes and a Play round trip. The sampled failure log contains
+no collection-generation mismatch. Normal exit balanced 432 image acquisitions
+and releases per eye and drained the retired generation. The existing package
+validation selection passed 13 tests with zero build warnings and errors.
+
+This is an ownership result. Visual defects, cold preparation, reservation
+failures, physical headset feedback, and broader performance gates remain open.
+The [Monado investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md)
+records the exact fixture, control, candidate, captures, and limits.
+
+The two existing YAML round-trip tests also passed for disabled automatic
+capture on probes and their grid spawner. Those owners already carry explicit
+default-value annotations. This does not establish an engine-wide boolean audit.
+
+### Deferred Stereo Color Attachment
+
+The deferred light-combine descriptor now declares its destination color slot
+with the same framebuffer identity as depth and stencil. Previously, Vulkan
+pruned that color attachment and recorded a depth-only combine pass. RenderDoc
+now shows HDR color Clear/Store and shared depth/stencil Load/Store in the
+strict stereo path. Both HDR layers contain scene color.
+
+Normal Monado interior captures show textured geometry in both eyes through
+pose changes and Play. Normal exit balanced 479 acquisitions and releases per
+eye and drained the retired generation. The Release build had zero warnings
+and errors. Cold final output still contains a magenta line and an undefined-
+data pattern. Repeated desktop recording exceptions also remain under review.
+These are separate open gates in the
+[Monado investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md).
+
+### Stable-Bin Manifest Growth
+
+Visibility manifests now use compact record indices. The builder grows each
+row before it accesses the manifest. The prior order threw an index exception
+at the first valid draw beyond the initial 256 rows and could also fail after
+skipped payloads. Capacity limits, payload identities, and freeze ownership
+remain unchanged.
+
+The Release Monado fixture completed 1,300 desktop frames in a 60.22-second
+window with zero recording failures. Cold startup and a Play round trip also
+had zero recording failures. Normal exit balanced 5,554 acquisitions and
+releases per eye and drained the retired generation. This fixes the observed
+exception and repeated output recreation. It does not establish the desktop
+100 FPS target or complete visual acceptance. The
+[Monado investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md)
+records the failed control, trace limits, candidate, and retained binaries.
+
+### Generation-Qualified Image-View Ownership
+
+`VkImageBackedTexture` retains each native image-view creation generation for
+primary, attachment, cached, and imported views. Retirement checks the exact
+receipt before admission fencing and checks identity again after dependency
+publication. The service keeps native view ownership. Lifecycle locks and image
+or sampler ownership did not change.
+
+The scoped gate passed on the frozen Release candidate. The normal Monado
+trigger run, graph-patch-parked cold control, both-eye previews, Play/Edit round
+trip, warm 60-second liveness window, and normal teardown passed their stated
+ownership checks. The final control matched the frozen source and binary
+identities. The focused test rerun passed 11/11 with zero skips and no build
+warnings or errors; two tests exercise stale-generation behavior and nine
+assert source contracts. See the [investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#scoped-image-view-ownership-closeout).
+
+This closes only the image-view ownership child. It does not establish temporal
+history acceptance, TSR visual quality, 100 FPS, headset comfort, lighting
+parity, or cumulative report completion. The next scoped item is accepted
+strict-stereo temporal history, with the parked TSR ordering patch as a required
+dependency. Its pre-edit gate is recorded in the investigation.
+
+### Accepted Strict-Stereo Temporal History
+
+Status: **Closed.** The user cleared focused tests on October 5. Strict Vulkan single-pass
+stereo stages CPU temporal history and publishes it only through the tracker's
+native-submission-accepted transition. The parked TSR ordering patch is
+included as a required dependency.
+
+Every live gate passed on Monado. The earlier host covered the source review,
+Release build, cold startup and camera-cut recovery, the 60-second warm liveness
+window, Play/Edit, session restart, normal teardown, and the Submit and
+Recording rejections. A second host (October 5, source `4758666b4`) completed
+the remaining checks:
+
+- An accepted-publication fault (`FailAcceptedPublication`) hit the strict
+  submission and published history exactly once. Its render frame has exactly
+  one committed pair, and later frames keep ready history. An OpenXR
+  `Publish`-stage fault, which drops the layer after acceptance, also published
+  exactly once.
+- Cold and warm RenderDoc captures show `HistoryReady=0` on the first resolve
+  over a discarded new history image. All 26 later frames show `HistoryReady=1`
+  on the same image. Every history color copy follows the resolve. Both eye
+  layers are defined.
+- With the close fix below, a repeat of the fault run wrote the controller's
+  own smoke summary with zero failures. This is the first full smoke-suite pass
+  for the item.
+- 11 cleared test cases drive the CPU submission state machine and the tracker
+  claim without a device. They cover accept-once publication, kept seeds after
+  a discard, one outstanding candidate, and device-loss and camera-cut
+  invalidation. 3 source contracts check the publication call site, the
+  `finally` backstop, and device-loss routing. The focused Release run passed
+  37 of 37, with zero warnings.
+
+This does not establish TSR image quality, exposure, 100 FPS, or headset
+comfort. The captures showed a separate TSR history-depth ordering defect;
+see [TSR History-Depth Order](#tsr-history-depth-order) below. See the
+[investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#accepted-publication-fault-and-coldwarm-renderdoc-checks).
+
+### Final-Window Close Completion
+
+Status: **Validated** for the collapsed editor host on Vulkan. The OpenGL close
+defect stays **Pending** as a separate item.
+
+Since `870987cfc`, closing the final window stopped the engine timer and then
+queued window disposal as a render-thread job. Only a timer render dispatch
+drains that queue. The editor therefore never left `Engine.Run`, and the OpenXR
+smoke never wrote its summary. The collapsed host now completes an approved
+native close on the native window thread, after the close callback unwinds. It
+repeats the final-window quiesce first. The split-pump prototype keeps its job
+path.
+
+The design added the repeated quiesce. An adversarial review then approved it.
+The Release build had zero warnings. The fixed smoke exited normally 0.37
+seconds after `Engine.Run` returned. A Vulkan `WM_CLOSE` closed the editor in
+1.14 seconds. Existing focused tests passed all 20 window ownership contracts
+and the frame-boundary close contract; 8 vendor-upscale source contracts fail in
+files that this change does not touch. OpenGL
+close now reaches a separate shared-context defect: a
+worker thread releases a hidden window on the wrong thread, which terminates
+the process. That defect has its own checklist entry. The dirty-asset prompt,
+two-window shutdown, VRClient, and the split-pump prototype were not exercised.
+See the [investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#smoke-shutdown-delay-root-cause-and-fix).
+
+### TSR History-Depth Order
+
+Status: **Validated** under a user-approved reduced scope. TSR test work is not
+cleared.
+
+The strict OpenXR stereo eye is a `RvcRenderPipeline` that always runs the
+Default command chain. The TSR history-depth deferral applied only to the
+Advanced pipeline, so the stereo eye copied the current depth into history
+before the TSR resolve. In every warm control capture, history depth equaled
+current depth byte for byte. Depth-based history rejection could therefore
+never detect disocclusion. The deferral now depends only on the TSR mode, so
+every TSR chain copies depth after its resolve. The change also applies to
+desktop cameras that use `DefaultRenderPipeline` with TSR. On desktop Vulkan, it
+removes the rotation gizmo's rejected footprint; on OpenGL, only history
+readiness was checked.
+
+RenderDoc A/B on Monado: changed runs copy depth only after the resolve in 100%
+of TSR captures. History depth is the previous frame's copied depth, byte for
+byte. Readiness stays 0 cold and 1 warm. The stationary rejected fraction is
+0.039% in the one qualifying changed run, against 0.029% and 0.032% in 2
+control runs and a 0.53% limit. The accepted-history smoke on the changed
+binary, and desktop Default TSR on Vulkan and OpenGL, also pass. The desktop
+Vulkan gizmo A/B removed a solid rejected disk that control showed in the
+captured mode-5 frame. Dropped gates and their
+reasons are listed in the
+[investigation](../../investigations/rendering/2026-10-05-vulkan-stall-monado.md#tsr-history-depth-order-on-default-chain-paths).
+This does not prove that the reported headset ghosting is fixed.
+
+### Earlier Scoped Results
 
 IDs below preserve links to the active checklist and original investigations.
 Validated means the recorded scoped live gate passed. It does not mean Closed.

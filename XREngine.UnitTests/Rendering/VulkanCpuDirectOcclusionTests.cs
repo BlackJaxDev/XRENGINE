@@ -20,7 +20,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         string gpuOcclusion = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Occlusion.cs");
         string frameOps = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string queryFrameOp = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/QueryOp.cs");
-        string queryCapability = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.OcclusionQueryCapability.cs");
+        string queryCapability = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.cs");
         string recorder = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string commandChains = SourceContractWorkspace.ReadVulkanSourcesContaining(
             "LowerFrameOpsToRenderPacketsExcludingQueryBrackets",
@@ -40,8 +40,8 @@ public sealed class VulkanCpuDirectOcclusionTests
         coordinator.ShouldContain("TryGetBackendCapability<IOcclusionQueryBackendCapability>");
         coordinator.ShouldContain("capability?.BeginOcclusionQuery(query) == true");
         coordinator.ShouldContain("capability?.EndOcclusionQuery(query) == true");
-        queryCapability.ShouldContain("=> EnqueueOcclusionQueryBegin(query)");
-        queryCapability.ShouldContain("=> EnqueueOcclusionQueryEnd(query)");
+        queryCapability.ShouldContain("BeginOcclusionQuery(XRRenderQuery query) => _frameLoop.TryEnqueueQueryOperation(query, ERenderQueryOperation.Begin)");
+        queryCapability.ShouldContain("EndOcclusionQuery(XRRenderQuery query) => _frameLoop.TryEnqueueQueryOperation(query, ERenderQueryOperation.End)");
         coordinator.ShouldContain("VulkanQueryResolveMinLatencyFrames");
         coordinator.ShouldContain("ShouldDelayPendingQueryPoll(queryState, frameId)");
         coordinator.ShouldNotContain("NormalizeBackendQueryResult(");
@@ -79,7 +79,7 @@ public sealed class VulkanCpuDirectOcclusionTests
         int beginIndex = scheduledVisibleQuery.IndexOf(
             "s_cpuOcclusionCoordinator.BeginQuery(",
             StringComparison.Ordinal);
-        int drawIndex = scheduledVisibleQuery.IndexOf("RenderWithGpuScope(cmd, renderPass);", StringComparison.Ordinal);
+        int drawIndex = scheduledVisibleQuery.IndexOf("RenderWithGpuScope(cmd, renderPass, measureCpuSocSubmission);", StringComparison.Ordinal);
         int endIndex = scheduledVisibleQuery.IndexOf(
             "s_cpuOcclusionCoordinator.EndQuery(",
             StringComparison.Ordinal);

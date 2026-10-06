@@ -16,6 +16,8 @@ The quiet production VRClient reflection-driver run reached a playing world and 
 
 The shutdown stall is an existing lifecycle limitation: the last native-window close stops the timer before queued owner-thread `Dispose` removes the last window; `WaitToRender` skips processing main-thread tasks, leaving the outer loop unable to finish. Do not treat this run as a clean VRClient shutdown.
 
+Update 2026-10-05: commit `870987cfc` introduced this root cause. The collapsed window host now completes an approved native close on the native window thread, independent of the timer. The editor OpenXR smoke and a Vulkan `WM_CLOSE` exit normally with the fix. On OpenGL, the editor close now reaches a separate shared-context worker defect that terminates the process. The recorded VRClient run used OpenGL, so a VRClient OpenGL close can fail in a different way. VRClient was not run again, so its clean shutdown is still unverified. See the [Monado investigation](../rendering/2026-10-05-vulkan-stall-monado.md#smoke-shutdown-delay-root-cause-and-fix).
+
 The first reflection-driver attempt (PID 46544) failed to find the Silk GLFW platform because the scratch driver had a different runtime/dependency context and native search path. The retry used the production runtimeconfig/deps and native directories in `PATH`; this changed only the probe environment, not production code. In unit-testing mode, existing `ApplyUserSettingsSessionValues` and `ApplyGameSettingsSessionValues` apply session values so the selected OpenGL renderer survives sandbox settings. Probe evidence is in `Build/_AgentValidation/20260930-105523-unified-browser-runtime/reports/portable-host/vrclient-runtime-steady-2.txt` and the associated scratch session records.
 
 The intended direct launch is:

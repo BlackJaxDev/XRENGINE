@@ -1,7 +1,7 @@
 # Dependency Inventory
 
-Generated: 2026-10-05T11:25:00-07:00
-Commit: 79ab16f8f98778b92624e238a261aa558c1c684d
+Generated: 2026-10-05T16:10:51-07:00
+Commit: 71ccb6a4fc7fc31647fc04f10e9c419811f68db4
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
 
@@ -178,4 +178,5 @@ Notes:
 | XREngine.Runtime.Core/runtimes/win-x64/native/lib_coacd.dll | lib_coacd.dll | SarahWeiii (CoACD) | [MIT (see Build/Submodules/CoACD/LICENSE)](../Build/Submodules/CoACD/LICENSE) |
 | XREngine.Runtime.Physics.PhysX/runtimes/win-x64/native/libmagicphysx.dll | libmagicphysx.dll | Cysharp (MagicPhysX) / NVIDIA (PhysX 5) | [MIT (MagicPhysX) + NVIDIA PhysX 5 license](licenses/fetched/libmagicphysx-MIT (MagicPhysX) + NVIDIA PhysX 5 license.txt) |
 | XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/VulkanMemoryAllocatorBridge.Native.dll | VulkanMemoryAllocatorBridge.Native.dll | Advanced Micro Devices, Inc. (GPUOpen) | [MIT (Vulkan Memory Allocator)](../Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator/LICENSE.txt) |
+| XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/xr_shaderc.dll | xr_shaderc.dll | Google / Khronos / glslang contributors | [Apache-2.0 + BSD + MIT (see combined upstream notices)](../XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/xr_shaderc.license.txt) |
 | XREngine.Runtime.Rendering/runtimes/win-x64/native/VulkanMemoryAllocatorBridge.Native.dll | VulkanMemoryAllocatorBridge.Native.dll | Advanced Micro Devices, Inc. (GPUOpen) | [MIT (Vulkan Memory Allocator)](../Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator/LICENSE.txt) |

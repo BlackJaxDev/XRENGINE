@@ -99,6 +99,8 @@ internal sealed partial class VulkanCommandRuntime
         bool wantStencil,
         out BlitImageInfo info,
         bool isSource,
+        int passIndex,
+        in BlitPayload operation,
         in SwapchainRecordingTarget swapchainTarget)
     {
         if (frameBuffer is null)
@@ -147,7 +149,7 @@ internal sealed partial class VulkanCommandRuntime
             if (aspect == ImageAspectFlags.None)
                 continue;
 
-            info = ResolvePreparedAttachmentBlitImage(target, mipLevel, layerIndex, aspect);
+            info = ResolvePreparedAttachmentBlitImage(target, frameBuffer.Name, mipLevel, layerIndex, aspect, isSource, passIndex, in operation);
             return true;
         }
 
@@ -217,9 +219,13 @@ internal sealed partial class VulkanCommandRuntime
 
     private BlitImageInfo ResolvePreparedAttachmentBlitImage(
         IFrameBufferAttachement attachment,
+        string? frameBufferName,
         int mipLevel,
         int layerIndex,
-        ImageAspectFlags aspectMask)
+        ImageAspectFlags aspectMask,
+        bool isSource,
+        int passIndex,
+        in BlitPayload operation)
     {
         VkObjectBase? wrapper = attachment is GenericRenderObject resource
             ? ResourceRuntime.BackendObjects.Get(resource) as VkObjectBase
@@ -272,8 +278,39 @@ internal sealed partial class VulkanCommandRuntime
 
         if (attachment is not XRTexture texture || wrapper is not IVkImageDescriptorSource source)
             throw new VulkanPlanPreconditionException("A prepared blit attachment is not backed by a Vulkan image descriptor source.");
-        if (source.DescriptorImage.Handle == 0 || !source.IsDescriptorReady)
-            throw new VulkanPlanPreconditionException("A prepared texture blit attachment has no published Vulkan image.");
+        Image descriptorImage = source.DescriptorImage;
+        bool? descriptorReady = descriptorImage.Handle != 0 ? source.IsDescriptorReady : null;
+        if (descriptorImage.Handle == 0 || descriptorReady != true)
+        {
+            XRTexture? viewedTexture = texture is XRTextureViewBase textureView ? textureView.GetViewedTexture() : null;
+            ulong? cachedViewHandle = wrapper switch
+            {
+                VkTexture1D value => value.View.Handle,
+                VkTexture1DArray value => value.View.Handle,
+                VkTexture2D value => value.View.Handle,
+                VkTexture2DArray value => value.View.Handle,
+                VkTexture3D value => value.View.Handle,
+                VkTextureCube value => value.View.Handle,
+                VkTextureCubeArray value => value.View.Handle,
+                VkTextureRectangle value => value.View.Handle,
+                VkTextureView value => value.View.Handle,
+                _ => null,
+            };
+            bool? allocatorImage = wrapper is VkTextureView ? null : source.UsesAllocatorImage;
+            string? cachedReadiness = wrapper is VkTexture2DArray arrayTexture
+                ? arrayTexture.DescribeCachedDescriptorReadinessFailure()
+                : null;
+            throw new VulkanPlanPreconditionException(
+                $"A prepared texture blit attachment has no published Vulkan image. " +
+                $"role={(isSource ? "source" : "destination")}, pass={passIndex}, requestedColor={operation.ColorBit}, requestedDepth={operation.DepthBit}, requestedStencil={operation.StencilBit}, fbo='{frameBufferName ?? "<unnamed>"}', " +
+                $"texture='{texture.Name ?? "<unnamed>"}', viewedTexture='{viewedTexture?.Name ?? "<none>"}', " +
+                $"textureType={texture.GetType().Name}, textureId={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(texture)}, " +
+                $"wrapperType={wrapper.GetType().Name}, wrapperId={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(wrapper)}, " +
+                $"aspect={aspectMask}, mip={mipLevel}, layer={layerIndex}, image=0x{descriptorImage.Handle:X}, " +
+                $"cachedView={(cachedViewHandle.HasValue ? $"0x{cachedViewHandle.Value:X}" : "<unavailable>")}, ready={(descriptorReady.HasValue ? descriptorReady.Value.ToString() : "<unchecked:image-zero>")}, " +
+                $"generation={source.DescriptorGeneration}, allocatorImage={(allocatorImage.HasValue ? allocatorImage.Value.ToString() : "<view-backing>")}, " +
+                $"cachedReadiness={cachedReadiness ?? "<unavailable>"}.");
+        }
         if (depthOrStencil ? !IsDepthOrStencilFormat(source.DescriptorFormat) : (aspectMask & ImageAspectFlags.ColorBit) == 0)
             throw new VulkanPlanPreconditionException("A prepared texture blit attachment has an incompatible format/aspect.");
 

@@ -112,9 +112,13 @@ public sealed class HumanoidIKSolverComponentTests
     public void ContactCompensation_IsPostPoseAndCanTargetFeetSeparatelyFromHands()
     {
         var root = new SceneNode("Root", new Transform());
+        AnimationClipComponentTests.AddPlaybackSkeleton(root);
         var humanoid = root.AddComponent<HumanoidComponent>()!;
         var solver = root.AddComponent<HumanoidIKSolverComponent>()!;
         humanoid.Settings.IKGoalPolicy = EHumanoidIKGoalPolicy.AlwaysApply;
+        humanoid.SetFromNode();
+        humanoid.SetValue(EHumanoidValue.SpineFrontBack, 0.0f);
+        humanoid.ApplyCurrentMusclePose();
 
         solver.ConfigureAnimatedGoalContactCompensation(
             EHumanoidContactCompensationMode.GroundPlaneFeet,

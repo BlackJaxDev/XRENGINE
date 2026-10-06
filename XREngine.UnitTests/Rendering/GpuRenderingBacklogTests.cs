@@ -124,7 +124,8 @@ public class GpuRenderingBacklogTests
 
         var fallbackBounds = new AABB(new Vector3(-100f, -100f, -100f), new Vector3(100f, 100f, 100f));
         Matrix4x4 fallbackMatrix = Matrix4x4.CreateTranslation(-500f, -500f, -500f);
-        object?[] args = [renderInfo, fallbackBounds, fallbackMatrix, 7u];
+        GpuSceneOwnerSnapshot ownerSnapshot = GpuSceneOwnerSnapshot.CaptureLive(renderInfo);
+        object?[] args = [ownerSnapshot, fallbackBounds, fallbackMatrix, 7u];
 
         BoundsGpu bounds = (BoundsGpu)method!.Invoke(null, args)!;
 
@@ -543,6 +544,8 @@ public class GpuRenderingBacklogTests
     [Test]
     public void LOD_RequestBuffer_DrainReturnsAndClearsRequestedMasks()
     {
+        var owner = new CpuBackedLodBufferOwner();
+        using var ownerScope = GenericRenderObject.PushApiWrapperCreationOwner(owner);
         var scene = new GPUScene();
         var lod0 = XRMesh.CreateTriangles(Vector3.Zero, Vector3.UnitX, Vector3.UnitY);
         var lod1 = XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitZ + Vector3.UnitX, Vector3.UnitZ + Vector3.UnitY);
@@ -555,6 +558,7 @@ public class GpuRenderingBacklogTests
         requests[0].logicalMeshId.ShouldBe(logicalMeshId);
         requests[0].lodMask.ShouldBe(0b10u);
         scene.LODRequestBuffer.GetDataRawAtIndex<uint>(logicalMeshId).ShouldBe(0u);
+        owner.MapCallCount.ShouldBeGreaterThan(0);
     }
 
     [Test]
@@ -588,6 +592,8 @@ public class GpuRenderingBacklogTests
     [Test]
     public void LOD_StreamOnDemand_ServicePump_LoadsRequestedLevelsAndClearsMask()
     {
+        var owner = new CpuBackedLodBufferOwner();
+        using var ownerScope = GenericRenderObject.PushApiWrapperCreationOwner(owner);
         bool previous = RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand;
         RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand = true;
         try
@@ -606,6 +612,7 @@ public class GpuRenderingBacklogTests
             scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry loadedEntry).ShouldBeTrue();
             loadedEntry.LOD1_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, lod1));
             scene.LODRequestBuffer.GetDataRawAtIndex<uint>(logicalMeshId).ShouldBe(0u);
+            owner.MapCallCount.ShouldBeGreaterThan(0);
         }
         finally
         {
@@ -1037,6 +1044,45 @@ public class GpuRenderingBacklogTests
         public XRDataBuffer? BvhMortonBuffer => null;
         public uint BvhNodeCount => 0u;
         public bool IsBvhReady => isReady;
+    }
+
+    private sealed class CpuBackedLodBufferOwner : IRenderApiWrapperOwner
+    {
+        public string RenderApiWrapperOwnerName => nameof(CpuBackedLodBufferOwner);
+        public int MapCallCount { get; private set; }
+
+        public AbstractRenderAPIObject? GetOrCreateAPIRenderObject(GenericRenderObject renderObject, bool generateNow = false)
+            => renderObject is XRDataBuffer ? new CpuBackedLodDataBuffer(this) : null;
+
+        public void RecordMap() => MapCallCount++;
+    }
+
+    private sealed class CpuBackedLodDataBuffer(CpuBackedLodBufferOwner owner)
+        : AbstractRenderAPIObject(owner), IApiDataBuffer
+    {
+        public override bool IsGenerated => true;
+        public override void Generate() { }
+        public override void Destroy() { }
+        public override string GetDescribingName() => nameof(CpuBackedLodDataBuffer);
+
+        public void PushData() { }
+        public void PushSubData() { }
+        public void PushSubData(int offset, uint length) { }
+        public void MapBufferData() => owner.RecordMap();
+        public void UnmapBufferData() { }
+        public void Flush() { }
+        public void FlushRange(int offset, uint length) { }
+        public void SetUniformBlockName(XRRenderProgram program, string blockName) { }
+        public void SetBlockIndex(uint blockIndex) { }
+        public void Bind() { }
+        public void Unbind() { }
+        public void BindSSBO(XRRenderProgram program, uint? bindingIndexOverride = null) { }
+        public bool TryReadMapped(DataBufferMappedReadCallback callback) => false;
+        public bool TryWriteMapped(DataBufferMappedWriteCallback callback) => false;
+        public bool TryReadMapped<TState>(ref TState state, DataBufferMappedReadCallback<TState> callback)
+            where TState : allows ref struct => false;
+        public bool TryWriteMapped<TState>(ref TState state, DataBufferMappedWriteCallback<TState> callback)
+            where TState : allows ref struct => false;
     }
 
     private sealed class TestRenderable : IRenderable

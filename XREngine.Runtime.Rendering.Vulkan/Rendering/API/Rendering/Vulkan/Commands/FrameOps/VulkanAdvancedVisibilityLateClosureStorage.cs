@@ -21,15 +21,15 @@ internal sealed class VulkanAdvancedVisibilityLateClosureStorage
         new DescriptorImageInfo[MaxViews];
     internal DescriptorSet[] DescriptorSets { get; } =
         new DescriptorSet[MaxViews * 2];
-    private readonly ImageView[] _acquiredViews =
-        new ImageView[MaxViews * 2];
+    private readonly VulkanInternedImageViewReference[] _acquiredViews =
+        new VulkanInternedImageViewReference[MaxViews * 2];
     private int _acquiredViewCount;
 
-    internal bool TryTrackAcquiredView(ImageView view)
+    internal bool TryTrackAcquiredView(in VulkanInternedImageViewReference reference)
     {
-        if (view.Handle == 0 || _acquiredViewCount >= _acquiredViews.Length)
+        if (!reference.IsValid || _acquiredViewCount >= _acquiredViews.Length)
             return false;
-        _acquiredViews[_acquiredViewCount++] = view;
+        _acquiredViews[_acquiredViewCount++] = reference;
         return true;
     }
 
@@ -43,7 +43,7 @@ internal sealed class VulkanAdvancedVisibilityLateClosureStorage
         ArgumentNullException.ThrowIfNull(images);
         for (int index = _acquiredViewCount - 1; index >= 0; --index)
         {
-            _ = images.ReleaseInternedView(_acquiredViews[index]);
+            images.ReleaseInternedView(_acquiredViews[index]);
             _acquiredViews[index] = default;
         }
         _acquiredViewCount = 0;

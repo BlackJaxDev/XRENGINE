@@ -90,6 +90,7 @@ public sealed class HumanoidPoseAuditTests
                             Name = "LeftHand",
                             LocalPosition = HumanoidPoseAuditVector3.From(new Vector3(3.0f, 0.0f, 0.0f)),
                             LocalRotation = HumanoidPoseAuditQuaternion.From(Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI * 0.5f)),
+                            PoseDeltaFromNeutralRotation = HumanoidPoseAuditQuaternion.From(Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI * 0.5f)),
                             RootSpacePosition = HumanoidPoseAuditVector3.From(new Vector3(0.0f, 0.0f, 1.0f)),
                             WorldPosition = HumanoidPoseAuditVector3.From(new Vector3(1.0f, 2.0f, 4.0f)),
                         },
@@ -98,6 +99,8 @@ public sealed class HumanoidPoseAuditTests
             ],
         };
 
+        CompleteComparisonFixture(reference);
+        CompleteComparisonFixture(actual);
         HumanoidPoseAuditComparisonReport comparison = HumanoidPoseAuditComparer.Compare(reference, actual);
 
         comparison.ComparedSamples.ShouldBe(1);
@@ -162,6 +165,8 @@ public sealed class HumanoidPoseAuditTests
             ],
         };
 
+        CompleteComparisonFixture(reference);
+        CompleteComparisonFixture(actual);
         HumanoidPoseAuditComparisonReport comparison = HumanoidPoseAuditComparer.Compare(reference, actual);
 
         comparison.MuscleAbsoluteError.ShouldContain(x =>
@@ -260,6 +265,8 @@ public sealed class HumanoidPoseAuditTests
             ],
         };
 
+        CompleteComparisonFixture(reference);
+        CompleteComparisonFixture(actual);
         HumanoidPoseAuditComparisonReport comparison = HumanoidPoseAuditComparer.Compare(reference, actual);
 
         comparison.ComparedSamples.ShouldBe(3);
@@ -407,13 +414,15 @@ public sealed class HumanoidPoseAuditTests
     public void Sample_UsesHumanTraitMuscleNamesAndExportsRawCurveInputs()
     {
         var root = new SceneNode("Root", new Transform());
+        AnimationClipComponentTests.AddPlaybackSkeleton(root);
         const string yaml = """
 AnimationClip:
+  serializedVersion: 7
   m_Name: Audit
   m_SampleRate: 30
   m_AnimationClipSettings:
     m_StartTime: 0
-    m_StopTime: 0
+    m_StopTime: 0.033333333
     m_LoopTime: 0
   m_FloatCurves:
     - path: ''
@@ -487,15 +496,21 @@ AnimationClip:
         Directory.CreateDirectory(Path.GetDirectoryName(clipPath)!);
         File.WriteAllText(clipPath, yaml);
         AnimationClip clip = AnimYamlImporter.Import(clipPath);
+        clip.HasRootMotion.ShouldBeTrue();
 
         var clipComponent = root.AddComponent<AnimationClipComponent>()!;
         clipComponent.Animation = clip;
 
         var humanoid = root.AddComponent<HumanoidComponent>()!;
+        humanoid.SetFromNode();
+        humanoid.TryValidateAvatarDefinitionForPlayback(out string diagnostic).ShouldBeTrue(diagnostic);
+        clipComponent.TryValidatePlaybackCapabilities(out diagnostic).ShouldBeTrue(diagnostic);
+        clipComponent.EvaluateAtTime(0.0f);
+        humanoid.CurrentRawBodyPosition.ShouldBe(new Vector3(1.0f, 2.0f, 3.0f));
 
         HumanoidPoseAuditReport report = HumanoidPoseAuditSampler.Sample(clipComponent, humanoid, sampleRateOverride: 30);
 
-        report.SampleCount.ShouldBe(1);
+        report.SampleCount.ShouldBe(2);
         HumanoidPoseAuditSample sample = report.Samples[0];
         sample.BodyPosition.Value.ShouldBe(new Vector3(1.0f, 2.0f, 3.0f));
         Quaternion expectedRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI * 0.5f);
@@ -526,6 +541,26 @@ AnimationClip:
         string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         outputPath.ShouldBe(Path.Combine(desktopPath, "Sexy Walk_humanoid_pose_audit.json"));
         comparisonPath.ShouldBe(Path.Combine(desktopPath, "Sexy Walk_humanoid_pose_audit.comparison.json"));
+    }
+
+    private static void CompleteComparisonFixture(HumanoidPoseAuditReport report)
+    {
+        string requiredBone = report.Samples[0].Bones.Count > 0
+            ? report.Samples[0].Bones[0].Name
+            : "Hips";
+        report.RequiredBoneRoles.Add(requiredBone);
+        report.RequiredMuscleChannels.Add(report.Samples[0].Muscles[0].Name);
+
+        foreach (HumanoidPoseAuditSample sample in report.Samples)
+        {
+            if (sample.Bones.Count == 0)
+                sample.Bones.Add(new HumanoidPoseAuditBoneSample { Name = requiredBone });
+            sample.HasSolvedBodyModelRootPose = true;
+            sample.HipsModelRootPositionMeters = HumanoidPoseAuditVector3.From(Vector3.Zero);
+            sample.HipsModelRootRotation = HumanoidPoseAuditQuaternion.From(Quaternion.Identity);
+            sample.HipsWorldPositionMeters = HumanoidPoseAuditVector3.From(Vector3.Zero);
+            sample.HipsWorldRotation = HumanoidPoseAuditQuaternion.From(Quaternion.Identity);
+        }
     }
 
     private static T InvokePrivate<T>(MethodInfo method, object target, params object?[]? args)

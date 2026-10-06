@@ -115,6 +115,7 @@ namespace XREngine.Rendering
         private bool _approvedNativeCloseInProgress;
         private int _closeRequestedOrApproved;
         private int _pendingCloseRequested;
+        private int _approvedNativeCloseCompletionPending;
         private int _pendingFramebufferResize;
         private int _pendingFramebufferResizeWidth;
         private int _pendingFramebufferResizeHeight;
@@ -566,6 +567,9 @@ namespace XREngine.Rendering
 
         public void PumpNativeWindowEventsFromHost()
         {
+            if (TryCompleteApprovedNativeClose())
+                return;
+
             if (_isDisposed || _isDisposing)
                 return;
 
@@ -575,6 +579,10 @@ namespace XREngine.Rendering
             {
                 _desktopBackend?.PumpEvents();
             }
+
+            // A close approved inside this pump completes here, after the native callback has unwound.
+            if (TryCompleteApprovedNativeClose())
+                return;
 
             if (_isDisposed || _isDisposing)
                 return;
@@ -2141,29 +2149,67 @@ namespace XREngine.Rendering
 
             // The native close callback must unwind before either renderer or window disposal.
             _approvedNativeCloseInProgress = true;
-            RuntimeEngine.EnqueueRenderThreadTask(
-                () =>
-                {
-                    if (IsNativeEventPumpExternallyOwned)
-                    {
-                        TryBeginExternalPumpDispose("DesktopClose");
-                        return;
-                    }
+            if (!IsNativeEventPumpExternallyOwned)
+            {
+                // The collapsed host pump completes the close on this thread after the callback
+                // unwinds. Do not queue a render-thread job here: quiescing the final window stops
+                // the engine timer, and render-thread jobs drain only during a timer render dispatch.
+                Interlocked.Exchange(ref _approvedNativeCloseCompletionPending, 1);
+                return true;
+            }
 
-                    try
-                    {
-                        Dispose();
-                    }
-                    finally
-                    {
-                        RuntimeRenderingHostServices.Factories.RemoveWindow(this);
-                    }
-                },
+            RuntimeEngine.EnqueueRenderThreadTask(
+                () => TryBeginExternalPumpDispose("DesktopClose"),
                 $"XRWindow.DesktopClose[{GetHashCode()}]",
                 RenderThreadJobKind.RequiresGraphicsContext);
             return true;
         }
 
+        /// <summary>
+        /// Completes an approved native close after the native close callback has unwound.
+        /// </summary>
+        /// <remarks>
+        /// The collapsed window host calls this on the native window thread, which also owns the
+        /// renderer. The completion does not depend on the engine timer, so the final window closes
+        /// after its quiesce stops the timer. A native close (window button or WM_CLOSE) also
+        /// completes after a terminal loop fault stopped the timer. A <see cref="RequestClose"/> call
+        /// from another thread still needs a timer render dispatch to start the native close.
+        /// The final-window quiesce runs again here. Engine.ShutDown can approve several closes
+        /// before the first one completes. Each approval then sees more than one registered
+        /// window, so no approval runs the final-window quiesce.
+        /// </remarks>
+        /// <returns>True when this call completed a pending close.</returns>
+        private bool TryCompleteApprovedNativeClose()
+        {
+            // Only the native window thread sets and reads this flag; skip the locked exchange when idle.
+            if (Volatile.Read(ref _approvedNativeCloseCompletionPending) == 0 ||
+                Interlocked.Exchange(ref _approvedNativeCloseCompletionPending, 0) == 0)
+                return false;
+
+            try
+            {
+                if (!_renderer.IsShutdownTeardownAbandoned &&
+                    !RuntimeRenderingHostServices.Factories.QuiesceForWindowRendererTeardown(this))
+                {
+                    _renderer.AbandonShutdownTeardown();
+                    Debug.RenderingWarning(
+                        "[XRWindow] Host work did not quiesce before approved close completion; retaining native window resources. hash={0}",
+                        GetHashCode());
+                }
+
+                Dispose();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, $"[XRWindow] Approved native close disposal failed. hash={GetHashCode()}");
+            }
+            finally
+            {
+                RuntimeRenderingHostServices.Factories.RemoveWindow(this);
+            }
+
+            return true;
+        }
 
         private void OnFocusChanged(bool focused)
         {

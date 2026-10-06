@@ -224,7 +224,8 @@ public sealed class GpuIndirectPhase3PolicyTests
         source.ShouldContain("return VulkanFeatureProfile.ResolveOcclusionCullingMode(RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode);");
         source.ShouldNotContain("CpuQueryAsync && VulkanFeatureProfile.ActiveProfile != EVulkanGpuDrivenProfile.Diagnostics");
         source.ShouldContain("case EOcclusionCullingMode.CpuSoftwareOcclusion:");
-        source.ShouldContain("private bool ShouldInvalidateGpuHiZTemporalState(GPUScene scene, XRCamera camera)");
+        source.ShouldContain("private GpuHiZTemporalInvalidation EvaluateGpuHiZTemporalInvalidation(");
+        source.ShouldContain("PrepareStableHiZDecisions(scene, temporalInvalidation);");
         source.ShouldContain("shared.LastBuiltFrameId = ulong.MaxValue;");
         source.ShouldContain("private static bool TryResolveGpuHiZHistoryDepthInput");
         source.ShouldContain("DefaultRenderPipeline.HistoryDepthViewTextureName");
