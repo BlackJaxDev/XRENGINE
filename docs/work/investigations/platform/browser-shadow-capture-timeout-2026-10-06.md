@@ -128,6 +128,54 @@ viewport cannot qualify the image. The original absolute 10-second budget,
 first scroll, step timing, failure evidence, and request-failure assertion
 remain unchanged. The correction starts no extra trace or GPU readback.
 
+## Status layout after resize
+
+[Run 37452750729, job 112252327999](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37452750729/job/112252327999)
+on `d7fe4e8` passed the initial OFF image and GPU qualification. Its initial
+image had no exterior mismatch and a maximum projection-edge error of 0.303
+pixels. The first resized capture completed 44 screenshot attempts but did
+not qualify an image within the unchanged 10-second budget. The ON run did
+not start.
+
+The last pre-capture canvas origin was `(16,178.875)`; the post-capture origin
+was `(16,202.875)`. Both samples had the same CSS size, `813x457.3125`, backing
+size, `813x457`, viewport, `860x780`, and zero scroll. The inspected resized
+PNG includes a 24-pixel page strip above the canvas. The full-page failure
+PNG shows the complete world and the running status wrapping to two lines.
+The strict geometry and exterior checks correctly rejected that shifted clip.
+
+The shipping `engine-player.html` placed variable status and delivery-progress
+paragraphs before the canvas. `engine-player.js` replaces the status text,
+and `EngineCanvasHost` reports a short preparation message after a size
+change, then the longer running detail when the new output is ready. The
+page's `16px/1.5` text has a 24-pixel line height. That source path explains
+the observed displacement. The exact sequence of status strings was not
+recorded; it remains an inference from source, geometry, and the final image.
+
+The evidence does not support a repeated surface-generation loop. Texture
+observation was unsaturated and recorded exactly one new canvas depth and
+one `813x457` output family. Native compile and pipeline/module creation
+snapshots did not change. `WebGpuCanvasRenderer.resize` retains the current
+generation for unchanged dimensions. The host clears presentation only when
+that generation changes; its attachment observer ignores ordinary status
+text changes. Resource profiles use output dimensions and rendering settings,
+not the DOM position. The submission snapshot's present count advanced from
+9 to 14. The earlier GPU snapshot counted 7 because it was collected first.
+
+The production correction places the existing status and delivery-progress
+paragraphs immediately after the canvas. Their full text, IDs, status role,
+visibility rules, and updates remain unchanged. Message wrapping and delivery
+progress can change the space below the render surface without moving it.
+The publisher copies this template to the shipped `index.html`; the legacy
+diagnostic page is unchanged. The existing stable scrollbar gutter is preserved.
+The renderer, readiness checks, capture helper, deadlines, and all assertions
+are unchanged.
+
+Delivery was ready with all 349 essential assets verified and zero failed,
+cancelled, active, or queued reads. The 59 browser request-abort events still
+require separate attribution. The layout correction does not classify those
+events or establish that all resize preparation latency is resolved.
+
 ## Validation and next step
 
 The source and saved runtime artifacts were inspected. No new runtime or test
@@ -143,3 +191,10 @@ transient change that returns to the original geometry between samples. The
 next authorized shadow run must establish whether capture completes and image
 qualification remains valid. Source checks do not prove that the timeout,
 request failures, or shadow parity are fixed.
+
+The later `d7fe4e8` artifacts were inspected without a new local runtime or
+test run. The production paragraph placement passed independent source review
+and the scoped `git diff --check`. The review verified the publisher's template
+copy and removal of stale compressed index variants. Runtime confirmation in
+the approved shadow harness remains open. The unrelated TODO evidence-link
+edit was preserved.

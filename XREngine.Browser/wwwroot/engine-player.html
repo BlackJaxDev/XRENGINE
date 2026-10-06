@@ -17,9 +17,10 @@
 </head>
 <body>
   <h1>XRENGINE</h1>
+  <!-- Status text and delivery progress must not move the input surface. -->
+  <canvas id="input-surface" tabindex="0" aria-label="Engine input surface"></canvas>
   <p id="status" role="status" data-state="loading">Loading the engine world…</p>
   <p id="content-progress" aria-label="Asset delivery progress" hidden></p>
-  <canvas id="input-surface" tabindex="0" aria-label="Engine input surface"></canvas>
   <p>Focus the surface for keyboard, pointer, and touch input</p>
   <p>
     <button id="retry" type="button" hidden>Retry</button>
