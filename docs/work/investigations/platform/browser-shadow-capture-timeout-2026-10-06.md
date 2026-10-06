@@ -176,6 +176,79 @@ cancelled, active, or queued reads. The 59 browser request-abort events still
 require separate attribution. The layout correction does not classify those
 events or establish that all resize preparation latency is resolved.
 
+## Stable layout with late resized output
+
+[Run 37460775847, job 112270435960](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37460775847/job/112270435960)
+on `a9037c2` passed the initial OFF capture. The first resized capture kept
+the canvas at `y=138.875` with identical pre/post geometry. Attempt 36 still
+contained only the CSS background, RGB `(8,13,20)`, after 7,467 ms. Attempt
+37 entered screenshot capture at 7,602 ms and exhausted the remaining
+2,398 ms. The inspected later failure PNG shows the correct resized receiver
+and occluders. The layout correction therefore holds, but timely resized
+output remains unqualified.
+
+Old native outputs, texture IDs `11/13/15/3`, last appeared at queue serial
+1211. New `813x457` outputs, IDs `38/40/42/30`, appeared in five native
+consumer submissions at serials 1566 through 1570. The original records have
+no submission timestamps. Preparation-only iterations can submit an empty
+command-buffer list, so the intervening serials do not establish expensive
+GPU work. The harness completion serial 1208 belongs to its initial explicit
+checkpoint. Production tracks its own completion receipts; the saved value
+does not show that production completion stopped.
+
+Source inspection found serial pending gates during logical materialization,
+backend physical generation preparation, and later Advanced command preparation.
+The backend returns at the first pending resource, which delays independent
+resources. Batching that work requires retained completion state and bounded
+attempt/request admission; it cannot be implemented safely by ignoring pending
+exceptions or removing limits. The present evidence does not identify which
+gate consumed the capture interval. No renderer change is included.
+
+The next diagnostic packet reads existing state only for the first OFF resize
+to width 860. It has four fixed checkpoints for the entire run: capture start,
+first blank image, the first opportunity after half the capture budget, and
+capture failure. Each read uses a maximum 200 ms Node-side cap within the
+original absolute capture deadline. A failure after that deadline records an
+unavailable checkpoint without another browser read. Missing checkpoints have
+fixed reasons. Initial captures, later OFF resize, and both ON runs do not
+collect these checkpoints.
+
+Before that resize, a 500 ms bounded cached-module lookup installs a one-use
+observer on the existing host's normal `syncSurface` call. The observer restores
+the original method before forwarding the original receiver and arguments;
+it never invokes an additional surface update. A bounded cleanup also restores
+an observer that was not invoked. The live getter rejects stale host ownership
+and late execution, including immediately before each managed export call.
+
+Snapshots retain existing preparation state, a managed status summary of at
+most 4,096 characters rebuilt from fixed enums and validated numeric/boolean
+fields, selected frame/receipt counters,
+the production completion sequence, and at most eight active receipt records.
+At most 16 Advanced records retain allowlisted stage, phase, and state names,
+numeric frame/generation values, and reason-presence flags. Unknown names and
+missing fields remain explicit. Advanced preparation retains only draw count,
+publication state, generation, and deferral-presence flags. The full managed
+status can include descriptors and failure strings; those text values are not
+copied into the diagnostic record.
+Physical request summaries examine at most 64 retained requests and include
+fixed kind/state counts plus omitted counts. Kind slots 1 through 7 mean
+buffer, texture, texture view, sampler, binding layout, binding group, and
+prepared commands. State slots 1 through 4 mean pending, ready, failed, and
+cancelled. Slot zero records unknown values. No raw exception, descriptor,
+buffer, asset list, or URL is retained. No statistics are enabled, and no new
+GPU wait, submission, readback, frame, or profiling trace is requested.
+Timestamp scalars are added to the existing capped GPU observation records
+without adding a per-submit log. Their clock origin permits comparison with
+the capture checkpoints and distinguishes enqueue time from completion.
+An immediate evaluation failure has a different fixed reason from a read
+timeout. Setup and cleanup caps are separate from image acceptance; all four
+snapshot reads consume the original capture budget. A Node deadline cannot
+interrupt a synchronous managed getter that started before that deadline.
+The getter checks again before starting another managed call. Snapshot work
+can affect scheduling, and samples cannot reconstruct every intervening frame.
+Production completion sequences must be compared with the retained engine
+frame sequence, not directly with the harness's queue-submit serials.
+
 ## Validation and next step
 
 The source and saved runtime artifacts were inspected. No new runtime or test
@@ -195,6 +268,11 @@ request failures, or shadow parity are fixed.
 The later `d7fe4e8` artifacts were inspected without a new local runtime or
 test run. The production paragraph placement passed independent source review
 and the scoped `git diff --check`. The review verified the publisher's template
-copy and removal of stale compressed index variants. Runtime confirmation in
-the approved shadow harness remains open. The unrelated TODO evidence-link
-edit was preserved.
+copy and removal of stale compressed index variants. The later `a9037c2` run
+confirmed stable canvas placement, while timely resized output remained open.
+The four-checkpoint diagnostic packet passed syntax and scoped diff checks;
+independent source review found no blocking issue after the managed status
+was restricted to the safe field allowlist. Parsing depends on the current
+engine status format and its 16,384-character input cap; missing or unknown
+fields remain explicit. No runtime was started for that packet. The unrelated
+TODO evidence-link edit was preserved.
