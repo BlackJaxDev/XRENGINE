@@ -1,17 +1,17 @@
 {
   "repository": "BlackJaxDev/XRENGINE",
-  "sourceCommit": "b64f65a7fd7d619e47ec3defdfaa6733a35bbb4b",
-  "runId": "37307383257",
+  "sourceCommit": "e4a90cf2f865a08421bb68c293d27616465e1558",
+  "runId": "37386054995",
   "runAttempt": 1,
-  "jobId": "111754237186",
+  "jobId": "112019576000",
   "jobName": "Publish RollingBall with the Windows Editor CLI",
-  "artifactId": "11346111752",
+  "artifactId": "11380253911",
   "artifactName": "windows-editor-network-kinematic-bundle",
-  "artifactBytes": 55824360,
-  "artifactSha256": "9278a05d81f94c48d3c2c224f184ec5b41db9d2fa0b229580bbccb1be6884562",
-  "worldSha256": "3f1853781ba028be21670fea376080e2b210e8aaebc0284ba4f4f15cf42c040c",
+  "artifactBytes": 56380647,
+  "artifactSha256": "ad562f2b62ab3c24361056ecc90aa3a9e9f1458e83eeb11213898af1e6e11f50",
+  "worldSha256": "2ad421b20b513a997227633a9e822eabbb43643be5f4bf8f894ffb9c5de8b34c",
   "worldBytes": 2025,
   "declaredFiles": 310,
-  "totalBytes": 11359301,
-  "packageHash": "sha256:7594d13009b22812d5cc575c2add80114bc2afc5d146821fe8a761ac21006f9a"
+  "totalBytes": 11795241,
+  "packageHash": "sha256:d066014dc4294b151aedd25517c6ec9ff1061512af5c93ffde117d742839a3af"
 }

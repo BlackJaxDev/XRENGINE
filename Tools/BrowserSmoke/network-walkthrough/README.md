@@ -2,7 +2,7 @@
 
 This tooling is for one explicitly approved browser/server walkthrough. Publishing these helpers does not activate certificate work. The new workflow initially performs only Windows PowerShell AST parsing, literal C# compilation, and JavaScript syntax checks. No request or activation record is included in the source change. Ordinary browser CI still runs for engine, helper and workflow changes. Its push filter skips only commits whose changed paths are entirely the two fixed request/activation records below, so publishing approval metadata does not cancel an ongoing engine run. A mixed metadata/code change still runs ordinary CI and does not satisfy this workflow's dedicated-request gate.
 
-The immutable publisher input is recorded in `producer.json`: engine commit `b64f65a7fd7d619e47ec3defdfaa6733a35bbb4b`, run `37307383257`, attempt 1, successful Windows job `111754237186`, artifact `11346111752`, exactly 55,824,360 bytes, SHA-256 `9278a05d81f94c48d3c2c224f184ec5b41db9d2fa0b229580bbccb1be6884562`. The qualified producer compared the original native world with the genuine Editor publication. The consumer reuses that exact archive; it does not rebuild Editor/WASM, recook shaders, or regenerate another world.
+The immutable publisher input is recorded in `producer.json`: engine commit `e4a90cf2f865a08421bb68c293d27616465e1558`, run `37386054995`, attempt 1, successful Windows job `112019576000`, artifact `11380253911`, exactly 56,380,647 bytes, SHA-256 `ad562f2b62ab3c24361056ecc90aa3a9e9f1458e83eeb11213898af1e6e11f50`. The qualified producer compared the original native world with the genuine Editor publication. The consumer reuses that exact archive; it does not rebuild Editor/WASM, recook shaders, or regenerate another world.
 
 ## Execution and approval boundaries
 
@@ -29,8 +29,8 @@ The fixed request path is `.github/diagnostic-requests/network-walkthrough-20261
   "branch": "codex/webgpu-readiness-audit",
   "workflowPath": ".github/workflows/browser-network-walkthrough-once.yml",
   "helperCommit": "<reviewed-helper-commit-A>",
-  "sourceCommit": "b64f65a7fd7d619e47ec3defdfaa6733a35bbb4b",
-  "artifactSha256": "9278a05d81f94c48d3c2c224f184ec5b41db9d2fa0b229580bbccb1be6884562",
+  "sourceCommit": "e4a90cf2f865a08421bb68c293d27616465e1558",
+  "artifactSha256": "ad562f2b62ab3c24361056ecc90aa3a9e9f1458e83eeb11213898af1e6e11f50",
   "createdUtc": "<UTC-time>",
   "expiresUtc": "<UTC-time-within-24-hours>",
   "files": {
