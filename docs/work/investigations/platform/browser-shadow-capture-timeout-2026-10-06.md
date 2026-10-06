@@ -486,6 +486,84 @@ The factored clip check accepted the saved initial and resized geometry. It
 rejected synthetic outside, invalid, scale, viewport, visual-offset, and DPR
 cases. This was a local source check, not a browser or shadow-parity run.
 
+## Current-extent completion before capture
+
+[Run 37510579239](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37510579239)
+on `e273530b8472222d77af641243f09a0873a91285` passed the initial OFF
+capture. Its first resize returned 31 blank images. The last of those
+screenshots returned at 4,271 ms. The first observed native consumer for the
+new `813x457` backing extent was submitted at approximately 4,314.5 ms,
+at queue serial 992. Attempt 32 started its screenshot at 5,306 ms and
+exhausted the remaining 4,694 ms of the original 10-second capture budget.
+
+The 5,001 ms checkpoint showed a matching resource profile, no retained
+physical resource requests, six draws, and 14 commands. Production had
+completed frame sequence 991, with last sequence 993 and two pending scopes.
+These production sequence values are separate from the observer's queue
+serials. The snapshot and enqueue timing do not prove a GPU stall or the
+cause of the screenshot timeout. The inspected artifact is `11437160915`,
+ZIP SHA-256
+`19577a7be11f426853eb7e7b9d855efcce498e23c35d2930076739979e9b88a4`.
+
+The capture helper now requires the published programs, light state, expected
+extent, and prior completed queue serial. Initial captures derive their
+extent from the real canvas backing geometry. Resize captures use the extent
+returned by `resize` and the previous post-capture completion serial. Before
+the first screenshot, the helper finds a submitted native consumer for that
+extent. It uses the exact predicate shared with final GPU qualification:
+`firstSerial > afterSerial`, the allowed real dispatch operation and count,
+the selected native pipeline label, and binding zero of an output texture
+with matching width and height. A later `lastSerial` cannot qualify an old
+consumer record.
+
+The gate polls a compact, read-only GPU projection and the existing native
+selection, GPU READ-map count, and failure state. The projection retains the
+existing bounded errors, overflow and serial counters, texture IDs and
+dimensions, pipeline IDs and labels, and consumer first serial, operation,
+count, pipeline ID, and binding-zero output texture ID. It excludes record
+keys, modules, producers, and resource bindings. The default full snapshot
+remains unchanged. Missing eligible work waits for the next ordinary browser
+frame. Observed failures, GPU errors, overflow, READ maps, and invalid native
+selection fail the gate.
+
+Once a candidate exists, the gate freezes its first serial and calls the
+existing queue-completion helper exactly once. The returned completion serial
+must cover that candidate. It then reads the native compile recipe and runs
+the existing full identity assertion. Pending recipe hashing can wait for an
+ordinary frame within the same deadline; rejected or unavailable recipes and
+identity mismatches fail. Fresh canvas geometry after this gate must still
+match the expected backing extent. A changed extent fails without a new
+completion request.
+
+Polling, completion, identity verification, and all screenshot work share the
+original absolute capture deadline, capped at 10 seconds. Node and browser
+entry checks reject late work. Checks after awaits prevent late continuations
+from starting new reads or screenshots. Each ordinary-frame wait owns and
+clears its timer and pending animation-frame callback. A submitted queue wait
+cannot be cancelled. At most one gate queue promise can remain pending; if it
+settles after the deadline, it can update the observer's existing completion
+counters but cannot take another snapshot or continue capture.
+
+The three gate operations have fixed named diagnostic phases. A small gate
+record identifies the selected and completed serials; successful image
+evidence retains that record. Polls add no history or new diagnostic cap.
+The four existing resize checkpoints, 64-step limit, full post-capture
+snapshot, strict GPU assertions, image alignment, reference matching,
+receiver-effect checks, and request-failure assertion remain in place. This
+change submits no GPU work, reads back no GPU data, pauses no renderer,
+enables no statistics, and starts no trace.
+
+The source passed `node --check` and the scoped `git diff --check`. Nineteen
+saved-data and synthetic logical cases passed in task scratch. They checked
+predicate equivalence, the saved serial-992 boundary, compact/full snapshot
+behavior, native selection, pending and failed recipes, extent changes, one
+completion request, the shared deadline, queued late callbacks, and timer and
+animation-frame cleanup. A late synthetic queue settlement changed only the
+existing completion counters. Independent source review found no blocking
+lifetime or predicate issue. These checks ran no browser or GPU workload.
+The change remains runtime-unqualified; bounded capture and ON/OFF shadow
+parity still require a later authorized runtime run.
+
 ## Validation and next step
 
 The source and saved runtime artifacts were inspected. No new runtime or test
