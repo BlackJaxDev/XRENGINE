@@ -6,11 +6,18 @@ import { captureNativeProfileCapabilities } from './native-profile-capabilities.
 import { createOwnedGpuProfile } from './owned-gpu-profile.mjs';
 
 /** Passive capture: return every original WebGPU object/promise unchanged. Never retain WGSL in evidence. */
-export function installNativeCompileCapture() {
+export function installNativeCompileCapture(additionalPasses = []) {
+    const shadowPasses = ['shade-native-depth', 'shade-native-depth-msaa',
+        'shade-surface-exports-depth', 'shade-surface-exports-depth-msaa'];
+    if (!Array.isArray(additionalPasses) || additionalPasses.length > shadowPasses.length ||
+        additionalPasses.some(pass => !shadowPasses.includes(pass)) ||
+        new Set(additionalPasses).size !== additionalPasses.length)
+        throw new Error('Native compile capture requires a bounded supported shadow pass list.');
     const nativePassByLabel = new Map([
         'shade-native', 'shade-native-no-modifiers',
         'shade-native-msaa', 'shade-native-no-modifiers-msaa',
         'shade-surface-exports-no-modifiers', 'shade-surface-exports-no-modifiers-msaa',
+        ...additionalPasses,
     ].map(pass => [`engine-advanced-${pass}`, pass]));
     const adapters = new WeakMap(), devices = new WeakMap(), bindings = new WeakMap();
     const layouts = new WeakMap(), modules = new WeakMap();

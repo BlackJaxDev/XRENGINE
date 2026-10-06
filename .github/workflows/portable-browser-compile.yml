@@ -560,6 +560,76 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Set up native package and shadow staging tools
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Stage bounded Advanced shadow comparison
+        shell: pwsh
+        run: |
+          $catalog = Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU'
+          $output = Join-Path $env:VALIDATION_ROOT 'advanced-shadow-parity-cli'
+          node Tools/BrowserSmoke/prepare-advanced-shadow-comparison.mjs . $catalog $output
+          if ($LASTEXITCODE -ne 0) { throw 'The Advanced shadow comparison staging failed.' }
+
+      - name: Publish Advanced shadow comparison through the Editor CLI
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          foreach ($state in @('on', 'off')) {
+            $root = Join-Path $env:VALIDATION_ROOT "advanced-shadow-parity-cli/$state"
+            $projectRoot = Join-Path $root 'project'
+            $project = Join-Path $projectRoot 'AdvancedRenderingParity.xrproj'
+            $log = Join-Path $root 'editor-cli.log'
+            dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+              --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+              --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+            if ($LASTEXITCODE -ne 0) { throw "The Advanced shadow $state Editor CLI publisher failed; inspect $log." }
+            $site = Join-Path $projectRoot 'Build/browser-game'
+            $manifest = Get-Content -LiteralPath (Join-Path $site 'content/manifest.json') -Raw | ConvertFrom-Json
+            if (!(Test-Path -LiteralPath (Join-Path $site 'index.html')) -or
+                $manifest.startupWorld -ne '/game/Worlds/AdvancedRenderingParityWorld.asset') {
+              throw "The Editor did not activate the Advanced shadow $state world."
+            }
+            foreach ($pass in @('visibility-pull', 'depth-pyramid', 'gtao', 'shade-classify', 'shade-native', 'present')) {
+              if (!($manifest.pipelineArtifacts | Where-Object { $_.scope -eq 'advanced' -and $_.pass -eq $pass })) {
+                throw "Missing published Advanced shadow $state program: $pass"
+              }
+            }
+            $expected = if ($state -eq 'on') { '8F537639AA8260D935FDA46C82A3CA4D4A983EFBB37BF9C00FB17F8738E96F9B' } else { 'B3DEE24DFCE5D5515C69CEF8DF62738547AE128ABA74A673A1AD058F6E712484' }
+            $stagedWorld = Join-Path $projectRoot 'Assets/Worlds/AdvancedRenderingParityWorld.asset'
+            if ((Get-FileHash -LiteralPath $stagedWorld -Algorithm SHA256).Hash -cne $expected) {
+              throw "The staged Advanced shadow $state world changed during Editor publishing."
+            }
+          }
+          git diff --exit-code -- Samples/AdvancedRenderingParity
+          if ($LASTEXITCODE -ne 0) { throw 'Authored Advanced inputs changed during shadow comparison publishing.' }
+
+      - name: Bind Advanced shadow source and published payload evidence
+        shell: pwsh
+        run: |
+          node Tools/BrowserSmoke/prepare-advanced-shadow-comparison.mjs --receipt . (Join-Path $env:VALIDATION_ROOT 'advanced-shadow-parity-cli')
+          if ($LASTEXITCODE -ne 0) { throw 'The Advanced shadow comparison publication evidence failed.' }
+
+      - name: Preserve exact Editor-published Advanced shadow ON bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-advanced-shadow-parity-bundle
+          path: ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve exact Editor-published Advanced shadow OFF reference
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-advanced-shadow-parity-off-bundle
+          path: ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify render scope ownership and native handoff loading
         shell: pwsh
         env:
@@ -770,11 +840,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Set up native package staging tools
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-
       - name: Publish the shared native networking fixture
         shell: pwsh
         env:
@@ -818,6 +883,12 @@ jobs:
             ${{ env.VALIDATION_ROOT }}/rollingball-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/rendering-parity-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/advanced-rendering-parity-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/project/Build/browser-game/shadow-comparison.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/project/Build/browser-game/shadow-comparison.json
             ${{ env.VALIDATION_ROOT }}/static-meshlet-gpu-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/static-meshlet-cpu-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/native-package.log
@@ -849,7 +920,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kind: [rollingball, rendering-parity, advanced-rendering-parity, ui-parity, modular-pipeline-parity, static-meshlet-parity]
+        kind: [rollingball, rendering-parity, advanced-rendering-parity, advanced-shadow-parity, ui-parity, modular-pipeline-parity, static-meshlet-parity]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -865,6 +936,13 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: windows-editor-static-meshlet-parity-cpu-bundle
+          path: ${{ env.VALIDATION_ROOT }}/published-cpu-baseline
+
+      - name: Download exact same-world shadow OFF reference
+        if: matrix.kind == 'advanced-shadow-parity'
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-editor-advanced-shadow-parity-off-bundle
           path: ${{ env.VALIDATION_ROOT }}/published-cpu-baseline
 
       - name: Set up browser qualification tools
@@ -898,7 +976,7 @@ jobs:
           if [[ "$GAME_KIND" == "advanced-rendering-parity" ]]; then
             trace_args+=(--native-compile-trace)
           fi
-          if [[ "$GAME_KIND" == "static-meshlet-parity" ]]; then
+          if [[ "$GAME_KIND" == "static-meshlet-parity" || "$GAME_KIND" == "advanced-shadow-parity" ]]; then
             trace_args+=(--baseline-publish "$VALIDATION_ROOT/published-cpu-baseline")
           fi
           if [[ "${{ steps.ui_frame_trace.outputs.armed }}" == "true" ]]; then
