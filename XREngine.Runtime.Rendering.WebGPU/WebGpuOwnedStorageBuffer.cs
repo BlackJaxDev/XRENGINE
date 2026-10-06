@@ -24,6 +24,7 @@ internal sealed class WebGpuOwnedStorageBuffer : AbstractRenderAPIObject
 
     internal int ResourceHandle => _handle;
     internal int PendingResourceHandle => _allocationRequest?.Handle ?? 0;
+    internal WebGpuResourceRequest? PendingResourceRequest => _allocationRequest;
     internal uint ByteLength => checked((uint)_byteLength);
     internal bool SupportsCopySource => (_usage & BrowserBufferUsage.CopySource) != 0;
     public override bool IsGenerated => _handle != 0 && _allocationRequest is null;

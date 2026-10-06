@@ -751,3 +751,53 @@ ZIP SHA-256
 The source contract still requires rejection of incompatible old meshlet
 payload provenance, but this run did not separately exercise an old disk-cache
 payload rejection.
+
+## Pending physical-buffer ownership diagnostics
+
+On 2026-10-06, Linux job `112130243687` in
+[run 37419366197](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37419366197)
+at commit `d3f17ddf3177ffbefca569681c5766937e8daa09` failed the unchanged
+`BrowserSmoke.UnlitIndirectCacheOwnership` assertion. The second x4 lifecycle
+failed after its return resize to 512×512, at accepted frame sequence 537,
+pipeline resource generation 4 and executor output generation 3. The complete
+230-resource inventory contains one unmatched 16-byte selection buffer,
+handle `196612`, with usage `136`. Slot 1 contains its second selection owner,
+but that owner reports both its published and pending handles as zero. All
+eleven preceding captured x1/x4 ownership stages pass.
+
+The physical creation journal publishes a candidate handle before its
+asynchronous validation scopes finish. A submitted request returns no physical
+handle to managed code until a later frame accepts its ready receipt. The
+diagnostic pause can stop on a successful frame from another slot during this
+interval. The spare slot still owns the request, while the old diagnostic
+reports only published and ready-unclaimed handles. The retained report does
+not include request identities, so it cannot prove the historical transport
+identity separately. Its exact unmatched resource and the source receipt
+contract identify this missing observation boundary; they do not establish a
+production leak.
+
+The diagnostic now includes each pending buffer's exact request identity,
+backend generation, state and immutable descriptor. Its same-session executor
+capture resolves that identity to the physical candidate and validates the
+descriptor, request state, packed resource generation and resource-table owner.
+It records the candidate only in the diagnostic pending-handle field. The
+candidate remains unaccepted: the capture does not claim the request, change
+readiness, advance preparation, submit a frame, wait for GPU completion or add
+a resource lease. Production rendering and receipt acceptance are unchanged.
+The existing complete-inventory, unique-owner, descriptor, dependency,
+pending-resource and frame assertions remain unchanged.
+
+Both affected JavaScript modules pass syntax checks and `git diff --check`
+passes. The focused `XREngine.Runtime.Rendering.WebGPU` build passes with zero
+warnings and errors using the existing .NET 10.0.401 SDK, local package cache,
+single-node MSBuild and disabled workload resolution. Its log is
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/indirect-pending-ownership-build.log`.
+This plain `net10.0` build does not compile the browser WASM host.
+Exact-commit browser acceptance remains pending.
+The required live boundary is the complete ordinary indirect x1/x4/AO matrix,
+including resize, restart, retained request identity, zero ordinary read maps
+and teardown. Source checks do not qualify browser output or physical hardware.
+The retained failing artifact is `11393920638`, ZIP SHA-256
+`dd0fd807a1a2b8355494808b2c015f9c34c3cbbe642244840f28817803f71159`.
+Its report is under
+`Build/_AgentValidation/20261001-225000-lit-surface/reports/bare-host-d3f17ddf/`.

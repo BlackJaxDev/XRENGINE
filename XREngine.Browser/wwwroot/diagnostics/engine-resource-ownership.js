@@ -3,6 +3,7 @@ export function retainEngineResourceOwnership(renderer, owner) {
     renderer._requireOwner();
     if (renderer._owner !== owner) throw new Error('The resource diagnostic must own its renderer.');
     const commands = renderer.commands, publish = commands.publish;
+    const creation = commands.engineFrame.creation;
     const descriptor = Object.getOwnPropertyDescriptor(commands, 'publish');
     const empty = [];
     let dependencies = new WeakMap(), disposed = false, captureError = null;
@@ -16,11 +17,15 @@ export function retainEngineResourceOwnership(renderer, owner) {
     };
     commands.publish = wrappedPublish;
     return {
-        capture(nativeId) {
+        capture(nativeId, indexedCache) {
             renderer._requireOwner();
-            if (disposed || renderer._owner !== owner || renderer.commands !== commands || commands.publish !== wrappedPublish)
+            if (disposed || renderer._owner !== owner || renderer.commands !== commands || commands.publish !== wrappedPublish ||
+                commands.engineFrame.creation !== creation)
                 throw new Error('Current diagnostic resource ownership is required.');
             if (captureError) throw captureError;
+            // A physical candidate can precede its managed acceptance receipt.
+            // Resolve only the exact retained request; do not accept or advance it.
+            resolvePendingBufferOwners(indexedCache);
             const entries = [], handles = new Map(), nativeBuffers = new Map();
             for (let slot = 1; slot < renderer._resources.slots.length; slot++) {
                 const entry = renderer._resources.slots[slot];
@@ -79,4 +84,44 @@ export function retainEngineResourceOwnership(renderer, owner) {
             else delete commands.publish;
         },
     };
+
+    function resolvePendingBufferOwners(cache) {
+        if (!cache || cache.owner !== owner || cache.outputGeneration !== renderer._generation ||
+            !Number.isSafeInteger(cache.backendGeneration) || cache.backendGeneration < 0)
+            throw new Error('Pending buffer diagnostics require the current managed renderer generation.');
+        const identities = new Set();
+        const resolve = (request, managedHandle) => {
+            if (!request) return managedHandle;
+            if (!Number.isSafeInteger(request.identity) || request.identity <= 0 || identities.has(request.identity) ||
+                request.ownerGeneration !== cache.backendGeneration || ![0, 1, 2].includes(request.state) ||
+                !Array.isArray(request.descriptor) || request.descriptor.length !== 3)
+                throw new Error('A pending buffer diagnostic has no unique live managed request.');
+            identities.add(request.identity);
+            const candidate = creation.requests.get(request.identity);
+            if (!candidate) {
+                // Queued descriptors may not have reached the executor. A ready
+                // receipt may already have released its transport identity.
+                if (request.state === 0 && managedHandle === 0 || request.state === 2 && managedHandle > 0)
+                    return managedHandle;
+                throw new Error('A submitted buffer request has no executor owner.');
+            }
+            if (candidate.kind !== 1 || candidate.json !== JSON.stringify(request.descriptor) ||
+                candidate.cancelled || ![1, 2].includes(candidate.state))
+                throw new Error('A pending buffer executor request has changed or retired.');
+            const handle = candidate.handle, entry = renderer._resources.slots[handle & 0xffff];
+            const [size, usage, label] = request.descriptor;
+            if (!Number.isSafeInteger(handle) || handle <= 0 || entry?.owner !== owner || entry.kind !== 'buffer' ||
+                entry.generation !== Math.floor(handle / 0x10000) || entry.value.retired ||
+                entry.value.size !== size || entry.value.usage !== usage || entry.value.label !== label ||
+                managedHandle !== 0 && managedHandle !== handle || request.state === 2 && managedHandle !== handle)
+                throw new Error('A pending buffer request has no exact physical candidate generation.');
+            return handle;
+        };
+        for (const slot of cache.slots) {
+            for (const selection of slot.selections)
+                selection.pendingHandle = resolve(selection.pendingRequest, selection.pendingHandle);
+            for (const work of slot.works)
+                work.pendingArguments = resolve(work.pendingArgumentsRequest, work.pendingArguments);
+        }
+    }
 }

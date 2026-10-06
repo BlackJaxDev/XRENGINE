@@ -37,7 +37,9 @@ internal sealed class WebGpuAuthoredIndexedFrameSlot(WebGpuRendererHost renderer
             output.Append("{\"index\":").Append(i)
                 .Append(",\"handle\":").Append(selected.ResourceHandle)
                 .Append(",\"pendingHandle\":").Append(selected.PendingResourceHandle)
-                .Append('}');
+                .Append(",\"pendingRequest\":");
+            AppendPendingBufferRequest(output, selected);
+            output.Append('}');
         }
         output.Append("],\"works\":[");
         for (int i = 0; i < _indirectWork.Count; i++)
@@ -47,11 +49,29 @@ internal sealed class WebGpuAuthoredIndexedFrameSlot(WebGpuRendererHost renderer
             output.Append("{\"index\":").Append(i)
                 .Append(",\"arguments\":").Append(work.Arguments.ResourceHandle)
                 .Append(",\"pendingArguments\":").Append(work.Arguments.PendingResourceHandle)
-                .Append(",\"pipeline\":").Append(work.DiagnosticPipelineHandle)
+                .Append(",\"pendingArgumentsRequest\":");
+            AppendPendingBufferRequest(output, work.Arguments);
+            output.Append(",\"pipeline\":").Append(work.DiagnosticPipelineHandle)
                 .Append(",\"outputGeneration\":").Append(work.DiagnosticOutputGeneration)
                 .Append('}');
         }
         output.Append("]}");
+    }
+
+    private static void AppendPendingBufferRequest(StringBuilder output, WebGpuOwnedStorageBuffer buffer)
+    {
+        if (buffer.PendingResourceRequest is not { } request)
+        {
+            output.Append("null");
+            return;
+        }
+        if (!ReferenceEquals(request.Owner, buffer) || request.OwnerGeneration != buffer.OwnerGeneration || request.Kind != 1)
+            throw new InvalidOperationException("WebGPU.AuthoredIndexed.DiagnosticOwner: a pending buffer must retain its exact allocation request.");
+        output.Append("{\"identity\":").Append(request.Identity)
+            .Append(",\"ownerGeneration\":").Append(request.OwnerGeneration)
+            .Append(",\"state\":").Append((int)request.State)
+            .Append(",\"descriptor\":").Append(request.Json)
+            .Append('}');
     }
 
     internal void Begin(GPUScene scene, GpuMeshSubmissionPublicationLease lease, uint sequence)

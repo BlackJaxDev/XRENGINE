@@ -295,9 +295,10 @@ export class EngineMeshDiagnosticHost {
                 if (target.format === 'rgba16float' && target.label === 'HDRSceneTex') hdrTargets.push(target);
             }
         });
-        return { ...JSON.parse(this.exports.GetUnlitState(this.session)), shaders, pipelines, hdrTargets, targets,
+        const observed = JSON.parse(this.exports.GetUnlitState(this.session));
+        return { ...observed, shaders, pipelines, hdrTargets, targets,
             submittedFrame: this.unlitFrameEvidence.capture(),
-            resourceOwnership: this.unlitResourceOwnership?.capture(nativeId) ?? null };
+            resourceOwnership: this.unlitResourceOwnership?.capture(nativeId, observed.indexedCache) ?? null };
     }
 
     /** Reads only a canonical x1 texture owned by the current ordinary-unlit generation. */
