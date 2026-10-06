@@ -950,3 +950,35 @@ These checks do not qualify runtime selection, modifier toggles, rendered values
 or compilation speed. Browser acceptance must identify the actual selected
 descriptor and retain the full programs for selected modifiers and uncertain
 state. The ordinary application and isolated compile deadlines remain unchanged.
+
+## Software browser acceptance with proven modifier absence
+
+Exact commit `6cbf90ba34bca26c95e3d486bfc76d71042942e9` passes the Advanced
+application in [run 37409898930, job 112103952918](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37409898930/job/112103952918).
+The Windows Editor cooked and published the saved Advanced sample through its
+ordinary CLI. Two fresh Chromium software-WebGPU sessions show the authored
+checker panels before and after resize. Initial and resized screenshots were
+inspected. Canvas backing sizes are 977×550, then 813×457 and 893×502. Screenshot
+CSS rounding adds one or two rows; those PNG dimensions are not backing sizes.
+
+Both sessions select `engine-advanced-shade-native-no-modifiers`. Its captured
+compute-pipeline creation completes in 10,900.6 ms and 11,546.9 ms. Its 278,216-byte
+WGSL has SHA-256 `0d88fea7ef3f06cd8ab95d3b49ded7cb240047f90f84cc4f9e51645398328b95`.
+The captured selected descriptor and compiled pipeline identity agree. Recorded
+work includes native visibility draws, depth-pyramid and GTAO dispatches,
+classification/finalization, native material/background shading, postprocessing
+and presentation. The two recorded sessions report 14 and 16 visibility/present
+draws, 28 and 32 native shading dispatches, and zero GPU read mappings. No page
+or console errors occur, and local-delivery checks pass. All 1,376 recorded HTTP
+responses are successful. The browser logs also contain 143 aborted-request
+events; this result does not claim that every request completed.
+
+The retained qualification artifact is `editor-advanced-rendering-parity-browser-qualification`,
+ID `11389678261`, 233,175 bytes, SHA-256
+`0ce891eb02d5768570706c47a8a49b4165c2aa4ab425f8204711a7f2a2f17e1d`.
+This establishes the static sample's selected modifier-free native application
+path under the unchanged deadline. Earlier full-native controls exceeded 45
+seconds. These runs are not a matched performance benchmark. They do not qualify
+selected shadows or decals, transitions between program families, numerical PBR
+values, native deformation, x4 MSAA, every submission mode, or hardware performance.
+Those acceptance requirements remain open.
