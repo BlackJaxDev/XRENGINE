@@ -142,9 +142,21 @@ export async function advancedRenderingGameCheck(browser, origin, report, config
             const resized = await captureUntil(page, config, `advanced-rendering-${iteration}-resized`, null, hasSurface,
                 'BrowserSmoke.AdvancedResize: the authored surface disappeared after output replacement.');
             const submissions = await page.evaluate(() => globalThis.advancedSubmissionSnapshot());
-            for (const pass of ['depth-pyramid', 'gtao', 'shade-classify', 'shade-finalize', 'shade-native', 'shade-background'])
+            for (const pass of ['depth-pyramid', 'gtao', 'shade-classify', 'shade-finalize', 'shade-background'])
                 assert(submissions.compute[`engine-advanced-${pass}`] > 0,
                     `BrowserSmoke.AdvancedStageMissing: no recorded native ${pass} dispatch.`);
+            const nativeLabels = ['engine-advanced-shade-native', 'engine-advanced-shade-native-no-modifiers'];
+            const selectedNative = nativeLabels.filter(label => submissions.compute[label] > 0);
+            assert(selectedNative.length === 1,
+                'BrowserSmoke.AdvancedStageMissing: one exact native shading program must dispatch.');
+            const nativeCompile = await page.evaluate(() => globalThis.advancedNativeCompileSnapshot?.() ?? null);
+            assert(nativeCompile?.captureErrors.length === 0 && nativeCompile.records.some(record =>
+                record.recipeStatus === 'ready' && record.status === 'fulfilled' &&
+                record.recipe?.pipeline?.label === selectedNative[0]),
+            'BrowserSmoke.AdvancedNativeIdentity: the selected native program needs a captured compile recipe.');
+            assert(submissions.creation.computePipelines.records.some(record =>
+                record.label === selectedNative[0] && record.status === 'fulfilled'),
+            'BrowserSmoke.AdvancedNativeIdentity: the selected native pipeline did not compile.');
             for (const pass of ['visibility-pull', 'present'])
                 assert(submissions.raster[`engine-advanced-${pass}`] > 0,
                     `BrowserSmoke.AdvancedRasterMissing: no recorded native ${pass} draw.`);
@@ -152,7 +164,8 @@ export async function advancedRenderingGameCheck(browser, origin, report, config
                 'BrowserSmoke.AdvancedReadback: the native output requested a GPU read mapping.');
             assertNoBrowserErrors(events);
             report.advancedRenderingIterations.push({ iteration, detail, playing: initial.pixels,
-                resized: resized.pixels, submissions, canvasSizes: { before,
+                resized: resized.pixels, selectedNativeProgram: selectedNative[0], nativeCompile,
+                submissions, canvasSizes: { before,
                     after: await canvas.evaluate(element => [element.width, element.height]) } });
         } catch (error) {
             hadFailure = true;

@@ -93,6 +93,43 @@ This design assumes the existing repository writers/coordinator, reviewed workfl
 
 The exact published page is served on a fresh `http://127.0.0.1:<ephemeral>` origin. Both modes require the existing `EngineCanvasHost` to report running/presented, `HasPresentedCanvasFrame()` true and preparation state 1; renderer initialization alone is insufficient. Preflight closes fully before trust. The live mode uses real focused W key events, real managed admission, worker simulation counters and a fresh post-suspension reservation/handoff. This does not claim exact server/client pose agreement or complete replay/mobile/expiry qualification.
 
+The browser launch requests the Chromium sandbox with Playwright's
+`chromiumSandbox: true`. Earlier preparations inherited
+[Playwright's sandbox-off default](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-chromium-sandbox).
+The helper keeps the four software-mode arguments from `smoke.config.mjs` in
+their existing order. It appends `--use-webgpu-adapter=swiftshader` for this
+walkthrough only. The existing `--enable-unsafe-webgpu` flag
+[allows CPU adapters](https://chromium.googlesource.com/chromium/src/+/ae047a7ca076abd0d10f856ff9bb59639b6d8de3/gpu/command_buffer/service/webgpu_decoder_impl.cc)
+and [bypasses Chromium's WebGPU adapter blocklist](https://developer.chrome.com/blog/supercharge-web-ai-testing).
+Use this mode only with the trusted loopback pages and the existing request
+route. The launch does not add Dawn `allow_unsafe_apis`, relax TLS, or change
+certificate trust.
+
+[Chromium 153.0.8010.12 GPU startup code](https://chromium.googlesource.com/codesearch/chromium/src/+/refs/tags/153.0.8010.12/gpu/ipc/service/gpu_init.cc)
+preloads `vk_swiftshader.dll` when the WebGPU adapter selector requests
+SwiftShader. [Chromium's WebGPU test configuration](https://chromium.googlesource.com/chromium/src/+/HEAD/third_party/blink/web_tests/FlagSpecificConfig)
+pairs that selector with `--enable-unsafe-webgpu`.
+[Dawn's test guide](https://dawn.googlesource.com/dawn/+/HEAD/webgpu-cts/README.md)
+also documents the selector. These source facts support a launch candidate.
+They do not prove that this runner used the sandbox or created a SwiftShader
+adapter.
+
+After the real first-frame check passes, `BrowserEnvironmentProof` reads the
+current renderer device's `adapterInfo`. It does not request another adapter.
+The public result contains only `swiftshader`, `other`, or `unavailable`, plus
+an optional fallback boolean. A short-lived browser CDP session reads
+`SystemInfo.getInfo`. The public result records `chromiumSandboxRequested: true`
+and `webGpuAdapterRequested: 'swiftshader'` as launch requests. After the first
+frame, it records `gpuProcessSandboxed` as the observed boolean.
+[Chromium's GPU info](https://chromium.googlesource.com/chromium/src/+/a134480ae1adb62656040363afc9987d7adf4c78/gpu/config/gpu_info.cc)
+supplies `sandboxed` as a boolean, and its
+[SystemInfo handler](https://chromium.googlesource.com/chromium/src/+/0355b2473dd07c2fde13c657f783bf219b7869a3/content/browser/devtools/protocol/system_info_handler.cc)
+places it in `gpu.auxAttributes`. The result contains no raw CDP reply or
+adapter text. During preparation, the check fails before trust if the adapter
+is not SwiftShader, the GPU process sandbox is not reported as enabled, or
+proof is unavailable. The CDP boolean describes the GPU process. It does not
+prove the renderer process sandbox state.
+
 If the page fails, the browser probe reads the host's retained cold failure before cleanup. The public result contains only a presence flag and closed-list startup stage, exception kind, and engine condition labels. Unknown text maps to `other`. An absent host failure stays absent and does not identify a cause. The probe does not export page status text, exception text, stacks, request URLs, browser console records, or shader source. This classification does not change the first-frame gate or permit a network run after failed preparation.
 
 The service uses literal IPv4 loopback, advertises `localhost`, and issues `wss://localhost:15200/realtime`. The single certificate has SAN `DNS=localhost`, a nonexportable private key in `CurrentUser\My`, explicit UTC `NotBefore=now` rounded to certificate whole-second precision and `NotAfter=start+30 minutes`. Its positive validity interval is checked to be no more than 30 minutes before trust is added; the provider's default backdating is not used. Only its public certificate is added to `CurrentUser\Root`. The browser uses normal TLS validation; no ignored certificate errors, TLS flags, LocalMachine store, firewall change or signing certificate is used. The service accepts only the exact ephemeral page origin. A restrictive `connect-src` policy permits only that gateway plus same-origin/local blob/data requests; request routing and WebSocket observation add checks without proxying or replacing Chromium's WSS handshake.
@@ -176,3 +213,12 @@ build descendants named `vctip` and `mspdbsrv`. The earlier cleanup flag therefo
 did not prove native-build process cleanup. Both builds now use the owned-job
 protocol above. Their fresh Windows containment and preflight evidence are still
 required. The failed request is retired; no activation was created or published.
+
+Preparation run `37404814127` built both native targets in their owned jobs and
+confirmed zero compiler descendants after cleanup. Browser preflight then
+failed with `AdapterUnavailable` before trust. The updated launch is the next
+source candidate for that failure. It needs a fresh reviewed helper hash,
+dedicated request, successful Windows static and preflight evidence, and the
+existing independent review before any exact-run activation. A passing source
+check or launch-option check is not runtime acceptance. No certificate mutation
+or trust action was reached in run `37404814127`.

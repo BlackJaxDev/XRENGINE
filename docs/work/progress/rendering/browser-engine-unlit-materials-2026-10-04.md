@@ -114,3 +114,34 @@ are generation-correct, actual native identities remain stable, and pending
 retirement/readback resources drain. All other existing Linux renderer/runtime
 checks pass. This closes the bounded CPU-direct x1 cohort, not the separately
 listed x4, GPU-driven, custom-pipeline or native Advanced acceptance.
+
+## Fresh-context native program comparison
+
+On `c394049ff00f1905554368ac14a5fc8a79dec821`, the existing GPU-indirect blended
+x4 restart check fails in
+[run 37403803720](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37403803720)
+at the second fresh context's initial 512×512 capture. The unlit-texture shader
+and pipeline exchange diagnostic IDs 9 and 10. The diagnostic assigns these
+ordinals from a fresh WeakMap as it visits resource slots. Freed-slot reuse and
+asynchronous resource publication can change that order across contexts.
+
+The inventory of 21 distinct native programs, the nine catalog identity values,
+ten shader-cache entries and misses, 73,728 cache-key bytes, and 37 pipeline-cache
+entries match the passing run. Pixel, blended ordering, ownership and readback checks precede this failure
+and pass. The failing lifecycle does not reach its later resize and teardown
+checks. The compared commits change only the isolated networking tooling.
+
+With explicit test-edit clearance, the fresh-context blended comparison now
+groups the existing native program records by object ID, sorts each object's
+kind/label memberships, then sorts the group list. The outer list remains a
+multiset. This preserves distinct-object counts and cross-label aliases while
+allowing the session-local ordinals to differ. Exact native-ID checks within one
+context, warm cache checks, cooked identities, pixels, owner/dependency checks,
+readback accounting and teardown checks remain unchanged. Non-blended residual
+comparisons remain unchanged.
+
+Analysis of all ten saved blended stages produces the same 21 object groups,
+including both distinct color render pipelines. This is saved-evidence analysis;
+the corrected live check still requires exact-commit CI. Three measured extents
+and eventual zero-resource teardown do not prove a steady-state resource bound
+for the blended candidate caches. That broader acceptance remains open.

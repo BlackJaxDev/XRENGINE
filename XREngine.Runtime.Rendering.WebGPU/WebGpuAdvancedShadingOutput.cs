@@ -29,6 +29,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         WebGpuAdvancedShadingFrame frame = _frames[visibility.Scene!.SlotIndex];
         if (frame.ClassifiedSequence == visibility.FrameSequence && frame.PreparationGeneration == visibility.PreparationGeneration &&
             frame.AuthoredDecalsEnabled == request.EnableAuthoredDecals &&
+            HasCurrentAuthoredDecalCount(in request, frame) &&
             frame.AuthoredDecalCommandSignature == AuthoredDecalCommandSignature(in request))
         { reason = string.Empty; return true; }
         bool multisample = request.MsaaSampleCount == 4;
@@ -94,14 +95,16 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         if (frame.ClassifiedSequence != visibility.FrameSequence || frame.PreparationGeneration != visibility.PreparationGeneration ||
             frame.Width != request.Target.Width || frame.Height != request.Target.Height ||
             frame.AuthoredDecalsEnabled != request.EnableAuthoredDecals ||
+            !HasCurrentAuthoredDecalCount(in request, frame) ||
             frame.AuthoredDecalCommandSignature != AuthoredDecalCommandSignature(in request))
         { reason = "WebGPU.Advanced.ClassificationMissing: shade requires the same frozen view, scene slot, and GPU classification generation."; return false; }
         if (request.MsaaSampleCount == 4) return TryShadeMultisample(in request, instance, visibility, frame, out reason);
-        WebGpuRenderProgram native = Program(instance, frame.DepthComparisonBank ? "shade-native-depth" : "shade-native");
+        bool modifiersAbsent = HasModifierAbsentPrograms(instance, in request, frame);
+        WebGpuRenderProgram native = Program(instance, modifiersAbsent ? "shade-native-no-modifiers" : frame.DepthComparisonBank ? "shade-native-depth" : "shade-native");
         WebGpuRenderProgram? uberNative = frame.HasUberRaster ? UberProgram(instance, frame.DepthComparisonBank, false, false) : null;
         WebGpuRenderProgram? uberExports = frame.HasUberRaster && request.RequiresMaterialSurfaceExports ? UberProgram(instance, frame.DepthComparisonBank, false, true) : null;
         WebGpuRenderProgram background = Program(instance, "shade-background");
-        WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, frame.DepthComparisonBank ? "shade-surface-exports-depth" : "shade-surface-exports") : null;
+        WebGpuRenderProgram? exports = request.RequiresMaterialSurfaceExports ? Program(instance, modifiersAbsent ? "shade-surface-exports-no-modifiers" : frame.DepthComparisonBank ? "shade-surface-exports-depth" : "shade-surface-exports") : null;
         WebGpuRenderProgram? exportBackground = request.RequiresMaterialSurfaceExports ? Program(instance, "shade-background-exports") : null;
         bool ready = Prepare(native) & Prepare(background);
         if (exports is not null) ready &= Prepare(exports) & Prepare(exportBackground!);
@@ -228,6 +231,10 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
     {
         WebGpuRenderProgram api = _renderer.GetAdvancedStageApi(instance.Pipeline!, pass switch
         {
+            "shade-native-no-modifiers" => "advanced::shade-native-no-modifiers",
+            "shade-native-no-modifiers-msaa" => "advanced::shade-native-no-modifiers-msaa",
+            "shade-surface-exports-no-modifiers" => "advanced::shade-surface-exports-no-modifiers",
+            "shade-surface-exports-no-modifiers-msaa" => "advanced::shade-surface-exports-no-modifiers-msaa",
             "shade-uber-native" => "advanced::shade-uber-native",
             "shade-uber-native-depth" => "advanced::shade-uber-native-depth",
             "shade-uber-native-msaa" => "advanced::shade-uber-native-msaa",

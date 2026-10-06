@@ -33,6 +33,7 @@ internal sealed class WebGpuAdvancedShadingFrame : IDisposable
     internal uint[] AuthoredDecalIndices = [];
     internal int AuthoredDecalCount;
     internal bool DepthComparisonBank;
+    internal bool NativeModifiersAbsent;
     internal bool HasUberRaster;
     internal uint Width;
     internal uint Height;

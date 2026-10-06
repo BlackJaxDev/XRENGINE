@@ -21,6 +21,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             // An exception must not leave a partially replaced plan reusable against
             // the previously accepted publication on a later frame.
             frame.DatabaseEpoch = 0;
+            frame.NativeModifiersAbsent = false;
             _globalCount = 0;
             PrepareAuthoredDecals(in request, snapshot, frame);
             uint view = request.NativeViewIndex;
@@ -108,6 +109,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             }
             frame.Materials.EnsureCapacity(checked(Math.Max(materials.Length, 1) * 4));
             frame.Materials.UploadPreparation(MemoryMarshal.AsBytes(frame.MaterialRows.AsSpan(0, Math.Max(materials.Length, 1))));
+            frame.NativeModifiersAbsent = AreNativeModifiersAbsent(snapshot, in request, frame);
             frame.DatabaseEpoch = snapshot.DatabaseEpoch; frame.MaterialGenerations = snapshot.MaterialPayloads.Generations;
             frame.ResourceGenerations = snapshot.ResourceGenerations; frame.ViewIndex = request.NativeViewIndex; frame.IblEnabled = request.EnableLightProbesAndIbl;
             frame.AuthoredDecalsEnabled = request.EnableAuthoredDecals;
@@ -140,6 +142,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput
             frame.MaterialGenerations != snapshot.MaterialPayloads.Generations || frame.ResourceGenerations != snapshot.ResourceGenerations ||
             frame.ViewIndex != request.NativeViewIndex || frame.IblEnabled != request.EnableLightProbesAndIbl ||
             frame.AuthoredDecalsEnabled != request.EnableAuthoredDecals ||
+            !HasCurrentAuthoredDecalCount(in request, frame) ||
             frame.AuthoredDecalCommandSignature != AuthoredDecalCommandSignature(in request)) return false;
         for (int index = 0; index < frame.CohortCount; index++)
         {

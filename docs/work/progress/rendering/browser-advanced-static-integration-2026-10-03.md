@@ -881,3 +881,72 @@ then exercise filtered directional/spot shadows with mapped normals, ordered
 overlapping decals, alpha/mask variation, mirrored/nonuniform transforms,
 triangle edges, MSAA samples and invalid-resource diagnostic behavior. A faster
 native compile alone cannot establish image parity or production acceptance.
+
+## Native program family separation and optional modifier absence
+
+The October 6 source group separates the native material evaluator from the
+Uber raster-surface consumer at cook time. The Uber consumer keeps its own
+schema and resource ABI. Slang preserves its declared resource parameters even
+when the specialized source does not use all of them. On `c4922e42`, the isolated
+software-adapter Uber consumer compiled in 3,052.4 ms with no validation error.
+This was a compile-only result. The ordinary native application and its isolated
+native pipeline still exceeded their unchanged 45-second deadlines.
+
+The next source group at `abcdf3b6` uses one ordered iterator for generic and
+selected authored decals. Generic rows precede authored entries; authored order
+and duplicate entries remain. The iterator retains deferred authored-range
+validation and does not add the two counts, which avoids count-addition overflow.
+Both evaluator bodies remain unchanged. All sixteen cooks passed their ABI
+checks; all eight Uber programs remained byte-identical. The ordinary native
+WGSL shrank to 367,990 bytes. Exact browser
+[run 37397150630](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37397150630)
+still exceeded the native first-frame deadline. Source size alone does not
+establish compilation speed.
+
+Four additive companions now cover ordinary native shading and material surface
+exports, each at one or four samples. Their
+`xrengine.engine.native-unmodified.v1` identity requires
+`XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1`. They retain the complete
+binding layouts, texture bank, entry points, workgroups, and limits of their full
+counterparts. The cooker adds this new identity to its parameter-preservation
+rule. The existing Uber consumer and Uber base/order-gate paths keep their
+previous rule. Existing full-program compiler options do not change.
+
+Selection requires a valid frozen scene publication and a current authored decal
+selection. During cohort-plan rebuild, the renderer scans all physical light
+and generic decal rows with the shader's view-mask rules. An enabled selected-view
+shadow light or generic decal keeps the full program, including stale identities.
+Selected authored decals also keep the full program. Missing resources do not
+prove modifier absence. Depth-comparison banks use the full family.
+
+The proof is cached with the existing publication, view, material, resource, and
+authored-selection identities. Each rebuild clears the previous proof before
+validation. Reused plans add no
+new scan or allocation. Existing resource, material, texture, and authored decal
+validation remains active. The empty authored-range diagnostic stays at its
+original shader call point. Relevant generation or authored-selection changes
+invalidate the proof. The rebuilt plan selects the required family. Pending
+preparation retains the whole frame without submission.
+
+The new companions are optional. An older package without them continues to use
+the full family. A present but malformed companion fails schema or ABI validation
+at installation; device-limit checks run during admission. Selection requires every optional
+companion needed by the frame; it does not mix an unready family into that frame.
+
+Source review, a WebGPU Release build, a ShaderCooker Release build, and all twenty
+canonical cooks passed. Both builds had zero warnings and zero errors. All sixteen
+existing WGSL programs remain byte-identical to the shared-iterator baseline.
+Each new program retains its counterpart's physical ABI.
+
+| Optional companion | WGSL bytes | Descriptor bytes |
+| --- | ---: | ---: |
+| Native | 278,216 | 33,191 |
+| Native, four samples | 283,537 | 33,097 |
+| Surface exports | 279,067 | 33,229 |
+| Surface exports, four samples | 284,566 | 33,332 |
+
+The added raw payload is 1,258,235 bytes before catalog metadata and compression.
+These checks do not qualify runtime selection, modifier toggles, rendered values,
+or compilation speed. Browser acceptance must identify the actual selected
+descriptor and retain the full programs for selected modifiers and uncertain
+state. The ordinary application and isolated compile deadlines remain unchanged.
