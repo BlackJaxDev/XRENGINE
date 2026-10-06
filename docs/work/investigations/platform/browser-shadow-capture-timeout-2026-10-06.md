@@ -206,7 +206,7 @@ gate consumed the capture interval. No renderer change is included.
 
 The next diagnostic packet reads existing state only for the first OFF resize
 to width 860. It has four fixed checkpoints for the entire run: capture start,
-first blank image, the first opportunity after half the capture budget, and
+first blank image, the midpoint of the capture budget, and
 capture failure. Each read uses a maximum 200 ms Node-side cap within the
 original absolute capture deadline. A failure after that deadline records an
 unavailable checkpoint without another browser read. Missing checkpoints have
@@ -407,8 +407,52 @@ The server still serves full bodies and has no conditional-response branch.
 The strict request-failure assertion, browser error checks, capture deadline,
 image checks, and GPU completion checks remain unchanged. This is a bounded
 test-server candidate, not a change to the published player's cache policy or
-a claim that aborted requests are harmless. The next exact-commit CI run must
-qualify the candidate. ON/OFF shadow parity remains open.
+a claim that aborted requests are harmless. ON/OFF shadow parity remains open.
+
+## Midpoint observation during a pending screenshot
+
+[Run 37495279449](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37495279449)
+on `20646` retained no browser request failures, crashes, or errors. The
+delivery snapshot was ready with 349 verified essential assets and zero
+failed or cancelled reads. The initial OFF capture passed, but the first
+resize again exceeded its unchanged 10-second capture budget.
+
+Nineteen completed resize captures contained only the CSS background with
+stable geometry. The saved PNG has SHA-256
+`98a01812cd1058d44aa1868d4694fbe1c7b90554a56e27d1dc9f4ba47972b95b`.
+The first resized native consumer enqueued at capture +4,660 ms, with seven
+calls from submit serial 1,183 through 1,190. Screenshot attempt 20 started
+at +4,697 ms and used the remaining 5,303 ms before timing out. The later
+full-page failure image shows the receiver and occluders. No device error
+or new shader compilation was retained. These observations do not identify
+the blocked screenshot operation or establish when the resized GPU work
+completed. Playwright's page screenshot also includes page preparation,
+font readiness, layout metrics, and cleanup around the Chromium capture.
+
+The first resized enqueue was earlier than the successful `f10b` run's
+approximately +5,329 ms. Another resource scheduling change is therefore
+not justified by this result. The existing halfway read was never reached
+because it ran only between capture operations; attempt 20 was still pending
+at the midpoint. Its absence cannot be interpreted as incomplete GPU work.
+
+The same halfway slot is now scheduled by an owned Node timer at absolute
+capture start plus half the existing budget. A synchronous slot claim makes
+the timer and existing loop calls mutually exclusive. The selector remains
+only the first OFF resize to width 860, with four slots total, unchanged
+fields, a maximum 200 ms read cap, and the original absolute capture deadline.
+A closed page or expired deadline starts no read. The page-side getter also
+rejects late execution before managed exports. If browser evaluation blocks,
+the record remains explicitly unavailable with a timeout or failure reason.
+
+Capture success or failure clears the midpoint timer. Before copying evidence,
+it seals an in-flight midpoint record as unavailable; any later read reply is
+ignored. The existing read cap still bounds that in-flight observation, and
+cleanup adds no wait or capture allowance. The timer callback catches read
+failures without replacing the primary capture failure. This change adds no
+GPU completion wait, submission, readback, renderer pause, or new checkpoint.
+It does not establish that the screenshot timeout is fixed.
+The inspected artifact is `11429557034`, ZIP SHA-256
+`5360c614ae793be58a268cdb43e3635f315860856eaf7c3aef433580a13f264b`.
 
 ## Validation and next step
 
