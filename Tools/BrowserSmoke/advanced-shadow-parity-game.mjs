@@ -340,14 +340,26 @@ export function installShadowGpuObservation() {
             }
         }
     });
-    globalThis.advancedShadowSnapshot = () => structuredClone(evidence);
-    globalThis.advancedShadowComplete = async () => {
+    const snapshot = mode => mode === 'capture' ? {
+        captureErrors: [...evidence.captureErrors], deviceErrors: [...evidence.deviceErrors], overflow: evidence.overflow,
+        queueSubmits: evidence.queueSubmits, queueCompletions: evidence.queueCompletions, completedSerial: evidence.completedSerial,
+        textures: evidence.textures.map(({ id, width, height }) => ({ id, width, height })),
+        pipelines: evidence.pipelines.map(({ id, label }) => ({ id, label })),
+        consumers: evidence.consumers.map(({ pipelineId, operation, count, firstSerial, outputs }) => ({
+            pipelineId, operation, count, firstSerial,
+            outputs: outputs.filter(view => view.binding === 0).map(({ binding, textureId }) => ({ binding, textureId })),
+        })),
+    } : structuredClone(evidence);
+    globalThis.advancedShadowSnapshot = snapshot;
+    globalThis.advancedShadowComplete = async (mode, deadline = Infinity) => {
+        if (Date.now() >= deadline) throw new Error('BrowserSmoke.ShadowCompletion: capture deadline exhausted.');
         if (!queue) throw new Error('BrowserSmoke.ShadowCompletion: no real queue submission.');
         const serial = evidence.queueSubmits;
         await queue.onSubmittedWorkDone();
         evidence.queueCompletions++;
         evidence.completedSerial = Math.max(evidence.completedSerial, serial);
-        return structuredClone(evidence);
+        // A late queue promise can update the existing counters, but must not start another evidence read.
+        return Date.now() >= deadline ? null : snapshot(mode);
     };
 }
 
@@ -370,15 +382,21 @@ function nativeBinding(value) {
     return entry;
 }
 
-function assertNativeIdentity(snapshot, programs, state) {
-    const labels = Object.keys(snapshot.submissions.compute).filter(label =>
-        /^engine-advanced-shade-(?:native|surface-exports|uber-native)/.test(label) && snapshot.submissions.compute[label] > 0);
+function selectedShadowNative(submissions, state, allowPending = false) {
+    const labels = Object.keys(submissions.compute).filter(label =>
+        /^engine-advanced-shade-(?:native|surface-exports|uber-native)/.test(label) && submissions.compute[label] > 0);
+    if (allowPending && labels.length === 0) return null;
     assert(labels.length === 1 && (state === 'on' ? labels[0] === 'engine-advanced-shade-native-depth' :
         ['engine-advanced-shade-native', 'engine-advanced-shade-native-no-modifiers'].includes(labels[0])),
     `BrowserSmoke.ShadowNativeSelection: ${state} selected ${JSON.stringify(labels)}.`);
-    const artifact = programs[labels[0].replace('engine-advanced-', '')];
+    return labels[0];
+}
+
+function assertNativeIdentity(snapshot, programs, state) {
+    const selectedNative = selectedShadowNative(snapshot.submissions, state);
+    const artifact = programs[selectedNative.replace('engine-advanced-', '')];
     const descriptor = artifact.descriptor;
-    const records = snapshot.nativeCompile?.records.filter(record => record.recipe?.pipeline?.label === labels[0]) ?? [];
+    const records = snapshot.nativeCompile?.records.filter(record => record.recipe?.pipeline?.label === selectedNative) ?? [];
     assert(snapshot.nativeCompile?.captureErrors.length === 0 && records.length === 1 &&
         records[0].status === 'fulfilled' && records[0].recipeStatus === 'ready',
     'BrowserSmoke.ShadowNativeIdentity: selected program needs one complete native compile recipe.');
@@ -393,7 +411,18 @@ function assertNativeIdentity(snapshot, programs, state) {
     if (state === 'on') assert(descriptor.defines.includes('XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1') &&
         descriptor.defines.includes('XR_ADV_DEPTH_COMPARISON_BANK=1'),
     'BrowserSmoke.ShadowNativeIdentity: selected program lacks the full standalone depth-shadow family.');
-    return labels[0];
+    return selectedNative;
+}
+
+function matchingShadowConsumers(gpu, selectedNative, extent, afterSerial, throughSerial) {
+    const texture = id => gpu.textures.find(value => value.id === id);
+    const completed = value => value.firstSerial <= throughSerial && value.firstSerial > afterSerial;
+    // GPU-written indirect dimensions remain opaque. Match the real submitted operation and its output.
+    return gpu.consumers.filter(value => completed(value) &&
+        (value.operation === 'dispatchWorkgroupsIndirect' || value.operation === 'dispatchWorkgroups' && value.count > 0) &&
+        gpu.pipelines.find(pipeline => pipeline.id === value.pipelineId)?.label === selectedNative &&
+        value.outputs.some(view => view.binding === 0 && texture(view.textureId)?.width === extent[0] &&
+            texture(view.textureId)?.height === extent[1]));
 }
 
 function assertShadowEvidence(snapshot, programs, state, extent, afterSerial = 0) {
@@ -408,14 +437,7 @@ function assertShadowEvidence(snapshot, programs, state, extent, afterSerial = 0
         assert(submissions.raster[`engine-advanced-${pass}`] > 0,
             `BrowserSmoke.ShadowStageMissing: no native ${pass} draw.`);
     const selectedNative = assertNativeIdentity(snapshot, programs, state);
-    const texture = id => gpu.textures.find(value => value.id === id);
-    const completed = value => value.firstSerial <= gpu.completedSerial && value.firstSerial > afterSerial;
-    // GPU-written indirect dimensions remain opaque. Match the real submitted operation and its output.
-    const consumers = gpu.consumers.filter(value => completed(value) &&
-        (value.operation === 'dispatchWorkgroupsIndirect' || value.operation === 'dispatchWorkgroups' && value.count > 0) &&
-        gpu.pipelines.find(pipeline => pipeline.id === value.pipelineId)?.label === selectedNative &&
-        value.outputs.some(view => view.binding === 0 && texture(view.textureId)?.width === extent[0] &&
-            texture(view.textureId)?.height === extent[1]));
+    const consumers = matchingShadowConsumers(gpu, selectedNative, extent, afterSerial, gpu.completedSerial);
     assert(consumers.length > 0,
         'BrowserSmoke.ShadowOutput: no completed native consumer for the current canvas extent.');
     if (state === 'off') {
@@ -693,19 +715,43 @@ async function cleanupShadowResizeObservation(page) {
     shadowResizeObservers.delete(page);
 }
 
-async function captureShadowSurface(page, config, imageAnalysis, slot, name, failure, reference = null, observeResize = false) {
+/** Waits for one ordinary frame and releases its timer and pending frame on every exit. */
+async function waitForShadowCaptureFrame(deadline) {
+    const expired = () => new Error('BrowserSmoke.ShadowCaptureDeadline: capture deadline exhausted.');
+    if (Date.now() >= deadline) throw expired();
+    let frame, timer;
+    try {
+        await new Promise((resolve, reject) => {
+            timer = setTimeout(() => reject(expired()), Math.max(0, deadline - Date.now()));
+            frame = requestAnimationFrame(() => Date.now() >= deadline ? reject(expired()) : resolve());
+        });
+        if (Date.now() >= deadline) throw expired();
+    } finally {
+        clearTimeout(timer);
+        if (frame !== undefined) cancelAnimationFrame(frame);
+    }
+}
+
+async function captureShadowSurface(page, config, imageAnalysis, slot, name, failure, captureContext,
+    reference = null, observeResize = false) {
     const budget = Math.min(config.timeout, 10000);
     const startedAt = Date.now();
     const deadline = startedAt + budget;
+    const { programs, state, extent, afterSerial } = captureContext;
+    assert(programs && ['on', 'off'].includes(state) && Number.isSafeInteger(afterSerial) && afterSerial >= 0 &&
+        (extent === null || Array.isArray(extent) && extent.length === 2 && extent.every(value => Number.isSafeInteger(value) && value > 0)),
+    'BrowserSmoke.ShadowCaptureContext: require programs, state, a valid extent, and the prior completed serial.');
     const canvas = page.locator('#input-surface');
     const unrun = () => ({ status: 'unrun', attempt: null, value: null });
-    const phases = ['scroll-into-view', 'geometry-before', 'canvas-screenshot', 'geometry-after',
+    const phases = ['wait-native-consumer', 'complete-native-consumer', 'verify-native-identity',
+        'scroll-into-view', 'geometry-before', 'canvas-screenshot', 'geometry-after',
         'inspect-pixels', 'inspect-alignment', 'read-status', 'read-failure-status', 'next-animation-frame'];
     const diagnostics = { schema: 1, name, budgetMs: budget, startedAtUtcMs: startedAt,
         elapsedMs: null, attempt: 0, activePhase: null,
         phases: Object.fromEntries(phases.map(phase => [phase, { attempt: null, phase, status: 'unrun',
             startedAtMs: null, elapsedMs: null, remainingMs: null }])),
-        steps: [], omittedSteps: 0, before: unrun(), after: unrun(), clip: unrun(), latestSummary: unrun() };
+        steps: [], omittedSteps: 0, before: unrun(), after: unrun(), clip: unrun(), latestSummary: unrun(),
+        gate: { status: 'unrun', extent: null, afterSerial, selectedNative: null, selectedSerial: null, completedSerial: null } };
     if (observeResize) {
         diagnostics.resizeObserver = shadowResizeObservers.get(page) ?? { status: 'unavailable', reason: 'not-installed' };
         diagnostics.resizeCheckpoints = Object.fromEntries(['capture-start', 'first-blank', 'halfway', 'failure']
@@ -730,6 +776,10 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
         result.shadowCapture = structuredClone(diagnostics);
         return result;
     };
+    const requireCaptureTime = () => {
+        if (captureClosed || Date.now() >= deadline)
+            throw new Error(`${failure} Canvas capture exceeded its ${budget} ms budget.`);
+    };
     const step = async (phase, action) => {
         const stepStartedAt = Date.now();
         const remaining = deadline - stepStartedAt;
@@ -753,24 +803,112 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
                     reject(new Error(`${failure} Canvas capture exceeded its ${budget} ms budget.`));
                 }, remaining);
             })]);
+            requireCaptureTime();
             record.status = 'fulfilled';
             record.elapsedMs = Date.now() - stepStartedAt;
             diagnostics.activePhase = null;
             return result;
         } catch (error) {
-            record.status = timedOut || error?.code === 'SHADOW_IMAGE_DEADLINE' ? 'timed-out' : 'rejected';
+            record.status = timedOut || Date.now() >= deadline || error?.code === 'SHADOW_IMAGE_DEADLINE' ? 'timed-out' : 'rejected';
             record.elapsedMs = Date.now() - stepStartedAt;
             throw withCaptureEvidence(error);
         } finally { clearTimeout(timer); }
     };
-    const geometry = () => canvas.evaluate(element => {
-        const bounds = element.getBoundingClientRect();
-        return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
-            bitmapWidth: element.width, bitmapHeight: element.height, devicePixelRatio, scrollX, scrollY,
-            viewportWidth: innerWidth, viewportHeight: innerHeight,
-            viewportScale: visualViewport?.scale ?? null,
-            viewportOffsetX: visualViewport?.offsetLeft ?? null, viewportOffsetY: visualViewport?.offsetTop ?? null };
-    });
+    const geometry = () => {
+        requireCaptureTime();
+        return canvas.evaluate((element, deadline) => {
+            if (Date.now() >= deadline) throw new Error('BrowserSmoke.ShadowCaptureDeadline: geometry read expired.');
+            const bounds = element.getBoundingClientRect();
+            return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+                bitmapWidth: element.width, bitmapHeight: element.height, devicePixelRatio, scrollX, scrollY,
+                viewportWidth: innerWidth, viewportHeight: innerHeight,
+                viewportScale: visualViewport?.scale ?? null,
+                viewportOffsetX: visualViewport?.offsetLeft ?? null, viewportOffsetY: visualViewport?.offsetTop ?? null };
+        }, deadline);
+    };
+    const nextFrame = async () => {
+        requireCaptureTime();
+        await page.evaluate(waitForShadowCaptureFrame, deadline);
+        requireCaptureTime();
+    };
+    const readGate = async includeNative => {
+        requireCaptureTime();
+        const result = await page.evaluate(({ deadline, includeNative }) => {
+            if (Date.now() >= deadline) throw new Error('BrowserSmoke.ShadowCaptureDeadline: consumer read expired.');
+            const source = globalThis.advancedSubmissionEvidence;
+            const gpu = globalThis.advancedShadowSnapshot('capture');
+            if (Date.now() >= deadline) throw new Error('BrowserSmoke.ShadowCaptureDeadline: native identity read expired.');
+            return { gpu,
+                submissions: { readMappings: source?.readMappings,
+                    compute: Object.fromEntries(Object.entries(source?.compute ?? {}).filter(([label]) =>
+                        /^engine-advanced-shade-(?:native|surface-exports|uber-native)/.test(label))) },
+                failure: Boolean(globalThis.advancedCanvasFailureEvidence) || document.querySelector('#status')?.dataset.state === 'failed',
+                nativeCompile: includeNative ? globalThis.advancedNativeCompileSnapshot() : null };
+        }, { deadline, includeNative });
+        requireCaptureTime();
+        assert(result.gpu && result.gpu.captureErrors.length === 0 && result.gpu.deviceErrors.length === 0 &&
+            result.gpu.overflow === 0 && result.submissions.readMappings === 0 && !result.failure,
+        'BrowserSmoke.ShadowCaptureGate: require bounded GPU evidence, no failure, and zero GPU READ maps.');
+        return result;
+    };
+    const completeCurrentExtent = async initialGeometry => {
+        const gate = diagnostics.gate;
+        gate.extent = extent ?? [initialGeometry.bitmapWidth, initialGeometry.bitmapHeight];
+        assert(gate.extent.every(value => Number.isSafeInteger(value) && value > 0) &&
+            equal(gate.extent, [initialGeometry.bitmapWidth, initialGeometry.bitmapHeight]),
+        'BrowserSmoke.ShadowCaptureExtent: canvas backing extent differs from the requested capture.');
+        gate.status = 'pending';
+        await step('wait-native-consumer', async () => {
+            for (;;) {
+                const observed = await readGate(false);
+                const selectedNative = selectedShadowNative(observed.submissions, state, true);
+                const consumers = selectedNative ? matchingShadowConsumers(observed.gpu, selectedNative,
+                    gate.extent, afterSerial, observed.gpu.queueSubmits) : [];
+                if (consumers.length > 0) {
+                    gate.selectedNative = selectedNative;
+                    gate.selectedSerial = consumers[0].firstSerial;
+                    return;
+                }
+                await nextFrame();
+            }
+        });
+        await step('complete-native-consumer', async () => {
+            requireCaptureTime();
+            const gpu = await page.evaluate(async deadline => {
+                if (Date.now() >= deadline) throw new Error('BrowserSmoke.ShadowCaptureDeadline: completion wait expired.');
+                const gpu = await globalThis.advancedShadowComplete('capture', deadline);
+                if (Date.now() >= deadline) throw new Error('BrowserSmoke.ShadowCaptureDeadline: completion returned late.');
+                return gpu;
+            }, deadline);
+            requireCaptureTime();
+            assert(gpu && gpu.captureErrors.length === 0 && gpu.deviceErrors.length === 0 && gpu.overflow === 0 &&
+                gpu.queueCompletions > 0 && gate.selectedSerial <= gpu.completedSerial,
+            'BrowserSmoke.ShadowCaptureCompletion: the selected current-extent consumer did not complete.');
+            gate.completedSerial = gpu.completedSerial;
+        });
+        await step('verify-native-identity', async () => {
+            for (;;) {
+                const observed = await readGate(true);
+                const selectedNative = selectedShadowNative(observed.submissions, state);
+                assert(selectedNative === gate.selectedNative,
+                    'BrowserSmoke.ShadowCaptureSelection: native selection changed before capture.');
+                const native = observed.nativeCompile;
+                const records = native?.records.filter(record => record.recipe?.pipeline?.label === selectedNative ||
+                    record.pass === selectedNative.replace('engine-advanced-', '')) ?? [];
+                const record = records[0];
+                // Recipe hashing can still be pending after queue completion. Terminal failures must fail immediately.
+                if (native?.captureErrors.length === 0 && records.length === 1 &&
+                    ['pending', 'fulfilled'].includes(record.status) && ['pending', 'ready'].includes(record.recipeStatus) &&
+                    (record.status === 'pending' || record.recipeStatus === 'pending')) {
+                    await nextFrame();
+                    continue;
+                }
+                assertNativeIdentity(observed, programs, state);
+                gate.status = 'fulfilled';
+                return;
+            }
+        });
+    };
     const captureClip = (sample, viewport) => {
         // Match Playwright 1.63's element screenshot rounding in document coordinates.
         // Page screenshot clips use viewport coordinates and do not repeat element stability waits.
@@ -799,6 +937,10 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
     }, Math.max(0, startedAt + budget / 2 - Date.now()));
     try {
         if (observeResize) await readShadowResizeCheckpoint(page, diagnostics, 'capture-start');
+        const initialGeometry = await step('geometry-before', geometry);
+        diagnostics.before = { status: 'available', attempt: diagnostics.attempt, value: initialGeometry };
+        await completeCurrentExtent(initialGeometry);
+        requireCaptureTime();
         do {
             if (observeResize && Date.now() - startedAt >= budget / 2)
                 await readShadowResizeCheckpoint(page, diagnostics, 'halfway');
@@ -823,11 +965,14 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
                 viewport = page.viewportSize();
                 capture = captureClip(before, viewport);
             }
+            assert(equal(diagnostics.gate.extent, [before.bitmapWidth, before.bitmapHeight]),
+                'BrowserSmoke.ShadowCaptureExtent: canvas backing extent changed after the completion gate.');
             const { clip } = capture;
             diagnostics.clip = { status: 'available', attempt: diagnostics.attempt, value: { ...clip, viewport } };
             const image = await step('canvas-screenshot', () => {
                 assert(capture.valid,
                 'BrowserSmoke.ShadowCaptureBounds: the complete canvas must fit the unscaled viewport without clipping.');
+                requireCaptureTime();
                 return page.screenshot({ path: path.join(config.output, `${name}.png`), clip, fullPage: false,
                     timeout: Math.max(1, deadline - Date.now()) });
             });
@@ -859,6 +1004,7 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
             if (observeResize && Date.now() - startedAt >= budget / 2)
                 await readShadowResizeCheckpoint(page, diagnostics, 'halfway');
             if (hasSurface(pixels) && latest.captureValidity.accepted && Date.now() < deadline) {
+                latest.captureGate = structuredClone(diagnostics.gate);
                 if (observeResize) {
                     stopHalfwayCheckpoint();
                     diagnostics.resizeCheckpoints.failure.reason = 'capture-completed';
@@ -872,10 +1018,11 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
                     () => page.locator('#status').textContent())}`));
             // Retry at the next browser frame, within the same capture budget. Do not add a fixed startup delay.
             const remaining = deadline - Date.now();
-            if (remaining > 0) await step('next-animation-frame',
-                () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve))));
+            if (remaining > 0) await step('next-animation-frame', nextFrame);
         } while (Date.now() < deadline);
         throw withCaptureEvidence(new Error(`${failure} Last canvas summary: ${JSON.stringify(latest)}`));
+    } catch (error) {
+        throw error?.shadowCapture ? error : withCaptureEvidence(error);
     } finally { stopHalfwayCheckpoint(); }
 }
 
@@ -1027,7 +1174,8 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
         report.advancedShadowImageAnalysis = await imageAnalysis.request('ready', {}, Date.now() + Math.min(config.timeout, 10000));
         await run('off', 0, async (page, _events, name, detail) => {
             baseline.initial = await captureShadowSurface(page, config, imageAnalysis, 'off-initial', `${name}-playing`,
-                'BrowserSmoke.ShadowOffSurface: the authored OFF surface did not reach the canvas.');
+                'BrowserSmoke.ShadowOffSurface: the authored OFF surface did not reach the canvas.',
+                { programs: offArtifacts.programs, state: 'off', extent: null, afterSerial: 0 });
             baseline.initialExtent = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
             const initial = await snapshot(page);
             const initialQualification = assertShadowEvidence(initial, offArtifacts.programs, 'off', baseline.initialExtent);
@@ -1038,7 +1186,8 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
                 if (iteration === 0) await installShadowResizeObservation(page, `${origin}/__baseline/index.html`);
                 const extent = await resize(page, widths[iteration]);
                 const image = await captureShadowSurface(page, config, imageAnalysis, `off-${widths[iteration]}`, `${name}-resized-${iteration}`,
-                    'BrowserSmoke.ShadowOffResize: the authored OFF surface disappeared after resize.', null, iteration === 0);
+                    'BrowserSmoke.ShadowOffResize: the authored OFF surface disappeared after resize.',
+                    { programs: offArtifacts.programs, state: 'off', extent, afterSerial: prior.gpu.completedSerial }, null, iteration === 0);
                 const evidence = await snapshot(page);
                 const qualification = assertShadowEvidence(evidence, offArtifacts.programs, 'off', extent, prior.gpu.completedSerial);
                 baseline.resized.push({ ...image, extent });
@@ -1050,7 +1199,8 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
             const result = { iteration, detail };
             report.advancedShadowIterations.push(result);
             const playing = await captureShadowSurface(page, config, imageAnalysis, 'current', `${name}-playing`,
-                'BrowserSmoke.ShadowSurface: the authored ON surface did not reach the canvas.', baseline.initial);
+                'BrowserSmoke.ShadowSurface: the authored ON surface did not reach the canvas.',
+                { programs: onArtifacts.programs, state: 'on', extent: null, afterSerial: 0 }, baseline.initial);
             const before = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
             assert(equal(before, baseline.initialExtent), 'BrowserSmoke.ShadowComparison: initial ON/OFF canvas extents differ.');
             result.playing = playing.pixels;
@@ -1061,7 +1211,9 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
             const after = await resize(page, widths[iteration]);
             assert(equal(after, baseline.resized[iteration].extent), 'BrowserSmoke.ShadowComparison: resized ON/OFF canvas extents differ.');
             const resized = await captureShadowSurface(page, config, imageAnalysis, 'current', `${name}-resized`,
-                'BrowserSmoke.ShadowResize: the authored ON surface disappeared after resize.', baseline.resized[iteration]);
+                'BrowserSmoke.ShadowResize: the authored ON surface disappeared after resize.',
+                { programs: onArtifacts.programs, state: 'on', extent: after, afterSerial: result.initial.gpu.completedSerial },
+                baseline.resized[iteration]);
             result.resized = resized.pixels;
             result.after = await snapshot(page);
             result.resizeQualification = assertShadowEvidence(result.after, onArtifacts.programs, 'on', after,
