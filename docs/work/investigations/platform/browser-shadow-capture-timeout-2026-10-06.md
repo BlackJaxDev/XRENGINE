@@ -669,3 +669,52 @@ was restricted to the safe field allowlist. Parsing depends on the current
 engine status format and its 16,384-character input cap; missing or unknown
 fields remain explicit. No runtime was started for that packet. The unrelated
 TODO evidence-link edit was preserved.
+
+## Smaller software capture profile
+
+[Run 37526282428](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37526282428)
+used source `4b05` and artifact `11443424461`. The artifact ZIP SHA-256 is
+`36c5dcff402f869a28863a2f13d50be836f84912543edcf7203395239cb2604a`.
+The saved artifact is under `shadow-protocol-capture/runtime-4b05` in the
+reserved validation run. The completion gate passed native candidate serial
+1,036 through completed serial 1,038 in 3,901 ms. Native identity took 41 ms,
+and session creation took 4 ms. `Page.captureScreenshot` used the remaining
+6,019 ms and timed out. No decode, file write, or resize ran. Session cleanup
+was not verified before the existing context teardown. This result identifies
+the pending CDP command. It does not identify why that command timed out.
+
+The shadow job now runs a separate small software profile first. It uses a
+`640x780` viewport, then widths 560 and 600 at height 780. The source-derived
+canvas backing extents are `593x334`, `513x289`, and `553x311`. The expected
+rounded PNG sizes are `593x335`, `513x290`, and `553x312`. Runtime canvas
+geometry must match each backing extent. The image worker accepts only the
+PNG and backing-size tuples for its selected profile. One worker retains the
+same three OFF images and current ON image, with the same byte limits. The
+small worker must stop with an acknowledged exit before the full profile starts.
+
+The original full profile still runs at `1024x1100`, then `860x780` and
+`940x780`. Its backing extents, strict PNG validation, four first-OFF-resize
+checkpoints, GPU assertions, and receiver thresholds stay in place. Both
+profiles use the same pinned ON/OFF worlds, 256-pixel shadow resources, two
+fresh ON starts, two resizes, and a fresh OFF reference. Each capture has the
+same absolute 10-second limit. The report identifies each profile. Small
+images have a distinct name; full images keep their original names.
+The full profile stays unrun if the small profile fails; that failure also
+fails the job. A passed small profile does not qualify full-size shadow parity.
+The pure projection gives 4,602, 3,284, and 3,936 small-profile receiver
+centers. These counts are only source calculations. Runtime images must still
+pass the unchanged alignment and receiver checks.
+
+Passing `captureUntil` to the Advanced capture helper only bounds its retry
+loop. It does not prove a strict total 10-second bound. This change does not
+alter that helper or claim that the screenshot timeout is fixed. Source and
+scratch checks passed: Node `v24.19.0` syntax checks, scoped `git diff --check`,
+and 62 scratch cases for profile isolation, geometry, PNG slots, image
+references, alignment, receiver projection, and worker cleanup. The local
+Playwright package resolved from `Tools/BrowserSmoke` is `1.63.0`. The scratch
+cases ran against the exact shipping `shadow-image-worker.mjs` source without
+a codec guard change. CI remains pinned to Node 22. These checks ran no
+browser or GPU workload. Independent source review found no blocking geometry,
+GPU, or lifetime issue. A later authorized runtime run remains necessary.
+No runtime result exists for the added small profile at the time of this note.
+Full-size shadow coverage remains open.

@@ -1,4 +1,4 @@
-import { parentPort } from 'node:worker_threads';
+import { parentPort, workerData } from 'node:worker_threads';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { inspectShadowPixels, inspectShadowCaptureImage, shadowReceiverRegions,
@@ -11,8 +11,15 @@ try {
         PNG = require('playwright-core/lib/utilsBundle').PNG;
 } catch { /* The message protocol reports the fixed codec failure. */ }
 
-const slots = new Set(['off-initial', 'off-860', 'off-940', 'current']);
-const profiles = [[977, 551, 977, 550], [813, 459, 813, 457], [893, 504, 893, 502]];
+const captureProfiles = {
+    small: { 'off-initial': [593, 335, 593, 334], 'off-560': [513, 290, 513, 289],
+        'off-600': [553, 312, 553, 311] },
+    full: { 'off-initial': [977, 551, 977, 550], 'off-860': [813, 459, 813, 457],
+        'off-940': [893, 504, 893, 502] },
+};
+const profile = captureProfiles[workerData?.profile];
+const slots = new Set([...Object.keys(profile ?? {}), 'current']);
+const profiles = Object.values(profile ?? {});
 const images = new Map();
 const maximumPngBytes = 8 * 1024 * 1024;
 const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -25,13 +32,14 @@ const requireImage = (slot, hash) => {
 
 function decode(request) {
     if (!slots.has(request.slot)) fail('image-slot');
-    const profile = profiles.find(value => value[0] === request.width && value[1] === request.height &&
+    const captureProfile = profiles.find(value => value[0] === request.width && value[1] === request.height &&
         value[2] === request.canvasWidth && value[3] === request.canvasHeight);
-    if (!profile || request.cssWidth !== request.canvasWidth ||
+    if (!captureProfile || request.cssWidth !== request.canvasWidth ||
         !(request.png instanceof Uint8Array) || request.png.byteLength > maximumPngBytes || request.png.byteLength < 45)
         fail('png-size');
-    const baselineWidth = { 'off-initial': 977, 'off-860': 813, 'off-940': 893 }[request.slot];
-    if (baselineWidth && request.width !== baselineWidth) fail('image-slot');
+    const baselineProfile = profile?.[request.slot];
+    if (baselineProfile && (request.width !== baselineProfile[0] || request.height !== baselineProfile[1] ||
+        request.canvasWidth !== baselineProfile[2] || request.canvasHeight !== baselineProfile[3])) fail('image-slot');
     const bytes = Buffer.from(request.png.buffer, request.png.byteOffset, request.png.byteLength);
     if (!bytes.subarray(0, 8).equals(signature) || bytes.readUInt32BE(8) !== 13 ||
         bytes.toString('ascii', 12, 16) !== 'IHDR' || bytes.readUInt32BE(16) !== request.width ||
@@ -71,9 +79,10 @@ parentPort.on('message', request => {
     let result;
     try {
         if (!Number.isFinite(request.deadline) || Date.now() >= request.deadline) fail('deadline');
-        if (typeof PNG?.sync?.read !== 'function') fail('codec');
+        if (typeof PNG?.sync?.read !== 'function' || !profile) fail('codec');
         if (request.operation === 'ready') result = { codec: 'playwright-core@1.63.0/pngjs', retainedImageSlots: 4,
-            maximumPngBytes, maximumRetainedRgbaBytes: 4 * 977 * 551 * 4 };
+            profile: workerData.profile, maximumPngBytes,
+            maximumRetainedRgbaBytes: 4 * Math.max(...profiles.map(value => value[0] * value[1])) * 4 };
         else if (request.operation === 'inspect') result = decode(request);
         else if (request.operation === 'align') {
             const image = requireImage(request.slot, request.hash);

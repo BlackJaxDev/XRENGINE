@@ -22,8 +22,8 @@ const canonical = value => Array.isArray(value) ? value.map(canonical) : value &
 const equal = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 
 /** Owns one interruptible decoder and exactly three baseline slots plus the current image. */
-function createShadowImageAnalysis() {
-    const worker = new Worker(new URL('./shadow-image-worker.mjs', import.meta.url));
+function createShadowImageAnalysis(profile) {
+    const worker = new Worker(new URL('./shadow-image-worker.mjs', import.meta.url), { workerData: { profile } });
     let pending = null, sequence = 0, stopped = null, failure = null;
     let terminationRequested = false, unexpectedExit = false, exitCode = null;
     const error = code => Object.assign(new Error(`BrowserSmoke.ShadowImageAnalysis: ${code}.`),
@@ -1286,103 +1286,137 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
     report.advancedShadowScope = 'Combined directional and point ON/OFF shadow effect on the pinned receiver; real 256px shadow production and full native consumption. Does not establish isolated point-shadow visual occlusion, exact PCSS or numeric material parity, native compile speed, or physical-GPU performance.';
     report.advancedShadowIterations = [];
     report.advancedShadowFailures = [];
-    const imageAnalysis = createShadowImageAnalysis();
-    const widths = [860, 940];
-    const baseline = {};
-    const run = async (state, iteration, action) => {
-        const name = `advanced-shadow-${state}-${iteration}`;
-        const { page, context, events } = await instrumentedPage(browser, origin, report, name, config);
-        let hadFailure = false;
+    const profiles = [
+        { name: 'small', initialViewport: { width: 640, height: 780 }, widths: [560, 600],
+            extents: [[593, 334], [513, 289], [553, 311]] },
+        { name: 'full', initialViewport: { width: 1024, height: 1100 }, widths: [860, 940],
+            extents: [[977, 550], [813, 457], [893, 502]] },
+    ];
+    report.advancedShadowProfiles = Object.fromEntries(profiles.map(profile => [profile.name,
+        { status: 'unrun', initialViewport: profile.initialViewport, resizeWidths: profile.widths,
+            expectedExtents: profile.extents, iterations: [], failures: [] }]));
+    for (const profile of profiles) {
+        const profileReport = report.advancedShadowProfiles[profile.name];
+        profileReport.status = 'running';
+        const imageAnalysis = createShadowImageAnalysis(profile.name);
+        const widths = profile.widths;
+        const baseline = {};
+        const run = async (state, iteration, action) => {
+            const name = profile.name === 'full' ? `advanced-shadow-${state}-${iteration}`
+                : `advanced-shadow-small-${state}-${iteration}`;
+            const { page, context, events } = await instrumentedPage(browser, origin, report, name, config);
+            let primaryError = null;
+            try {
+                if (profile.name === 'small') await page.setViewportSize(profile.initialViewport);
+                const detail = await start(page, origin, state === 'on' ? '__game' : '__baseline');
+                await action(page, events, name, detail);
+                assertNoBrowserErrors(events);
+                assert(!events.some(event => ['crash', 'requestfailed'].includes(event.type)),
+                    'BrowserSmoke.ShadowBrowserFailure: the page crashed or a request failed.');
+            } catch (error) {
+                primaryError = error;
+                if (error?.shadowCapture?.resizeCheckpoints)
+                    await readShadowResizeCheckpoint(page, error.shadowCapture, 'failure');
+                const evidence = await page.evaluate(() => ({ failure: globalThis.advancedCanvasFailureEvidence ?? null,
+                    nativeCompile: globalThis.advancedNativeCompileSnapshot?.() ?? null,
+                    submissions: globalThis.advancedSubmissionSnapshot?.() ?? null,
+                    gpu: globalThis.advancedShadowSnapshot?.() ?? null })).catch(() => null);
+                const delivery = await shadowDeliverySnapshot(page,
+                    `${origin}/${state === 'on' ? '__game' : '__baseline'}/index.html`);
+                const failure = { profile: profile.name, state, iteration, error: String(error),
+                    capture: error?.shadowCapture ?? null, ...evidence, delivery };
+                profileReport.failures.push(failure);
+                report.advancedShadowFailures.push(failure);
+                await page.screenshot({ path: path.join(config.output, `${name}-failure.png`), fullPage: true }).catch(() => {});
+                throw error;
+            } finally {
+                await cleanupShadowResizeObservation(page);
+                try { await context.close(); }
+                catch (error) {
+                    profileReport.contextCleanupError = String(error);
+                    if (!primaryError) throw error;
+                }
+            }
+        };
+        let imageAnalysisFailed = false;
         try {
-            const detail = await start(page, origin, state === 'on' ? '__game' : '__baseline');
-            await action(page, events, name, detail);
-            assertNoBrowserErrors(events);
-            assert(!events.some(event => ['crash', 'requestfailed'].includes(event.type)),
-                'BrowserSmoke.ShadowBrowserFailure: the page crashed or a request failed.');
+            profileReport.imageAnalysis = await imageAnalysis.request('ready', {}, Date.now() + Math.min(config.timeout, 10000));
+            assert(profileReport.imageAnalysis.profile === profile.name && profileReport.imageAnalysis.retainedImageSlots === 4,
+                'BrowserSmoke.ShadowImageProfile: analysis worker profile or slot count differs from the requested case.');
+            if (profile.name === 'full') report.advancedShadowImageAnalysis = profileReport.imageAnalysis;
+            await run('off', 0, async (page, _events, name, detail) => {
+                baseline.initial = await captureShadowSurface(page, config, imageAnalysis, 'off-initial', `${name}-playing`,
+                    'BrowserSmoke.ShadowOffSurface: the authored OFF surface did not reach the canvas.',
+                    { programs: offArtifacts.programs, state: 'off', extent: null, afterSerial: 0,
+                        expectedPage: `${origin}/__baseline/index.html` });
+                baseline.initialExtent = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
+                assert(equal(baseline.initialExtent, profile.extents[0]),
+                    'BrowserSmoke.ShadowExtent: initial canvas backing extent differs from the source-derived profile.');
+                const initial = await snapshot(page);
+                const initialQualification = assertShadowEvidence(initial, offArtifacts.programs, 'off', baseline.initialExtent);
+                profileReport.baseline = { detail, playing: baseline.initial.pixels, initial, initialQualification, resized: [] };
+                if (profile.name === 'full') report.advancedShadowBaseline = profileReport.baseline;
+                baseline.resized = [];
+                let prior = initial;
+                for (let iteration = 0; iteration < widths.length; iteration++) {
+                    if (iteration === 0 && profile.name === 'full')
+                        await installShadowResizeObservation(page, `${origin}/__baseline/index.html`);
+                    const extent = await resize(page, widths[iteration]);
+                    assert(equal(extent, profile.extents[iteration + 1]),
+                        'BrowserSmoke.ShadowExtent: resized canvas backing extent differs from the source-derived profile.');
+                    const image = await captureShadowSurface(page, config, imageAnalysis, `off-${widths[iteration]}`, `${name}-resized-${iteration}`,
+                        'BrowserSmoke.ShadowOffResize: the authored OFF surface disappeared after resize.',
+                        { programs: offArtifacts.programs, state: 'off', extent, afterSerial: prior.gpu.completedSerial,
+                            expectedPage: `${origin}/__baseline/index.html` }, null, iteration === 0 && profile.name === 'full');
+                    const evidence = await snapshot(page);
+                    const qualification = assertShadowEvidence(evidence, offArtifacts.programs, 'off', extent, prior.gpu.completedSerial);
+                    baseline.resized.push({ ...image, extent });
+                    profileReport.baseline.resized.push({ pixels: image.pixels, extent, evidence, qualification });
+                    prior = evidence;
+                }
+            });
+            for (let iteration = 0; iteration < 2; iteration++) await run('on', iteration, async (page, _events, name, detail) => {
+                const result = { iteration, detail };
+                profileReport.iterations.push(result);
+                if (profile.name === 'full') report.advancedShadowIterations.push(result);
+                const playing = await captureShadowSurface(page, config, imageAnalysis, 'current', `${name}-playing`,
+                    'BrowserSmoke.ShadowSurface: the authored ON surface did not reach the canvas.',
+                    { programs: onArtifacts.programs, state: 'on', extent: null, afterSerial: 0,
+                        expectedPage: `${origin}/__game/index.html` }, baseline.initial);
+                const before = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
+                assert(equal(before, baseline.initialExtent), 'BrowserSmoke.ShadowComparison: initial ON/OFF canvas extents differ.');
+                result.playing = playing.pixels;
+                result.initial = await snapshot(page);
+                result.initialQualification = assertShadowEvidence(result.initial, onArtifacts.programs, 'on', before);
+                result.comparison = compareReceiver(baseline.initial, playing, before);
+                assertReceiverDifference(result.comparison, 'initial');
+                const after = await resize(page, widths[iteration]);
+                assert(equal(after, baseline.resized[iteration].extent), 'BrowserSmoke.ShadowComparison: resized ON/OFF canvas extents differ.');
+                const resized = await captureShadowSurface(page, config, imageAnalysis, 'current', `${name}-resized`,
+                    'BrowserSmoke.ShadowResize: the authored ON surface disappeared after resize.',
+                    { programs: onArtifacts.programs, state: 'on', extent: after, afterSerial: result.initial.gpu.completedSerial,
+                        expectedPage: `${origin}/__game/index.html` },
+                    baseline.resized[iteration]);
+                result.resized = resized.pixels;
+                result.after = await snapshot(page);
+                result.resizeQualification = assertShadowEvidence(result.after, onArtifacts.programs, 'on', after,
+                    result.initial.gpu.completedSerial);
+                result.resizedComparison = compareReceiver(baseline.resized[iteration], resized, after);
+                assertReceiverDifference(result.resizedComparison, 'resized');
+                result.canvasSizes = { before, after };
+            });
+            profileReport.status = 'passed';
         } catch (error) {
-            hadFailure = true;
-            if (error?.shadowCapture?.resizeCheckpoints)
-                await readShadowResizeCheckpoint(page, error.shadowCapture, 'failure');
-            const evidence = await page.evaluate(() => ({ failure: globalThis.advancedCanvasFailureEvidence ?? null,
-                nativeCompile: globalThis.advancedNativeCompileSnapshot?.() ?? null,
-                submissions: globalThis.advancedSubmissionSnapshot?.() ?? null,
-                gpu: globalThis.advancedShadowSnapshot?.() ?? null })).catch(() => null);
-            const delivery = await shadowDeliverySnapshot(page,
-                `${origin}/${state === 'on' ? '__game' : '__baseline'}/index.html`);
-            report.advancedShadowFailures.push({ state, iteration, error: String(error),
-                capture: error?.shadowCapture ?? null, ...evidence, delivery });
-            await page.screenshot({ path: path.join(config.output, `${name}-failure.png`), fullPage: true }).catch(() => {});
+            imageAnalysisFailed = true;
+            profileReport.status = 'failed';
             throw error;
         } finally {
-            await cleanupShadowResizeObservation(page);
-            if (hadFailure) await context.close().catch(() => {});
-            else await context.close();
+            const stopped = await imageAnalysis.close();
+            profileReport.imageAnalysis ??= { codec: 'unavailable' };
+            profileReport.imageAnalysis.workerStopped = stopped;
+            if (profile.name === 'full') report.advancedShadowImageAnalysis = profileReport.imageAnalysis;
+            if (!stopped) profileReport.status = 'failed';
+            if (!stopped && !imageAnalysisFailed) throw new Error('BrowserSmoke.ShadowImageCleanup: owned analysis worker did not stop within 1000 ms.');
         }
-    };
-    let imageAnalysisFailed = false;
-    try {
-        report.advancedShadowImageAnalysis = await imageAnalysis.request('ready', {}, Date.now() + Math.min(config.timeout, 10000));
-        await run('off', 0, async (page, _events, name, detail) => {
-            baseline.initial = await captureShadowSurface(page, config, imageAnalysis, 'off-initial', `${name}-playing`,
-                'BrowserSmoke.ShadowOffSurface: the authored OFF surface did not reach the canvas.',
-                { programs: offArtifacts.programs, state: 'off', extent: null, afterSerial: 0,
-                    expectedPage: `${origin}/__baseline/index.html` });
-            baseline.initialExtent = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
-            const initial = await snapshot(page);
-            const initialQualification = assertShadowEvidence(initial, offArtifacts.programs, 'off', baseline.initialExtent);
-            report.advancedShadowBaseline = { detail, playing: baseline.initial.pixels, initial, initialQualification, resized: [] };
-            baseline.resized = [];
-            let prior = initial;
-            for (let iteration = 0; iteration < widths.length; iteration++) {
-                if (iteration === 0) await installShadowResizeObservation(page, `${origin}/__baseline/index.html`);
-                const extent = await resize(page, widths[iteration]);
-                const image = await captureShadowSurface(page, config, imageAnalysis, `off-${widths[iteration]}`, `${name}-resized-${iteration}`,
-                    'BrowserSmoke.ShadowOffResize: the authored OFF surface disappeared after resize.',
-                    { programs: offArtifacts.programs, state: 'off', extent, afterSerial: prior.gpu.completedSerial,
-                        expectedPage: `${origin}/__baseline/index.html` }, null, iteration === 0);
-                const evidence = await snapshot(page);
-                const qualification = assertShadowEvidence(evidence, offArtifacts.programs, 'off', extent, prior.gpu.completedSerial);
-                baseline.resized.push({ ...image, extent });
-                report.advancedShadowBaseline.resized.push({ pixels: image.pixels, extent, evidence, qualification });
-                prior = evidence;
-            }
-        });
-        for (let iteration = 0; iteration < 2; iteration++) await run('on', iteration, async (page, _events, name, detail) => {
-            const result = { iteration, detail };
-            report.advancedShadowIterations.push(result);
-            const playing = await captureShadowSurface(page, config, imageAnalysis, 'current', `${name}-playing`,
-                'BrowserSmoke.ShadowSurface: the authored ON surface did not reach the canvas.',
-                { programs: onArtifacts.programs, state: 'on', extent: null, afterSerial: 0,
-                    expectedPage: `${origin}/__game/index.html` }, baseline.initial);
-            const before = await page.locator('#input-surface').evaluate(element => [element.width, element.height]);
-            assert(equal(before, baseline.initialExtent), 'BrowserSmoke.ShadowComparison: initial ON/OFF canvas extents differ.');
-            result.playing = playing.pixels;
-            result.initial = await snapshot(page);
-            result.initialQualification = assertShadowEvidence(result.initial, onArtifacts.programs, 'on', before);
-            result.comparison = compareReceiver(baseline.initial, playing, before);
-            assertReceiverDifference(result.comparison, 'initial');
-            const after = await resize(page, widths[iteration]);
-            assert(equal(after, baseline.resized[iteration].extent), 'BrowserSmoke.ShadowComparison: resized ON/OFF canvas extents differ.');
-            const resized = await captureShadowSurface(page, config, imageAnalysis, 'current', `${name}-resized`,
-                'BrowserSmoke.ShadowResize: the authored ON surface disappeared after resize.',
-                { programs: onArtifacts.programs, state: 'on', extent: after, afterSerial: result.initial.gpu.completedSerial,
-                    expectedPage: `${origin}/__game/index.html` },
-                baseline.resized[iteration]);
-            result.resized = resized.pixels;
-            result.after = await snapshot(page);
-            result.resizeQualification = assertShadowEvidence(result.after, onArtifacts.programs, 'on', after,
-                result.initial.gpu.completedSerial);
-            result.resizedComparison = compareReceiver(baseline.resized[iteration], resized, after);
-            assertReceiverDifference(result.resizedComparison, 'resized');
-            result.canvasSizes = { before, after };
-        });
-    } catch (error) {
-        imageAnalysisFailed = true;
-        throw error;
-    } finally {
-        const stopped = await imageAnalysis.close();
-        report.advancedShadowImageAnalysis ??= { codec: 'unavailable' };
-        report.advancedShadowImageAnalysis.workerStopped = stopped;
-        if (!stopped && !imageAnalysisFailed) throw new Error('BrowserSmoke.ShadowImageCleanup: owned analysis worker did not stop within 1000 ms.');
     }
 }
