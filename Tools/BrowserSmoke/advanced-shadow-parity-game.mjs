@@ -138,7 +138,7 @@ async function publishedShadowArtifacts(root, state) {
         const result = await artifact(entries[0]);
         assert(result.descriptor.name === `engine-advanced-${pass}` &&
             result.descriptor.materialVariant === undefined &&
-            result.descriptor.entryPoints?.compute === 'advancedShadeNative' &&
+            result.descriptor.entryPoints?.compute === (pass.endsWith('-msaa') ? 'advancedShadeNativeMsaa' : 'advancedShadeNative') &&
             Object.keys(result.descriptor.entryPoints).length === 1 &&
             equal(result.descriptor.workgroupSize, [16, 16, 1]),
         'BrowserSmoke.ShadowArtifact: native pipeline identity disagrees.');
