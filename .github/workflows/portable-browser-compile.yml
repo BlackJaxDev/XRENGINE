@@ -189,11 +189,60 @@ jobs:
     name: Publish RollingBall with the Windows Editor CLI
     runs-on: windows-latest
     timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      reuse: ${{ steps.reuse_selector.outcome == 'success' && steps.reuse_selector.outputs.reuse == 'true' }}
+      manifest: ${{ steps.reuse_selector.outcome == 'success' && steps.reuse_selector.outputs.reuse == 'true' && steps.reuse_selector.outputs.manifest || '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Select and preflight exact Editor bundle reuse
+        id: reuse_probe
+        continue-on-error: true
+        timeout-minutes: 7
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+        run: ./Tools/BrowserSmoke/Invoke-EditorBundleReuse.ps1 -Mode Select
+
+      - name: Preserve validated Editor bundle reuse provenance
+        id: reuse_provenance
+        if: ${{ steps.reuse_probe.outcome == 'success' && steps.reuse_probe.outputs.reuse == 'true' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: editor-bundle-reuse-provenance
+          path: ${{ env.VALIDATION_ROOT }}/editor-bundle-reuse-provenance.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Select validated Editor reuse decision
+        id: reuse_selector
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        env:
+          PROBE_OUTCOME: ${{ steps.reuse_probe.outcome }}
+          PROBE_REUSE: ${{ steps.reuse_probe.outputs.reuse }}
+          PROBE_MANIFEST: ${{ steps.reuse_probe.outputs.manifest }}
+          PROVENANCE_OUTCOME: ${{ steps.reuse_provenance.outcome }}
+        run: |
+          if ($env:PROBE_OUTCOME -ceq 'success' -and $env:PROBE_REUSE -ceq 'true' -and
+              $env:PROVENANCE_OUTCOME -ceq 'success' -and $env:PROBE_MANIFEST) {
+            "manifest=$env:PROBE_MANIFEST" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            "reuse=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            "reuse=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
 
       - name: Initialize pinned Editor project submodules
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $paths = @('Build/Submodules/OscCore-NET9', 'Build/Submodules/OpenVR.NET')
@@ -218,6 +267,7 @@ jobs:
           }
 
       - name: Stage the pinned Editor shader compiler
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $shaderCompiler = 'XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/xr_shaderc.dll'
@@ -236,20 +286,24 @@ jobs:
           }
 
       - name: Set up .NET 10
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
       - name: Install WebAssembly workload
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         run: dotnet workload install wasm-tools
 
       - name: Prepare pinned browser physics sources
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           ./Tools/Dependencies/Prepare-JoltBrowserManaged.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/managed"
           ./Tools/Dependencies/Build-JoltBrowser.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/native" -DotNetRoot $env:DOTNET_ROOT
 
       - name: Stage canonical RollingBall inputs
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $source = 'Samples/RollingBall'
@@ -265,6 +319,7 @@ jobs:
           Write-Output "Staged canonical RollingBall project: $project"
 
       - name: Publish RollingBall through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         env:
           JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
@@ -278,6 +333,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "The Editor browser-publishing CLI failed; inspect $log." }
 
       - name: Verify activated game bundle and unchanged canonical inputs
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $site = Join-Path $env:VALIDATION_ROOT 'rollingball-cli/project/Build/browser-game'
@@ -299,6 +355,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Canonical RollingBall inputs changed during CLI publishing.' }
 
       - name: Preserve exact Editor-published game bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-rollingball-bundle
@@ -307,6 +364,7 @@ jobs:
           retention-days: 7
 
       - name: Verify dependency attribution in a disposable source copy
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -367,7 +425,7 @@ jobs:
           }
 
       - name: Preserve isolated dependency attribution evidence
-        if: always()
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@v7
         with:
           name: browser-dependency-attribution
@@ -376,6 +434,7 @@ jobs:
           retention-days: 7
 
       - name: Prepare canonical RenderingParity browser inputs
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $toolchain = Join-Path $env:VALIDATION_ROOT 'toolchain/slang-windows'
@@ -399,6 +458,7 @@ jobs:
           ./Tools/Cook-EngineBrowserShaders.ps1 -OutputDirectory (Join-Path $project 'Assets/Shaders/WebGPU')
 
       - name: Preserve exact native shading cook
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $shaders = Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU'
@@ -493,7 +553,7 @@ jobs:
           $selected | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $evidence 'artifacts.json') -Encoding utf8NoBOM
 
       - name: Upload native shading source evidence
-        if: always()
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@v7
         with:
           name: native-shading-cook
@@ -502,6 +562,7 @@ jobs:
           retention-days: 14
 
       - name: Publish RenderingParity through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         env:
           JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
@@ -525,6 +586,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Canonical RenderingParity inputs changed during CLI publishing.' }
 
       - name: Preserve exact Editor-published RenderingParity bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-rendering-parity-bundle
@@ -533,6 +595,7 @@ jobs:
           retention-days: 7
 
       - name: Stage authored Advanced rendering project
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $project = Join-Path $env:VALIDATION_ROOT 'advanced-rendering-parity-cli/project'
@@ -547,6 +610,7 @@ jobs:
           Copy-Item -LiteralPath (Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU') -Destination $shaders -Recurse
 
       - name: Publish Advanced rendering through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         env:
           JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
@@ -573,6 +637,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Authored Advanced inputs changed during CLI publishing.' }
 
       - name: Preserve exact Editor-published Advanced rendering bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-advanced-rendering-parity-bundle
@@ -581,11 +646,13 @@ jobs:
           retention-days: 7
 
       - name: Set up native package and shadow staging tools
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         uses: actions/setup-node@v6
         with:
           node-version: '22'
 
       - name: Stage bounded Advanced shadow comparison
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $catalog = Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU'
@@ -594,6 +661,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'The Advanced shadow comparison staging failed.' }
 
       - name: Publish Advanced shadow comparison through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         env:
           JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
@@ -629,6 +697,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Authored Advanced inputs changed during shadow comparison publishing.' }
 
       - name: Verify Advanced shadow startup settings through the cooked codec
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         timeout-minutes: 10
         run: |
@@ -638,12 +707,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'The Advanced shadow startup settings differ outside the three transient settings asset IDs.' }
 
       - name: Bind Advanced shadow source and published payload evidence
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           node Tools/BrowserSmoke/prepare-advanced-shadow-comparison.mjs --receipt . (Join-Path $env:VALIDATION_ROOT 'advanced-shadow-parity-cli')
           if ($LASTEXITCODE -ne 0) { throw 'The Advanced shadow comparison publication evidence failed.' }
 
       - name: Preserve exact Editor-published Advanced shadow ON bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-advanced-shadow-parity-bundle
@@ -652,6 +723,7 @@ jobs:
           retention-days: 7
 
       - name: Preserve exact Editor-published Advanced shadow OFF reference
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-advanced-shadow-parity-off-bundle
@@ -660,6 +732,7 @@ jobs:
           retention-days: 7
 
       - name: Verify render scope ownership and native handoff loading
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         env:
           ALSOFT_DRIVERS: 'null'
@@ -676,7 +749,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Render scope ownership or native handoff loading checks failed.' }
 
       - name: Preserve render scope ownership evidence
-        if: always()
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@v7
         with:
           name: render-scope-ownership-tests
@@ -685,6 +758,7 @@ jobs:
           retention-days: 14
 
       - name: Stage authored shared UI project
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $project = Join-Path $env:VALIDATION_ROOT 'ui-parity-cli/project'
@@ -698,6 +772,7 @@ jobs:
           Copy-Item -LiteralPath (Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU') -Destination $shaders -Recurse
 
       - name: Publish shared UI through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         env:
           JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
@@ -727,6 +802,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Authored shared UI inputs changed during CLI publishing.' }
 
       - name: Preserve exact Editor-published shared UI bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-ui-parity-bundle
@@ -735,6 +811,7 @@ jobs:
           retention-days: 7
 
       - name: Stage and cook authored modular pipeline project
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $project = Join-Path $env:VALIDATION_ROOT 'modular-pipeline-parity-cli/project'
@@ -750,6 +827,7 @@ jobs:
           & ./Samples/ModularPipelineParity/Prepare-BrowserShaders.ps1 -OutputDirectory (Join-Path $project 'Assets/Shaders/WebGPU')
 
       - name: Publish modular pipeline through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         env:
           JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
@@ -772,6 +850,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Authored modular sample inputs changed during CLI publishing.' }
 
       - name: Preserve exact Editor-published modular pipeline bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-modular-pipeline-parity-bundle
@@ -780,6 +859,7 @@ jobs:
           retention-days: 7
 
       - name: Stage identical static meshlet GPU and CPU worlds
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         run: |
           $original = Get-Content -LiteralPath 'Samples/RenderingParity/Assets/Worlds/RenderingParityWorld.asset' -Raw
@@ -819,6 +899,7 @@ jobs:
           }
 
       - name: Publish static meshlet GPU and CPU worlds through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         env:
           JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
@@ -854,6 +935,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Authored static meshlet sample inputs changed during CLI publishing.' }
 
       - name: Preserve exact Editor-published static meshlet GPU bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-static-meshlet-parity-bundle
@@ -862,6 +944,7 @@ jobs:
           retention-days: 7
 
       - name: Preserve exact Editor-published static meshlet CPU reference
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-static-meshlet-parity-cpu-bundle
@@ -870,6 +953,7 @@ jobs:
           retention-days: 7
 
       - name: Publish the shared native networking fixture
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         env:
           JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
@@ -895,7 +979,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'The shared native world publication failed canonical identity or byte verification.' }
 
       - name: Preserve the shared native networking fixture
-        if: always()
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-network-kinematic-bundle
@@ -904,7 +988,7 @@ jobs:
           retention-days: 7
 
       - name: Preserve Windows Editor CLI evidence
-        if: always()
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-rollingball-qualification
@@ -954,6 +1038,9 @@ jobs:
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -963,24 +1050,53 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Download exact Editor-published game bundle
+        if: needs.windows-editor-browser.outputs.reuse != 'true'
         uses: actions/download-artifact@v8
         with:
           name: windows-editor-${{ matrix.kind }}-bundle
           path: ${{ env.VALIDATION_ROOT }}/published-game
 
       - name: Download exact same-world CPU reference
-        if: matrix.kind == 'static-meshlet-parity'
+        if: needs.windows-editor-browser.outputs.reuse != 'true' && matrix.kind == 'static-meshlet-parity'
         uses: actions/download-artifact@v8
         with:
           name: windows-editor-static-meshlet-parity-cpu-bundle
           path: ${{ env.VALIDATION_ROOT }}/published-cpu-baseline
 
       - name: Download exact same-world shadow OFF reference
-        if: matrix.kind == 'advanced-shadow-parity'
+        if: needs.windows-editor-browser.outputs.reuse != 'true' && matrix.kind == 'advanced-shadow-parity'
         uses: actions/download-artifact@v8
         with:
           name: windows-editor-advanced-shadow-parity-off-bundle
           path: ${{ env.VALIDATION_ROOT }}/published-cpu-baseline
+
+      - name: Download and verify original reused Editor bundle
+        if: needs.windows-editor-browser.outputs.reuse == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          REUSE_MANIFEST: ${{ needs.windows-editor-browser.outputs.manifest }}
+          GAME_KIND: ${{ matrix.kind }}
+        run: ./Tools/BrowserSmoke/Invoke-EditorBundleReuse.ps1 -Mode Download -Kind "windows-editor-$env:GAME_KIND-bundle" -Destination "$env:VALIDATION_ROOT/published-game"
+
+      - name: Download and verify original reused static meshlet CPU reference
+        if: needs.windows-editor-browser.outputs.reuse == 'true' && matrix.kind == 'static-meshlet-parity'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          REUSE_MANIFEST: ${{ needs.windows-editor-browser.outputs.manifest }}
+        run: ./Tools/BrowserSmoke/Invoke-EditorBundleReuse.ps1 -Mode Download -Kind windows-editor-static-meshlet-parity-cpu-bundle -Destination "$env:VALIDATION_ROOT/published-cpu-baseline"
+
+      - name: Download and verify original reused shadow OFF reference
+        if: needs.windows-editor-browser.outputs.reuse == 'true' && matrix.kind == 'advanced-shadow-parity'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          REUSE_MANIFEST: ${{ needs.windows-editor-browser.outputs.manifest }}
+        run: ./Tools/BrowserSmoke/Invoke-EditorBundleReuse.ps1 -Mode Download -Kind windows-editor-advanced-shadow-parity-off-bundle -Destination "$env:VALIDATION_ROOT/published-cpu-baseline"
 
       - name: Set up browser qualification tools
         uses: actions/setup-node@v6
