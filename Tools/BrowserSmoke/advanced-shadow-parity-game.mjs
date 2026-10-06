@@ -473,16 +473,55 @@ export function inspectShadowCaptureImage({ data, width, height }, regions) {
 
 async function captureShadowSurface(page, config, name, failure, reference = null) {
     const budget = Math.min(config.timeout, 10000);
-    const deadline = Date.now() + budget;
+    const startedAt = Date.now();
+    const deadline = startedAt + budget;
     const canvas = page.locator('#input-surface');
-    const step = async action => {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) throw new Error(`${failure} Canvas capture exceeded its ${budget} ms budget.`);
+    const unrun = () => ({ status: 'unrun', attempt: null, value: null });
+    const phases = ['scroll-into-view', 'geometry-before', 'canvas-screenshot', 'geometry-after',
+        'inspect-pixels', 'inspect-alignment', 'read-status', 'read-failure-status', 'next-animation-frame'];
+    const diagnostics = { schema: 1, name, budgetMs: budget, startedAtUtcMs: startedAt,
+        elapsedMs: null, attempt: 0, activePhase: null,
+        phases: Object.fromEntries(phases.map(phase => [phase, { attempt: null, phase, status: 'unrun',
+            startedAtMs: null, elapsedMs: null, remainingMs: null }])),
+        steps: [], omittedSteps: 0, before: unrun(), after: unrun(), latestSummary: unrun() };
+    const withCaptureEvidence = error => {
+        const result = error instanceof Error ? error : new Error(String(error));
+        diagnostics.elapsedMs = Date.now() - startedAt;
+        // Copy before browser evidence collection or cleanup can run. Pending work cannot change this record.
+        result.shadowCapture = structuredClone(diagnostics);
+        return result;
+    };
+    const step = async (phase, action) => {
+        const stepStartedAt = Date.now();
+        const remaining = deadline - stepStartedAt;
+        const record = { attempt: diagnostics.attempt, phase, status: 'pending',
+            startedAtMs: stepStartedAt - startedAt, elapsedMs: null, remainingMs: Math.max(0, remaining) };
+        diagnostics.activePhase = phase;
+        diagnostics.phases[phase] = record;
+        if (diagnostics.steps.length < 64) diagnostics.steps.push(record);
+        else diagnostics.omittedSteps++;
+        if (remaining <= 0) {
+            record.status = 'not-started-budget';
+            record.elapsedMs = 0;
+            throw withCaptureEvidence(new Error(`${failure} Canvas capture exceeded its ${budget} ms budget.`));
+        }
         let timer;
+        let timedOut = false;
         try {
-            return await Promise.race([action(), new Promise((_, reject) => {
-                timer = setTimeout(() => reject(new Error(`${failure} Canvas capture exceeded its ${budget} ms budget.`)), remaining);
+            const result = await Promise.race([action(), new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    timedOut = true;
+                    reject(new Error(`${failure} Canvas capture exceeded its ${budget} ms budget.`));
+                }, remaining);
             })]);
+            record.status = 'fulfilled';
+            record.elapsedMs = Date.now() - stepStartedAt;
+            diagnostics.activePhase = null;
+            return result;
+        } catch (error) {
+            record.status = timedOut ? 'timed-out' : 'rejected';
+            record.elapsedMs = Date.now() - stepStartedAt;
+            throw withCaptureEvidence(error);
         } finally { clearTimeout(timer); }
     };
     const geometry = () => canvas.evaluate(element => {
@@ -492,14 +531,19 @@ async function captureShadowSurface(page, config, name, failure, reference = nul
     });
     let latest;
     do {
-        await step(() => canvas.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) }));
-        const before = await step(geometry);
-        const image = await step(() => canvas.screenshot({ path: path.join(config.output, `${name}.png`),
+        diagnostics.attempt++;
+        diagnostics.before = unrun();
+        diagnostics.after = unrun();
+        await step('scroll-into-view', () => canvas.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) }));
+        const before = await step('geometry-before', geometry);
+        diagnostics.before = { status: 'available', attempt: diagnostics.attempt, value: before };
+        const image = await step('canvas-screenshot', () => canvas.screenshot({ path: path.join(config.output, `${name}.png`),
             timeout: Math.max(1, deadline - Date.now()) }));
-        const after = await step(geometry);
-        const pixels = await step(() => inspectCanvas(page, null, image));
+        const after = await step('geometry-after', geometry);
+        diagnostics.after = { status: 'available', attempt: diagnostics.attempt, value: after };
+        const pixels = await step('inspect-pixels', () => inspectCanvas(page, null, image));
         const regions = shadowReceiverRegions(pixels.width, pixels.height, before.bitmapWidth, before.bitmapHeight);
-        const alignment = await step(() => page.evaluate(async ({ encoded, regions }) => {
+        const alignment = await step('inspect-alignment', () => page.evaluate(async ({ encoded, regions }) => {
             const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
             const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
             const surface = new OffscreenCanvas(bitmap.width, bitmap.height);
@@ -515,14 +559,17 @@ async function captureShadowSurface(page, config, name, failure, reference = nul
             equal(reference.pixels.captureValidity.alignment.observed, alignment.observed);
         latest = { ...pixels, captureValidity: { accepted: stable && alignment.accepted && matchesReference, stable, matchesReference,
             before, after, alignment } };
+        diagnostics.latestSummary = { status: 'available', attempt: diagnostics.attempt, value: latest };
         if (hasSurface(pixels) && latest.captureValidity.accepted && Date.now() <= deadline) return { image, pixels: latest };
-        if (await step(() => page.locator('#status').getAttribute('data-state')) === 'failed')
-            throw new Error(`BrowserSmoke.EngineFrameFailed: ${await step(() => page.locator('#status').textContent())}`);
+        if (await step('read-status', () => page.locator('#status').getAttribute('data-state')) === 'failed')
+            throw withCaptureEvidence(new Error(`BrowserSmoke.EngineFrameFailed: ${await step('read-failure-status',
+                () => page.locator('#status').textContent())}`));
         // Retry at the next browser frame, within the same capture budget. Do not add a fixed startup delay.
         const remaining = deadline - Date.now();
-        if (remaining > 0) await step(() => page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve))));
+        if (remaining > 0) await step('next-animation-frame',
+            () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve))));
     } while (Date.now() < deadline);
-    throw new Error(`${failure} Last canvas summary: ${JSON.stringify(latest)}`);
+    throw withCaptureEvidence(new Error(`${failure} Last canvas summary: ${JSON.stringify(latest)}`));
 }
 
 async function compareReceiver(page, off, on, canvasExtent) {
@@ -589,6 +636,47 @@ async function snapshot(page) {
     });
 }
 
+/** Reads fixed delivery counters after failure without extending a blocked browser evaluation. */
+async function shadowDeliverySnapshot(page, expectedPage) {
+    const deadline = Date.now() + 1000;
+    const unavailable = { status: 'unavailable', reason: 'page-evaluation-failed', state: null,
+        verifiedAssets: null, essentialVerifiedAssets: null, essentialAssets: null, failedReads: null,
+        cancelledReads: null, activeRequests: null, queuedReads: null, retainedAssets: null };
+    const timeout = { ...unavailable, reason: 'counter-read-timeout' };
+    let timer;
+    try {
+        const result = await Promise.race([
+            page.evaluate(async ({ expectedPage, deadline, unavailable }) => {
+                const absent = reason => ({ ...unavailable, reason });
+                if (location.href !== expectedPage) return absent('unexpected-document');
+                if (document.querySelector('#status')?.dataset.state !== 'running')
+                    return absent('running-module-unproven');
+                if (Date.now() >= deadline) return absent('counter-read-timeout');
+                try {
+                    // A running player has evaluated engine-runtime.js and its static engine-assets.js import.
+                    // Resolve the same module-map key under this publish mount; do not request another module.
+                    const module = await import(new URL('./engine-assets.js', location.href).href);
+                    if (Date.now() >= deadline) return absent('counter-read-timeout');
+                    const progress = JSON.parse(module.engineAssetImports.currentProgress());
+                    if (!progress) return absent('no-current-source');
+                    const counters = ['verifiedAssets', 'essentialVerifiedAssets', 'essentialAssets', 'failedReads',
+                        'cancelledReads', 'activeRequests', 'queuedReads', 'retainedAssets'];
+                    if (!['opening', 'ready'].includes(progress.state) || counters.some(key =>
+                        !Number.isSafeInteger(progress[key]) || progress[key] < 0))
+                        return absent('invalid-counters');
+                    const delivery = { ...unavailable, status: 'available', reason: null, state: progress.state };
+                    for (const key of counters) delivery[key] = progress[key];
+                    return delivery;
+                } catch { return absent('counter-read-failed'); }
+            }, { expectedPage, deadline, unavailable }).catch(() => unavailable),
+            new Promise(resolve => {
+                timer = setTimeout(() => resolve(timeout), Math.max(0, deadline - Date.now()));
+            }),
+        ]);
+        return Date.now() <= deadline ? result : timeout;
+    } finally { clearTimeout(timer); }
+}
+
 async function start(page, origin, mount) {
     await page.addInitScript({ content: `globalThis.advancedShadowInspectCaptureImage = (${inspectShadowCaptureImage.toString()});` });
     await page.addInitScript(installNativeCompileCapture, ['shade-native-depth']);
@@ -643,7 +731,10 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
                 nativeCompile: globalThis.advancedNativeCompileSnapshot?.() ?? null,
                 submissions: globalThis.advancedSubmissionSnapshot?.() ?? null,
                 gpu: globalThis.advancedShadowSnapshot?.() ?? null })).catch(() => null);
-            report.advancedShadowFailures.push({ state, iteration, error: String(error), ...evidence });
+            const delivery = await shadowDeliverySnapshot(page,
+                `${origin}/${state === 'on' ? '__game' : '__baseline'}/index.html`);
+            report.advancedShadowFailures.push({ state, iteration, error: String(error),
+                capture: error?.shadowCapture ?? null, ...evidence, delivery });
             await page.screenshot({ path: path.join(config.output, `${name}-failure.png`), fullPage: true }).catch(() => {});
             throw error;
         } finally {
