@@ -609,6 +609,15 @@ jobs:
           git diff --exit-code -- Samples/AdvancedRenderingParity
           if ($LASTEXITCODE -ne 0) { throw 'Authored Advanced inputs changed during shadow comparison publishing.' }
 
+      - name: Verify Advanced shadow startup settings through the cooked codec
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $output = Join-Path $env:VALIDATION_ROOT 'advanced-shadow-parity-cli'
+          dotnet run --project Tools/BrowserSmoke/ShadowStartupVerifier/ShadowStartupVerifier.csproj `
+            --configuration Release --no-launch-profile -- . $output
+          if ($LASTEXITCODE -ne 0) { throw 'The Advanced shadow startup settings differ outside the three transient settings asset IDs.' }
+
       - name: Bind Advanced shadow source and published payload evidence
         shell: pwsh
         run: |
@@ -886,6 +895,14 @@ jobs:
             ${{ env.VALIDATION_ROOT }}/advanced-rendering-parity-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/staged-inputs.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/postpublish-inputs-on.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/postpublish-inputs-off.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/published-startup-on.bin
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/published-startup-off.bin
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/startup-verification.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/project/Assets/Worlds/AdvancedRenderingParityWorld.asset
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/project/Assets/Worlds/AdvancedRenderingParityWorld.asset
             ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/project/Build/browser-game/content/manifest.json
             ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/project/Build/browser-game/content/manifest.json
             ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/project/Build/browser-game/shadow-comparison.json

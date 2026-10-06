@@ -24,9 +24,11 @@ async function publishedShadowArtifacts(root, state) {
     const launch = JSON.parse(await fs.readFile(path.join(root, 'browser-publish.json'), 'utf8'));
     assert(launch.schema === 2 && launch.format === 'xrengine-engine-launch' &&
         launch.manifest === './content/manifest.json' && manifest.startupWorld === worldPath &&
+        manifest.startupSettings === '/game/startup.asset' &&
         receipt.schema === 1 && receipt.state === state && receipt.sourceWorldSha256 === fixtureHashes[state] &&
         /^[a-f0-9]{64}$/.test(receipt.canonicalCatalogManifestSha256) &&
-        /^[a-f0-9]{64}$/.test(receipt.sharedSourceSha256),
+        /^[a-f0-9]{64}$/.test(receipt.sharedSourceSha256) &&
+        /^[a-f0-9]{64}$/.test(receipt.verifiedStartupSemanticSha256),
     `BrowserSmoke.ShadowFixture: ${state} must use the pinned published receiver and occluders.`);
     const readPayload = async virtualPath => {
         const entries = manifest.assets?.filter(entry => entry.path === virtualPath) ?? [];
@@ -42,6 +44,9 @@ async function publishedShadowArtifacts(root, state) {
     const world = await readPayload(worldPath);
     assert(world.hash === receipt.publishedWorldSha256,
         `BrowserSmoke.ShadowFixture: ${state} cooked startup world differs from the staging receipt.`);
+    const startup = await readPayload('/game/startup.asset');
+    assert(startup.hash === receipt.publishedStartupSettingsSha256,
+        `BrowserSmoke.ShadowFixture: ${state} cooked startup settings differ from the verified receipt.`);
     const artifact = async entry => {
         assert(entry && /^[a-f0-9]{64}$/.test(entry.descriptorIdentity),
             'BrowserSmoke.ShadowArtifact: required program is absent.');
@@ -610,6 +615,7 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
         publishedShadowArtifacts(config.gamePublish, 'on'), publishedShadowArtifacts(config.baselinePublish, 'off')]);
     assert(onArtifacts.receipt.canonicalCatalogManifestSha256 === offArtifacts.receipt.canonicalCatalogManifestSha256 &&
         onArtifacts.receipt.sharedSourceSha256 === offArtifacts.receipt.sharedSourceSha256 &&
+        onArtifacts.receipt.verifiedStartupSemanticSha256 === offArtifacts.receipt.verifiedStartupSemanticSha256 &&
         equal(onArtifacts.programs, offArtifacts.programs),
     'BrowserSmoke.ShadowComparison: ON/OFF must have identical shared source and cooked program identities.');
     report.advancedShadowArtifacts = { on: onArtifacts, off: offArtifacts };

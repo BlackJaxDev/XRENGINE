@@ -37,21 +37,30 @@ function assertValidationDirectoryChain(repo, target) {
     }
 }
 
-function sharedSourceDigest(project) {
-    const entries = [];
-    function collect(directory, relative = "") {
+function sharedSourceSnapshot(project) {
+    const files = [];
+    function addFile(file, relative) {
+        if (!fs.lstatSync(file).isFile())
+            throw new Error(`The staged source must be a regular file: ${relative}`);
+        files.push({ path: relative, sha256: worldHash(fs.readFileSync(file)) });
+    }
+    function collect(directory, relative) {
+        if (!fs.lstatSync(directory).isDirectory())
+            throw new Error(`The staged source must be a directory: ${relative}`);
         for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
-            const name = relative ? `${relative}/${item.name}` : item.name;
-            if (!relative && ["Build", "bin", "obj", "Intermediate"].includes(item.name)) continue;
+            const name = `${relative}/${item.name}`;
             if (name === "Assets/Worlds/AdvancedRenderingParityWorld.asset") continue;
             const file = path.join(directory, item.name);
             if (item.isDirectory()) collect(file, name);
-            else if (item.isFile()) entries.push(`${name} ${worldHash(fs.readFileSync(file))}\n`);
+            else if (item.isFile()) addFile(file, name);
             else throw new Error(`Unexpected shadow comparison source entry: ${name}`);
         }
     }
-    collect(project);
-    return worldHash(entries.sort().join(""));
+    addFile(path.join(project, "AdvancedRenderingParity.xrproj"), "AdvancedRenderingParity.xrproj");
+    collect(path.join(project, "Assets"), "Assets");
+    collect(path.join(project, "Config"), "Config");
+    files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+    return { files, sha256: worldHash(files.map(file => `${file.path} ${file.sha256}\n`).join("")) };
 }
 
 if (process.argv[2] === "--receipt") {
@@ -61,17 +70,34 @@ if (process.argv[2] === "--receipt") {
     const repo = path.resolve(repoArgument);
     const output = path.resolve(outputArgument);
     assertValidationDirectoryChain(repo, output);
+    const snapshotPath = path.join(output, "staged-inputs.json");
+    if (!fs.lstatSync(snapshotPath).isFile())
+        throw new Error("The staged input snapshot must be a regular file.");
+    const snapshot = JSON.parse(fs.readFileSync(snapshotPath, "utf8"));
+    if (snapshot.schema !== 1 || !Array.isArray(snapshot.files) || !/^[0-9a-f]{64}$/.test(snapshot.sharedSourceSha256))
+        throw new Error("The staged input snapshot is invalid.");
     const receipts = [];
     for (const state of ["on", "off"]) {
         const project = path.join(output, state, "project");
         const site = path.join(project, "Build", "browser-game");
         assertValidationDirectoryChain(repo, site);
+        const currentInputs = sharedSourceSnapshot(project);
+        fs.writeFileSync(path.join(output, `postpublish-inputs-${state}.json`), `${JSON.stringify({
+            schema: 1, sharedSourceSha256: currentInputs.sha256, files: currentInputs.files,
+        }, null, 2)}\n`, { flag: "wx" });
+        if (currentInputs.sha256 !== snapshot.sharedSourceSha256
+            || JSON.stringify(currentInputs.files) !== JSON.stringify(snapshot.files))
+            throw new Error(`The staged shadow ${state} source inputs changed during publishing.`);
         const stagedWorld = path.join(project, "Assets", "Worlds", "AdvancedRenderingParityWorld.asset");
+        if (!fs.lstatSync(stagedWorld).isFile())
+            throw new Error(`The staged shadow ${state} world must be a regular file.`);
         if (worldHash(fs.readFileSync(stagedWorld)) !== expectedWorldHashes[state])
             throw new Error(`The staged shadow ${state} world changed during publishing.`);
         const manifest = JSON.parse(fs.readFileSync(path.join(site, "content", "manifest.json"), "utf8"));
         if (manifest.startupWorld !== "/game/Worlds/AdvancedRenderingParityWorld.asset")
             throw new Error(`The shadow ${state} bundle has the wrong startup world.`);
+        if (manifest.startupSettings !== "/game/startup.asset")
+            throw new Error(`The shadow ${state} bundle has the wrong startup settings.`);
         const matches = manifest.assets?.filter(asset => asset.path === manifest.startupWorld);
         const worldAsset = matches?.[0];
         if (matches?.length !== 1 || worldAsset.encoding !== "cooked-binary"
@@ -80,20 +106,53 @@ if (process.argv[2] === "--receipt") {
         const payload = fs.readFileSync(path.join(site, "content", worldAsset.url));
         if (worldHash(payload) !== worldAsset.hash)
             throw new Error(`The shadow ${state} world payload does not match the published manifest.`);
-        receipts.push({ site, value: {
+        const startupAssets = manifest.assets.filter(asset => asset.path === "/game/startup.asset");
+        const startupAsset = startupAssets[0];
+        if (startupAssets.length !== 1 || startupAsset.encoding !== "cooked-binary"
+            || !/^[0-9a-f]{64}$/.test(startupAsset.hash)
+            || startupAsset.url !== `payload/${startupAsset.hash}.bin`)
+            throw new Error(`The shadow ${state} bundle has no verified startup settings asset.`);
+        const startupPayload = fs.readFileSync(path.join(site, "content", startupAsset.url));
+        if (startupPayload.length !== startupAsset.bytes || worldHash(startupPayload) !== startupAsset.hash)
+            throw new Error(`The shadow ${state} startup settings payload does not match the published manifest.`);
+        receipts.push({ site, manifest, startupAsset, value: {
             schema: 1,
             state,
             sourceWorldSha256: expectedWorldHashes[state],
             publishedWorldSha256: worldAsset.hash,
             canonicalCatalogManifestSha256: worldHash(fs.readFileSync(path.join(project, "Assets", "Shaders", "WebGPU", "manifest.json"))),
-            sharedSourceSha256: sharedSourceDigest(project),
+            sharedSourceSha256: snapshot.sharedSourceSha256,
         } });
     }
     if (receipts[0].value.canonicalCatalogManifestSha256 !== receipts[1].value.canonicalCatalogManifestSha256
         || receipts[0].value.sharedSourceSha256 !== receipts[1].value.sharedSourceSha256)
         throw new Error("The shadow comparison projects have different shared sources or shader catalogs.");
+    const verifiedPath = path.join(output, "startup-verification.json");
+    if (!fs.lstatSync(verifiedPath).isFile())
+        throw new Error("The startup semantic verification must be a regular file.");
+    const verified = JSON.parse(fs.readFileSync(verifiedPath, "utf8"));
+    if (verified.schema !== 1 || verified.onStartupSha256 !== receipts[0].startupAsset.hash
+        || verified.offStartupSha256 !== receipts[1].startupAsset.hash
+        || !/^[0-9a-f]{64}$/.test(verified.normalizedStartupSha256)
+        || JSON.stringify(verified.normalizedFields) !== JSON.stringify([
+            "GameStartupSettings.ID", "BuildSettings.ID", "DefaultUserSettings.ID",
+        ]))
+        throw new Error("The startup semantic verification does not bind both published payloads.");
+    const startupMetadata = asset => ({ ...asset, hash: null, url: null });
+    if (JSON.stringify(startupMetadata(receipts[0].startupAsset)) !== JSON.stringify(startupMetadata(receipts[1].startupAsset)))
+        throw new Error("The startup settings asset metadata differs outside its verified payload hash.");
+    const withoutVariablePayloads = manifest => ({
+        ...manifest,
+        assets: manifest.assets.filter(asset => asset.path !== manifest.startupWorld && asset.path !== manifest.startupSettings),
+    });
+    if (JSON.stringify(withoutVariablePayloads(receipts[0].manifest)) !== JSON.stringify(withoutVariablePayloads(receipts[1].manifest)))
+        throw new Error("The shadow comparison bundles differ outside their verified startup payloads.");
     if (receipts[0].value.publishedWorldSha256 === receipts[1].value.publishedWorldSha256)
         throw new Error("The shadow ON and OFF published worlds have the same payload.");
+    for (const receipt of receipts) {
+        receipt.value.publishedStartupSettingsSha256 = receipt.startupAsset.hash;
+        receipt.value.verifiedStartupSemanticSha256 = verified.normalizedStartupSha256;
+    }
     for (const { site, value } of receipts) {
         assertValidationDirectoryChain(repo, site);
         const receipt = path.join(site, "shadow-comparison.json");
@@ -180,3 +239,10 @@ for (const [state, fixture] of Object.entries(worlds)) {
     fs.writeFileSync(stagedWorld, fixture.text);
     console.log(`${state} ${fixture.sha256} ${path.join(project, "AdvancedRenderingParity.xrproj")}`);
 }
+const onInputs = sharedSourceSnapshot(path.join(output, "on", "project"));
+const offInputs = sharedSourceSnapshot(path.join(output, "off", "project"));
+if (onInputs.sha256 !== offInputs.sha256 || JSON.stringify(onInputs.files) !== JSON.stringify(offInputs.files))
+    throw new Error("The shadow comparison projects have different staged source inputs.");
+fs.writeFileSync(path.join(output, "staged-inputs.json"), `${JSON.stringify({
+    schema: 1, sharedSourceSha256: onInputs.sha256, files: onInputs.files,
+}, null, 2)}\n`, { flag: "wx" });
