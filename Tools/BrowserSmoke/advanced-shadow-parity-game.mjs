@@ -771,6 +771,22 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
             viewportScale: visualViewport?.scale ?? null,
             viewportOffsetX: visualViewport?.offsetLeft ?? null, viewportOffsetY: visualViewport?.offsetTop ?? null };
     });
+    const captureClip = (sample, viewport) => {
+        // Match Playwright 1.63's element screenshot rounding in document coordinates.
+        // Page screenshot clips use viewport coordinates and do not repeat element stability waits.
+        const left = Math.floor(sample.x + sample.scrollX + 1e-3);
+        const top = Math.floor(sample.y + sample.scrollY + 1e-3);
+        const clip = { x: left - sample.scrollX, y: top - sample.scrollY,
+            width: Math.ceil(sample.x + sample.scrollX + sample.width - 1e-3) - left,
+            height: Math.ceil(sample.y + sample.scrollY + sample.height - 1e-3) - top };
+        const valid = viewport && Object.values(sample).every(Number.isFinite) &&
+            sample.devicePixelRatio === 1 && sample.viewportScale === 1 &&
+            sample.viewportOffsetX === 0 && sample.viewportOffsetY === 0 &&
+            sample.viewportWidth === viewport.width && sample.viewportHeight === viewport.height &&
+            sample.width > 0 && sample.height > 0 && clip.width > 0 && clip.height > 0 &&
+            clip.x >= 0 && clip.y >= 0 && clip.x + clip.width <= viewport.width && clip.y + clip.height <= viewport.height;
+        return { clip, valid };
+    };
     let latest;
     if (observeResize) halfwayTimer = setTimeout(() => {
         if (captureClosed) return;
@@ -790,25 +806,27 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
             diagnostics.before = unrun();
             diagnostics.after = unrun();
             diagnostics.clip = unrun();
-            await step('scroll-into-view', () => canvas.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) }));
-            const before = await step('geometry-before', geometry);
+            let before = await step('geometry-before', geometry);
             diagnostics.before = { status: 'available', attempt: diagnostics.attempt, value: before };
-            const viewport = page.viewportSize();
-            // Match Playwright 1.63's element screenshot rounding in document coordinates.
-            // Page screenshot clips use viewport coordinates and do not repeat element stability waits.
-            const left = Math.floor(before.x + before.scrollX + 1e-3);
-            const top = Math.floor(before.y + before.scrollY + 1e-3);
-            const clip = { x: left - before.scrollX, y: top - before.scrollY,
-                width: Math.ceil(before.x + before.scrollX + before.width - 1e-3) - left,
-                height: Math.ceil(before.y + before.scrollY + before.height - 1e-3) - top };
+            let viewport = page.viewportSize();
+            let capture = captureClip(before, viewport);
+            if (capture.valid) {
+                const record = { attempt: diagnostics.attempt, phase: 'scroll-into-view', status: 'skipped-visible',
+                    startedAtMs: Date.now() - startedAt, elapsedMs: 0, remainingMs: Math.max(0, deadline - Date.now()) };
+                diagnostics.phases['scroll-into-view'] = record;
+                if (diagnostics.steps.length < 64) diagnostics.steps.push(record);
+                else diagnostics.omittedSteps++;
+            } else {
+                await step('scroll-into-view', () => canvas.scrollIntoViewIfNeeded({ timeout: Math.max(1, deadline - Date.now()) }));
+                before = await step('geometry-before', geometry);
+                diagnostics.before = { status: 'available', attempt: diagnostics.attempt, value: before };
+                viewport = page.viewportSize();
+                capture = captureClip(before, viewport);
+            }
+            const { clip } = capture;
             diagnostics.clip = { status: 'available', attempt: diagnostics.attempt, value: { ...clip, viewport } };
             const image = await step('canvas-screenshot', () => {
-                assert(viewport && Object.values(before).every(Number.isFinite) &&
-                    before.devicePixelRatio === 1 && before.viewportScale === 1 &&
-                    before.viewportOffsetX === 0 && before.viewportOffsetY === 0 &&
-                    before.viewportWidth === viewport.width && before.viewportHeight === viewport.height &&
-                    before.width > 0 && before.height > 0 && clip.width > 0 && clip.height > 0 &&
-                    clip.x >= 0 && clip.y >= 0 && clip.x + clip.width <= viewport.width && clip.y + clip.height <= viewport.height,
+                assert(capture.valid,
                 'BrowserSmoke.ShadowCaptureBounds: the complete canvas must fit the unscaled viewport without clipping.');
                 return page.screenshot({ path: path.join(config.output, `${name}.png`), clip, fullPage: false,
                     timeout: Math.max(1, deadline - Date.now()) });
