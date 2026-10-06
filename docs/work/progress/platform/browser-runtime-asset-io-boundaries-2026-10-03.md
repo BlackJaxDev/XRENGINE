@@ -36,7 +36,7 @@ This local capability witness does not execute the browser host. Later slices re
 
 In the current browser path, an unloaded packaged identity enters `AssetManager.LoadFromRuntimeSourceAsync`; synchronous `Load` can retrieve only a published cached catalog object. Direct noncatalog `Load` and `LoadAsync` fail host-file admission before probing or scheduling work (`Assets/Loading/AssetManager.Loading.Api.Core.cs`); synchronous remote overloads reject caller execution before `GetResult` (`Assets/Loading/AssetManager.Loading.Remote.Api.cs`). `XRAsset`'s base async import/reload wrappers still delegate to admitted desktop host operations, and its serialization/file-replace retry remains host-file gated (`XREngine.Data/Core/Assets/XRAsset.cs`). These methods remain compiled in portable projects. The reviewed wrappers do not form a generic async importer for arbitrary raw files: a browser asset must have a registered cooked catalog target, or a feature-specific captured async reader such as Gaussian/DDGI. That is a deliberate delivery boundary, not an uncovered requirement to fetch arbitrary host paths.
 
-No new browser-reachable synchronous file read or sync-over-async wait was found in the named asset paths in this targeted source review. `UR03.02` remains open under its literal removal wording because synchronous desktop APIs and direct file operations still occupy shared runtime assemblies behind admission; a decision to physically separate or remove them is distinct from proving Browser call-path safety. This record does not establish a complete source audit of every shared method, browser page playback or live feature output.
+No new browser-reachable synchronous file read or sync-over-async wait was found in the named asset paths in this targeted source review. `UR03.02b` remains open under its literal removal wording because synchronous desktop APIs and direct file operations still occupy shared runtime assemblies behind admission; a decision to physically separate or remove them is distinct from proving Browser call-path safety. This record does not establish a complete source audit of every shared method, browser page playback or live feature output.
 
 ## Shared shader convenience boundaries
 
@@ -62,7 +62,7 @@ The same inherited async-entry review also covers `XRShader` context-aware loadi
 
 ## Diagnostic capture file output
 
-Rendering now encodes diagnostic PNG data and uses an optional host file output service for physical writes. The desktop backend installs the service during bootstrap, including headless bootstrap. `VPRC_CaptureFrame` checks host-file admission and selects the writer before synchronous readback when output is due. The desktop writer resolves the full path, creates its parent directory, writes the PNG, reopens that file for SHA-256, and writes indented metrics JSON after the metrics fields are set. Pipeline texture and framebuffer exports check their renderer capability first, then check host-file admission and select the writer before requesting asynchronous capture. The callbacks keep their existing naming, PNG encoding, image disposal, and timing. The desktop writer checks host-file admission when each output method runs, including after an asynchronous callback, so a retained desktop service rejects writes admitted after host-file access becomes unavailable. A synchronous write that was already admitted can finish after a concurrent source change. Browser hosts have no installed writer. This bounded change does not close UR02.03b or UR03.02.
+Rendering now encodes diagnostic PNG data and uses an optional host file output service for physical writes. The desktop backend installs the service during bootstrap, including headless bootstrap. `VPRC_CaptureFrame` checks host-file admission and selects the writer before synchronous readback when output is due. The desktop writer resolves the full path, creates its parent directory, writes the PNG, reopens that file for SHA-256, and writes indented metrics JSON after the metrics fields are set. Pipeline texture and framebuffer exports check their renderer capability first, then check host-file admission and select the writer before requesting asynchronous capture. The callbacks keep their existing naming, PNG encoding, image disposal, and timing. The desktop writer checks host-file admission when each output method runs, including after an asynchronous callback, so a retained desktop service rejects writes admitted after host-file access becomes unavailable. A synchronous write that was already admitted can finish after a concurrent source change. Browser hosts have no installed writer. This bounded change does not close UR02.03b or UR03.02b.
 
 The synchronous host-file admission helper now retains the source binding's
 reader count without creating a read lease or linked cancellation source.
@@ -81,3 +81,24 @@ new test was run for this move.
 `BaseNetworkingManager.SendFileAsync` and `ReceiveFileAsync` now reject operating-system paths before metadata, transport admission or file creation on browser, caller-thread, runtime-catalog and non-synchronous asset-source hosts. Both also recheck immediately before opening a file after an awaited transport operation. The diagnostic is `NetworkFileTransfer.HostFileUnavailable`; applications with an already opened stream retain the existing stream-transfer entry points when their installed transport supports them. The capability check does not add raw TCP support to the browser transport or change realtime WebSocket framing.
 
 An ignored production-method probe passes 17 checks with controlled in-memory transports: non-synchronous and synchronous-catalog rejection before transport or destination access, caller-thread rejection, unchanged desktop file payloads, retirement while connect/accept is pending, and available preopened-stream transfers under a non-synchronous asset source. Core and the probe compile with zero warnings/errors. No sockets or real server are used. This is admission and resumed-file-open evidence, not atomic cancellation of file operations already admitted on a desktop owner; the broader runtime I/O and blocking-site inventory remains open.
+
+## File mapping file access
+
+Both `FileMap` facades keep host-file admission and mapping ownership in Data.
+They now ask the installed `IFileMappingBackend` to open a requested file or a
+temporary file. The desktop backend owns path probing, file creation, file
+copying, and stream opening. It reports a fallback before it copies the file,
+through each facade's existing warning channel. Mapping still uses the same
+stream, offset, length, and protection. A mapping failure disposes a stream
+opened by a facade. `FromStream` keeps the caller's stream ownership.
+
+External `IFileMappingBackend` implementations must add `OpenFile` and
+`OpenTemporaryFile`, then rebuild against this pre-v1 interface. No browser
+backend is installed by this change. The wider runtime I/O inventory and
+`UR03.02b` remain open.
+
+Independent source review confirmed file options, fallback timing, warning
+channels and stream ownership against the prior implementation. The desktop
+platform leaf and shared dependencies built with zero warnings and zero errors.
+No runtime mapping probe or new test was run for this move. External backend
+implementations and browser execution remain outside this evidence.
