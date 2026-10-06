@@ -532,7 +532,7 @@ internal static partial class Program
             }
             SlangWgslOutput result = await CompileSlangWithContextAsync(stageContext, sourceRoot, sourceRelative, includeValues, defineValues, cancellationToken,
                 Object(recipe["entryPoints"], "entryPoints").ToDictionary(pair => pair.Key, pair => ScalarString(pair.Value, "entry point"), StringComparer.Ordinal),
-                preserveResourceParameters: uberBase);
+                preserveResourceParameters: uberBase || String(recipe, "semanticSchemaIdentity") == "xrengine.engine.uber-raster-consumer.v2");
             source = StrictUtf8.GetBytes(NormalizeLines(result.Source));
             compilerIdentity = result.CompilerIdentity;
             Require(Regex.IsMatch(compilerIdentity, "^slang/2026\\.8/[0-9a-f]{64}$", RegexOptions.CultureInvariant), $"{stageContext}: incompatible Slang compiler identity.");
