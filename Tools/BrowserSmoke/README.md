@@ -572,3 +572,20 @@ modules or code regions.
 
 Any later capture requires a new explicit scope decision; editing or re-adding
 the request is not an automatic retry.
+
+## Work-note-only pushes
+
+The portable browser workflow skips a push when its only changes are Markdown
+work notes under `docs/work/` or the existing diagnostic request/activation
+records. Pull-request and manual triggers remain unfiltered. A mixed push with
+source, helper, project or workflow changes still runs within
+[GitHub's path-filter evaluation rules](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#git-diff-comparisons).
+The new pattern matches only Markdown names. JSON, TSV and other file extensions
+in the work-note tree do not match it.
+GitHub currently evaluates only the first 3,000 files in a generated diff, so
+this path filter is not an absolute guarantee for arbitrarily large pushes.
+Required workflow checks can remain pending when a path filter skips their
+event; the unchanged pull-request trigger avoids adding that filter to PR checks.
+
+This scheduling change does not alter qualification assertions, time limits,
+runner permissions, or the independent one-run diagnostic activation gates.
