@@ -1,10 +1,16 @@
 using XREngine.Data.Core;
-using XREngine.Input.Devices;
 
 namespace XREngine.Rendering.UI
 {
     public class UIToggleComponent : UIInspectorEditorComponent
     {
+        public UIToggleComponent()
+        {
+            // Use the canvas's accepted interaction so focus does not reset a
+            // pending mouse press by registering another release callback.
+            InteractAction += OnToggleChecked;
+        }
+
         public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.CheckBox;
         public override bool AccessibilityActivate() => Toggle();
         public XREvent<ECurrentState>? OnStateChanged;
@@ -53,12 +59,6 @@ namespace XREngine.Rendering.UI
                 LastState = currentState;
                 OnStateChanged?.Invoke(currentState);
             }
-        }
-
-        public override void RegisterInput(IInputRegistration input)
-        {
-            base.RegisterInput(input);
-            input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Released, OnToggleChecked);
         }
 
         public ECurrentState CurrentState
@@ -198,6 +198,15 @@ namespace XREngine.Rendering.UI
             return true;
         }
 
-        private void OnToggleChecked() => Toggle();
+        private void OnToggleChecked(UIInteractableComponent component)
+        {
+            // Gamepad focus can remain after the control or canvas becomes hidden or inactive.
+            if (!IsActiveInHierarchy || !UITransform.IsVisibleInHierarchy ||
+                UserInterfaceCanvas is not { IsActiveInHierarchy: true } canvas ||
+                !canvas.CanvasTransform.IsVisibleInHierarchy)
+                return;
+
+            Toggle();
+        }
     }
 }
