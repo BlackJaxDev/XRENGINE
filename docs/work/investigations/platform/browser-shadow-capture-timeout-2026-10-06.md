@@ -454,6 +454,38 @@ It does not establish that the screenshot timeout is fixed.
 The inspected artifact is `11429557034`, ZIP SHA-256
 `5360c614ae793be58a268cdb43e3635f315860856eaf7c3aef433580a13f264b`.
 
+## Redundant scroll before the initial capture
+
+[Run 37504421975](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37504421975)
+on `2535ffa9` failed in the first OFF capture. The first attempt spent 4,015 ms
+in `scrollIntoViewIfNeeded`, 26 ms reading canvas geometry, and 5,963 ms in
+the screenshot step before the unchanged 10-second deadline. The screenshot
+started with 5,959 ms left. The first resize and its four checkpoints did not
+run. The later failure PNG shows the receiver and occluders. The inspected
+artifact is `11432144904`, ZIP SHA-256
+`8f913669db65661fca198803e19e023bdc8ead2bf97d4b7f249469eee30d7d49`.
+
+The initial canvas was already inside the viewport. Its measured rectangle
+was `(16, 138.875, 977, 549.5625)` in a `1024x1100` viewport. The complete
+rounded clip was `(16, 138, 977, 551)`. The pinned
+[Playwright 1.63 source](https://raw.githubusercontent.com/microsoft/playwright/v1.63.0/packages/playwright-core/src/server/dom.ts)
+shows that `scrollIntoViewIfNeeded` waits for element stability before it
+checks whether a scroll is needed. The saved timing does not prove which part
+of that call took 4,015 ms.
+
+The shadow harness now reads geometry before scroll. It skips the scroll only
+when the complete rounded clip passes the existing finite geometry, unit
+scale, zero visual offset, viewport match, positive size, and containment
+checks. An invalid or outside sample still calls `scrollIntoViewIfNeeded` and
+then reads geometry again. The screenshot uses the same clip check. Diagnostics
+mark a skipped scroll as `skipped-visible`; they do not report it as completed.
+The absolute capture deadline, before/after geometry equality, image and
+receiver checks, and first-resize checkpoint lifetime stay the same.
+
+The factored clip check accepted the saved initial and resized geometry. It
+rejected synthetic outside, invalid, scale, viewport, visual-offset, and DPR
+cases. This was a local source check, not a browser or shadow-parity run.
+
 ## Validation and next step
 
 The source and saved runtime artifacts were inspected. No new runtime or test
