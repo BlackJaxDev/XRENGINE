@@ -395,10 +395,13 @@ try {
        artifactDigest = ('sha256:' + $producer.artifactSha256); archiveBytes = $artifact.size_in_bytes;
        packageVerification = $verification } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $run 'artifact-provenance.public.json')
     $supervisorStage = 'BuildServer'
-    & dotnet build XREngine.Server/XREngine.Server.csproj --configuration Release -p:XREngineRendererBackends=None -p:XREngineIncludeVulkanBackend=false -p:XREngineIncludeOpenGlBackend=false
+    & dotnet build XREngine.Server/XREngine.Server.csproj --configuration Release `
+        --disable-build-servers -m:1 -nr:false -p:UseSharedCompilation=false -p:MSBuildEnableWorkloadResolver=false `
+        -p:XREngineRendererBackends=None -p:XREngineIncludeVulkanBackend=false -p:XREngineIncludeOpenGlBackend=false
     if ($LASTEXITCODE -ne 0) { throw 'Normal Server build failed.' }
     $supervisorStage = 'BuildService'
-    & dotnet build XREngine.ControlPlane.Service/XREngine.ControlPlane.Service.csproj --configuration Release
+    & dotnet build XREngine.ControlPlane.Service/XREngine.ControlPlane.Service.csproj --configuration Release `
+        --disable-build-servers -m:1 -nr:false -p:UseSharedCompilation=false -p:MSBuildEnableWorkloadResolver=false
     if ($LASTEXITCODE -ne 0) { throw 'Normal ControlPlane.Service build failed.' }
     if (-not (Test-Path -LiteralPath $serverExe -PathType Leaf) -or -not (Test-Path -LiteralPath $serviceExe -PathType Leaf)) { throw 'Normal executables missing.' }
     # Same published runtime and strict real first-frame gate, before any trust
