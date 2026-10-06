@@ -148,3 +148,40 @@ native WGSL decreases from 410,012 to 368,171 bytes, and the Uber consumer from
 native operations and remove the opposing material family's unreachable code.
 These source and cook results do not establish a faster native pipeline build.
 Browser compilation and rendered acceptance remain required at the new source.
+
+The exact `c4922e42` run
+[37392593677](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37392593677)
+passes the portable engine/physics, Windows publisher, RollingBall,
+RenderingParity, modular pipeline, and static meshlet jobs. UI still fails its
+initial animation-frame wait. Advanced still fails its 45-second first-frame
+preparation limit while the ordinary native compute pipeline is pending.
+
+The isolated Uber consumer now compiles successfully in 3,052.4 ms on the
+software adapter. Its exact 174,870-byte WGSL has SHA-256
+`40bd3f5aeb99636bcaf3f4b70997808a9a7d9efa85fcff02a5bca1c1fbc042e7`.
+The ordinary 368,171-byte native consumer still exceeds the isolated 45-second
+watchdog. Both modules report no shader compilation messages, device loss, or
+uncaptured errors. This establishes bounded Uber pipeline compilation, not an
+application or rendered Uber pass. The evidence archive is artifact
+`11382553441`, SHA-256
+`c9b79126f9b90834474e08170cb81428b8a15e4e334323ff7688e70edd7859fd`.
+
+## Shared ordered decal traversal
+
+The two decal consumers previously called their large evaluator from separate
+generic-row and selected-index loops. A shared phase/cursor iterator now gives
+each evaluator one call site. Generic rows keep their original order and flag
+filter. Selected entries follow them in exact authored order, including
+duplicates. Their buffer range is validated only after generic evaluation.
+The iterator does not add the two counts, and selected index arithmetic stays
+inside the validated range. Material, sampling, derivative, normal, and logical
+failure behavior remains in the unchanged evaluator bodies.
+
+All 16 canonical companions cook and all 17 ABI fields match `c4922e42`.
+Each of the eight native companions now has one full-surface decal evaluator
+call site and one receiver-normal evaluator call site. All eight Uber modules
+are byte-identical. Main native WGSL is 367,990 bytes, SHA-256
+`db38b2909a1f110e5e1ac4267c9d9b6ecfaf5ff2abbd47a377ed5e865b31c994`.
+These checks establish source/ABI preservation and changed call structure.
+They do not establish a native compiler speed improvement; the next exact
+browser run must measure pipeline readiness and retain the original deadline.
