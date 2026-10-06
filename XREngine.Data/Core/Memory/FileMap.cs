@@ -6,6 +6,9 @@ namespace XREngine
 {
     public abstract class FileMap : IDisposable
     {
+        private static readonly Action<string, string> ReportFallback =
+            static (path, tempPath) => Trace.WriteLine($"File at {path} is in use; creating temporary copy at {tempPath}.");
+
         protected VoidPtr _addr;
         protected long _length;
         protected string? _path;
@@ -38,22 +41,8 @@ namespace XREngine
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("File mapping");
             IFileMappingBackend backend = FileMappingServices.Required;
-            FileStream stream;
+            FileStream stream = backend.OpenFile(path, prot == FileMapProtect.ReadWrite, options, ReportFallback);
             FileMap map;
-            try
-            {
-                if (!File.Exists(path))
-                    stream = File.Create(path, 8, options);
-                else
-                    stream = new FileStream(path, FileMode.Open, (prot == FileMapProtect.ReadWrite) ? FileAccess.ReadWrite : FileAccess.Read, FileShare.Read, 8, options);
-            }
-            catch //File is currently in use, but we can copy it to a temp location and read that
-            {
-                string tempPath = Path.GetTempFileName();
-                Trace.WriteLine($"File at {path} is in use; creating temporary copy at {tempPath}.");
-                File.Copy(path, tempPath, true);
-                stream = new FileStream(tempPath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 8, options | FileOptions.DeleteOnClose);
-            }
             try
             {
                 map = FromStreamInternal(stream, prot, offset, length, backend);
@@ -63,7 +52,7 @@ namespace XREngine
                 stream.Dispose();
                 throw;
             }
-            map._path = path; //In case we're using a temp file
+            map._path = path;
             return map;
         }
         public static FileMap? FromTempFile(long length)
@@ -72,7 +61,7 @@ namespace XREngine
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("Temporary file mapping");
             IFileMappingBackend backend = FileMappingServices.Required;
-            FileStream stream = new FileStream(path = Path.GetTempFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 8, FileOptions.RandomAccess | FileOptions.DeleteOnClose);
+            FileStream stream = backend.OpenTemporaryFile(out path);
             try
             {
                 return FromStreamInternal(stream, FileMapProtect.ReadWrite, 0, length, backend);
