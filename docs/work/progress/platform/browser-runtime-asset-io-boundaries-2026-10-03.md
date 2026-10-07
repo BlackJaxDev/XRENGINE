@@ -266,3 +266,35 @@ does not close the broader physical I/O inventory.
 
 The combined Desktop/shared Release build passed with zero warnings and zero
 errors. No new test or live diagnostic-file capture was run for this move.
+
+## Authored metadata file operations
+
+`AssetManager.Metadata` and its metadata-ID fallback now use the optional
+`IAssetMetadataFileBackend` capability on the installed `IAssetFileSystem`.
+The Desktop provider and the smoke publisher's existing local adapter implement
+the eleven file-operation and GUID-read members. The publisher keeps its
+existing registration, inputs, project references, and target framework.
+
+Core retains the metadata YAML serializer, GUID policy, path naming, importer
+selection, locks, and best-effort pruning. Physical reads, writes, moves, copies,
+deletes, timestamps, and directory operations move to the host providers. The
+GUID scanner keeps its BOM-aware shared read and three attempts with 15 ms and
+30 ms waits. `DirectoryInfo` in the sibling-root lookup only walks path names
+and parents; the captured backend performs its directory-existence probe.
+
+Each operation captures one discovery/backend pair. Each inner asset ensure
+still checks host-file admission before its lock. Watcher source/epoch checks
+and cached-ID publication checks remain. This does not create an atomic lease
+against a provider or asset-source change during admitted file I/O. A custom
+native provider must implement the capability for direct metadata maintenance;
+an absent capability fails explicitly. Metadata-ID fallback keeps its warning
+and false result. YAML parse errors retain their previous invalid-metadata
+result, while an unsupported provider read escapes that parse fallback.
+
+Independent source and ownership review passed. Core, Desktop platform, and the
+standalone publisher Release builds passed with zero warnings and errors on
+the pinned SDK. The CI filter adds the two existing metadata-sync cases, the
+sibling-root ID lookup case, and `DesktopAssetFileSystemTests`; their assertions
+and setup are unchanged. Their exact-commit result remains pending. This is a
+physical placement change, not asynchronous browser metadata support or closure
+of the full runtime-I/O and blocking-site inventories.

@@ -135,10 +135,26 @@ Threads, Host, Desktop platform, Browser platform, the standalone publisher, and
 SoftwareVulkan pass with zero warnings and errors. The local Bootstrap build
 cannot complete because the tracked OpenVR.NET and OscCore-NET9 submodule sources
 are absent.
-The dependent local RenderBench build was not run. Full Windows CI remains the
-broader build and startup gate. Its filter selects the existing `JobManagerTests`
-and `EngineWorkSchedulerTests` without test-method or assertion edits; their
-new exact-commit result is pending. Render-lane, transform, timer, profiler,
+The dependent local RenderBench build was not run. Exact commit
+`102a3030667fec56b2e1f337f6f56462c2c87123` passed the Windows Editor build and
+publication job in [run 37583510694](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37583510694).
+Its unchanged filtered tests passed **76/76**: 10 `JobManagerTests`, 25
+`EngineWorkSchedulerTests`, and the previous 41 ownership, physics, shader,
+spill, and handoff cases. Artifact `11466686179` is 16,016 bytes with SHA-256
+`faebf71dc08f0220cfff1109f6791327fbf02018ebd53614e3ef8813a2e99aea`.
+The downloaded TRX has no failed, skipped, aborted, or inconclusive case.
+The full run finished with seven successful jobs. Its existing UI animation-frame
+check failed, and shadow ON exceeded its 45-second first-frame limit while
+`engine-advanced-shade-native-depth-no-decals` remained pending for 37.5 seconds.
+Neither failure supplies worker-placement or desktop/VR pacing acceptance.
+
+The existing local Headless project also built with zero warnings and errors
+and passed **144/144** selected animation, VR, routing, and filesystem unit
+cases. The run used the clean published source and disabled internal tracing.
+Its log does not embed a commit hash; source identity was checked separately.
+No fixture or assertion changed. These results do not establish physical VR
+pacing, whole-engine runtime acceptance, or browser feature acceptance.
+Render-lane, transform, timer, profiler,
 batch/pool, and other blocking-site placement remain open. No requirement state
 or desktop/VR scheduling policy changed.
 
