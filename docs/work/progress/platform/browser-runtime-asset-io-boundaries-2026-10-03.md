@@ -295,6 +295,20 @@ Independent source and ownership review passed. Core, Desktop platform, and the
 standalone publisher Release builds passed with zero warnings and errors on
 the pinned SDK. The CI filter adds the two existing metadata-sync cases, the
 sibling-root ID lookup case, and `DesktopAssetFileSystemTests`; their assertions
-and setup are unchanged. Their exact-commit result remains pending. This is a
-physical placement change, not asynchronous browser metadata support or closure
-of the full runtime-I/O and blocking-site inventories.
+and setup are unchanged. On exact commit
+`3e3df765b8966a9679e4ef7b3225da494e873911`, this filter passed **80/80** in
+[run 37588179202](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37588179202),
+including all four newly selected existing cases. Artifact `11468536973` is
+17,278 bytes with SHA-256
+`ccd130ff7a244cd756240e9c241068f35fad8f7affb0053102286e90805944e0`.
+GitHub artifact metadata identifies the source commit and run; the downloaded
+ZIP matches that digest, and its TRX records zero failed, skipped, aborted, or
+inconclusive cases. This verifies the selected native provider behavior. Browser
+metadata support and the full runtime-I/O and blocking-site inventories remain
+open.
+
+The same run finished with seven successful jobs, including both build/publish
+jobs and the five baseline game cases. UI still failed its animation-frame check.
+Shadow ON exceeded the 45-second first-frame limit while
+`engine-advanced-shade-native-depth-no-decals` remained pending for 38.2 seconds;
+the recorded GPU resource list had no failure. Those browser checks remain open.
