@@ -531,13 +531,15 @@ namespace XREngine
             if (assetId == Guid.Empty)
                 return false;
 
+            IAssetFileSystem? fileSystem = AssetFileSystemServices.Current;
+            IAssetMetadataFileBackend? files = fileSystem as IAssetMetadataFileBackend;
             IRuntimeAssetSource? source = _runtimeAssetSource;
             int sourceEpoch = Volatile.Read(ref _runtimeSourceEpoch);
             if (LoadedAssetsByIDInternal.TryGetValue(assetId, out var asset) && !asset.IsDestroyed
                 && !string.IsNullOrWhiteSpace(asset.FilePath)
                 && (UsesRuntimeAssetCatalog
                     ? source is IRuntimeAssetCatalog catalog && catalog.TryGetAsset(asset.FilePath, out _)
-                    : !SupportsSynchronousAssetWork || (source?.Exists(asset.FilePath) ?? File.Exists(asset.FilePath))))
+                    : !SupportsSynchronousAssetWork || (source?.Exists(asset.FilePath) ?? files?.FileExists(asset.FilePath) ?? false)))
             {
                 lock (_runtimePublicationGate)
                 {
@@ -557,46 +559,64 @@ namespace XREngine
             if (!SupportsSynchronousAssetWork)
                 return false;
 
-            if (TryResolveAssetPathByIdFromMetadataRoot(assetId, GameMetadataPath, GameAssetsPath, out assetPath))
+            if (fileSystem is null || files is null)
+            {
+                Debug.LogWarning($"Failed to resolve asset id '{assetId}': the installed asset file system does not provide metadata file operations.");
+                return false;
+            }
+
+            if (TryResolveAssetPathByIdFromMetadataRoot(assetId, GameMetadataPath, GameAssetsPath, fileSystem, files, out assetPath))
                 return true;
 
-            if (!TryInferMetadataRootsFromReferenceAssetPath(referenceAssetPath, out string? metadataRoot, out string? assetsRoot))
-                return false;
+            try
+            {
+                if (!TryInferMetadataRootsFromReferenceAssetPath(referenceAssetPath, files, out string? metadataRoot, out string? assetsRoot))
+                    return false;
 
-            if (string.Equals(metadataRoot, GameMetadataPath, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(assetsRoot, GameAssetsPath, StringComparison.OrdinalIgnoreCase))
-                return false;
+                if (string.Equals(metadataRoot, GameMetadataPath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(assetsRoot, GameAssetsPath, StringComparison.OrdinalIgnoreCase))
+                    return false;
 
-            return TryResolveAssetPathByIdFromMetadataRoot(assetId, metadataRoot, assetsRoot, out assetPath);
+                return TryResolveAssetPathByIdFromMetadataRoot(assetId, metadataRoot, assetsRoot, fileSystem, files, out assetPath);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to resolve asset id '{assetId}' from reference path '{referenceAssetPath}': {ex.Message}");
+                return false;
+            }
         }
 
         private static bool TryResolveAssetPathByIdFromMetadataRoot(
             Guid assetId,
             string? metadataRoot,
             string? assetsRoot,
+            IAssetFileSystem fileSystem,
+            IAssetMetadataFileBackend files,
             [NotNullWhen(true)] out string? assetPath)
         {
             assetPath = null;
 
             if (assetId == Guid.Empty
                 || string.IsNullOrWhiteSpace(metadataRoot)
-                || string.IsNullOrWhiteSpace(assetsRoot)
-                || !Directory.Exists(metadataRoot))
+                || string.IsNullOrWhiteSpace(assetsRoot))
                 return false;
 
             try
             {
-                foreach (string metaFile in AssetFileSystemServices.Required.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories))
+                if (!files.DirectoryExists(metadataRoot))
+                    return false;
+
+                foreach (string metaFile in fileSystem.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories))
                 {
                     if (IsTransientMetadataPath(metaFile))
                         continue;
 
-                    AssetMetadata? meta = TryReadMetadata(metaFile);
+                    AssetMetadata? meta = TryReadMetadata(metaFile, files);
                     if (meta?.Guid != assetId || string.IsNullOrWhiteSpace(meta.RelativePath))
                         continue;
 
                     string candidate = Path.Combine(assetsRoot, meta.RelativePath.Replace('/', Path.DirectorySeparatorChar));
-                    if (File.Exists(candidate))
+                    if (files.FileExists(candidate))
                     {
                         assetPath = candidate;
                         return true;
@@ -613,6 +633,7 @@ namespace XREngine
 
         private static bool TryInferMetadataRootsFromReferenceAssetPath(
             string? referenceAssetPath,
+            IAssetMetadataFileBackend files,
             [NotNullWhen(true)] out string? metadataRoot,
             [NotNullWhen(true)] out string? assetsRoot)
         {
@@ -636,6 +657,7 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(directoryPath))
                 return false;
 
+            // DirectoryInfo walks path names here. Only the backend checks if a directory exists.
             for (DirectoryInfo? directory = new(directoryPath); directory is not null; directory = directory.Parent)
             {
                 if (!string.Equals(directory.Name, "Assets", StringComparison.OrdinalIgnoreCase))
@@ -646,7 +668,7 @@ namespace XREngine
                     break;
 
                 string candidateMetadataRoot = Path.Combine(parent.FullName, "Metadata");
-                if (!Directory.Exists(candidateMetadataRoot))
+                if (!files.DirectoryExists(candidateMetadataRoot))
                     continue;
 
                 assetsRoot = directory.FullName;

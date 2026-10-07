@@ -761,7 +761,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Verify runtime ownership, physics workers, shader sources, and native handoff loading
+      - name: Verify runtime ownership, workers, shader sources, metadata, and native handoff loading
         if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh
         env:
@@ -773,10 +773,10 @@ jobs:
           dotnet build $project --configuration Release --no-restore
           if ($LASTEXITCODE -ne 0) { throw 'Render scope test build failed.' }
           dotnet test $project --configuration Release --no-build --no-restore `
-            --filter 'FullyQualifiedName~RenderScopeOwnershipTests|FullyQualifiedName~XRFrameBufferBindingStackTests|FullyQualifiedName~RenderStateThreadIsolationTests|FullyQualifiedName~XRBufferClientSpillTests|FullyQualifiedName~ShaderSourceResolverCachingTests|FullyQualifiedName~ShaderSourceDependencyHotReloadTests|FullyQualifiedName~VulkanShaderPreprocessParityTests|FullyQualifiedName~PhysicsChainCpuWorkSchedulerTests|FullyQualifiedName~JobManagerTests|FullyQualifiedName~EngineWorkSchedulerTests|FullyQualifiedName~NetworkingContractsTests.RealtimeJoinHandoff_ReadsLocalJsonPayloadFromEnvironment' `
+            --filter 'FullyQualifiedName~RenderScopeOwnershipTests|FullyQualifiedName~XRFrameBufferBindingStackTests|FullyQualifiedName~RenderStateThreadIsolationTests|FullyQualifiedName~XRBufferClientSpillTests|FullyQualifiedName~ShaderSourceResolverCachingTests|FullyQualifiedName~ShaderSourceDependencyHotReloadTests|FullyQualifiedName~VulkanShaderPreprocessParityTests|FullyQualifiedName~PhysicsChainCpuWorkSchedulerTests|FullyQualifiedName~JobManagerTests|FullyQualifiedName~EngineWorkSchedulerTests|FullyQualifiedName~PrefabModelSerializationTests.SyncMetadataWithAssets_|FullyQualifiedName~PrefabModelSerializationTests.LoadPrefabFromSiblingBuildAssetRoot_ResolvesExternalModelGraphByLocalMetadata|FullyQualifiedName~DesktopAssetFileSystemTests|FullyQualifiedName~NetworkingContractsTests.RealtimeJoinHandoff_ReadsLocalJsonPayloadFromEnvironment' `
             --logger 'trx;LogFileName=render-scope-ownership.trx' `
             --results-directory "$env:VALIDATION_ROOT/render-scope-tests"
-          if ($LASTEXITCODE -ne 0) { throw 'Runtime ownership, physics worker, shader source, or native handoff loading checks failed.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime ownership, worker, shader source, metadata, or native handoff loading checks failed.' }
 
       - name: Preserve render scope ownership evidence
         if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}

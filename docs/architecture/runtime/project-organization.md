@@ -70,6 +70,21 @@ false for incomplete work and reports collected errors after cleanup attempts.
 
 `Engine.ProfileCapture` stays in the shared Host project. It selects speed profile paths, labels, output data, and retention count. The optional `IRuntimeProfileCaptureFileOutput` contract stays in Rendering. The desktop platform leaf implements it through the existing diagnostic capture file output service. That leaf creates directories, applies the retention policy, and writes profile text with `Encoding.UTF8`. The Host still checks host-file admission and obtains the log run directory before it requests profile output. A host without the service or this capability reports a capture-start directory error; later profile writes keep their catch-all behavior.
 
+Authored asset metadata uses the optional `IAssetMetadataFileBackend` capability
+on the installed `IAssetFileSystem`. Core retains metadata YAML, GUID and path
+rules, importer selection, and locks. The Desktop leaf owns physical file
+operations and the shared-read GUID scan, including its bounded retry waits.
+The standalone smoke publisher supplies the same capability on its existing
+local file adapter. Each admitted metadata operation retains one provider for
+file operations and discovery. Each asset ensure still rechecks host-file
+admission. This is not an atomic lease against source or provider replacement.
+
+Custom native file-system providers must implement this capability to use
+direct metadata maintenance. A missing capability fails explicitly before file
+operations. Metadata ID lookup keeps its warning and false result when this
+fallback is unavailable. Browser, catalog, and caller-thread restrictions remain;
+this interface does not add synchronous metadata access to those modes.
+
 `ShaderSourceResolver` and `UberShaderVariantBuilder` use captured host services
 for file reads, existence checks, timestamps, and directory discovery.
 `IShaderSourceFileBackend` owns file operations; `IAssetFileSystem` owns discovery.
