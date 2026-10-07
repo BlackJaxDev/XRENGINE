@@ -1,8 +1,99 @@
 # Browser caller-thread blocking inventory
 
-Updated: 2026-10-05. This is a source inventory for the shared `XREngine.Browser` project closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The lexical table is a historical 22:43 UTC scan, not a recount of the later integrated source; the call-path classification below uses the current source.
+Updated: 2026-10-07. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The new committed-source scan below updates the lexical inventory. The later sections retain their dated call-path and validation evidence.
 
-## Lexical refresh
+## Committed-source refresh (2026-10-07)
+
+The scan is pinned to [commit 2b11b0c2](https://github.com/BlackJaxDev/XRENGINE/commit/2b11b0c2fff378a7df0d1b2079ccab458ef226ee).
+It uses the 19 project roots in that commit's `Build/Portable/PortableProjects.tsv`
+and 5,235 tracked C# paths from `git ls-tree -r -z --name-only <commit>`.
+Each expression is passed to `git grep -E <expression> <commit> -- <paths>`.
+This reads committed blobs, including tracked paths hidden by ignore rules.
+It excludes generated files and external source imports. The 17 tracked
+RollingBall game scripts are a separate input scan and have zero matches in all
+three columns. The project list differs from the older reference walk below;
+the table is not a like-for-like measure of removed calls.
+
+The three original expressions remain:
+
+```regex
+\.Wait\(|\.WaitOne\(|\.Result\b|GetAwaiter\(\)\.GetResult\(\)|Thread\.Sleep|\.WaitAll\(|\.WaitAny\(|\.Join\(
+new Thread\(
+Task\.Run\(|Parallel\.(For|ForEach|Invoke)|ThreadPool\.
+```
+
+Counts are matched files, not call sites. The alternation pipes above are
+unescaped ERE operators; the requirement ledger escapes them only for its
+Markdown table.
+
+| Project | Wait/result/join | `new Thread` | Task/parallel/pool |
+| --- | ---: | ---: | ---: |
+| `XREngine.Extensions` | 2 | 0 | 4 |
+| `XREngine.Data` | 10 | 0 | 6 |
+| `XREngine.Audio` | 0 | 0 | 0 |
+| `XREngine.Animation` | 1 | 0 | 0 |
+| `XREngine.Input` | 0 | 0 | 0 |
+| `XREngine.Modeling` | 0 | 0 | 0 |
+| `XREngine.Runtime.Core` | 28 | 5 | 7 |
+| `XREngine.Runtime.Rendering` | 42 | 2 | 9 |
+| `XREngine.Runtime.Host` | 17 | 2 | 3 |
+| `XREngine.Runtime.AudioIntegration` | 3 | 0 | 2 |
+| `XREngine.Runtime.AnimationIntegration` | 3 | 0 | 0 |
+| `XREngine.Runtime.InputIntegration` | 0 | 0 | 0 |
+| `XREngine.Runtime.ModelingIntegration` | 0 | 0 | 0 |
+| `XREngine.Runtime.Rendering.WebGPU` | 6 | 0 | 0 |
+| `XREngine.Runtime.Platform.Browser` | 0 | 0 | 0 |
+| `XREngine.Browser` | 1 | 0 | 0 |
+| `XREngine.Audio.WebAudio` | 0 | 0 | 0 |
+| `XREngine.Runtime.Net.WebSockets` | 0 | 0 | 0 |
+| `XREngine.Runtime.Physics.Jolt` | 0 | 0 | 0 |
+
+The thread expression finds ten locations in nine files: six locations in Core,
+two in Rendering, and two in Host. They belong to job domains, transform and
+physics workers, render/context threads, the timer, and profiler statistics.
+Their placement remains open work. The wait expression finds 211 lines, including
+74 `string.Join` lines across 51 files. Other matches include result properties
+and comments. These numbers do not establish browser reachability or blocking.
+
+A separate Core/Rendering/Host/Data scan finds 43 files and 231 lines with static
+`File`/`Directory` member tokens or explicit `new FileStream`, `new FileInfo`, and
+`new DirectoryInfo` constructors. It misses target-typed constructors. A broader
+type-token scan finds 18 Core, 22 Rendering, four Host, and 21 Data files, including
+declarations and comments. These are different metrics from the historical 136
+direct-call count. The direct and broad expressions are:
+
+```regex
+\b(File|Directory)\.[A-Za-z_][A-Za-z0-9_]*|\bnew[[:space:]]+(FileStream|FileInfo|DirectoryInfo)[[:space:]]*\(
+\b(File|Directory|FileStream|FileInfo|DirectoryInfo)\b
+```
+
+The following native metadata extraction in
+[commit 9e024e33](https://github.com/BlackJaxDev/XRENGINE/commit/9e024e331a638004f7be0e33a48a70ecd5f59524)
+removes the shared frontend's target-typed `FileInfo` read. The
+[runtime asset I/O record](browser-runtime-asset-io-boundaries-2026-10-03.md)
+records its scope. Neither inventory closes the physical-placement requirements.
+
+## Physics worker placement (2026-10-07)
+
+The later physics worker extraction keeps `PhysicsChainCpuWorkScheduler` in Core
+and moves its thread construction, signals, completion wait, and joins into
+Desktop. The public scheduler keeps its handle buffer, range claiming, metrics,
+inline conditions, and execution/disposal guards. Each scheduler captures one
+worker group. Browser/caller-thread and zero-worker construction do not access
+the factory. Native positive-worker standalone consumers must install the
+factory; an absent or invalid group fails instead of selecting inline fallback.
+The [project ownership contract](../../../architecture/runtime/project-organization.md)
+records this composition requirement and the constructor/caller-fault cleanup.
+General, auxiliary, render, transform, timer, and profiler worker placement stays
+open. This does not change the requirement count.
+
+Core, Desktop platform, and Browser platform Release builds pass with zero
+warnings and errors. The existing three `PhysicsChainCpuWorkSchedulerTests`
+are selected by the normal Windows workflow without source or assertion edits.
+Their new exact-commit result is pending. No desktop/VR pacing or browser runtime
+acceptance is claimed for this extraction.
+
+## Historical lexical refresh
 
 The inventory includes the Browser executable and its direct/transitive engine project references. The project-reference walk yields 18 fixed projects plus the configured generated RollingBall game project: the 19-project portable closure. Counts are files with a match, not distinct blocking calls. The refreshed 22:43 UTC source scan uses the three search expressions in `UR02.03b` over Git-tracked C# paths plus new working-source files in recursively referenced project directories. Ordinary `rg` directory scans were insufficient: the repository `Assets/` ignore rule hides tracked `XREngine.Data/Core/Assets/XRAsset.cs` and its four default worker wrappers. Use `git grep` for tracked source, or feed explicit tracked paths to `rg`; do not let ignore rules define the runtime closure. A file can appear in multiple columns. Conditional project references are included lexically; the configurable game-project reference and externally supplied managed Jolt source require separate scans. These counts include in-progress source and do not qualify it.
 

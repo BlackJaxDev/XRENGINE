@@ -4,16 +4,14 @@ using XREngine.Execution;
 namespace XREngine.Components;
 
 /// <summary>
-/// Persistent coarse-range CPU scheduler. Worker threads and synchronization
-/// primitives are created once; steady execution reuses a high-water handle
-/// buffer and performs no managed allocations.
-/// Browser and caller-thread hosts execute the same ranges inline without workers.
+/// Persistent coarse-range CPU scheduler. A host worker group runs the range
+/// callback. Steady execution reuses a high-water handle buffer and performs
+/// no managed allocations. Browser and caller-thread hosts run ranges inline.
 /// </summary>
 public sealed class PhysicsChainCpuWorkScheduler : IDisposable
 {
-    private readonly Thread[] _threads;
-    private readonly AutoResetEvent[] _workSignals;
-    private readonly CountdownEvent? _completion;
+    private readonly IPhysicsChainCpuWorkerGroup? _workerGroup;
+    private readonly int _workerCount;
     private PhysicsChainArenaHandle[] _handles;
     private IPhysicsChainCpuBatchExecutor? _executor;
     private int _handleCount;
@@ -32,26 +30,27 @@ public sealed class PhysicsChainCpuWorkScheduler : IDisposable
         ArgumentOutOfRangeException.ThrowIfLessThan(initialHandleCapacity, 1);
         if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread)
             workerCount = 0;
-        _threads = new Thread[workerCount];
-        _workSignals = new AutoResetEvent[workerCount];
-        _completion = workerCount > 0 ? new CountdownEvent(workerCount) : null;
         _handles = new PhysicsChainArenaHandle[initialHandleCapacity];
-
-        for (int workerIndex = 0; workerIndex < workerCount; ++workerIndex)
+        if (workerCount > 0)
         {
-            var signal = new AutoResetEvent(false);
-            _workSignals[workerIndex] = signal;
-            var thread = new Thread(WorkerMain)
+            IPhysicsChainCpuWorkerGroup group = PhysicsChainCpuWorkerGroupServices.Required.Create(workerCount, ProcessRanges)
+                ?? throw new InvalidOperationException("PhysicsChainCpuWorkerGroup.InvalidGroup: the host returned no worker group.");
+            try
             {
-                IsBackground = true,
-                Name = $"PhysicsChainCpu-{workerIndex}",
-            };
-            _threads[workerIndex] = thread;
-            thread.Start(workerIndex);
+                if (group.FixedWorkerCount != workerCount)
+                    throw new InvalidOperationException("PhysicsChainCpuWorkerGroup.InvalidWorkerCount: the host returned a group with a different worker count.");
+            }
+            catch
+            {
+                group.Dispose();
+                throw;
+            }
+            _workerGroup = group;
+            _workerCount = workerCount;
         }
     }
 
-    public int WorkerCount => _threads.Length;
+    public int WorkerCount => _workerCount;
 
     public bool Execute(
         IPhysicsChainCpuBatchExecutor executor,
@@ -79,18 +78,14 @@ public sealed class PhysicsChainCpuWorkScheduler : IDisposable
             _failedRangeCount = 0;
             _deterministic = deterministic;
 
-            if (deterministic || _threads.Length == 0 || handles.Length <= batchSize
+            if (deterministic || _workerGroup is null || handles.Length <= batchSize
                 || OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread)
             {
                 ProcessRanges();
             }
             else
             {
-                _completion!.Reset(_threads.Length);
-                for (int workerIndex = 0; workerIndex < _workSignals.Length; ++workerIndex)
-                    _workSignals[workerIndex].Set();
-                ProcessRanges();
-                _completion.Wait();
+                _workerGroup.SynchronousRun();
             }
 
             ++_executionCount;
@@ -105,7 +100,7 @@ public sealed class PhysicsChainCpuWorkScheduler : IDisposable
 
     public PhysicsChainCpuWorkSchedulerSnapshot GetSnapshot()
         => new(
-            _threads.Length,
+            WorkerCount,
             _handles.Length,
             _batchSize,
             _handleCount,
@@ -123,27 +118,7 @@ public sealed class PhysicsChainCpuWorkScheduler : IDisposable
         if (previousState == 1)
             throw new InvalidOperationException("The physics-chain scheduler cannot be disposed while executing.");
 
-        for (int workerIndex = 0; workerIndex < _workSignals.Length; ++workerIndex)
-            _workSignals[workerIndex].Set();
-        for (int workerIndex = 0; workerIndex < _threads.Length; ++workerIndex)
-            _threads[workerIndex].Join();
-        for (int workerIndex = 0; workerIndex < _workSignals.Length; ++workerIndex)
-            _workSignals[workerIndex].Dispose();
-        _completion?.Dispose();
-    }
-
-    private void WorkerMain(object? state)
-    {
-        int workerIndex = (int)state!;
-        AutoResetEvent signal = _workSignals[workerIndex];
-        while (true)
-        {
-            signal.WaitOne();
-            if (Volatile.Read(ref _lifecycleState) == 2)
-                return;
-            ProcessRanges();
-            _completion!.Signal();
-        }
+        _workerGroup?.Dispose();
     }
 
     private void ProcessRanges()
