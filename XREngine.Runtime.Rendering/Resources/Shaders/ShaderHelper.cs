@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Core.Files;
@@ -23,6 +24,7 @@ public static class ShaderHelper
     private static readonly ConcurrentDictionary<ulong, ConcurrentDictionary<DefinedVariantCacheKey, string>> DefinedVariantSourceCache = new();
     private static readonly ConcurrentDictionary<DefinedVariantShaderCacheKey, XRShader> DefinedVariantShaderCache = new();
     private static readonly ConcurrentDictionary<EngineShaderCacheKey, Task<XRShader>> EngineShaderLoadTasks = new();
+    private static readonly ConditionalWeakTable<XRShader, UberVertexSourceStamp> UberVertexSources = new();
     private static readonly HashSet<string> DefineBasedTransparencyForwardShaderFiles = new(StringComparer.OrdinalIgnoreCase)
     {
         "LitTexturedForward.fs",
@@ -51,6 +53,40 @@ public static class ShaderHelper
     private readonly record struct DefinedVariantCacheKey(string DefineName, string SourceText);
     private readonly record struct DefinedVariantShaderCacheKey(string DefineName, EShaderType ShaderType, string SourceText, string? FilePath, string? SourceName);
     private readonly record struct EngineShaderCacheKey(string RelativePath, EShaderType ShaderType);
+
+    private sealed record UberVertexSourceStamp(long SourceRevision, XRShader? Source, long SourceRevisionAtCreation);
+
+    /// <summary>Checks if the engine loaded this unchanged Uber vertex source.</summary>
+    public static bool HasTrustedUberVertexSource(XRShader shader)
+        => shader.Type == EShaderType.Vertex
+            && UberVertexSources.TryGetValue(shader, out UberVertexSourceStamp? stamp)
+            && stamp.SourceRevision == shader.SourceRevision
+            && (stamp.Source is null
+                || (stamp.Source.SourceRevision == stamp.SourceRevisionAtCreation
+                    && HasTrustedUberVertexSource(stamp.Source)));
+
+    private static void RegisterUberVertexSource(XRShader shader, string relativePath)
+    {
+        if (shader.Type != EShaderType.Vertex || !IsUberVertexPath(relativePath))
+            return;
+
+        StampUberVertexSource(shader, null);
+    }
+
+    private static void StampUberVertexSource(XRShader shader, XRShader? source)
+    {
+        lock (UberVertexSources)
+        {
+            UberVertexSources.Remove(shader);
+            UberVertexSources.Add(shader, new UberVertexSourceStamp(
+                shader.SourceRevision, source, source?.SourceRevision ?? 0L));
+        }
+    }
+
+    private static bool IsUberVertexPath(string relativePath)
+        => relativePath.Equals("Uber/UberShader.vert", StringComparison.OrdinalIgnoreCase)
+            || relativePath.Equals("Uber/UberShader_OVR.vert", StringComparison.OrdinalIgnoreCase)
+            || relativePath.Equals("Uber/UberShader_NV.vert", StringComparison.OrdinalIgnoreCase);
 
     internal static void ClearDefinedVariantSourceCache()
     {
@@ -85,6 +121,7 @@ public static class ShaderHelper
         source.Type = key.ShaderType;
         SlangShaderPilots.Configure(source, key.RelativePath);
         source.TryGetResolvedSource(out _, annotateIncludes: false, logFailures: true);
+        RegisterUberVertexSource(source, key.RelativePath);
         return source;
     }
 
@@ -94,6 +131,7 @@ public static class ShaderHelper
         source.Type = key.ShaderType;
         SlangShaderPilots.Configure(source, key.RelativePath);
         source.TryGetResolvedSource(out _, annotateIncludes: false, logFailures: true);
+        RegisterUberVertexSource(source, key.RelativePath);
         return source;
     }
 
@@ -861,11 +899,14 @@ public static class ShaderHelper
                 TextFile variantText = TextFile.FromText(variantSource);
                 variantText.FilePath = key.FilePath;
                 variantText.Name = key.SourceName;
-                return new XRShader(key.ShaderType, variantText)
+                XRShader variant = new(key.ShaderType, variantText)
                 {
                     Name = sourceShader.Name,
                     GenerateAsync = sourceShader.GenerateAsync,
                 };
+                if (HasTrustedUberVertexSource(sourceShader))
+                    StampUberVertexSource(variant, sourceShader);
+                return variant;
             },
             shader);
     }

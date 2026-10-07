@@ -31,9 +31,8 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 
     /// <summary>
     /// Readiness of the directional shadow lane programs. A recorded lane
-    /// fault (a pipeline that failed at family preparation) reports Failed
-    /// for a bounded time so the atlas retries cascades through the generic
-    /// path after rejecting the frame whose group could not be prepared.
+    /// fault reports Failed for a bounded time. The atlas keeps a strict GPU
+    /// group dirty and can use the generic path only for CPU-direct work.
     /// </summary>
     internal VulkanAdvancedVisibilityPipelineReadiness GetDirectionalShadowLaneReadiness(out string reason)
     {
@@ -127,7 +126,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         double linkMilliseconds = 0.0;
         double nativeMilliseconds = 0.0;
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _earlyVisibilityProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _boundsPatchProgram);
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _buildIndirectProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _earlyIndexedGroupFinalizeProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _lateIndexedGroupFinalizeProgram);
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _buildDepthPyramidProgram);
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _lateVisibilityProgram);
         AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _lateVisibilityNoHzbProgram);
@@ -338,7 +340,11 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             using var foregroundWaitObservation =
                 new VulkanPipelineForegroundWaitObservationScope(_foregroundWaitObserver);
             VulkanAdvancedVisibilityPipelineReadiness readiness =
-                PrepareComputePipelines(out _, out _, out reason);
+                PrepareComputePipelines(out _, out _, out _, out reason);
+            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return readiness;
+
+            readiness = PrepareIndexedGroupFinalizePipelines(out reason);
             if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 return readiness;
 
@@ -408,9 +414,9 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     {
         VulkanAdvancedVisibilityPipelineReadiness readiness =
             PrepareDirectionalShadowProgram(EAdvancedMaterialCoverageMode.Opaque, out reason);
-        return readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready
-            ? readiness
-            : PrepareDirectionalShadowProgram(EAdvancedMaterialCoverageMode.Masked, out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        return PrepareDirectionalShadowProgram(EAdvancedMaterialCoverageMode.Masked, out reason);
     }
 
     private VulkanAdvancedVisibilityPipelineReadiness PrepareRasterFamily(
@@ -442,7 +448,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private void WaitForPendingShaderCompiles()
     {
         WaitForPendingShaderCompiles(_earlyVisibilityProgram);
+        WaitForPendingShaderCompiles(_boundsPatchProgram);
         WaitForPendingShaderCompiles(_buildIndirectProgram);
+        WaitForPendingShaderCompiles(_earlyIndexedGroupFinalizeProgram);
+        WaitForPendingShaderCompiles(_lateIndexedGroupFinalizeProgram);
         WaitForPendingShaderCompiles(_buildDepthPyramidProgram);
         WaitForPendingShaderCompiles(_lateVisibilityProgram);
         WaitForPendingShaderCompiles(_lateVisibilityNoHzbProgram);
@@ -458,6 +467,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         WaitForPendingShaderCompiles(_maskedMultiviewMeshRasterProgram);
         WaitForPendingShaderCompiles(_directionalShadowOpaqueProgram);
         WaitForPendingShaderCompiles(_directionalShadowMaskedProgram);
+        WaitForPendingShaderCompiles(_directionalShadowCullProgram);
         for (int i = 0; i < _nativeComputePrograms.Length; i++)
             WaitForPendingShaderCompiles(_nativeComputePrograms[i]);
     }
@@ -476,7 +486,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         HashCode hash = new();
         hash.Add(RuntimeEngine.Rendering.Settings.ShaderConfigVersion);
         AddProgramIdentity(ref hash, _earlyVisibilityProgram);
+        AddProgramIdentity(ref hash, _boundsPatchProgram);
         AddProgramIdentity(ref hash, _buildIndirectProgram);
+        AddProgramIdentity(ref hash, _earlyIndexedGroupFinalizeProgram);
+        AddProgramIdentity(ref hash, _lateIndexedGroupFinalizeProgram);
         AddProgramIdentity(ref hash, _buildDepthPyramidProgram);
         AddProgramIdentity(ref hash, _lateVisibilityProgram);
         AddProgramIdentity(ref hash, _lateVisibilityNoHzbProgram);
@@ -521,8 +534,11 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 
     private bool AreRequiredProgramsCurrent()
     {
-        if (!IsProgramCurrent(_earlyVisibilityProgram, compute: true) ||
+        if (!IsProgramCurrent(_boundsPatchProgram, compute: true) ||
+            !IsProgramCurrent(_earlyVisibilityProgram, compute: true) ||
             !IsProgramCurrent(_buildIndirectProgram, compute: true) ||
+            !IsProgramCurrent(_earlyIndexedGroupFinalizeProgram, compute: true) ||
+            !IsProgramCurrent(_lateIndexedGroupFinalizeProgram, compute: true) ||
             !IsProgramCurrent(_buildDepthPyramidProgram, compute: true) ||
             !IsProgramCurrent(_lateVisibilityProgram, compute: true) ||
             !IsProgramCurrent(_lateVisibilityNoHzbProgram, compute: true) ||

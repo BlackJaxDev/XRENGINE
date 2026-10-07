@@ -17,12 +17,14 @@ internal readonly struct AutoUniformMaterialWritePlanCacheKey :
     private readonly ulong _materialValueVersion;
     private readonly ulong _runtimeUniformNameSignature;
     private readonly ulong _runtimeUniformPublicationLayoutSignature;
+    private readonly MaterialUniformBindingPayload? _materialPayload;
 
     internal AutoUniformMaterialWritePlanCacheKey(
         ulong publicationLayoutSignature,
         XRMaterial material,
         ulong runtimeUniformNameSignature,
-        ulong runtimeUniformPublicationLayoutSignature)
+        ulong runtimeUniformPublicationLayoutSignature,
+        MaterialUniformBindingPayload? materialPayload = null)
     {
         _publicationLayoutSignature = publicationLayoutSignature;
         _materialIdentity = RuntimeHelpers.GetHashCode(material);
@@ -31,6 +33,7 @@ internal readonly struct AutoUniformMaterialWritePlanCacheKey :
         _runtimeUniformNameSignature = runtimeUniformNameSignature;
         _runtimeUniformPublicationLayoutSignature =
             runtimeUniformPublicationLayoutSignature;
+        _materialPayload = materialPayload;
     }
 
     internal ulong MaterialLayoutVersion => _materialLayoutVersion;
@@ -44,7 +47,8 @@ internal readonly struct AutoUniformMaterialWritePlanCacheKey :
            _materialValueVersion == other._materialValueVersion &&
            _runtimeUniformNameSignature == other._runtimeUniformNameSignature &&
            _runtimeUniformPublicationLayoutSignature ==
-               other._runtimeUniformPublicationLayoutSignature;
+               other._runtimeUniformPublicationLayoutSignature &&
+           ReferenceEquals(_materialPayload, other._materialPayload);
 
     public override bool Equals(object? obj)
         => obj is AutoUniformMaterialWritePlanCacheKey other &&
@@ -59,6 +63,7 @@ internal readonly struct AutoUniformMaterialWritePlanCacheKey :
         hash.Add(_materialValueVersion);
         hash.Add(_runtimeUniformNameSignature);
         hash.Add(_runtimeUniformPublicationLayoutSignature);
+        hash.Add(_materialPayload is null ? 0 : RuntimeHelpers.GetHashCode(_materialPayload));
         return hash.ToHashCode();
     }
 }

@@ -12,6 +12,7 @@ namespace XREngine.Scene
         /// </summary>
         public void OnActivated()
         {
+            using var mutation = PhysicsChainWorld.BeginNodeActivationMutation(this);
             ActivateTransform();
             ActivateComponents();
             Activated?.Invoke(this);
@@ -35,6 +36,7 @@ namespace XREngine.Scene
         /// </summary>
         public void OnDeactivated()
         {
+            using var mutation = PhysicsChainWorld.BeginNodeActivationMutation(this);
             DeactivateComponents();
             DeactivateTransform();
             Deactivated?.Invoke(this);

@@ -347,26 +347,75 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         };
         _benchmarkRunController = new PhysicsChainBenchmarkRunController(benchmarkConfiguration);
 
-        var benchmarkRoot = SceneNode.NewChild($"{_benchmarkEntry.DisplayName} Benchmark Instances");
-        benchmarkRoot.SetTransform<Transform>();
+        SceneNode? benchmarkRoot = null;
+        bool sourceWasActive = _benchmarkEntry.RootNode.IsActiveSelf;
+        try
+        {
+            benchmarkRoot = SceneNode.NewChild($"{_benchmarkEntry.DisplayName} Benchmark Instances");
+            benchmarkRoot.SetTransform<Transform>();
 
-        Stopwatch spawnStopwatch = Stopwatch.StartNew();
-        SpawnBenchmarkInstances(benchmarkRoot, _benchmarkEntry, copyCount, includeDebugDisplays);
-        spawnStopwatch.Stop();
+            Stopwatch spawnStopwatch = Stopwatch.StartNew();
+            SpawnBenchmarkInstances(benchmarkRoot, _benchmarkEntry, copyCount, includeDebugDisplays);
+            spawnStopwatch.Stop();
 
-        _benchmarkSourceWasActive = _benchmarkEntry.RootNode.IsActiveSelf;
-        _benchmarkEntry.RootNode.IsActiveSelf = false;
-        Relayout();
+            _benchmarkEntry.RootNode.IsActiveSelf = false;
+            Relayout();
 
-        _benchmarkRoot = benchmarkRoot;
-        _benchmarkIncludeDebugDisplays = includeDebugDisplays;
-        _benchmarkSpawnMilliseconds = spawnStopwatch.Elapsed.TotalMilliseconds;
-        _benchmarkActiveCopyCount = copyCount;
-        _benchmarkActiveDurationSeconds = durationSeconds;
-        _benchmarkStopwatch = null;
-        _benchmarkLastTimestamp = 0;
-        _benchmarkRunning = true;
-        _benchmarkStatus = $"Settling {_benchmarkEntry.DisplayName}: {copyCount} copies; timing begins after resources remain stable.";
+            _benchmarkRoot = benchmarkRoot;
+            _benchmarkSourceWasActive = sourceWasActive;
+            _benchmarkIncludeDebugDisplays = includeDebugDisplays;
+            _benchmarkSpawnMilliseconds = spawnStopwatch.Elapsed.TotalMilliseconds;
+            _benchmarkActiveCopyCount = copyCount;
+            _benchmarkActiveDurationSeconds = durationSeconds;
+            _benchmarkStopwatch = null;
+            _benchmarkLastTimestamp = 0;
+            _benchmarkRunning = true;
+            _benchmarkStatus = $"Settling {_benchmarkEntry.DisplayName}: {copyCount} copies; timing begins after resources remain stable.";
+        }
+        catch (Exception ex)
+        {
+            XREngine.Debug.LogException(ex, "Failed to start physics-chain benchmark.");
+            try
+            {
+                StopBenchmarkRootMotion();
+            }
+            catch (Exception cleanupException)
+            {
+                XREngine.Debug.LogException(cleanupException, "Failed to stop partial physics-chain benchmark motion.");
+            }
+            try
+            {
+                benchmarkRoot?.Destroy(true);
+            }
+            catch (Exception cleanupException)
+            {
+                XREngine.Debug.LogException(cleanupException, "Failed to destroy partial physics-chain benchmark.");
+            }
+
+            try
+            {
+                _benchmarkEntry.RootNode.IsActiveSelf = sourceWasActive;
+                Relayout();
+            }
+            catch (Exception restoreException)
+            {
+                XREngine.Debug.LogException(restoreException, "Failed to restore physics-chain benchmark source.");
+            }
+
+            _benchmarkRoot = null;
+            _benchmarkEntry = null;
+            _benchmarkStopwatch = null;
+            _benchmarkRunController = null;
+            _benchmarkRunning = false;
+            _benchmarkRunToggle = false;
+            _benchmarkRunWithDebugDisplaysToggle = false;
+            _benchmarkIncludeDebugDisplays = false;
+            _benchmarkSourceWasActive = false;
+            _benchmarkLastTimestamp = 0;
+            _benchmarkActiveCopyCount = 0;
+            _benchmarkActiveDurationSeconds = 0.0f;
+            _benchmarkStatus = $"Benchmark start failed: {ex.GetType().Name}: {ex.Message}";
+        }
     }
 
     private void UpdateBenchmark()

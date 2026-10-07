@@ -22,6 +22,7 @@ const uint FLAG_UNCERTAIN = 1u << 3u;
 const uint FLAG_CONSERVATIVE = 1u << 4u;
 const uint FLAG_EARLY_VISIBLE = 1u << 5u;
 const uint FLAG_DEFERRED = 1u << 6u;
+const uint FLAG_BOUNDS_REJECTED = 1u << 10u;
 const uint RETEST_AGE_SHIFT = 16u;
 const uint RETEST_AGE_MASK = 15u << RETEST_AGE_SHIFT;
 const uint RETEST_AGE_LIMIT = 7u;
@@ -184,7 +185,9 @@ void main()
         XR_ADV_VisibilityPersistentState.records[persistentWord + 5u]);
     state.DepthPyramidGeneration = XR_ADV_VisibilityPersistentState.records[persistentWord + 6u];
     state.Flags = XR_ADV_VisibilityPersistentState.records[persistentWord + 7u];
-    if (!candidateIncludesSelectedView(candidate.ViewMask) ||
+    if ((candidate.Flags & FLAG_BOUNDS_REJECTED) != 0u ||
+        !candidateIncludesSelectedView(candidate.ViewMask) ||
+        XR_ADV_SelectedViewExcludesInstance(candidateIndex, XR_ADV_VisibilityPush.viewIndex) ||
         XR_ADV_SelectedViewExcludesProjectiveMirror(candidateIndex, XR_ADV_VisibilityPush.viewIndex))
     {
         state.Draw = candidate.Draw;

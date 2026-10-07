@@ -26,7 +26,10 @@ internal sealed class VulkanFrameOpWorkspace
             state.Cursor = 0;
         }
 
-        int slot = state.Cursor++;
+        int slot = state.Cursor;
+        while (slot < state.Items.Count && state.Items[slot].AuthoringResource is not null)
+            ++slot;
+        state.Cursor = slot + 1;
         reusable = slot < state.Items.Count
             ? state.Items[slot]
             : null;

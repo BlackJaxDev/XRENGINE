@@ -16,15 +16,46 @@ copy commands, and readback details belong only in the backend adapter.
 `GPUPhysicsChainDispatcher.Kernels.DispatchSpecializedPhysics` uses GPU-authored
 active lists and indirect arguments for these families. Each shader runs the
 tree's resolved substeps inside its dispatch. `GPUDispatchGroupKey` contains
-dispatch isolation, not loop count. The component still resolves fixed-step
-accumulation and time scale before submission; a shared CPU/GPU clock contract
+dispatch isolation, not loop count. `PhysicsChainWorld.Clock` resolves the
+batched GPU cadence and substeps through `PhysicsChainSimulationClock` before
+submission. One shared CPU/GPU reset, teleport, and integration contract
 remains open.
 
 Dynamic particle state and static particle templates use separate buffers.
 Source versions control seed/reset and static-template uploads. Dynamic
-per-tree headers carry the resolved loop count and time scale. This separation
-does not establish that all shader fields are needed or that the header upload
-uses a persistent mapped ring.
+per-tree headers carry the resolved loop count and time scale. Headers and
+affine transforms use retained mapped input pages. Exact versions control
+dirty-range publication. The retained shader field set still needs its audit.
+
+## Global GPU chain debug
+
+Selected chain debug uses one bounded compact batch per world. The batch caps
+selection at 256 chains and 16,384 particles. A compute pass writes point and
+line instance storage and one 20-byte indexed indirect command. Two indexed
+draws use point input topology; their geometry shaders produce points and
+lines. The pass completes with shader-storage and command visibility. It
+performs no CPU readback. No selected chain means no batch generation or draw.
+
+Each batch owns its buffers, mesh renderers, compute program, and shader.
+Successful content stays fixed for all views in the same render frame. The
+renderer must match the simulation output owner. A later frame can mutate the
+batch only after authoring uses end. Vulkan also requires the original
+renderer and exact native buffer content to report Ready. OpenGL uses its
+ordered context and buffer-update contract.
+
+Raw mesh requests, compute and copy operations, and physical frame payloads
+retain an `IRenderResourceLeaseOwner`. `RenderResourceLeaseOwner` joins the use
+count and retirement state in one atomic value. Retirement stops zero-use
+resurrection. The final counted release disposes owned storage once, on that
+releasing thread, through public deferred resource disposal. Transfer from a
+counted retiring use remains legal. Independent admission must hold a use
+before it accesses owned storage.
+
+Vulkan revalidates captured particle/static source identities before native
+materialization. A retired shared source rejects the debug request. The debug
+batch lease does not keep the simulation arena alive across replacement. The
+five-argument compute backend method remains available; a backend that does
+not implement the leased overload rejects a non-null owner as `Unsupported`.
 
 `PhysicsChainShaderContractTests` and `PhysicsChainGpuKernelFamilyTests` cover
 record layouts and source contracts. `PhysicsChainGpuDependencyOrderingTests`

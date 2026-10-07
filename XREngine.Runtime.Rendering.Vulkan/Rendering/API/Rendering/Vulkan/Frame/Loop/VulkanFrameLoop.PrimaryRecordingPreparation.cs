@@ -1038,9 +1038,19 @@ internal sealed partial class VulkanFrameLoop
         if (sliceColdPreparation && _presentNowMeshLastProgressTimestamp == 0)
             _presentNowMeshLastProgressTimestamp = Stopwatch.GetTimestamp();
 
+        try
+        {
         NormalizeQueuedMeshRenderRequests(requestCount);
         ApplyResidentTemplateProjectionDeltas(requestCount);
         InjectResidentTemplateDeviceLossIfRequested();
+        for (int index = 0; index < requestCount; ++index)
+        {
+            if (_meshOperationRequestScratch[index].IndexedIndirect is not null)
+            {
+                allowPreparedCohort = false;
+                break;
+            }
+        }
 
         long coldPreparationTicks = 0;
         int deferredRequestCount = 0;
@@ -1095,7 +1105,8 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanCpuStage.FrameOpCohort);
             if (TryStageResidentMeshTemplates(requestCount, out deferredReason))
             {
-                _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+                VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                    _meshOperationRequestScratch.AsSpan(0, requestCount));
                 if (trackPresentNowProgress)
                 {
                     watchdog.RecordProgress();
@@ -1115,7 +1126,8 @@ internal sealed partial class VulkanFrameLoop
         }
         if (stagedPreparedCohort)
         {
-            _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+            VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
             if (trackPresentNowProgress)
             {
                 watchdog.RecordProgress();
@@ -1132,7 +1144,8 @@ internal sealed partial class VulkanFrameLoop
             preparedCohortMatched &&
             !foregroundRequired)
         {
-            _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+            VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
             return false;
         }
 
@@ -1299,7 +1312,7 @@ internal sealed partial class VulkanFrameLoop
                 if (!EnqueueQueuedMeshDraw(
                         in operationRequest,
                         allowFrameOwnedAuthoringOperations,
-                        out MeshDrawOp? enqueuedOperation))
+                        out FrameOp? enqueuedOperation))
                 {
                     _meshOperationWarmPreparationSignatures.Remove(
                         preparationSignature);
@@ -1333,10 +1346,9 @@ internal sealed partial class VulkanFrameLoop
                     _presentNowMeshLastProgressTimestamp = Stopwatch.GetTimestamp();
                 }
 
-                bool reusable = IsPreparedMeshOperationCohortEligible(
-                        in request,
-                        in operationRequest);
-                if (reusable && enqueuedOperation!.PreserveSubmissionOrder)
+                bool reusable = request.IndexedIndirect is null &&
+                    IsPreparedMeshOperationCohortEligible(in request, in operationRequest);
+                if (reusable && enqueuedOperation is MeshDrawOp { PreserveSubmissionOrder: true })
                     reusable = false;
                 _meshOperationMaterializationScratch[requestIndex] =
                     operationRequest;
@@ -1414,7 +1426,8 @@ internal sealed partial class VulkanFrameLoop
         }
         _meshOperationMaterializationScratch.AsSpan(0, requestCount).Clear();
         _meshOperationCohortEntryScratch.AsSpan(0, requestCount).Clear();
-        _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+        VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+            _meshOperationRequestScratch.AsSpan(0, requestCount));
         Interlocked.Increment(ref _preparedMeshOperationFullMaterializations);
         RuntimeEngine.Rendering.Stats.Vulkan
             .RecordVulkanPreparedMeshOperationCohort(
@@ -1461,6 +1474,12 @@ internal sealed partial class VulkanFrameLoop
             "[Vulkan] {0}",
             deferredReason);
         return false;
+        }
+        finally
+        {
+            VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
+        }
     }
 
     private static bool HasMeshReadinessExpired(
@@ -2158,7 +2177,7 @@ internal sealed partial class VulkanFrameLoop
     private bool EnqueueQueuedMeshDraw(
         in VulkanMeshOperationRequest request,
         bool allowFrameOwnedAuthoringOperations,
-        out MeshDrawOp? operation)
+        out FrameOp? operation)
     {
         operation = null;
         int passIndex = VulkanCommandRuntime.EnsureValidPassIndex(
@@ -2188,17 +2207,39 @@ internal sealed partial class VulkanFrameLoop
             };
         }
 
-        operation = MeshDrawOp.Rent(
-            passIndex,
-            request.ExplicitTarget ?? request.ProducerSnapshot.Target,
-            request.Draw,
-            context,
-            queueThread.RenderQueryBracketDepth > 0);
-        return _commandRuntime.TryEnqueueContentFrameOperation(
+        XRFrameBuffer? target =
+            request.ExplicitTarget ?? request.ProducerSnapshot.Target;
+        if (request.IndexedIndirect is { } indirect)
+        {
+            if (_resourceRuntime.WrapperLookup.GetOrCreate(
+                    indirect.Arguments, generateNow: false) is not VkDataBuffer buffer ||
+                buffer.BufferHandle is null)
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.MeshIndexedIndirect.ArgumentsUnavailable",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Indexed indirect mesh arguments are not ready.");
+                return false;
+            }
+            operation = IndirectDrawOp.Rent(
+                passIndex, target, buffer, null, request.Renderer, request.Draw,
+                1u, 20u, indirect.ByteOffset, 0, false, null, context);
+            operation.AttachAuthoringResource(indirect.AuthoringLease);
+        }
+        else
+        {
+            operation = MeshDrawOp.Rent(
+                passIndex, target, request.Draw, context,
+                queueThread.RenderQueryBracketDepth > 0);
+        }
+        bool accepted = _commandRuntime.TryEnqueueContentFrameOperation(
             _frameOperationQueue,
             operation,
             passIndex,
             out _);
+        if (!accepted && request.IndexedIndirect is not null)
+            operation.ReleaseAuthoringSnapshot();
+        return accepted;
     }
 
     private bool TryStagePreparedMeshOperation(

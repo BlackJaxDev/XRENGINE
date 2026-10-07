@@ -644,6 +644,7 @@ the target's type and optional persistent ID.
 | `get_ddgi_visibility_interruption` | Read the development-only DDGI receipt-lifetime diagnostic for one exact selected pipeline. |
 | `get_derived_types` | Find all types that derive from a given type across all loaded assemblies. |
 | `get_editor_openxr_toggle_status` | Read whether the editor OpenXR toggle is available, its requested and runtime states, and the local player's controlled pawn. |
+| `get_editor_preference` | Read one effective editor preference by property name or dotted path. |
 | `get_editor_preferences` | Read all editor preferences (effective view: global base + project and process-local session overrides merged). |
 | `get_engine_settings` | Read engine configuration overview (user settings, timing, project info, runtime metrics). |
 | `get_engine_state` | Get engine/editor play mode and high-level state flags. |
@@ -781,6 +782,7 @@ the target's type and optional persistent ID.
 | `set_node_transform` | Set a scene node transform (translation, rotation, scale). |
 | `set_node_world_transform` | Set a scene node world transform (translation, rotation, scale). |
 | `set_object_property` | Set a property on any XRBase instance by GUID (uses SetField pipeline). |
+| `set_object_reference` | Set a reference property to an existing engine object, including compatible interface properties. Omit reference_object_id to clear the reference. |
 | `set_tag` | Assign or remove a tag on a scene node. |
 | `set_transform` | Set a scene node transform (translation, rotation, scale). |
 | `snapshot_world_state` | Capture an in-memory snapshot of the active world state for later restore. |

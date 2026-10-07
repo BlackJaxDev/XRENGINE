@@ -1385,7 +1385,8 @@ internal unsafe partial class VkMeshRenderer
 			publicationLayoutSignature,
 			material,
 			runtimeUniformNameSignature,
-			runtimeUniformPublicationLayoutSignature);
+			runtimeUniformPublicationLayoutSignature,
+			bindingSnapshot?.MaterialUniformBindings);
 		VkMaterial? materialPlanOwner = cacheDependsOnMaterialOrRuntime
 			? WrapperLookup.GetOrCreate(
 				material,
@@ -1405,6 +1406,8 @@ internal unsafe partial class VkMeshRenderer
 				out cached);
 		if (planCacheHit &&
 			cached is not null &&
+			ReferenceEquals(cached.MaterialPayload,
+				bindingSnapshot?.MaterialUniformBindings) &&
 			cached.PublicationLayoutSignature ==
 				publicationLayoutSignature &&
 			(!materialOwned ||
@@ -1459,12 +1462,16 @@ internal unsafe partial class VkMeshRenderer
 				!hasRuntimeOverride)
 			{
 				AutoUniformMember member = operation.Member;
-				ShaderVar? materialParameter =
-					material.Parameter<ShaderVar>(member.Name);
+				bool capturedEffect = IsPhysicsVertexEffectControl(member.Name) &&
+					bindingSnapshot is not null;
+				ShaderVar? materialParameter = capturedEffect
+					? null : material.Parameter<ShaderVar>(member.Name);
+				bool hasCapturedEffectValue = capturedEffect &&
+					_program.TryGetUniformValue(bindingSnapshot, member.Name, out _);
 				bool hasDeclaredDefault =
 					VulkanAutoUniformBindingSchema.HasExplicitDefault(
 						member);
-				if (materialParameter is null && !hasDeclaredDefault)
+				if (materialParameter is null && !hasCapturedEffectValue && !hasDeclaredDefault)
 				{
 					// Loose GLSL uniforms default to zero. Preserve that
 					// contract after rewriting them into a UBO instead of
@@ -1476,7 +1483,8 @@ internal unsafe partial class VkMeshRenderer
 				if (TryWriteStaticMaterialAutoUniform(
 						staticBytes,
 						member,
-						material))
+						material,
+						bindingSnapshot))
 				{
 					continue;
 				}
@@ -1526,7 +1534,10 @@ internal unsafe partial class VkMeshRenderer
 			runtimeUniformNameSignature,
 			runtimeUniformPublicationLayoutSignature,
 			staticBytes,
-			[.. dynamicOperations]);
+			[.. dynamicOperations])
+		{
+			MaterialPayload = bindingSnapshot?.MaterialUniformBindings,
+		};
 		if (materialPlanOwner is not null)
 		{
 			materialPlanOwner.CacheAutoUniformMaterialWritePlan(
@@ -1944,8 +1955,17 @@ internal unsafe partial class VkMeshRenderer
 	private bool TryWriteStaticMaterialAutoUniform(
 		Span<byte> data,
 		AutoUniformMember member,
-		XRMaterial material)
+		XRMaterial material,
+		ComputeDispatchSnapshot? snapshot)
 	{
+		if (snapshot is not null && IsPhysicsVertexEffectControl(member.Name))
+		{
+			if (_program is not null && _program.TryGetUniformValue(
+				snapshot, member.Name, out ProgramUniformValue captured))
+				return TryWriteProgramUniformValue(data, member, captured);
+			return member.DefaultValue is { } declared &&
+				TryWriteAutoUniformValue(data, member, declared.Value, declared.Type);
+		}
 		ShaderVar? parameter = material.Parameter<ShaderVar>(member.Name);
 		if (parameter is not null)
 		{
@@ -1960,6 +1980,11 @@ internal unsafe partial class VkMeshRenderer
 		return member.DefaultValue is { } defaultValue &&
 			TryWriteAutoUniformValue(data, member, defaultValue.Value, defaultValue.Type);
 	}
+
+	private static bool IsPhysicsVertexEffectControl(string name)
+		=> name.StartsWith("_Vertex", StringComparison.Ordinal) ||
+			name is "_OutlineWidth" or "_OutlineExpansionMode" or
+				"_OutlineDropShadowOffset";
 
 	private bool TryWriteAutoUniformOperation(
 		Span<byte> data,
@@ -2092,6 +2117,9 @@ internal unsafe partial class VkMeshRenderer
 		{
 			return true;
 		}
+		if (snapshot is not null && IsPhysicsVertexEffectControl(member.Name))
+			return member.DefaultValue is not { } declared ||
+				TryWriteAutoUniformValue(data, member, declared.Value, declared.Type);
 
 		ShaderVar? parameter = material.Parameter<ShaderVar>(member.Name);
 		if (parameter is not null)
@@ -2149,6 +2177,10 @@ internal unsafe partial class VkMeshRenderer
 				member.Name,
 				draw.ProgramBindingSnapshot))
 			return true;
+		if (draw.ProgramBindingSnapshot is not null &&
+			IsPhysicsVertexEffectControl(member.Name))
+			return member.DefaultValue is not { } declared ||
+				TryWriteAutoUniformValue(data, member, declared.Value, declared.Type);
 
 		ShaderVar? parameter = material.Parameter<ShaderVar>(member.Name);
 		if (parameter is not null)

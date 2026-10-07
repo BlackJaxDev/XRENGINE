@@ -8,6 +8,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Threading;
 using XREngine.Core.Files;
+using XREngine.Components;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -323,7 +324,15 @@ namespace XREngine.Scene.Transforms
         public virtual TransformBase? Parent
         {
             get => _parent;
-            set => SetField(ref _parent, value);
+            set
+            {
+                if (ReferenceEquals(_parent, value))
+                    return;
+                using var mutation = PhysicsChainWorld.BeginHierarchyMutation(this, value?.World ?? World, value);
+                _parentAssignmentDepth++;
+                try { SetField(ref _parent, value); }
+                finally { --_parentAssignmentDepth; }
+            }
         }
 
         [YamlIgnore]
@@ -333,11 +342,12 @@ namespace XREngine.Scene.Transforms
             get => _children;
             set
             {
-                if (value is not null)
+                if (value is not null && !ReferenceEquals(_children, value))
+                {
+                    using var mutation = PhysicsChainWorld.BeginChildrenMutation(this, value);
                     value.ThreadSafe = true;
-                else
-                    return;
-                SetField(ref _children, value);
+                    SetField(ref _children, value);
+                }
             }
         }
 
@@ -754,6 +764,28 @@ namespace XREngine.Scene.Transforms
 
         #region Constructors
 
+        private int _parentAssignmentDepth;
+
+        private void AttachChildListHandlers()
+        {
+            DetachChildListHandlers();
+            _children.PreAnythingAdded += ValidateChildListMutation;
+            _children.PreAnythingRemoved += ValidateChildListMutation;
+            _children.PostAnythingAdded += ChildAdded;
+            _children.PostAnythingRemoved += ChildRemoved;
+        }
+
+        private void DetachChildListHandlers()
+        {
+            _children.PreAnythingAdded -= ValidateChildListMutation;
+            _children.PreAnythingRemoved -= ValidateChildListMutation;
+            _children.PostAnythingAdded -= ChildAdded;
+            _children.PostAnythingRemoved -= ChildRemoved;
+        }
+
+        private bool ValidateChildListMutation(TransformBase child)
+            => PhysicsChainWorld.ValidateChildListMutation(this, child);
+
         protected TransformBase() : this(null) { }
 
         protected TransformBase(TransformBase? parent)
@@ -761,8 +793,7 @@ namespace XREngine.Scene.Transforms
             _sceneNode = null;
             Depth = parent?.Depth + 1 ?? 0;
             _children = new EventList<TransformBase>() { ThreadSafe = true };
-            _children.PostAnythingAdded += ChildAdded;
-            _children.PostAnythingRemoved += ChildRemoved;
+            AttachChildListHandlers();
 
 
             _debugHandle = RuntimeTransformServices.Current?.CreateDebugHandle(this, RenderDebug);
@@ -776,12 +807,11 @@ namespace XREngine.Scene.Transforms
             // Deserialization may replace the EventList while property notifications are suppressed.
             // Re-attach invariants that are normally installed via property change callbacks.
             _children ??= new EventList<TransformBase>() { ThreadSafe = true };
+            using var mutation = PhysicsChainWorld.BeginHierarchyMutation(
+                this, _parent?.World ?? World, _parent);
 
             _children.ThreadSafe = true;
-            _children.PostAnythingAdded -= ChildAdded;
-            _children.PostAnythingRemoved -= ChildRemoved;
-            _children.PostAnythingAdded += ChildAdded;
-            _children.PostAnythingRemoved += ChildRemoved;
+            AttachChildListHandlers();
 
             // Ensure this transform appears in its parent's child list.
             if (_parent is not null)
@@ -789,10 +819,7 @@ namespace XREngine.Scene.Transforms
                 _parent._children ??= new EventList<TransformBase>() { ThreadSafe = true };
 
                 _parent._children.ThreadSafe = true;
-                _parent._children.PostAnythingAdded -= _parent.ChildAdded;
-                _parent._children.PostAnythingRemoved -= _parent.ChildRemoved;
-                _parent._children.PostAnythingAdded += _parent.ChildAdded;
-                _parent._children.PostAnythingRemoved += _parent.ChildRemoved;
+                _parent.AttachChildListHandlers();
 
                 lock (_parent._children)
                 {
@@ -977,6 +1004,7 @@ namespace XREngine.Scene.Transforms
         }
         public TransformBase? FindChild(Func<TransformBase, bool> predicate)
         {
+            using var callback = PhysicsChainWorld.EnterHierarchyReadCallback();
             lock (_children)
                 return _children.FirstOrDefault(predicate);
         }
@@ -1020,6 +1048,7 @@ namespace XREngine.Scene.Transforms
 
         public TransformBase? FindDescendant(Func<TransformBase, bool> predicate)
         {
+            using var callback = PhysicsChainWorld.EnterHierarchyReadCallback();
             lock (_children)
             {
                 TransformBase? child = _children.FirstOrDefault(predicate);
@@ -1512,8 +1541,7 @@ namespace XREngine.Scene.Transforms
                         _parent?._children.Remove(this);
                         break;
                     case nameof(Children):
-                        _children.PostAnythingAdded -= ChildAdded;
-                        _children.PostAnythingRemoved -= ChildRemoved;
+                        DetachChildListHandlers();
                         lock (_children)
                         {
                             foreach (var child in _children)
@@ -1565,8 +1593,7 @@ namespace XREngine.Scene.Transforms
                     }
                     break;
                 case nameof(Children):
-                    _children.PostAnythingAdded += ChildAdded;
-                    _children.PostAnythingRemoved += ChildRemoved;
+                    AttachChildListHandlers();
                     _children.ThreadSafe = true;
                     lock (_children)
                     {
@@ -1585,16 +1612,22 @@ namespace XREngine.Scene.Transforms
         }
 
         private void ChildAdded(TransformBase e)
-            => e.Parent = this;
+        {
+            if (e._parentAssignmentDepth == 0)
+                e.Parent = this;
+        }
 
         private void ChildRemoved(TransformBase e)
-            => e.Parent = null;
+        {
+            if (e._parentAssignmentDepth == 0)
+                e.Parent = null;
+        }
 
         protected override void OnDestroying()
         {
+            using var mutation = PhysicsChainWorld.BeginTransformDestructionMutation(this);
             //Unsubscribe from children events
-            _children.PostAnythingAdded -= ChildAdded;
-            _children.PostAnythingRemoved -= ChildRemoved;
+            DetachChildListHandlers();
 
             //Detach all children (don't destroy them - they may be reused)
             lock (_children)

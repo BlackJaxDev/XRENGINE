@@ -6,9 +6,8 @@ namespace XREngine.Rendering.Shadows;
 /// <summary>
 /// Hand-off of scheduled directional cascade groups to the Advanced directional
 /// shadow raster stage. The atlas manager keeps allocation, dirty tracking,
-/// completion receipts and the generic per-renderer path; the lane only
-/// replaces the recording of a group's casters when a consumer stage reported
-/// itself ready in the previous render frame. Everything here runs on the
+/// completion receipts and the generic per-renderer path. A strict GPU group
+/// stays dirty when the lane cannot accept it. Everything here runs on the
 /// render thread.
 /// </summary>
 public sealed partial class ShadowAtlasManager
@@ -29,6 +28,12 @@ public sealed partial class ShadowAtlasManager
     private XRFrameBuffer? _advancedLaneTargetFrameBuffer;
     private bool _advancedLaneConsumerReady;
     private string? _advancedLaneConsumerReason;
+    private AdvancedDirectionalShadowConsumerAuthority _advancedLaneAuthority;
+    private ulong _advancedLaneAuthorityFrameId;
+    private bool _advancedLaneOwnerExpected;
+    private bool _advancedLaneGenericFallbackAllowed = true;
+    private bool _advancedLaneAuthorityConflict;
+    private string? _advancedLaneAuthorityReason;
     private ulong _advancedLaneHoldUntilFrameId;
     private string? _advancedLaneLastDeclineReason;
     private long _advancedLaneDeferredGroups;
@@ -79,15 +84,72 @@ public sealed partial class ShadowAtlasManager
     /// <summary>
     /// Called by the Advanced directional shadow stage every time it executes.
     /// Groups are deferred in a later frame only while the consumer keeps
-    /// reporting itself ready; a frame without a consumer renders generically.
+    /// reporting itself ready. A strict GPU request stays dirty without it.
     /// </summary>
-    public void NotifyAdvancedDirectionalShadowLaneConsumer(ulong renderFrameId, bool ready, string? reason)
+    public void NotifyAdvancedDirectionalShadowLaneConsumer(
+        ulong renderFrameId,
+        bool ready,
+        string? reason)
     {
         AssertRenderThread();
         _advancedLaneConsumerFrameId = renderFrameId;
         _advancedLaneConsumerReady = ready;
         _advancedLaneConsumerReason = ready ? null : reason;
     }
+
+    /// <summary>Publishes the desktop consumer selected before shadow scheduling.</summary>
+    internal void PublishAdvancedDirectionalShadowConsumerAuthority(
+        ulong renderFrameId,
+        in AdvancedDirectionalShadowConsumerAuthority authority,
+        bool ownerExpected,
+        bool genericFallbackAllowed,
+        string? reason)
+    {
+        AssertRenderThread();
+        if (_advancedLaneAuthorityFrameId == renderFrameId)
+        {
+            _advancedLaneGenericFallbackAllowed &= genericFallbackAllowed;
+            if (!ownerExpected)
+                return;
+            if (_advancedLaneOwnerExpected &&
+                (_advancedLaneAuthorityConflict ||
+                 !_advancedLaneAuthority.SameAs(in authority)))
+            {
+                _advancedLaneAuthority = default;
+                _advancedLaneOwnerExpected = true;
+                _advancedLaneAuthorityConflict = true;
+                _advancedLaneAuthorityReason =
+                    "Multiple desktop Advanced consumers published conflicting command packages for this shadow frame.";
+                return;
+            }
+        }
+        else
+        {
+            _advancedLaneGenericFallbackAllowed = genericFallbackAllowed;
+            _advancedLaneAuthorityConflict = false;
+        }
+
+        if (!ownerExpected)
+        {
+            _advancedLaneAuthorityFrameId = renderFrameId;
+            _advancedLaneAuthority = default;
+            _advancedLaneOwnerExpected = false;
+            _advancedLaneAuthorityReason = reason;
+            return;
+        }
+
+        _advancedLaneAuthorityFrameId = renderFrameId;
+        _advancedLaneAuthority = authority.IsValid && authority.RenderFrameId == renderFrameId
+            ? authority : default;
+        _advancedLaneOwnerExpected = ownerExpected;
+        _advancedLaneAuthorityReason = _advancedLaneAuthority.IsValid ? null : reason;
+    }
+
+    /// <summary>Checks that the stage owns this frame's scheduled groups.</summary>
+    internal bool MatchesAdvancedDirectionalShadowConsumerAuthority(
+        in AdvancedDirectionalShadowConsumerAuthority authority)
+        => _advancedLaneAuthorityFrameId == authority.RenderFrameId &&
+            _advancedLaneAuthority.SameAs(in authority);
 
     /// <summary>
     /// Hands out the next cascade group deferred by this frame's scheduled-tile
@@ -116,9 +178,8 @@ public sealed partial class ShadowAtlasManager
     /// <summary>
     /// Records the backend's decision for a dequeued group. An accepted group
     /// commits its cascade slots and completion receipts exactly as a generic
-    /// grouped render does; a rejected group stays dirty, renders generically
-    /// from the next frame, and holds the lane closed for a bounded number of
-    /// frames so a persistent backend failure cannot starve the tiles.
+    /// grouped render does. A rejected group stays dirty. Only a CPU-direct
+    /// group can return to generic rendering after a bounded lane hold.
     /// </summary>
     public void CompleteAdvancedDirectionalShadowGroup(
         AdvancedDirectionalShadowLaneRequest request,
@@ -144,12 +205,17 @@ public sealed partial class ShadowAtlasManager
         bool criticalBypass = pending.CriticalBypass;
         double elapsedMs = ElapsedMilliseconds(pending.DeferredTimestamp);
         int planIndex = pending.PlanIndex;
+        bool requiresStrictGpu = request.RequiresStrictGpu;
         ReleasePendingAdvancedLaneGroup(ref pending);
 
         if (!accepted || plan is null || light is null)
         {
             _advancedLaneRejectedGroups++;
-            HoldAdvancedLane(reason ?? "The backend rejected the deferred cascade group.");
+            if (requiresStrictGpu)
+                _advancedLaneLastDeclineReason = reason ??
+                    "The strict GPU directional shadow group was rejected.";
+            else
+                HoldAdvancedLane(reason ?? "The backend rejected the deferred cascade group.");
             return;
         }
 
@@ -194,6 +260,17 @@ public sealed partial class ShadowAtlasManager
         }
 
         ulong renderFrameId = SubmissionTrackingRenderFrameId;
+        if (_advancedLaneAuthorityFrameId != renderFrameId)
+        {
+            declineReason = "The current render frame has no frozen desktop Advanced shadow consumer authority.";
+            return false;
+        }
+        if (!_advancedLaneAuthority.IsValid)
+        {
+            declineReason = _advancedLaneAuthorityReason ??
+                "The desktop Advanced shadow consumer has no published command package.";
+            return false;
+        }
         if (!_advancedLaneConsumerReady || _advancedLaneConsumerFrameId + 1UL < renderFrameId)
         {
             declineReason = _advancedLaneConsumerReason ??
@@ -201,7 +278,8 @@ public sealed partial class ShadowAtlasManager
             return false;
         }
 
-        if (renderFrameId < _advancedLaneHoldUntilFrameId)
+        bool strictGpu = RequiresStrictDirectionalShadowLane();
+        if (!strictGpu && renderFrameId < _advancedLaneHoldUntilFrameId)
         {
             declineReason = _advancedLaneLastDeclineReason ?? "The lane is held after a rejected group.";
             return false;
@@ -264,6 +342,8 @@ public sealed partial class ShadowAtlasManager
         }
 
         _advancedLaneTargetFrameBuffer = page.FrameBuffer;
+        request.RequiresStrictGpu = strictGpu;
+        request.ConsumerAuthority = _advancedLaneAuthority;
         request.PendingSlot = slot;
         ref PendingAdvancedLaneGroup pending = ref _pendingAdvancedLaneGroups[slot];
         pending.State = PendingAdvancedLaneGroupState.Pending;
@@ -281,8 +361,8 @@ public sealed partial class ShadowAtlasManager
 
     /// <summary>
     /// Groups still pending when the next scheduled-tile pass starts were never
-    /// consumed (the stage did not execute, or faulted before completing them).
-    /// They stay dirty and render generically; the lane is held closed briefly.
+    /// consumed. They stay dirty. A CPU-direct group can use a bounded hold;
+    /// a strict GPU group must retry its GPU lane.
     /// </summary>
     private void FailUnconsumedAdvancedLaneGroups()
     {
@@ -290,6 +370,7 @@ public sealed partial class ShadowAtlasManager
             return;
 
         int unconsumed = 0;
+        bool strictGroup = false;
         for (int slot = 0; slot < _pendingAdvancedLaneGroups.Length; slot++)
         {
             ref PendingAdvancedLaneGroup pending = ref _pendingAdvancedLaneGroups[slot];
@@ -297,6 +378,7 @@ public sealed partial class ShadowAtlasManager
                 continue;
 
             unconsumed++;
+            strictGroup |= pending.Request?.RequiresStrictGpu == true;
             ReleasePendingAdvancedLaneGroup(ref pending);
         }
 
@@ -304,7 +386,11 @@ public sealed partial class ShadowAtlasManager
             return;
 
         _advancedLaneUnconsumedGroups += unconsumed;
-        HoldAdvancedLane("The Advanced directional shadow stage did not consume the deferred cascade groups.");
+        if (strictGroup || RequiresStrictDirectionalShadowLane())
+            _advancedLaneLastDeclineReason =
+                "The strict GPU directional shadow stage did not consume its deferred groups.";
+        else
+            HoldAdvancedLane("The Advanced directional shadow stage did not consume the deferred cascade groups.");
     }
 
     private void ReleasePendingAdvancedLaneGroup(ref PendingAdvancedLaneGroup pending)
@@ -329,6 +415,15 @@ public sealed partial class ShadowAtlasManager
             "[ShadowAtlas] Directional cascade groups return to the generic path for {0} frames: {1}",
             AdvancedLaneFailureHoldFrames,
             reason);
+    }
+
+    private bool RequiresStrictDirectionalShadowLane()
+    {
+        if (_advancedLaneAuthorityFrameId == SubmissionTrackingRenderFrameId)
+            return !_advancedLaneGenericFallbackAllowed;
+        if (!_advancedLaneOwnerExpected)
+            return false;
+        return true;
     }
 
     private static AdvancedDirectionalShadowLaneRequest[] CreateAdvancedLaneRequests()

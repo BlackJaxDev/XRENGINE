@@ -33,6 +33,7 @@ public readonly record struct BackendReadyCanonicalViewRecord(
     public EAdvancedViewRecordFlags Flags { get; init; }
     public ulong HistoryKey { get; init; }
     public ulong SourceCameraIdentity { get; init; }
+    public uint CullingLayerMask { get; init; } = uint.MaxValue;
     public uint ViewMaskLo { get; init; }
     public uint ViewMaskHi { get; init; }
     public Vector4 FoveationCenterAndBias { get; init; }

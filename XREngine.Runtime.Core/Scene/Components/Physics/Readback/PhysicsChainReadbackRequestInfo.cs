@@ -7,6 +7,9 @@ namespace XREngine.Components;
 public sealed record PhysicsChainReadbackRequestInfo
 {
     public required PhysicsChainRuntimeHandle InstanceHandle { get; init; }
+    /// <summary>Changes when the instance is rebuilt, reset, transferred, or rebound.</summary>
+    public long InstanceSourceGeneration { get; init; }
+    internal PhysicsChainComponent? SourceComponent { get; init; }
     public required PhysicsChainReadbackFields Fields { get; init; }
     public required ReadOnlyMemory<int> SelectedElementIndices { get; init; }
     public required long SubmissionFrame { get; init; }

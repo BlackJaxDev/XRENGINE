@@ -259,6 +259,8 @@ public partial class OpenGLRenderer
             RawGL.DispatchCompute(Math.Max(1u, (count + 255u) / 256u), 1u, 1u);
             RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit | MemoryBarrierMask.CommandBarrierBit);
         }
+        if (!TryFinalizeAdvancedIndexedGroups(slot, late: true, out reason))
+            return false;
         reason = "Ready";
         return true;
         }

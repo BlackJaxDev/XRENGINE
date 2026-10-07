@@ -65,7 +65,10 @@ namespace XREngine.Rendering.Commands
                 // Copy the updating buffer data to the render buffer
                 // This ensures the render buffer has the latest commands while keeping
                 // the updating buffer's indices consistent with _commandIndexLookup
-                bool stageStreamsDirty = _drawMetadataDirtyRange.HasValue ||
+                // Material overrides change draw metadata without a content-version
+                // advance. Republish the renderer routes so their drawn materials stay current.
+                bool drawMetadataDirty = _drawMetadataDirtyRange.HasValue;
+                bool stageStreamsDirty = drawMetadataDirty ||
                     _boundsDirtyRange.HasValue ||
                     _classificationDirtyRange.HasValue ||
                     _visibilityDirtyRange.HasValue ||
@@ -105,6 +108,8 @@ namespace XREngine.Rendering.Commands
                 
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
+                if (commandSnapshotDirty || drawMetadataDirty)
+                    PublishRendererCommandIndices();
                 using (RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers.AdvancedPublication"))
                     PublishAdvancedResidentSceneIfRequested();
 
@@ -146,7 +151,7 @@ namespace XREngine.Rendering.Commands
         {
             // Cull-control and cull-bounds are published as one storage generation.
             CopyDirtyRange(_updatingDrawMetadataBuffer, _allLoadedDrawMetadataBuffer, ref _drawMetadataDirtyRange);
-            CopyDirtyRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer, ref _boundsDirtyRange);
+            CopyCpuOwnedBoundsToRenderSnapshot();
             CopyDirtyRange(_updatingClassificationBuffer, _allLoadedClassificationBuffer, ref _classificationDirtyRange);
             CopyDirtyRange(_updatingVisibilityBuffer, _allLoadedVisibilityBuffer, ref _visibilityDirtyRange);
         }
@@ -161,6 +166,37 @@ namespace XREngine.Rendering.Commands
 
             CopyBufferRange(source, destination, dirtyRange.Min, dirtyRange.MaxExclusive - dirtyRange.Min);
             dirtyRange.Clear();
+        }
+
+        private void CopyCpuOwnedBoundsToRenderSnapshot()
+        {
+            if (!_boundsDirtyRange.HasValue || _updatingBoundsBuffer is null || _allLoadedBoundsBuffer is null)
+                return;
+
+            if (_gpuCopiedAabbRenderers.Count == 0)
+            {
+                CopyDirtyRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer, ref _boundsDirtyRange);
+                return;
+            }
+
+            uint rangeStart = _boundsDirtyRange.Min;
+            uint rangeEnd = _boundsDirtyRange.MaxExclusive;
+            uint copyStart = rangeStart;
+            for (uint index = rangeStart; index < rangeEnd; ++index)
+            {
+                if (!IsCommandOwnedByGpuCopiedAabb(index))
+                    continue;
+
+                if (index > copyStart)
+                    CopyBufferRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer,
+                        copyStart, index - copyStart);
+                copyStart = index + 1u;
+            }
+
+            if (rangeEnd > copyStart)
+                CopyBufferRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer,
+                    copyStart, rangeEnd - copyStart);
+            _boundsDirtyRange.Clear();
         }
 
         private void CopyDirtyStableSoABuffersToRenderSnapshot()

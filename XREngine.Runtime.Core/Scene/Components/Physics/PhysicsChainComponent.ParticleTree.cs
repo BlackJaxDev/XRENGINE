@@ -6,7 +6,7 @@ namespace XREngine.Components;
 
 public partial class PhysicsChainComponent
 {
-    class ParticleTree(Transform root) : XRBase
+    internal sealed class ParticleTree(Transform root) : XRBase
     {
         public Transform Root { get; } = root;
         public Matrix4x4 RootWorldToLocalMatrix => Root.InverseWorldMatrix;

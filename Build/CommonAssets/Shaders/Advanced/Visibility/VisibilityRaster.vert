@@ -23,6 +23,7 @@ layout(std430, binding = 77) readonly buffer XRAdvancedStereoViewMasks { uint ma
 #define XR_ADV_RASTER_VIEW_INDEX XR_ADV_VisibilityRasterPush.viewIndex
 #endif
 #define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_RASTER_VIEW_INDEX
+#define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
 #include "VisibilityInterface.glslinc"
 
 // Vulkan exposes gl_VertexIndex while desktop OpenGL names the identical
@@ -50,7 +51,32 @@ layout(location = 10) flat out uint VisibilityEditorFlags;
 
 uint XR_ADV_VisibilityPayloadIndex()
 {
-    return gl_BaseInstanceARB;
+    if ((XR_ADV_VisibilityRasterPush.producerAndOrigin &
+            XR_ADV_VIS_PRODUCER_MASK) != XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED)
+        return gl_BaseInstanceARB;
+#if defined(XR_ADV_BACKEND_OPENGL)
+    uint instanceIndex = gl_BaseInstanceARB + uint(gl_InstanceID);
+#else
+    uint instanceIndex = uint(gl_InstanceIndex);
+#endif
+    bool late = (XR_ADV_VisibilityRasterPush.producerAndOrigin & 8u) != 0u;
+    uint tableLength = late
+        ? uint(XR_ADV_VisibilityLateMeshPayloads.records.length())
+        : uint(XR_ADV_VisibilityMeshPayloads.records.length());
+    if (gl_BaseInstanceARB >= tableLength)
+        return XR_ADV_VIS_INVALID;
+    uint firstPayload = late
+        ? XR_ADV_VisibilityLateMeshPayloads.records[gl_BaseInstanceARB]
+        : XR_ADV_VisibilityMeshPayloads.records[gl_BaseInstanceARB];
+    if (firstPayload >= uint(XR_ADV_VisibilityPayloads.records.length()))
+        return XR_ADV_VIS_INVALID;
+    if (XR_ADV_VisibilityPayloads.records[firstPayload].instanceCount > 1u)
+        return firstPayload;
+    if (instanceIndex >= tableLength)
+        return XR_ADV_VIS_INVALID;
+    return late
+        ? XR_ADV_VisibilityLateMeshPayloads.records[instanceIndex]
+        : XR_ADV_VisibilityMeshPayloads.records[instanceIndex];
 }
 
 void XR_ADV_RejectVisibilityVertex()
@@ -178,11 +204,30 @@ void main()
 
     vec3 localPosition = Position;
     vec2 localTexCoord0 = TexCoord0;
-#if defined(XR_ADV_BACKEND_OPENGL)
-    // The GL family uses one index atlas for static and aggregate-deformed
-    // draws. Fetch from the selected SSBO so a deformation arena offset is
-    // never interpreted as an offset into the static vertex attribute buffer.
     uint selectedVertex = uint(XR_ADV_VERTEX_INDEX);
+    if (producer == XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED)
+    {
+        uint vertexBase = deformed
+            ? preparedDeformation.currentVertexOffset
+            : geometryRecord.currentVertexData.elementOffset;
+        if (vertexBase > 0xffffffffu - selectedVertex)
+        {
+            atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+            XR_ADV_RejectVisibilityVertex();
+            return;
+        }
+        selectedVertex += vertexBase;
+    }
+#if defined(XR_ADV_BACKEND_OPENGL)
+    // OpenGL reads static and prepared vertices from the selected arena.
+#endif
+#if defined(XR_ADV_BACKEND_OPENGL)
+    if (true)
+#else
+    if (producer == XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED ||
+        producer == XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED)
+#endif
+    {
     if (selectedVertex >= (deformed ? uint(XR_ADV_VisibilityCurrentVertices.records.length()) : uint(XR_ADV_VisibilityStaticVertices.records.length())))
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
@@ -194,7 +239,7 @@ void main()
         : XR_ADV_VisibilityStaticVertices.records[selectedVertex];
     localPosition = vertex.position;
     localTexCoord0 = unpackHalf2x16(vertex.texCoord0Half);
-#endif
+    }
 #if defined(XR_ADV_VIS_VERTEX_DISPLACEMENT)
     localPosition += XR_ADV_ApplyVisibilityVertexDisplacement(
         payload,
@@ -207,7 +252,7 @@ void main()
     bool previousVertexValid = !deformed;
     if (deformed)
     {
-        uint currentVertex = uint(XR_ADV_VERTEX_INDEX);
+        uint currentVertex = selectedVertex;
         uint currentEnd =
             preparedDeformation.currentVertexOffset +
             preparedDeformation.vertexCount;

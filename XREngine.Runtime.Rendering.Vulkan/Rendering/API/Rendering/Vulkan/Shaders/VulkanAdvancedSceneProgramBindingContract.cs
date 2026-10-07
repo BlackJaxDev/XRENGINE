@@ -74,11 +74,17 @@ internal static class VulkanAdvancedSceneProgramBindingContract
     internal const uint VisibilityLateIndexedArgumentsBinding = 41u;
     internal const uint VisibilityLateMeshArgumentsBinding = 44u;
     internal const uint VisibilityLateMeshPayloadsBinding = 45u;
+    internal const uint VisibilityIndexedInstanceGroupsBinding = 63u;
+    internal const uint VisibilityEarlyIndexedGroupCountsBinding = 64u;
+    internal const uint VisibilityLateIndexedGroupCountsBinding = 65u;
     internal const uint VisibilityDepthPyramidSampledBinding = 42u;
 internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     internal const uint VisibilityDeformationOverlayBinding = 46u;
     internal const uint VisibilityCanonicalIndicesBinding = 47u;
     internal const uint VisibilityReconstructionCountersBinding = 48u;
+    internal const uint VisibilityPhysicsBoundsRoutesBinding = 60u;
+    internal const uint VisibilityPhysicsBoundsAtlasBinding = 61u;
+    internal const uint VisibilityPhysicsBoundsMetadataBinding = 62u;
     // Native classification and opaque shading use the same immutable set-1
     // layout as visibility. These bindings are deliberately disjoint from the
     // frame-data ABI so an admitted compute closure never rewrites a table
@@ -326,9 +332,15 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
             VisibilityLateIndexedArgumentsBinding or
             VisibilityLateMeshArgumentsBinding or
             VisibilityLateMeshPayloadsBinding or
+            VisibilityIndexedInstanceGroupsBinding or
+            VisibilityEarlyIndexedGroupCountsBinding or
+            VisibilityLateIndexedGroupCountsBinding or
             VisibilityDeformationOverlayBinding or
             VisibilityCanonicalIndicesBinding or
-            VisibilityReconstructionCountersBinding;
+            VisibilityReconstructionCountersBinding or
+            VisibilityPhysicsBoundsRoutesBinding or
+            VisibilityPhysicsBoundsAtlasBinding or
+            VisibilityPhysicsBoundsMetadataBinding;
 
     private static bool ContainsNativeStorageBinding(uint binding)
         => binding is NativeActiveTilesBinding or NativeKernelTilesBinding or

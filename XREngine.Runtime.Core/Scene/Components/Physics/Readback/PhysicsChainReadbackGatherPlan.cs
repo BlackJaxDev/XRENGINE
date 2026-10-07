@@ -7,6 +7,7 @@ public sealed record PhysicsChainReadbackGatherPlan
 {
     public required PhysicsChainReadbackHandle RequestHandle { get; init; }
     public required PhysicsChainRuntimeHandle InstanceHandle { get; init; }
+    public long InstanceSourceGeneration { get; init; }
     public required PhysicsChainReadbackSourceEpoch SourceEpoch { get; init; }
     public required long GatherFrame { get; init; }
     public required int ElementCount { get; init; }

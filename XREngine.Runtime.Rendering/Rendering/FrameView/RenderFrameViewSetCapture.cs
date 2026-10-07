@@ -122,6 +122,7 @@ public static class RenderFrameViewSetCapture
             CurrentJitter: camera.ProjectionJitter)
         {
             SourceCameraIdentity = (camera as XRCamera)?.RenderIdentity ?? 0UL,
+            CullingLayerMask = camera.CullingLayerMask,
         };
         return current;
     }

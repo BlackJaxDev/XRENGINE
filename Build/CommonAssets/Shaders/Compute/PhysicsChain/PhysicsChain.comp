@@ -1,6 +1,8 @@
 #version 450
 
 #include "Compute/PhysicsChain/PhysicsChainWorkgroups.glslinc"
+#include "Compute/PhysicsChain/PhysicsChainConstraints.glslinc"
+#include "Compute/PhysicsChain/PhysicsChainAffineInput.glslinc"
 
 layout(local_size_x = PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
 
@@ -42,7 +44,7 @@ struct ColliderData
 {
     vec4 Center;   // xyz = position, w = radius
     vec4 Params;   // type-specific
-    vec4 Orientation; // box world rotation quaternion (xyz, w)
+    vec4 Orientation; // box rotation or marked capsule direction
     int Type;      // 0=sphere,1=capsule,2=box
     int _pad0;
     int _pad1;
@@ -63,7 +65,7 @@ layout(std430, binding = 1) readonly buffer ParticleStaticBuffer
 
 layout(std430, binding = 3) buffer TransformMatricesBuffer 
 {
-    mat4 TransformMatrices[];
+    PhysicsChainAffineInput TransformMatrices[];
 };
 
 layout(std430, binding = 4) buffer CollidersBuffer
@@ -137,15 +139,19 @@ bool sphereColliderCollision(vec3 center, float rad, inout vec3 pos, float r)
     return false;
 }
 
-bool capsuleColliderCollision(vec3 start, vec3 end, float inverseLengthSquared, float rad, inout vec3 pos, float r)
+bool capsuleColliderCollision(vec3 start, vec3 end, vec4 packedDirection, float inverseLengthSquared, float rad, inout vec3 pos, float r)
 {
-    vec3 dir = end - start;
-    float lenSquared = dot(dir, dir);
-    if (lenSquared < 1e-8)
+    bool hasPackedDirection = packedDirection.w == -65536.0 &&
+        !any(isnan(packedDirection.xyz)) && !any(isinf(packedDirection.xyz));
+    vec3 dir = hasPackedDirection ? packedDirection.xyz : end - start;
+    float inverseLength = inverseLengthSquared;
+    if (!(inverseLength > 0.0))
     {
-        return sphereColliderCollision(start, rad, pos, r);
+        float lenSquared = dot(dir, dir);
+        if (lenSquared < 1e-8)
+            return sphereColliderCollision(start, rad, pos, r);
+        inverseLength = 1.0 / lenSquared;
     }
-    float inverseLength = inverseLengthSquared > 0.0 ? inverseLengthSquared : 1.0 / lenSquared;
     float projection = clamp(dot(pos - start, dir) * inverseLength, 0.0, 1.0);
     vec3 closest = start + dir * projection;
     return sphereColliderCollision(closest, rad, pos, r);
@@ -222,7 +228,7 @@ bool processColliders(int colliderOffset, int colliderCount, inout vec3 pos, flo
         }
         else if (c.Type == 1)
         {
-            coll = coll || capsuleColliderCollision(c.Center.xyz, c.Params.xyz, c.Params.w, c.Center.w, pos, r);
+            coll = coll || capsuleColliderCollision(c.Center.xyz, c.Params.xyz, c.Orientation, c.Params.w, c.Center.w, pos, r);
         }
         else if (c.Type == 2)
         {
@@ -245,11 +251,11 @@ void applyFreezeAxis(int freezeAxis, inout vec3 pos, vec3 parentPos, mat4 parent
     
     vec3 normal;
     if (freezeAxis == 1)
-        normal = normalize(parentMat[0].xyz);
+        normal = normalizeChainDirection(parentMat[0].xyz);
     else if (freezeAxis == 2)
-        normal = normalize(parentMat[1].xyz);
+        normal = normalizeChainDirection(parentMat[1].xyz);
     else
-        normal = normalize(parentMat[2].xyz);
+        normal = normalizeChainDirection(parentMat[2].xyz);
     
     float d = dot(pos - parentPos, normal);
     pos -= normal * d;
@@ -280,7 +286,7 @@ void main()
         {
             ParticleStatic particleStatic = ParticleStatics[pid];
             ParticleState p = Particles[pid];
-            vec3 transformPosition = TransformMatrices[pid][3].xyz;
+            vec3 transformPosition = physicsChainAffineTranslation(TransformMatrices[pid]);
             int parentIndex = particleStatic.ParentIndex;
 
             if (parentIndex < particleStart || parentIndex >= pid)
@@ -297,7 +303,7 @@ void main()
                 float stiffness = mix(1.0, particleStatic.Stiffness, tp.Weight);
                 if (stiffness > 0.0)
                 {
-                    mat4 parentMatrix = TransformMatrices[parentIndex];
+                    mat4 parentMatrix = decodePhysicsChainAffineInput(TransformMatrices[parentIndex]);
                     parentMatrix[3].xyz = parent.Position;
                     vec3 restPosition = (parentMatrix * vec4(particleStatic.TransformLocalPosition, 1.0)).xyz;
                     vec3 displacement = restPosition - p.Position;
@@ -307,14 +313,7 @@ void main()
                         p.Position += displacement * ((displacementLength - maxLength) / displacementLength);
                 }
 
-                vec3 difference = parent.Position - p.Position;
-                float lengthSquared = dot(difference, difference);
-                if (lengthSquared > 1e-8)
-                {
-                    float inverseLength = inversesqrt(lengthSquared);
-                    float currentLength = lengthSquared * inverseLength;
-                    p.Position += difference * ((currentLength - particleStatic.BoneLength) * inverseLength);
-                }
+                p.Position = constrainChainSegment(p.Position, parent.Position, particleStatic.BoneLength);
             }
 
             Particles[pid] = p;
@@ -343,7 +342,7 @@ void main()
         {
             ParticleStatic particleStatic = ParticleStatics[pid];
             ParticleState p = Particles[pid];
-            vec3 transformPosition = TransformMatrices[pid][3].xyz;
+            vec3 transformPosition = physicsChainAffineTranslation(TransformMatrices[pid]);
             p.PreviousPhysicsPosition = p.Position;
 
             int parentIndex = particleStatic.ParentIndex;
@@ -366,7 +365,7 @@ void main()
                 float stiffness = mix(1.0, particleStatic.Stiffness, tp.Weight);
                 if (stiffness > 0.0 || particleStatic.Elasticity > 0.0)
                 {
-                    mat4 parentMatrix = TransformMatrices[parentIndex];
+                    mat4 parentMatrix = decodePhysicsChainAffineInput(TransformMatrices[parentIndex]);
                     parentMatrix[3].xyz = parent.Position;
                     vec3 restPosition = (parentMatrix * vec4(particleStatic.TransformLocalPosition, 1.0)).xyz;
                     vec3 displacement = restPosition - p.Position;
@@ -384,16 +383,10 @@ void main()
 
                 float particleRadius = particleStatic.Radius * tp.ObjectScale;
                 p.IsColliding = processColliders(tp.ColliderOffset, tp.ColliderCount, p.Position, particleRadius) ? 1 : 0;
-                applyFreezeAxis(tp.FreezeAxis, p.Position, parent.Position, TransformMatrices[parentIndex]);
+                applyFreezeAxis(tp.FreezeAxis, p.Position, parent.Position,
+                    decodePhysicsChainAffineInput(TransformMatrices[parentIndex]));
 
-                vec3 difference = parent.Position - p.Position;
-                float lengthSquared = dot(difference, difference);
-                if (lengthSquared > 1e-8)
-                {
-                    float inverseLength = inversesqrt(lengthSquared);
-                    float currentLength = lengthSquared * inverseLength;
-                    p.Position += difference * ((currentLength - particleStatic.BoneLength) * inverseLength);
-                }
+                p.Position = constrainChainSegment(p.Position, parent.Position, particleStatic.BoneLength);
             }
             else
             {

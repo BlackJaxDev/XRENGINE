@@ -1,3 +1,5 @@
+using Silk.NET.Vulkan;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -16,6 +18,11 @@ internal sealed class VulkanBinResourceManifest
     private int _nativeUseOffset;
     private int _nativeUseCapacity;
     private int _nativeUseCount;
+    private readonly Dictionary<VulkanResidentDrawDependency, byte> _resourceLookup = [];
+    private readonly Dictionary<(ObjectType Type, ulong Handle),
+        (uint QueueFamily, ulong Generation, ImageLayout Layout)> _nativeHandleLookup = [];
+    private readonly Dictionary<(ObjectType Type, ulong Handle, ulong Offset,
+        ulong Length, uint Stride), int> _nativeRangeLookup = [];
 
     private VulkanBinResourceManifest(
         VulkanResidentDrawDependency[] resources,
@@ -85,7 +92,8 @@ internal sealed class VulkanBinResourceManifest
         VulkanResidentDrawDependency[] resources = new VulkanResidentDrawDependency[resourceCapacity];
         VulkanTemplateNativeResourceUse[] nativeUses =
             new VulkanTemplateNativeResourceUse[nativeUseCapacity];
-        if (!TryMergeTemplates(
+        VulkanBinResourceManifest result = new(resources, nativeUses, streamOwned: false);
+        if (!result.TryMergeTemplates(
                 templates,
                 resources,
                 nativeUses,
@@ -97,10 +105,14 @@ internal sealed class VulkanBinResourceManifest
         }
 
         if (resourceCount != resources.Length)
-            Array.Resize(ref resources, resourceCount);
+            Array.Resize(ref result._resources, resourceCount);
         if (nativeUseCount != nativeUses.Length)
-            Array.Resize(ref nativeUses, nativeUseCount);
-        manifest = new(resources, nativeUses, streamOwned: false);
+            Array.Resize(ref result._nativeUses, nativeUseCount);
+        result._resourceCapacity = resourceCount;
+        result._nativeUseCapacity = nativeUseCount;
+        result._resourceCount = resourceCount;
+        result._nativeUseCount = nativeUseCount;
+        manifest = result;
         return true;
     }
 
@@ -201,7 +213,7 @@ internal sealed class VulkanBinResourceManifest
         return true;
     }
 
-    private static bool TryMergeTemplates(
+    private bool TryMergeTemplates(
         ReadOnlySpan<VulkanTemplateResourceManifest> templates,
         Span<VulkanResidentDrawDependency> resources,
         Span<VulkanTemplateNativeResourceUse> nativeUses,
@@ -212,6 +224,12 @@ internal sealed class VulkanBinResourceManifest
         resourceCount = 0;
         nativeUseCount = 0;
         failure = VulkanBinResourceManifestFailure.None;
+        _resourceLookup.Clear();
+        _nativeHandleLookup.Clear();
+        _nativeRangeLookup.Clear();
+        _resourceLookup.EnsureCapacity(resources.Length);
+        _nativeHandleLookup.EnsureCapacity(nativeUses.Length);
+        _nativeRangeLookup.EnsureCapacity(nativeUses.Length);
         for (int templateIndex = 0; templateIndex < templates.Length; ++templateIndex)
         {
             ReadOnlySpan<VulkanResidentDrawDependency> templateResources =
@@ -219,16 +237,7 @@ internal sealed class VulkanBinResourceManifest
             for (int resourceIndex = 0; resourceIndex < templateResources.Length; ++resourceIndex)
             {
                 VulkanResidentDrawDependency candidate = templateResources[resourceIndex];
-                bool exists = false;
-                for (int existingIndex = 0; existingIndex < resourceCount; ++existingIndex)
-                {
-                    if (resources[existingIndex] == candidate)
-                    {
-                        exists = true;
-                        break;
-                    }
-                }
-                if (exists)
+                if (_resourceLookup.ContainsKey(candidate))
                     continue;
                 if (resourceCount == resources.Length)
                 {
@@ -236,6 +245,7 @@ internal sealed class VulkanBinResourceManifest
                     return false;
                 }
                 resources[resourceCount++] = candidate;
+                _resourceLookup.Add(candidate, 0);
             }
 
             ReadOnlySpan<VulkanTemplateNativeResourceUse> templateNativeUses =
@@ -243,52 +253,52 @@ internal sealed class VulkanBinResourceManifest
             for (int nativeIndex = 0; nativeIndex < templateNativeUses.Length; ++nativeIndex)
             {
                 VulkanTemplateNativeResourceUse candidate = templateNativeUses[nativeIndex];
-                bool exists = false;
-                for (int existingIndex = 0; existingIndex < nativeUseCount; ++existingIndex)
+                var handleKey = (candidate.ObjectType, candidate.Handle);
+                if (_nativeHandleLookup.TryGetValue(handleKey, out var owner))
                 {
-                    ref readonly VulkanTemplateNativeResourceUse existing =
-                        ref nativeUses[existingIndex];
-                    if (existing.ObjectType != candidate.ObjectType ||
-                        existing.Handle != candidate.Handle)
-                        continue;
-                    if (existing.QueueFamily != candidate.QueueFamily)
+                    if (owner.QueueFamily != candidate.QueueFamily)
                     {
                         failure = VulkanBinResourceManifestFailure.QueueFamilyConflict;
                         return false;
                     }
-                    if (existing.NativeGeneration != candidate.NativeGeneration)
+                    if (owner.Generation != candidate.NativeGeneration)
                     {
                         failure = VulkanBinResourceManifestFailure.NativeRangeConflict;
                         return false;
                     }
-                    if (existing.RequiredLayout != candidate.RequiredLayout)
+                    if (owner.Layout != candidate.RequiredLayout)
                     {
                         failure = VulkanBinResourceManifestFailure.ImageLayoutConflict;
                         return false;
                     }
-                    // Packed vertex and index columns deliberately share a VkBuffer
-                    // while retaining distinct range ownership declarations.
-                    if (existing.Offset != candidate.Offset ||
-                        existing.Length != candidate.Length ||
-                        existing.ElementStride != candidate.ElementStride)
-                        continue;
+                }
+                else
+                    _nativeHandleLookup.Add(handleKey,
+                        (candidate.QueueFamily, candidate.NativeGeneration,
+                            candidate.RequiredLayout));
+
+                // The same buffer can own several distinct byte ranges.
+                // Merge access only when the full range and stride match.
+                var rangeKey = (candidate.ObjectType, candidate.Handle,
+                    candidate.Offset, candidate.Length, candidate.ElementStride);
+                if (_nativeRangeLookup.TryGetValue(rangeKey, out int existingIndex))
+                {
+                    VulkanTemplateNativeResourceUse existing = nativeUses[existingIndex];
                     nativeUses[existingIndex] = existing with
                     {
                         Access = existing.Access | candidate.Access,
                         Stages = existing.Stages | candidate.Stages,
                         AccessMask = existing.AccessMask | candidate.AccessMask,
                     };
-                    exists = true;
-                    break;
-                }
-                if (exists)
                     continue;
+                }
                 if (nativeUseCount == nativeUses.Length)
                 {
                     failure = VulkanBinResourceManifestFailure.CapacityExceeded;
                     return false;
                 }
-                nativeUses[nativeUseCount++] = candidate;
+                nativeUses[nativeUseCount] = candidate;
+                _nativeRangeLookup.Add(rangeKey, nativeUseCount++);
             }
         }
         return true;

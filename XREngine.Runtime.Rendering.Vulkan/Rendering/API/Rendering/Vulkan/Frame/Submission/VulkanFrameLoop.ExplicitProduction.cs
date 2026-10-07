@@ -535,6 +535,8 @@ internal sealed partial class VulkanFrameLoop
                 acceptedPlan.CanonicalPublicationPins);
             if (capacityExceededCount > 0)
             {
+                VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                    _meshOperationRequestScratch.AsSpan(0, requestCount));
                 string detail = capacityFailure.HasFailure
                     ? capacityFailure.FormatDiagnostic(capacityExceededCount)
                     : $"FramePlanCapacityExceeded lane=MainScene " +
@@ -557,34 +559,42 @@ internal sealed partial class VulkanFrameLoop
                 "The bounded request queue rejected an accepted foreground cohort.");
         }
 
-        // Capture the raw material snapshot first so cold imported textures can
-        // be prepared before mesh materialization attempts descriptor binding.
-        acceptedPlan.CaptureRequiredTextureReferences(
-            _meshOperationRequestScratch.AsSpan(0, requestCount));
-        _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
-            acceptedPlan.RequiredTextureUploads,
-            acceptedPlan.RequiredTextures,
-            acceptedPlan.RequiredTextureGenerations,
-            requireExactDescriptorPublication: false);
-        CompleteAcceptedPresentNowTextureReadiness(
-            acceptedPlan,
-            ref watchdog,
-            "ExplicitOutput -> visible material snapshot -> texture generation");
-
-        if (!MaterializeQueuedMeshRenderRequests(
-                requestCount,
-                allowPreparedCohort: true,
-                out string meshFailure,
-                out _,
-                ref watchdog,
-                sourceFrameId: frameNumber,
-                sliceColdPreparation: false))
+        try
         {
-            throw watchdog.CreateFailure(
-                EVulkanPresentNowReadinessStage.MeshMaterialization,
-                "visible-mesh-generation",
-                "ExplicitOutput -> visible meshes -> program/buffer/descriptor",
-                meshFailure);
+            // Capture the raw material snapshot first so cold imported textures can
+            // be prepared before mesh materialization attempts descriptor binding.
+            acceptedPlan.CaptureRequiredTextureReferences(
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
+            _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+                acceptedPlan.RequiredTextureUploads,
+                acceptedPlan.RequiredTextures,
+                acceptedPlan.RequiredTextureGenerations,
+                requireExactDescriptorPublication: false);
+            CompleteAcceptedPresentNowTextureReadiness(
+                acceptedPlan,
+                ref watchdog,
+                "ExplicitOutput -> visible material snapshot -> texture generation");
+
+            if (!MaterializeQueuedMeshRenderRequests(
+                    requestCount,
+                    allowPreparedCohort: true,
+                    out string meshFailure,
+                    out _,
+                    ref watchdog,
+                    sourceFrameId: frameNumber,
+                    sliceColdPreparation: false))
+            {
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.MeshMaterialization,
+                    "visible-mesh-generation",
+                    "ExplicitOutput -> visible meshes -> program/buffer/descriptor",
+                    meshFailure);
+            }
+        }
+        finally
+        {
+            VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
         }
 
         FrameOp[] drainedOperations = _framePlanner.Operations.DrainForPrimary(

@@ -557,28 +557,33 @@ internal sealed partial class VulkanFrameLoop
                 break;
             }
             case EGpuDiagnosticReadbackDecoder.SubmissionValidation:
+            case EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters:
                 if (words.Length < 16)
                     return;
 
                 long payloadOverflow = words[6];
                 long decodeOutOfBounds = words[8];
                 long unsupportedDisplacement = words[10];
+                uint boundsRouteRejected = words[11];
+                uint boundsNumericRejected = words[12];
                 RuntimeEngine.Rendering.Stats.GpuDriven.RecordCommandCompaction(
                     culledCommands: 0,
                     gpuCompactionOverflow: payloadOverflow,
                     activeListOverflow: decodeOutOfBounds,
                     meshletOverflow: unsupportedDisplacement);
                 if (payloadOverflow != 0 || decodeOutOfBounds != 0 ||
-                    unsupportedDisplacement != 0)
+                    unsupportedDisplacement != 0 || boundsRouteRejected != 0 || boundsNumericRejected != 0)
                 {
                     Debug.VulkanWarningEvery(
                         "Vulkan.AdvancedVisibility.AsyncDiagnostic",
                         TimeSpan.FromSeconds(1),
-                        "[Vulkan] Advanced visibility diagnostic frame={0} payloadOverflow={1} decodeOutOfBounds={2} unsupportedDisplacement={3}.",
+                        "[Vulkan] Advanced visibility diagnostic frame={0} payloadOverflow={1} decodeOutOfBounds={2} unsupportedDisplacement={3} boundsRouteRejected={4} boundsNumericRejected={5}.",
                         payload.SourceFrameId,
                         payloadOverflow,
                         decodeOutOfBounds,
-                        unsupportedDisplacement);
+                        unsupportedDisplacement,
+                        boundsRouteRejected,
+                        boundsNumericRejected);
                 }
                 break;
         }

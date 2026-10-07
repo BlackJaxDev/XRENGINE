@@ -7,7 +7,7 @@ namespace XREngine.Rendering;
 /// </summary>
 public static class AdvancedVisibilityBufferContract
 {
-    public const uint PayloadVersion = 1u;
+    public const uint PayloadVersion = 2u;
     public const uint InvalidWord = uint.MaxValue;
     public const uint MaximumEncodableIndex = uint.MaxValue - 1u;
     public const EAdvancedVisibilityTargetEncoding Encoding =

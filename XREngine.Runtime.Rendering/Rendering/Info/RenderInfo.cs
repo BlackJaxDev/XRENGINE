@@ -39,6 +39,8 @@ namespace XREngine.Rendering.Info
         /// </summary>
         public event DelPreRenderCallback? CollectedForRenderCallback;
 
+        internal bool HasCollectedForRenderCallback => CollectedForRenderCallback is not null;
+
         public delegate void DelSwapBuffersCallback(RenderInfo info, RenderCommand command);
         /// <summary>
         /// This callback is called when the engine is swapping buffers - both the collect and render threads are currently in sync and waiting.
@@ -157,7 +159,9 @@ namespace XREngine.Rendering.Info
                 // Use the live Enabled flag so hover stencil responds immediately.
                 // This keeps CPU-rendered debug overlays responsive even if it means
                 // a small risk of cross-thread visibility lag.
-                if (!cmd.Enabled)
+                if (!cmd.Enabled ||
+                    this is RenderInfo3D { OwnerRenderableMesh: { } mesh } &&
+                    mesh.IsPrimaryCommand(cmd) && !mesh.ShouldCollectPrimaryCommand(passes.IsShadowPass))
                     continue;
 
                 cmd.CollectedForRender(camera);

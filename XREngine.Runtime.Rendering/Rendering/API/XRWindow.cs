@@ -12,6 +12,7 @@ using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.Occlusion;
+using XREngine.Rendering.Shadows;
 using XREngine.Scene;
 
 namespace XREngine.Rendering
@@ -1576,6 +1577,12 @@ namespace XREngine.Rendering
                 return false;
             }
 
+            if (waitForGpu)
+                TryRendererCleanupStep(renderer, reason,
+                    "RetirePhysicsChainOutputPages",
+                    () => XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.Instance
+                        .NotifyOutputProducerKnownIdle(renderer));
+
             bool wrappersDestroyed = TryRendererCleanupStep(
                 renderer,
                 reason,
@@ -2817,6 +2824,7 @@ namespace XREngine.Rendering
 
                 if (!interactiveResizeFrame)
                 {
+                    PublishAdvancedDirectionalShadowConsumerAuthority(renderFrameId);
                     frameRenderer.PrepareRenderFramePacing();
                     using var preRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPreRender");
                     try
@@ -3068,6 +3076,50 @@ namespace XREngine.Rendering
                     "[RenderDiag] Forced DebugOpaqueRenderPipeline for VP[{0}] due to XRE_FORCE_DEBUG_OPAQUE_PIPELINE=1.",
                     viewport.Index);
             }
+        }
+
+        private void PublishAdvancedDirectionalShadowConsumerAuthority(ulong renderFrameId)
+        {
+            IRuntimeRenderWorld? world = TargetWorldInstance;
+            ShadowAtlasManager? atlas = world?.Lights.ShadowAtlas;
+            if (atlas is null)
+                return;
+
+            AdvancedDirectionalShadowConsumerAuthority authority = default;
+            int ownerCount = 0;
+            bool genericFallbackAllowed = true;
+            ReadOnlySpan<XRWindow> windows = RuntimeEngine.RegisteredWindowSnapshot;
+            bool currentWindowRegistered = false;
+            for (int windowIndex = 0; windowIndex <= windows.Length; ++windowIndex)
+            {
+                if (windowIndex == windows.Length && currentWindowRegistered)
+                    break;
+                XRWindow window = windowIndex == windows.Length ? this : windows[windowIndex];
+                currentWindowRegistered |= ReferenceEquals(window, this);
+                for (int index = 0; index < window.Viewports.Count; ++index)
+                {
+                    XRViewport viewport = window.Viewports[index];
+                    if (!ReferenceEquals(viewport.World, world) ||
+                        viewport.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost)
+                        continue;
+
+                    ++ownerCount;
+                    bool captured = viewport.TryCaptureAdvancedDirectionalShadowConsumerAuthority(
+                        renderFrameId, out AdvancedDirectionalShadowConsumerAuthority candidate);
+                    genericFallbackAllowed &= captured &&
+                        candidate.Strategy == EMeshSubmissionStrategy.CpuDirect;
+                    authority = ownerCount == 1 ? candidate : default;
+                }
+            }
+
+            string? reason = ownerCount > 1
+                ? "Multiple desktop Advanced viewports own different shadow consumers."
+                : ownerCount == 1 && !authority.IsValid
+                    ? "The desktop Advanced viewport has no published command package."
+                    : null;
+            atlas.PublishAdvancedDirectionalShadowConsumerAuthority(
+                renderFrameId, authority, ownerCount != 0,
+                genericFallbackAllowed, reason);
         }
 
         private void LogRenderDiagnostics(double delta, bool useScenePanelMode, bool canRenderWindowViewports, bool forceFullViewport)

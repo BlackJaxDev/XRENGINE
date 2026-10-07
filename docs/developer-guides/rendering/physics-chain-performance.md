@@ -1,10 +1,78 @@
 # Physics Chain Performance
 
-Last updated: 2026-10-06
+Last updated: 2026-10-07
 
 The physics-chain optimization work reduces `PhysicsChainComponent` CPU cost, GPU transfer bandwidth, synchronization stalls, and hot-path allocations across CPU, standalone GPU, and batched GPU modes.
 
-The implementation now has the core architecture in place: low-allocation buffer upload paths, async readback for compatibility sync, dirty/version-aware uploads, reduced transform propagation cost, reusable CPU scheduling, and regression coverage for the main synchronization and versioning risks. Remaining work is validation and benchmark capture, tracked separately in [Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md).
+The runtime has low-allocation buffer uploads, asynchronous compatibility
+readback, version-aware uploads, reduced transform propagation, and reusable
+CPU scheduling. The thousands-scale path also has generation-safe bone
+coverage, retained canonical GPU bounds, committed CPU spatial snapshots,
+mapped input pages, world-owned clocks, and reused rest-input ranges.
+Covered untextured identity-world draws retain static plans. Strict canonical
+submission uses GPU collection and indexed instance groups in the main view.
+Directional shadows and the remaining world input work are tracked in the
+[implementation todo](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md).
+Runtime evidence and acceptance checks remain in
+[Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md).
+
+## GPU skinned scale measurement
+
+Use `Tools/Benchmarks/Measure-PhysicsChainScale.ps1` for the Math Intersections
+skinned-chain scene in a named isolated Release session. Put output in the
+current task run:
+
+```powershell
+pwsh Tools/Benchmarks/Measure-PhysicsChainScale.ps1 -Session physics-chain-scale -ChainCount 2000 -WindowSeconds 30 -OutputFolder "Build/_AgentValidation/<task-run>/reports/scale"
+```
+
+`-Session` is required. Chain count defaults to 2,000 and accepts 1 to 10,000.
+The timing window defaults to 30 seconds and accepts 5 to 60 seconds.
+`-SubmissionStrategy` defaults to `GpuIndirectZeroReadback`. Use `CpuDirect`
+for an explicit CPU submission comparison. The command restores the prior
+runtime override after cleanup. It checks the frozen package before and after
+timing and rejects a changed strategy, a downgrade, or new physics readback
+in the strict GPU window.
+`-Telemetry` enables stage counters for a separate diagnostic window.
+`-UseExistingSession` uses the named running session and leaves it running.
+`-CaptureEvidence` writes wide and near MCP images after timing. Native
+RenderDoc exports remain necessary when MCP readback does not match the target.
+Use the [editor workflow](../ai/agent-editor-workflows.md) for session ownership,
+capture, and evidence retention.
+
+The command waits for canonical readiness. It rejects changed chain counts,
+new bad frame outcomes, new dispatch or input-page failures, quarantined input
+pages, new input-buffer allocations, and input writes or a producer epoch that
+do not advance. On a readiness timeout, it saves the final frame counters,
+profiler, and dispatcher. Completed Hz uses the actual elapsed window. A preallocated ring
+records completed-frame timestamps. The command calculates frame-interval p95
+from these timestamps and rejects a reset, overwritten samples, or incomplete
+coverage. The summary reports whether p95 meets the 10 ms target. One-second
+counter samples remain for rate trends only. Benchmark cleanup restores the source rig.
+The count sample calls `GPUPhysicsChainDispatcher.CaptureRegisteredComponentCount()`.
+It does not serialize the full dispatcher. The command calls `get_render_state`
+with `viewport_index: 0` before and after the timed window. This selects the
+desktop window viewport when a transient shadow viewport is active. These
+snapshots include retained draw-plan and material-resolution counts. It also
+saves the final profiler and a
+`<label>-window-start.json` marker. Set `-CpuTraceSeconds 15` with a window of
+at least 20 seconds to collect a bounded `dotnet-trace` sampled-thread trace.
+The harness starts the trace inside the timed window and saves its output
+beside the summary. This requires `dotnet-trace` on `PATH`. A traced or
+telemetry window is diagnostic evidence. Run a separate unobserved acceptance
+window. Set `-RequireDirectionalShadows` to require new accepted cascade
+groups with no new rejected, unconsumed, or generic groups. These counters
+prevent a cached static atlas from passing a moving-shadow check.
+The harness temporarily disables `Debug.EnableProfilerFrameLogging`,
+`Debug.EnableProfilerComponentTiming`,
+`Debug.EnableGpuRenderPipelineProfiling`, and
+`Debug.EnableProfilerUdpSending` through session preferences. It checks these
+settings before and after the window, then restores them. It saves failure
+evidence before it checks the final frozen strategy snapshot. The
+`XRE_PROFILER_ENABLED` environment flag controls UDP sending. It does not
+disable the editor code profiler.
+Failed setup removes the partial benchmark root, resets the run state, and
+records the exception and stack.
 
 ## World-owned runtime architecture
 
@@ -158,8 +226,39 @@ Runtime bandwidth/frame metrics are available from `GPUPhysicsChainDispatcher.Ge
 per-chain inspection surface. It reports the requested CPU/batched-GPU/
 standalone-GPU path, backend readiness, retained CPU and GPU kernel families,
 requested and effective quality policy, and explicit compatibility costs such
-as CPU transform mirroring, GPU bone readback, and per-chain debug rendering.
+as CPU transform mirroring, GPU bone readback, and selected chain debug rendering.
 A failed GPU status never indicates that a CPU fallback was used.
+
+Batched GPU chain debug uses one compact world batch and two indexed indirect
+draws. It selects only explicit chains, with limits of 256 chains and 16,384
+particles. It does no CPU readback and creates no debug work when selection
+is off. Read `GPUPhysicsChainDispatcher.GetGpuDebugDiagnosticsSnapshot()` for
+selected counts, the limit flag, dispatches, draw submissions, and readback
+use. A foreign renderer, a busy retained batch, or a retired native source
+rejects work with a diagnostic. Native debug and teardown checks remain in the
+[validation plan](../../work/testing/physics/physics-validation.md#gpu-skinned-chain-scale).
+
+`GPUPhysicsChainDispatcher.Instance.GpuBoundsDiagnostics` reports GPU bounds
+slots, dispatches, copied commands, material-contract rejections, and
+compatibility-route rejections. Use `LastMaterialContractRejectionCount` and
+`LastCompatibilityRouteRejectionCount` to see each cause in the latest bounds
+publication. `CompatibilityRouteRejectionCount` counts covered chain commands
+whose GPUScene copy was rejected because the compatibility culling draw has no
+retained physics output page and source identity. The canonical Advanced route
+uses the retained atlas bound. CpuDirect still draws a rejected compatibility
+command. No CPU bound replaces the rejected GPUScene copy. Release builds do
+not write the warning text, so read the counters in Release sessions.
+
+To test material vertex effects in the Math Intersections world, set
+`XRE_PHYSICS_CHAIN_TEST_VERTEX_EFFECTS=1` before the editor starts. The skinned
+chain test material then declares neutral vertex-effect parameters. Change them
+with the `set_material_uniforms` MCP tool. Do not set this variable for timing
+windows.
+Use `set_object_reference` to assign an existing material to a command override
+or an existing transform to `RootBone` or `ReferenceObject`. Supply target and
+reference object IDs and optional member paths. The action checks the reference
+type and uses the property setter. Omit the reference ID to clear it.
+
 ## Key Files
 
 - `XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.cs`
@@ -198,13 +297,27 @@ CPU stalls and varying GPU clocks prevent a controlled GPU comparison.
 The rendering bridge retains one readback coordinator per physics world.
 World tracking ends after the last source leaves and outstanding work drains.
 GPU bounds routing captures renderer command indices once per scene, then
-uses indexed lookups for each palette binding.
+uses indexed lookups for each palette binding. The compatibility GPUScene copy
+writes a rejected record for covered chain commands. Its command bounds and
+cull bounds buffers do not carry the physics atlas bound. Use the canonical
+Advanced route for GPU-culled covered chains.
 
 With `XRE_WORLD_TICK_TELEMETRY=1`,
 `PhysicsChainComponent.WorldLateTickTelemetry` exposes cumulative late-tick
 stage times and gate wait in Stopwatch ticks. Compare snapshots and divide by
 `StopwatchFrequency`. These are elapsed times, not exclusive CPU use. Keep
 this observer disabled for final performance acceptance.
+
+`PhysicsChainComponent.GetGpuRestInputCompatibilityCount(reason)` reads the
+world's cumulative compatibility-input count for one reason. A compatibility
+input still uses the selected GPU solver. Compare the counter before and after
+a change; do not treat a process-lifetime total as one frame's result.
+
+`RenderableMeshStageTelemetry.Snapshot()` reports named stages as
+`stage:ticks/calls` when world tick telemetry is enabled. These counters cover
+all scene meshes. They do not isolate one covered renderer. Use the selected
+renderer's `TrackedSkinnedBoneCount`, `HasPendingRenderMatrixUpdate`, and
+`UsesCommittedWorldBounds` for focused inspection.
 
 The same flag enables `RuntimeWorldRenderer.CollectionTelemetry`. Compare
 snapshots to get collect and swap call counts and matrix, mesh, and scene time.

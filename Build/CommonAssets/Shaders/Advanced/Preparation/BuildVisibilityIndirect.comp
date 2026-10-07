@@ -74,6 +74,48 @@ void main()
     }
 
     XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[payloadIndex];
+    if (producer == PRODUCER_INDIRECT_INDEXED)
+    {
+        uint groupPlusOne = payload.instanceGroupIndexPlusOne;
+        uint groupCount = uint(XR_ADV_VisibilityInstanceGroups.records.length());
+        if (groupPlusOne == 0u || groupPlusOne > groupCount)
+        {
+            atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+            return;
+        }
+        uint groupIndex = groupPlusOne - 1u;
+        XRAdvancedIndexedInstanceGroup group =
+            XR_ADV_VisibilityInstanceGroups.records[groupIndex];
+        uint groupBase = XR_ADV_VisibilityPush.viewIndex * groupCount;
+        uint countIndex = groupBase + groupIndex;
+        uint first = XR_ADV_VisibilityPush.payloadBase + group.firstMember;
+        if (group.rangeIndex != range ||
+            countIndex >= uint(XR_ADV_VisibilityEarlyGroupCounts.records.length()) ||
+            first < XR_ADV_VisibilityPush.payloadBase ||
+            first > uint(XR_ADV_VisibilityMeshPayloads.records.length()) ||
+            group.memberCapacity >
+                uint(XR_ADV_VisibilityMeshPayloads.records.length()) - first)
+        {
+            atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+            return;
+        }
+        uint member = atomicAdd(XR_ADV_VisibilityEarlyGroupCounts.records[countIndex], 0u);
+        while (member < group.memberCapacity)
+        {
+            uint prior = atomicCompSwap(
+                XR_ADV_VisibilityEarlyGroupCounts.records[countIndex], member, member + 1u);
+            if (prior == member)
+                break;
+            member = prior;
+        }
+        if (member >= group.memberCapacity)
+        {
+            atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+            return;
+        }
+        XR_ADV_VisibilityMeshPayloads.records[first + member] = payloadIndex;
+        return;
+    }
     if ((producer == PRODUCER_STATIC_MESHLET ||
          producer == PRODUCER_SKINNED_MESHLET) &&
         payload.meshletCount == 0u)
@@ -117,23 +159,6 @@ void main()
         return;
     }
     uint outputIndex = rangeBegin + rangeLocal;
-
-    if (producer == PRODUCER_INDIRECT_INDEXED)
-    {
-        DrawIndexedIndirect argument;
-        argument.IndexCount = payload.indexCount;
-        argument.InstanceCount = max(payload.instanceCount, 1u);
-        argument.FirstIndex = payload.firstIndex;
-        argument.VertexOffset = int(payload.vertexOffset);
-        argument.FirstInstance = payloadIndex;
-        uint argumentBase = outputIndex * 5u;
-        XR_ADV_VisibilityIndexedArguments.records[argumentBase] = argument.IndexCount;
-        XR_ADV_VisibilityIndexedArguments.records[argumentBase + 1u] = argument.InstanceCount;
-        XR_ADV_VisibilityIndexedArguments.records[argumentBase + 2u] = argument.FirstIndex;
-        XR_ADV_VisibilityIndexedArguments.records[argumentBase + 3u] = uint(argument.VertexOffset);
-        XR_ADV_VisibilityIndexedArguments.records[argumentBase + 4u] = argument.FirstInstance;
-        return;
-    }
 
     if (producer == PRODUCER_STATIC_MESHLET ||
         producer == PRODUCER_SKINNED_MESHLET)

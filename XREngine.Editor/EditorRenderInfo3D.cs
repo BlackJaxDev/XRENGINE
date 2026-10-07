@@ -28,6 +28,10 @@ public class EditorRenderInfo3D : RenderInfo3D
         set => SetField(ref _editorVisibilityMode, value);
     }
 
+    /// <summary>Gets whether this owner has no editor-only collection policy.</summary>
+    public override bool SupportsCanonicalGpuCollection => GetType() == typeof(EditorRenderInfo3D) && !VisibleInEditorOnly &&
+        Owner is not CameraComponent && Owner is not XRCamera;
+
     public override bool AllowRender(IVolume? cullingVolume, RenderCommandCollection passes, IRuntimeCullingCamera? camera, bool containsOnly, bool collectMirrors) =>
         (Owner is not CameraComponent ccomp || !object.ReferenceEquals(ccomp.Camera, camera)) && 
         (Owner is not XRCamera cam || !object.ReferenceEquals(cam, camera)) && 

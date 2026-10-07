@@ -251,6 +251,24 @@ namespace XREngine.Rendering
                 renderer.Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride,
                     instances, billboardMode, forceNoStereo, canonicalDrawIdentitySnapshot);
             }
+
+            /// <summary>Submits one indexed draw with GPU-authored arguments.</summary>
+            public bool RenderIndexedIndirect(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix,
+                XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride,
+                XRDataBuffer arguments, nuint byteOffset, EPrimitiveType topology,
+                EMeshBillboardMode billboardMode, bool forceNoStereo,
+                IRenderResourceLeaseOwner? authoringLease, out string failureReason)
+            {
+                if (EnsureApiWrapperForOwnerFirstUse() is not IApiMeshRenderer renderer)
+                {
+                    failureReason = "The active render owner does not provide mesh submission.";
+                    return false;
+                }
+                return renderer.RenderIndexedIndirect(modelMatrix, prevModelMatrix,
+                    materialOverride, renderOptionsOverride, arguments, byteOffset,
+                    topology, billboardMode, forceNoStereo, authoringLease,
+                    out failureReason);
+            }
         }
 
         public class Version<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(XRMeshRenderer renderer, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines)
@@ -1436,6 +1454,28 @@ namespace XREngine.Rendering
         public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot = default)
             => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo, canonicalDrawIdentitySnapshot);
 
+        /// <summary>Submits one indexed mesh draw from a GPU-authored command.</summary>
+        public bool RenderIndexedIndirect(XRDataBuffer arguments, nuint byteOffset,
+            EPrimitiveType topology, out string failureReason,
+            XRMaterial? materialOverride = null, RenderingParameters? renderOptionsOverride = null,
+            bool forceNoStereo = false, IRenderResourceLeaseOwner? authoringLease = null)
+        {
+            if (arguments.Target != EBufferTarget.DrawIndirectBuffer ||
+                (byteOffset & 3u) != 0 ||
+                (ulong)byteOffset > arguments.Length ||
+                arguments.Length - (ulong)byteOffset < 20u)
+            {
+                failureReason = "Indexed indirect arguments have an invalid target or byte range.";
+                return false;
+            }
+            return GetVersion(forceNoStereo).RenderIndexedIndirect(
+                Matrix4x4.Identity, Matrix4x4.Identity,
+                materialOverride, renderOptionsOverride, arguments, byteOffset, topology,
+                Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo,
+                authoringLease,
+                out failureReason);
+        }
+
         public AbstractRenderAPIObject? EnsureApiRenderObject(bool forceNoStereo = false)
             => AbstractRenderer.Current?.GetOrCreateAPIRenderObject(GetVersion(forceNoStereo));
 
@@ -1628,6 +1668,7 @@ namespace XREngine.Rendering
         {
             try
             {
+                RuntimeEngine.Rendering.SettingsChanged -= RefreshGpuCoverageForSettings;
                 ResetDrivableBuffers();
                 IndirectDrawBuffer?.Dispose();
                 IndirectDrawBuffer = null;
@@ -1946,37 +1987,41 @@ namespace XREngine.Rendering
 
         private void ResetDrivableBuffers()
         {
-            if (_boneByTransform is not null)
-            {
-                foreach (var pair in _boneByTransform)
-                    pair.Key.RenderMatrixChanged -= BoneTransformRenderMatrixChanged;
-                _boneByTransform.Clear();
-            }
+            GpuDrivenBoneCoverageSnapshot coverage;
+            BoneBufferState previousBoneState;
             lock (_dirtyBoneSyncRoot)
             {
+                previousBoneState = Volatile.Read(ref _boneBufferState);
+                if (_boneByTransform is not null)
+                {
+                    foreach (var pair in _boneByTransform)
+                        pair.Key.RenderMatrixChanged -= BoneTransformRenderMatrixChanged;
+                    _boneByTransform.Clear();
+                }
                 _dirtyBoneIndices?.Clear();
                 _dirtyBoneFlags = null;
                 _dirtyBoneMatrices = null;
                 _bonesInvalidated = false;
                 _gpuDrivenBoneRefCounts = null;
                 _gpuDrivenBoneCount = 0;
+                _bones = null;
+                _boneByTransform = null;
+                ClearExternalSkinPaletteSourceLocked();
+                Volatile.Write(ref _boneBufferState, new BoneBufferState());
+                AdvanceBoneBufferGenerationLocked();
+                coverage = RefreshGpuDrivenBoneCoverageLocked();
             }
-            ClearGpuDrivenSkinPaletteSource();
 
-            _bones = null;
-
-            RemoveMeshDeformBuffer(BoneMatricesBuffer);
-            BoneMatricesBuffer?.Destroy();
-
-            RemoveMeshDeformBuffer(BoneInvBindMatricesBuffer);
-            BoneInvBindMatricesBuffer?.Destroy();
-
-            RemoveMeshDeformBuffer(SkinPaletteBuffer);
-            SkinPaletteBuffer?.Destroy();
-
-            RemoveMeshDeformBuffer(PreviousSkinPaletteBuffer);
-            PreviousSkinPaletteBuffer?.Destroy();
-            Volatile.Write(ref _boneBufferState, new BoneBufferState());
+            RemoveMeshDeformBuffer(previousBoneState.Matrices);
+            previousBoneState.Matrices?.Destroy();
+            RemoveMeshDeformBuffer(previousBoneState.InverseBindMatrices);
+            previousBoneState.InverseBindMatrices?.Destroy();
+            RemoveMeshDeformBuffer(previousBoneState.Palette);
+            previousBoneState.Palette?.Destroy();
+            RemoveMeshDeformBuffer(previousBoneState.PreviousPalette);
+            previousBoneState.PreviousPalette?.Destroy();
+            MarkSkinnedOutputDirty();
+            _gpuDrivenBoneCoverageChanged?.Invoke(this, coverage);
 
             BlendshapeBufferState previousBlendshapeState =
                 Volatile.Read(ref _blendshapeBufferState);
@@ -2059,6 +2104,49 @@ namespace XREngine.Rendering
         public XRDataBuffer? PreviousSkinPaletteBuffer => Volatile.Read(ref _boneBufferState).PreviousPalette;
 
         private BoneBufferState _boneBufferState = new();
+        private long _boneBufferGeneration = 1;
+        private long _staleGpuDrivenBoneReleaseCount;
+        private bool _hasCompleteGpuDrivenBoneCoverage;
+
+        /// <summary>Gets the current bone-set generation.</summary>
+        public long BoneBufferGeneration => Volatile.Read(ref _boneBufferGeneration);
+
+        /// <summary>Gets the number of releases for an old bone set.</summary>
+        public long StaleGpuDrivenBoneReleaseCount => Interlocked.Read(ref _staleGpuDrivenBoneReleaseCount);
+
+        /// <summary>Gets full GPU coverage without taking the bone-set lock.</summary>
+        public bool HasCompleteGpuDrivenBoneCoverage
+            => RuntimeEngine.Rendering.Settings.AllowSkinning &&
+                RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
+                Volatile.Read(ref _hasCompleteGpuDrivenBoneCoverage);
+
+        private Action<XRMeshRenderer, GpuDrivenBoneCoverageSnapshot>? _gpuDrivenBoneCoverageChanged;
+
+        /// <summary>Occurs when GPU coverage or the bone-set generation changes.</summary>
+        public event Action<XRMeshRenderer, GpuDrivenBoneCoverageSnapshot>? GpuDrivenBoneCoverageChanged
+        {
+            add
+            {
+                lock (_dirtyBoneSyncRoot)
+                {
+                    if (_gpuDrivenBoneCoverageChanged is null)
+                        RuntimeEngine.Rendering.SettingsChanged += RefreshGpuCoverageForSettings;
+                    _gpuDrivenBoneCoverageChanged += value;
+                }
+            }
+            remove
+            {
+                lock (_dirtyBoneSyncRoot)
+                {
+                    _gpuDrivenBoneCoverageChanged -= value;
+                    if (_gpuDrivenBoneCoverageChanged is null)
+                        RuntimeEngine.Rendering.SettingsChanged -= RefreshGpuCoverageForSettings;
+                }
+            }
+        }
+
+        private void RefreshGpuCoverageForSettings()
+            => CaptureGpuDrivenBoneCoverage();
 
         /// <summary>Captures one coherent skinning-resource generation for backend binding.</summary>
         public readonly record struct BoneResourceSnapshot(
@@ -2086,6 +2174,7 @@ namespace XREngine.Rendering
             internal XRDataBuffer? InverseBindMatrices;
             internal XRDataBuffer? Palette;
             internal XRDataBuffer? PreviousPalette;
+            internal XRMesh? PreparedMesh;
             internal RenderBone[]? Bones;
             internal Dictionary<TransformBase, RenderBone>? BoneByTransform;
             internal List<uint>? DirtyIndices;
@@ -2118,15 +2207,16 @@ namespace XREngine.Rendering
 
         private BoneBufferState CaptureBoneBufferState()
         {
-            BoneBufferState buffers = Volatile.Read(ref _boneBufferState);
             lock (_dirtyBoneSyncRoot)
             {
+                BoneBufferState buffers = Volatile.Read(ref _boneBufferState);
                 return new BoneBufferState
                 {
                     Matrices = buffers.Matrices,
                     InverseBindMatrices = buffers.InverseBindMatrices,
                     Palette = buffers.Palette,
                     PreviousPalette = buffers.PreviousPalette,
+                    PreparedMesh = buffers.PreparedMesh,
                     Bones = _bones,
                     BoneByTransform = _boneByTransform,
                     DirtyIndices = _dirtyBoneIndices,
@@ -2144,9 +2234,13 @@ namespace XREngine.Rendering
 
         private void ApplyBoneBufferState(BoneBufferState state)
         {
-            Volatile.Write(ref _boneBufferState, state);
             lock (_dirtyBoneSyncRoot)
             {
+                // A restored state has old ownership counts. Give each installed set
+                // new counts so an old release cannot affect it.
+                state.GpuDrivenRefCounts = state.Bones is null ? null : new int[state.Bones.Length + 1];
+                state.GpuDrivenCount = 0;
+                Volatile.Write(ref _boneBufferState, state);
                 // GPU ownership transitions resolve transforms from _bones while they hold
                 // this lock, so the bone set and its reference counts change together.
                 _bones = state.Bones;
@@ -2157,10 +2251,88 @@ namespace XREngine.Rendering
                 _bonesInvalidated = state.BonesInvalidated;
                 _gpuDrivenBoneRefCounts = state.GpuDrivenRefCounts;
                 _gpuDrivenBoneCount = state.GpuDrivenCount;
+                ClearExternalSkinPaletteSourceLocked();
+                AdvanceBoneBufferGenerationLocked();
+                RefreshGpuDrivenBoneCoverageLocked();
             }
             _paletteBoneOrderSignature = state.PaletteSignature;
             _bonePaletteOrderChecked = state.PaletteOrderChecked;
             _bonePaletteStaleReported = state.PaletteStaleReported;
+            if (state.Bones is not null)
+                RefreshBoneMatricesFromRenderState();
+            MarkSkinnedOutputDirty();
+        }
+
+        private void PublishGpuDrivenBoneCoverageChanged()
+        {
+            GpuDrivenBoneCoverageSnapshot snapshot;
+            lock (_dirtyBoneSyncRoot)
+                snapshot = RefreshGpuDrivenBoneCoverageLocked();
+            _gpuDrivenBoneCoverageChanged?.Invoke(this, snapshot);
+        }
+
+        /// <summary>Gets a coherent GPU coverage snapshot for the current bone set.</summary>
+        public GpuDrivenBoneCoverageSnapshot CaptureGpuDrivenBoneCoverage()
+        {
+            GpuDrivenBoneCoverageSnapshot snapshot;
+            bool changed;
+            lock (_dirtyBoneSyncRoot)
+            {
+                changed = _hasCompleteGpuDrivenBoneCoverage != CaptureGpuDrivenBoneCoverageLocked().IsFullyCovered;
+                snapshot = RefreshGpuDrivenBoneCoverageLocked();
+            }
+            if (changed)
+                _gpuDrivenBoneCoverageChanged?.Invoke(this, snapshot);
+            return snapshot;
+        }
+
+        /// <summary>Gets the prepared mesh and generation used by GPU mapping.</summary>
+        internal (XRMesh? Mesh, long Generation) CaptureGpuDrivenBoneMappingSource()
+        {
+            lock (_dirtyBoneSyncRoot)
+            {
+                BoneBufferState state = Volatile.Read(ref _boneBufferState);
+                return (state.PreparedMesh, _boneBufferGeneration);
+            }
+        }
+
+        private GpuDrivenBoneCoverageSnapshot CaptureGpuDrivenBoneCoverageLocked()
+        {
+            int utilized = _bones?.Length ?? 0;
+            bool external = RuntimeEngine.Rendering.Settings.AllowSkinning &&
+                RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
+                _externalSkinPaletteBuffer is not null && _externalSkinPaletteCount >= (uint)(utilized + 1);
+            BoneBufferState state = Volatile.Read(ref _boneBufferState);
+            bool complete = utilized > 0 && ReferenceEquals(Mesh, state.PreparedMesh) &&
+                Mesh?.UtilizedBones?.Length == utilized &&
+                external && _externalSkinPaletteComplete && _gpuDrivenBoneCount == utilized;
+            return new(_boneBufferGeneration, utilized, _gpuDrivenBoneCount, external, complete);
+        }
+
+        private GpuDrivenBoneCoverageSnapshot RefreshGpuDrivenBoneCoverageLocked()
+        {
+            GpuDrivenBoneCoverageSnapshot snapshot = CaptureGpuDrivenBoneCoverageLocked();
+            Volatile.Write(ref _hasCompleteGpuDrivenBoneCoverage, snapshot.IsFullyCovered);
+            return snapshot;
+        }
+
+        private void AdvanceBoneBufferGenerationLocked()
+        {
+            if (_boneBufferGeneration == long.MaxValue)
+                throw new InvalidOperationException("Bone-buffer generation was exhausted.");
+            Volatile.Write(ref _boneBufferGeneration, _boneBufferGeneration + 1);
+        }
+
+        private void ClearExternalSkinPaletteSourceLocked()
+        {
+            _externalSkinPaletteSourceOwner = null;
+            _externalSkinPaletteBuffer = null;
+            _externalPreviousSkinPaletteBuffer = null;
+            _externalSkinPaletteBase = 0u;
+            _externalSkinPaletteCount = 0u;
+            _externalSkinPaletteComplete = false;
+            SetField(ref _externalSkinPaletteHistoryValid, false, publishNotifications: false,
+                propertyName: nameof(HasValidGpuDrivenPaletteHistory));
         }
 
         /// <summary>
@@ -2199,17 +2371,22 @@ namespace XREngine.Rendering
         private void DetachBoneBufferState()
         {
             Volatile.Write(ref _boneBufferState, new BoneBufferState());
-            _bones = null;
-            _boneByTransform = null;
+            GpuDrivenBoneCoverageSnapshot coverage;
             lock (_dirtyBoneSyncRoot)
             {
+                _bones = null;
+                _boneByTransform = null;
                 _dirtyBoneIndices = null;
                 _dirtyBoneFlags = null;
                 _dirtyBoneMatrices = null;
                 _gpuDrivenBoneRefCounts = null;
                 _gpuDrivenBoneCount = 0;
+                ClearExternalSkinPaletteSourceLocked();
+                AdvanceBoneBufferGenerationLocked();
+                coverage = RefreshGpuDrivenBoneCoverageLocked();
             }
             Buffers = [];
+            _gpuDrivenBoneCoverageChanged?.Invoke(this, coverage);
         }
 
         [MemoryPackIgnore]
@@ -2217,6 +2394,10 @@ namespace XREngine.Rendering
 
         [MemoryPackIgnore]
         public XRDataBuffer? ActivePreviousSkinPaletteBuffer => HasExternalSkinPaletteSource ? _externalPreviousSkinPaletteBuffer : PreviousSkinPaletteBuffer;
+
+        /// <summary>Reports whether the external palette keeps the prior rendered pose.</summary>
+        [MemoryPackIgnore]
+        public bool HasValidGpuDrivenPaletteHistory => Volatile.Read(ref _externalSkinPaletteHistoryValid);
 
         private SkinningLodProfile? _skinningLodProfile;
         private int _activeSkinningLodTier;
@@ -3042,6 +3223,7 @@ namespace XREngine.Rendering
                             lifetimeLeaseHeld = false;
                             ExitResourcePublicationLease();
                         }
+                        PublishGpuDrivenBoneCoverageChanged();
                     },
                     () =>
                     {
@@ -3057,6 +3239,7 @@ namespace XREngine.Rendering
                             lifetimeLeaseHeld = false;
                             ExitResourcePublicationLease();
                         }
+                        PublishGpuDrivenBoneCoverageChanged();
                     });
                 staging.DetachBoneBufferState();
             }
@@ -3081,6 +3264,7 @@ namespace XREngine.Rendering
             (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] utilizedBones =
                 mesh?.GetSkinningBoneOrderForPreparation() ?? [];
             uint boneCount = (uint)utilizedBones.Length;
+            Volatile.Read(ref _boneBufferState).PreparedMesh = mesh;
 
             Volatile.Read(ref _boneBufferState).Matrices = new($"{ECommonBufferType.BoneMatrices}Buffer", EBufferTarget.ShaderStorageBuffer, boneCount + 1, EComponentType.Float, 16, false, false)
             {
@@ -3150,7 +3334,14 @@ namespace XREngine.Rendering
             _paletteBoneOrderSignature = ComputeBoneOrderSignature(Mesh);
             _bonePaletteOrderChecked = false;
             _bonePaletteStaleReported = false;
+            GpuDrivenBoneCoverageSnapshot coverage;
+            lock (_dirtyBoneSyncRoot)
+            {
+                AdvanceBoneBufferGenerationLocked();
+                coverage = RefreshGpuDrivenBoneCoverageLocked();
+            }
             MarkSkinnedOutputDirty();
+            _gpuDrivenBoneCoverageChanged?.Invoke(this, coverage);
         }
 
         private void ClearBoneMatrixBuffersTransactionally(XRMesh? expectedMesh)
@@ -3213,6 +3404,7 @@ namespace XREngine.Rendering
                         lifetimeLeaseHeld = false;
                         ExitResourcePublicationLease();
                     }
+                    PublishGpuDrivenBoneCoverageChanged();
                 },
                 () =>
                 {
@@ -3229,6 +3421,7 @@ namespace XREngine.Rendering
                         lifetimeLeaseHeld = false;
                         ExitResourcePublicationLease();
                     }
+                    PublishGpuDrivenBoneCoverageChanged();
                 });
         }
 
@@ -3313,6 +3506,8 @@ namespace XREngine.Rendering
         private XRDataBuffer? _externalPreviousSkinPaletteBuffer;
         private uint _externalSkinPaletteBase;
         private uint _externalSkinPaletteCount;
+        private bool _externalSkinPaletteComplete;
+        private bool _externalSkinPaletteHistoryValid;
 
         private void BoneTransformRenderMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
@@ -3728,20 +3923,30 @@ namespace XREngine.Rendering
         /// detaches its CPU palette listener, because the CPU palette is not read while
         /// a GPU owner writes that bone.
         /// </summary>
-        internal void RegisterGpuDrivenBoneIndices(IReadOnlyList<uint> boneIndices)
+        internal long RegisterGpuDrivenBoneIndices(
+            IReadOnlyList<uint> boneIndices,
+            long expectedGeneration,
+            XRMesh expectedMesh)
         {
-            if (_gpuDrivenBoneRefCounts is null || boneIndices.Count == 0)
-                return;
-
+            GpuDrivenBoneCoverageSnapshot? change = null;
+            long generation;
             lock (_dirtyBoneSyncRoot)
             {
-                if (_gpuDrivenBoneRefCounts is null)
-                    return;
+                generation = _boneBufferGeneration;
+                BoneBufferState state = Volatile.Read(ref _boneBufferState);
+                if (generation != expectedGeneration ||
+                    !ReferenceEquals(state.PreparedMesh, expectedMesh) ||
+                    !ReferenceEquals(Mesh, expectedMesh) ||
+                    state.PaletteSignature != ComputeBoneOrderSignature(expectedMesh) ||
+                    _gpuDrivenBoneRefCounts is null || boneIndices.Count == 0)
+                    return 0;
+
+                int previousDrivenCount = _gpuDrivenBoneCount;
 
                 for (int i = 0; i < boneIndices.Count; ++i)
                 {
                     uint boneIndex = boneIndices[i];
-                    if (boneIndex >= (uint)_gpuDrivenBoneRefCounts.Length)
+                    if (boneIndex == 0u || boneIndex >= (uint)_gpuDrivenBoneRefCounts.Length)
                         continue;
 
                     if (_gpuDrivenBoneRefCounts[boneIndex]++ == 0)
@@ -3753,7 +3958,13 @@ namespace XREngine.Rendering
 
                     ClearDirtyBoneIndex((int)boneIndex);
                 }
+
+                if (_gpuDrivenBoneCount != previousDrivenCount)
+                    change = RefreshGpuDrivenBoneCoverageLocked();
             }
+            if (change is { } snapshot)
+                _gpuDrivenBoneCoverageChanged?.Invoke(this, snapshot);
+            return generation;
         }
 
         /// <summary>
@@ -3761,21 +3972,26 @@ namespace XREngine.Rendering
         /// palette listener is attached again and the bone is reseeded from its current
         /// matrix, because the detached listener did not record intermediate changes.
         /// </summary>
-        internal void UnregisterGpuDrivenBoneIndices(IReadOnlyList<uint> boneIndices)
+        internal void UnregisterGpuDrivenBoneIndices(IReadOnlyList<uint> boneIndices, long generation)
         {
-            if (_gpuDrivenBoneRefCounts is null || boneIndices.Count == 0)
-                return;
-
             bool reseeded = false;
+            GpuDrivenBoneCoverageSnapshot? change = null;
             lock (_dirtyBoneSyncRoot)
             {
-                if (_gpuDrivenBoneRefCounts is null)
+                if (generation != _boneBufferGeneration)
+                {
+                    Interlocked.Increment(ref _staleGpuDrivenBoneReleaseCount);
                     return;
+                }
+                if (_gpuDrivenBoneRefCounts is null || boneIndices.Count == 0)
+                    return;
+
+                int previousDrivenCount = _gpuDrivenBoneCount;
 
                 for (int i = 0; i < boneIndices.Count; ++i)
                 {
                     uint boneIndex = boneIndices[i];
-                    if (boneIndex >= (uint)_gpuDrivenBoneRefCounts.Length)
+                    if (boneIndex == 0u || boneIndex >= (uint)_gpuDrivenBoneRefCounts.Length)
                         continue;
 
                     int refCount = _gpuDrivenBoneRefCounts[boneIndex];
@@ -3796,10 +4012,14 @@ namespace XREngine.Rendering
                     transform.RenderMatrixChanged += BoneTransformRenderMatrixChanged;
                     reseeded |= MarkBoneMatrixDirty(boneIndex, GetCurrentBoneMatrix(transform));
                 }
+                if (_gpuDrivenBoneCount != previousDrivenCount)
+                    change = RefreshGpuDrivenBoneCoverageLocked();
             }
 
             if (reseeded)
                 MarkSkinnedOutputDirty();
+            if (change is { } snapshot)
+                _gpuDrivenBoneCoverageChanged?.Invoke(this, snapshot);
         }
 
         /// <summary>
@@ -3827,37 +4047,67 @@ namespace XREngine.Rendering
             return transform is not null;
         }
 
-        internal void SetGpuDrivenSkinPaletteSource(
+        internal bool SetGpuDrivenSkinPaletteSource(
             object owner,
             XRDataBuffer skinPalette,
             XRDataBuffer? previousSkinPalette,
             uint baseElement,
-            uint elementCount)
+            uint elementCount,
+            long boneBufferGeneration,
+            bool drivesCompleteBonePalette,
+            bool previousPaletteValid = true)
         {
-            _externalSkinPaletteSourceOwner = owner;
-            _externalSkinPaletteBuffer = skinPalette;
-            _externalPreviousSkinPaletteBuffer = previousSkinPalette;
-            _externalSkinPaletteBase = baseElement;
-            _externalSkinPaletteCount = elementCount;
-            MarkSkinnedOutputDirty();
+            GpuDrivenBoneCoverageSnapshot? change = null;
+            bool structuralChange;
+            lock (_dirtyBoneSyncRoot)
+            {
+                if (boneBufferGeneration != _boneBufferGeneration)
+                    return false;
+
+                bool oldCoverage = _hasCompleteGpuDrivenBoneCoverage;
+                bool sameOwner = ReferenceEquals(_externalSkinPaletteSourceOwner, owner);
+                bool swappedBuffers = ReferenceEquals(_externalSkinPaletteBuffer, previousSkinPalette) &&
+                    ReferenceEquals(_externalPreviousSkinPaletteBuffer, skinPalette);
+                structuralChange = !sameOwner || _externalSkinPaletteBase != baseElement ||
+                    _externalSkinPaletteCount != elementCount ||
+                    _externalSkinPaletteComplete != drivesCompleteBonePalette ||
+                    (!swappedBuffers && (!ReferenceEquals(_externalSkinPaletteBuffer, skinPalette) ||
+                        !ReferenceEquals(_externalPreviousSkinPaletteBuffer, previousSkinPalette)));
+                _externalSkinPaletteSourceOwner = owner;
+                _externalSkinPaletteBuffer = skinPalette;
+                _externalPreviousSkinPaletteBuffer = previousSkinPalette;
+                _externalSkinPaletteBase = baseElement;
+                _externalSkinPaletteCount = elementCount;
+                _externalSkinPaletteComplete = drivesCompleteBonePalette;
+                SetField(ref _externalSkinPaletteHistoryValid, previousPaletteValid, publishNotifications: false,
+                    propertyName: nameof(HasValidGpuDrivenPaletteHistory));
+                GpuDrivenBoneCoverageSnapshot snapshot = RefreshGpuDrivenBoneCoverageLocked();
+                if (snapshot.IsFullyCovered != oldCoverage)
+                    change = snapshot;
+            }
+            if (structuralChange)
+                MarkSkinnedOutputDirty();
+            if (change is { } changedSnapshot)
+                _gpuDrivenBoneCoverageChanged?.Invoke(this, changedSnapshot);
+            return true;
         }
 
         internal void ClearGpuDrivenSkinPaletteSource(object owner)
         {
-            if (!ReferenceEquals(_externalSkinPaletteSourceOwner, owner))
-                return;
-
-            ClearGpuDrivenSkinPaletteSource();
-        }
-
-        private void ClearGpuDrivenSkinPaletteSource()
-        {
-            _externalSkinPaletteSourceOwner = null;
-            _externalSkinPaletteBuffer = null;
-            _externalPreviousSkinPaletteBuffer = null;
-            _externalSkinPaletteBase = 0u;
-            _externalSkinPaletteCount = 0u;
+            GpuDrivenBoneCoverageSnapshot? change = null;
+            lock (_dirtyBoneSyncRoot)
+            {
+                if (!ReferenceEquals(_externalSkinPaletteSourceOwner, owner))
+                    return;
+                bool oldCoverage = _hasCompleteGpuDrivenBoneCoverage;
+                ClearExternalSkinPaletteSourceLocked();
+                GpuDrivenBoneCoverageSnapshot snapshot = RefreshGpuDrivenBoneCoverageLocked();
+                if (snapshot.IsFullyCovered != oldCoverage)
+                    change = snapshot;
+            }
             MarkSkinnedOutputDirty();
+            if (change is { } changedSnapshot)
+                _gpuDrivenBoneCoverageChanged?.Invoke(this, changedSnapshot);
         }
 
         private bool IsBoneGpuDriven(int index)

@@ -6,6 +6,7 @@ namespace XREngine.Components;
 /// </summary>
 internal sealed partial class PhysicsChainReadbackService
 {
+    internal Lock SyncRoot { get; } = new();
     private readonly PhysicsChainSlotArena<PhysicsChainReadbackRequestInfo> _requests = new();
     private readonly Dictionary<RequestKey, PhysicsChainReadbackHandle> _coalescedRequests = [];
     private readonly List<PhysicsChainReadbackHandle> _liveHandles = [];
@@ -34,7 +35,9 @@ internal sealed partial class PhysicsChainReadbackService
         int expectedByteCount,
         long submissionFrame,
         out PhysicsChainReadbackHandle handle,
-        out PhysicsChainReadbackRejection rejection)
+        out PhysicsChainReadbackRejection rejection,
+        PhysicsChainComponent? sourceComponent = null,
+        long instanceSourceGeneration = 0L)
     {
         ++_requestedCount;
         handle = PhysicsChainReadbackHandle.Invalid;
@@ -48,7 +51,7 @@ internal sealed partial class PhysicsChainReadbackService
         _currentFrame = Math.Max(_currentFrame, submissionFrame);
 
         ResetBudgetIfNeeded(submissionFrame);
-        var key = new RequestKey(instanceHandle, fields, selectedElementIndices);
+        var key = new RequestKey(instanceHandle, fields, selectedElementIndices, instanceSourceGeneration);
         if (_coalescedRequests.TryGetValue(key, out PhysicsChainReadbackHandle existing)
             && TryGet(existing, out PhysicsChainReadbackRequestInfo? existingInfo)
             && existingInfo is not null
@@ -81,6 +84,8 @@ internal sealed partial class PhysicsChainReadbackService
         var info = new PhysicsChainReadbackRequestInfo
         {
             InstanceHandle = instanceHandle,
+            InstanceSourceGeneration = instanceSourceGeneration,
+            SourceComponent = sourceComponent,
             Fields = fields,
             SelectedElementIndices = key.CopySelection(),
             SubmissionFrame = submissionFrame,
@@ -263,15 +268,18 @@ internal sealed partial class PhysicsChainReadbackService
     {
         private readonly PhysicsChainRuntimeHandle _instanceHandle;
         private readonly PhysicsChainReadbackFields _fields;
+        private readonly long _instanceSourceGeneration;
         private readonly int[] _selection;
 
         public RequestKey(
             PhysicsChainRuntimeHandle instanceHandle,
             PhysicsChainReadbackFields fields,
-            ReadOnlySpan<int> selectedElementIndices)
+            ReadOnlySpan<int> selectedElementIndices,
+            long instanceSourceGeneration)
         {
             _instanceHandle = instanceHandle;
             _fields = fields;
+            _instanceSourceGeneration = instanceSourceGeneration;
             _selection = selectedElementIndices.ToArray();
         }
 
@@ -282,6 +290,7 @@ internal sealed partial class PhysicsChainReadbackService
             => other is not null
                 && _instanceHandle == other._instanceHandle
                 && _fields == other._fields
+                && _instanceSourceGeneration == other._instanceSourceGeneration
                 && _selection.AsSpan().SequenceEqual(other._selection);
 
         public override bool Equals(object? obj)
@@ -292,6 +301,7 @@ internal sealed partial class PhysicsChainReadbackService
             HashCode hash = new();
             hash.Add(_instanceHandle);
             hash.Add(_fields);
+            hash.Add(_instanceSourceGeneration);
             for (int i = 0; i < _selection.Length; ++i)
                 hash.Add(_selection[i]);
             return hash.ToHashCode();

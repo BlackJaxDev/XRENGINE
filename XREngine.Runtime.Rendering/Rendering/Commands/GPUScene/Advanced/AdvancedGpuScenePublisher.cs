@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
 
@@ -34,6 +35,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     private ulong _lookupGeneration;
     private int _topologyDeltaCount;
     private int _contentDeltaCount;
+    private int _reusedStaticDrawPlanCount;
+    private int _materialResolveAttemptCount;
     private int _lastGeometryCompactionReplacementCount;
     private ulong _lastGeometryCompactionReclaimedBytes;
     private ulong _geometryCompactionCount;
@@ -81,6 +84,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     public int TopologyDeltaCount => _topologyDeltaCount;
 
     public int ContentDeltaCount => _contentDeltaCount;
+
+    /// <summary>Covered draw plans reused in the most recent preflight.</summary>
+    public int ReusedStaticDrawPlanCount => _reusedStaticDrawPlanCount;
+
+    /// <summary>Material resolver calls in the most recent preflight.</summary>
+    public int MaterialResolveAttemptCount => _materialResolveAttemptCount;
 
     /// <summary>Geometry rows rebound by the most recently applied compaction.</summary>
     public int LastGeometryCompactionReplacementCount
@@ -357,7 +366,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                         plan.Renderer,
                         plan.Mesh,
                         checked((uint)Math.Max(0, plan.MeshVertexCount)),
-                        plan.ContentSignature, plan.StructuralSignature);
+                        plan.ContentSignature, plan.StructuralSignature, plan.GpuBoundsSource,
+                        new PhysicsChainDrawMaterialSnapshot(plan.MaterialSource,
+                            plan.MaterialBindingLayoutVersion,
+                            plan.MaterialBindingValueVersion,
+                            plan.MaterialBindingResourceVersion,
+                            plan.MaterialShaderStateRevision,
+                            plan.MaterialUberStateRevision));
                 }
 
                 TombstoneMissingRegistrations();
@@ -437,11 +452,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     committed.Publication, frameId);
                 PublishSourceDrawIdentities(in committed);
             }
+            CaptureCommittedMaterialPlans();
             _identityDeliveryIncomplete = false;
             ClearPublicationFailure();
         }
         catch (Exception exception)
         {
+            _committedMaterialPlanCacheValid = false;
             if (!publicationCommitted)
             {
                 provisional.Snapshot?.ResourcePayloads.AbortSourceCapture();
@@ -777,6 +794,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             World = world,
             StructuralSignature = plan.StructuralSignature,
             ContentSignature = plan.ContentSignature,
+            MaterialSource = plan.MaterialSource,
+            MaterialBindingLayoutVersion = plan.MaterialBindingLayoutVersion,
+            MaterialBindingValueVersion = plan.MaterialBindingValueVersion,
+            MaterialBindingResourceVersion = plan.MaterialBindingResourceVersion,
+            MaterialShaderStateRevision = plan.MaterialShaderStateRevision,
+            MaterialUberStateRevision = plan.MaterialUberStateRevision,
             TemporalMesh = plan.Mesh,
             TemporalGeometryRevision = plan.MeshGeometryRevision,
             TemporalVertexCount = plan.MeshVertexCount,
@@ -879,6 +902,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         registration.TemporalIndexCount = plan.MeshIndexCount;
         registration.TemporalPrimitiveTopology = plan.MeshPrimitiveTopology;
         registration.TemporalSkinned = plan.MeshIsSkinned;
+        registration.MaterialSource = plan.MaterialSource;
+        registration.MaterialBindingLayoutVersion = plan.MaterialBindingLayoutVersion;
+        registration.MaterialBindingValueVersion = plan.MaterialBindingValueVersion;
+        registration.MaterialBindingResourceVersion = plan.MaterialBindingResourceVersion;
+        registration.MaterialShaderStateRevision = plan.MaterialShaderStateRevision;
+        registration.MaterialUberStateRevision = plan.MaterialUberStateRevision;
         if (content == registration.ContentSignature)
             return;
 
@@ -1290,7 +1319,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             BoundsSphere = bounds.BoundingSphere,
             BoundsMin = bounds.AabbMin,
             BoundsMax = bounds.AabbMax,
-            VisibilityFlags = EAdvancedInstanceVisibilityFlags.Enabled,
+            VisibilityFlags =
+                ((command.Flags & (uint)GPUIndirectRenderFlags.PrimaryDisabled) == 0u
+                    ? EAdvancedInstanceVisibilityFlags.Enabled : EAdvancedInstanceVisibilityFlags.None) |
+                ((command.Flags & (uint)GPUIndirectRenderFlags.CastShadow) != 0u
+                    ? EAdvancedInstanceVisibilityFlags.CastsShadows : EAdvancedInstanceVisibilityFlags.None) |
+                ((command.Flags & (uint)GPUIndirectRenderFlags.ReceiveShadows) != 0u
+                    ? EAdvancedInstanceVisibilityFlags.ReceivesShadows : EAdvancedInstanceVisibilityFlags.None),
             LayerMask = command.LayerMask,
             RenderPassMask = command.RenderPassMask,
         };
@@ -1392,6 +1427,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     private static uint StructuralDrawFlags(uint flags)
         => flags & ~((uint)GPUIndirectRenderFlags.EditorHighlightMask |
+            (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
             (uint)GPUIndirectRenderFlags.ReceiveShadows);
 
@@ -1421,23 +1457,45 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         return hash;
     }
 
+    private static bool TryCaptureGpuBoundsSource(XRMeshRenderer? renderer,
+        out XREngine.Rendering.Compute.PhysicsChainGpuBoundsSource? boundsSource)
+    {
+        boundsSource = null;
+        if (renderer is null || !renderer.HasCompleteGpuDrivenBoneCoverage)
+            return true;
+        if (!XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.Instance.TryCaptureGpuBoundsSource(renderer, out var source))
+            return false;
+        boundsSource = source;
+        return true;
+    }
+
     private static ulong ComputeContentSignature(
         in DrawMetadata command,
         in BoundsGpu bounds,
         in Matrix4x4 world,
         in Matrix4x4 previousWorld,
-        XRMaterial? material)
+        XRMaterial? material,
+        bool gpuOwnedBounds)
     {
         ulong hash = Mix(command.TransformID, command.InstanceCount);
         hash = Mix(hash, command.Flags & ((uint)GPUIndirectRenderFlags.EditorHighlightMask |
+            (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
             (uint)GPUIndirectRenderFlags.ReceiveShadows));
         hash = Mix(hash, command.LayerMask);
-        hash = Mix(hash, bounds.BoundsVersion);
+        hash = Mix(hash, gpuOwnedBounds ? 1u : 0u);
+        if (!gpuOwnedBounds)
+            hash = Mix(hash, bounds.BoundsVersion);
         hash = Mix(hash, material?.BindingValueVersion ?? 0u);
         hash = Mix(hash, material?.BindingResourceVersion ?? 0u);
-        hash = MixMatrix(hash, in world);
-        hash = MixMatrix(hash, in previousWorld);
+        // A covered draw with identity transforms gets its motion from the
+        // current physics output page. Nonidentity transforms remain content.
+        if (!gpuOwnedBounds || world != Matrix4x4.Identity ||
+            previousWorld != Matrix4x4.Identity)
+        {
+            hash = MixMatrix(hash, in world);
+            hash = MixMatrix(hash, in previousWorld);
+        }
         return hash;
     }
 
@@ -1557,6 +1615,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         public Matrix4x4 World;
         public ulong StructuralSignature;
         public ulong ContentSignature;
+        public XRMaterial? MaterialSource;
+        public ulong MaterialBindingLayoutVersion;
+        public ulong MaterialBindingValueVersion;
+        public ulong MaterialBindingResourceVersion;
+        public long MaterialShaderStateRevision;
+        public long MaterialUberStateRevision;
+        public AdvancedCommittedMaterialPlan CommittedMaterialPlan;
         public ulong LastSeenSequence;
         public ulong LastSeenFrameId;
         public ulong TombstoneSequence;

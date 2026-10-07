@@ -1,44 +1,42 @@
 #version 450
 
-// One workgroup reduces one chain's current and previous particle positions
-// into a conservative world-space AABB. Including both positions keeps
-// interpolation, fast motion, and sleeping/held presentation inside the slot.
+// One workgroup bounds the current and previous skin palettes for one mesh.
+// Positive normalized skin weights keep each vertex inside the union of its
+// transformed mesh-local box. Material vertex effects run after skinning in
+// world space. Their declared translation bound pads the reduced box.
 layout(local_size_x = 256) in;
 
-struct Particle
-{
-    vec3 Position;
-    float _pad0;
-    vec3 PrevPosition;
-    float _pad1;
-    int IsColliding;
-    float _pad2a;
-    float _pad2b;
-    float _pad2c;
-    vec3 PreviousPhysicsPosition;
-    float _pad3;
-};
+// The drawn materials have an effect that a padding cannot bound.
+const uint BoundsWorkItemRejectedMaterialContract = 1u;
 
 struct BoundsWorkItem
 {
-    uint ParticleOffset;
-    uint ParticleCount;
-    float InfluenceRadius;
+    // w: world-space material vertex-effect padding.
+    vec4 LocalMinimum;
+    vec4 LocalMaximum;
+    uint PaletteBase;
+    uint PaletteCount;
     uint BoundsSlot;
+    uint Flags;
 };
 
-layout(std430, binding = 0) readonly buffer ParticleBuffer
-{
-    Particle Particles[];
-};
-
-layout(std430, binding = 1) readonly buffer BoundsWorkItemBuffer
+layout(std430, binding = 0) readonly buffer BoundsWorkItemBuffer
 {
     BoundsWorkItem WorkItems[];
 };
 
+layout(std430, binding = 1) readonly buffer CurrentPaletteBuffer
+{
+    vec4 CurrentPaletteRows[];
+};
+
+layout(std430, binding = 2) readonly buffer PreviousPaletteBuffer
+{
+    vec4 PreviousPaletteRows[];
+};
+
 // Two uvec4 values per slot: minimum then maximum.
-layout(std430, binding = 2) buffer BoundsBuffer
+layout(std430, binding = 3) buffer BoundsBuffer
 {
     uvec4 BoundsBits[];
 };
@@ -47,37 +45,82 @@ uniform uint WorkItemCount;
 
 shared vec3 SharedMinimum[gl_WorkGroupSize.x];
 shared vec3 SharedMaximum[gl_WorkGroupSize.x];
+shared uint SharedInvalid;
 
 bool IsFinite(vec3 value)
 {
     return !any(isnan(value)) && !any(isinf(value));
 }
 
+bool IncludePaletteBox(vec4 row0, vec4 row1, vec4 row2,
+    vec3 center, vec3 halfExtent, inout vec3 minimum, inout vec3 maximum)
+{
+    if (!IsFinite(row0.xyz) || !IsFinite(row1.xyz) || !IsFinite(row2.xyz)
+        || !IsFinite(vec3(row0.w, row1.w, row2.w)))
+        return false;
+
+    vec4 centerPoint = vec4(center, 1.0);
+    vec3 worldCenter = vec3(dot(centerPoint, row0),
+        dot(centerPoint, row1), dot(centerPoint, row2));
+    vec3 worldExtent = vec3(dot(abs(row0.xyz), halfExtent),
+        dot(abs(row1.xyz), halfExtent), dot(abs(row2.xyz), halfExtent));
+    vec3 boxMinimum = worldCenter - worldExtent;
+    vec3 boxMaximum = worldCenter + worldExtent;
+    if (!IsFinite(boxMinimum) || !IsFinite(boxMaximum)
+        || any(greaterThan(boxMinimum, boxMaximum)))
+        return false;
+
+    minimum = min(minimum, boxMinimum);
+    maximum = max(maximum, boxMaximum);
+    return true;
+}
+
 void main()
 {
     uint workItemIndex = gl_WorkGroupID.x;
-    if (workItemIndex >= WorkItemCount)
+    if (workItemIndex >= WorkItemCount || workItemIndex >= uint(WorkItems.length()))
         return;
 
     BoundsWorkItem item = WorkItems[workItemIndex];
+    uint minimumIndex = item.BoundsSlot * 2u;
+    if (minimumIndex >= uint(BoundsBits.length())
+        || minimumIndex + 1u >= uint(BoundsBits.length()))
+        return;
+
     uint localIndex = gl_LocalInvocationID.x;
+    if (localIndex == 0u)
+        SharedInvalid = 0u;
+    barrier();
+
     const float MaximumFloat = 3.402823466e+38;
     vec3 minimum = vec3(MaximumFloat);
     vec3 maximum = vec3(-MaximumFloat);
-    vec3 expansion = vec3(max(item.InfluenceRadius, 0.0));
-
-    for (uint particleIndex = localIndex; particleIndex < item.ParticleCount; particleIndex += gl_WorkGroupSize.x)
+    vec3 center = (item.LocalMinimum.xyz + item.LocalMaximum.xyz) * 0.5;
+    vec3 halfExtent = (item.LocalMaximum.xyz - item.LocalMinimum.xyz) * 0.5;
+    float effectPadding = item.LocalMinimum.w;
+    uint currentMatrixCount = uint(CurrentPaletteRows.length()) / 3u;
+    uint previousMatrixCount = uint(PreviousPaletteRows.length()) / 3u;
+    if ((item.Flags & BoundsWorkItemRejectedMaterialContract) != 0u
+        || isnan(effectPadding) || isinf(effectPadding) || effectPadding < 0.0
+        || !IsFinite(center) || !IsFinite(halfExtent)
+        || any(lessThan(halfExtent, vec3(0.0)))
+        || item.PaletteCount <= 1u
+        || item.PaletteBase >= currentMatrixCount
+        || item.PaletteCount > currentMatrixCount - item.PaletteBase
+        || item.PaletteBase >= previousMatrixCount
+        || item.PaletteCount > previousMatrixCount - item.PaletteBase)
+        atomicOr(SharedInvalid, 1u);
+    else
     {
-        Particle particle = Particles[item.ParticleOffset + particleIndex];
-        if (IsFinite(particle.Position))
+        for (uint boneIndex = localIndex + 1u; boneIndex < item.PaletteCount;
+            boneIndex += gl_WorkGroupSize.x)
         {
-            minimum = min(minimum, particle.Position - expansion);
-            maximum = max(maximum, particle.Position + expansion);
-        }
-        if (IsFinite(particle.PrevPosition))
-        {
-            minimum = min(minimum, particle.PrevPosition - expansion);
-            maximum = max(maximum, particle.PrevPosition + expansion);
+            uint row = (item.PaletteBase + boneIndex) * 3u;
+            if (!IncludePaletteBox(CurrentPaletteRows[row], CurrentPaletteRows[row + 1u],
+                CurrentPaletteRows[row + 2u], center, halfExtent, minimum, maximum)
+                || !IncludePaletteBox(PreviousPaletteRows[row], PreviousPaletteRows[row + 1u],
+                PreviousPaletteRows[row + 2u], center, halfExtent, minimum, maximum))
+                atomicOr(SharedInvalid, 1u);
         }
     }
 
@@ -98,7 +141,21 @@ void main()
     if (localIndex != 0u)
         return;
 
-    uint minimumIndex = item.BoundsSlot * 2u;
-    BoundsBits[minimumIndex] = uvec4(floatBitsToUint(SharedMinimum[0]), 0u);
-    BoundsBits[minimumIndex + 1u] = uvec4(floatBitsToUint(SharedMaximum[0]), 0u);
+    vec3 finalMinimum = SharedMinimum[0];
+    vec3 finalMaximum = SharedMaximum[0];
+    vec3 numericMargin = max(abs(finalMinimum), abs(finalMaximum)) * 1e-4
+        + vec3(1e-4);
+    finalMinimum -= numericMargin + vec3(effectPadding);
+    finalMaximum += numericMargin + vec3(effectPadding);
+    if (SharedInvalid != 0u || !IsFinite(finalMinimum) || !IsFinite(finalMaximum)
+        || any(greaterThan(finalMinimum, finalMaximum)))
+    {
+        // The visibility patch rejects this slot and records a numeric failure.
+        BoundsBits[minimumIndex] = uvec4(0x7fc00000u, 0x7fc00000u, 0x7fc00000u, 0u);
+        BoundsBits[minimumIndex + 1u] = uvec4(0x7fc00000u, 0x7fc00000u, 0x7fc00000u, 0u);
+        return;
+    }
+
+    BoundsBits[minimumIndex] = uvec4(floatBitsToUint(finalMinimum), 0u);
+    BoundsBits[minimumIndex + 1u] = uvec4(floatBitsToUint(finalMaximum), 0u);
 }

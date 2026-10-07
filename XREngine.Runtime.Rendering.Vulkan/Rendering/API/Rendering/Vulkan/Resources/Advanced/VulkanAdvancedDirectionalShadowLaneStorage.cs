@@ -8,10 +8,8 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Backend-owned copy of one directional cascade group accepted for the
 /// Advanced directional shadow lane: per-cascade native viewport, scissor and
-/// row-vector world-to-clip matrix, plus the per-record cascade masks that
-/// family preparation derives from the sealed bins. Instances live in a ring
-/// on the frame loop and are stamped with the render frame that captured them,
-/// so a stale slot can never be recorded for a later frame.
+/// row-vector world-to-clip matrix, plus optional CPU-direct record masks.
+/// The physical operation copies the queue ring data before recording.
 /// </summary>
 internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
 {
@@ -26,6 +24,7 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
     internal int CascadeCount { get; private set; }
     internal float DepthClearValue { get; private set; }
     internal bool ReversedDepth { get; private set; }
+    internal uint CullingLayerMask { get; private set; }
     internal ulong RenderFrameId { get; private set; }
     internal XRFrameBuffer? Target { get; private set; }
 
@@ -76,9 +75,30 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
         CascadeCount = source.CascadeCount;
         DepthClearValue = source.DepthClearValue;
         ReversedDepth = source.ReversedDepth;
+        CullingLayerMask = source.CullingLayerMask;
         RenderFrameId = renderFrameId;
         Target = source.PageFrameBuffer;
         failureReason = "Ready";
+        return true;
+    }
+
+    /// <summary>Copies one sealed lane without retaining the mutable queue ring slot.</summary>
+    internal bool TryCopyFrom(VulkanAdvancedDirectionalShadowLaneStorage source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        Clear();
+        if (source.CascadeCount <= 0 || source.CascadeCount > MaxCascadeCount ||
+            source.Target is null || source.RenderFrameId == 0UL)
+            return false;
+        source.ViewProjections.CopyTo(_viewProjections);
+        source.Viewports.CopyTo(_viewports);
+        source.Scissors.CopyTo(_scissors);
+        CascadeCount = source.CascadeCount;
+        DepthClearValue = source.DepthClearValue;
+        ReversedDepth = source.ReversedDepth;
+        CullingLayerMask = source.CullingLayerMask;
+        RenderFrameId = source.RenderFrameId;
+        Target = source.Target;
         return true;
     }
 
@@ -100,6 +120,7 @@ internal sealed class VulkanAdvancedDirectionalShadowLaneStorage
         CascadeCount = 0;
         DepthClearValue = 1.0f;
         ReversedDepth = false;
+        CullingLayerMask = 0u;
         RenderFrameId = 0UL;
         Target = null;
         _recordMaskCount = 0;

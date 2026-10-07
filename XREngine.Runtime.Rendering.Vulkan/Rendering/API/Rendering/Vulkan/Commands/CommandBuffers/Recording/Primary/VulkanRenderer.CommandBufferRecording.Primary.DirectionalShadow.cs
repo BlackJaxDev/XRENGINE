@@ -56,7 +56,8 @@ internal sealed partial class VulkanCommandRuntime
             !bins.HasSealedSubmissionPlans || lane.CascadeCount <= 0 ||
             lane.RenderFrameId != payload.Request.RenderFrameId ||
             !ReferenceEquals(lane.Target, payload.Request.Target) ||
-            lane.RecordMaskCount != bins.RecordCount || !info.BeginsRendering)
+            (!payload.DirectionalShadowResources.IsValid &&
+             lane.RecordMaskCount != bins.RecordCount) || !info.BeginsRendering)
         {
             throw new VulkanPlanPreconditionException(
                 "Advanced directional shadow raster reached recording without its sealed cascade group, target and stable-bin closure.");
@@ -79,6 +80,10 @@ internal sealed partial class VulkanCommandRuntime
             throw new VulkanPlanPreconditionException(
                 $"Advanced directional shadow atlas page changed after sealing: {mismatch}.");
         }
+
+        if (payload.DirectionalShadowResources.IsValid)
+            return RecordAdvancedDirectionalShadowGpuPayload(
+                ref state, in payload, in info, bins);
 
         if (state.RenderScope.IsActive)
             EndActiveRenderPass(ref state);

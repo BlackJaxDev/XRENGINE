@@ -301,7 +301,10 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     {
         using (SyncRoot.EnterScope())
         {
+            // Each shadow operation owns its cascade copy until physical lowering.
+            // Other stages can share a family lease because they have no lane data.
             for (int index = 0;
+                 !request.IsDirectionalShadowStage &&
                  index < _advancedVisibilityInputLeases.Length;
                  ++index)
             {

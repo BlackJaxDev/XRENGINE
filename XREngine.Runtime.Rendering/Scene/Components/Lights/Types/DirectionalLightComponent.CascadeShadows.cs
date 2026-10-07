@@ -4303,7 +4303,11 @@ namespace XREngine.Components.Lights
 
             // The generic layered pass clears every tile to 1.0 and tests Lequal:
             // shadow cameras keep normal depth regardless of the scene camera.
-            request.Reset(atlasFbo, group.LightId, renderFrameId, reversedDepth: false, depthClearValue: 1.0f);
+            if (sourceState.Viewports[0].Camera is not { } collectionCamera)
+                return DeclineCascadeAtlasRender(out declineReason, "The grouped cascade collection camera is unavailable.");
+            request.Reset(atlasFbo, group.LightId, renderFrameId,
+                reversedDepth: false, depthClearValue: 1.0f,
+                collectionCamera.CullingLayerMask);
             for (int i = 0; i < groupedCount; i++)
             {
                 if (!request.TryAddCascade(in orderedRects[i], in orderedMatrices[i]))

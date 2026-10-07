@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
+using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -23,10 +26,17 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
     private readonly int _maximumIndirectRangeCapacity;
     private readonly EVulkanAcceptedFrameLane _lane;
     private readonly VulkanAdvancedVisibilityInputCopyTelemetry? _copyTelemetry;
+    private AdvancedVisibilityInputVariant? _variant;
+    private int _variantDrawCapacity;
+    private int _variantRangeCapacity;
     private AdvancedVisibilityPayload[] _payloads;
     private AdvancedVisibilityCandidate[] _candidates;
+    private AdvancedGpuBoundsPatchRoute[] _boundsRoutes;
+    private PhysicsChainGpuOutputPageLease _boundsPage;
+    private VulkanAdvancedDirectionalShadowLaneStorage? _directionalShadowLane;
     private EAdvancedGeometryProducer[] _producers;
     private AdvancedIndirectRange[] _indirectRanges;
+    private AdvancedIndexedInstanceGroup[] _indexedInstanceGroups;
     private int[] _indirectPayloadIndices;
     private AdvancedDeformedArenaSlice[] _deformationSlices;
     private VulkanAdvancedVisibilityStageRequest _familyRequest;
@@ -34,6 +44,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
     private int _candidateCount;
     private int _producerCount;
     private int _indirectRangeCount;
+    private int _indexedInstanceGroupCount;
     private int _indirectPayloadIndexCount;
     private bool _captured;
 
@@ -56,8 +67,10 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         int initialRanges = fixedCapacity ? Math.Min(indirectRangeCapacity, InitialFixedRowCapacity) : indirectRangeCapacity;
         _payloads = new AdvancedVisibilityPayload[initialDraws];
         _candidates = new AdvancedVisibilityCandidate[initialDraws];
+        _boundsRoutes = new AdvancedGpuBoundsPatchRoute[initialDraws];
         _producers = new EAdvancedGeometryProducer[initialDraws];
         _indirectRanges = new AdvancedIndirectRange[initialRanges];
+        _indexedInstanceGroups = new AdvancedIndexedInstanceGroup[initialDraws];
         _indirectPayloadIndices = new int[initialDraws];
         _deformationSlices = new AdvancedDeformedArenaSlice[initialDraws];
     }
@@ -68,6 +81,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
            Publication.DrawCount == (uint)_payloadCount &&
            Indirect.PayloadCount == (uint)_payloadCount &&
            Indirect.RangeCount == (uint)_indirectRangeCount &&
+           _indexedInstanceGroupCount <= _payloadCount &&
            _candidateCount == _payloadCount &&
            _producerCount == _payloadCount &&
            _indirectPayloadIndexCount == _payloadCount &&
@@ -88,12 +102,18 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
 
     internal ReadOnlySpan<AdvancedVisibilityCandidate> Candidates
         => _candidates.AsSpan(0, _candidateCount);
+    internal ReadOnlySpan<AdvancedGpuBoundsPatchRoute> BoundsRoutes
+        => _boundsRoutes.AsSpan(0, _candidateCount);
+    internal PhysicsChainGpuOutputPageLease BoundsPage => _boundsPage;
+    internal VulkanAdvancedDirectionalShadowLaneStorage? DirectionalShadowLane => _directionalShadowLane;
 
     internal ReadOnlySpan<EAdvancedGeometryProducer> Producers
         => _producers.AsSpan(0, _producerCount);
 
     internal ReadOnlySpan<AdvancedIndirectRange> IndirectRanges
         => _indirectRanges.AsSpan(0, _indirectRangeCount);
+    internal ReadOnlySpan<AdvancedIndexedInstanceGroup> IndexedInstanceGroups
+        => _indexedInstanceGroups.AsSpan(0, _indexedInstanceGroupCount);
 
     internal ReadOnlySpan<int> IndirectPayloadIndices
         => _indirectPayloadIndices.AsSpan(0, _indirectPayloadIndexCount);
@@ -105,6 +125,10 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
 
     internal void Reset()
     {
+        if (_boundsPage.Token.IsValid)
+            GPUPhysicsChainDispatcher.Instance.ReleaseOutputPage(_boundsPage.Token);
+        _boundsPage = default;
+        _directionalShadowLane?.Clear();
         _familyRequest = default;
         Publication = default;
         Indirect = default;
@@ -113,6 +137,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         _candidateCount = 0;
         _producerCount = 0;
         _indirectRangeCount = 0;
+        _indexedInstanceGroupCount = 0;
         _indirectPayloadIndexCount = 0;
         _captured = false;
     }
@@ -131,18 +156,35 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             failureReason = "The advanced visibility authoring request is incomplete.";
             return false;
         }
+        if (request.IsDirectionalShadowStage)
+        {
+            _directionalShadowLane ??= new VulkanAdvancedDirectionalShadowLaneStorage();
+            if (request.DirectionalShadowLane is not { } lane ||
+                !_directionalShadowLane.TryCopyFrom(lane))
+            {
+                failureReason = "The directional shadow lane changed before queue authoring.";
+                return false;
+            }
+        }
 
         AdvancedPreparationPublication publication = request.Publication;
         int payloadCount = checked((int)publication.DrawCount);
         int indirectRangeCount = checked((int)publication.IndirectRangeCount);
+        int requiredRangeCapacity = _fixedCapacity
+            ? _maximumIndirectRangeCapacity
+            : Math.Max(payloadCount, indirectRangeCount);
+        EnsureVariantCapacity(payloadCount, requiredRangeCapacity);
         EnsureCapacity(ref _payloads, payloadCount, "payload");
         EnsureCapacity(ref _candidates, payloadCount, "candidate");
+        EnsureCapacity(ref _boundsRoutes, payloadCount, "bounds-route");
         EnsureCapacity(ref _producers, payloadCount, "producer");
         EnsureCapacity(
             ref _indirectRanges,
-            indirectRangeCount,
+            requiredRangeCapacity,
             "indirect-range",
-            _maximumIndirectRangeCapacity);
+            _fixedCapacity ? _maximumIndirectRangeCapacity : -1);
+        EnsureCapacity(ref _indexedInstanceGroups, payloadCount,
+            "indexed-instance-group");
         EnsureCapacity(
             ref _indirectPayloadIndices,
             payloadCount,
@@ -158,16 +200,37 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
                 _indirectRanges.AsSpan(0, indirectRangeCount),
                 _indirectPayloadIndices.AsSpan(0, payloadCount),
                 _deformationSlices.AsSpan(0, payloadCount),
+                _boundsRoutes.AsSpan(0, payloadCount),
                 out AdvancedIndirectPreparationResult indirect,
-                out AdvancedGpuDeformationPublication deformationPublication))
+                out AdvancedGpuDeformationPublication deformationPublication,
+                out _boundsPage))
         {
             failureReason =
                 "The advanced visibility publication changed before its authoring columns could be retained.";
             return false;
         }
 
+        if (!request.BackendPackage.TryGetCurrent(out BackendReadyFramePackage package) ||
+            !_variant!.TryBuild(
+                _payloads.AsSpan(0, payloadCount),
+                _producers.AsSpan(0, payloadCount),
+                _indirectRanges,
+                _indirectPayloadIndices.AsSpan(0, payloadCount),
+                _indexedInstanceGroups.AsSpan(0, payloadCount),
+                package,
+                in publication,
+                out AdvancedIndirectPreparationResult variantIndirect))
+        {
+            Reset();
+            failureReason = "The frozen visibility submission strategy could not form an exact input variant.";
+            return false;
+        }
+        indirect = variantIndirect;
+        indirectRangeCount = checked((int)indirect.RangeCount);
+        int indexedInstanceGroupCount = _variant.GroupCount;
+
         if (indirect.PayloadCount != publication.DrawCount ||
-            indirect.RangeCount != publication.IndirectRangeCount ||
+            _fixedCapacity && indirect.RangeCount > (uint)_maximumIndirectRangeCapacity ||
             (publication.DeformationJobCount != 0u &&
              (!publication.AggregateDispatchExecuted ||
               deformationPublication.FrameId != publication.FrameId ||
@@ -187,6 +250,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         _candidateCount = payloadCount;
         _producerCount = payloadCount;
         _indirectRangeCount = indirectRangeCount;
+        _indexedInstanceGroupCount = indexedInstanceGroupCount;
         _indirectPayloadIndexCount = payloadCount;
         _captured = true;
         failureReason = "Ready";
@@ -229,6 +293,8 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             authoringInput.Producers;
         ReadOnlySpan<AdvancedIndirectRange> indirectRanges =
             authoringInput.IndirectRanges;
+        ReadOnlySpan<AdvancedIndexedInstanceGroup> indexedInstanceGroups =
+            authoringInput.IndexedInstanceGroups;
         ReadOnlySpan<int> indirectPayloadIndices =
             authoringInput.IndirectPayloadIndices;
         ReadOnlySpan<AdvancedDeformedArenaSlice> deformationSlices =
@@ -238,12 +304,15 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         {
             EnsureCapacity(ref _payloads, payloads.Length, "payload");
             EnsureCapacity(ref _candidates, candidates.Length, "candidate");
+            EnsureCapacity(ref _boundsRoutes, candidates.Length, "bounds-route");
             EnsureCapacity(ref _producers, producers.Length, "producer");
             EnsureCapacity(
                 ref _indirectRanges,
                 indirectRanges.Length,
                 "indirect-range",
                 _maximumIndirectRangeCapacity);
+            EnsureCapacity(ref _indexedInstanceGroups, indexedInstanceGroups.Length,
+                "indexed-instance-group");
             EnsureCapacity(
                 ref _indirectPayloadIndices,
                 indirectPayloadIndices.Length,
@@ -264,8 +333,13 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             candidates.CopyTo(_candidates);
             producers.CopyTo(_producers);
             indirectRanges.CopyTo(_indirectRanges);
+            indexedInstanceGroups.CopyTo(_indexedInstanceGroups);
             indirectPayloadIndices.CopyTo(_indirectPayloadIndices);
             deformationSlices.CopyTo(_deformationSlices);
+            authoringInput.BoundsRoutes.CopyTo(_boundsRoutes);
+            if (authoringInput._boundsPage.Token.IsValid &&
+                !GPUPhysicsChainDispatcher.Instance.TryRetainOutputPage(authoringInput._boundsPage.Token, out _boundsPage))
+                throw new VulkanPlanPreconditionException("The physics bounds output page changed before frame-plan capture.");
             copied = true;
         }
         catch
@@ -279,7 +353,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             if (copied && _copyTelemetry is not null)
                 _copyTelemetry.RecordCopy(ComputeCopyByteCount(
                     payloads.Length,
-                    indirectRanges.Length), copyTicks);
+                    indirectRanges.Length, indexedInstanceGroups.Length), copyTicks);
         }
 
         _familyRequest = request;
@@ -290,6 +364,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         _candidateCount = candidates.Length;
         _producerCount = producers.Length;
         _indirectRangeCount = indirectRanges.Length;
+        _indexedInstanceGroupCount = indexedInstanceGroups.Length;
         _indirectPayloadIndexCount = indirectPayloadIndices.Length;
         _captured = true;
     }
@@ -337,7 +412,22 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         Array.Resize(ref values, _fixedCapacity ? Math.Min(grown, maximum) : grown);
     }
 
-    private static long ComputeCopyByteCount(int payloadCount, int indirectRangeCount)
+    private void EnsureVariantCapacity(int draws, int ranges)
+    {
+        int requiredDraws = Math.Max(1, draws);
+        int requiredRanges = Math.Max(1, ranges);
+        if (_variant is not null &&
+            _variantDrawCapacity >= requiredDraws &&
+            _variantRangeCapacity >= requiredRanges)
+            return;
+        _variantDrawCapacity = Math.Max(requiredDraws, _variantDrawCapacity);
+        _variantRangeCapacity = Math.Max(requiredRanges, _variantRangeCapacity);
+        _variant = new AdvancedVisibilityInputVariant(
+            _variantDrawCapacity, _variantRangeCapacity);
+    }
+
+    private static long ComputeCopyByteCount(int payloadCount, int indirectRangeCount,
+        int indexedInstanceGroupCount)
         => checked(
             (long)payloadCount * (
                 Unsafe.SizeOf<AdvancedVisibilityPayload>() +
@@ -345,5 +435,6 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
                 Unsafe.SizeOf<EAdvancedGeometryProducer>() +
                 Unsafe.SizeOf<int>() +
                 Unsafe.SizeOf<AdvancedDeformedArenaSlice>()) +
-            (long)indirectRangeCount * Unsafe.SizeOf<AdvancedIndirectRange>());
+            (long)indirectRangeCount * Unsafe.SizeOf<AdvancedIndirectRange>() +
+            (long)indexedInstanceGroupCount * Unsafe.SizeOf<AdvancedIndexedInstanceGroup>());
 }

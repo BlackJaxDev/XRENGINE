@@ -272,3 +272,31 @@ Current-depth two-pass Hi-Z occlusion is implemented by `GPURenderPassCollection
 The Vulkan scene-database buffer-device-address prototype is an optional geometry-fetch mode. When the active profile enables it and the renderer reports `ISceneDatabaseDeviceAddressBackendCapability`, generated shader code can consume scene database buffer addresses instead of descriptor bindings for supported records. Unsupported backends must report a downgrade reason.
 
 OpenGL sparse mesh residency is not implemented. OpenGL uses arena allocation and explicit fallback diagnostics for this contract until a separate feature lands.
+
+## Canonical Indexed Instance Groups
+
+`AdvancedVisibilityInputVariant` builds ranges from each consumer's frozen
+submission strategy after it copies the shared preparation. Shared deformation
+runs once per world, scene, and frame. A second consumer can use another strategy
+without reopening the shared output slot.
+
+`AdvancedIndexedInstanceGroupPlanner` combines single-instance indexed payloads
+only when their retained index and vertex bytes, primitive section, vertex
+layout, material constants, texture and sampler references, coverage, and raster
+range agree. Hash matches require full equality. The planner caches proven
+content classes under exact database, table, and arena generations. Warm frames
+scan draw witnesses without scanning immutable geometry bytes again. Authored
+multi-instance payloads keep a separate group and their original instance count.
+
+Each group has a fixed member segment. GPU visibility appends visible payload IDs
+to that segment. A finalizer writes one indexed argument per nonempty group.
+The argument uses `VertexOffset=0` and `FirstInstance` as the member-table base.
+The vertex shader selects each member's draw, material, transform, current and
+previous deformation offsets, selection ID, and primitive base. Shared indexed
+topology does not share pose or temporal state.
+
+Early and late visibility use separate member tables and counters. The sealed
+raster phase selects the matching table for indexed and meshlet consumers.
+OpenGL stereo first combines the eye masks, then appends each visible payload
+once. Vulkan retains its packed vertex binding for pipeline compatibility; the
+indexed shader reads member vertices through the canonical storage buffers.

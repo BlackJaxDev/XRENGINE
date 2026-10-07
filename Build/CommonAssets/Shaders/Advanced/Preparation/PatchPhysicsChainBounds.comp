@@ -1,0 +1,132 @@
+#version 450
+
+#define XR_ADV_VISIBILITY_WRITABLE_CANDIDATES 1
+#include "../Visibility/VisibilityInterface.glslinc"
+
+#if defined(XR_ADV_BACKEND_OPENGL)
+// These bindings are restored before visibility reads the producer tables.
+#define XR_ADV_BINDING_CHAIN_BOUND_ROUTES 53
+#define XR_ADV_BINDING_CHAIN_BOUNDS 54
+#define XR_ADV_BINDING_CHAIN_BOUND_METADATA 55
+#else
+#define XR_ADV_BINDING_CHAIN_BOUND_ROUTES 60
+#define XR_ADV_BINDING_CHAIN_BOUNDS 61
+#define XR_ADV_BINDING_CHAIN_BOUND_METADATA 62
+#endif
+
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_CHAIN_BOUND_ROUTES)
+readonly buffer XRAdvancedChainBoundRoutes { uint words[]; } XR_ADV_ChainBoundRoutes;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_CHAIN_BOUNDS)
+readonly buffer XRAdvancedChainBounds { uvec4 records[]; } XR_ADV_ChainBounds;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_CHAIN_BOUND_METADATA)
+readonly buffer XRAdvancedChainBoundMetadata { uvec4 records[]; } XR_ADV_ChainBoundMetadata;
+
+layout(push_constant) uniform XRAdvancedChainBoundPatchParameters
+{
+    uvec4 parameters;
+} XR_ADV_ChainBoundPatch;
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+bool finiteVector(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+void rejectRoute()
+{
+    // Reserved counter words retain the fixed visibility counter ABI.
+    atomicAdd(XR_ADV_VisibilityCounters.reserved[0], 1u);
+}
+
+void rejectNumericBound(uint candidateBase)
+{
+    XR_ADV_VisibilityCandidates.records[candidateBase + 16u] = 0u;
+    XR_ADV_VisibilityCandidates.records[candidateBase + 17u] = 0u;
+    XR_ADV_VisibilityCandidates.records[candidateBase + 19u] |= 1u << 10u;
+    atomicAdd(XR_ADV_VisibilityCounters.reserved[1], 1u);
+}
+
+void rejectCandidateRoute(uint candidateBase)
+{
+    XR_ADV_VisibilityCandidates.records[candidateBase + 16u] = 0u;
+    XR_ADV_VisibilityCandidates.records[candidateBase + 17u] = 0u;
+    XR_ADV_VisibilityCandidates.records[candidateBase + 19u] |= 1u << 10u;
+    rejectRoute();
+}
+
+void main()
+{
+    uint routeIndex = gl_GlobalInvocationID.x;
+    uint routeBase = routeIndex * 8u;
+    if (routeIndex >= XR_ADV_ChainBoundPatch.parameters.x ||
+        routeBase + 7u >= uint(XR_ADV_ChainBoundRoutes.words.length()))
+        return;
+
+    uint drawIndex = XR_ADV_ChainBoundRoutes.words[routeBase];
+    uint drawGeneration = XR_ADV_ChainBoundRoutes.words[routeBase + 1u];
+    if (drawGeneration == 0u)
+        return;
+
+    uint candidateIndex = XR_ADV_ChainBoundRoutes.words[routeBase + 2u];
+    uint boundsSlot = XR_ADV_ChainBoundRoutes.words[routeBase + 3u];
+    uint slotGeneration = XR_ADV_ChainBoundRoutes.words[routeBase + 4u];
+    uint producerEpoch = XR_ADV_ChainBoundRoutes.words[routeBase + 5u];
+    uvec2 boneGeneration = uvec2(XR_ADV_ChainBoundRoutes.words[routeBase + 6u],
+                               XR_ADV_ChainBoundRoutes.words[routeBase + 7u]);
+    if (candidateIndex >= XR_ADV_ChainBoundPatch.parameters.x ||
+        candidateIndex >= uint(XR_ADV_VisibilityCandidates.records.length()) / 20u)
+    {
+        rejectRoute();
+        return;
+    }
+
+    uint candidateBase = candidateIndex * 20u;
+    if (XR_ADV_VisibilityCandidates.records[candidateBase] != drawIndex ||
+        XR_ADV_VisibilityCandidates.records[candidateBase + 1u] != drawGeneration)
+    {
+        rejectRoute();
+        return;
+    }
+
+    if (boundsSlot >= uint(XR_ADV_ChainBoundMetadata.records.length()) ||
+        boundsSlot >= uint(XR_ADV_ChainBounds.records.length()) / 2u ||
+        producerEpoch != XR_ADV_ChainBoundPatch.parameters.y ||
+        XR_ADV_ChainBoundPatch.parameters.z == 0u)
+    {
+        rejectCandidateRoute(candidateBase);
+        return;
+    }
+    uvec4 metadata = XR_ADV_ChainBoundMetadata.records[boundsSlot];
+    if (metadata.x != slotGeneration || metadata.y != producerEpoch ||
+        any(notEqual(metadata.zw, boneGeneration)))
+    {
+        rejectCandidateRoute(candidateBase);
+        return;
+    }
+
+    vec3 minimum = uintBitsToFloat(XR_ADV_ChainBounds.records[boundsSlot * 2u].xyz);
+    vec3 maximum = uintBitsToFloat(XR_ADV_ChainBounds.records[boundsSlot * 2u + 1u].xyz);
+    vec3 extent = (maximum - minimum) * 0.5;
+    vec3 center = minimum + extent;
+    float radius = length(extent);
+    if (!finiteVector(minimum) || !finiteVector(maximum) ||
+        any(greaterThan(minimum, maximum)) || !finiteVector(center) ||
+        isnan(radius) || isinf(radius) || radius < 0.0)
+    {
+        rejectNumericBound(candidateBase);
+        return;
+    }
+
+    XR_ADV_VisibilityCandidates.records[candidateBase + 4u] = floatBitsToUint(center.x);
+    XR_ADV_VisibilityCandidates.records[candidateBase + 5u] = floatBitsToUint(center.y);
+    XR_ADV_VisibilityCandidates.records[candidateBase + 6u] = floatBitsToUint(center.z);
+    XR_ADV_VisibilityCandidates.records[candidateBase + 7u] = floatBitsToUint(radius);
+    XR_ADV_VisibilityCandidates.records[candidateBase + 8u] = floatBitsToUint(minimum.x);
+    XR_ADV_VisibilityCandidates.records[candidateBase + 9u] = floatBitsToUint(minimum.y);
+    XR_ADV_VisibilityCandidates.records[candidateBase + 10u] = floatBitsToUint(minimum.z);
+    XR_ADV_VisibilityCandidates.records[candidateBase + 12u] = floatBitsToUint(maximum.x);
+    XR_ADV_VisibilityCandidates.records[candidateBase + 13u] = floatBitsToUint(maximum.y);
+    XR_ADV_VisibilityCandidates.records[candidateBase + 14u] = floatBitsToUint(maximum.z);
+    XR_ADV_VisibilityCandidates.records[candidateBase + 19u] &= ~(1u << 10u);
+}

@@ -821,7 +821,7 @@ internal unsafe partial class VkMeshRenderer
 			useDynamicRendering ? 0UL : renderPass.Handle,
 			useDynamicRendering ? dynamicRenderingFormats : default,
 			programPipelineHash,
-			_program.LinkGeneration,
+			_program.InterfaceGeneration,
 			vertexLayoutHash,
 			descriptorLayoutHash,
 			_program.PipelineLayout.Handle,
@@ -1362,6 +1362,7 @@ internal unsafe partial class VkMeshRenderer
 		long dependencyGeneration = dependencyLease.Generation;
 				if (!program.IsLinked ||
 					program.PipelineLayout.Handle == 0 ||
+					program.InterfaceGeneration != key.InterfaceGeneration ||
 					program.ComputeGraphicsPipelineFingerprint() != key.ProgramPipelineHash ||
 					program.DescriptorSchemaFingerprint != key.DescriptorLayoutHash)
 				{

@@ -16,7 +16,8 @@ internal readonly record struct VulkanRenderBinKey(
     uint ViewMask,
     VulkanRenderBinOrderingClass OrderingClass,
     VulkanRenderBinNativeCompatibility NativeCompatibility,
-    VulkanRenderBinContextCompatibility ContextCompatibility)
+    VulkanRenderBinContextCompatibility ContextCompatibility,
+    VulkanVisibilityBindingCompatibility VisibilityBinding)
 {
     internal bool IsValid => PassCompatibility != 0u &&
         PipelineVariant != 0u && GeometryPage != 0u &&
@@ -110,7 +111,8 @@ internal readonly record struct VulkanRenderBinKey(
             viewMask,
             orderingClass,
             new VulkanRenderBinNativeCompatibility(in nativeState),
-            contextCompatibility);
+            contextCompatibility,
+            default);
     }
 
     /// <summary>Builds an exact canonical packed-geometry visibility key.</summary>
@@ -118,6 +120,7 @@ internal readonly record struct VulkanRenderBinKey(
         int passIndex,
         uint viewMask,
         in AdvancedVisibilityPayload payload,
+        EAdvancedGeometryProducer producer,
         ulong sceneNativeGeneration,
         in VulkanVisibilityPreparedVertexSource vertexSource,
         VulkanFrameDataSlice indexSlice,
@@ -126,13 +129,22 @@ internal readonly record struct VulkanRenderBinKey(
     {
         VulkanPreparedMeshPrimitive primitive = nativeState.Primitive0;
         uint acceptedViewMask = viewMask == 0u ? 1u : viewMask;
+        var bindingGeometry = producer == EAdvancedGeometryProducer.IndirectIndexed
+            ? default
+            : payload.Geometry;
         return new(
             Mix(unchecked((ulong)(uint)(passIndex + 1)), acceptedViewMask),
             Mix(payload.RasterStateClass, checked((ulong)payload.Coverage),
                 payload.CullMode, payload.PrimitiveTopology),
             Mix(
-                payload.Geometry.Index,
-                payload.Geometry.Generation,
+                bindingGeometry.Index,
+                bindingGeometry.Generation,
+                checked((ulong)producer),
+                payload.RasterStateClass,
+                checked((ulong)payload.Coverage),
+                payload.CullMode,
+                payload.PrimitiveTopology,
+                payload.Skinned ? 1u : 0u,
                 sceneNativeGeneration,
                 vertexSource.Buffer.Handle,
                 vertexSource.Generation,
@@ -140,14 +152,27 @@ internal readonly record struct VulkanRenderBinKey(
                 vertexSource.Length,
                 vertexSource.ElementStride,
                 indexSlice.Generation,
+                indexSlice.Offset,
+                indexSlice.Length,
                 primitive.IndexBuffer.Handle,
                 nativeState.VertexBindingSignature),
             unchecked(((uint)primitive.Topology << 16) | (uint)primitive.IndexType),
             1u,
             acceptedViewMask,
             VulkanRenderBinOrderingClass.Opaque,
-            new VulkanRenderBinNativeCompatibility(in nativeState),
-            VulkanRenderBinContextCompatibility.Create(in context));
+            new VulkanRenderBinNativeCompatibility(in nativeState, ignoreDrawCounts: true),
+            VulkanRenderBinContextCompatibility.Create(in context),
+            new VulkanVisibilityBindingCompatibility(
+                bindingGeometry,
+                producer,
+                payload.RasterStateClass,
+                payload.Coverage,
+                payload.CullMode,
+                payload.PrimitiveTopology,
+                payload.Skinned,
+                sceneNativeGeneration,
+                indexSlice,
+                vertexSource));
     }
     private static ulong Mix(params ReadOnlySpan<ulong> values)
     {

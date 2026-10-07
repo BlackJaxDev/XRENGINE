@@ -48,6 +48,9 @@ internal readonly record struct PendingMeshDraw(
     AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot,
     WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
+    internal EPrimitiveType IndirectTopology { get; init; } = EPrimitiveType.Triangles;
+    internal IRenderResourceLeaseOwner? IndexedIndirectAuthoringLease { get; init; }
+
     internal AdvancedGpuSceneDrawIdentity CanonicalDrawIdentity
         => CanonicalDrawIdentitySnapshot.Primary;
     internal XRCamera? Camera => ViewSnapshot?.Camera;

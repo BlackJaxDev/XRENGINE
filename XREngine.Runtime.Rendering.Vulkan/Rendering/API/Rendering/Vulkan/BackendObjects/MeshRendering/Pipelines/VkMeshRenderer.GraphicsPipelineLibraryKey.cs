@@ -10,7 +10,7 @@ internal readonly record struct VulkanGraphicsPipelineLibraryKey(
         DynamicRenderingFormatSignature DynamicRenderingFormats,
         PrimitiveTopology Topology,
         ulong ProgramPipelineHash,
-        ulong ProgramLinkGeneration,
+        ulong InterfaceGeneration,
         ulong VertexLayoutHash,
         ulong DescriptorLayoutHash,
         bool UsesDescriptorHeap,

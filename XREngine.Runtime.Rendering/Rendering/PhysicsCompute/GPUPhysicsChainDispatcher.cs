@@ -91,16 +91,19 @@ public sealed partial class GPUPhysicsChainDispatcher
     private static readonly int ParticleStaticSizeBytes = Unsafe.SizeOf<GPUParticleStaticData>();
     private static readonly int PerTreeParamsSizeBytes = Unsafe.SizeOf<GPUPerTreeParams>();
     private static readonly int ColliderSizeBytes = Unsafe.SizeOf<GPUColliderData>();
-    private static readonly int Matrix4x4SizeBytes = Unsafe.SizeOf<Matrix4x4>();
+    private static readonly int AffineInputSizeBytes = Unsafe.SizeOf<PhysicsChainAffineInput>();
     private static readonly PhysicsChainComputePass ArenaGrowthCompletionPass = new(
         PhysicsChainComputePassKind.ArenaGrowth,
         EMemoryBarrierMask.BufferUpdate | EMemoryBarrierMask.ShaderStorage);
+    private static readonly PhysicsChainComputePass InputPublicationPass = new(
+        PhysicsChainComputePassKind.InputPublication,
+        EMemoryBarrierMask.ClientMappedBuffer);
     private static readonly PhysicsChainComputePass SimulationCompletionPass = new(
         PhysicsChainComputePassKind.Simulation,
         EMemoryBarrierMask.ShaderStorage);
     private static readonly PhysicsChainComputePass BonePaletteCompletionPass = new(
         PhysicsChainComputePassKind.BonePalettePublication,
-        EMemoryBarrierMask.ShaderStorage);
+        EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.BufferUpdate);
     private static readonly PhysicsChainComputePass ActiveWorkResetCompletionPass = new(
         PhysicsChainComputePassKind.ActiveWorkReset,
         EMemoryBarrierMask.ShaderStorage);
@@ -160,23 +163,27 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     // Registered components
     private readonly ConcurrentDictionary<IPhysicsChainComputeSource, GPUPhysicsChainRequest> _registeredComponents = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    private readonly object _registrationTransitionSync = new();
     private readonly object _registeredComponentsSync = new();
     private readonly List<GPUPhysicsChainRequest> _registeredComponentSnapshot = [];
+    private readonly Dictionary<IPhysicsChainComputeSource, GPUPhysicsChainRequest> _outputPublicationRequestByComponent =
+        new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     private readonly List<GPUPhysicsChainRequest> _activeRequests = new();
+    private readonly List<GPUPhysicsChainRequest> _isolatedRequests = new();
+    private bool _paletteOutputRefreshPending;
     private readonly List<GPUPhysicsChainRequest> _dispatchGroup = [];
     private readonly List<InFlightDispatch> _inFlight = [];
     private readonly List<DeferredPhysicsChainArenaResource> _deferredArenaResources = [];
     private readonly Stack<XRDataBuffer<GPUParticleData>> _readbackBufferPool = new();
-    private readonly PhysicsChainSelectiveReadbackSlotResources[] _selectiveReadbackSlots =
-    [
-        new(),
-        new(),
-        new(),
-    ];
+    private readonly Dictionary<IPhysicsChainReadbackCoordinator, PhysicsChainSelectiveReadbackWorldResources> _selectiveReadbackWorldResources =
+        new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    private readonly List<PhysicsChainSelectiveReadbackWorldResources> _retiredSelectiveReadbackWorldResources = [];
     private readonly PhysicsChainReadbackGatherPlan?[] _pendingSelectiveReadbackPlans = new PhysicsChainReadbackGatherPlan?[SelectiveReadbackSlotCount];
     private readonly List<PhysicsChainGpuReadbackGatherItem> _selectiveReadbackGatherItems = [];
-    private readonly HashSet<IPhysicsChainReadbackCoordinator> _readbackWorlds = [];
-    private readonly HashSet<IPhysicsChainReadbackCoordinator> _readbackWorldsScheduledThisFrame = [];
+    private readonly HashSet<IPhysicsChainReadbackCoordinator> _readbackWorlds =
+        new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    private readonly HashSet<IPhysicsChainReadbackCoordinator> _readbackWorldsScheduledThisFrame =
+        new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     private readonly List<IPhysicsChainReadbackCoordinator> _readbackWorldsToRetire = [];
 
     // Shared GPU resources
@@ -192,7 +199,7 @@ public sealed partial class GPUPhysicsChainDispatcher
     // Combined buffers for all components
     private XRDataBuffer<GPUParticleData>? _particlesBuffer;
     private XRDataBuffer<GPUParticleStaticData>? _particleStaticBuffer;
-    private XRDataBuffer<Matrix4x4>? _transformMatricesBuffer;
+    private XRDataBuffer<PhysicsChainAffineInput>? _transformMatricesBuffer;
     private XRDataBuffer<GPUColliderData>? _collidersBuffer;
     private XRDataBuffer<GPUPerTreeParams>? _perTreeParamsBuffer;
     private XRDataBuffer<PhysicsChainGpuInstanceMetadata>? _instanceMetadataBuffer;
@@ -241,6 +248,9 @@ public sealed partial class GPUPhysicsChainDispatcher
     private long _lastReadbackPollFrame = -1L;
     // Statistics
     public int RegisteredComponentCount => _registeredComponents.Count;
+
+    /// <summary>Reads the registration count without capturing full dispatcher diagnostics.</summary>
+    public static int CaptureRegisteredComponentCount() => Instance.RegisteredComponentCount;
     public int TotalParticleCount { get; private set; }
     public int TotalTreeCount { get; private set; }
     public int TotalColliderCount { get; private set; }
@@ -520,7 +530,8 @@ public sealed partial class GPUPhysicsChainDispatcher
         uint BoneMatrixElementCount,
         bool DrivesCompleteBonePalette,
         int BindingGeneration,
-        int ParticleStateVersion);
+        int ParticleStateVersion,
+        long RendererBoneBufferGeneration);
 
     #endregion
 
@@ -530,6 +541,12 @@ public sealed partial class GPUPhysicsChainDispatcher
     /// Registers a GPU physics chain component for batched processing.
     /// </summary>
     public void Register(IPhysicsChainComputeSource component)
+    {
+        lock (_registrationTransitionSync)
+            RegisterCore(component);
+    }
+
+    private void RegisterCore(IPhysicsChainComputeSource component)
     {
         var request = new GPUPhysicsChainRequest(component);
         GPUPhysicsChainRequest? replacedRequest = null;
@@ -546,6 +563,13 @@ public sealed partial class GPUPhysicsChainDispatcher
 
                 _registeredComponentSnapshot.RemoveAt(requestIndex);
                 _registeredComponents.TryRemove(candidate.Component, out _);
+                if (candidate.DebugSelected)
+                {
+                    --_selectedGpuDebugChainCount;
+                    ++_gpuDebugSelectionRevision;
+                    candidate.DebugSelected = false;
+                    QueueGpuDebugWorldRetirementIfUnused(candidate.DebugSelectedWorld);
+                }
                 replacedRequest ??= candidate;
             }
 
@@ -554,7 +578,30 @@ public sealed partial class GPUPhysicsChainDispatcher
 
             registered = _registeredComponents.TryAdd(component, request);
             if (registered)
+            {
+                request.DebugSelected = component.DebugDrawChains;
+                request.DebugSelectedWorld = request.DebugSelected ? component.World : null;
+                if (request.DebugSelected)
+                {
+                    ++_selectedGpuDebugChainCount;
+                    ++_gpuDebugSelectionRevision;
+                    if (request.DebugSelectedWorld is { } selectedWorld)
+                        _gpuDebugWorldsPendingRetirement.Remove(selectedWorld);
+                }
                 _registeredComponentSnapshot.Add(request);
+            }
+        }
+
+        if (replacedRequest is not null)
+        {
+            try
+            {
+                replacedRequest.Component.ClearBatchedGpuDrivenBonePaletteSources();
+            }
+            catch (Exception exception)
+            {
+                XREngine.Debug.LogException(exception);
+            }
         }
 
         if (registered)
@@ -578,12 +625,27 @@ public sealed partial class GPUPhysicsChainDispatcher
     /// </summary>
     public void Unregister(IPhysicsChainComputeSource component)
     {
+        lock (_registrationTransitionSync)
+            UnregisterCore(component);
+    }
+
+    private void UnregisterCore(IPhysicsChainComputeSource component)
+    {
         GPUPhysicsChainRequest? request;
         lock (_registeredComponentsSync)
         {
             if (_registeredComponents.TryRemove(component, out request))
             {
                 _registeredComponentSnapshot.Remove(request);
+                if (request.DebugSelected)
+                {
+                    --_selectedGpuDebugChainCount;
+                    ++_gpuDebugSelectionRevision;
+                    request.DebugSelected = false;
+                    QueueGpuDebugWorldRetirementIfUnused(request.DebugSelectedWorld);
+                    if (_selectedGpuDebugChainCount == 0)
+                        _gpuDebugDiagnostics = default;
+                }
                 if (_registeredComponentSnapshot.Count == 0)
                     Interlocked.Exchange(ref _arenaLayoutResetRequested, 1);
             }
@@ -591,6 +653,15 @@ public sealed partial class GPUPhysicsChainDispatcher
 
         if (request is not null)
         {
+            // Release the removed request's palette source before a replacement can register.
+            try
+            {
+                request.Component.ClearBatchedGpuDrivenBonePaletteSources();
+            }
+            catch (Exception exception)
+            {
+                XREngine.Debug.LogException(exception);
+            }
             if (VerboseLogging)
                 XREngine.Debug.Out($"[GPUPhysicsChainDispatcher] Unregister: Component unregistered. ComponentHash={component.GetHashCode():X}, RequestId={request.RequestId}, TotalRegistered={_registeredComponents.Count}");
             return;
@@ -632,6 +703,124 @@ public sealed partial class GPUPhysicsChainDispatcher
         return backing;
     }
 
+    private static T[] SnapshotInto<T>(ReadOnlySpan<T> source, ref T[] backing)
+    {
+        if (source.Length == 0)
+            return [];
+        if (backing.Length != source.Length)
+            backing = new T[source.Length];
+        source.CopyTo(backing);
+        return backing;
+    }
+
+    private static void SnapshotParticles(ReadOnlySpan<PhysicsChainGpuParticle> source, ref GPUParticleData[] backing)
+    {
+        if (backing.Length != source.Length)
+            backing = source.Length == 0 ? [] : new GPUParticleData[source.Length];
+        for (int i = 0; i < source.Length; ++i)
+        {
+            PhysicsChainGpuParticle value = source[i];
+            backing[i] = new GPUParticleData
+            {
+                Position = value.Position,
+                PrevPosition = value.PrevPosition,
+                IsColliding = value.IsColliding,
+                PreviousPhysicsPosition = value.PreviousPhysicsPosition,
+            };
+        }
+    }
+
+    private static void SnapshotParticleStatic(ReadOnlySpan<PhysicsChainGpuParticleStatic> source, ref GPUParticleStaticData[] backing)
+    {
+        if (backing.Length != source.Length)
+            backing = source.Length == 0 ? [] : new GPUParticleStaticData[source.Length];
+        for (int i = 0; i < source.Length; ++i)
+        {
+            PhysicsChainGpuParticleStatic value = source[i];
+            backing[i] = new GPUParticleStaticData
+            {
+                TransformLocalPosition = value.TransformLocalPosition,
+                ParentIndex = value.ParentIndex,
+                Damping = value.Damping,
+                Elasticity = value.Elasticity,
+                Stiffness = value.Stiffness,
+                Inert = value.Inert,
+                Friction = value.Friction,
+                Radius = value.Radius,
+                BoneLength = value.BoneLength,
+                TreeIndex = value.TreeIndex,
+            };
+        }
+    }
+
+    private static void SnapshotTrees(ReadOnlySpan<PhysicsChainGpuTree> source, ref GPUParticleTreeData[] backing)
+    {
+        if (backing.Length != source.Length)
+            backing = source.Length == 0 ? [] : new GPUParticleTreeData[source.Length];
+        for (int i = 0; i < source.Length; ++i)
+        {
+            PhysicsChainGpuTree value = source[i];
+            backing[i] = new GPUParticleTreeData
+            {
+                RestGravity = value.RestGravity,
+                ParticleOffset = value.ParticleOffset,
+                ParticleCount = value.ParticleCount,
+            };
+        }
+    }
+
+    private static void SnapshotColliders(ReadOnlySpan<PhysicsChainGpuCollider> source, ref GPUColliderData[] backing)
+    {
+        if (backing.Length != source.Length)
+            backing = source.Length == 0 ? [] : new GPUColliderData[source.Length];
+        for (int i = 0; i < source.Length; ++i)
+        {
+            PhysicsChainGpuCollider value = source[i];
+            backing[i] = new GPUColliderData
+            {
+                Center = value.Center,
+                Params = value.Params,
+                Orientation = value.Orientation,
+                Type = value.Type,
+            };
+        }
+    }
+
+    /// <summary>Copies borrowed chain data into the pending packet during this call.</summary>
+    public void SubmitData(
+        IPhysicsChainComputeSource component,
+        in PhysicsChainGpuDispatchSnapshot snapshot,
+        bool effectiveGpuDrivenSkinning)
+    {
+        if (!_registeredComponents.TryGetValue(component, out var request))
+            return;
+
+        lock (request.InputGate)
+        {
+            PhysicsChainRenderInputPacket input = request.PendingInput;
+            if (input.ParticleStateVersion != snapshot.ParticleStateVersion || input.Particles.Length != snapshot.Particles.Length)
+                SnapshotParticles(snapshot.Particles, ref input.Particles);
+            if (input.StaticDataVersion != snapshot.StaticDataVersion || input.ParticleStaticData.Length != snapshot.ParticleStatic.Length)
+                SnapshotParticleStatic(snapshot.ParticleStatic, ref input.ParticleStaticData);
+            if (input.TreeDataVersion != snapshot.TreeDataVersion || input.Trees.Length != snapshot.Trees.Length)
+                SnapshotTrees(snapshot.Trees, ref input.Trees);
+            if (input.TransformDataSignature != snapshot.TransformSignature || input.Transforms.Length != snapshot.Transforms.Length)
+                input.Transforms = SnapshotInto(snapshot.Transforms, ref input.Transforms);
+            if (input.ColliderDataSignature != snapshot.ColliderSignature || input.Colliders.Length != snapshot.Colliders.Length)
+                SnapshotColliders(snapshot.Colliders, ref input.Colliders);
+            if (input.BoneStructureSignature != snapshot.BoneStructureSignature || input.Bones.Length != snapshot.Bones.Length)
+                input.Bones = SnapshotInto(snapshot.Bones, ref input.Bones);
+
+            CompleteSubmittedInput(component, request, input, snapshot.DeltaTime, snapshot.ObjectScale,
+                snapshot.Weight, snapshot.Force, snapshot.Gravity, snapshot.ObjectMove,
+                snapshot.FreezeAxis, snapshot.LoopCount, snapshot.TimeVar,
+                snapshot.ExecutionGeneration, snapshot.SubmissionId, snapshot.StaticDataVersion,
+                snapshot.TreeDataVersion, snapshot.ParticleStateVersion, snapshot.TransformSignature,
+                snapshot.ColliderSignature, snapshot.BoneStructureSignature,
+                effectiveGpuDrivenSkinning, snapshot.SpatialInput, snapshot.ReadbackSourceGeneration);
+        }
+    }
+
     /// <summary>
     /// Submits particle and collider data for a component. Called during component's Prepare phase.
     /// </summary>
@@ -657,78 +846,91 @@ public sealed partial class GPUPhysicsChainDispatcher
         int particleStateVersion,
         int transformDataSignature,
         int colliderDataSignature,
-        int? treeDataVersion = null)
+        int? treeDataVersion = null,
+        ReadOnlySpan<PhysicsChainGpuBone> bones = default,
+        int boneStructureSignature = 0,
+        bool effectiveGpuDrivenSkinning = false,
+        PhysicsChainGpuSpatialInput spatialInput = default)
     {
         if (!_registeredComponents.TryGetValue(component, out var request))
             return;
 
-        int resolvedTreeDataVersion = treeDataVersion ?? staticDataVersion;
-        int previousColliderCount = request.Colliders.Count;
-        int previousTreeCount = request.Trees.Count;
-
-        // Snapshot into request-owned arrays so the render thread never iterates
-        // the component's live mutable lists. Only allocates when element count changes.
-        if (request.ParticleStateVersion != particleStateVersion || request._particlesBacking.Length != particles.Count)
-            request.Particles = SnapshotInto(particles, ref request._particlesBacking);
-        if (request.StaticDataVersion != staticDataVersion || request._particleStaticBacking.Length != particleStaticData.Count)
-            request.ParticleStaticData = SnapshotInto(particleStaticData, ref request._particleStaticBacking);
-        if (request.TreeDataVersion != resolvedTreeDataVersion || request._treesBacking.Length != trees.Count)
-            request.Trees = SnapshotInto(trees, ref request._treesBacking);
-        if (request.TransformDataSignature != transformDataSignature || request._transformsBacking.Length != transforms.Count)
-            request.Transforms = SnapshotInto(transforms, ref request._transformsBacking);
-        if (request.ColliderDataSignature != colliderDataSignature || request._collidersBacking.Length != colliders.Count)
-            request.Colliders = SnapshotInto(colliders, ref request._collidersBacking);
-
-        bool dynamicHeaderChanged = !request.DynamicHeaderInitialized
-            || request.DeltaTime != deltaTime
-            || request.ObjectScale != objectScale
-            || request.Weight != weight
-            || request.Force != force
-            || request.Gravity != gravity
-            || request.ObjectMove != objectMove
-            || request.FreezeAxis != freezeAxis
-            || request.LoopCount != loopCount
-            || request.TimeVar != timeVar
-            || previousColliderCount != colliders.Count
-            || previousTreeCount != trees.Count;
-        if (dynamicHeaderChanged)
+        lock (request.InputGate)
         {
-            ++request.DynamicHeaderVersion;
-            if (request.LoopCount != loopCount)
-                ++request.SchedulingMetadataVersion;
+            PhysicsChainRenderInputPacket input = request.PendingInput;
+            int treeVersion = treeDataVersion ?? staticDataVersion;
+            if (input.ParticleStateVersion != particleStateVersion || input.Particles.Length != particles.Count)
+                input.Particles = SnapshotInto(particles, ref input.Particles);
+            if (input.StaticDataVersion != staticDataVersion || input.ParticleStaticData.Length != particleStaticData.Count)
+                input.ParticleStaticData = SnapshotInto(particleStaticData, ref input.ParticleStaticData);
+            if (input.TreeDataVersion != treeVersion || input.Trees.Length != trees.Count)
+                input.Trees = SnapshotInto(trees, ref input.Trees);
+            if (input.TransformDataSignature != transformDataSignature || input.Transforms.Length != transforms.Count)
+                input.Transforms = SnapshotInto(transforms, ref input.Transforms);
+            if (input.ColliderDataSignature != colliderDataSignature || input.Colliders.Length != colliders.Count)
+                input.Colliders = SnapshotInto(colliders, ref input.Colliders);
+            if (input.BoneStructureSignature != boneStructureSignature || input.Bones.Length != bones.Length)
+                input.Bones = SnapshotInto(bones, ref input.Bones);
+
+            CompleteSubmittedInput(component, request, input, deltaTime, objectScale, weight,
+                force, gravity, objectMove, freezeAxis, loopCount, timeVar, executionGeneration,
+                submissionId, staticDataVersion, treeVersion, particleStateVersion,
+                transformDataSignature, colliderDataSignature, boneStructureSignature,
+                effectiveGpuDrivenSkinning, spatialInput, component.ReadbackSourceGeneration);
         }
-        request.DynamicHeaderInitialized = true;
-        request.DeltaTime = deltaTime;
-        request.ObjectScale = objectScale;
-        request.Weight = weight;
-        request.Force = force;
-        request.Gravity = gravity;
-        request.ObjectMove = objectMove;
-        request.FreezeAxis = freezeAxis;
-        request.LoopCount = loopCount;
-        request.TimeVar = timeVar;
-        request.UpdateMode = component.UpdateMode;
-        request.DispatchIsolationKey = component.UseBatchedDispatcher ? 0 : request.RequestId;
-        request.ExecutionGeneration = executionGeneration;
-        request.SubmissionId = submissionId;
-        request.StaticDataVersion = staticDataVersion;
-        request.TreeDataVersion = resolvedTreeDataVersion;
-        request.ParticleStateVersion = particleStateVersion;
-        request.TransformDataSignature = transformDataSignature;
-        request.ColliderDataSignature = colliderDataSignature;
-        request.LastKnownParticleCount = particles.Count;
+    }
+
+    private static void CompleteSubmittedInput(
+        IPhysicsChainComputeSource component,
+        GPUPhysicsChainRequest request,
+        PhysicsChainRenderInputPacket input,
+        float deltaTime,
+        float objectScale,
+        float weight,
+        Vector3 force,
+        Vector3 gravity,
+        Vector3 objectMove,
+        int freezeAxis,
+        int loopCount,
+        float timeVar,
+        int executionGeneration,
+        long submissionId,
+        int staticDataVersion,
+        int treeDataVersion,
+        int particleStateVersion,
+        int transformDataSignature,
+        int colliderDataSignature,
+        int boneStructureSignature,
+        bool effectiveGpuDrivenSkinning,
+        PhysicsChainGpuSpatialInput spatialInput,
+        long readbackSourceGeneration)
+    {
+        input.DeltaTime = deltaTime;
+        input.ObjectScale = objectScale;
+        input.Weight = weight;
+        input.Force = force;
+        input.Gravity = gravity;
+        input.ObjectMove = objectMove;
+        input.FreezeAxis = freezeAxis;
+        input.LoopCount = loopCount;
+        input.TimeVar = timeVar;
+        input.UpdateMode = component.UpdateMode;
+        input.DispatchIsolationKey = component.UseBatchedDispatcher ? 0 : request.RequestId;
+        input.ExecutionGeneration = executionGeneration;
+        input.ReadbackSourceGeneration = readbackSourceGeneration;
+        input.SubmissionId = submissionId;
+        input.StaticDataVersion = staticDataVersion;
+        input.TreeDataVersion = treeDataVersion;
+        input.ParticleStateVersion = particleStateVersion;
+        input.TransformDataSignature = transformDataSignature;
+        input.ColliderDataSignature = colliderDataSignature;
+        input.BoneStructureSignature = boneStructureSignature;
+        input.EffectiveGpuDrivenSkinning = effectiveGpuDrivenSkinning;
+        input.SpatialInput = spatialInput;
+        input.ValidateAffineInputs(transformDataSignature);
+        input.HasData = true;
+        input.Sequence = ++request.NextInputSequence;
         request.NeedsUpdate = true;
-        request.SkipUpdate = loopCount <= 0;
-        if (!request.SchedulingMetadataInitialized)
-        {
-            request.Enabled = 1u;
-            request.Relevant = 1u;
-            request.QualityTier = 0u;
-            request.Cadence = 1u;
-            request.Phase = 0u;
-            request.FeatureMask = 0u;
-            request.SchedulingMetadataInitialized = true;
-        }
     }
 
     /// <summary>
@@ -752,25 +954,32 @@ public sealed partial class GPUPhysicsChainDispatcher
         uint resolvedSleepState = sleeping ? 1u : 0u;
         uint resolvedCadence = Math.Max(cadence, 1u);
         uint resolvedPhase = phase % resolvedCadence;
-        if (request.Enabled == resolvedEnabled
-            && request.Relevant == resolvedRelevant
-            && request.SleepState == resolvedSleepState
-            && request.QualityTier == qualityTier
-            && request.Cadence == resolvedCadence
-            && request.Phase == resolvedPhase
-            && request.FeatureMask == featureMask)
-            return true;
+        lock (request.InputGate)
+        {
+            PhysicsChainRenderInputPacket input = request.PendingInput;
+            if (input.Enabled == resolvedEnabled
+                && input.Relevant == resolvedRelevant
+                && input.SleepState == resolvedSleepState
+                && input.QualityTier == qualityTier
+                && input.Cadence == resolvedCadence
+                && input.Phase == resolvedPhase
+                && input.FeatureMask == featureMask)
+                return true;
 
-        request.Enabled = resolvedEnabled;
-        request.Relevant = resolvedRelevant;
-        request.SleepState = resolvedSleepState;
-        request.QualityTier = qualityTier;
-        request.Cadence = resolvedCadence;
-        request.Phase = resolvedPhase;
-        request.FeatureMask = featureMask;
-        request.SchedulingMetadataInitialized = true;
-        ++request.SchedulingMetadataVersion;
-        request.NeedsUpdate = true;
+            if (input.Sequence <= request.AcceptedInput.Sequence && request.AcceptedInput.HasData)
+                input.CopyDataFrom(request.AcceptedInput);
+
+            input.Enabled = resolvedEnabled;
+            input.Relevant = resolvedRelevant;
+            input.SleepState = resolvedSleepState;
+            input.QualityTier = qualityTier;
+            input.Cadence = resolvedCadence;
+            input.Phase = resolvedPhase;
+            input.FeatureMask = featureMask;
+            input.SchedulingMetadataInitialized = true;
+            input.Sequence = ++request.NextInputSequence;
+            request.NeedsUpdate = true;
+        }
         return true;
     }
 
@@ -798,36 +1007,71 @@ public sealed partial class GPUPhysicsChainDispatcher
     /// </summary>
     public void ProcessDispatches()
     {
+        lock (_registrationTransitionSync)
+            ProcessDispatchesCore();
+    }
+
+    private void ProcessDispatchesCore()
+    {
         if (!_enabled)
             return;
 
+        PollSimulationReceipts();
+        _paletteOutputRefreshPending |= ConfirmResidentSpatialState();
         unchecked { ++_readbackFrameIndex; }
         _readbackWorldsScheduledThisFrame.Clear();
         ApplyPendingArenaLayoutReset();
 
         // Collect active requests
         _activeRequests.Clear();
+        _isolatedRequests.Clear();
         lock (_registeredComponentsSync)
         {
             _activeRequests.EnsureCapacity(_registeredComponentSnapshot.Count);
+            _isolatedRequests.EnsureCapacity(_registeredComponentSnapshot.Count);
             for (int i = 0; i < _registeredComponentSnapshot.Count; ++i)
             {
                 GPUPhysicsChainRequest request = _registeredComponentSnapshot[i];
-                if (request.NeedsUpdate && request.DispatchIsolationKey == 0)
+                if (!request.TryAcceptInput(out ulong rejectedSequence,
+                    out int invalidTransformIndex, out bool transformCountMismatch))
+                {
+                    if (rejectedSequence != 0u)
+                        RecordDispatchFailure(transformCountMismatch
+                            ? $"AffineTransformCountMismatch:{request.RequestId}:{rejectedSequence}:{invalidTransformIndex}"
+                            : $"NonAffineTransformInput:{request.RequestId}:{rejectedSequence}:{invalidTransformIndex}");
+                    continue;
+                }
+
+                if (request.DispatchIsolationKey == 0)
                     _activeRequests.Add(request);
-            }
-            for (int i = 0; i < _registeredComponentSnapshot.Count; ++i)
-            {
-                GPUPhysicsChainRequest request = _registeredComponentSnapshot[i];
-                if (request.NeedsUpdate && request.DispatchIsolationKey != 0)
-                    _activeRequests.Add(request);
+                else
+                    _isolatedRequests.Add(request);
             }
 
             // Registration order is the stable order within both dispatch buckets.
         }
 
+        for (int i = 0; i < _isolatedRequests.Count; ++i)
+            _activeRequests.Add(_isolatedRequests[i]);
 
-        if (_activeRequests.Count == 0)
+        for (int i = 0; i < _activeRequests.Count; ++i)
+        {
+            GPUPhysicsChainRequest request = _activeRequests[i];
+            PhysicsChainRenderInputPacket accepted = request.AcceptedInput;
+            request.Component.AcceptGpuDrivenBoneBindings(accepted.Bones, accepted.BoneStructureSignature,
+                accepted.ParticleStateVersion, accepted.EffectiveGpuDrivenSkinning);
+        }
+
+        bool paletteBindingsChanged = false;
+        lock (_registeredComponentsSync)
+        {
+            for (int i = 0; i < _registeredComponentSnapshot.Count; ++i)
+                paletteBindingsChanged |= _registeredComponentSnapshot[i].Component.RefreshGpuDrivenBoneBindings();
+        }
+        _paletteOutputRefreshPending |= paletteBindingsChanged;
+
+        bool pendingSelectiveReadback = HasPendingSelectiveReadback();
+        if (_activeRequests.Count == 0 && !_paletteOutputRefreshPending && !pendingSelectiveReadback)
             return;
 
         IPhysicsChainComputeBackend? backend = ResolveComputeBackend(AbstractRenderer.Current);
@@ -849,7 +1093,10 @@ public sealed partial class GPUPhysicsChainDispatcher
             return;
         _activeWorkScanMode = SelectActiveWorkScanMode(backend.Capabilities);
         unchecked { ++_activeWorkFrameIndex; }
-        ProcessDispatchGroups(backend);
+        if (_activeRequests.Count == 0)
+            PublishWithoutSimulationInputPage(backend);
+        else
+            ProcessDispatchGroups(backend);
     }
 
     internal static GPUPhysicsChainBackendStatus EvaluateBackendCapability(
@@ -896,7 +1143,13 @@ public sealed partial class GPUPhysicsChainDispatcher
 
         bool rendererChanged = _backendEvaluated && !ReferenceEquals(renderer, _evaluatedRenderer);
         if (rendererChanged)
+        {
             InvalidateInFlightReadbacksForRendererChange();
+            RetireSimulationReceipts();
+            RetireInputPages();
+            RetireOutputPages();
+            ResetGpuBoundsResources();
+        }
 
         bool backendIdentityChanged = !_backendEvaluated || rendererChanged;
         _backendEvaluated = true;
@@ -917,6 +1170,12 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     private void InvalidateInFlightReadbacksForRendererChange()
     {
+        foreach (PhysicsChainSelectiveReadbackWorldResources bank in _selectiveReadbackWorldResources.Values)
+        {
+            bank.RejectLogicalTransfers();
+            _retiredSelectiveReadbackWorldResources.Add(bank);
+        }
+        _selectiveReadbackWorldResources.Clear();
         for (int i = 0; i < _inFlight.Count; ++i)
         {
             InFlightDispatch entry = _inFlight[i];
@@ -937,14 +1196,16 @@ public sealed partial class GPUPhysicsChainDispatcher
         uint groupsX,
         uint groupsY,
         uint groupsZ,
-        PhysicsChainComputePassKind passKind)
+        PhysicsChainComputePassKind passKind,
+        IRenderResourceLeaseOwner? authoringLease = null)
     {
         PhysicsChainComputeEnqueueStatus status = backend.TryDispatchDirect(
             program,
             groupsX,
             groupsY,
             groupsZ,
-            passKind);
+            passKind,
+            authoringLease);
         if (status == PhysicsChainComputeEnqueueStatus.Enqueued)
             return true;
 
@@ -1040,6 +1301,7 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     public void ProcessCompletions()
     {
+        ProcessGpuDebugRetirements();
         if (!_enabled)
             return;
 
@@ -1225,19 +1487,27 @@ public sealed partial class GPUPhysicsChainDispatcher
         }
 
         BuildActiveWorkRecords(requests);
+        EnsureTransformInputCatalogCapacity();
         TotalParticleCount = _particleArenaHighWater;
         TotalTreeCount = _allPerTreeParams.Count;
         TotalColliderCount = _colliderArenaHighWater;
         if (!EnsureResidentArenaCapacity(backend, _allPerTreeParams.Count)
             || !EnsureActiveWorkCapacity(backend, _instanceMetadata.Count, _treeWorkItems.Count)
+            || !EnsureInputPageCapacity(backend, _allPerTreeParams.Count,
+                _instanceMetadata.Count, _treeWorkItems.Count,
+                _colliderArenaHighWater, _particleArenaHighWater)
             || !EnsureSpecializedKernelResources(backend, requests))
             return false;
 
         for (int requestIndex = 0; requestIndex < requests.Count; ++requestIndex)
             UploadDirtyRequestRanges(requests[requestIndex]);
 
-        UploadDynamicTreeHeaders(requests);
-        UploadActiveWorkInputs(requests);
+        if (!UploadInputPageColliders(requests)
+            || !UploadInputPageTransforms()
+            || !UploadDynamicTreeHeaders(requests)
+            || !UploadActiveWorkInputs(requests)
+            || !TryCompletePass(backend, InputPublicationPass))
+            return false;
         _particleArenaUploadedHighWater = _particleArenaHighWater;
         _colliderArenaUploadedHighWater = _colliderArenaHighWater;
         RefreshMainPassBindings();
@@ -1317,9 +1587,7 @@ public sealed partial class GPUPhysicsChainDispatcher
 
         int capacityPerBucket = CalculateActiveListCapacityPerBucket(candidateCount);
         uint previousActiveIdCapacity = _activeTreeIdBuffer?.ElementCount ?? 0u;
-        if (!EnsureArenaCapacity(ref _instanceMetadataBuffer, "PhysicsChainInstanceMetadata", Math.Max(instanceCount, 1), 0, EBufferUsage.StreamDraw, backend)
-            || !EnsureArenaCapacity(ref _treeWorkItemBuffer, "PhysicsChainTreeWorkItems", Math.Max(candidateCount, 1), 0, EBufferUsage.StreamDraw, backend)
-            || !EnsureArenaCapacity(ref _activeTreeIdBuffer, "PhysicsChainActiveTreeIds", capacityPerBucket * (int)PhysicsChainKernelBucket.Count, 0, EBufferUsage.DynamicDraw, backend)
+        if (!EnsureArenaCapacity(ref _activeTreeIdBuffer, "PhysicsChainActiveTreeIds", capacityPerBucket * (int)PhysicsChainKernelBucket.Count, 0, EBufferUsage.DynamicDraw, backend)
             || !EnsureArenaCapacity(ref _activeWorkCounterBuffer, "PhysicsChainActiveWorkCounters", ActiveWorkCounterElementCount, 0, EBufferUsage.DynamicDraw, backend)
             || !EnsureArenaCapacity(
                 ref _indirectDispatchArgumentBuffer,
@@ -1340,7 +1608,7 @@ public sealed partial class GPUPhysicsChainDispatcher
     internal static int CalculateActiveListCapacityPerBucket(int candidateCount)
         => checked((int)XRMath.NextPowerOfTwo((uint)Math.Max(candidateCount, 1)));
 
-    private void UploadActiveWorkInputs(IReadOnlyList<GPUPhysicsChainRequest> requests)
+    private bool UploadActiveWorkInputs(IReadOnlyList<GPUPhysicsChainRequest> requests)
     {
         bool fullUpload = !IsActiveWorkLayoutCurrent(requests)
             || _activeWorkResourceGeneration != _arenaResourceGeneration;
@@ -1378,13 +1646,8 @@ public sealed partial class GPUPhysicsChainDispatcher
             int dirtyCount = metadataDirtyEndExclusive - metadataDirtyStart;
             Span<PhysicsChainGpuInstanceMetadata> dirtyMetadata =
                 CollectionsMarshal.AsSpan(_instanceMetadata).Slice(metadataDirtyStart, dirtyCount);
-            uint bytes = _instanceMetadataBuffer.WriteDataRaw(dirtyMetadata, (uint)metadataDirtyStart);
-            PushBufferUpdate(
-                _instanceMetadataBuffer,
-                fullPush: false,
-                bytes,
-                metadataDirtyStart * Unsafe.SizeOf<PhysicsChainGpuInstanceMetadata>());
-            RecordArenaUpload(bytes, isStatic: false);
+            if (!TryWriteInputPage(_instanceMetadataBuffer, dirtyMetadata, metadataDirtyStart))
+                return false;
         }
 
         if (_treeWorkItemBuffer is not null && treeDirtyStart >= 0 && treeDirtyEndExclusive > treeDirtyStart)
@@ -1392,17 +1655,12 @@ public sealed partial class GPUPhysicsChainDispatcher
             int dirtyCount = treeDirtyEndExclusive - treeDirtyStart;
             Span<PhysicsChainGpuTreeWorkItem> dirtyTreeWork =
                 CollectionsMarshal.AsSpan(_treeWorkItems).Slice(treeDirtyStart, dirtyCount);
-            uint bytes = _treeWorkItemBuffer.WriteDataRaw(dirtyTreeWork, (uint)treeDirtyStart);
-            PushBufferUpdate(
-                _treeWorkItemBuffer,
-                fullPush: false,
-                bytes,
-                treeDirtyStart * Unsafe.SizeOf<PhysicsChainGpuTreeWorkItem>());
-            RecordArenaUpload(bytes, isStatic: false);
+            if (!TryWriteInputPage(_treeWorkItemBuffer, dirtyTreeWork, treeDirtyStart))
+                return false;
         }
 
         if (metadataDirtyStart < 0 && treeDirtyStart < 0)
-            return;
+            return true;
 
         _activeWorkResourceGeneration = _arenaResourceGeneration;
         _activeWorkLayout.Clear();
@@ -1416,6 +1674,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             request.UploadedTreeWorkArenaGeneration = request.ArenaAllocationGeneration;
             request.UploadedTreeWorkCount = request.Trees.Count;
         }
+        return true;
     }
 
     private bool IsActiveWorkLayoutCurrent(IReadOnlyList<GPUPhysicsChainRequest> requests)
@@ -1521,30 +1780,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 EBufferUsage.StaticDraw,
                 backend))
             return false;
-        if (!EnsureArenaCapacity(
-                ref _transformMatricesBuffer,
-                "PhysicsChainTransformArena",
-                _particleArenaHighWater,
-                _particleArenaUploadedHighWater,
-                EBufferUsage.DynamicDraw,
-                backend))
-            return false;
-        if (!EnsureArenaCapacity(
-                ref _collidersBuffer,
-                "PhysicsChainColliderArena",
-                Math.Max(_colliderArenaHighWater, 1),
-                _colliderArenaUploadedHighWater,
-                EBufferUsage.DynamicDraw,
-                backend))
-            return false;
-
-        return EnsureArenaCapacity(
-            ref _perTreeParamsBuffer,
-            "PhysicsChainDynamicHeaderArena",
-            Math.Max(requiredTreeHeaderCount, 1),
-            preserveElementCount: 0,
-            EBufferUsage.StreamDraw,
-            backend);
+        return true;
     }
 
     private bool EnsureArenaCapacity<T>(
@@ -1655,7 +1891,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         if (plan.UploadParticleState && _particlesBuffer is not null && request.Particles.Count > 0)
         {
             uint bytes = _particlesBuffer.WriteDataRaw(
-                request._particlesBacking.AsSpan(0, request.Particles.Count),
+                request.AcceptedInput.Particles.AsSpan(),
                 (uint)request.ParticleOffset);
             PushBufferUpdate(_particlesBuffer, fullPush: false, bytes, request.ParticleOffset * ParticleStateSizeBytes);
             RecordArenaUpload(bytes, isStatic: false);
@@ -1666,7 +1902,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             Span<GPUParticleStaticData> adjusted = request.GetAdjustedStaticData();
             for (int i = 0; i < adjusted.Length; ++i)
             {
-                adjusted[i] = request._particleStaticBacking[i];
+                adjusted[i] = request.AcceptedInput.ParticleStaticData[i];
                 if (adjusted[i].ParentIndex >= 0)
                     adjusted[i].ParentIndex += request.ParticleOffset;
             }
@@ -1676,24 +1912,18 @@ public sealed partial class GPUPhysicsChainDispatcher
             RecordArenaUpload(bytes, isStatic: true);
         }
 
-        if (plan.UploadTransformInputs && _transformMatricesBuffer is not null && request.Transforms.Count > 0)
+        if (plan.UploadTransformInputs && request.Transforms.Count > 0)
         {
-            uint bytes = _transformMatricesBuffer.WriteDataRaw(
-                request._transformsBacking.AsSpan(0, request.Transforms.Count),
-                (uint)request.ParticleOffset);
-            PushBufferUpdate(_transformMatricesBuffer, fullPush: false, bytes, request.ParticleOffset * Matrix4x4SizeBytes);
-            RecordArenaUpload(bytes, isStatic: false);
+            RecordTransformCatalogRange(request.ParticleOffset, request.Transforms.Count);
+            Span<PhysicsChainAffineInput> destination =
+                CollectionsMarshal.AsSpan(_transformInputCatalog).Slice(
+                    request.ParticleOffset, request.Transforms.Count);
+            for (int index = 0; index < destination.Length; ++index)
+                destination[index] = PhysicsChainAffineInput.FromMatrix(
+                    request.AcceptedInput.Transforms[index]);
         }
 
-        if (plan.UploadColliderData && _collidersBuffer is not null && request.Colliders.Count > 0)
-        {
-            uint bytes = _collidersBuffer.WriteDataRaw(
-                request._collidersBacking.AsSpan(0, request.Colliders.Count),
-                (uint)request.ColliderOffset);
-            PushBufferUpdate(_collidersBuffer, fullPush: false, bytes, request.ColliderOffset * ColliderSizeBytes);
-            RecordArenaUpload(bytes, isStatic: false);
-        }
-
+        ObserveResidentSpatialInputs(request, plan.UploadParticleState, plan.UploadTransformInputs);
         request.UploadedArenaAllocationGeneration = request.ArenaAllocationGeneration;
         request.UploadedParticleStateVersion = request.ParticleStateVersion;
         request.UploadedStaticDataVersion = request.StaticDataVersion;
@@ -1702,10 +1932,10 @@ public sealed partial class GPUPhysicsChainDispatcher
         request.PendingArenaAllocationChange = false;
     }
 
-    private void UploadDynamicTreeHeaders(IReadOnlyList<GPUPhysicsChainRequest> requests)
+    private bool UploadDynamicTreeHeaders(IReadOnlyList<GPUPhysicsChainRequest> requests)
     {
         if (_perTreeParamsBuffer is null || _allPerTreeParams.Count == 0)
-            return;
+            return true;
 
         bool fullUpload = !IsDynamicHeaderLayoutCurrent(requests)
             || _dynamicHeaderResourceGeneration != _arenaResourceGeneration;
@@ -1726,13 +1956,12 @@ public sealed partial class GPUPhysicsChainDispatcher
         }
 
         if (dirtyStart < 0)
-            return;
+            return true;
 
         int dirtyCount = dirtyEndExclusive - dirtyStart;
         Span<GPUPerTreeParams> dirtyHeaders = CollectionsMarshal.AsSpan(_allPerTreeParams).Slice(dirtyStart, dirtyCount);
-        uint bytes = _perTreeParamsBuffer.WriteDataRaw(dirtyHeaders, (uint)dirtyStart);
-        PushBufferUpdate(_perTreeParamsBuffer, fullPush: false, bytes, dirtyStart * PerTreeParamsSizeBytes);
-        RecordArenaUpload(bytes, isStatic: false);
+        if (!TryWriteInputPage(_perTreeParamsBuffer, dirtyHeaders, dirtyStart))
+            return false;
         _dynamicHeaderResourceGeneration = _arenaResourceGeneration;
 
         _dynamicHeaderLayout.Clear();
@@ -1743,6 +1972,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             _dynamicHeaderLayout.Add(new PhysicsChainDynamicHeaderLayoutEntry(request.RequestId, request.Trees.Count));
             MarkDynamicHeaderUploaded(request);
         }
+        return true;
     }
 
     private bool IsDynamicHeaderLayoutCurrent(IReadOnlyList<GPUPhysicsChainRequest> requests)
@@ -1841,7 +2071,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 {
                     liveBytes += (long)request.Particles.Count * ParticleStateSizeBytes;
                     liveBytes += (long)request.ParticleStaticData.Count * ParticleStaticSizeBytes;
-                    liveBytes += (long)request.Transforms.Count * Matrix4x4SizeBytes;
+                    liveBytes += (long)request.Transforms.Count * AffineInputSizeBytes;
                 }
                 if (request.ColliderOffset >= 0)
                     liveBytes += (long)request.Colliders.Count * ColliderSizeBytes;
@@ -1969,7 +2199,20 @@ public sealed partial class GPUPhysicsChainDispatcher
         }
 
         int signature = ComputeGpuDrivenBonePaletteSignature(_gpuDrivenPaletteBindings);
+        PhysicsChainOutputPage? outputPage = _writingOutputPageIndex >= 0
+            ? _outputPages[_writingOutputPageIndex] : null;
+        if (outputPage is not null)
+        {
+            _gpuDrivenSkinPaletteBuffer = outputPage.CurrentPalette;
+            _gpuDrivenPreviousSkinPaletteBuffer = outputPage.PreviousPalette;
+        }
+        else
+        {
+            _gpuDrivenSkinPaletteBuffer = _unpagedSkinPaletteBuffer;
+            _gpuDrivenPreviousSkinPaletteBuffer = _unpagedPreviousSkinPaletteBuffer;
+        }
         bool needsRebuild = signature != _gpuDrivenBonePaletteSignature
+            || outputPage is not null && outputPage.PaletteSignature != signature
             || _gpuDrivenBonePaletteMappingsBuffer is null
             || _gpuDrivenSkinPaletteBuffer is null
             || _gpuDrivenPreviousSkinPaletteBuffer is null
@@ -1977,9 +2220,23 @@ public sealed partial class GPUPhysicsChainDispatcher
 
         if (needsRebuild)
             RebuildBatchedGpuDrivenBonePaletteBuffers(signature);
-        else
+        else if (outputPage is null)
             (_gpuDrivenSkinPaletteBuffer, _gpuDrivenPreviousSkinPaletteBuffer) =
                 (_gpuDrivenPreviousSkinPaletteBuffer, _gpuDrivenSkinPaletteBuffer);
+
+        if (outputPage is not null)
+        {
+            outputPage.CurrentPalette = _gpuDrivenSkinPaletteBuffer;
+            outputPage.PreviousPalette = _gpuDrivenPreviousSkinPaletteBuffer;
+            outputPage.PaletteSignature = signature;
+            if (!backend.EnsureGpuBufferReady(_gpuDrivenPreviousSkinPaletteBuffer!))
+                return false;
+        }
+        else
+        {
+            _unpagedSkinPaletteBuffer = _gpuDrivenSkinPaletteBuffer;
+            _unpagedPreviousSkinPaletteBuffer = _gpuDrivenPreviousSkinPaletteBuffer;
+        }
 
         if (_gpuDrivenBoneMappings.Count == 0
             || _gpuDrivenBonePaletteMappingsBuffer is null
@@ -2013,7 +2270,6 @@ public sealed partial class GPUPhysicsChainDispatcher
             ClearBatchedGpuDrivenBonePaletteSources(requests);
             return false;
         }
-        PublishBatchedGpuDrivenBonePaletteSources();
         return true;
     }
 
@@ -2045,6 +2301,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             hash.Add(binding.DrivesCompleteBonePalette);
             hash.Add(binding.BindingGeneration);
             hash.Add(binding.ParticleStateVersion);
+            hash.Add(binding.RendererBoneBufferGeneration);
         }
 
         return hash.ToHashCode();
@@ -2125,16 +2382,28 @@ public sealed partial class GPUPhysicsChainDispatcher
         if (_gpuDrivenSkinPaletteBuffer is null || _gpuDrivenPreviousSkinPaletteBuffer is null)
             return;
 
-        for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
+        lock (_registrationTransitionSync)
         {
-            GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
-            uint elementCount = Math.Max(binding.BoneMatrixElementCount, 1u);
-            binding.Renderer.SetGpuDrivenSkinPaletteSource(
-                binding.Component,
-                _gpuDrivenSkinPaletteBuffer!,
-                _gpuDrivenPreviousSkinPaletteBuffer,
-                _gpuDrivenPaletteSliceBases[bindingIndex],
-                elementCount);
+            for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
+            {
+                GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
+                if (!_outputPublicationRequestByComponent.TryGetValue(binding.Component, out GPUPhysicsChainRequest? captured)
+                    || !_registeredComponents.TryGetValue(binding.Component, out GPUPhysicsChainRequest? current)
+                    || !ReferenceEquals(captured, current))
+                    continue;
+                uint elementCount = Math.Max(binding.BoneMatrixElementCount, 1u);
+                if (!binding.Renderer.SetGpuDrivenSkinPaletteSource(
+                    binding.Component,
+                    _gpuDrivenSkinPaletteBuffer!,
+                    _gpuDrivenPreviousSkinPaletteBuffer,
+                    _gpuDrivenPaletteSliceBases[bindingIndex],
+                    elementCount,
+                    binding.RendererBoneBufferGeneration,
+                    binding.DrivesCompleteBonePalette,
+                    _publishedOutputPageIndex < 0
+                        || !_outputPages[_publishedOutputPageIndex].PaletteHistoryResetRenderers.Contains(binding.Renderer)))
+                    XREngine.Debug.LogWarning("A physics-chain palette binding used an old renderer bone set.");
+            }
         }
     }
 
@@ -2188,6 +2457,8 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     private bool ProcessDispatchGroups(IPhysicsChainComputeBackend backend)
     {
+        if (!TryBeginSimulationReceipt(out PhysicsChainSimulationReceipt receipt))
+            return RecordDispatchFailure("SimulationReceiptBusyOrUnsafe");
         _currentDispatchGroupIsBatched = ContainsBatchedRequest(_activeRequests);
         try
         {
@@ -2195,10 +2466,6 @@ public sealed partial class GPUPhysicsChainDispatcher
                 return RecordDispatchFailure("PrepareFrameArenaCapacity");
 
             DebugReadbackGpuDrivenBonePaletteIfRequested(backend);
-
-            bool canUseBatchedBonePalette = HasSingleDispatchGroup(_activeRequests);
-            if (!canUseBatchedBonePalette)
-                ClearBatchedGpuDrivenBonePaletteSources(_activeRequests);
 
             for (int groupStart = 0; groupStart < _activeRequests.Count;)
             {
@@ -2219,41 +2486,180 @@ public sealed partial class GPUPhysicsChainDispatcher
                     continue;
                 }
 
-                if (!backend.BeginBatch())
-                    return RecordDispatchFailure("BeginTransactionalBatch");
-
-                bool batchCommitted = false;
+                if (!TryAcquireInputPage(backend))
+                    return RecordDispatchFailure("InputPageBusyOrUnsafe");
                 try
                 {
-                    if (!ProcessDispatchGroup(backend, canUseBatchedBonePalette, out string failureStage))
-                        return RecordDispatchFailure(failureStage);
+                    if (!backend.BeginBatch())
+                        return RecordDispatchFailure("BeginTransactionalBatch");
 
-                    backend.CommitBatch();
-                    batchCommitted = true;
-                    Interlocked.Increment(ref s_dispatchGroupCount);
-                    for (int requestIndex = 0; requestIndex < _dispatchGroup.Count; ++requestIndex)
-                        _dispatchGroup[requestIndex].NeedsUpdate = false;
+                    bool batchCommitted = false;
+                    try
+                    {
+                        BeginTransformCatalogGroup();
+                        _currentInputPage!.HasQueuedWork = true;
+                        if (!ProcessDispatchGroup(backend, out string failureStage))
+                            return RecordDispatchFailure(failureStage);
+
+                        backend.CommitBatch();
+                        batchCommitted = true;
+                        CommitTransformCatalogGroup();
+                        for (int requestIndex = 0; requestIndex < _dispatchGroup.Count; ++requestIndex)
+                        {
+                            CompleteResidentSpatialSolveAttempt(_dispatchGroup[requestIndex]);
+                            _dispatchGroup[requestIndex].MarkSimulationInputConsumed();
+                            RecordSimulationReceipt(receipt, _dispatchGroup[requestIndex]);
+                        }
+                        _paletteOutputRefreshPending = true;
+                        Interlocked.Increment(ref s_dispatchGroupCount);
+                    }
+                    finally
+                    {
+                        if (!batchCommitted)
+                        {
+                            try
+                            {
+                                backend.RollbackBatch();
+                            }
+                            finally
+                            {
+                                RollbackTransformCatalogGroup();
+                                for (int requestIndex = 0; requestIndex < _dispatchGroup.Count; ++requestIndex)
+                                    _dispatchGroup[requestIndex].InvalidateUploadedInputs();
+                                _dynamicHeaderResourceGeneration = -1;
+                                _activeWorkResourceGeneration = -1;
+                            }
+                        }
+                    }
                 }
                 finally
                 {
-                    if (!batchCommitted)
-                        backend.RollbackBatch();
+                    FinishInputGroup();
                 }
 
                 groupStart = groupEnd;
             }
 
-            return true;
+            if (!PublishSelectiveReadbacksAfterSimulation(backend))
+                return false;
+            return PublishRegisteredOutputs(backend);
         }
         finally
         {
-            _currentDispatchGroupIsBatched = true;
+            try
+            {
+                SealInputPages(backend);
+            }
+            finally
+            {
+                SealSimulationReceipt(backend, receipt);
+                _currentDispatchGroupIsBatched = true;
+            }
         }
     }
 
+    private bool PublishRegisteredOutputs(IPhysicsChainComputeBackend backend)
+    {
+        _outputPublicationRequests.Clear();
+        _outputPublicationRequestByComponent.Clear();
+        lock (_registeredComponentsSync)
+        {
+            for (int requestIndex = 0; requestIndex < _registeredComponentSnapshot.Count; ++requestIndex)
+            {
+                GPUPhysicsChainRequest request = _registeredComponentSnapshot[requestIndex];
+                if (request.ParticleOffset >= 0 && request.Particles.Count > 0
+                    && request.Component.HasGpuDrivenRenderers)
+                {
+                    _outputPublicationRequests.Add(request);
+                    _outputPublicationRequestByComponent.Add(request.Component, request);
+                }
+            }
+        }
+        CollectBatchedGpuDrivenBonePaletteBindings(_outputPublicationRequests);
+        if (_gpuDrivenPaletteBindings.Count == 0)
+        {
+            CompleteActiveRequestUpdates();
+            _paletteOutputRefreshPending = false;
+            return true;
+        }
+
+        bool hasCompleteRenderer = false;
+        for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
+            hasCompleteRenderer |= IsCertifiedCompleteBoundsBinding(_gpuDrivenPaletteBindings[bindingIndex]);
+
+        if (hasCompleteRenderer && !TryBeginOutputPage(backend))
+            return RecordDispatchFailure("OutputPageBusyOrUnsafe");
+
+        if (!backend.BeginBatch())
+        {
+            AbandonOutputPage(backend);
+            return RecordDispatchFailure("BeginOutputPublicationBatch");
+        }
+
+        bool outputCommitted = false;
+        try
+        {
+            if (_inputPublicationBarrierPending &&
+                !TryCompletePass(backend, InputPublicationPass))
+                return RecordDispatchFailure("InputPageTransformBarrier");
+            _inputPublicationBarrierPending = false;
+            if (hasCompleteRenderer)
+                _outputPages[_writingOutputPageIndex].HasQueuedGpuWork = true;
+            if (!PublishBatchedGpuDrivenBoneMatrices(backend, _outputPublicationRequests))
+                return RecordDispatchFailure("BatchedPalettePublication");
+            if (!TryCompletePass(backend, BonePaletteCompletionPass))
+                return RecordDispatchFailure("BonePaletteCompletionBarrier");
+
+            if (hasCompleteRenderer && !CopyPreviousOutputPalette(backend,
+                _outputPages[_writingOutputPageIndex]))
+                return RecordDispatchFailure("PreviousPalettePublication");
+
+            if (hasCompleteRenderer && !PublishGpuDrivenBounds(backend, _outputPublicationRequests))
+                return RecordDispatchFailure(_gpuBoundsFailureStage);
+
+            backend.CommitBatch();
+            outputCommitted = true;
+            if (hasCompleteRenderer && !CommitOutputPage(backend))
+            {
+                AbandonOutputPage(backend);
+                return RecordDispatchFailure("OutputPageFence");
+            }
+            if (hasCompleteRenderer)
+                FinalizeGpuBoundsSceneOwnership();
+            PublishBatchedGpuDrivenBonePaletteSources();
+        }
+        finally
+        {
+            if (!outputCommitted)
+            {
+                backend.RollbackBatch();
+                AbandonOutputPage(backend);
+            }
+        }
+
+        CompleteActiveRequestUpdates();
+        _paletteOutputRefreshPending = false;
+        return true;
+    }
+
+    private void CompleteActiveRequestUpdates()
+    {
+        lock (_registeredComponentsSync)
+        {
+            for (int requestIndex = 0; requestIndex < _registeredComponentSnapshot.Count; ++requestIndex)
+                _registeredComponentSnapshot[requestIndex].AcknowledgeAcceptedInput();
+        }
+    }
+
+    private static bool IsCertifiedCompleteBoundsBinding(in GpuDrivenRendererPaletteBinding binding)
+        => binding.DrivesCompleteBonePalette
+            && RuntimeEngine.Rendering.Settings.AllowSkinning
+            && RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
+            && binding.RendererBoneBufferGeneration > 0
+            && binding.Renderer.BoneBufferGeneration == binding.RendererBoneBufferGeneration;
+
     private bool ProcessDispatchGroup(
         IPhysicsChainComputeBackend backend,
-        bool canUseBatchedBonePalette,
         out string failureStage)
     {
         if (!BuildResidentArenaBuffers(backend, _dispatchGroup))
@@ -2264,6 +2670,8 @@ public sealed partial class GPUPhysicsChainDispatcher
 
         if (TotalParticleCount > 0 && TotalTreeCount > 0)
         {
+            for (int requestIndex = 0; requestIndex < _dispatchGroup.Count; ++requestIndex)
+                ObserveResidentSpatialSolveAttempt(_dispatchGroup[requestIndex]);
             // Active IDs and command sizes are GPU-authored. CPU command topology
             // remains reset -> compact -> finalize -> fixed indirect bucket calls.
             if (!DispatchActiveWorkGeneration(backend)
@@ -2282,12 +2690,6 @@ public sealed partial class GPUPhysicsChainDispatcher
             ++_kernelSimulationBarrierCount;
         }
 
-        if (!PublishGpuDrivenBounds(backend, _dispatchGroup))
-        {
-            failureStage = _gpuBoundsFailureStage;
-            return false;
-        }
-
         if (VerboseLogging)
         {
             XREngine.Debug.Out(
@@ -2296,39 +2698,6 @@ public sealed partial class GPUPhysicsChainDispatcher
                 $"TransformsBufferHash={_transformMatricesBuffer?.GetHashCode():X}");
         }
 
-        bool batchedBonePalettePublished =
-            canUseBatchedBonePalette && PublishBatchedGpuDrivenBoneMatrices(backend, _dispatchGroup);
-        for (int requestIndex = 0; requestIndex < _dispatchGroup.Count; ++requestIndex)
-        {
-            GPUPhysicsChainRequest request = _dispatchGroup[requestIndex];
-            if (!request.Component.HasGpuDrivenRenderers || batchedBonePalettePublished)
-                continue;
-
-            if (VerboseLogging)
-            {
-                XREngine.Debug.Out(
-                    $"[GPUPhysicsChainDispatcher] ProcessDispatchGroups: Calling PublishGpuDrivenBoneMatrices. " +
-                    $"RequestIndex={requestIndex}, RequestId={request.RequestId}, ComponentHash={request.Component.GetHashCode():X}, " +
-                    $"ParticleOffset={request.ParticleOffset}, ParticleCount={request.Particles.Count}");
-            }
-
-            if (!request.Component.PublishGpuDrivenBoneMatrices(
-                    _particlesBuffer,
-                    _transformMatricesBuffer,
-                    request.ParticleOffset,
-                    backend: backend))
-            {
-                failureStage = "PerComponentPalettePublication";
-                return false;
-            }
-        }
-
-        if (!TryCompletePass(backend, BonePaletteCompletionPass))
-        {
-            failureStage = "BonePaletteCompletionBarrier";
-            return false;
-        }
-        QueueSelectiveReadbacks(backend, _dispatchGroup);
         if (!QueueAsyncReadback(backend, _dispatchGroup))
         {
             failureStage = "AsyncReadbackEnqueue";
@@ -2358,6 +2727,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         TotalColliderCount = 0;
 
         _allPerTreeParams.Clear();
+        _transformInputCatalog.Clear();
         _instanceMetadata.Clear();
         _treeWorkItems.Clear();
         _dynamicHeaderLayout.Clear();
@@ -2596,16 +2966,51 @@ public sealed partial class GPUPhysicsChainDispatcher
         }
     }
 
-    private void QueueSelectiveReadbacks(
-        IPhysicsChainComputeBackend backend,
-        IReadOnlyList<GPUPhysicsChainRequest> producingRequests)
+    private bool HasPendingSelectiveReadback()
+    {
+        foreach (IPhysicsChainReadbackCoordinator world in _readbackWorlds)
+            if (world.HasPendingTransfers)
+                return true;
+        return false;
+    }
+
+    private bool PublishSelectiveReadbacksAfterSimulation(IPhysicsChainComputeBackend backend)
+    {
+        TrackReadbackWorlds(_activeRequests);
+        bool hasActiveReadbackSource = false;
+        foreach (IPhysicsChainReadbackCoordinator world in _readbackWorlds)
+            if (world.HasActiveSources)
+            {
+                hasActiveReadbackSource = true;
+                break;
+            }
+        if (!hasActiveReadbackSource)
+            return true;
+
+        if (!backend.BeginBatch())
+            return RecordDispatchFailure("SelectiveReadbackBatch");
+        bool committed = false;
+        try
+        {
+            QueueSelectiveReadbacks(backend);
+            backend.CommitBatch();
+            committed = true;
+            return true;
+        }
+        finally
+        {
+            if (!committed)
+                backend.RollbackBatch();
+        }
+    }
+
+    private void QueueSelectiveReadbacks(IPhysicsChainComputeBackend backend)
     {
         if (_particlesBuffer is null || _transformMatricesBuffer is null || _selectiveReadbackGatherProgram is null)
             return;
         if (!EnsureProgramLinked(_selectiveReadbackGatherProgram))
             return;
 
-        TrackReadbackWorlds(producingRequests);
         PhysicsChainReadbackSourceEpoch epoch = GetReadbackSourceEpoch();
         foreach (IPhysicsChainReadbackCoordinator world in _readbackWorlds)
         {
@@ -2645,92 +3050,115 @@ public sealed partial class GPUPhysicsChainDispatcher
         if (!world.TryAcquireReadbackStagingSlot(plan, out PhysicsChainReadbackStagingLease lease, out _))
             return;
 
-        if (!TryFindRequest(plan.InstanceHandle, out GPUPhysicsChainRequest? request)
+        if (!TryFindRequest(world, plan.InstanceHandle, out GPUPhysicsChainRequest? request)
             || !TryBuildGpuGatherItems(plan, request!, _selectiveReadbackGatherItems)
-            || !EnsureSelectiveReadbackSlotResources(backend, lease.Slot, plan.ElementCount, plan.ByteCount))
+            || !EnsureSelectiveReadbackSlotResources(world, backend, lease.Slot, plan.ElementCount, plan.ByteCount,
+                out PhysicsChainSelectiveReadbackSlotResources? resources))
         {
             world.FailReadbackStagingSlot(lease, _readbackFrameIndex);
             return;
         }
 
-        PhysicsChainSelectiveReadbackSlotResources resources = _selectiveReadbackSlots[lease.Slot];
-        XRDataBuffer<PhysicsChainGpuReadbackGatherItem> itemBuffer = resources.Items!;
+        XRDataBuffer<PhysicsChainGpuReadbackGatherItem> itemBuffer = resources!.Items!;
         XRDataBuffer<uint> packedOutput = resources.PackedOutput!;
         XRDataBuffer<uint> staging = resources.MappedStaging!;
 
-        uint itemBytes = itemBuffer.WriteDataRaw(CollectionsMarshal.AsSpan(_selectiveReadbackGatherItems));
-        PushBufferUpdate(itemBuffer, fullPush: false, itemBytes);
-        RecordCpuUploadBytes(itemBytes, _currentDispatchGroupIsBatched);
+        bool committed = false;
+        resources.ProducerRenderer = backend.Renderer;
+        resources.ProducerBackend = backend;
+        resources.HasQueuedWork = true;
+        try
+        {
+            uint itemBytes = itemBuffer.WriteDataRaw(CollectionsMarshal.AsSpan(_selectiveReadbackGatherItems));
+            PushBufferUpdate(itemBuffer, fullPush: false, itemBytes);
+            RecordCpuUploadBytes(itemBytes, _currentDispatchGroupIsBatched);
 
-        _selectiveReadbackGatherProgram!.Uniform("ItemCount", (uint)_selectiveReadbackGatherItems.Count);
-        _selectiveReadbackGatherProgram.Uniform("ParticleCapacity", _particlesBuffer!.ElementCount);
-        _selectiveReadbackGatherProgram.Uniform("TransformCapacity", _transformMatricesBuffer!.ElementCount);
-        _selectiveReadbackGatherProgram.Uniform("OutputWordCapacity", packedOutput.ElementCount);
-        _selectiveReadbackGatherProgram.BindBuffer(_particlesBuffer, 0);
-        _selectiveReadbackGatherProgram.BindBuffer(_transformMatricesBuffer, 1);
-        _selectiveReadbackGatherProgram.BindBuffer(itemBuffer, 2);
-        _selectiveReadbackGatherProgram.BindBuffer(packedOutput, 3);
-        uint groups = ((uint)_selectiveReadbackGatherItems.Count + ReadbackGatherLocalSizeX - 1u) / ReadbackGatherLocalSizeX;
-        if (!TryDispatchDirect(
-                backend,
-                _selectiveReadbackGatherProgram,
-                Math.Max(groups, 1u),
-                1u,
-                1u,
-                PhysicsChainComputePassKind.SelectiveReadbackGather))
-        {
-            world.FailReadbackStagingSlot(lease, _readbackFrameIndex);
-            return;
-        }
-        if (!TryCompletePass(backend, SelectiveReadbackGatherCompletionPass))
-        {
-            world.FailReadbackStagingSlot(lease, _readbackFrameIndex);
-            return;
-        }
+            _selectiveReadbackGatherProgram!.Uniform("ItemCount", (uint)_selectiveReadbackGatherItems.Count);
+            _selectiveReadbackGatherProgram.Uniform("ParticleCapacity", _particlesBuffer!.ElementCount);
+            _selectiveReadbackGatherProgram.Uniform("TransformCapacity", _transformMatricesBuffer!.ElementCount);
+            _selectiveReadbackGatherProgram.Uniform("OutputWordCapacity", packedOutput.ElementCount);
+            _selectiveReadbackGatherProgram.BindBuffer(_particlesBuffer, 0);
+            _selectiveReadbackGatherProgram.BindBuffer(_transformMatricesBuffer, 1);
+            _selectiveReadbackGatherProgram.BindBuffer(itemBuffer, 2);
+            _selectiveReadbackGatherProgram.BindBuffer(packedOutput, 3);
+            uint groups = ((uint)_selectiveReadbackGatherItems.Count + ReadbackGatherLocalSizeX - 1u) / ReadbackGatherLocalSizeX;
+            if (!TryDispatchDirect(
+                    backend,
+                    _selectiveReadbackGatherProgram,
+                    Math.Max(groups, 1u),
+                    1u,
+                    1u,
+                    PhysicsChainComputePassKind.SelectiveReadbackGather,
+                    resources))
+            {
+                return;
+            }
+            if (!TryCompletePass(backend, SelectiveReadbackGatherCompletionPass))
+            {
+                return;
+            }
 
-        nuint exactByteCount = (nuint)plan.ByteCount;
-        var copy = new PhysicsChainComputeBufferCopy(packedOutput, 0, staging, 0, exactByteCount);
-        if (!ValidateGpuCopyRange(packedOutput, 0, staging, 0, exactByteCount, "selective-gather->mapped-staging", request!.RequestId)
-            || !TryCopyBuffer(backend, copy, "selective-gather-to-mapped-staging"))
-        {
-            world.FailReadbackStagingSlot(lease, _readbackFrameIndex);
-            return;
-        }
-        RecordGpuCopyBytes(plan.ByteCount, _currentDispatchGroupIsBatched);
-        if (!TryCompletePass(backend, SelectiveReadbackTransferCompletionPass))
-        {
-            world.FailReadbackStagingSlot(lease, _readbackFrameIndex);
-            return;
-        }
+            nuint exactByteCount = (nuint)plan.ByteCount;
+            var copy = new PhysicsChainComputeBufferCopy(packedOutput, 0, staging, 0, exactByteCount, resources);
+            if (!ValidateGpuCopyRange(packedOutput, 0, staging, 0, exactByteCount, "selective-gather->mapped-staging", request!.RequestId)
+                || !TryCopyBuffer(backend, copy, "selective-gather-to-mapped-staging"))
+            {
+                return;
+            }
+            RecordGpuCopyBytes(plan.ByteCount, _currentDispatchGroupIsBatched);
+            if (!TryCompletePass(backend, SelectiveReadbackTransferCompletionPass))
+            {
+                return;
+            }
 
-        XRGpuFence? gpuFence = backend.InsertFence();
-        if (gpuFence is null)
-        {
-            world.FailReadbackStagingSlot(lease, _readbackFrameIndex);
-            return;
-        }
+            XRGpuFence? gpuFence = backend.InsertFence();
+            if (gpuFence is null)
+            {
+                return;
+            }
+            resources.CompletionFence = gpuFence;
 
-        PhysicsChainMappedReadbackStagingSource source = resources.StagingSource;
-        PhysicsChainGpuReadbackFence fence = resources.Fence;
-        source.Reset(backend, staging, plan.ByteCount);
-        fence.Reset(gpuFence);
-        if (!source.IsValid
-            || !world.CommitReadbackStagingSlot(lease, source, fence, _readbackFrameIndex, out _))
+            PhysicsChainMappedReadbackStagingSource source = resources.StagingSource;
+            PhysicsChainGpuReadbackFence fence = resources.Fence;
+            source.Reset(backend, staging, plan.ByteCount);
+            fence.Reset(gpuFence, ownsFence: false);
+            if (!source.IsValid
+                || !world.CommitReadbackStagingSlot(lease, source, fence, _readbackFrameIndex, out _))
+            {
+                source.Dispose();
+                fence.Dispose();
+            }
+            else
+                committed = true;
+        }
+        finally
         {
-            source.Dispose();
-            fence.Dispose();
-            world.FailReadbackStagingSlot(lease, _readbackFrameIndex);
+            if (!committed)
+            {
+                if (resources.CompletionFence is null)
+                {
+                    try { resources.CompletionFence = backend.InsertFence(); }
+                    catch (Exception exception) { XREngine.Debug.LogException(exception); }
+                    if (resources.CompletionFence is null)
+                        resources.Quarantined = true;
+                }
+                resources.StagingSource.Dispose();
+                resources.Fence.Dispose();
+                world.FailReadbackStagingSlot(lease, _readbackFrameIndex);
+            }
         }
     }
 
-    private bool TryFindRequest(PhysicsChainRuntimeHandle handle, out GPUPhysicsChainRequest? request)
+    private bool TryFindRequest(IPhysicsChainReadbackCoordinator world,
+        PhysicsChainRuntimeHandle handle, out GPUPhysicsChainRequest? request)
     {
         lock (_registeredComponentsSync)
         {
             for (int i = 0; i < _registeredComponentSnapshot.Count; ++i)
             {
                 GPUPhysicsChainRequest candidate = _registeredComponentSnapshot[i];
-                if (candidate.Component.RuntimeHandle == handle)
+                if (ReferenceEquals(candidate.Component.ReadbackCoordinator, world)
+                    && candidate.Component.RuntimeHandle == handle)
                 {
                     request = candidate;
                     return true;
@@ -2742,12 +3170,26 @@ public sealed partial class GPUPhysicsChainDispatcher
         return false;
     }
 
-    private static bool TryBuildGpuGatherItems(
+    private bool TryBuildGpuGatherItems(
         PhysicsChainReadbackGatherPlan plan,
         GPUPhysicsChainRequest request,
         List<PhysicsChainGpuReadbackGatherItem> destination)
     {
         destination.Clear();
+        PhysicsChainRenderInputPacket input = request.AcceptedInput;
+        if (!input.HasData || !input.AffineInputValid || request.ParticleOffset < 0
+            || request.Particles.Count == 0 || request.PendingArenaAllocationChange || request.HasPendingResidentRetry
+            || (long)request.ParticleOffset + request.Particles.Count > int.MaxValue
+            || request.UploadedArenaAllocationGeneration != request.ArenaAllocationGeneration
+            || request.UploadedParticleStateVersion != request.ParticleStateVersion
+            || request.UploadedStaticDataVersion != request.StaticDataVersion
+            || request.UploadedTransformDataVersion != request.TransformDataSignature
+            || plan.InstanceSourceGeneration != input.ReadbackSourceGeneration
+            || plan.InstanceSourceGeneration != request.Component.ReadbackSourceGeneration
+            || _particlesBuffer is null || _transformMatricesBuffer is null
+            || (ulong)request.ParticleOffset + (uint)request.Particles.Count > _particlesBuffer.ElementCount
+            || (ulong)request.ParticleOffset + (uint)request.Transforms.Count > _transformMatricesBuffer.ElementCount)
+            return false;
         destination.EnsureCapacity(plan.ElementCount);
         ReadOnlySpan<PhysicsChainReadbackGatherItem> items = plan.Items.Span;
         for (int i = 0; i < items.Length; ++i)
@@ -2760,13 +3202,32 @@ public sealed partial class GPUPhysicsChainDispatcher
             if ((!isParticle && !isTransform)
                 || item.SourceIndex < 0
                 || item.DestinationByteOffset < 0
+                || item.ByteCount <= 0 || item.DestinationByteOffset > plan.ByteCount - item.ByteCount
                 || (item.DestinationByteOffset & 3) != 0
                 || (item.ByteCount & 3) != 0)
                 return false;
 
             int sourceCount = isParticle ? request.Particles.Count : request.Transforms.Count;
-            if (item.SourceIndex >= sourceCount || request.ParticleOffset > int.MaxValue - item.SourceIndex)
+            int expectedBytes = isParticle ? 6 * sizeof(float) : 12 * sizeof(float);
+            if (item.ByteCount != expectedBytes || item.SourceIndex >= sourceCount
+                || request.ParticleOffset > int.MaxValue - item.SourceIndex
+                || !isParticle && (input.Bones.Length != sourceCount || request.Particles.Count != sourceCount))
                 return false;
+
+            int childIndex = -1;
+            Vector3 restDirection = Vector3.Zero;
+            if (isTransform)
+            {
+                for (int boneIndex = 0; boneIndex < input.Bones.Length; ++boneIndex)
+                    if (input.Bones[boneIndex].ParentIndex == item.SourceIndex)
+                    {
+                        childIndex = boneIndex;
+                        restDirection = input.Bones[boneIndex].RestLocalDirection;
+                        break;
+                    }
+                if (!float.IsFinite(restDirection.X) || !float.IsFinite(restDirection.Y) || !float.IsFinite(restDirection.Z))
+                    return false;
+            }
 
             destination.Add(new PhysicsChainGpuReadbackGatherItem
             {
@@ -2774,6 +3235,8 @@ public sealed partial class GPUPhysicsChainDispatcher
                 SourceIndex = (uint)(request.ParticleOffset + item.SourceIndex),
                 DestinationWordOffset = (uint)(item.DestinationByteOffset / sizeof(uint)),
                 WordCount = (uint)(item.ByteCount / sizeof(uint)),
+                ChildSourceIndex = childIndex < 0 ? -1 : checked(request.ParticleOffset + childIndex),
+                RestLocalDirection = restDirection,
             });
         }
 
@@ -2781,15 +3244,25 @@ public sealed partial class GPUPhysicsChainDispatcher
     }
 
     private bool EnsureSelectiveReadbackSlotResources(
+        IPhysicsChainReadbackCoordinator world,
         IPhysicsChainComputeBackend backend,
         int slotIndex,
         int itemCount,
-        int byteCount)
+        int byteCount,
+        out PhysicsChainSelectiveReadbackSlotResources? slot)
     {
-        if ((uint)slotIndex >= (uint)_selectiveReadbackSlots.Length || itemCount <= 0 || byteCount <= 0)
+        slot = null;
+        if ((uint)slotIndex >= SelectiveReadbackSlotCount || itemCount <= 0 || byteCount <= 0)
             return false;
 
-        PhysicsChainSelectiveReadbackSlotResources slot = _selectiveReadbackSlots[slotIndex];
+        if (!_selectiveReadbackWorldResources.TryGetValue(world, out PhysicsChainSelectiveReadbackWorldResources? bank))
+        {
+            bank = new PhysicsChainSelectiveReadbackWorldResources(SelectiveReadbackSlotCount);
+            _selectiveReadbackWorldResources.Add(world, bank);
+        }
+        slot = bank.Slots[slotIndex];
+        if (!slot.TryBeginReuse(backend))
+            return RecordReadbackEnqueueFailure("SelectiveReadbackSlotBusyOrUnsafe");
         uint requiredItems = (uint)itemCount;
         uint requiredWords = (uint)((byteCount + sizeof(uint) - 1) / sizeof(uint));
         EnsureSelectiveBufferCapacity(ref slot.Items, $"PhysicsChainReadbackItems{slotIndex}", requiredItems, EBufferUsage.StreamDraw);
@@ -2845,7 +3318,21 @@ public sealed partial class GPUPhysicsChainDispatcher
                 _readbackWorldsToRetire.Add(world);
 
         for (int i = 0; i < _readbackWorldsToRetire.Count; ++i)
-            _readbackWorlds.Remove(_readbackWorldsToRetire[i]);
+        {
+            IPhysicsChainReadbackCoordinator world = _readbackWorldsToRetire[i];
+            _readbackWorlds.Remove(world);
+            if (_selectiveReadbackWorldResources.Remove(world, out PhysicsChainSelectiveReadbackWorldResources? bank))
+                _retiredSelectiveReadbackWorldResources.Add(bank);
+        }
+
+        for (int index = _retiredSelectiveReadbackWorldResources.Count - 1; index >= 0; --index)
+        {
+            PhysicsChainSelectiveReadbackWorldResources bank = _retiredSelectiveReadbackWorldResources[index];
+            if (!bank.CanRetire())
+                continue;
+            bank.Dispose();
+            _retiredSelectiveReadbackWorldResources.RemoveAt(index);
+        }
     }
 
     private PhysicsChainReadbackSourceEpoch GetReadbackSourceEpoch()
@@ -2976,8 +3463,14 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     public void Reset()
     {
+        RetireSimulationReceipts();
+        RetireInputPages();
+        RetireOutputPages();
+        _transformInputCatalog.Clear();
+        _outputPublicationRequestByComponent.Clear();
         _activeRequests.Clear();
         _dispatchGroup.Clear();
+        _paletteOutputRefreshPending = false;
         _backendEvaluated = false;
         _evaluatedRenderer = null;
         _computeBackend = null;
@@ -3018,6 +3511,7 @@ public sealed partial class GPUPhysicsChainDispatcher
     public void Dispose()
     {
         Reset();
+        DisposeInputPages();
 
         _particlesBuffer?.Dispose();
         _particleStaticBuffer?.Dispose();
@@ -3030,11 +3524,10 @@ public sealed partial class GPUPhysicsChainDispatcher
         _activeWorkCounterBuffer?.Dispose();
         _indirectDispatchArgumentBuffer?.Dispose();
         _gpuDrivenBonePaletteMappingsBuffer?.Dispose();
-        _gpuDrivenSkinPaletteBuffer?.Dispose();
+        DisposeUnpagedPaletteBuffers();
         DisposeSpecializedKernelResources();
         DisposeGpuBoundsResources();
         DisposeGlobalDebugResources();
-        _gpuDrivenPreviousSkinPaletteBuffer?.Dispose();
         _gpuDrivenBoneInvBindMatricesBuffer?.Dispose();
         _particlesBuffer = null;
         _particleStaticBuffer = null;
@@ -3066,8 +3559,12 @@ public sealed partial class GPUPhysicsChainDispatcher
 
         while (_readbackBufferPool.Count > 0)
             _readbackBufferPool.Pop().Dispose();
-        for (int i = 0; i < _selectiveReadbackSlots.Length; ++i)
-            _selectiveReadbackSlots[i].Dispose();
+        foreach (PhysicsChainSelectiveReadbackWorldResources bank in _selectiveReadbackWorldResources.Values)
+            bank.Dispose();
+        _selectiveReadbackWorldResources.Clear();
+        foreach (PhysicsChainSelectiveReadbackWorldResources bank in _retiredSelectiveReadbackWorldResources)
+            bank.Dispose();
+        _retiredSelectiveReadbackWorldResources.Clear();
 
         _mainPhysicsProgram?.Destroy();
         _activeWorkProgram?.Destroy();
@@ -3098,30 +3595,153 @@ public sealed partial class GPUPhysicsChainDispatcher
 /// <summary>
 /// Represents a registered GPU physics chain component's data for batched processing.
 /// </summary>
-public class GPUPhysicsChainRequest(IPhysicsChainComputeSource component)
+public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component)
 {
     private static int s_nextRequestId;
 
     public IPhysicsChainComputeSource Component { get; } = component;
     public int RequestId { get; } = Interlocked.Increment(ref s_nextRequestId);
+    internal readonly object InputGate = new();
+    internal PhysicsChainRenderInputPacket PendingInput = new();
+    internal PhysicsChainRenderInputPacket AcceptedInput = new();
+    internal ulong NextInputSequence;
+    internal ulong AcknowledgedInputSequence;
+    private ulong _simulationInputSequence;
+    private bool _retryAcceptedInput;
+    private int _residentInputsRetryPending;
+    private ulong _reportedInvalidAffineInputSequence;
 
-    // Per-component particle data — backed by request-owned snapshot arrays.
-    // SubmitData copies from the component's live lists into these arrays so the
-    // render thread never holds references to mutable collections that can be
-    // cleared during component deactivation on the update thread.
+    /// <summary>Accepts one complete pending input without exposing producer writes.</summary>
+    internal bool TryAcceptInput(out ulong rejectedSequence,
+        out int invalidTransformIndex, out bool transformCountMismatch)
+    {
+        rejectedSequence = 0u;
+        invalidTransformIndex = -1;
+        transformCountMismatch = false;
+        lock (InputGate)
+        {
+            if (PendingInput.HasData && PendingInput.Sequence > AcceptedInput.Sequence &&
+                !PendingInput.AffineInputValid)
+            {
+                if (_reportedInvalidAffineInputSequence != PendingInput.Sequence)
+                {
+                    _reportedInvalidAffineInputSequence = PendingInput.Sequence;
+                    rejectedSequence = PendingInput.Sequence;
+                    invalidTransformIndex = PendingInput.FirstInvalidAffineInputIndex;
+                    transformCountMismatch = PendingInput.Transforms.Length != PendingInput.Particles.Length;
+                }
+                return false;
+            }
+            if (Interlocked.Exchange(ref _residentInputsRetryPending, 0) != 0)
+            {
+                InvalidateUploadedInputs();
+                _retryAcceptedInput = true;
+                NeedsUpdate = true;
+            }
+            if (!NeedsUpdate)
+                return false;
+
+            if (PendingInput.HasData && PendingInput.Sequence > AcceptedInput.Sequence)
+            {
+                (PendingInput, AcceptedInput) = (AcceptedInput, PendingInput);
+                PendingInput.CopySchedulingFrom(AcceptedInput);
+                ApplyAcceptedInput();
+            }
+
+            return AcceptedInput.HasData &&
+                (_retryAcceptedInput || AcceptedInput.Sequence > _simulationInputSequence);
+        }
+    }
+
+    /// <summary>Acknowledges only the input generation used by this dispatch.</summary>
+    internal void AcknowledgeAcceptedInput()
+    {
+        lock (InputGate)
+        {
+            AcknowledgedInputSequence = AcceptedInput.Sequence;
+            NeedsUpdate = PendingInput.Sequence > AcknowledgedInputSequence;
+        }
+    }
+
+    /// <summary>Consumes simulation once even if output publication must wait.</summary>
+    internal void MarkSimulationInputConsumed()
+    {
+        lock (InputGate)
+        {
+            _simulationInputSequence = AcceptedInput.Sequence;
+            _retryAcceptedInput = false;
+        }
+    }
+
+    /// <summary>Retries resident inputs after their submitted native work fails.</summary>
+    internal void RetryAcceptedInput()
+        => Interlocked.Exchange(ref _residentInputsRetryPending, 1);
+
+    internal bool HasPendingResidentRetry => Volatile.Read(ref _residentInputsRetryPending) != 0;
+
+    private void ApplyAcceptedInput()
+    {
+        PhysicsChainRenderInputPacket input = AcceptedInput;
+        bool headerChanged = !DynamicHeaderInitialized ||
+            DeltaTime != input.DeltaTime || ObjectScale != input.ObjectScale || Weight != input.Weight ||
+            Force != input.Force || Gravity != input.Gravity || ObjectMove != input.ObjectMove ||
+            FreezeAxis != input.FreezeAxis || LoopCount != input.LoopCount || TimeVar != input.TimeVar ||
+            Colliders.Count != input.Colliders.Length || Trees.Count != input.Trees.Length;
+        if (headerChanged)
+            ++DynamicHeaderVersion;
+
+        bool schedulingChanged = !SchedulingMetadataInitialized ||
+            Enabled != input.Enabled || Relevant != input.Relevant || SleepState != input.SleepState ||
+            QualityTier != input.QualityTier || Cadence != input.Cadence || Phase != input.Phase ||
+            FeatureMask != input.FeatureMask || LoopCount != input.LoopCount;
+        if (schedulingChanged)
+            ++SchedulingMetadataVersion;
+
+        Particles = input.Particles;
+        ParticleStaticData = input.ParticleStaticData;
+        Trees = input.Trees;
+        Transforms = input.Transforms;
+        Colliders = input.Colliders;
+        DeltaTime = input.DeltaTime;
+        ObjectScale = input.ObjectScale;
+        Weight = input.Weight;
+        Force = input.Force;
+        Gravity = input.Gravity;
+        ObjectMove = input.ObjectMove;
+        FreezeAxis = input.FreezeAxis;
+        LoopCount = input.LoopCount;
+        TimeVar = input.TimeVar;
+        UpdateMode = input.UpdateMode;
+        DispatchIsolationKey = input.DispatchIsolationKey;
+        ExecutionGeneration = input.ExecutionGeneration;
+        SubmissionId = input.SubmissionId;
+        StaticDataVersion = input.StaticDataVersion;
+        TreeDataVersion = input.TreeDataVersion;
+        ParticleStateVersion = input.ParticleStateVersion;
+        TransformDataSignature = input.TransformDataSignature;
+        ColliderDataSignature = input.ColliderDataSignature;
+        BoneStructureSignature = input.BoneStructureSignature;
+        SpatialInput = input.SpatialInput;
+        LastKnownParticleCount = input.Particles.Length;
+        SkipUpdate = input.LoopCount <= 0;
+        Enabled = input.Enabled;
+        Relevant = input.Relevant;
+        SleepState = input.SleepState;
+        QualityTier = input.QualityTier;
+        Cadence = input.Cadence;
+        Phase = input.Phase;
+        FeatureMask = input.FeatureMask;
+        SchedulingMetadataInitialized = true;
+        DynamicHeaderInitialized = true;
+    }
+
+    // These views point only to the accepted bank during a render dispatch.
     public IReadOnlyList<GPUPhysicsChainDispatcher.GPUParticleData> Particles { get; set; } = [];
     public IReadOnlyList<GPUPhysicsChainDispatcher.GPUParticleStaticData> ParticleStaticData { get; set; } = [];
     public IReadOnlyList<GPUPhysicsChainDispatcher.GPUParticleTreeData> Trees { get; set; } = [];
     public IReadOnlyList<Matrix4x4> Transforms { get; set; } = [];
     public IReadOnlyList<GPUPhysicsChainDispatcher.GPUColliderData> Colliders { get; set; } = [];
 
-    // Snapshot backing arrays — grow-only; shared between SubmitData (write) and
-    // the IReadOnlyList properties above (read). See SnapshotInto<T>.
-    internal GPUPhysicsChainDispatcher.GPUParticleData[] _particlesBacking = [];
-    internal GPUPhysicsChainDispatcher.GPUParticleStaticData[] _particleStaticBacking = [];
-    internal GPUPhysicsChainDispatcher.GPUParticleTreeData[] _treesBacking = [];
-    internal Matrix4x4[] _transformsBacking = [];
-    internal GPUPhysicsChainDispatcher.GPUColliderData[] _collidersBacking = [];
     private GPUPhysicsChainDispatcher.GPUParticleStaticData[] _adjustedParticleStaticBacking = [];
 
     // Per-component parameters
@@ -3143,6 +3763,8 @@ public class GPUPhysicsChainRequest(IPhysicsChainComputeSource component)
     public int ParticleStateVersion;
     public int TransformDataSignature;
     public int ColliderDataSignature;
+    public int BoneStructureSignature;
+    public PhysicsChainGpuSpatialInput SpatialInput;
     public bool NeedsUpdate;
     public bool SkipUpdate;
     public uint Enabled = 1u;
@@ -3192,7 +3814,18 @@ public class GPUPhysicsChainRequest(IPhysicsChainComputeSource component)
         ColliderOffset = source.ColliderOffset;
         ColliderArenaCapacity = source.ColliderArenaCapacity;
         ArenaAllocationGeneration = source.ArenaAllocationGeneration;
+        ResidentParticleBounds = source.ResidentParticleBounds;
+        ResidentBasisStretch = source.ResidentBasisStretch;
+        ResidentSpatialValid = source.ResidentSpatialValid;
+        ResidentSpatialInitialized = source.ResidentSpatialInitialized;
 
+        InvalidateUploadedInputs();
+        PendingArenaAllocationChange = ParticleOffset >= 0 || ColliderArenaCapacity > 0;
+    }
+
+    /// <summary>Requires a full input publication after uncertain native execution.</summary>
+    internal void InvalidateUploadedInputs()
+    {
         UploadedArenaAllocationGeneration = int.MinValue;
         UploadedParticleStateVersion = int.MinValue;
         UploadedStaticDataVersion = int.MinValue;
@@ -3206,7 +3839,6 @@ public class GPUPhysicsChainRequest(IPhysicsChainComputeSource component)
         UploadedHeaderTreeVersion = int.MinValue;
         UploadedHeaderArenaGeneration = int.MinValue;
         UploadedHeaderColliderCount = int.MinValue;
-        PendingArenaAllocationChange = ParticleOffset >= 0 || ColliderArenaCapacity > 0;
     }
 
     internal Span<GPUPhysicsChainDispatcher.GPUParticleStaticData> GetAdjustedStaticData()

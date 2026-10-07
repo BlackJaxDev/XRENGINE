@@ -99,12 +99,14 @@ namespace XREngine.Rendering.Commands
             uint lodCount)
         {
             GPUIndirectRenderFlags flags = GPUIndirectRenderFlags.None;
+            if (!snapshot.BasePassEnabled)
+                flags |= GPUIndirectRenderFlags.PrimaryDisabled;
             if (material.IsTransparentLike())
                 flags |= GPUIndirectRenderFlags.Transparent;
 
             if (snapshot.Owner.Is3D)
             {
-                if (snapshot.Owner.CastsShadows)
+                if (snapshot.Owner.CastsShadows && snapshot.ShadowPassEnabled)
                     flags |= GPUIndirectRenderFlags.CastShadow;
                 if (snapshot.Owner.ReceivesShadows)
                     flags |= GPUIndirectRenderFlags.ReceiveShadows;

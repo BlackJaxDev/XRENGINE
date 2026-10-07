@@ -30,7 +30,22 @@ layout(location = 1) flat out uint ShadowMaterialDenseIndex;
 
 uint XR_ADV_VisibilityPayloadIndex()
 {
-    return gl_BaseInstanceARB;
+    if ((XR_ADV_DirectionalShadowPush.producerAndOrigin &
+            XR_ADV_VIS_PRODUCER_MASK) != XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED)
+        return gl_BaseInstanceARB;
+    uint instanceIndex = uint(gl_InstanceIndex);
+    if (gl_BaseInstanceARB >=
+            uint(XR_ADV_VisibilityMeshPayloads.records.length()))
+        return XR_ADV_VIS_INVALID;
+    uint firstPayload =
+        XR_ADV_VisibilityMeshPayloads.records[gl_BaseInstanceARB];
+    if (firstPayload >= uint(XR_ADV_VisibilityPayloads.records.length()))
+        return XR_ADV_VIS_INVALID;
+    if (XR_ADV_VisibilityPayloads.records[firstPayload].instanceCount > 1u)
+        return firstPayload;
+    return instanceIndex < uint(XR_ADV_VisibilityMeshPayloads.records.length())
+        ? XR_ADV_VisibilityMeshPayloads.records[instanceIndex]
+        : XR_ADV_VIS_INVALID;
 }
 
 void XR_ADV_RejectShadowVertex()
@@ -98,6 +113,40 @@ void main()
 
     vec3 localPosition = Position;
     vec2 localTexCoord0 = TexCoord0;
+    uint selectedVertex = uint(XR_ADV_VERTEX_INDEX);
+    if (producer == XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED)
+    {
+        uint geometryDense = XR_ADV_ResolveVisibilityHandle(
+            payload.geometry,
+            VisibilityGeometryLookupSegment,
+            XR_ADV_DIAGNOSTIC_MESH);
+        if (geometryDense == XR_ADV_INVALID_DENSE_INDEX)
+        {
+            XR_ADV_RejectShadowVertex();
+            return;
+        }
+        uint vertexBase = deformed
+            ? preparedDeformation.currentVertexOffset
+            : XR_ADV_LoadGeometry(geometryDense).currentVertexData.elementOffset;
+        if (vertexBase > 0xffffffffu - selectedVertex)
+        {
+            XR_ADV_RejectShadowVertex();
+            return;
+        }
+        selectedVertex += vertexBase;
+        if (selectedVertex >= (deformed
+            ? uint(XR_ADV_VisibilityCurrentVertices.records.length())
+            : uint(XR_ADV_VisibilityStaticVertices.records.length())))
+        {
+            XR_ADV_RejectShadowVertex();
+            return;
+        }
+        XRAdvancedVisibilityPackedVertex vertex = deformed
+            ? XR_ADV_VisibilityCurrentVertices.records[selectedVertex]
+            : XR_ADV_VisibilityStaticVertices.records[selectedVertex];
+        localPosition = vertex.position;
+        localTexCoord0 = unpackHalf2x16(vertex.texCoord0Half);
+    }
 #if defined(XR_ADV_VIS_VERTEX_DISPLACEMENT)
     localPosition += XR_ADV_ApplyVisibilityVertexDisplacement(
         payload,
@@ -110,7 +159,7 @@ void main()
     {
         // Deformed vertices are fetched through the same packed arena offsets
         // as the visibility raster; reject vertices outside the prepared range.
-        uint currentVertex = uint(XR_ADV_VERTEX_INDEX);
+        uint currentVertex = selectedVertex;
         uint currentEnd =
             preparedDeformation.currentVertexOffset +
             preparedDeformation.vertexCount;

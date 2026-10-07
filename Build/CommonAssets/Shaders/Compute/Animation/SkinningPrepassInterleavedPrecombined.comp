@@ -279,7 +279,7 @@ void applySkinning(inout vec3 position, inout vec3 normal, inout vec3 tangent, u
     if (totalWeight <= 0.0001f)
         return;
 
-    position = skinnedPos;
+    position = skinnedPos / totalWeight;
     if (hasNormals != 0)
         normal = skinnedNormal;
     if (hasTangents != 0)

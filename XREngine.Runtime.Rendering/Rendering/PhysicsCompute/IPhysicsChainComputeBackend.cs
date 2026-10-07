@@ -21,6 +21,16 @@ public interface IPhysicsChainComputeBackend
         uint groupsY,
         uint groupsZ,
         PhysicsChainComputePassKind passKind);
+    PhysicsChainComputeEnqueueStatus TryDispatchDirect(
+        XRRenderProgram program,
+        uint groupsX,
+        uint groupsY,
+        uint groupsZ,
+        PhysicsChainComputePassKind passKind,
+        IRenderResourceLeaseOwner? authoringLease)
+        => authoringLease is null
+            ? TryDispatchDirect(program, groupsX, groupsY, groupsZ, passKind)
+            : PhysicsChainComputeEnqueueStatus.Unsupported;
     PhysicsChainComputeEnqueueStatus TryCopyBuffer(in PhysicsChainComputeBufferCopy copy);
     PhysicsChainComputeEnqueueStatus TryDispatchIndirect(
         XRRenderProgram program,

@@ -424,7 +424,7 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 			usesDynamicRenderingIdentity ? dynamicRenderingFormats : default,
 			hasTopology ? pipeline.Topology : default,
 			hasProgram ? pipeline.ProgramPipelineHash : 0UL,
-			hasProgram ? pipeline.ProgramLinkGeneration : 0UL,
+			hasProgram ? pipeline.InterfaceGeneration : 0UL,
 			hasVertexLayout ? pipeline.VertexLayoutHash : 0UL,
 			hasProgram ? pipeline.DescriptorLayoutHash : 0UL,
 			usesDescriptorHeap,

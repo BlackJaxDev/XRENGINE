@@ -140,6 +140,7 @@ Code todos list only open implementation items. Checks are in the [testing docs]
 - [todo/physics/box3d-backend-integration-todo.md](todo/physics/box3d-backend-integration-todo.md)
 - [todo/physics/jolt-character-controller-correctness-todo.md](todo/physics/jolt-character-controller-correctness-todo.md)
 - [todo/physics/physics-chain-thousands-scale-optimization-todo.md](todo/physics/physics-chain-thousands-scale-optimization-todo.md)
+- [Physics chain scale implementation status](progress/physics/physics-chain-scale-status-2026-10-07.md)
 
 ### platform
 

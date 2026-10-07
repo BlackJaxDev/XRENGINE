@@ -73,6 +73,15 @@ layout(std430, binding = 4) readonly buffer DebugItemBuffer
     DebugItem DebugItems[];
 };
 
+layout(std430, binding = 5) writeonly buffer DebugIndirectArguments
+{
+    uint IndexCount;
+    uint InstanceCount;
+    uint FirstIndex;
+    int VertexOffset;
+    uint FirstInstance;
+};
+
 uniform int ParticleCount;
 uniform vec4 PointColor;
 uniform vec4 LineColor;
@@ -89,6 +98,14 @@ vec3 resolveRenderPosition(ParticleState particle, float alpha, int mode)
 void main()
 {
     uint localIndex = gl_GlobalInvocationID.x;
+    if (localIndex == 0u)
+    {
+        IndexCount = 1u;
+        InstanceCount = uint(ParticleCount);
+        FirstIndex = 0u;
+        VertexOffset = 0;
+        FirstInstance = 0u;
+    }
     if (localIndex >= uint(ParticleCount))
         return;
 

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using XREngine.Rendering.Compute;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 
@@ -12,7 +13,7 @@ namespace XREngine.Rendering;
 /// records. It is pipeline-neutral and intentionally owns no output textures
 /// or per-view temporal histories.
 /// </summary>
-public sealed class AdvancedPreparationExtractor : IDisposable
+public sealed partial class AdvancedPreparationExtractor : IDisposable
 {
     private readonly AdvancedPreparationOptions _options;
     private readonly AdvancedAnimationScheduler _animationScheduler;
@@ -118,6 +119,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             options.MaximumIndirectRanges);
         _visibilityCandidates =
             new AdvancedVisibilityCandidate[options.MaximumDraws];
+        _gpuBoundsRoutes = new AdvancedGpuBoundsPatchRoute[options.MaximumDraws];
         _visibilityPayloads =
             new AdvancedVisibilityPayload[options.MaximumDraws];
         _visibilityPlans =
@@ -204,10 +206,19 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         in RenderWorldSnapshot world,
         RenderFrameViewSet? viewSet,
         EAdvancedPreparationConsumer consumers)
+        => Build(world, viewSet, consumers,
+            RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
+
+    public AdvancedPreparationPublication Build(
+        in RenderWorldSnapshot world,
+        RenderFrameViewSet? viewSet,
+        EAdvancedPreparationConsumer consumers,
+        EMeshSubmissionStrategy submissionStrategy)
     {
         LastExtractionTicks = 0;
         LastIndirectPlanningTicks = 0;
         LastInitialViewPlanningTicks = 0;
+        ReleaseGpuBoundsPublication();
         // Do not let deferred or failed preparation leave consumers observing
         // arrays tied to the preceding world frame.
         AdvanceVisibilityContentGeneration();
@@ -279,6 +290,10 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         _drawCount = checked((int)Math.Min(
             submissionCount,
             (uint)_options.MaximumDraws));
+        if (!TryCaptureGpuBoundsPublication(publicationSnapshot, _drawCount))
+            return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
+                "The covered draw bounds output page is unavailable.");
+        _gpuDeformation.SetPhysicsOutputSource(_gpuBoundsDispatcher, _gpuBoundsPage.Token);
         if (!TryPrepareCanonicalDeformationMeshes(publicationSnapshot, _drawCount))
             return CreateDeferredPublication(
                 world,
@@ -303,6 +318,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
 
         long extractionStarted = Stopwatch.GetTimestamp();
         _meshPreparationPending = false;
+        _physicsOutputMismatch = false;
         for (int commandIndex = 0;
              commandIndex < _drawCount;
              commandIndex++)
@@ -313,6 +329,9 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 frameId,
                 world.GpuScene.AdvancedScenePublication.Publication.FrameGeneration);
         }
+        if (_physicsOutputMismatch)
+            return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
+                "The covered draw palette or authored envelope does not match its retained bounds page.");
         if (_meshPreparationPending)
             return CreateDeferredPublication(
                 world,
@@ -356,8 +375,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             countBufferBase: 0u,
             argumentStride: 20u,
             countStride: 4u,
-            submissionStrategy:
-                RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
+            submissionStrategy: submissionStrategy);
         LastIndirectPlanningTicks = Stopwatch.GetTimestamp() - indirectPlanningStarted;
         _visibilityPlanCount = 0;
         if (viewSet is RenderFrameViewSet initialViews)
@@ -549,7 +567,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             {
                 RenderFrameViewDescriptor view = views.GetView(viewIndex);
                 if (view.ViewId >= 64u ||
-                    !SphereIntersectsView(candidate.BoundsSphere, in view))
+                    ((candidate.Flags & EAdvancedVisibilityPreparationFlags.GpuOwnedBounds) == 0u &&
+                     !SphereIntersectsView(candidate.BoundsSphere, in view)))
                 {
                     continue;
                 }
@@ -704,6 +723,28 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 ? EAdvancedVisibilityPreparationFlags.NewRecord |
                   EAdvancedVisibilityPreparationFlags.ConservativeVisible
                 : EAdvancedVisibilityPreparationFlags.None;
+        if (deformationSource.GpuBoundsSource is { } boundsSource)
+        {
+            visibilityFlags |= EAdvancedVisibilityPreparationFlags.GpuOwnedBounds;
+            _gpuBoundsRoutes[commandIndex] = AdvancedGpuBoundsPatchRoute.Create(
+                in draw, checked((uint)commandIndex), in boundsSource, _gpuBoundsPage.ProducerEpoch);
+            if (renderer is not null && mesh is not null && _gpuBoundsDispatcher is not null &&
+                _gpuBoundsDispatcher.TryCaptureRendererOutputState(_gpuBoundsPage.Token,
+                    in boundsSource, mesh, out PhysicsChainGpuRendererOutputState certifiedState,
+                    out _) &&
+                !PhysicsChainMaterialBoundsCertificate.Covers(
+                        certifiedState.MaterialPadding, certifiedState.MaterialBoundsSupported,
+                        deformationSource.MaterialSnapshot))
+            {
+                // The bounds patch rejects this route and clears its candidate view mask.
+                _gpuBoundsRoutes[commandIndex] = _gpuBoundsRoutes[commandIndex] with
+                {
+                    BoundsSlot = uint.MaxValue,
+                };
+            }
+        }
+        else
+            _gpuBoundsRoutes[commandIndex] = default;
         publication.Geometry.TryGet(geometry, out AdvancedGeometryRecord canonicalGeometry);
         BoundsGpu commandBounds = new()
         {
@@ -756,6 +797,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 offsets,
                 deformationMeshletRange,
                 frameId,
+                deformationSource.GpuBoundsSource,
                 out deformationSlice,
                 out AdvancedGpuDeformationMeshSlice gpuMeshSlice,
                 out AdvancedGpuDeformationPoseSlice gpuPoseSlice,
@@ -858,6 +900,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         in AdvancedSceneGeometryOffsets sourceOffsets,
         in GPUScene.GpuMeshletRange meshletRange,
         ulong frameId,
+        PhysicsChainGpuBoundsSource? boundsSource,
         out AdvancedDeformedArenaSlice slice,
         out AdvancedGpuDeformationMeshSlice gpuMeshSlice,
         out AdvancedGpuDeformationPoseSlice gpuPoseSlice,
@@ -889,15 +932,34 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             slice = default;
             return false;
         }
-        if (meshPreparation != AdvancedGpuDeformationMeshPreparationStatus.Ready ||
-            !_gpuDeformation.TryGetOrAddPose(
-                renderer,
-                mesh,
-                out gpuPoseSlice))
+        PhysicsChainGpuRendererOutputState physicsState = default;
+        ReadOnlySpan<PhysicsChainMorphWeight> retainedMorphWeights = default;
+        if (boundsSource is { } coveredSource &&
+            (_gpuBoundsDispatcher is null || _gpuBoundsPage.CurrentPaletteBuffer is null ||
+                !_gpuBoundsDispatcher.TryCaptureRendererOutputState(_gpuBoundsPage.Token,
+                    in coveredSource, mesh, out physicsState, out retainedMorphWeights)))
         {
+            _physicsOutputMismatch = true;
             slice = default;
             return false;
         }
+        bool poseReady = boundsSource.HasValue
+            ? _gpuDeformation.TryGetOrAddPose(renderer, mesh, out gpuPoseSlice,
+                _gpuBoundsPage.CurrentPaletteBuffer, physicsState.PaletteBase,
+                physicsState.PaletteCount, physicsState.Envelope, retainedMorphWeights)
+            : _gpuDeformation.TryGetOrAddPose(renderer, mesh, out gpuPoseSlice);
+        if (meshPreparation != AdvancedGpuDeformationMeshPreparationStatus.Ready || !poseReady)
+        {
+            _physicsOutputMismatch |= boundsSource.HasValue && !poseReady;
+            slice = default;
+            return false;
+        }
+        bool compatibleHistory = boundsSource.HasValue
+            ? _gpuDeformation.HasCompatiblePhysicsHistory(_gpuBoundsDispatcher!,
+                in _gpuBoundsPage, physicsState.PreviousPaletteValid)
+            : !renderer.HasExternalSkinPaletteSource || renderer.HasValidGpuDrivenPaletteHistory;
+        if (!compatibleHistory)
+            _deformedArena.InvalidateOwnerHistory(outputHandle, reset: true);
         if (!_deformedArena.TryAcquireSlice(
                 outputHandle,
                 checked((uint)mesh.VertexCount),
@@ -1452,6 +1514,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
 
     public void Dispose()
     {
+        ReleaseGpuBoundsPublication();
         _preparedSceneIdentity = 0u;
         _preparedScenePublication = default;
         _temporalScene = null;
