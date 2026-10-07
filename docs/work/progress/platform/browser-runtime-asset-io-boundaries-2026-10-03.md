@@ -28,8 +28,22 @@ warnings and errors. The normal Windows workflow now selects the existing
 resolver caching, dependency hot-reload, and Vulkan preprocess parity fixtures
 without changing their assertions. Their new exact-commit result is pending.
 No live shader reload, browser file access, or runtime performance result is
-claimed. The unchanged native frontend `FileInfo` read and broader physical-I/O
-inventory remain open. No requirement state changed.
+claimed. No requirement state changed.
+
+The following native-frontend extraction removes the remaining metadata read
+from `XRShader.Frontend.cs`. Its only caller is the Vulkan Slang compiler. That
+caller captures the file backend and installation generation before compilation,
+then normalizes each dependency path and requests its UTC timestamp and length
+through the captured provider. Missing metadata fails instead of registering
+zero values. A source revision or provider change observed after the reads
+rejects the request. Shared registration consumes these neutral records and the
+compile request's original source path and immutable include roots. It still
+updates the index for an empty dependency list. No provider callback runs under
+the index lock. The existing gap between final admission and index replacement
+is not a strict atomic retirement guarantee. The broader physical-I/O inventory
+remains open. Vulkan and Host Release builds pass with zero warnings and errors;
+independent source review passes. These checks do not execute a native shader
+reload or qualify a rendered frame.
 
 ## Buffer spill host storage (2026-10-07)
 

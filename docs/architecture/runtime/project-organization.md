@@ -45,8 +45,14 @@ metadata callbacks execute outside those gates. Each resolved, optimized, and
 UI entry retains the dependency snapshot and source key that produced it.
 Browser and catalog admission rules still reject host-file resolution before
 provider access. Plain text and registered in-memory snippets remain available.
-This boundary does not move the native frontend metadata read in
-`XRShader.Frontend.cs` or establish live browser shader reload support.
+The Vulkan native frontend captures its shader file backend before compilation
+and reads dependency metadata through that provider in the Vulkan leaf. Shared
+`XRShader` receives the prepared dependency records and the original source path
+and include roots. A missing dependency or a replaced provider fails the compile
+request. Empty dependency lists still replace older index entries. The final
+source and installation checks reject changes observed before registration;
+they do not promise atomic retirement across the independent dependency-index
+lock. This source boundary does not establish live browser shader reload support.
 
 ### Dependency direction
 
