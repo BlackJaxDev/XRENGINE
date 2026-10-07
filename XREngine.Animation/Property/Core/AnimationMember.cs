@@ -719,6 +719,11 @@ namespace XREngine.Animation
             {
                 if (Animation is not null)
                     ConfigureTypedValueAppliers(parentObj);
+                else
+                {
+                    ResetTypedValueAppliers();
+                    TryAssignRegisteredValueAppliers(parentObj.GetType());
+                }
 
                 object? typedValue = getter!(parentObj);
                 DefaultValue = typedValue;

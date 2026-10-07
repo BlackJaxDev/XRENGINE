@@ -14,6 +14,9 @@ eight C# files, `.gitignore`, and six documentation paths.
   Transform registration still precedes world-change notification and UI
   activation. Registered animation getters keep the reflection fallback for
   discrete values when no supported registered setter exists.
+  A follow-up binds registered setters for getter-backed members without an
+  animation during initialization. Parent-chain getters still avoid reflective
+  metadata lookup, and manual discrete writes retain their lazy fallback.
 - Physics chain execution keeps disposal and reentrancy guards and includes
   master's late-tick telemetry. Browser and caller modes choose serial work
   before native worker queues and waits. Desktop and VR keep their independent
