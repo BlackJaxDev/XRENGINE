@@ -56,6 +56,27 @@ lock. This source boundary does not establish live browser shader reload support
 
 ### Dependency direction
 
+`PhysicsChainCpuWorkScheduler` keeps range claiming, handle storage, metrics, and
+execution/disposal admission in Core. A captured `IPhysicsChainCpuWorkerGroup`
+owns its physical workers. Desktop composition installs the group factory;
+Desktop owns thread creation, wake events, completion waiting, and thread joins.
+Each parallel run wakes all workers, runs the same range callback on the caller,
+then waits for worker completion. Provider replacement affects only later
+scheduler construction. Existing schedulers dispose their own captured group.
+The owner serializes runs and disposal. Desktop construction closes partially
+started workers if startup fails. If the caller's range callback throws, the
+group waits for the worker callbacks to finish before that exception leaves the
+run. A rejected custom group is disposed when its fixed count cannot be read or
+does not match the request. Exceptions from worker callbacks retain the existing
+unhandled worker-thread behavior.
+
+Browser, caller-thread, and zero-worker construction do not access that factory.
+Their existing inline execution remains. Native standalone callers that request
+positive workers must register Desktop services or supply a group factory with
+the requested fixed worker count. An absent or invalid group fails explicitly.
+The shared public scheduler signature and namespace remain unchanged. This
+separation does not change desktop/VR clocks or the other job-domain workers.
+
 - `XREngine.Runtime.Core` references only `XREngine.Data` and `XREngine.Extensions`. It has no rendering, feature-library, integration, Bootstrap, Editor, or application dependency.
 - `XREngine.Runtime.Rendering` references Core, Data, and Extensions, and stays backend-neutral. The OpenGL, Vulkan, and WebGPU renderer projects are one-way leaves of Rendering.
 - Feature libraries (Animation, Audio, Input, Modeling) stay below the `XREngine.Runtime.*Integration` projects. An integration project does not reference another integration project or an application.

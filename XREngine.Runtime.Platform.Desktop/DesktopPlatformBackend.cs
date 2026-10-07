@@ -5,6 +5,7 @@ using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Runtime.Platform.Desktop.Windowing;
 using XREngine.Networking;
+using XREngine.Components;
 
 namespace XREngine.Runtime.Platform.Desktop;
 
@@ -19,6 +20,7 @@ public static class DesktopPlatformBackend
 
     public static void Register()
     {
+        PhysicsChainCpuWorkerGroupServices.Current = new DesktopPhysicsChainCpuWorkerGroupFactory();
         RuntimeWindowBackendRegistry.Install(new DesktopSilkWindowBackendFactory());
         InputPlatformServices.ReadCapsLockState = static () =>
             NativeMethods.TryDetermineSystemCapsLockState(out bool enabled) ? enabled : null;
