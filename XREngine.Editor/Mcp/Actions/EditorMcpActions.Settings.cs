@@ -147,6 +147,37 @@ namespace XREngine.Editor.Mcp
                 }));
         }
 
+        /// <summary>Reads one effective editor preference by its property path.</summary>
+        [XRMcp(Name = "get_editor_preference", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Read one effective editor preference by property name or dotted path.")]
+        public static Task<McpToolResponse> GetEditorPreferenceAsync(
+            McpToolContext context,
+            [McpName("property_name"), Description("Property name or dotted path, such as 'Debug.EnableProfilerFrameLogging'.")]
+            string propertyName)
+        {
+            if (string.IsNullOrWhiteSpace(propertyName))
+                return Task.FromResult(new McpToolResponse("property_name is required.", isError: true));
+
+            if (!TryResolvePropertyPathTarget(Engine.EditorPreferences, propertyName,
+                    out XRBase? owner, out string name, out string resolvedPath, out McpToolResponse? error))
+                return Task.FromResult(error!);
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase;
+            PropertyInfo? property = owner!.GetType().GetProperty(name, flags);
+            if (property is null || !property.CanRead || property.GetIndexParameters().Length != 0)
+                return Task.FromResult(new McpToolResponse(
+                    $"Readable property '{name}' not found on '{owner.GetType().Name}'.", isError: true));
+
+            return Task.FromResult(new McpToolResponse(
+                $"Read editor preference '{resolvedPath}'.",
+                new
+                {
+                    propertyPath = resolvedPath,
+                    propertyType = FormatTypeName(property.PropertyType),
+                    value = ToMcpValue(property.GetValue(owner))
+                }));
+        }
+
         /// <summary>
         /// Modifies an editor preference on the <see cref="Engine.GlobalEditorPreferences"/> object.
         /// </summary>

@@ -1261,6 +1261,7 @@ namespace XREngine.Rendering.Vulkan
                 S13aPublicationTelemetry.BeginAdvancedFamilyStep();
             VulkanAdvancedVisibilityPipelineReadiness computePipelineReadiness =
                 ResourceRuntime.AdvancedVisibilityPipelines.TryGetComputePipelines(
+                    out VkRenderProgram boundsPatchProgram,
                     out VkRenderProgram earlyVisibilityProgram,
                     out VkRenderProgram buildIndirectProgram,
                     out string pipelineReason);
@@ -1278,6 +1279,65 @@ namespace XREngine.Rendering.Vulkan
                         ? EVulkanCommandRecordingFailureKind.RetryFrame
                         : EVulkanCommandRecordingFailureKind
                             .RecoverAfterStateChange;
+                return false;
+            }
+
+            VulkanAdvancedVisibilityPipelineReadiness groupPipelineReadiness =
+                ResourceRuntime.AdvancedVisibilityPipelines.TryGetIndexedGroupFinalizePipelines(
+                    out VkRenderProgram earlyIndexedGroupFinalizeProgram,
+                    out VkRenderProgram lateIndexedGroupFinalizeProgram,
+                    out string groupPipelineReason);
+            if (groupPipelineReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            {
+                recordingState.RecordingDeferredReason =
+                    $"Advanced indexed group finalizer admission failed: {groupPipelineReason}";
+                recordingState.FailureKind = groupPipelineReadiness is
+                    VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                    VulkanAdvancedVisibilityPipelineReadiness.Missing
+                        ? EVulkanCommandRecordingFailureKind.RetryFrame
+                        : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                return false;
+            }
+
+            ulong directionalShadowBytes = 0u;
+            for (int operationIndex = 0;
+                 operationIndex < recordingState.Ops.Length;
+                 ++operationIndex)
+            {
+                if (recordingState.Ops.GetHeader(operationIndex).OpCode !=
+                    EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+                    continue;
+                VulkanAdvancedVisibilityStageRequest shadowRequest =
+                    recordingState.Ops.GetAdvancedVisibility(operationIndex).Request;
+                if (shadowRequest.Reservation != familyReservation ||
+                    shadowRequest.Stage != EAdvancedRenderStage.DirectionalShadowRaster ||
+                    familyState.PayloadCapacity == 0u ||
+                    !shadowRequest.BackendPackage.TryGetCurrent(
+                        out BackendReadyFramePackage shadowPackage) ||
+                    shadowPackage.SubmissionResolution.Resolved !=
+                        EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+                    continue;
+                uint cascadeCount = checked((uint)shadowRequest.DirectionalShadowLane!.CascadeCount);
+                if (!VulkanAdvancedVisibilityResourceRuntime.TryGetDirectionalShadowRequiredBytes(
+                        cascadeCount, familyState.PayloadCapacity,
+                        familyState.IndexedInstanceGroupCount,
+                        familyState.RangeCapacity, out ulong laneBytes) ||
+                    ulong.MaxValue - directionalShadowBytes < laneBytes)
+                {
+                    recordingState.RecordingDeferredReason =
+                        "Strict directional shadow stream size exceeds the bounded native ABI.";
+                    recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                    return false;
+                }
+                directionalShadowBytes += laneBytes;
+            }
+            if (directionalShadowBytes != 0u &&
+                !familyResources.TryPreflightDirectionalShadowBudget(
+                    in familyState, directionalShadowBytes,
+                    out string shadowBudgetReason))
+            {
+                recordingState.RecordingDeferredReason = shadowBudgetReason;
+                recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
                 return false;
             }
 
@@ -1301,8 +1361,10 @@ namespace XREngine.Rendering.Vulkan
                         operationIndex,
                         in request,
                         in familyState,
+                        boundsPatchProgram,
                         earlyVisibilityProgram,
                         buildIndirectProgram,
+                        earlyIndexedGroupFinalizeProgram,
                         out string stateAssociationReason);
                 stateProbe.End(S13aAdvancedFamilyStep.StateAssociation);
                 if (stateAssociationReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
@@ -1319,6 +1381,60 @@ namespace XREngine.Rendering.Vulkan
                             : EVulkanCommandRecordingFailureKind
                                 .RecoverAfterStateChange;
                     return false;
+                }
+
+                if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster &&
+                    familyState.PayloadCapacity != 0u &&
+                    request.BackendPackage.TryGetCurrent(out BackendReadyFramePackage shadowPackage) &&
+                    shadowPackage.SubmissionResolution.Resolved ==
+                        EMeshSubmissionStrategy.GpuIndirectZeroReadback)
+                {
+                    VulkanAdvancedDirectionalShadowLaneStorage lane =
+                        request.DirectionalShadowLane!;
+                    VulkanAdvancedSceneLookupSegments shadowLookupSegments =
+                        familySceneState.LookupSegments;
+                    if (!familyResources.TryPrepareDirectionalShadowResources(
+                            in familyState, in shadowLookupSegments,
+                            recordingState.Ops.GetHeader(operationIndex).PayloadIndex,
+                            checked((uint)lane.CascadeCount),
+                            out VulkanAdvancedDirectionalShadowResourceState shadow,
+                            out string shadowResourceReason))
+                    {
+                        recordingState.RecordingDeferredReason =
+                            $"Strict directional shadow output admission failed: {shadowResourceReason}";
+                        recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                        return false;
+                    }
+                    VulkanAdvancedVisibilityPipelineReadiness cullReadiness =
+                        ResourceRuntime.AdvancedVisibilityPipelines
+                            .TryGetDirectionalShadowCullProgram(
+                                out VkRenderProgram cullProgram,
+                                out string cullReason);
+                    VulkanAdvancedVisibilityPipelineReadiness finalizeReadiness =
+                        ResourceRuntime.AdvancedVisibilityPipelines
+                            .TryGetIndexedGroupFinalizePipelines(
+                                out VkRenderProgram finalizeProgram,
+                                out _, out string finalizeReason);
+                    if (cullReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready ||
+                        finalizeReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                    {
+                        recordingState.RecordingDeferredReason =
+                            $"Strict directional shadow compute admission failed: {cullReason}; {finalizeReason}";
+                        recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                        return false;
+                    }
+                    VulkanAdvancedVisibilityPipelineReadiness shadowAssociation =
+                        recordingState.Ops.Stream.TryAssociateDirectionalShadowResources(
+                            operationIndex, in request, in shadow,
+                            cullProgram, finalizeProgram,
+                            out string associationReason);
+                    if (shadowAssociation != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                    {
+                        recordingState.RecordingDeferredReason =
+                            $"Strict directional shadow operation sealing failed: {associationReason}";
+                        recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                        return false;
+                    }
                 }
 
                 S13aPublicationTelemetry.StepProbe nativeProbe =
@@ -1518,6 +1634,7 @@ namespace XREngine.Rendering.Vulkan
                                     in lateClosure,
                                     buildDepthPyramidProgram,
                                     lateVisibilityProgram,
+                                    lateIndexedGroupFinalizeProgram,
                                     out string lateAssociationReason);
                         if (lateAssociationReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                         {
@@ -1744,6 +1861,7 @@ namespace XREngine.Rendering.Vulkan
             bool geometryBuilt = bins.TryBuildVisibilityGeometryStream(
                     ResourceRuntime,
                     input.Payloads,
+                    input.Producers,
                     input.DeformationSlices,
                     input.DeformationPublication,
                     package,
@@ -1908,11 +2026,9 @@ namespace XREngine.Rendering.Vulkan
 
         /// <summary>
         /// Prepares one deferred cascade group for recording: the family's sealed
-        /// bins receive depth-only pipelines for the atlas-page closure and the
-        /// lane derives per-record cascade masks. An unprepared group rejects
-        /// this fresh frame before recording so its atlas submission receipt
-        /// cannot acknowledge unwritten tiles. The fault hold lets the next
-        /// frame retry those tiles through the generic path.
+        /// bins receive depth-only pipelines for the atlas-page closure.
+        /// CPU-direct work derives record masks. Strict indexed work keeps
+        /// caster selection on the GPU and rejects an incomplete frame.
         /// </summary>
         private bool TryPrepareDirectionalShadowLane(
             scoped ref PrimaryCommandBufferRecordingState recordingState,
@@ -1924,6 +2040,26 @@ namespace XREngine.Rendering.Vulkan
             VulkanAdvancedDirectionalShadowLaneStorage lane = request.DirectionalShadowLane
                 ?? throw new VulkanPlanPreconditionException(
                     "The directional shadow stage reached preparation without its cascade group.");
+            if (!request.BackendPackage.TryGetCurrent(out BackendReadyFramePackage package) ||
+                package.SubmissionResolution.Resolved is not
+                    (EMeshSubmissionStrategy.CpuDirect or
+                     EMeshSubmissionStrategy.GpuIndirectZeroReadback))
+            {
+                recordingState.RecordingDeferredReason =
+                    "Advanced directional shadow preparation has no frozen CPU-direct or strict indexed strategy.";
+                recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                return false;
+            }
+            EMeshSubmissionStrategy strategy = package.SubmissionResolution.Resolved;
+            if (strategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
+                !DeviceContext.Capabilities.Supports(
+                    EVulkanDeviceCapability.DrawIndirectCount))
+            {
+                recordingState.RecordingDeferredReason =
+                    "Strict directional shadow recording requires native indexed indirect-count support.";
+                recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                return false;
+            }
             string shadowReason;
             if (!familyBins.HasSealedSubmissionPlans)
             {
@@ -1937,15 +2073,19 @@ namespace XREngine.Rendering.Vulkan
                     familyBins.TryPrepareDirectionalShadowRasterPipelines(
                         ResourceRuntime.AdvancedVisibilityPipelines,
                         in targetClosure,
+                        strategy,
                         out shadowReason);
                 shadowProbe.End(S13aAdvancedFamilyStep.RasterPipelines);
                 if (shadowReadiness == VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 {
-                    VulkanDirectionalShadowLaneCulling.ComputeRecordMasks(
-                        familyBins.Records,
-                        input.Candidates,
-                        lane.ViewProjections,
-                        lane.AcquireRecordMasks(familyBins.RecordCount));
+                    if (strategy == EMeshSubmissionStrategy.CpuDirect)
+                    {
+                        VulkanDirectionalShadowLaneCulling.ComputeRecordMasks(
+                            familyBins.Records,
+                            input.Candidates,
+                            lane.ViewProjections,
+                            lane.AcquireRecordMasks(familyBins.RecordCount));
+                    }
                     return true;
                 }
             }

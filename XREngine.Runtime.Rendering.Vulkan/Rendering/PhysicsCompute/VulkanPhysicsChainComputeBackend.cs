@@ -58,16 +58,27 @@ internal sealed class VulkanPhysicsChainComputeBackend : IPhysicsChainComputeBac
         uint groupsY,
         uint groupsZ,
         PhysicsChainComputePassKind passKind)
-        => (PhysicsChainComputeEnqueueStatus)_renderer.TryDispatchCompute(program, groupsX, groupsY, groupsZ);
+        => TryDispatchDirect(program, groupsX, groupsY, groupsZ, passKind, null);
+
+    public PhysicsChainComputeEnqueueStatus TryDispatchDirect(
+        XRRenderProgram program,
+        uint groupsX,
+        uint groupsY,
+        uint groupsZ,
+        PhysicsChainComputePassKind passKind,
+        IRenderResourceLeaseOwner? authoringLease)
+        => (PhysicsChainComputeEnqueueStatus)_renderer.TryDispatchPhysicsChainCompute(
+            program, groupsX, groupsY, groupsZ, authoringLease);
 
     public PhysicsChainComputeEnqueueStatus TryCopyBuffer(in PhysicsChainComputeBufferCopy copy)
-        => (PhysicsChainComputeEnqueueStatus)_renderer.TryEnqueueBufferCopy(
+        => (PhysicsChainComputeEnqueueStatus)_renderer.TryEnqueuePhysicsChainBufferCopy(
             copy.Source,
             copy.SourceOffset,
             copy.Destination,
             copy.DestinationOffset,
             copy.ByteCount,
-            "PhysicsChain.BufferCopy");
+            "PhysicsChain.BufferCopy",
+            copy.AuthoringLease);
 
     public PhysicsChainComputeEnqueueStatus TryDispatchIndirect(
         XRRenderProgram program,
@@ -94,6 +105,7 @@ internal sealed class VulkanPhysicsChainComputeBackend : IPhysicsChainComputeBac
         => kind switch
         {
             PhysicsChainComputePassKind.ArenaGrowth => "PhysicsChain.ArenaGrowth.Completion",
+            PhysicsChainComputePassKind.InputPublication => "PhysicsChain.InputPublication.Completion",
             PhysicsChainComputePassKind.ActiveWorkReset => "PhysicsChain.ActiveWorkReset.Completion",
             PhysicsChainComputePassKind.ActiveWorkCompaction => "PhysicsChain.ActiveWorkCompaction.Completion",
             PhysicsChainComputePassKind.IndirectArgumentGeneration => "PhysicsChain.IndirectArgumentGeneration.Completion",

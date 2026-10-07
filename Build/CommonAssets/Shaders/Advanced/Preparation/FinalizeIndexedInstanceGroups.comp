@@ -1,0 +1,123 @@
+#version 450
+
+layout(push_constant, std430) uniform XRAdvancedVisibilityPreparationPush
+{
+    uint viewIndex;
+    uint payloadBase;
+    uint payloadCapacity;
+    uint rangeBase;
+} XR_ADV_VisibilityPush;
+
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityPush.viewIndex
+#define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
+#include "../Visibility/VisibilityInterface.glslinc"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+bool ReserveRange(uint index, uint capacity, out uint member)
+{
+#if defined(XR_ADV_LATE_GROUPS)
+    member = atomicAdd(XR_ADV_VisibilityLateRangeCounts.records[index], 0u);
+#else
+    member = atomicAdd(XR_ADV_VisibilityRangeCounts.records[index], 0u);
+#endif
+    while (member < capacity)
+    {
+#if defined(XR_ADV_LATE_GROUPS)
+        uint prior = atomicCompSwap(
+            XR_ADV_VisibilityLateRangeCounts.records[index], member, member + 1u);
+#else
+        uint prior = atomicCompSwap(
+            XR_ADV_VisibilityRangeCounts.records[index], member, member + 1u);
+#endif
+        if (prior == member)
+            return true;
+        member = prior;
+    }
+    return false;
+}
+
+void main()
+{
+    uint groupIndex = gl_GlobalInvocationID.x;
+    uint groupCount = uint(XR_ADV_VisibilityInstanceGroups.records.length());
+    if (groupIndex >= groupCount)
+        return;
+
+    XRAdvancedIndexedInstanceGroup group =
+        XR_ADV_VisibilityInstanceGroups.records[groupIndex];
+    uint countIndex = XR_ADV_VisibilityPush.viewIndex * groupCount + groupIndex;
+#if defined(XR_ADV_LATE_GROUPS)
+    if (countIndex >= uint(XR_ADV_VisibilityLateGroupCounts.records.length()))
+        return;
+    uint memberCount = XR_ADV_VisibilityLateGroupCounts.records[countIndex];
+#else
+    if (countIndex >= uint(XR_ADV_VisibilityEarlyGroupCounts.records.length()))
+        return;
+    uint memberCount = XR_ADV_VisibilityEarlyGroupCounts.records[countIndex];
+#endif
+    if (memberCount == 0u)
+        return;
+    uint rangeCount = uint(XR_ADV_VisibilityRangeOffsets.records.length());
+    uint payloadCount = uint(XR_ADV_VisibilityPayloads.records.length());
+    if (memberCount > group.memberCapacity || group.rangeIndex >= rangeCount ||
+        group.representativePayloadIndex >= payloadCount ||
+        group.firstMember > XR_ADV_VisibilityPush.payloadCapacity ||
+        group.memberCapacity > XR_ADV_VisibilityPush.payloadCapacity - group.firstMember)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return;
+    }
+
+    uint rangeBegin = XR_ADV_VisibilityPush.payloadBase +
+        XR_ADV_VisibilityRangeOffsets.records[group.rangeIndex];
+    uint rangeEnd = XR_ADV_VisibilityPush.payloadBase +
+        (group.rangeIndex + 1u < rangeCount
+            ? XR_ADV_VisibilityRangeOffsets.records[group.rangeIndex + 1u]
+            : XR_ADV_VisibilityPush.payloadCapacity);
+    uint rangeCounter = XR_ADV_VisibilityPush.rangeBase + group.rangeIndex;
+    uint argumentWords =
+#if defined(XR_ADV_LATE_GROUPS)
+        uint(XR_ADV_VisibilityLateIndexedArguments.records.length());
+    uint rangeCounterWords = uint(XR_ADV_VisibilityLateRangeCounts.records.length());
+#else
+        uint(XR_ADV_VisibilityIndexedArguments.records.length());
+    uint rangeCounterWords = uint(XR_ADV_VisibilityRangeCounts.records.length());
+#endif
+    if (rangeBegin > rangeEnd || rangeEnd > argumentWords / 5u ||
+        rangeCounter >= rangeCounterWords)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return;
+    }
+    uint rangeCapacity = rangeEnd - rangeBegin;
+    uint local;
+    if (!ReserveRange(rangeCounter, rangeCapacity, local))
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+        return;
+    }
+
+    XRAdvancedVisibilityPayload representative =
+        XR_ADV_VisibilityPayloads.records[group.representativePayloadIndex];
+    uint outputIndex = rangeBegin + local;
+    uint argumentBase = outputIndex * 5u;
+    uint instanceCount = group.memberCapacity == 1u
+        ? memberCount * max(representative.instanceCount, 1u)
+        : memberCount;
+#if defined(XR_ADV_LATE_GROUPS)
+    XR_ADV_VisibilityLateIndexedArguments.records[argumentBase] = representative.indexCount;
+    XR_ADV_VisibilityLateIndexedArguments.records[argumentBase + 1u] = instanceCount;
+    XR_ADV_VisibilityLateIndexedArguments.records[argumentBase + 2u] = representative.firstIndex;
+    XR_ADV_VisibilityLateIndexedArguments.records[argumentBase + 3u] = 0u;
+    XR_ADV_VisibilityLateIndexedArguments.records[argumentBase + 4u] =
+        XR_ADV_VisibilityPush.payloadBase + group.firstMember;
+#else
+    XR_ADV_VisibilityIndexedArguments.records[argumentBase] = representative.indexCount;
+    XR_ADV_VisibilityIndexedArguments.records[argumentBase + 1u] = instanceCount;
+    XR_ADV_VisibilityIndexedArguments.records[argumentBase + 2u] = representative.firstIndex;
+    XR_ADV_VisibilityIndexedArguments.records[argumentBase + 3u] = 0u;
+    XR_ADV_VisibilityIndexedArguments.records[argumentBase + 4u] =
+        XR_ADV_VisibilityPush.payloadBase + group.firstMember;
+#endif
+}

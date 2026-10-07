@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Compute;
 using VkBufferHandle = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
@@ -28,15 +29,23 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
     VulkanFrameDataSlice IndirectArguments,
     VulkanFrameDataSlice MeshArguments,
     VulkanFrameDataSlice MeshPayloads,
+    VulkanFrameDataSlice IndexedInstanceGroups,
+    VulkanFrameDataSlice EarlyIndexedGroupCounts,
     VulkanAdvancedVisibilityGeometrySlices Geometry,
     VulkanFrameDataSlice LateVisibleIndices,
     VulkanFrameDataSlice LateRangeCounts,
     VulkanFrameDataSlice LateIndirectArguments,
     VulkanFrameDataSlice LateMeshArguments,
     VulkanFrameDataSlice LateMeshPayloads,
+    VulkanFrameDataSlice LateIndexedGroupCounts,
+    VulkanFrameDataSlice BoundsRoutes,
+    VulkanNativeBufferRange BoundsAtlas,
+    VulkanNativeBufferRange BoundsMetadata,
+    PhysicsChainGpuOutputPageToken BoundsPageToken,
     uint ViewCount,
     uint PayloadCapacity,
     uint RangeCapacity,
+    uint IndexedInstanceGroupCount,
     uint IndirectArgumentCapacity,
     AdvancedVisibilityFamilyReservation Reservation = default)
 {
@@ -54,10 +63,15 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
                 RangeIndices.IsValid && RangeOffsets.IsValid && RangeCounts.IsValid &&
                 Counters.IsValid && IndirectArguments.IsValid && MeshArguments.IsValid &&
                 MeshPayloads.IsValid && Geometry.IsValid && LateVisibleIndices.IsValid &&
+                IndexedInstanceGroups.IsValid && EarlyIndexedGroupCounts.IsValid &&
                 LateRangeCounts.IsValid && LateIndirectArguments.IsValid &&
-                LateMeshArguments.IsValid && LateMeshPayloads.IsValid && ViewCount != 0u &&
+                LateMeshArguments.IsValid && LateMeshPayloads.IsValid &&
+                LateIndexedGroupCounts.IsValid &&
+                BoundsRoutes.IsValid && ViewCount != 0u &&
                 RangeCapacity != 0u;
             if (!descriptorBackingValid)
+                return false;
+            if (IndexedInstanceGroupCount > PayloadCapacity)
                 return false;
 
             // Empty families bind one-element backing ranges but retain zero as

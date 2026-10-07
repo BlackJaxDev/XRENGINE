@@ -114,6 +114,7 @@ internal sealed partial class PhysicsChainReadbackService
         {
             RequestHandle = handle,
             InstanceHandle = info.InstanceHandle,
+            InstanceSourceGeneration = info.InstanceSourceGeneration,
             SourceEpoch = sourceEpoch,
             GatherFrame = gatherFrame,
             ElementCount = items.Length,
@@ -398,7 +399,10 @@ internal sealed partial class PhysicsChainReadbackService
         bool validSource = currentEpoch.IsValid
             && currentEpoch == plan.SourceEpoch
             && info.InstanceHandle == plan.InstanceHandle
-            && world.TryResolveRuntimeHandle(plan.InstanceHandle, out _);
+            && info.InstanceSourceGeneration == plan.InstanceSourceGeneration
+            && (info.SourceComponent is { } component
+                ? component.MatchesReadbackSource(world, plan.InstanceHandle, plan.InstanceSourceGeneration)
+                : world.TryResolveRuntimeHandle(plan.InstanceHandle, out _));
         if (!validSource)
         {
             info.Status = PhysicsChainReadbackStatus.DiscardedStale;

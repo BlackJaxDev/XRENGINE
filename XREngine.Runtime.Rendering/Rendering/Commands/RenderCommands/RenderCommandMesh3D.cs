@@ -6,6 +6,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Occlusion;
 using YamlDotNet.Serialization;
@@ -68,6 +69,8 @@ namespace XREngine.Rendering.Commands
         private int _renderPass;
         private uint _renderEditorHighlightBits;
         private GpuSceneOwnerSnapshot _renderGpuSceneOwner;
+        private bool _renderBasePassEnabled = true;
+        private bool _renderShadowPassEnabled = true;
         private AABB? _renderWorldCullingVolumeOverride;
         private Matrix4x4 _renderPrevWorldMatrix = Matrix4x4.Identity;
         private bool _renderHasPrevWorldMatrix;
@@ -532,7 +535,11 @@ namespace XREngine.Rendering.Commands
                 nameof(XRMaterial.TransparencyMode) or
                 nameof(XRMaterial.TransparentTechniqueOverride) or
                 nameof(XRMaterial.AlphaCutoff) or
-                nameof(XRMaterial.TransparentSortPriority))
+                nameof(XRMaterial.TransparentSortPriority) or
+                nameof(XRMaterial.RenderPass) or
+                nameof(XRMaterial.PassSet) or
+                nameof(XRMaterial.ShaderStateRevision) or
+                nameof(XRMaterial.UberStateRevision))
                 MarkDirty();
         }
 
@@ -744,6 +751,14 @@ namespace XREngine.Rendering.Commands
             _renderPass = RenderPass;
             _renderEditorHighlightBits = EditorHighlightBits;
             _renderGpuSceneOwner = GpuSceneOwnerSnapshot.CaptureLive(OwnerRenderInfo);
+            XRMaterial? effectiveMaterial = _renderMaterialOverride ?? _renderMesh?.Material;
+            bool authoredEnabled = Enabled && (OwnerRenderInfo?.ShouldRender ?? true);
+            bool isPrimary = OwnerRenderInfo is RenderInfo3D { OwnerRenderableMesh: { } ownerMesh } &&
+                ownerMesh.IsPrimaryCommand(this);
+            _renderBasePassEnabled = authoredEnabled &&
+                (!isPrimary || XREngine.Components.Scene.Mesh.RenderableMesh.IsPrimaryMaterialPassEnabled(effectiveMaterial, false));
+            _renderShadowPassEnabled = authoredEnabled &&
+                (!isPrimary || XREngine.Components.Scene.Mesh.RenderableMesh.IsPrimaryMaterialPassEnabled(effectiveMaterial, true));
             _renderWorldCullingVolumeOverride = WorldCullingVolumeOverride;
             _renderGpuCommandIndex = GPUCommandIndex;
             _renderCanonicalDrawIdentitySnapshot = _canonicalDrawIdentitySnapshot;
@@ -860,7 +875,7 @@ namespace XREngine.Rendering.Commands
             => new(_renderMesh, _renderWorldMatrix, _renderWorldMatrixIsModelMatrix,
                 _renderMaterialOverride, _renderInstances, _renderPass,
                 _renderForceCpuRendering, _renderEditorHighlightBits, StableQueryKey,
-                _renderGpuSceneOwner);
+                _renderGpuSceneOwner, _renderBasePassEnabled, _renderShadowPassEnabled);
 
         internal void ApplyLateRenderThreadWorldMatrix(Matrix4x4 worldMatrix)
         {
@@ -967,6 +982,12 @@ namespace XREngine.Rendering.Commands
             {
                 if (RenderDiagnosticsFlags.ForceSkinnedUnbounded && UsesDeformedMesh(_renderMesh ?? _mesh))
                     return null;
+
+                XRMeshRenderer? commandRenderer = _dirty ? _mesh : _renderMesh ?? _mesh;
+                if (OwnerRenderInfo is XREngine.Rendering.Info.RenderInfo3D owner &&
+                    ReferenceEquals(commandRenderer, owner.OwnerRenderableMesh?.CurrentLODRenderer) &&
+                    owner.TryGetCommittedWorldBounds(out AABB committedBounds, out _))
+                    return committedBounds;
 
                 if (TryGetWorldCullingVolumeOverride(out AABB overrideBounds))
                     return overrideBounds;

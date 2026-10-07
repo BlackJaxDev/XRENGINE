@@ -437,23 +437,44 @@ internal sealed unsafe partial class VulkanPipelineManager
 
             AnnounceVulkanPipelineCompileQueue(workerCount, capacity);
 
-            VulkanPipelineCompileTask compileTask =
-                EnsureVulkanPipelineCompileTask();
-            _vulkanGraphicsPipelineProgramCompileJobs.Add(
-                request.Key.ProgramPipelineHash,
-                request.CompileKey);
-            Task<VulkanGraphicsPipelineCompileResult> task =
-                compileTask.Enqueue(
+            if (!request.Program.TryRetainProgramInterface(
+                    request.PipelineLayout,
+                    request.Key.InterfaceGeneration,
+                    out VulkanProgramInterfaceEntry? interfaceEntry))
+            {
+                rejectReason = "graphics pipeline request lost its exact linked interface";
+                retryable = true;
+                return false;
+            }
+
+            Task<VulkanGraphicsPipelineCompileResult> task;
+            Action promoteToForeground;
+            try
+            {
+                VulkanPipelineCompileTask compileTask =
+                    EnsureVulkanPipelineCompileTask();
+                _vulkanGraphicsPipelineProgramCompileJobs.Add(
+                    request.Key.ProgramPipelineHash,
+                    request.CompileKey);
+                task = compileTask.Enqueue(
                     () => CreateGraphicsPipelineOnWorker(
                         request,
                         BackgroundPipelineCache),
                     foregroundRequired,
-                    out Action promoteToForeground);
+                    out promoteToForeground);
+            }
+            catch
+            {
+                ReleaseProgramCompileReservation(request);
+                interfaceEntry!.Context.Resources.ProgramInterfaces.Release(interfaceEntry);
+                throw;
+            }
 
             var job = new VulkanGraphicsPipelineCompileJob(
                 request,
                 task,
-                promoteToForeground);
+                promoteToForeground,
+                interfaceEntry!);
             _vulkanGraphicsPipelineCompileJobs[request.CompileKey] = job;
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
@@ -478,6 +499,10 @@ internal sealed unsafe partial class VulkanPipelineManager
                     }
                     catch
                     {
+                    }
+                    finally
+                    {
+                        completedJob.ReleaseInterface();
                     }
                 },
                 (this, job),

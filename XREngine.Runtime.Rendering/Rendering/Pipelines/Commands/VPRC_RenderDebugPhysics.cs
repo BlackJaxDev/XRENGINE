@@ -1,5 +1,6 @@
 using System;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Scene.Physics.DebugVisualization;
 
@@ -18,7 +19,12 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(ResolveRenderGraphPassIndex()))
             using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
-                ActivePipelineInstance.RenderState.WindowViewport?.World?.DebugRenderPhysics(DepthMode);
+            {
+                IRuntimeRenderWorld? world = ActivePipelineInstance.RenderState.WindowViewport?.World;
+                world?.DebugRenderPhysics(DepthMode);
+                if (DepthMode == PhysicsDebugDepthMode.DepthTested && world is not null)
+                    GPUPhysicsChainDispatcher.Instance.RenderSelectedGpuDebug(world.WorldContext);
+            }
         }
 
         private int ResolveRenderGraphPassIndex()

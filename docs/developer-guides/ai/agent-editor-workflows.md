@@ -105,6 +105,17 @@ engine loop is running.
 
 For Vulkan or OpenGL rendering issues, use RenderDoc when MCP screenshots and logs do not identify the failing pass/resource. Prefer it for shadow maps, post-process inputs, motion vectors, G-buffer contents, descriptor binding mistakes, layout hazards, and "the frame looks wrong but logs are inconclusive" cases.
 
+For an editor frame with presentation, use
+`RenderDocCaptureBridge.TryTriggerCapture` through MCP. Pass a capture path
+template under the current run's `renderdoc/` folder. It captures the next
+presented frame. Direct `TryStartCapture` and `TryEndCapture` calls through
+`invoke_method` do not reserve a render-frame boundary. `MainThread` mode runs
+on the app/update thread, so those calls can change capture state during native
+command recording. Use explicit start/end only when the capture owner controls
+the recording boundary. A Vulkan chain-scale run reproduced a native
+`renderdoc.dll` fault with explicit start/end; presented-frame trigger captures
+passed. See the [capture investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md).
+
 1. Verify capture tooling first:
 
    ```powershell

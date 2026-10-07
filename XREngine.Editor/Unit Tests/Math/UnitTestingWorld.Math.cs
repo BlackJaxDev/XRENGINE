@@ -1194,6 +1194,25 @@ public static partial class EditorUnitTests
         return bones;
     }
 
+    /// <summary>
+    /// When this environment variable is "1", the skinned chain test material
+    /// declares neutral vertex-effect parameters. Validation tools can then
+    /// change them through material uniform tools.
+    /// </summary>
+    private const string PhysicsChainVertexEffectParametersVariable = "XRE_PHYSICS_CHAIN_TEST_VERTEX_EFFECTS";
+
+    private static ShaderVar[] CreateNeutralVertexEffectParameters()
+        =>
+        [
+            new ShaderFloat(0.0f, "_VertexEffectsEnabled"),
+            new ShaderVector3(Vector3.Zero, "_VertexManipulationLocalTranslation"),
+            new ShaderVector3(Vector3.Zero, "_VertexManipulationLocalRotation"),
+            new ShaderVector3(Vector3.Zero, "_VertexManipulationLocalRotationSpeed"),
+            new ShaderVector3(Vector3.One, "_VertexManipulationLocalScale"),
+            new ShaderVector3(Vector3.Zero, "_VertexManipulationWorldTranslation"),
+            new ShaderFloat(0.0f, "_VertexManipulationHeight"),
+        ];
+
     private static void AddPhysicsChainSkinnedBoxVisual(SceneNode testNode, Transform[] chainBones, ColorF4 color)
     {
         Transform testTransform = testNode.GetTransformAs<Transform>(true)!;
@@ -1208,6 +1227,8 @@ public static partial class EditorUnitTests
         XRMesh mesh = CreatePhysicsChainSkinnedPrismMesh(testTransform, chainBones);
         XRMaterial material = XRMaterial.CreateLitColorMaterial(color);
         material.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
+        if (Environment.GetEnvironmentVariable(PhysicsChainVertexEffectParametersVariable) == "1")
+            material.Parameters = [.. material.Parameters, .. CreateNeutralVertexEffectParameters()];
 
         var modelComponent = visualNode.AddComponent<ModelComponent>()!;
         modelComponent.Model = new Model([new SubMesh(mesh, material)]);

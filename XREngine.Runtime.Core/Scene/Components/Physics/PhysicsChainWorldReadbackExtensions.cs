@@ -18,10 +18,13 @@ public static class PhysicsChainWorldReadbackExtensions
         out PhysicsChainReadbackRejection rejection)
     {
         PhysicsChainReadbackService service = GetService(world);
-        if (!world.TryResolveRuntimeHandle(instanceHandle, out _))
+        bool sourceValid = world.TryCaptureReadbackSource(instanceHandle, out PhysicsChainComponent? component,
+            out long sourceGeneration, out PhysicsChainReadbackRejection sourceRejection);
+        using var scope = service.SyncRoot.EnterScope();
+        if (!sourceValid)
         {
             handle = PhysicsChainReadbackHandle.Invalid;
-            rejection = PhysicsChainReadbackRejection.InvalidInstance;
+            rejection = sourceRejection;
             service.RecordRejectedRequest();
             return false;
         }
@@ -33,26 +36,48 @@ public static class PhysicsChainWorldReadbackExtensions
             expectedByteCount,
             submissionFrame,
             out handle,
-            out rejection);
+            out rejection,
+            component,
+            sourceGeneration);
     }
 
     public static bool TryGetReadbackRequest(
         this PhysicsChainWorld world,
         PhysicsChainReadbackHandle handle,
         out PhysicsChainReadbackRequestInfo? info)
-        => GetService(world).TryGet(handle, out info);
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.TryGet(handle, out info);
+    }
 
     public static bool CancelReadback(this PhysicsChainWorld world, PhysicsChainReadbackHandle handle)
-        => GetService(world).Cancel(handle);
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.Cancel(handle);
+    }
 
     public static void AdvanceReadbacks(this PhysicsChainWorld world, long currentFrame)
-        => GetService(world).AdvanceFrame(currentFrame);
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        service.AdvanceFrame(currentFrame);
+    }
 
     public static bool ReleaseReadback(this PhysicsChainWorld world, PhysicsChainReadbackHandle handle)
-        => GetService(world).Release(handle);
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.Release(handle);
+    }
 
     public static PhysicsChainReadbackCounters GetReadbackCounters(this PhysicsChainWorld world)
-        => GetService(world).GetCounters();
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.GetCounters();
+    }
 
     public static bool TryBuildReadbackGatherPlan(
         this PhysicsChainWorld world,
@@ -61,21 +86,33 @@ public static class PhysicsChainWorldReadbackExtensions
         long gatherFrame,
         out PhysicsChainReadbackGatherPlan? plan,
         out PhysicsChainReadbackTransferFailure failure)
-        => GetService(world).TryBuildGatherPlan(handle, sourceEpoch, gatherFrame, out plan, out failure);
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.TryBuildGatherPlan(handle, sourceEpoch, gatherFrame, out plan, out failure);
+    }
 
     public static int BuildPendingReadbackGatherPlans(
         this PhysicsChainWorld world,
         PhysicsChainReadbackSourceEpoch sourceEpoch,
         long gatherFrame,
         Span<PhysicsChainReadbackGatherPlan?> destination)
-        => GetService(world).BuildPendingGatherPlans(sourceEpoch, gatherFrame, destination);
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.BuildPendingGatherPlans(sourceEpoch, gatherFrame, destination);
+    }
 
     public static bool TryAcquireReadbackStagingSlot(
         this PhysicsChainWorld world,
         PhysicsChainReadbackGatherPlan plan,
         out PhysicsChainReadbackStagingLease lease,
         out PhysicsChainReadbackTransferFailure failure)
-        => GetService(world).TryAcquireStagingSlot(plan, out lease, out failure);
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.TryAcquireStagingSlot(plan, out lease, out failure);
+    }
 
     /// <summary>
     /// Managed CPU/testing convenience path. GPU backends should pass an
@@ -88,7 +125,11 @@ public static class PhysicsChainWorldReadbackExtensions
         IPhysicsChainReadbackFence fence,
         long transferFrame,
         out PhysicsChainReadbackTransferFailure failure)
-        => GetService(world).CommitStagingSlot(lease, packedData, fence, transferFrame, out failure);
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.CommitStagingSlot(lease, packedData, fence, transferFrame, out failure);
+    }
 
     public static bool CommitReadbackStagingSlot(
         this PhysicsChainWorld world,
@@ -97,23 +138,35 @@ public static class PhysicsChainWorldReadbackExtensions
         IPhysicsChainReadbackFence fence,
         long transferFrame,
         out PhysicsChainReadbackTransferFailure failure)
-        => GetService(world).CommitStagingSlot(
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.CommitStagingSlot(
             lease,
             source,
             fence,
             transferFrame,
             out failure);
+    }
 
     public static bool AbandonReadbackStagingSlot(
         this PhysicsChainWorld world,
         PhysicsChainReadbackStagingLease lease)
-        => GetService(world).AbandonStagingSlot(lease);
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.AbandonStagingSlot(lease);
+    }
 
     public static bool FailReadbackStagingSlot(
         this PhysicsChainWorld world,
         PhysicsChainReadbackStagingLease lease,
         long completionFrame)
-        => GetService(world).FailStagingSlot(lease, completionFrame);
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.FailStagingSlot(lease, completionFrame);
+    }
 
     public static void PollReadbackTransfers(
         this PhysicsChainWorld world,
@@ -121,6 +174,7 @@ public static class PhysicsChainWorldReadbackExtensions
         PhysicsChainReadbackSourceEpoch currentEpoch)
     {
         PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
         service.AdvanceFrame(currentFrame);
         service.PollTransfers(world, currentFrame, currentEpoch);
     }
@@ -129,14 +183,26 @@ public static class PhysicsChainWorldReadbackExtensions
         this PhysicsChainWorld world,
         PhysicsChainReadbackHandle handle,
         out PhysicsChainReadbackResult? result)
-        => GetService(world).TryGetResult(handle, out result);
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.TryGetResult(handle, out result);
+    }
 
     public static PhysicsChainReadbackTransferCounters GetReadbackTransferCounters(
         this PhysicsChainWorld world)
-        => GetService(world).GetTransferCounters();
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.GetTransferCounters();
+    }
 
     public static bool HasPendingReadbackTransfers(this PhysicsChainWorld world)
-        => GetService(world).HasPendingTransfers();
+    {
+        PhysicsChainReadbackService service = GetService(world);
+        using var scope = service.SyncRoot.EnterScope();
+        return service.HasPendingTransfers();
+    }
 
     private static PhysicsChainReadbackService GetService(PhysicsChainWorld world)
         => Services.GetValue(world, static _ => new PhysicsChainReadbackService(PhysicsChainReadbackLimits.Default));

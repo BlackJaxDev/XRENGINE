@@ -10,6 +10,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Scene.Transforms;
 using XREngine.Timers;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components;
 
@@ -20,6 +21,25 @@ public partial class PhysicsChainComponent : XRComponent
     private bool _isSimulating;
     private bool _isValidating;
     private bool _rebuildQueued;
+    private int _worldMutationDepth;
+
+    internal bool IsWorldMutationPending => Volatile.Read(ref _worldMutationDepth) != 0;
+
+    internal void BeginWorldMutation()
+    {
+        using (_runtimeBindingSync.EnterScope())
+        {
+            if (_worldMutationDepth == 0)
+                InvalidateReadbackSource();
+            Interlocked.Increment(ref _worldMutationDepth);
+        }
+    }
+
+    internal void EndWorldMutation()
+    {
+        using (_runtimeBindingSync.EnterScope())
+            Interlocked.Decrement(ref _worldMutationDepth);
+    }
     private int _particlesVersion;
     private int _particleStateVersion;
 
@@ -42,8 +62,10 @@ public partial class PhysicsChainComponent : XRComponent
 
     protected override void OnComponentActivated()
     {
+        using var mutation = PhysicsChainWorld.BeginComponentMutation(this);
         base.OnComponentActivated();
         ActivateGpuExecutionMode();
+        PhysicsChainWorld.BindPendingRuntimeGraph(this);
         SetupParticles();
         PhysicsChainWorld.Register(this);
         ResetParticlesPosition();
@@ -52,12 +74,14 @@ public partial class PhysicsChainComponent : XRComponent
     }
     protected override void OnComponentDeactivated()
     {
+        using var mutation = PhysicsChainWorld.BeginComponentMutation(this);
+        PhysicsChainWorld.RetireForComponentMutation(this);
         PhysicsChainWorld.Unregister(this);
         DeactivateGpuExecutionMode();
         base.OnComponentDeactivated();
         InitTransforms();
         _preUpdateCount = 0;
-        _time = 0.0f;
+        _cpuBackendWorld?.ResetSimulationClock(_runtimeHandle, this);
     }
 
     private void FixedUpdate()
@@ -72,7 +96,8 @@ public partial class PhysicsChainComponent : XRComponent
             PreUpdate();
 
         if (UpdateMode == EUpdateMode.FixedUpdate)
-            _fixedUpdateRenderAccumulatedTicks += Math.Max(0L, RuntimeTimingServices.Current.UpdateDeltaTicks);
+            _cpuBackendWorld?.AdvanceFixedRenderClock(
+                _runtimeHandle, this, RuntimeTimingServices.Current.UpdateDeltaTicks);
         
     }
 
@@ -90,31 +115,72 @@ public partial class PhysicsChainComponent : XRComponent
         }
     }
 
-    internal void SetRuntimeHandle(PhysicsChainRuntimeHandle handle)
+    internal PhysicsChainWorld? CaptureRuntimeOwner()
     {
-        _runtimeHandle = handle;
-        if (!handle.IsValid)
+        using (_runtimeBindingSync.EnterScope())
+            return _runtimeOwnerWorld;
+    }
+
+    internal void CaptureRuntimeBinding(out PhysicsChainWorld? owner, out PhysicsChainRuntimeHandle handle)
+    {
+        using (_runtimeBindingSync.EnterScope())
         {
-            _qualityPhaseInitialized = false;
-            return;
+            owner = _runtimeOwnerWorld;
+            handle = _runtimeHandle;
         }
-        _qualityCadencePhase = ComputeDeterministicQualityPhase(handle.Slot, handle.Generation);
-        _qualityCadenceProgress = _qualityCadencePhase;
-        _qualityPhaseInitialized = true;
-        float rate = ResolveEffectiveUpdateRate();
-        _time = rate > 0.0f ? _qualityCadenceProgress / rate : 0.0f;
+    }
+
+    /// <summary>Identifies the particle layout and reset state used by delayed GPU snapshots.</summary>
+    [YamlIgnore]
+    public long ReadbackSourceGeneration => RuntimeGraph.ReadbackSourceGeneration;
+
+    internal void InvalidateReadbackSource() => RuntimeGraph.InvalidateReadbackSource();
+
+    internal bool MatchesReadbackSource(PhysicsChainWorld world, PhysicsChainRuntimeHandle handle, long generation)
+    {
+        PhysicsChainRuntimeGraph graph = RuntimeGraph;
+        PhysicsChainReadbackBinding? binding = graph.ReadbackBinding;
+        return !IsWorldMutationPending && !IsDestroyed && binding is not null
+            && ReferenceEquals(binding.World, world) && binding.Handle == handle
+            && graph.ReadbackSourceGeneration == generation;
+    }
+
+    internal bool TryBindRuntimeOwner(PhysicsChainWorld world, PhysicsChainRuntimeHandle handle)
+    {
+        using (_runtimeBindingSync.EnterScope())
+        {
+            if (_runtimeOwnerWorld is not null && !ReferenceEquals(_runtimeOwnerWorld, world))
+                return false;
+            _runtimeOwnerWorld = world;
+            RuntimeGraph.BindReadbackSource(world, handle);
+            SetField(ref _runtimeHandle, handle, nameof(RuntimeHandle));
+            return true;
+        }
+    }
+
+    internal bool TryReleaseRuntimeOwner(PhysicsChainWorld world, PhysicsChainRuntimeHandle handle)
+    {
+        using (_runtimeBindingSync.EnterScope())
+        {
+            if (!ReferenceEquals(_runtimeOwnerWorld, world) || _runtimeHandle != handle)
+                return false;
+            DetachCpuBackend(world);
+            RuntimeGraph.UnbindReadbackSource();
+            _runtimeOwnerWorld = null;
+            SetField(ref _runtimeHandle, PhysicsChainRuntimeHandle.Invalid, nameof(RuntimeHandle));
+            return true;
+        }
     }
 
     internal void SetEffectiveQualityTier(PhysicsChainQualityTier tier)
     {
         float previousRate = ResolveEffectiveUpdateRate();
-        float progress = ComputeCadenceProgress(
-            _time, previousRate, _qualityPhaseInitialized ? _qualityCadenceProgress : 0.0f);
+        float progress = _cpuBackendWorld?.CaptureCadenceProgress(
+            _runtimeHandle, this, previousRate, 0.0f) ?? 0.0f;
         if (!SetField(ref _effectiveQualityTier, tier, nameof(EffectiveQualityTier)))
             return;
-        _qualityCadenceProgress = progress;
         float nextRate = ResolveEffectiveUpdateRate();
-        _time = nextRate > 0.0f ? progress / nextRate : 0.0f;
+        _cpuBackendWorld?.SetCadenceProgress(_runtimeHandle, this, progress, nextRate);
         ApplyCpuQualityPolicy();
 
         if (tier == PhysicsChainQualityTier.Sleep)
@@ -345,6 +411,16 @@ public partial class PhysicsChainComponent : XRComponent
     }
 
     private void Prepare(bool snapshotForCpuJobs = true)
+        => PrepareCore(snapshotForCpuJobs, attemptWorldGpuRest: false, out _);
+
+    private void PrepareGpu(out ReadOnlySpan<Matrix4x4> gpuRestMatrices)
+        => PrepareCore(snapshotForCpuJobs: false, attemptWorldGpuRest: true,
+            out gpuRestMatrices);
+
+    private void PrepareCore(
+        bool snapshotForCpuJobs,
+        bool attemptWorldGpuRest,
+        out ReadOnlySpan<Matrix4x4> gpuRestMatrices)
     {
         bool observeGpuPrepare = UseGPU && RuntimeWorldTickTelemetry.Enabled;
         long restPoseTicks = 0L;
@@ -397,11 +473,23 @@ public partial class PhysicsChainComponent : XRComponent
             _smoothedObjectMove = rawObjectMove;
         }
 
+        gpuRestMatrices = default;
+        bool useWorldGpuRest = attemptWorldGpuRest && _cpuBackendWorld is not null &&
+            _cpuBackendWorld.TryConsumeGpuRestInputs(_runtimeHandle, this, out gpuRestMatrices);
+        int gpuRestOffset = 0;
         for (int i = 0; i < _particleTrees.Count; ++i)
         {
             ParticleTree pt = _particleTrees[i];
             if (pt.Particles is not { Count: > 0 })
                 continue;
+
+            if (useWorldGpuRest)
+            {
+                pt.RestGravity = Vector3.TransformNormal(
+                    pt.LocalGravity, gpuRestMatrices[gpuRestOffset]);
+                gpuRestOffset += pt.Particles.Count;
+                continue;
+            }
 
             // Restore rest-pose rotations before reading matrices. ApplyParticlesToTransforms()
             // writes simulation rotation deltas back to the hierarchy each frame; without this
@@ -415,12 +503,17 @@ public partial class PhysicsChainComponent : XRComponent
             // Ensure we sample the current (post-InitTransforms / post-animation) pose.
             // Without this, we can end up using stale world matrices from the prior frame,
             // effectively allowing the simulated pose to slowly become the new "rest".
-            long hierarchyStart = Stopwatch.GetTimestamp();
+            long hierarchyStart = RuntimeWorldTickTelemetry.Enabled
+                ? Stopwatch.GetTimestamp()
+                : 0L;
             RefreshPreparedParticleTree(pt);
-            long hierarchyElapsed = Stopwatch.GetTimestamp() - hierarchyStart;
-            RuntimePhysicsChainRendering.Current.RecordHierarchyRecalculationTicks(hierarchyElapsed);
-            if (observeGpuPrepare)
-                hierarchyTicks += hierarchyElapsed;
+            if (RuntimeWorldTickTelemetry.Enabled)
+            {
+                long hierarchyElapsed = Stopwatch.GetTimestamp() - hierarchyStart;
+                RuntimePhysicsChainRendering.Current.RecordHierarchyRecalculationTicks(hierarchyElapsed);
+                if (observeGpuPrepare)
+                    hierarchyTicks += hierarchyElapsed;
+            }
 
             pt.RestGravity = pt.Root.TransformDirection(pt.LocalGravity);
 
@@ -920,7 +1013,7 @@ public partial class PhysicsChainComponent : XRComponent
 
         if (IsIndependentQualityPolicyProperty(propName))
             ApplyCpuQualityPolicy();
-        if (propName == nameof(RuntimeVisible))
+        if (propName is nameof(RuntimeVisible) or nameof(RuntimeHandle))
             return;
         if (propName == nameof(UseGpuDrivenSkinning))
         {
@@ -1123,21 +1216,14 @@ public partial class PhysicsChainComponent : XRComponent
 
         if ((UpdateMode != EUpdateMode.Default || _effectiveQualityTier != PhysicsChainQualityTier.Strict) && updateRate > 0.0f)
         {
-            float frameTime = 1.0f / updateRate;
-            _time += dt;
-            loop = 0;
-
-            while (_time >= frameTime)
+            if (_cpuBackendWorld is null || !_cpuBackendWorld.TryResolveSimulationLoop(
+                _runtimeHandle, this, dt, updateRate, qualityPolicy.MaximumCatchUpSteps,
+                out loop, out stepDelta))
             {
-                _time -= frameTime;
-                if (++loop >= qualityPolicy.MaximumCatchUpSteps)
-                {
-                    _time = 0.0f;
-                    break;
-                }
+                loop = 0;
+                timeVar = 0.0f;
+                return;
             }
-
-            stepDelta = frameTime;
         }
 
         timeVar = ComputeSimulationTimeScale(stepDelta, ResolveSimulationReferenceDelta(), Speed);
@@ -1183,6 +1269,7 @@ public partial class PhysicsChainComponent : XRComponent
             return;
         }
 
+        InvalidateReadbackSource();
         _particleTrees.Clear();
 
         Transform? componentTransform = DefaultTransform;
@@ -1204,7 +1291,10 @@ public partial class PhysicsChainComponent : XRComponent
             // Activation-time setup can run before the hierarchy has produced valid
             // world-space child transforms. Force a hierarchy recalc before we sample
             // WorldTranslation so the initial chain rest pose matches the authored pose.
-            pt.Root.RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: false, childRecalcType: ELoopType.Parallel).Wait();
+            pt.Root.RecalculateMatrixHierarchy(
+                forceWorldRecalc: true,
+                setRenderMatrixNow: false,
+                childRecalcType: PhysicsChainWorld.RequiresSequentialHierarchyEvaluation ? ELoopType.Sequential : ELoopType.Parallel).Wait();
             AppendParticles(pt, pt.Root, -1, 0.0f);
 
             if (pt.Particles.Count == 0)
@@ -1216,6 +1306,8 @@ public partial class PhysicsChainComponent : XRComponent
 
         UpdateParameters();
         _particlesVersion++;
+        unchecked { ++_particleStateVersion; }
+        _cpuBackendWorld?.MarkGpuRestOwnershipDirty();
         MarkGpuBuffersDirty();
         InvalidateGpuDrivenRenderers();
     }
@@ -1398,6 +1490,7 @@ public partial class PhysicsChainComponent : XRComponent
 
     private void ResetParticlesPosition()
     {
+        InvalidateReadbackSource();
         for (int i = 0; i < _particleTrees.Count; ++i)
             ResetParticlesPosition(_particleTrees[i]);
 
@@ -1407,9 +1500,8 @@ public partial class PhysicsChainComponent : XRComponent
         }
 
         _objectPrevPosition = Transform.WorldTranslation;
-        _time = 0.0f;
+        _cpuBackendWorld?.ResetSimulationClock(_runtimeHandle, this);
         _preUpdateCount = 0;
-        _fixedUpdateRenderAccumulatedTicks = 0L;
         InitializeRootBoneTracking();
     }
 
@@ -1468,6 +1560,10 @@ public partial class PhysicsChainComponent : XRComponent
 
     private float ComputeRenderAlpha()
     {
+        PhysicsChainSimulationClock clock = _cpuBackendWorld is not null
+            && _cpuBackendWorld.TryGetSimulationClock(_runtimeHandle, this, out PhysicsChainSimulationClock current)
+                ? current
+                : default;
         if (UpdateMode == EUpdateMode.FixedUpdate)
         {
             long fixedDeltaTicks = RuntimeTimingServices.Current.FixedDeltaTicks;
@@ -1477,14 +1573,14 @@ public partial class PhysicsChainComponent : XRComponent
                 intervalTicks = Math.Max(intervalTicks, (long)(TimeSpan.TicksPerSecond / fixedUpdateRate));
             return intervalTicks <= 0L
                 ? 1.0f
-                : Math.Clamp((float)(Math.Max(0L, _fixedUpdateRenderAccumulatedTicks) / (double)intervalTicks), 0.0f, 1.0f);
+                : Math.Clamp((float)(Math.Max(0L, clock.FixedRenderAccumulatedTicks) / (double)intervalTicks), 0.0f, 1.0f);
         }
 
         float updateRate = ResolveEffectiveUpdateRate();
         if (updateRate > 0.0f)
         {
             float frameTime = 1.0f / updateRate;
-            return Math.Clamp(_time / frameTime, 0.0f, 1.0f);
+            return Math.Clamp(clock.ElapsedSeconds / frameTime, 0.0f, 1.0f);
         }
 
         return 1.0f;
@@ -1523,7 +1619,7 @@ public partial class PhysicsChainComponent : XRComponent
         if (UsesInterpolatedPresentation())
         {
             if (newSimulationResults && UpdateMode == EUpdateMode.FixedUpdate)
-                _fixedUpdateRenderAccumulatedTicks = 0L;
+                _cpuBackendWorld?.ClearFixedRenderClock(_runtimeHandle, this);
 
             float alpha = ComputeRenderAlpha();
             ApplyParticlesToTransforms(InterpolationMode, alpha);

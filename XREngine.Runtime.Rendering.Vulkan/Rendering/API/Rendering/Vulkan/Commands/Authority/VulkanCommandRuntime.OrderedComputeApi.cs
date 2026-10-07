@@ -75,7 +75,8 @@ internal sealed partial class VulkanCommandRuntime
         int currentPassIndex,
         in FrameOpContext context,
         bool allowSynchronousUpload,
-        bool isDeviceLost)
+        bool isDeviceLost,
+        IRenderResourceLeaseOwner? authoringLease = null)
     {
         if (!SupportsOrderedComputeWork)
             return isDeviceLost
@@ -118,7 +119,8 @@ internal sealed partial class VulkanCommandRuntime
                 label,
                 requireGpuWriteVisibility,
                 diagnosticReceipt,
-                context);
+                context,
+                authoringLease);
     }
 
     internal ERendererComputeEnqueueStatus TryEnqueueOrderedComputeBarrier(
@@ -320,14 +322,26 @@ internal sealed partial class VulkanCommandRuntime
         VulkanFrameOperationQueue queue, VkDataBuffer sourceOwner, Buffer source, ulong sourceOffset,
         VkDataBuffer destinationOwner, Buffer destination, ulong destinationOffset, ulong byteCount,
         int passIndex, string label, bool requireGpuWriteVisibility,
-        GpuDiagnosticSnapshotReceipt? diagnosticReceipt, in FrameOpContext context)
+        GpuDiagnosticSnapshotReceipt? diagnosticReceipt, in FrameOpContext context,
+        IRenderResourceLeaseOwner? authoringLease = null)
     {
         ERendererComputeEnqueueStatus status = VulkanOrderedComputeProducer.TryCreateBufferCopy(
             sourceOwner, source, sourceOffset, destinationOwner, destination, destinationOffset,
             byteCount, passIndex, label, requireGpuWriteVisibility, diagnosticReceipt, context,
             out BufferCopyOp? operation);
         if (operation is not null)
-            queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(operation, passIndex));
+        {
+            operation.AttachAuthoringResource(authoringLease);
+            try
+            {
+                queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(operation, passIndex));
+            }
+            catch
+            {
+                operation.ReleaseAuthoringSnapshot();
+                throw;
+            }
+        }
         return status;
     }
 

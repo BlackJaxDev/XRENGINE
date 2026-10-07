@@ -17,8 +17,6 @@ public partial class RenderableMesh
         XRMaterial? material,
         bool isShadowCollection)
     {
-        _rc.Enabled = ShouldSubmitPrimaryCommand(material, isShadowCollection);
-
         MaterialPassDefinition? outlinePass = null;
         bool outlineEnabled = !isShadowCollection &&
             renderer is not null &&
@@ -45,7 +43,13 @@ public partial class RenderableMesh
         _materialOutlineCommand.Enabled = true;
     }
 
-    private static bool ShouldSubmitPrimaryCommand(XRMaterial? material, bool isShadowCollection)
+    internal bool IsPrimaryCommand(RenderCommand command) => ReferenceEquals(command, _rc);
+
+    internal bool ShouldCollectPrimaryCommand(bool isShadowCollection)
+        => IsPrimaryMaterialPassEnabled(
+            MaterialOverride ?? CurrentLODRenderer?.Material, isShadowCollection);
+
+    internal static bool IsPrimaryMaterialPassEnabled(XRMaterial? material, bool isShadowCollection)
     {
         if (material is null || material.PassSet.Passes.Length == 0)
             return true;

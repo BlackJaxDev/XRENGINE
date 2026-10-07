@@ -311,7 +311,8 @@ namespace XREngine.Editor.Mcp
         [Description("Get current rendering pipeline and camera state.")]
         public static Task<McpToolResponse> GetRenderStateAsync(
             McpToolContext context,
-            [McpName("vr_eye"), Description("Optional VR output to inspect: left, right, or the shared stereo viewport.")] string? vrEye = null)
+            [McpName("vr_eye"), Description("Optional VR output to inspect: left, right, or the shared stereo viewport.")] string? vrEye = null,
+            [McpName("viewport_index"), Description("Optional desktop viewport index in window 0. Use zero to select its first viewport.")] int? viewportIndex = null)
         {
             var pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
             var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
@@ -324,15 +325,29 @@ namespace XREngine.Editor.Mcp
                 ?? stateViewport
                 ?? pipeline?.LastWindowViewport
                 ?? RuntimeEngine.EnumerateActiveViewports().FirstOrDefault();
-            if (!string.IsNullOrWhiteSpace(vrEye))
+            if (viewportIndex.HasValue && !string.IsNullOrWhiteSpace(vrEye))
+                return Task.FromResult(new McpToolResponse(
+                    "Choose either viewport_index or vr_eye, not both.", isError: true));
+            if (viewportIndex is int selectedViewportIndex)
+            {
+                if (RuntimeEngine.Windows.Count == 0 ||
+                    selectedViewportIndex < 0 ||
+                    selectedViewportIndex >= RuntimeEngine.Windows.ElementAt(0).Viewports.Count)
+                    return Task.FromResult(new McpToolResponse(
+                        $"Desktop viewport_index {selectedViewportIndex} is not available in window 0.",
+                        isError: true));
+                activeViewport = ResolveViewport(context.World, null, null, 0,
+                    selectedViewportIndex, out _);
+            }
+            else if (!string.IsNullOrWhiteSpace(vrEye))
             {
                 activeViewport = ResolveViewport(context.World, null, vrEye, 0, 0, out string? error);
                 if (activeViewport is null)
                     return Task.FromResult(new McpToolResponse(error ?? "No VR viewport found.", isError: true));
             }
-            var activeCamera = camera
-                ?? renderState?.SceneCamera
-                ?? activeViewport?.ActiveCamera;
+            var activeCamera = viewportIndex.HasValue
+                ? activeViewport?.ActiveCamera
+                : camera ?? renderState?.SceneCamera ?? activeViewport?.ActiveCamera;
             var activeCameraTransform = activeCamera?.Transform ?? activeViewport?.CameraComponent?.Transform;
             var activeCameraNode = activeCameraTransform?.SceneNode;
             var activeCameraPipeline = activeCamera?.RenderPipeline;
@@ -348,11 +363,14 @@ namespace XREngine.Editor.Mcp
             var pawnNode = mainPawn?.SceneNode;
             var pawnTransform = pawnNode?.Transform;
             var renderArea = RuntimeEngine.Rendering.State.RenderArea;
-            var activeViewportCommands = activeViewport?.RenderPipelineInstance.MeshRenderCommands;
-            var renderingViewportCommands = viewport?.RenderPipelineInstance.MeshRenderCommands;
+            var activeViewportCommands = activeViewport?.MeshRenderCommandsOverride
+                ?? activeViewport?.RenderPipelineInstance.MeshRenderCommands;
+            var renderingViewportCommands = viewport?.MeshRenderCommandsOverride
+                ?? viewport?.RenderPipelineInstance.MeshRenderCommands;
             var activeGpuScene = activeViewport?.World?.VisualScene?.GPUCommands;
-            BackendReadyFramePackage? activeFramePackage =
-                activeViewportCommands?.RenderingBackendReadyPackage;
+            object? canonicalFramePackage = CaptureCanonicalFramePackage(activeViewportCommands);
+            var directionalShadowLane = activeViewport?.World?.Lights?.ShadowAtlas?
+                .CaptureAdvancedDirectionalShadowLaneDiagnostics();
             var activeViewports = RuntimeEngine
                 .EnumerateActiveViewports(RuntimeEngine.EViewportEnumerationMode.IncludeVrEyeViewports)
                 .Select(BuildViewportRenderSummary)
@@ -390,6 +408,7 @@ namespace XREngine.Editor.Mcp
                 activeViewportUpdatingCommandCount = activeViewportCommands?.GetUpdatingCommandCount(),
                 activeViewportCommandsAddedCount = activeViewportCommands?.GetCommandsAddedCount(),
                 activeViewportRenderingCommandPasses = BuildRenderCommandPassSummary(activeViewportCommands),
+                directionalShadowLane,
                 activeViewportResourcePasses = BuildResourcePassSummary(activeViewport?.RenderPipelineInstance.ActiveGeneration?.PassMetadata),
                 advancedProfile = activeViewport is null
                     ? null
@@ -402,6 +421,8 @@ namespace XREngine.Editor.Mcp
                     publicationFailure = activeGpuScene.AdvancedPublicationFailure,
                     topologyDeltaCount = activeGpuScene.AdvancedTopologyDeltaCount,
                     contentDeltaCount = activeGpuScene.AdvancedContentDeltaCount,
+                    reusedStaticDrawPlanCount = activeGpuScene.AdvancedReusedStaticDrawPlanCount,
+                    materialResolveAttemptCount = activeGpuScene.AdvancedMaterialResolveAttemptCount,
                     geometryCompactionReplacementCount = activeGpuScene.AdvancedGeometryCompactionReplacementCount,
                     geometryCompactionReclaimedBytes = activeGpuScene.AdvancedGeometryCompactionReclaimedBytes,
                     geometryCompactionCount = activeGpuScene.AdvancedGeometryCompactionCount,
@@ -432,29 +453,7 @@ namespace XREngine.Editor.Mcp
                     minimumReclaimableSequence = activeGpuScene.AdvancedSharedDatabase.MinimumReclaimablePublicationSequence,
                     retention = activeGpuScene.AdvancedSharedDatabase.CaptureRetentionSnapshot(),
                 },
-                canonicalFramePackage = activeFramePackage is null ? null : new
-                {
-                    state = activeFramePackage.State.ToString(),
-                    scenePublication = activeFramePackage.CanonicalScenePublication,
-                    frame = activeFramePackage.CanonicalFrame,
-                    submission = activeFramePackage.SubmissionResolution,
-                    viewCount = activeFramePackage.CanonicalViews.Length,
-                    viewHistory = activeFramePackage.CanonicalViews.ToArray().Select(view => new
-                    {
-                        viewId = view.ViewId,
-                        historyKey = view.HistoryKey,
-                        valid = (view.Flags & EAdvancedViewRecordFlags.TemporalHistoryValid) != 0,
-                        unjitteredViewChanged = view.ViewProjectionUnjittered != view.PreviousViewProjectionUnjittered,
-                        jitter = view.CurrentAndPreviousJitter,
-                    }).ToArray(),
-                    residentPassCount = activeFramePackage.CanonicalPasses.Length,
-                    dirtyOwnerRangeCount = activeFramePackage.CanonicalDirtyOwnerRanges.Length,
-                    diagnosticRequestCount = activeFramePackage.DiagnosticReadbackRequests.Length,
-                    cpuVisibleDrawCount = activeFramePackage.CpuVisibleDraws.Length,
-                    orderedExceptionCount = activeFramePackage.OrderedExceptions.Length,
-                    templateProjectionDeltaCount = activeFramePackage.TemplateProjectionDeltas.Length,
-                    canonicalSubmissionCount = activeFramePackage.CanonicalSubmissionCount,
-                },
+                canonicalFramePackage,
                 activeCameraType = activeCamera?.GetType().FullName,
                 activeCameraNodeId = activeCameraNode?.ID,
                 activeCameraNodeName = activeCameraNode?.Name,
@@ -513,6 +512,38 @@ namespace XREngine.Editor.Mcp
             };
 
             return Task.FromResult(new McpToolResponse("Retrieved render state.", data));
+        }
+
+        private static object? CaptureCanonicalFramePackage(RenderCommandCollection? commands)
+        {
+            if (commands is null)
+                return null;
+
+            using var readScope = commands.EnterRenderingBufferReadScope();
+            BackendReadyFramePackage package = commands.RenderingBackendReadyPackage;
+            return new
+            {
+                state = package.State.ToString(),
+                scenePublication = package.CanonicalScenePublication,
+                frame = package.CanonicalFrame,
+                submission = package.SubmissionResolution,
+                viewCount = package.CanonicalViews.Length,
+                viewHistory = package.CanonicalViews.ToArray().Select(view => new
+                {
+                    viewId = view.ViewId,
+                    historyKey = view.HistoryKey,
+                    valid = (view.Flags & EAdvancedViewRecordFlags.TemporalHistoryValid) != 0,
+                    unjitteredViewChanged = view.ViewProjectionUnjittered != view.PreviousViewProjectionUnjittered,
+                    jitter = view.CurrentAndPreviousJitter,
+                }).ToArray(),
+                residentPassCount = package.CanonicalPasses.Length,
+                dirtyOwnerRangeCount = package.CanonicalDirtyOwnerRanges.Length,
+                diagnosticRequestCount = package.DiagnosticReadbackRequests.Length,
+                cpuVisibleDrawCount = package.CpuVisibleDraws.Length,
+                orderedExceptionCount = package.OrderedExceptions.Length,
+                templateProjectionDeltaCount = package.TemplateProjectionDeltas.Length,
+                canonicalSubmissionCount = package.CanonicalSubmissionCount,
+            };
         }
 
         private static LegacyCanonicalDrawMapping? GetLastLegacyCanonicalDrawMapping(

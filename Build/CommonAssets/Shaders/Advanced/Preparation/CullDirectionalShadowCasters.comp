@@ -1,0 +1,209 @@
+#version 450
+
+layout(push_constant, std430) uniform XRAdvancedDirectionalShadowCullPush
+{
+    uint cascadeIndex;
+    uint payloadCapacity;
+    uint layerMask;
+    uint zeroToOneDepth;
+    layout(row_major) mat4 viewProjection;
+} XR_ADV_ShadowPush;
+
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_ShadowPush.cascadeIndex
+#include "../Visibility/VisibilityInterface.glslinc"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+bool finite3(vec3 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+bool insidePlane(vec3 center, vec3 extent, vec4 plane)
+{
+    return dot(vec4(center, 1.0), plane) +
+        dot(extent, abs(plane.xyz)) >= 0.0;
+}
+
+bool intersectsCascade(vec3 minimum, vec3 maximum, out bool numericValid)
+{
+    numericValid = false;
+    vec3 extent = (maximum - minimum) * 0.5;
+    vec3 center = minimum + extent;
+    if (!finite3(center) || !finite3(extent))
+        return false;
+    mat4 matrix = XR_ADV_ShadowPush.viewProjection;
+    for (uint column = 0u; column < 4u; ++column)
+        if (any(isnan(matrix[column])) || any(isinf(matrix[column])))
+            return false;
+    numericValid = true;
+    vec4 x = matrix[0];
+    vec4 y = matrix[1];
+    vec4 z = matrix[2];
+    vec4 w = matrix[3];
+    return insidePlane(center, extent, w + x) &&
+        insidePlane(center, extent, w - x) &&
+        insidePlane(center, extent, w + y) &&
+        insidePlane(center, extent, w - y) &&
+        insidePlane(center, extent,
+            XR_ADV_ShadowPush.zeroToOneDepth != 0u ? z : w + z) &&
+        insidePlane(center, extent, w - z);
+}
+
+void rejectCaster()
+{
+    atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+}
+
+void main()
+{
+    uint payloadIndex = gl_GlobalInvocationID.x;
+    uint capacity = XR_ADV_ShadowPush.payloadCapacity;
+    uint groupCount = uint(XR_ADV_VisibilityInstanceGroups.records.length());
+    if (payloadIndex >= capacity)
+        return;
+    if (payloadIndex >= uint(XR_ADV_VisibilityPayloads.records.length()) ||
+        payloadIndex >= uint(XR_ADV_VisibilityProducers.records.length()) ||
+        payloadIndex >= uint(XR_ADV_VisibilityRangeIndices.records.length()) ||
+        payloadIndex >= uint(XR_ADV_VisibilityCandidates.records.length()) / 20u ||
+        XR_ADV_VisibilityProducers.records[payloadIndex] !=
+            XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED)
+    {
+        rejectCaster();
+        return;
+    }
+
+    uint candidateBase = payloadIndex * 20u;
+    uint flags = XR_ADV_VisibilityCandidates.records[candidateBase + 19u];
+    if ((flags & (1u << 10u)) != 0u)
+        return;
+    XRAdvancedVisibilityPayload payload =
+        XR_ADV_VisibilityPayloads.records[payloadIndex];
+    if (payload.draw.index == 0u ||
+        payload.draw.index != XR_ADV_VisibilityCandidates.records[candidateBase] ||
+        payload.draw.generation !=
+            XR_ADV_VisibilityCandidates.records[candidateBase + 1u])
+    {
+        rejectCaster();
+        return;
+    }
+    uint drawDense = XR_ADV_ResolveVisibilityHandle(
+        payload.draw, VisibilityDrawLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+    if (drawDense == XR_ADV_INVALID_DENSE_INDEX ||
+        drawDense >= uint(XR_ADV_Draws.records.length()))
+    {
+        rejectCaster();
+        return;
+    }
+    XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+    if ((draw.flags & 2u) == 0u)
+        return;
+    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
+        payload.geometry, VisibilityGeometryLookupSegment,
+        XR_ADV_DIAGNOSTIC_MESH);
+    uint materialDense = XR_ADV_ResolveVisibilityHandle(
+        payload.material, VisibilityMaterialLookupSegment,
+        XR_ADV_DIAGNOSTIC_MATERIAL);
+    uint transformDense = XR_ADV_ResolveVisibilityHandle(
+        draw.currentTransform, VisibilityTransformLookupSegment,
+        XR_ADV_DIAGNOSTIC_DRAW);
+    if (geometryDense == XR_ADV_INVALID_DENSE_INDEX ||
+        geometryDense >= uint(XR_ADV_Geometries.records.length()) ||
+        materialDense == XR_ADV_INVALID_DENSE_INDEX ||
+        materialDense >= uint(XR_ADV_Materials.records.length()) ||
+        transformDense == XR_ADV_INVALID_DENSE_INDEX ||
+        transformDense >= uint(XR_ADV_Transforms.records.length()))
+    {
+        rejectCaster();
+        return;
+    }
+    uint instanceDense = XR_ADV_ResolveVisibilityHandle(
+        draw.instance, VisibilityInstanceLookupSegment,
+        XR_ADV_DIAGNOSTIC_INSTANCE);
+    if (instanceDense == XR_ADV_INVALID_DENSE_INDEX ||
+        instanceDense >= uint(XR_ADV_Instances.records.length()))
+    {
+        rejectCaster();
+        return;
+    }
+    XRAdvancedInstanceRecord instance = XR_ADV_LoadInstance(instanceDense);
+    if ((instance.layerMask & XR_ADV_ShadowPush.layerMask) == 0u)
+        return;
+    if (draw.deformation.index != 0u)
+    {
+        XRAdvancedPreparedDrawDeformationRecord prepared;
+        if (!XR_ADV_TryLoadPreparedDrawDeformation(drawDense, draw, prepared))
+        {
+            rejectCaster();
+            return;
+        }
+    }
+
+    vec3 minimum = (flags & (1u << 9u)) != 0u
+        ? uintBitsToFloat(uvec3(
+            XR_ADV_VisibilityCandidates.records[candidateBase + 8u],
+            XR_ADV_VisibilityCandidates.records[candidateBase + 9u],
+            XR_ADV_VisibilityCandidates.records[candidateBase + 10u]))
+        : instance.boundsMin.xyz;
+    vec3 maximum = (flags & (1u << 9u)) != 0u
+        ? uintBitsToFloat(uvec3(
+            XR_ADV_VisibilityCandidates.records[candidateBase + 12u],
+            XR_ADV_VisibilityCandidates.records[candidateBase + 13u],
+            XR_ADV_VisibilityCandidates.records[candidateBase + 14u]))
+        : instance.boundsMax.xyz;
+    if (!finite3(minimum) || !finite3(maximum) ||
+        any(greaterThan(minimum, maximum)))
+    {
+        rejectCaster();
+        return;
+    }
+    bool numericValid;
+    bool intersects = intersectsCascade(minimum, maximum, numericValid);
+    if (!numericValid)
+    {
+        rejectCaster();
+        return;
+    }
+    if (!intersects)
+        return;
+
+    uint groupPlusOne = payload.instanceGroupIndexPlusOne;
+    if (groupPlusOne == 0u || groupPlusOne > groupCount)
+    {
+        rejectCaster();
+        return;
+    }
+    uint groupIndex = groupPlusOne - 1u;
+    XRAdvancedIndexedInstanceGroup group =
+        XR_ADV_VisibilityInstanceGroups.records[groupIndex];
+    uint groupCountIndex = XR_ADV_ShadowPush.cascadeIndex * groupCount + groupIndex;
+    uint memberBase = XR_ADV_ShadowPush.cascadeIndex * capacity + group.firstMember;
+    if (group.rangeIndex != XR_ADV_VisibilityRangeIndices.records[payloadIndex] ||
+        groupCountIndex >= uint(XR_ADV_VisibilityEarlyGroupCounts.records.length()) ||
+        group.firstMember > capacity ||
+        group.memberCapacity > capacity - group.firstMember ||
+        memberBase > uint(XR_ADV_VisibilityMeshPayloads.records.length()) ||
+        group.memberCapacity >
+            uint(XR_ADV_VisibilityMeshPayloads.records.length()) - memberBase)
+    {
+        rejectCaster();
+        return;
+    }
+    uint member = atomicAdd(
+        XR_ADV_VisibilityEarlyGroupCounts.records[groupCountIndex], 0u);
+    while (member < group.memberCapacity)
+    {
+        uint prior = atomicCompSwap(
+            XR_ADV_VisibilityEarlyGroupCounts.records[groupCountIndex],
+            member, member + 1u);
+        if (prior == member)
+            break;
+        member = prior;
+    }
+    if (member >= group.memberCapacity)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+        return;
+    }
+    XR_ADV_VisibilityMeshPayloads.records[memberBase + member] = payloadIndex;
+}

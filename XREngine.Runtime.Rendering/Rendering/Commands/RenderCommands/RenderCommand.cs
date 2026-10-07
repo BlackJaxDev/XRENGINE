@@ -73,6 +73,25 @@ namespace XREngine.Rendering.Commands
         public delegate void DelPreRender(RenderCommand command, IRuntimeRenderCamera? camera);
         public event DelPreRender? OnCollectedForRender;
 
+        private DelPreRender? _checkedCollectionCallbacks;
+        private bool _hasCustomCollectionCallbacks;
+
+        /// <summary>Gets whether collection or draw callbacks need the CPU command path.</summary>
+        internal bool RequiresCpuCollectionCallbacks
+        {
+            get
+            {
+                DelPreRender? callbacks = OnCollectedForRender;
+                if (!ReferenceEquals(callbacks, _checkedCollectionCallbacks))
+                {
+                    _checkedCollectionCallbacks = callbacks;
+                    _hasCustomCollectionCallbacks = callbacks is not null &&
+                        callbacks.GetInvocationList().Length > (OwnerRenderInfo is null ? 0 : 1);
+                }
+                return _hasCustomCollectionCallbacks || PreRender is not null || PostRender is not null;
+            }
+        }
+
         public delegate void DelSwapBuffers(RenderCommand command);
         public event DelSwapBuffers? OnSwapBuffers;
 

@@ -28,6 +28,12 @@ public partial class GPUScene
     public int AdvancedContentDeltaCount
         => _advancedScenePublisher.ContentDeltaCount;
 
+    /// <summary>Gets the number of covered static draw plans reused by the last preflight.</summary>
+    public int AdvancedReusedStaticDrawPlanCount => _advancedScenePublisher.ReusedStaticDrawPlanCount;
+
+    /// <summary>Gets the number of material resolution attempts in the last preflight.</summary>
+    public int AdvancedMaterialResolveAttemptCount => _advancedScenePublisher.MaterialResolveAttemptCount;
+
     public int AdvancedGeometryCompactionReplacementCount
         => _advancedScenePublisher.LastGeometryCompactionReplacementCount;
 

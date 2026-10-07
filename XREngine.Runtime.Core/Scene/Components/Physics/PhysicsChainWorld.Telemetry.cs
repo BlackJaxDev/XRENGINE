@@ -16,6 +16,7 @@ public sealed partial class PhysicsChainWorld
     private long _lateDiagnosticsTicks;
     private long _lateGpuComponentPreparationTicks;
     private long _lateGpuInputPackingTicks;
+    private long _lateGpuWorldInputGatherTicks;
     private long _lateGpuBridgeDispatchTicks;
     private long _lateStructuralBoundaryTicks;
     private long _lateQualityBudgetTicks;
@@ -47,7 +48,10 @@ public sealed partial class PhysicsChainWorld
         Interlocked.Read(ref _lateGpuHierarchyTicks),
         Interlocked.Read(ref _lateGpuParticleTransformReadTicks),
         Interlocked.Read(ref _lateActivityScanTicks),
-        Interlocked.Read(ref _lateSelectedActivityTicks));
+        Interlocked.Read(ref _lateSelectedActivityTicks))
+    {
+        GpuWorldInputGatherTicks = Interlocked.Read(ref _lateGpuWorldInputGatherTicks),
+    };
 
     internal static void RecordGpuComponentPreparation(long ticks)
     {

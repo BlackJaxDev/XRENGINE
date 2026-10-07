@@ -22,4 +22,8 @@ public readonly record struct PhysicsChainLateTickTelemetrySnapshot(
     long GpuHierarchyTicks,
     long GpuParticleTransformReadTicks,
     long ActivityScanTicks,
-    long SelectedActivityTicks);
+    long SelectedActivityTicks)
+{
+    /// <summary>Gets the serial world capture time before component GPU dispatch.</summary>
+    public long GpuWorldInputGatherTicks { get; init; }
+}

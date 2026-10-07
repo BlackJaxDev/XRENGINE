@@ -287,7 +287,13 @@ namespace XREngine.Scene
         public bool IsActiveSelf
         {
             get => _isActiveSelf;
-            set => SetField(ref _isActiveSelf, value);
+            set
+            {
+                if (_isActiveSelf == value)
+                    return;
+                using var mutation = PhysicsChainWorld.BeginNodeActivationMutation(this);
+                SetField(ref _isActiveSelf, value);
+            }
         }
 
         /// <summary>
@@ -405,6 +411,8 @@ namespace XREngine.Scene
                 if (ReferenceEquals(oldParent, newParent))
                     return;
 
+                using var mutation = PhysicsChainWorld.BeginHierarchyMutation(
+                    _transform, newParent?.World ?? _transform.World, newParent);
                 OnParentChanging();
 
                 _transform.Parent = newParent;
