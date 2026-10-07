@@ -20,6 +20,7 @@
   <Project Path="XREngine.Runtime.AudioIntegration/XREngine.Runtime.AudioIntegration.csproj" />
   <Project Path="XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj" />
   <Project Path="XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
+  <Project Path="XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   <Project Path="XREngine.Runtime.Execution.Threads/XREngine.Runtime.Execution.Threads.csproj" />
   <Project Path="XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
   <Project Path="XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />

@@ -8,7 +8,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.ExceptionServices;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -116,13 +115,12 @@ namespace XREngine
         /// This fires regardless of whether output is also written to file/console.
         /// </summary>
         public static event Action<LogEntry>? ConsoleEntryAdded;
-        private const int MaxRunDirectoryCount = 3;
         private const int MaxConsoleEntries = 5000;
         private static readonly object LogWriterLock = new();
         private static readonly object ConsoleEntriesLock = new();
         private static readonly List<LogEntry> _consoleEntries = new();
-        private static readonly Dictionary<string, StreamWriter> AuxiliaryLogWriters = new(StringComparer.OrdinalIgnoreCase);
-        private static readonly Dictionary<ELogCategory, StreamWriter?> LogWriters = new()
+        private static readonly Dictionary<string, IRuntimeDebugTextLog> AuxiliaryLogWriters = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<ELogCategory, IRuntimeDebugTextLog?> LogWriters = new()
         {
             [ELogCategory.General] = null,
             [ELogCategory.Assets] = null,
@@ -200,9 +198,7 @@ namespace XREngine
             ConsoleEntryAdded?.Invoke(addedEntry);
         }
 
-        private static string? _logSessionId;
-        private static string? _logsRootDirectory;
-        private static string? _logRunDirectory;
+        private static IRuntimeDebugLogSession? _logSession;
 
         /// <summary>
         /// Returns the default editor console color for a log category. File log headers use
@@ -893,12 +889,13 @@ namespace XREngine
             bool isRenderThread = IsCurrentRenderThread();
             if (isRenderThread && !OperatingSystem.IsBrowser())
             {
-                ThreadPool.QueueUserWorkItem(static state =>
+                IRuntimeDebugLogBackend backend = RuntimeDebugLogBackendServices.RequireCurrent();
+                backend.QueueOut(static state =>
                 {
-                    var (v, dOnly, pDate, pDomain, msg, stack, time) =
-                        ((EOutputVerbosity, bool, bool, bool, string, string?, DateTime))state!;
-                    OutCore(v, dOnly, pDate, pDomain, msg, stack, time);
-                }, (verbosity, debugOnly, printDate, printAppDomain, message, capturedStackTrace, now));
+                    var (v, dOnly, pDate, pDomain, msg, stack, time, capturedBackend) =
+                        ((EOutputVerbosity, bool, bool, bool, string, string?, DateTime, IRuntimeDebugLogBackend))state!;
+                    OutCore(v, dOnly, pDate, pDomain, msg, stack, time, capturedBackend);
+                }, (verbosity, debugOnly, printDate, printAppDomain, message, capturedStackTrace, now, backend));
                 return;
             }
 
@@ -913,13 +910,14 @@ namespace XREngine
             bool printAppDomain,
             string message,
             string? capturedStackTrace,
-            DateTime now)
+            DateTime now,
+            IRuntimeDebugLogBackend? backend = null)
         {
             var hostServices = RuntimeDebugHostServices.Current;
 
             if (verbosity > hostServices.OutputVerbosity)
             {
-                Suppressed(message);
+                Suppressed(message, backend);
                 return;
             }
 
@@ -954,11 +952,11 @@ namespace XREngine
                 message = $"[{now}] " + message;
 
             bool logToFile = hostServices.LogOutputToFile;
-            WriteLogMessage(message, logToFile);
+            WriteLogMessage(message, logToFile, backend: backend);
         }
 
-        private static void Suppressed(string message)
-            => WriteLogMessage($"[Suppressed] {message}", RuntimeDebugHostServices.Current.LogOutputToFile);
+        private static void Suppressed(string message, IRuntimeDebugLogBackend? backend = null)
+            => WriteLogMessage($"[Suppressed] {message}", RuntimeDebugHostServices.Current.LogOutputToFile, backend: backend);
 
         /// <summary>
         /// Logs an exception to the general log. Use category-specific methods for specialized logging.
@@ -1276,7 +1274,8 @@ namespace XREngine
         private static bool IsCurrentRenderThread()
             => RuntimeDebugHostServices.Current.IsRenderThread || (IsRenderThreadEvaluator?.Invoke() == true);
 
-        private static void WriteLogMessage(string message, bool logToFile, ELogCategory category = ELogCategory.General)
+        private static void WriteLogMessage(string message, bool logToFile, ELogCategory category = ELogCategory.General,
+            IRuntimeDebugLogBackend? backend = null)
         {
             if (OperatingSystem.IsBrowser())
             {
@@ -1285,26 +1284,29 @@ namespace XREngine
                 Console.WriteLine(message);
                 return;
             }
+            backend ??= RuntimeDebugLogBackendServices.RequireCurrent();
             if (IsCurrentRenderThread())
             {
-                ThreadPool.QueueUserWorkItem(static state =>
+                backend.QueueCategory(static state =>
                 {
-                    var (msg, toFile, cat) = ((string, bool, ELogCategory))state!;
-                    WriteLogMessageCore(msg, toFile, cat);
-                }, (message, logToFile, category));
+                    var (msg, toFile, cat, capturedBackend) =
+                        ((string, bool, ELogCategory, IRuntimeDebugLogBackend))state!;
+                    WriteLogMessageCore(msg, toFile, cat, capturedBackend);
+                }, (message, logToFile, category, backend));
                 return;
             }
 
-            WriteLogMessageCore(message, logToFile, category);
+            WriteLogMessageCore(message, logToFile, category, backend);
         }
 
-        private static void WriteLogMessageCore(string message, bool logToFile, ELogCategory category)
+        private static void WriteLogMessageCore(string message, bool logToFile, ELogCategory category,
+            IRuntimeDebugLogBackend backend)
         {
-            StreamWriter? writer = null;
+            IRuntimeDebugTextLog? writer = null;
 
             lock (LogWriterLock)
             {
-                writer = EnsureLogWriterInternal(category, logToFile);
+                writer = EnsureLogWriterInternal(category, logToFile, backend);
                 writer?.WriteLine(BuildCategoryLogLine(category, message, DateTimeOffset.Now));
             }
 
@@ -1318,7 +1320,8 @@ namespace XREngine
             }
         }
 
-        private static StreamWriter? EnsureLogWriterInternal(ELogCategory category, bool logToFile)
+        private static IRuntimeDebugTextLog? EnsureLogWriterInternal(ELogCategory category, bool logToFile,
+            IRuntimeDebugLogBackend backend)
         {
             if (!logToFile)
             {
@@ -1326,18 +1329,21 @@ namespace XREngine
                 return null;
             }
 
-            _logSessionId ??= CreateLogSessionId();
-
+            IRuntimeDebugLogSession session = GetOrCreateLogSession(backend, eagerSessionId: true);
             if (LogWriters[category] is null)
             {
-                string logsDirectory = GetLogRunDirectory();
                 string fileName = BuildCategoryLogFileName(category);
-                string filePath = Path.Combine(logsDirectory, fileName);
-                var writer = new StreamWriter(new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read))
+                IRuntimeDebugTextLog writer = session.OpenTextLog(fileName);
+                try
                 {
-                    AutoFlush = true
-                };
-                writer.WriteLine(BuildCategoryLogHeader(category, DateTimeOffset.Now));
+                    writer.WriteLine(BuildCategoryLogHeader(category, DateTimeOffset.Now));
+                }
+                catch
+                {
+                    try { writer.Dispose(); }
+                    catch { /* Keep the original header error. */ }
+                    throw;
+                }
                 LogWriters[category] = writer;
             }
 
@@ -1356,28 +1362,29 @@ namespace XREngine
                 return;
             }
 
+            IRuntimeDebugLogBackend backend = RuntimeDebugLogBackendServices.RequireCurrent();
             if (IsCurrentRenderThread())
             {
-                ThreadPool.QueueUserWorkItem(static state =>
+                backend.QueueAuxiliary(static state =>
                 {
-                    var (fn, msg) = ((string, string))state!;
-                    WriteAuxiliaryLogCore(fn, msg);
-                }, (fileName, message));
+                    var (fn, msg, capturedBackend) = ((string, string, IRuntimeDebugLogBackend))state!;
+                    WriteAuxiliaryLogCore(fn, msg, capturedBackend);
+                }, (fileName, message, backend));
                 return;
             }
 
-            WriteAuxiliaryLogCore(fileName, message);
+            WriteAuxiliaryLogCore(fileName, message, backend);
         }
 
-        private static void WriteAuxiliaryLogCore(string fileName, string message)
+        private static void WriteAuxiliaryLogCore(string fileName, string message, IRuntimeDebugLogBackend backend)
         {
             lock (LogWriterLock)
             {
                 try
                 {
-                    StreamWriter? writer = EnsureAuxiliaryLogWriterInternal(fileName);
+                    IRuntimeDebugTextLog? writer = EnsureAuxiliaryLogWriterInternal(fileName, backend);
                     writer?.WriteLine(message);
-                    writer?.WriteLine();
+                    writer?.WriteLine(null);
                 }
                 catch
                 {
@@ -1386,20 +1393,25 @@ namespace XREngine
             }
         }
 
-        private static StreamWriter? EnsureAuxiliaryLogWriterInternal(string fileName)
+        private static IRuntimeDebugTextLog? EnsureAuxiliaryLogWriterInternal(string fileName,
+            IRuntimeDebugLogBackend backend)
         {
             string normalizedName = BuildAuxiliaryLogFileName(fileName);
-            if (AuxiliaryLogWriters.TryGetValue(normalizedName, out StreamWriter? existingWriter))
+            if (AuxiliaryLogWriters.TryGetValue(normalizedName, out IRuntimeDebugTextLog? existingWriter))
                 return existingWriter;
 
-            string logsDirectory = GetLogRunDirectory();
-            string filePath = Path.Combine(logsDirectory, normalizedName);
-            var writer = new StreamWriter(new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.Read))
+            IRuntimeDebugLogSession session = GetOrCreateLogSession(backend);
+            IRuntimeDebugTextLog writer = session.OpenTextLog(normalizedName);
+            try
             {
-                AutoFlush = true
-            };
-
-            writer.WriteLine($"Auxiliary log ({normalizedName}) started {FormatTimestamp(DateTimeOffset.Now)}");
+                writer.WriteLine($"Auxiliary log ({normalizedName}) started {FormatTimestamp(DateTimeOffset.Now)}");
+            }
+            catch
+            {
+                try { writer.Dispose(); }
+                catch { /* Keep the original header error. */ }
+                throw;
+            }
             AuxiliaryLogWriters[normalizedName] = writer;
             return writer;
         }
@@ -1424,8 +1436,8 @@ namespace XREngine
                 AuxiliaryLogWriters.Remove(auxiliaryName);
             }
 
-            _logSessionId = null;
-            _logRunDirectory = null;
+            _logSession?.Dispose();
+            _logSession = null;
         }
 
         /// <summary>
@@ -1434,105 +1446,32 @@ namespace XREngine
         /// </summary>
         public static string EnsureLogRunDirectory()
         {
+            IRuntimeDebugLogBackend backend = RuntimeDebugLogBackendServices.RequireCurrent();
             lock (LogWriterLock)
             {
-                return GetLogRunDirectory();
+                return GetOrCreateLogSession(backend).EnsureRunDirectory();
             }
         }
 
-        private static string GetLogsRootDirectory()
+        private static IRuntimeDebugLogSession GetOrCreateLogSession(IRuntimeDebugLogBackend backend,
+            bool eagerSessionId = false)
         {
-            if (_logsRootDirectory is not null)
-                return _logsRootDirectory;
-
-            string? editorSessionRoot = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionRoot);
-            string preferred = string.IsNullOrWhiteSpace(editorSessionRoot)
-                ? Path.Combine(FindRepositoryRoot() ?? AppContext.BaseDirectory, "Build", "Logs")
-                : Path.Combine(Path.GetFullPath(editorSessionRoot), "logs");
-
-            if (!TryCreateDirectory(preferred))
+            if (_logSession is not null)
             {
-                string fallback = Path.Combine(AppContext.BaseDirectory, "Logs");
-                TryCreateDirectory(fallback);
-                preferred = fallback;
+                if (eagerSessionId && !_logSession.HasSessionId)
+                    _logSession.SetSessionIdIfAbsent(
+                        BuildLogSessionId(GetLogApplicationIdentifier(), DateTime.Now, Environment.ProcessId));
+                return _logSession;
             }
 
-            _logsRootDirectory = preferred;
-            return preferred;
+            string applicationIdentifier = GetLogApplicationIdentifier();
+            int processId = Environment.ProcessId;
+            string? sessionId = eagerSessionId
+                ? BuildLogSessionId(applicationIdentifier, DateTime.Now, processId)
+                : null;
+            return _logSession = backend.CreateSession(
+                new RuntimeDebugLogSessionOptions(sessionId, applicationIdentifier, processId));
         }
-
-        private static string GetLogRunDirectory()
-        {
-            if (_logRunDirectory is not null)
-                return _logRunDirectory;
-
-            string rootDirectory = GetLogsRootDirectory();
-            string buildFolder = SanitizePathSegment(GetBuildIdentifier());
-            string platformFolder = SanitizePathSegment(GetPlatformIdentifier());
-
-            string runsRoot = Path.Combine(rootDirectory, buildFolder, platformFolder);
-            if (!TryCreateDirectory(runsRoot))
-                runsRoot = rootDirectory;
-
-            if (_logSessionId is null)
-                _logSessionId = CreateLogSessionId();
-
-            string runDirectory = Path.Combine(runsRoot, _logSessionId);
-            if (!TryCreateDirectory(runDirectory))
-            {
-                string fallback = Path.Combine(rootDirectory, _logSessionId);
-                TryCreateDirectory(fallback);
-                runDirectory = fallback;
-            }
-
-            EnforceRunDirectoryLimit(runsRoot);
-
-            _logRunDirectory = runDirectory;
-            return runDirectory;
-        }
-
-        private static string GetBuildIdentifier()
-        {
-            try
-            {
-                DirectoryInfo baseDir = new(AppContext.BaseDirectory);
-                string? tfm = baseDir.Name;
-                string? configuration = baseDir.Parent?.Name;
-
-                if (!string.IsNullOrWhiteSpace(configuration) && !string.IsNullOrWhiteSpace(tfm))
-                    return $"{configuration}_{tfm}";
-
-                if (!string.IsNullOrWhiteSpace(tfm))
-                    return tfm;
-
-                return configuration ?? AppDomain.CurrentDomain.FriendlyName ?? "UnknownBuild";
-            }
-            catch
-            {
-                return AppDomain.CurrentDomain.FriendlyName ?? "UnknownBuild";
-            }
-        }
-
-        private static string GetPlatformIdentifier()
-        {
-            try
-            {
-                string arch = RuntimeInformation.ProcessArchitecture.ToString();
-                string os = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "windows" :
-                            RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx" :
-                            RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "linux" :
-                            RuntimeInformation.OSDescription;
-
-                return $"{os}_{arch}".ToLowerInvariant();
-            }
-            catch
-            {
-                return "unknown_platform";
-            }
-        }
-
-        private static string CreateLogSessionId()
-            => BuildLogSessionId(GetLogApplicationIdentifier(), DateTime.Now, Environment.ProcessId);
 
         private static string GetLogApplicationIdentifier()
         {
@@ -1642,83 +1581,5 @@ namespace XREngine
             return start >= length ? "unknown" : new string(buffer, start, length - start);
         }
 
-        private static string SanitizePathSegment(string segment)
-        {
-            if (string.IsNullOrWhiteSpace(segment))
-                return "unknown";
-
-            char[] invalidChars = Path.GetInvalidFileNameChars();
-            var sanitized = new string(segment
-                .Select(ch => invalidChars.Contains(ch) ? '_' : ch)
-                .ToArray());
-
-            return string.IsNullOrWhiteSpace(sanitized) ? "unknown" : sanitized;
-        }
-
-        private static string? FindRepositoryRoot()
-        {
-            try
-            {
-                DirectoryInfo? current = new(AppContext.BaseDirectory);
-                while (current is not null)
-                {
-                    string currentPath = current.FullName;
-                    if (File.Exists(Path.Combine(currentPath, "XRENGINE.sln")) || Directory.Exists(Path.Combine(currentPath, ".git")))
-                        return currentPath;
-
-                    current = current.Parent;
-                }
-            }
-            catch
-            {
-                // Ignore; we'll fall back to the executable directory later.
-            }
-
-            return null;
-        }
-
-        private static bool TryCreateDirectory(string path)
-        {
-            try
-            {
-                Directory.CreateDirectory(path);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static void EnforceRunDirectoryLimit(string runsRoot)
-        {
-            try
-            {
-                Directory.CreateDirectory(runsRoot);
-                DirectoryInfo rootInfo = new(runsRoot);
-                DirectoryInfo[] runDirectories = rootInfo.GetDirectories();
-
-                if (runDirectories.Length <= MaxRunDirectoryCount)
-                    return;
-
-                foreach (DirectoryInfo dir in runDirectories
-                    .OrderByDescending(d => d.CreationTimeUtc)
-                    .Skip(MaxRunDirectoryCount))
-                {
-                    try
-                    {
-                        dir.Delete(true);
-                    }
-                    catch
-                    {
-                        // Ignore cleanup failures, permissions may block deletion.
-                    }
-                }
-            }
-            catch
-            {
-                // If we cannot enumerate directories, skip retention to avoid crashing logging.
-            }
-        }
     }
 }

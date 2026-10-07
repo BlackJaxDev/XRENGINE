@@ -8,7 +8,9 @@ using XREngine.Data;
 using XREngine.Execution;
 using XREngine.Rendering;
 using XREngine.Runtime.Bootstrap;
+using XREngine.Runtime.Diagnostics.Native;
 
+NativeDebugBackendRegistration.EnsureRegistered();
 if (args.Length != 3)
     throw new ArgumentException("Usage: RollingBallPublisher <canonical-project.xrproj> <editor.dll> <validation-root>");
 

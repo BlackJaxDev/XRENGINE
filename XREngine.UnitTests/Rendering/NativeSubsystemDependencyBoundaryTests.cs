@@ -30,7 +30,8 @@ public sealed class NativeSubsystemDependencyBoundaryTests
         "XREngine.Runtime.Rendering.ImGui", "XREngine.Runtime.UI.Ultralight",
         "XREngine.Runtime.UI.Rive", "XREngine.Runtime.UI.Skia", "XREngine.Runtime.Text.FreeType",
         "XREngine.Runtime.IO.DirectStorage", "XREngine.Runtime.Net.Sockets", "XREngine.Runtime.Net.Osc",
-        "XREngine.Runtime.Diagnostics.Desktop", "XREngine.Runtime.Rendering.OpenGL",
+        "XREngine.Runtime.Diagnostics.Desktop", "XREngine.Runtime.Diagnostics.Native",
+        "XREngine.Runtime.Rendering.OpenGL",
         "XREngine.Runtime.Rendering.Vulkan", "XREngine.Runtime.Rendering.WebGPU",
     };
 
@@ -56,12 +57,17 @@ public sealed class NativeSubsystemDependencyBoundaryTests
             foreach (string project in NativeLeaves)
                 foreach (string reference in ReadProjectReferences(root, project))
                 {
-                    Assert.That(NativeLeaves, Does.Not.Contain(reference),
-                        $"Native leaf '{project}' references another leaf '{reference}'.");
+                    if (project != "XREngine.Runtime.Platform.Desktop" ||
+                        reference != "XREngine.Runtime.Diagnostics.Native")
+                        Assert.That(NativeLeaves, Does.Not.Contain(reference),
+                            $"Native leaf '{project}' references another leaf '{reference}'.");
                     Assert.That(reference, Is.Not.AnyOf("XREngine.Runtime.Bootstrap", "XREngine.Editor",
                         "XREngine.Server", "XREngine.VRClient", "XREngine.UnitTests"),
                         $"Native leaf '{project}' references application '{reference}'.");
                 }
+            Assert.That(ReadProjectReferences(root, "XREngine.Runtime.Diagnostics.Native"),
+                Is.EquivalentTo(new[] { "XREngine.Runtime.Core" }),
+                "Native logging must reference Core only.");
         });
     }
 

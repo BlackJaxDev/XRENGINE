@@ -6,6 +6,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Profiling;
 using XREngine.Rendering.Vulkan;
 using XREngine.RenderBench;
+using XREngine.Runtime.Diagnostics.Native;
 
 namespace XREngine.UnitTests.SoftwareVulkan;
 
@@ -14,6 +15,7 @@ internal static unsafe class Program
 {
     private static int Main(string[] args)
     {
+        NativeDebugBackendRegistration.EnsureRegistered();
         if (args.Length != 2 || args[0] != "--icd" || !File.Exists(args[1]))
         {
             Console.Error.WriteLine("Usage: XREngine.SoftwareVulkanValidation --icd <software-ICD.json>\nExit codes: 0 all checks passed; 1 failure; 2 invalid input; 3 unsupported/skipped checks.");

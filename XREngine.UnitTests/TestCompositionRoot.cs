@@ -23,6 +23,7 @@ public sealed class TestCompositionRoot
     [OneTimeSetUp]
     public void InstallRuntimeServices()
     {
+        RuntimeApplicationBootstrap.PrepareLoggingServices();
         RuntimeApplicationBootstrap.PrepareWorkerServices();
         _previousRenderingHostServices = RuntimeRenderingHostServices.Current;
         _previousShaderServices = RuntimeShaderServices.Current;
