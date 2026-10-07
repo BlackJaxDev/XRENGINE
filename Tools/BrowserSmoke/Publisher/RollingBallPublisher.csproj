@@ -8,5 +8,6 @@
   <ItemGroup>
     <ProjectReference Include="../../../Samples/RollingBall/RollingBall.csproj" />
     <ProjectReference Include="../../../XREngine.Runtime.Execution.Threads/XREngine.Runtime.Execution.Threads.csproj" />
+    <ProjectReference Include="../../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   </ItemGroup>
 </Project>

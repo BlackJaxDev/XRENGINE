@@ -207,6 +207,45 @@ Render-lane, transform, timer, profiler,
 batch/pool, and other blocking-site placement remain open. No requirement state
 or desktop/VR scheduling policy changed.
 
+## Native logging placement (2026-10-07)
+
+`XREngine.Runtime.Diagnostics.Native` now owns physical debug-log files,
+directory discovery and retention, and the three existing ThreadPool dispatch
+operations. The new `net10.0` project references only Core and adds no package.
+Core keeps message formatting, preferences, filtering, console entries,
+writer dictionaries, and their existing lock. The browser category and auxiliary
+console paths do not require this native provider.
+
+Native hosts must register logging before a native logging operation. A missing
+provider gives a configuration error. Registration preserves a custom provider
+and does not open files or start workers. Each queued operation captures its
+provider. An active session and its writers remain on their original provider
+until reset. Replacing or removing the registry entry does not dispose them;
+removal rejects new native operations. The implementation preserves the three
+dispatch points, their caller/worker timing and execution-context flow, file
+formats, local timestamps, root fallback, and retention rules. Final directory
+fallback remains best effort. Category file errors still propagate before
+console insertion; auxiliary file errors remain best effort.
+
+Desktop composition and the identified tool/test entry points register the
+native leaf before logging can occur. The benchmark assembly also registers
+when loaded by a benchmark child process. Its tool-only build excludes that
+initializer and native reference. The approved dependency test adds the new
+leaf and permits only its intended Desktop implementation edge. The
+[project map](../../../architecture/runtime/project-organization.md) records
+the startup and custom-host contract.
+
+Independent source, lifetime, and composition review passed. Eight local Debug
+builds passed with zero warnings and errors: Core/native leaf, Desktop,
+BrowserRuntimeMetadataCooker, BrowserSmoke Publisher, Headless, SoftwareVulkan,
+and both benchmark modes. RenderBench compilation is blocked by the absent
+OpenVR.NET and OscCore-NET9 submodule projects. The focused full NUnit cases
+share that blocked composition and have not run locally. Exact published
+Windows Release CI and its focused test filter remain pending. These results
+do not qualify live file output, shutdown draining, browser behavior, or
+desktop/VR pacing. The lexical table above remains pinned to its stated older
+commit; this placement change does not close the remaining inventory.
+
 ## Historical lexical refresh
 
 The inventory includes the Browser executable and its direct/transitive engine project references. The project-reference walk yields 18 fixed projects plus the configured generated RollingBall game project: the 19-project portable closure. Counts are files with a match, not distinct blocking calls. The refreshed 22:43 UTC source scan uses the three search expressions in `UR02.03b` over Git-tracked C# paths plus new working-source files in recursively referenced project directories. Ordinary `rg` directory scans were insufficient: the repository `Assets/` ignore rule hides tracked `XREngine.Data/Core/Assets/XRAsset.cs` and its four default worker wrappers. Use `git grep` for tracked source, or feed explicit tracked paths to `rg`; do not let ignore rules define the runtime closure. A file can appear in multiple columns. Conditional project references are included lexically; the configurable game-project reference and externally supplied managed Jolt source require separate scans. These counts include in-progress source and do not qualify it.

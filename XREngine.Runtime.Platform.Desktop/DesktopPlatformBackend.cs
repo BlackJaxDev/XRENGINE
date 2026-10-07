@@ -20,6 +20,7 @@ public static class DesktopPlatformBackend
 
     public static void Register()
     {
+        DesktopLoggingBackend.EnsureRegistered();
         DesktopWorkerBackend.EnsureRegistered();
         PhysicsChainCpuWorkerGroupServices.Current = new DesktopPhysicsChainCpuWorkerGroupFactory();
         RuntimeWindowBackendRegistry.Install(new DesktopSilkWindowBackendFactory());

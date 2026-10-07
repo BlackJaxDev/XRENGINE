@@ -12,6 +12,9 @@ public static class RuntimeApplicationBootstrap
     /// <summary>Installs packaged desktop providers before reading launch assets to select an application profile.</summary>
     public static void PrepareDesktopServices() => DesktopRuntimeBackendBootstrap.EnsureRegistered();
 
+    /// <summary>Registers native logging before an application reads assets or starts workers.</summary>
+    public static void PrepareLoggingServices() => DesktopLoggingBackend.EnsureRegistered();
+
     /// <summary>Registers worker services before a host configures a threaded scheduler.</summary>
     public static void PrepareWorkerServices() => DesktopWorkerBackend.EnsureRegistered();
 

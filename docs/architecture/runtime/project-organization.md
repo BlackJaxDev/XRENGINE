@@ -60,6 +60,32 @@ Full Desktop bootstrap registers workers before other backend registration.
 Replacing an existing asset source can invoke cancellation callbacks during
 DirectStorage registration; those callbacks must already have worker support.
 
+`XREngine.Runtime.Diagnostics.Native` is a `net10.0` implementation leaf that
+references only Core. It owns native log files, run directories, root discovery,
+retention, and the three render-thread dispatch paths used by `Debug`. Core
+keeps message formatting, filtering, category preferences, console entries,
+writer dictionaries, and their lock. The native leaf uses the existing text
+encoding, shared-read file mode, auto-flush, local timestamps, and three-run
+retention policy. Browser category and auxiliary output use their direct
+console paths without a native provider.
+Directory creation keeps the prior best-effort fallback: when both preferred
+and fallback creation fail, a later file open reports the filesystem error.
+
+Native applications must register `NativeDebugBackendRegistration.EnsureRegistered()`
+before they call `Debug` logging or `Debug.EnsureLogRunDirectory()`. An external
+Core host without a registered backend receives an `InvalidOperationException`
+that names `IRuntimeDebugLogBackend`. Auxiliary file failures remain best effort;
+the missing-provider error occurs before auxiliary work is dispatched. Desktop
+composition registers native logging before other backend callbacks. Bootstrap
+exposes `RuntimeApplicationBootstrap.PrepareLoggingServices()` for early setup.
+Registration keeps a custom provider, creates no files or threads, and emits no
+log entry. An active log run and its open writers keep their provider when the
+registered provider changes. Each new operation requires the current provider
+and captures it for queued work. If provider A owns an active run and B replaces
+it, new work can dispatch through B while the open files stay with A. Removing
+the current provider rejects new native operations, but it does not close the
+active writers or cancel work that was already queued.
+
 The job manager owns each created domain before either starts. Startup failure
 requests cancellation and signals both domains before joining them. A clean
 rollback rethrows the startup exception; a failed cleanup reports an aggregate

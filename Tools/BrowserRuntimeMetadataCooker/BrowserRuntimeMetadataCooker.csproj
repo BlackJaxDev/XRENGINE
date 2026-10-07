@@ -8,5 +8,6 @@
   <ItemGroup>
     <ProjectReference Include="../../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" />
+    <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   </ItemGroup>
 </Project>

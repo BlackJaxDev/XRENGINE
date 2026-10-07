@@ -11,6 +11,7 @@
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <ProjectReference Include="../../XREngine.Runtime.AnimationIntegration/XREngine.Runtime.AnimationIntegration.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />
+    <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../Animation/VrCalibrationCaptureTests.cs" Link="Animation/VrCalibrationCaptureTests.cs" />
