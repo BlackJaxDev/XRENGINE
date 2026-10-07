@@ -83,5 +83,4 @@ The baked compression behavior is covered by animation unit tests:
 
 ## Future Work
 
-- Track cooked asset support, delta seek checkpoints, editor estimates, and type-specific lossless stores in the [baked value compression follow-ups TODO](../../work/todo/animation/baked-value-compression-followups-todo.md).
-- Track lossy quantized codecs, especially float-family formats, in the [lossy float baked value compression TODO](../../work/todo/animation/lossy-float-baked-value-compression-todo.md). Lossy formats should land only after the engine has a per-type error-budget contract and clear reconstruction rules.
+- Cooked encoded payloads, delta seek checkpoints, editor estimates, type-specific lossless stores, and opt-in lossy float-family codecs are tracked in the [baked value compression TODO](../../work/todo/animation/baked-value-compression-todo.md). Lossy formats land only after a per-type error-budget contract and clear reconstruction rules exist.

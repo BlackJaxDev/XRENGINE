@@ -7,6 +7,8 @@ namespace XREngine.Rendering.Compute;
 /// </summary>
 public interface IPhysicsChainReadbackCoordinator
 {
+    bool HasActiveSources { get; }
+    bool HasPendingTransfers { get; }
     PhysicsChainReadbackTransferCounters GetReadbackTransferCounters();
     int BuildPendingReadbackGatherPlans(
         PhysicsChainReadbackSourceEpoch sourceEpoch,

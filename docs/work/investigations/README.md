@@ -10,3 +10,4 @@ For rendering, use [Rendering Investigations](rendering/README.md).
 Runtime input: [Browser snapshot transient input edges](runtime/browser-snapshot-transient-edges-2026-10-02.md).
 
 - [Windows CI Build Preparation](platform/windows-ci-build-preparation-2026-10-05.md): workload provisioning, native symbols, and Visual Studio discovery; hosted-runner confirmation pending.
+- [Skinned GPU Chain Benchmark](physics/skinned-gpu-chain-benchmark-2026-10-06.md): GPU palette, bounds, repeated benchmark lifecycle, and scale measurements.

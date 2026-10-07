@@ -6,7 +6,7 @@ Status: Active; canonical tracker for the directional-light Vulkan stability pat
 Supersedes active ownership in:
 
 - [Shadow Atlas Framerate Regression Investigation](archive/shadow-atlas-framerate-regression-2026-07-02.md)
-- [Directional Cascade Atlas Stale Frame And Reprojection TODO](../../todo/rendering/shadows/directional-cascade-atlas-stale-frame-and-reprojection-todo.md)
+- [Shadow Atlas architecture](../../../architecture/rendering/shadow-atlas.md) (stale-frame and reprojection rules)
 - [Editor Origin / Eye Camera Flicker Investigation](archive/editor-origin-eye-camera-flicker-2026-06-28.md)
 - [Vulkan Mesh Jitter And Command-Buffer Retirement Failure](archive/vulkan-mesh-jitter-command-buffer-retirement-2026-07-21.md)
 - The Vulkan crash, cropped-output, and debug-flicker follow-up in
@@ -14,7 +14,7 @@ Supersedes active ownership in:
 
 Related work that remains separate and is not part of this acceptance pass:
 
-- [Vulkan Optimization Workstreams 03-05 Validation](../../testing/rendering/03-05-optimization-validation-todo.md)
+- [Vulkan Optimization Workstreams 03-05 Validation](../../testing/rendering/gpu-driven-submission-validation.md#vulkan-03-05-gate)
 - [Vulkan Zero-Readback Production Scheduling](../../progress/rendering/vulkan-zero-readback-production-scheduling-2026-08-03.md)
 
 ## Current status

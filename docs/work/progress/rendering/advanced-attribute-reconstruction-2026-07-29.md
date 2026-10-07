@@ -2,7 +2,7 @@
 
 Date: 2026-07-29
 Related TODO:
-[05 - Attribute Reconstruction](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md#visibility-and-reconstruction-acceptance-carried-from-architecture-documents-0305)
+[05 - Attribute Reconstruction](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md)
 
 ## Outcome
 

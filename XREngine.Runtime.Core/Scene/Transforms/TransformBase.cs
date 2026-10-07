@@ -1070,14 +1070,40 @@ namespace XREngine.Scene.Transforms
         /// </summary>
         public bool RecalculateMatrices(bool forceWorldRecalc = false, bool setRenderMatrixNow = false)
         {
-            bool worldChanged = IsWorldMatrixDirty;
+            bool localChanged;
+            bool worldChanged;
+            bool fastPath = false;
+            if (HierarchyStore is { } store)
+            {
+                if (GetType() == typeof(Transform)
+                    && store.TryRecalculateOrdinaryWorld(
+                        HierarchyHandle, forceWorldRecalc, out worldChanged))
+                {
+                    fastPath = true;
+                    localChanged = false;
+                }
+                else
+                    store.ReadDirtyPair(HierarchyHandle, out localChanged, out worldChanged);
+            }
+            else
+            {
+                localChanged = IsLocalMatrixDirty;
+                worldChanged = IsWorldMatrixDirty;
+            }
             bool recalcWorld = worldChanged || forceWorldRecalc;
 
-            if (IsLocalMatrixDirty)
-                RecalcLocal();
-
-            if (recalcWorld)
-                RecalcWorld();
+            if (fastPath)
+            {
+                if (recalcWorld)
+                    NotifyMatrixChange(4 | 8);
+            }
+            else
+            {
+                if (localChanged)
+                    RecalcLocal();
+                if (recalcWorld)
+                    RecalcWorld();
+            }
 
             // The global override can force every render-matrix publish to be deferred or synchronous,
             // regardless of what the caller requested. A transform with no world always publishes
@@ -1139,16 +1165,43 @@ namespace XREngine.Scene.Transforms
 
         public void RecalcLocal()
         {
-            WriteMatrix(0, CreateLocalMatrix());
-            SetMatrixDirty(0, false);
+            Matrix4x4 matrix = CreateLocalMatrix();
+            if (HierarchyStore is { } store)
+                store.WriteLocalAndClearDirty(HierarchyHandle, matrix);
+            else
+            {
+                WriteMatrix(0, matrix);
+                SetMatrixDirty(0, false);
+            }
             NotifyMatrixChange(1 | 2);
         }
 
         public void RecalcWorld()
         {
-            WriteMatrix(1, HierarchyStore is { } store && !HasCustomWorldMatrix
-                ? store.ComposeWorld(HierarchyHandle) : CreateWorldMatrix());
-            SetMatrixDirty(1, false);
+            // Local callbacks can detach or transfer this transform. Resolve its
+            // current store after those callbacks, before composing world space.
+            if (HierarchyStore is { } store)
+            {
+                bool customWorldMatrix = HasCustomWorldMatrix;
+                if (customWorldMatrix || !store.TryComposeAndWriteWorld(HierarchyHandle))
+                {
+                    Matrix4x4 matrix = customWorldMatrix
+                        ? CreateWorldMatrix()
+                        : store.ComposeWorld(HierarchyHandle);
+                    if (ReferenceEquals(HierarchyStore, store))
+                        store.WriteWorldAndClearDirty(HierarchyHandle, matrix);
+                    else
+                    {
+                        WriteMatrix(1, matrix);
+                        SetMatrixDirty(1, false);
+                    }
+                }
+            }
+            else
+            {
+                WriteMatrix(1, CreateWorldMatrix());
+                SetMatrixDirty(1, false);
+            }
             NotifyMatrixChange(4 | 8);
         }
 

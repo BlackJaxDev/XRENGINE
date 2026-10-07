@@ -6,11 +6,11 @@ Owner: Rendering
 
 ## Related Docs
 
-- [Vulkan Dynamic Rendering Migration TODO](../../todo/rendering/vulkan-dynamic-rendering-migration-todo.md)
+- [Vulkan Dynamic Rendering Migration TODO](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#vulkan-extension-backlog)
 - [Deferred+ Render Path Design](deferred-plus-render-path-design.md)
-- [Deferred+ Render Path TODO](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md#phase-7)
+- [Deferred+ Render Path TODO](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md)
 - [Retinal Visibility Cache Rendering Design](retinal-visibility-cache-rendering-design.md)
-- [Retinal Visibility Cache Rendering Validation Plan](../../testing/rendering/retinal-visibility-cache-rendering-todo.md)
+- [Retinal Visibility Cache Rendering Validation Plan](../../testing/rendering/retinal-visibility-cache-validation.md)
 - [Dynamic Indirect Material Bindings](dynamic-indirect-material-bindings.md)
 - [GPU Meshlet Zero-Readback Rendering Design](gpu-meshlet-zero-readback-rendering-design.md)
 - [Material Binding Policy](../../../architecture/rendering/material-binding-policy.md)

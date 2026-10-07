@@ -124,7 +124,7 @@ Status: research complete; causes and proposed fixes still require runtime
 validation. No runtime code or tests were changed during this research. The
 original CPU regression and reported TSR ghosting remain open.
 
-Execution is tracked in the [Vulkan Stall Remediation TODO](../../todo/rendering/vulkan-stall-remediation-todo.md),
+Execution is tracked in the [Vulkan Stall Remediation TODO](../../progress/rendering/vulkan-stall-remediation-results.md),
 with one fix active at a time and a mandatory validation gate before advancing.
 
 ### Evidence Boundaries

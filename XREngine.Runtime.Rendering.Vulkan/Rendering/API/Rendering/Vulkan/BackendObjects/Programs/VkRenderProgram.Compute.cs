@@ -1325,12 +1325,17 @@ internal unsafe partial class VkRenderProgram
         ComputeDispatchSnapshot snapshot,
         ulong reusableDescriptorBindingKey,
         out bool bindingSuperseded,
+        out string? failureReason,
         bool excludeGlobalTextureArray = false,
         bool allowSynchronousResourceUploads = true)
     {
         bindingSuperseded = false;
+        failureReason = null;
         if (excludeGlobalTextureArray && !_canBindGlobalTextureArraySeparately)
+        {
+            failureReason = "The global texture array cannot be bound separately.";
             return false;
+        }
 
         DescriptorSetLayout[] descriptorLayouts = excludeGlobalTextureArray
             ? _descriptorSetLayoutsBeforeGlobalMaterial
@@ -1339,7 +1344,7 @@ internal unsafe partial class VkRenderProgram
         if (descriptorLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
             return true;
 
-        if (!ValidateComputeSnapshot(snapshot, out _))
+        if (!ValidateComputeSnapshot(snapshot, out failureReason))
         {
             bindingSuperseded = HasSupersededComputeBufferSnapshot(snapshot);
             return false;
@@ -1370,6 +1375,7 @@ internal unsafe partial class VkRenderProgram
                     allowSynchronousResourceUploads,
                     out _))
                 {
+                    failureReason = $"Auto uniform preparation failed for '{binding.Name}'.";
                     return false;
                 }
 
@@ -1379,6 +1385,7 @@ internal unsafe partial class VkRenderProgram
             if (binding.Requirement == EVulkanDescriptorBindingRequirement.Required)
             {
                 RecordComputeDescriptorFailure(binding, "required uniform buffer is unresolved during pre-native preparation", skippedDispatch: true);
+                failureReason = $"Required uniform buffer '{binding.Name}' is unresolved.";
                 return false;
             }
 
@@ -1390,6 +1397,7 @@ internal unsafe partial class VkRenderProgram
                     out _))
             {
                 RecordComputeDescriptorFailure(binding, "optional fallback uniform buffer preparation failed", skippedDispatch: true);
+                failureReason = $"Fallback uniform preparation failed for '{binding.Name}'.";
                 return false;
             }
         }
@@ -1406,6 +1414,8 @@ internal unsafe partial class VkRenderProgram
             descriptorSetLimit,
             allowSynchronousResourceUploads);
         bindingSuperseded = !refreshed && HasSupersededComputeBufferSnapshot(snapshot);
+        if (!refreshed)
+            failureReason = "Reusable compute descriptor refresh failed.";
         return refreshed;
     }
     internal bool TryRefreshReusableComputeDispatchFrameData(in VulkanProgramPlannerRequest planner, uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)

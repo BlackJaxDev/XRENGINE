@@ -1,16 +1,17 @@
 # Dynamic Diffuse Global Illumination (DDGI)
 
-Dynamic Diffuse Global Illumination (DDGI) is an experimental probe-based diffuse lighting system based on Majercik et al. (2019). The implementation is undergoing corrective runtime validation. Track current defects and acceptance evidence in the [DDGI remediation checklist](../../work/todo/rendering/global-illumination/ddgi-implementation-todo.md).
+Dynamic Diffuse Global Illumination (DDGI) is an experimental probe-based diffuse lighting system based on Majercik et al. (2019). Open code work is in the [DDGI TODO](../../work/todo/rendering/global-illumination/ddgi-implementation-todo.md). Runtime checks are in [Global Illumination Validation](../../work/testing/rendering/global-illumination-validation.md#ddgi).
 
 ## Overview
 
 ### Support Tier & Platform Posture
 
-- **Status**: Experimental; implemented in `DefaultRenderPipeline`. `AdvancedRenderPipeline` does not support DDGI.
-- **Primary Baseline**: Windows 10/11, .NET 10, OpenGL 4.6 (Core Profile)
-- **Vulkan and stereo**: Source paths exist but require separate runtime acceptance. OpenGL validation does not establish support on these paths.
+- **Status**: Experimental. `GlobalIlluminationProviderRegistry` registers DDGI with one required host capability, `ScreenSpaceDiffuseOutput`. Both `DefaultGlobalIlluminationHostAdapter` and `AdvancedGlobalIlluminationHostAdapter` supply it, so DDGI runs in `DefaultRenderPipeline` and `AdvancedRenderPipeline`.
+- **Consumers**: Deferred opaque screen composition only. Forward, transparent, and world-space consumers are not supported.
+- **Primary Baseline**: Windows 10/11, .NET 10, OpenGL 4.6 (Core Profile).
+- **Vulkan and stereo**: Both pipelines have Vulkan and stereo source paths. The validation doc records which backend and pipeline combinations have passed.
 
-The current geometry path builds a separate world-space triangle BVH and works independently of CPU or GPU mesh draw submission. It supports constant material base color, metallic and emissive factors and directional-light shadows. Textures, alpha coverage, transmission and directional environment-map sampling are not yet represented in probe hit shading; miss radiance uses the world's authored ambient color. Pending GPU deformation or shader programs postpone the update instead of substituting geometry.
+The geometry path builds a separate world-space triangle BVH (`GpuDdgiGeometryService`) and works independently of CPU or GPU mesh draw submission. GPU geometry carries smooth normals and two UV sets. Probe hit shading samples material images on the GPU, including base color, emission color, strength, and texture, cutout opacity, and thin-surface transmission. Shadow rays accumulate colored transmission. Directional, point, and spot lights feed hit shading through a bounded light buffer (`DDGILightResources.Capacity` = 255). More lights produce a diagnostic and pause the update. Miss rays sample the authored sky through the DDGI environment capture. Missing UV1 data gives a reconstruction failure; it does not silently use UV0. Pending GPU deformation or shader programs postpone the update instead of substituting geometry.
 
 Grid, ray and cascade changes rebuild resources from an immutable descriptor. Current explicit implementation limits are 65,535 probe workgroups, 2,097,120 rays per update, 16,384 texels per atlas dimension and 512 MiB for a volume's probe/atlas/ray resources. Backend allocation must also succeed. The separate aggregate geometry service accepts up to 2,000,000 triangles. Camera scrolling clears history before tracing at new origins and warms the probes again. Per-viewport histories and cursors are independent.
 
@@ -59,7 +60,7 @@ Probe rays are generated on the GPU using a spherical Fibonacci lattice rotated 
 Probe rays traverse dedicated `DDGIGeometryTriangles` and `DDGIGeometryNodes` buffers directly in compute shaders. The scene service builds or refits these from current world-space mesh geometry independently of draw submission. Probe tracing does not read results back to the CPU.
 
 ### 3. Hit Shading & Multi-Bounce (`ddgi_hit_shade.comp`)
-Ray hits evaluate the primary directional light with triangle-BVH shadow rays, constant material factors and emission, plus previous probe diffuse lighting. Miss rays use the world's ambient color. `sampleDDGI` returns irradiance divided by pi; hit feedback must not divide that value by pi again. Screen shading applies the G-buffer albedo and the deferred renderer's diffuse Fresnel/metallic weighting.
+Ray hits evaluate the light buffer with triangle-BVH shadow rays, sampled material and emission, plus previous probe diffuse lighting. Miss rays use the DDGI environment capture. `sampleDDGI` returns irradiance divided by pi; hit feedback must not divide that value by pi again. Screen shading applies the G-buffer albedo and the deferred renderer's diffuse Fresnel/metallic weighting.
 
 ### 4. Dual-Grid Relocation & Classification (`ddgi_relocate.comp`)
 - **Relocation**: Probes hitting geometry at distances less than `RelocationMinDistance` are pushed away along the surface normal. Backface hits push probes outward to escape interior voids. Relocation offsets are strictly clamped to $[-\frac{1}{2}\mathbf{\Delta}_k, +\frac{1}{2}\mathbf{\Delta}_k]$ along each axis (the dual-grid constraint) to guarantee grid topology remains valid.
@@ -150,7 +151,7 @@ In hardware ray-tracing backends (Vulkan KHR Ray Tracing / DXR), probe rays and 
 
 | Mode | Scene Representation | Dynamics | Memory Footprint | Recommended Use Case |
 |---|---|---|---|---|
-| **DDGI** | Regular / Cascaded Probe Grid | Dynamic / Baked | Grid, update budget and geometry dependent | Experimental Default pipeline diffuse lighting. |
+| **DDGI** | Regular / Cascaded Probe Grid | Dynamic / Baked | Grid, update budget and geometry dependent | Experimental deferred-opaque diffuse lighting in Default and Advanced pipelines. |
 | **Light Probes** | Tetrahedral Delaunay Network | Static / Pre-baked | $1 - 5\text{ MB}$ | Legacy scenes, mobile platforms with no compute support. |
 | **Surfel GI** | Screen-Spawned Spatial Hash Surfels | Fully Real-time | $15 - 30\text{ MB}$ | Medium scenes with dynamic deformable meshes or rigid debris. |
 | **ReSTIR GI** | Spatiotemporal Reservoirs | Fully Real-time | $20 - 40\text{ MB}$ | High-end hardware with Vulkan RT support. |
@@ -172,6 +173,40 @@ In hardware ray-tracing backends (Vulkan KHR Ray Tracing / DXR), probe rays and 
 | **3-Cascade Hierarchy** | Three full atlas layers | | | **~14.06 MiB**, before ray scratch and scene geometry |
 
 Ray, hit and radiance scratch costs 96 bytes per scheduled ray of allocated capacity. For example, a cap of 256 probes with 128 rays each adds 3 MiB. Setting `MaxProbesUpdatedPerFrame` to zero allocates room for a full cascade. Scene triangle/BVH buffers, screen output, GPU query objects and backend overhead are additional. `FixedTimeBudgetMs` adapts the submitted probe count from delayed GPU timestamp measurements; it is a target for probe update passes, not a hard limit for geometry preparation or the entire frame.
+
+### Resource Layout
+
+| Resource | Format | Layout |
+|---|---|---|
+| Irradiance atlas | `R11fG11fB10f` texture array | One 6x6 octahedral tile per probe (4x4 interior plus 1-texel border). One array layer per cascade. |
+| Visibility atlas | `RG16f` texture array | One 16x16 octahedral tile per probe (14x14 interior plus border), storing $E[r]$ and $E[r^2]$. One layer per cascade. |
+| Probe state buffer | 32 bytes per probe | Nominal position from grid coordinates, relocation offset, active, sleeping, and inactive flags. |
+| Ray, hit, and radiance buffers | 96 bytes per ray | Capacity is `MaxProbesUpdatedPerFrame * RaysPerProbe`, not the total grid size. |
+| Screen output (`DDGITexture`) | `Rgba16f` | Internal render resolution. Stereo uses two layers. |
+
+`DDGIResourceDescriptor` validates the active-volume dimensions and the update budget before dispatch. It rejects more than 65,535 scheduled probes and more than `65535 * 32` ray elements. Cascade-local tile indices are separate from global probe-buffer indices.
+
+### Update Transaction And History
+
+- One update is one transaction. The passes run in the order raygen, trace, hit shade, relocate, irradiance and visibility update, border copy. A pass runs only after its inputs succeed.
+- History advances only after all writes of the update complete. Missing BVH data or a shader failure does not advance the atlas or the completed-update counter.
+- An interrupted update invalidates history and keeps a non-publishing abort receipt for its GPU writes. A later baked upload waits on that receipt before it writes host-visible buffers. A missing or failed receipt fails closed.
+- `DDGIInterruptionDiagnostics.TryArm(pipeline, skipCount, ...)` skips updates after the visibility stage on one exact pipeline instance. It is for development builds only; published builds reject it.
+- Per-viewport state holds history, cursors, and completion receipts. Geometry and BVH caches belong to a pipeline instance, not to the scene. A change of render API owner resets DDGI helpers.
+- `sampleDDGI` returns irradiance divided by pi. Hit feedback does not divide by pi again. Zero intensity gives zero indirect RGB.
+- Relocation runs before final classification. A probe inside geometry can move out within its half-cell bounds and become active again.
+
+### Baked Asset Format
+
+The `.ddgi` file starts with magic `0x49474444` and version `2`. Version 2 stores directional distance moments for the narrow visibility filter. The loader rejects version 1 with a re-capture diagnostic. It does not migrate old files. The asset stores probe records (including relocation and inactive state) and the irradiance and visibility layers. Uploads use explicit buffer and texture-array transfers on both backends.
+
+### Known Limits
+
+- Zero-thickness walls and sub-grid geometry can still leak. Chebyshev weighting reduces leaks but does not remove them.
+- Bias values need tuning per scene scale.
+- Probe ray and hit-vector debug drawing does not exist. Probe billboards exist.
+- `DisableCoarseVisibility` skips the outermost cascade's visibility work, but its atlas layer stays allocated.
+- No per-cascade memory budget is enforced. `DDGIMemoryDiagnostics` reports logical payload sizes, not driver residency.
 
 ---
 

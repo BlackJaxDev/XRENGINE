@@ -14,4 +14,8 @@ internal readonly record struct XRMeshDeformationInputSnapshot(
     XRDataBuffer? ActiveMorphs,
     uint ActiveMorphCount,
     ulong PoseVersion,
-    ulong MorphVersion);
+    ulong MorphVersion)
+{
+    /// <summary>GPU ownership selects individual rows in the renderer's local palette.</summary>
+    public bool UsesLocalBoneOwnership { get; init; }
+}

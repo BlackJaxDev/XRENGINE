@@ -9,7 +9,7 @@ renderer restart all invalidate and recover with zero foreground joins and zero
 validation errors; two literal budget clauses were missed by small margins
 and are recorded below. Gate record
 for
-[S13g](../../todo/rendering/vulkan-stall-remediation-todo.md#s13g-bound-warmed-pipeline-readiness-work)
+[S13g](../../progress/rendering/vulkan-stall-remediation-results.md)
 under the todo document's one-by-one protocol. Evidence root:
 `Build/_AgentValidation/20260926-192020-s13g-readiness/` (ignored,
 disposable; findings are copied here). Fixture, camera and session type are

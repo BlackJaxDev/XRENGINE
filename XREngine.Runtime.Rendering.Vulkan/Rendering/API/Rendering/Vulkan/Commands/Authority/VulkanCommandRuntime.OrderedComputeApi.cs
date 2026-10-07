@@ -45,7 +45,7 @@ internal sealed partial class VulkanCommandRuntime
             return ERendererComputeEnqueueStatus.InvalidResource;
 
         int passIndex = ResolveOrderedPrimaryWorkPassIndex(
-            label,
+            "ComputeDispatchIndirect",
             currentPassIndex,
             context.PassMetadata);
         return passIndex == int.MinValue
@@ -100,7 +100,7 @@ internal sealed partial class VulkanCommandRuntime
             return ERendererComputeEnqueueStatus.InvalidResource;
 
         int passIndex = ResolveOrderedPrimaryWorkPassIndex(
-            label,
+            "ComputeBufferCopy",
             currentPassIndex,
             context.PassMetadata);
         return passIndex == int.MinValue
@@ -137,7 +137,7 @@ internal sealed partial class VulkanCommandRuntime
                 : ERendererComputeEnqueueStatus.Unsupported;
 
         int passIndex = ResolveOrderedPrimaryWorkPassIndex(
-            label,
+            "ComputeMemoryBarrier",
             currentPassIndex,
             context.PassMetadata);
         if (passIndex == int.MinValue)
@@ -157,7 +157,7 @@ internal sealed partial class VulkanCommandRuntime
             return null;
 
         int passIndex = ResolveOrderedPrimaryWorkPassIndex(
-            "SubmissionMarker",
+            "ComputeSubmissionMarker",
             currentPassIndex,
             context.PassMetadata);
         return passIndex == int.MinValue

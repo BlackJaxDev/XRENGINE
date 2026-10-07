@@ -130,6 +130,8 @@ public sealed partial class AdvancedGpuScenePublisher
             return;
         Array.Resize(ref indices, capacity);
         Array.Resize(ref stamps, capacity);
+        // Resizing preserves old stamps. Invalidate them before reusing generation one.
+        Array.Clear(stamps);
         generation = 0u;
     }
 
@@ -306,6 +308,8 @@ public sealed partial class AdvancedGpuScenePublisher
             _plannedMaterialRequests.AsSpan(0, _plannedMaterialCount);
         ReadOnlySpan<AdvancedGpuMaterialRelease> releases =
             _plannedMaterialReleases.AsSpan(0, _plannedMaterialReleaseCount);
+        if (!EnsurePlannedMaterialBoundaryCapacity(out reason))
+            return false;
         if (!_materialPublisher.TryPreflightTransition(requests, releases, out reason))
             return false;
         if (!TryAppendFinalMaterialResourceReleases(releases, out reason))
@@ -314,10 +318,193 @@ public sealed partial class AdvancedGpuScenePublisher
         // whole-scene resource preflight in GlobalResources.
         if (!CanApplyPlannedSceneMutations())
         {
-            reason = "The canonical scene tables cannot accept the complete planned publication.";
+            if (!TryGrowPlannedSceneBoundaryCapacity(out reason) ||
+                !CanApplyPlannedSceneMutations())
+            {
+                if (reason.Length == 0)
+                    reason = "The canonical scene tables cannot accept the complete planned publication after boundary growth.";
+                return false;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryGrowPlannedSceneBoundaryCapacity(out string reason)
+    {
+        AdvancedGpuSceneDatabase tables = Database.Scene;
+        int additions = 0;
+        int structuralUpdates = 0;
+        int contentUpdates = 0;
+        int drawFlagUpdates = 0;
+        for (int index = 0; index < _plannedCommandCount; ++index)
+        {
+            ref readonly AdvancedGpuSceneCommandTransition plan = ref _plannedCommands[index];
+            if (plan.CommandIndex >= (uint)_commandDrawHandles.Length || !plan.Supported)
+                continue;
+            if (plan.RegistrationIndex < 0)
+            {
+                ++additions;
+                continue;
+            }
+
+            ref readonly AdvancedResidentRegistration registration = ref _registrations[plan.RegistrationIndex];
+            if (!IsRegistrationCurrent(in registration))
+            {
+                reason = "A planned scene registration lost its canonical records before boundary growth.";
+                return false;
+            }
+            AdvancedGpuHandle existingTarget =
+                _plannedMaterials[plan.MaterialPlanIndex].ExistingHandle;
+            if (plan.StructuralSignature != registration.StructuralSignature ||
+                !existingTarget.IsValid || registration.Material != existingTarget)
+                ++structuralUpdates;
+            else if (!tables.Draws.TryGet(registration.Draw, out AdvancedDrawRecord draw))
+            {
+                reason = "A planned draw lost its canonical record before boundary growth.";
+                return false;
+            }
+            else if (draw.Flags != (plan.Command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask))
+                ++drawFlagUpdates;
+            if (plan.ContentSignature != registration.ContentSignature)
+                ++contentUpdates;
+        }
+
+        int tombstones = 0;
+        for (int index = 0; index < _registrationCount; ++index)
+        {
+            if (_registrations[index].Active &&
+                _preflightSeenStamps[index] != _preflightSeenGeneration)
+                ++tombstones;
+        }
+        AdvancedGpuSceneCapacityProfile sceneCapacity = Database.Capacities.Scene;
+        sceneCapacity = sceneCapacity with
+        {
+            DrawRecords = RequiredSceneTableCapacity(tables.Draws, additions,
+                checked(structuralUpdates + drawFlagUpdates), tombstones),
+            InstanceRecords = RequiredSceneTableCapacity(tables.Instances, additions,
+                contentUpdates, tombstones),
+            TransformRecords = RequiredSceneTableCapacity(tables.Transforms,
+                checked(additions * 2), checked(contentUpdates * 2), checked(tombstones * 2)),
+            GeometryRecords = RequiredSceneTableCapacity(tables.Geometry.Records,
+                checked(additions + structuralUpdates), 0, checked(tombstones + structuralUpdates)),
+            DeformationRecords = RequiredSceneTableCapacity(tables.Deformations,
+                additions, structuralUpdates, tombstones),
+            RenderStateRecords = RequiredSceneTableCapacity(tables.RenderStates,
+                additions, structuralUpdates, tombstones),
+            EditorIdentityRecords = RequiredSceneTableCapacity(tables.EditorIdentities,
+                additions, contentUpdates, tombstones),
+        };
+
+        int reusableRegistrationSlots = 0;
+        for (int index = 0; index < _registrationCount; ++index)
+        {
+            if (!_registrations[index].Active)
+                ++reusableRegistrationSlots;
+        }
+        ulong registrationHighWater = (ulong)_registrationCount +
+            (uint)Math.Max(0, additions - reusableRegistrationSlots);
+        if (registrationHighWater > int.MaxValue / 2u)
+        {
+            reason = "The planned scene registration table exceeds its maximum capacity.";
             return false;
         }
 
+        uint registrationCapacity = NextPowerOfTwo((uint)Math.Max(registrationHighWater, 1u));
+        if (registrationCapacity > (uint)_registrations.Length)
+        {
+            Array.Resize(ref _registrations, checked((int)registrationCapacity));
+            Array.Resize(ref _preflightSeenStamps, checked((int)registrationCapacity));
+        }
+        uint lookupCapacity = NextPowerOfTwo(checked(registrationCapacity * 2u));
+        if (lookupCapacity > (uint)_registrationLookupIndices.Length)
+        {
+            Array.Resize(ref _registrationLookupIndices, checked((int)lookupCapacity));
+            Array.Resize(ref _registrationLookupStamps, checked((int)lookupCapacity));
+            RebuildRegistrationLookup();
+        }
+
+        if (sceneCapacity != Database.Capacities.Scene &&
+            !Database.TryGrowAtFrameBoundary(Database.Capacities with { Scene = sceneCapacity }))
+        {
+            reason = "The canonical scene tables cannot grow at this publication boundary.";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private static uint RequiredSceneTableCapacity<T>(
+        AdvancedGpuRecordTable<T> table,
+        int additions,
+        int replacements,
+        int tombstones)
+        where T : unmanaged
+    {
+        ulong usedDeltas = (ulong)table.Capacity * 4u - (uint)table.AvailablePublicationDeltas;
+        ulong usedRemaps = (ulong)table.Capacity * 2u - (uint)table.AvailableRemaps;
+        ulong required = Math.Max(
+            (ulong)table.Count + table.RetiredCount + (uint)additions,
+            (ulong)table.RetiredCount + (uint)tombstones);
+        required = Math.Max(required,
+            (usedDeltas + (uint)additions + (uint)replacements + (uint)tombstones + 3u) / 4u);
+        required = Math.Max(required, (usedRemaps + (uint)tombstones + 1u) / 2u);
+        return required > table.Capacity
+            ? NextPowerOfTwo(checked((uint)required))
+            : table.Capacity;
+    }
+
+    private bool EnsurePlannedMaterialBoundaryCapacity(out string reason)
+    {
+        uint newVariantCount = 0u;
+        for (int index = 0; index < _plannedMaterialCount; ++index)
+        {
+            if (!_plannedMaterials[index].ExistingHandle.IsValid)
+                ++newVariantCount;
+        }
+
+        ulong registryPeak = (ulong)_materialPublisher.VariantCount + newVariantCount;
+        ulong materialRowPeak = (ulong)Database.Materials.Materials.Count +
+            Database.Materials.Materials.RetiredCount + newVariantCount;
+        ulong required = Math.Max(registryPeak, materialRowPeak);
+        if (required <= Database.Capacities.MaterialRecords)
+        {
+            _materialPublisher.GrowAtFrameBoundary(Database.Capacities.MaterialRecords);
+            reason = string.Empty;
+            return true;
+        }
+
+        if (required > int.MaxValue / 2u)
+        {
+            reason = "The material transition exceeds the maximum variant registry capacity.";
+            return false;
+        }
+
+        uint capacity = NextPowerOfTwo((uint)required);
+        ulong constantWords = (ulong)capacity * Database.Materials.MaximumConstantWordsPerMaterial;
+        ulong textureBindings = (ulong)capacity * Database.Materials.MaximumTextureBindingsPerMaterial;
+        if (capacity > int.MaxValue / 2u ||
+            constantWords > int.MaxValue || textureBindings > int.MaxValue)
+        {
+            reason = "The material transition exceeds the maximum canonical material capacity.";
+            return false;
+        }
+
+        AdvancedSharedGpuSceneCapacityProfile profile = Database.Capacities with
+        {
+            MaterialRecords = capacity,
+            MaterialConstantWords = (uint)constantWords,
+            MaterialTextureBindings = (uint)textureBindings,
+        };
+        if (!Database.TryGrowAtFrameBoundary(profile))
+        {
+            reason = "The canonical material tables cannot grow at this publication boundary.";
+            return false;
+        }
+
+        _materialPublisher.GrowAtFrameBoundary(capacity);
         reason = string.Empty;
         return true;
     }
@@ -856,9 +1043,11 @@ public sealed partial class AdvancedGpuScenePublisher
         }
 
         int tombstones = 0;
+        int reusableRegistrationSlots = 0;
         for (int index = 0; index < _registrationCount; ++index)
-            if (_registrations[index].Active &&
-                _preflightSeenStamps[index] != _preflightSeenGeneration)
+            if (!_registrations[index].Active)
+                ++reusableRegistrationSlots;
+            else if (_preflightSeenStamps[index] != _preflightSeenGeneration)
             {
                 if (!IsRegistrationCurrent(in _registrations[index]))
                     return false;
@@ -866,6 +1055,7 @@ public sealed partial class AdvancedGpuScenePublisher
             }
 
         return geometryCompactionReplacementCount >= 0 &&
+            additions <= _registrations.Length - _registrationCount + reusableRegistrationSlots &&
             tables.Draws.CanApply(additions, checked(structuralUpdates + drawFlagUpdates), tombstones) &&
             tables.Instances.CanApply(additions, contentUpdates, tombstones) &&
             tables.Transforms.CanApply(

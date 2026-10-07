@@ -1,7 +1,7 @@
 # S13c: retain logical mesh/LOD registration by real mutation identity
 
 Status: Active (opened September 26, 2026). Gate record for
-[S13c](../../todo/rendering/vulkan-stall-remediation-todo.md#s13c-retain-logical-meshlod-registration-by-real-mutation-identity)
+[S13c](../../progress/rendering/vulkan-stall-remediation-results.md)
 under the todo document's one-by-one protocol. Evidence root:
 `Build/_AgentValidation/20260926-094453-s13c-registration-retention/` (ignored,
 disposable; findings are copied here).

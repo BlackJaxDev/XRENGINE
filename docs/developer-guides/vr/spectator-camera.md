@@ -79,7 +79,7 @@ The native lavapipe validation suite qualifies basic production Vulkan shader an
 readback behavior only. It does not establish spectator scene orientation, post
 processing, color space, aspect/visibility on a physical GPU, XR coexistence,
 headset frame-time impact, or hardware input/audio behavior. Those require the
-[named-hardware and visual acceptance procedure](../../work/testing/avatar/openxr-calibration-spectator-validation.md).
+[named-hardware and visual acceptance procedure](../../work/testing/avatar/avatar-validation.md#openxr-body-calibration-and-spectator).
 
 `BootstrapVrCalibrationFeedbackFactory.Create(parent, player)` separately attaches
 world-space calibration messages, tracker assignment labels, marker spheres, and

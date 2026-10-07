@@ -59,7 +59,8 @@ public sealed partial class AdvancedGpuScenePublisher
         in AdvancedGlobalResourceCapture capture,
         out string reason)
     {
-        reason = string.Empty;
+        if (!TryPreflightWorldAmbient(capture.AmbientEnvironment, out reason))
+            return false;
         ReadOnlySpan<object?> sources = capture.LightSources.Span;
         ReadOnlySpan<AdvancedLightRecord> records = capture.Lights.Span;
         if (sources.Length != records.Length)
@@ -369,6 +370,7 @@ public sealed partial class AdvancedGpuScenePublisher
     {
         ApplyPreflightedAuthoredDecals();
         AdvancedGlobalResourceDatabase resources = Database.Resources;
+        ApplyPreflightedWorldAmbient();
         for (int lightIndex = 0; lightIndex < _plannedLightCount; ++lightIndex)
         {
             int groupStart = _plannedLightShadowStarts[lightIndex];
@@ -556,6 +558,7 @@ public sealed partial class AdvancedGpuScenePublisher
         Array.Resize(ref _plannedLightShadowPayloadUpdates, capacity);
         Array.Resize(ref _publishedLightShadowStarts, capacity);
         Array.Resize(ref _publishedLightShadowCounts, capacity);
+        Array.Clear(_publishedLightSeenStamps);
         _publishedLightSeenGeneration = 0u;
     }
 
@@ -592,6 +595,7 @@ public sealed partial class AdvancedGpuScenePublisher
         Array.Resize(ref _plannedProbeExistingIndices, capacity);
         Array.Resize(ref _plannedProbeRequiresReplace, capacity);
         Array.Resize(ref _publishedProbeSeenStamps, capacity);
+        Array.Clear(_publishedProbeSeenStamps);
         _publishedProbeSeenGeneration = 0u;
     }
 

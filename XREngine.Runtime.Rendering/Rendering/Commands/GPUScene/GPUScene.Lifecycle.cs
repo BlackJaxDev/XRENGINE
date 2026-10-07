@@ -124,6 +124,8 @@ namespace XREngine.Rendering.Commands
             _totalCommandCount = 0;
             _updatingCommandCount = 0;
             _skinnedCommandCount = 0;
+            _registeredMeshCommandsByRenderInfo.Clear();
+            _registeredRenderInfoByMeshCommand.Clear();
         }
 
         private volatile bool _destroyed;
@@ -308,6 +310,8 @@ namespace XREngine.Rendering.Commands
             _meshlets.Clear();
             _commandIndicesPerMeshCommand.Clear();
             _commandIndexLookup.Clear();
+            _registeredMeshCommandsByRenderInfo.Clear();
+            _registeredRenderInfoByMeshCommand.Clear();
             _meshToIndexRemap.Clear();
             _meshDebugLabels.Clear();
             _unsupportedMeshMessages.Clear();

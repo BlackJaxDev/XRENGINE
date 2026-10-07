@@ -3,7 +3,6 @@
 Documentation for XREngine's rendering system — how windows are created, graphics APIs are initialized, and frames are rendered.
 
 ## Documents
-
 | Document | Description |
 |----------|-------------|
 | [Window Creation & Renderer Initialization](window-creation-and-renderer-init.md) | How the engine creates OS windows on startup, selects OpenGL or Vulkan, instantiates renderers, and begins the render loop. Start here for the full picture. |
@@ -12,8 +11,17 @@ Documentation for XREngine's rendering system — how windows are created, graph
 | [Rendering Frame Lifecycle And Dispatch Paths](frame-lifecycle-and-dispatch-paths.md) | The end-to-end `CollectVisible -> SwapBuffers -> Render` lifecycle, how worlds/viewports/scenes hand buffers across threads, and how CPU, GPU, BVH, octree, quadtree, and meshlet-related paths fit together. |
 | [Frame Loop Design](frame-loop-design.md) | Why work stays off the frame and how: nonblocking readiness, complete-state publication, identity versus content dirtiness, mutation-scoped updates, allocation-free hot paths, scoped invalidation and retirement, shadow-caster costs, play-mode restores, and how to measure the loop. |
 | [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md) | Implemented contract for declared pipeline resources, generation-based materialization, staged resize, and atomic resource swaps. Design source: [proposal](../../work/design/rendering/render-pipeline-resource-lifecycle-design.md). |
+| [Advanced Render Pipeline](advanced-render-pipeline.md) | `AdvancedRenderPipeline` visibility-buffer frame flow, invariants, capability floor, and output ownership for desktop, OpenXR, and offscreen. |
+| [Shadow Atlas](shadow-atlas.md) | Shadow atlas allocator, solve, relevance, threading and publication, stale-frame and reprojection rules, and directional cascade publication. |
+| [Transparency And OIT](transparency-and-oit.md) | Transparent surface routing, weighted blended order-independent transparency, and exact transparency experiments in the Default and Advanced pipelines. |
+| [GPU Hi-Z Occlusion Culling](gpu-hiz-occlusion-culling.md) | Cull, occlusion, and indirect buffer contract, the two-pass Hi-Z flow, and barrier obligations for each backend. |
+| [CPU Software Occlusion](cpu-software-occlusion.md) | Masked software occlusion culling on the CPU: occluder rasterization, occludee tests, and integration with visibility collection. |
+| [CPU Memory Ownership](cpu-memory-ownership.md) | Mesh and texture CPU copies, capacity-sized renderer arrays, and CPU memory budgets. |
+| [Vulkan Memory Allocation](vulkan-memory-allocation.md) | VMA ownership, allocation naming, and allocator statistics. |
+| [OpenVR VRClient GPU Handoff](openvr-vrclient-gpu-handoff.md) | Cross-process zero-readback GPU eye-frame handoff from the engine process to `XREngine.VRClient`, with external-memory resources, semaphore synchronization, pose timing, diagnostics, and recovery rules. |
 | [Global Illumination Ownership And Selection](global-illumination-ownership.md) | Conservative ownership, invalidation, selection, and GPU-retirement rules for modular GI providers and host adapters. |
 | [Renderer Backend Hot Reload](renderer-backend-hot-reload.md) | Shader, managed-delta, and collectible backend reload architecture, including the current process-global Streamline limit on structural Vulkan replacement. |
+| [Texture Streaming](texture-streaming.md) | Imported texture mip streaming: service split, cooked-cache authority, residency rules, and the Vulkan upload and publication contract. |
 | [XRDataBuffer RHI Write Model](xrdatabuffer-rhi-write-model.md) | Backend-neutral buffer write contract for memory policy, scoped writers, dirty ranges, upload routes, persistent rings, readback tickets, readiness, and diagnostics. |
 | [World Shader Prewarm Graph](../../work/design/rendering/world-shader-prewarm-graph-design.md) | Design proposal for collecting world, component, transform, asset, render-pipeline, shader, and material dependencies into prewarmable shader program combinations. |
 | [Mesh Submission Strategies](mesh-submission-strategies.md) | The `EMeshSubmissionStrategy` contract for CPU direct, instrumented GPU indirect, zero-readback GPU indirect, and meshlet submission. |
@@ -38,6 +46,7 @@ Documentation for XREngine's rendering system — how windows are created, graph
 | [Vulkan Primary Command-Buffer Reuse](vulkan-primary-command-buffer-reuse.md) | Per-image state ownership, secondary merge semantics, cache identity, exact rejection telemetry, and the 99% CPU-direct reuse gate. |
 | [Vulkan Compact Zero-Readback Submission](vulkan-compact-zero-readback-submission.md) | Three-tier GPU-owned material-table compaction, indirect-count submission, binding/compaction rungs, overflow rules, delayed diagnostics, and explicitly unsupported variants. |
 | [OpenXR VR Rendering](openxr-vr-rendering.md) | OpenXR session lifecycle, graphics bindings (OpenGL / Vulkan), swapchain management, three-phase frame model, per-eye rendering, mirror blit pipeline, and late-pose updates. |
+| [VR Output Pacing And Mirror Policy](vr-output-pacing-and-mirror-policy.md) | `EVrMirrorMode`, the frame-output manifest, per-output cadence dividers, and VR budget bands. |
 | [OpenVR (SteamVR) Rendering](openvr-rendering.md) | SteamVR initialization, render target creation (two-pass / single-pass stereo), compositor submission via OpenGL texture handles, prediction timing, and frame statistics. |
 | [Rendering Code Map](code-map.md) | Source file organization for mesh rendering, meshlet rendering, GPU compute stages, and shared infrastructure. |
 
@@ -66,7 +75,6 @@ Program.Main()
 ```
 
 ### Key Differences: OpenGL vs Vulkan
-
 | Aspect | OpenGL | Vulkan |
 |--------|--------|--------|
 | **Context** | Borrowed from the installed window backend on its owning thread | `Vk.GetApi()` entry points and a borrowed window surface |

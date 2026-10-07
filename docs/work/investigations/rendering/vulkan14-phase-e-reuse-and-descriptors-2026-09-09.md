@@ -12,7 +12,7 @@ every-frame counter policy, and validated material-table allocation reserves.
 
 ## Scope and acceptance
 
-Complete E1–E5 in the [modernization TODO](../../todo/rendering/vulkan-14-performance-and-shader-modernization-todo.md).
+Complete E1–E5 in the modernization TODO (deleted; design in [Vulkan Renderer: Descriptor Management](../../../architecture/rendering/vulkan-renderer.md#descriptor-management)).
 Preserve explicit heap/indexing selection, output admission, native-resource
 lifetime proof, and existing A–D behavior. Cache keys must compare complete
 identities; hashes alone cannot authorize reuse. No feature tests are added or

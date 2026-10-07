@@ -1,7 +1,7 @@
 # Cumulative publication and recording validation
 
 Status: **Executed; cumulative acceptance NOT PASSED**, October 1, 2026. This records execution of
-the [cumulative gate](../../todo/rendering/vulkan-stall-remediation-todo.md#s13i-prove-the-cumulative-fix-on-the-reported-workload).
+the [cumulative gate](../../progress/rendering/vulkan-stall-remediation-results.md).
 The only retained code correction restores omitted existing profiler fields.
 No rendering optimization, test change, or quality reduction is part of this
 investigation.
@@ -303,7 +303,7 @@ transfer-before-binding, bounded progress and retirement; waiting longer is not
 proof of those properties.
 
 Unattributed Advanced GPU cost is tracked separately in
-[Advanced pipeline GPU attribution](../../todo/rendering/optimization/advanced-pipeline-gpu-attribution-todo.md).
+[Advanced pipeline GPU attribution](../../todo/rendering/optimization/editor-profiler-ui-render-cost-todo.md).
 The existing Default-pipeline measurements do not establish current Advanced costs.
 Dense executed-pass timing in a separately validated observer and one-effect-at-a-
 time comparisons are required before selecting a GPU fix. No effect is disabled

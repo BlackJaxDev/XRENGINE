@@ -30,7 +30,7 @@ public sealed class SourceToonParityContractTests
     public void SerializedAssetYamlAndTextureMetadata_ParsesOldModernAndInlineLayouts()
     {
         string root = Path.GetDirectoryName(SourceToonParityCorpusTests.FindRepositoryFile(
-            "XREngine.UnitTests", "TestData", "Poiyomi", "README.md"))!;
+            "XREngine.UnitTests", "TestData", "Poiyomi", "material-old-unity.yaml"))!;
         SerializedMaterialDocument old = SerializedMaterialDocumentParser.ParseFile(
             Path.Combine(root, "material-old-unity.yaml"));
         SerializedMaterialDocument modern = SerializedMaterialDocumentParser.ParseFile(

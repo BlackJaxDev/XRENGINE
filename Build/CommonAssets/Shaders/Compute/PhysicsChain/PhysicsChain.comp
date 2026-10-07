@@ -1,6 +1,8 @@
 #version 450
 
-layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+#include "Compute/PhysicsChain/PhysicsChainWorkgroups.glslinc"
+
+layout(local_size_x = PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
 
 // --- Struct Definitions ---
 

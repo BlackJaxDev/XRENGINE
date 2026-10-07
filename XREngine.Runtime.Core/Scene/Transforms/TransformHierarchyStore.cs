@@ -33,6 +33,11 @@ public sealed class TransformHierarchyStore : IDisposable
     private long _propagationAllocated, _publicationAllocated;
     private double _propagationMs, _publicationMs;
     [ThreadStatic] private static TransformHierarchyStore? _evaluating;
+    private static readonly long[] s_contendedReads = new long[3];
+    private static readonly long[] s_oddSequenceRetries = new long[3];
+    private static readonly long[] s_changedSequenceRetries = new long[3];
+    private static readonly long[] s_retryTicks = new long[3];
+    private static readonly int[] s_maxSpinCount = new int[3];
 
     internal static void BeginEvaluation(TransformHierarchyStore store) => _evaluating = store;
     internal static void EndEvaluation() => _evaluating = null;
@@ -41,6 +46,39 @@ public sealed class TransformHierarchyStore : IDisposable
         Interlocked.Read(ref _dirtyLocal), Interlocked.Read(ref _dirtyWorld),
         Interlocked.Read(ref _propagated), Interlocked.Read(ref _published), Interlocked.Read(ref _events),
         _propagationAllocated, _publicationAllocated, _propagationMs, _publicationMs);
+
+    /// <summary>Gets cumulative sequence-read contention for local, world, and render matrices.</summary>
+    public static TransformHierarchyReadContentionTelemetrySnapshot GetReadContentionTelemetrySnapshot() => new(
+        RuntimeWorldTickTelemetry.Enabled,
+        Stopwatch.Frequency,
+        Interlocked.Read(ref s_contendedReads[0]), Interlocked.Read(ref s_oddSequenceRetries[0]),
+        Interlocked.Read(ref s_changedSequenceRetries[0]), Interlocked.Read(ref s_retryTicks[0]),
+        Volatile.Read(ref s_maxSpinCount[0]),
+        Interlocked.Read(ref s_contendedReads[1]), Interlocked.Read(ref s_oddSequenceRetries[1]),
+        Interlocked.Read(ref s_changedSequenceRetries[1]), Interlocked.Read(ref s_retryTicks[1]),
+        Volatile.Read(ref s_maxSpinCount[1]),
+        Interlocked.Read(ref s_contendedReads[2]), Interlocked.Read(ref s_oddSequenceRetries[2]),
+        Interlocked.Read(ref s_changedSequenceRetries[2]), Interlocked.Read(ref s_retryTicks[2]),
+        Volatile.Read(ref s_maxSpinCount[2]));
+
+    private static void RecordReadContention(int space, int oddRetries, int changedRetries, int spinCount, long started)
+    {
+        int index = (uint)space < 2u ? space : 2;
+        Interlocked.Increment(ref s_contendedReads[index]);
+        if (oddRetries != 0)
+            Interlocked.Add(ref s_oddSequenceRetries[index], oddRetries);
+        if (changedRetries != 0)
+            Interlocked.Add(ref s_changedSequenceRetries[index], changedRetries);
+        Interlocked.Add(ref s_retryTicks[index], Stopwatch.GetTimestamp() - started);
+        int observed = Volatile.Read(ref s_maxSpinCount[index]);
+        while (spinCount > observed)
+        {
+            int previous = Interlocked.CompareExchange(ref s_maxSpinCount[index], spinCount, observed);
+            if (previous == observed)
+                break;
+            observed = previous;
+        }
+    }
 
     internal TransformHandle Attach(TransformBase owner, Matrix4x4 local, Matrix4x4 world, Matrix4x4 render)
     {
@@ -112,10 +150,24 @@ public sealed class TransformHierarchyStore : IDisposable
     internal Matrix4x4 Read(TransformHandle h, int space)
     {
         SpinWait spin = default;
+        bool telemetryEnabled = RuntimeWorldTickTelemetry.Enabled;
+        long retryStart = 0;
+        int oddRetries = 0;
+        int changedRetries = 0;
         while (true)
         {
             int before = Volatile.Read(ref _sequence);
-            if ((before & 1) != 0) { spin.SpinOnce(); continue; }
+            if ((before & 1) != 0)
+            {
+                if (telemetryEnabled)
+                {
+                    if (oddRetries + changedRetries == 0)
+                        retryStart = Stopwatch.GetTimestamp();
+                    oddRetries++;
+                }
+                spin.SpinOnce();
+                continue;
+            }
             var owners = _owners;
             var generations = _generations;
             var matrices = space == 0 ? _local : space == 1 ? _world : _render;
@@ -124,7 +176,19 @@ public sealed class TransformHierarchyStore : IDisposable
                 && generations[h.Index] == h.Generation && owners[h.Index] is not null;
             Matrix4x4 value = alive ? matrices[h.Index] : default;
             Thread.MemoryBarrier();
-            if (before != Volatile.Read(ref _sequence)) { spin.SpinOnce(); continue; }
+            if (before != Volatile.Read(ref _sequence))
+            {
+                if (telemetryEnabled)
+                {
+                    if (oddRetries + changedRetries == 0)
+                        retryStart = Stopwatch.GetTimestamp();
+                    changedRetries++;
+                }
+                spin.SpinOnce();
+                continue;
+            }
+            if (telemetryEnabled && oddRetries + changedRetries != 0)
+                RecordReadContention(space, oddRetries, changedRetries, spin.Count, retryStart);
             if (!alive) throw new InvalidOperationException($"Stale transform handle {h.Index}:{h.Generation}; the transform detached or moved worlds.");
             return value;
         }
@@ -168,6 +232,114 @@ public sealed class TransformHierarchyStore : IDisposable
     internal bool IsDirty(TransformHandle handle, int space)
     {
         lock (_gate) { int i = Require(handle); return space == 0 ? _localDirty[i] : _worldDirty[i]; }
+    }
+
+    /// <summary>Reads both dirty flags from one hierarchy state.</summary>
+    internal void ReadDirtyPair(TransformHandle handle, out bool localDirty, out bool worldDirty)
+    {
+        lock (_gate)
+        {
+            int i = Require(handle);
+            localDirty = _localDirty[i];
+            worldDirty = _worldDirty[i];
+        }
+    }
+
+    /// <summary>Reads and composes an ordinary world matrix under one hierarchy gate.</summary>
+    internal bool TryRecalculateOrdinaryWorld(
+        TransformHandle handle, bool forceWorldRecalc, out bool recalcWorld)
+    {
+        recalcWorld = false;
+        lock (_gate)
+        {
+            int i = Require(handle);
+            if (_localDirty[i] || _orderDirty || _worldOverride[i])
+                return false;
+
+            int parentIndex = _parent[i];
+            if ((uint)parentIndex >= (uint)_used || _owners[parentIndex] is null)
+                return false;
+
+            recalcWorld = _worldDirty[i] || forceWorldRecalc;
+            if (!recalcWorld)
+                return true;
+
+            Matrix4x4 matrix = _local[i] * _world[parentIndex];
+            BeginWrite();
+            try
+            {
+                _world[i] = matrix;
+                if (!TransformBase.IsDiagnosticEvaluationActive)
+                    _publication[i] = true;
+                _worldDirty[i] = false;
+            }
+            finally { EndWrite(); }
+            return true;
+        }
+    }
+
+    /// <summary>Publishes one local matrix and clears its dirty flag before callbacks run.</summary>
+    internal void WriteLocalAndClearDirty(TransformHandle handle, Matrix4x4 matrix)
+    {
+        lock (_gate)
+        {
+            int i = Require(handle);
+            BeginWrite();
+            try
+            {
+                _local[i] = matrix;
+                _localDirty[i] = false;
+            }
+            finally { EndWrite(); }
+        }
+    }
+
+    /// <summary>
+    /// Composes an ordinary world matrix from a valid cached parent and commits it
+    /// under one gate. The caller uses the existing path when the order is stale.
+    /// </summary>
+    internal bool TryComposeAndWriteWorld(TransformHandle handle)
+    {
+        lock (_gate)
+        {
+            int i = Require(handle);
+            if (_orderDirty || _worldOverride[i])
+                return false;
+
+            int parentIndex = _parent[i];
+            if ((uint)parentIndex >= (uint)_used || _owners[parentIndex] is null)
+                return false;
+            Matrix4x4 matrix = _local[i] * _world[parentIndex];
+
+            BeginWrite();
+            try
+            {
+                _world[i] = matrix;
+                if (!TransformBase.IsDiagnosticEvaluationActive)
+                    _publication[i] = true;
+                _worldDirty[i] = false;
+            }
+            finally { EndWrite(); }
+            return true;
+        }
+    }
+
+    /// <summary>Publishes an externally composed world matrix before callbacks run.</summary>
+    internal void WriteWorldAndClearDirty(TransformHandle handle, Matrix4x4 matrix)
+    {
+        lock (_gate)
+        {
+            int i = Require(handle);
+            BeginWrite();
+            try
+            {
+                _world[i] = matrix;
+                if (!TransformBase.IsDiagnosticEvaluationActive)
+                    _publication[i] = true;
+                _worldDirty[i] = false;
+            }
+            finally { EndWrite(); }
+        }
     }
     internal void SetDirty(TransformHandle handle, int space, bool dirty)
     {

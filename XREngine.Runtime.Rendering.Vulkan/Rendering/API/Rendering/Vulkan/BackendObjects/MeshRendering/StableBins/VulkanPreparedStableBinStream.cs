@@ -35,6 +35,9 @@ internal sealed class VulkanPreparedStableBinStream
     private VulkanSealedBinSubmissionPlan?[] _sealScratchPlans;
     private byte[] _sealScratchPlanAssigned;
     private AdvancedIndirectRange[] _sealScratchRanges;
+    // Range-indexed scratch is rebuilt for each seal, independently of header
+    // capacity: a family can include ranges that this stream does not use.
+    private int[] _sealScratchRangeOwners = [];
     private VulkanTemplateResourceManifest[] _manifestTemplates;
     private VulkanTemplateResourceManifest?[] _visibilityAtlasManifests;
     private VulkanResidentDrawDependency[] _visibilityManifestResourceSlab;
@@ -1151,6 +1154,9 @@ internal sealed class VulkanPreparedStableBinStream
         {
             return false;
         }
+        if (_sealScratchRangeOwners.Length < indirectRanges.Length)
+            Array.Resize(ref _sealScratchRangeOwners, indirectRanges.Length);
+        _sealScratchRangeOwners.AsSpan(0, indirectRanges.Length).Fill(-1);
         for (int headerIndex = 0; headerIndex < _headerCount; ++headerIndex)
         {
             VulkanPreparedStableBinHeader header = _headers[headerIndex];
@@ -1178,18 +1184,8 @@ internal sealed class VulkanPreparedStableBinStream
             // though the visibility program does not. GPU lanes therefore
             // record the range once from its first compatible header; later
             // ordinary-bin headers remain retained but emit no duplicate draw.
-            int priorRangeOwner = -1;
-            for (int prior = 0; prior < headerIndex; ++prior)
-            {
-                if (_sealScratchPlanAssigned[prior] != 0 &&
-                    _sealScratchRanges[prior].Key == range.Key &&
-                    _sealScratchRanges[prior].FirstPayloadIndex == range.FirstPayloadIndex)
-                {
-                    priorRangeOwner = prior;
-                    break;
-                }
-            }
-            if (priorRangeOwner >= 0 && rangeStrategy != EMeshSubmissionStrategy.CpuDirect)
+            if (rangeStrategy != EMeshSubmissionStrategy.CpuDirect &&
+                _sealScratchRangeOwners[rangeIndex] >= 0)
             {
                 _sealScratchRanges[headerIndex] = range;
                 continue;
@@ -1228,6 +1224,8 @@ internal sealed class VulkanPreparedStableBinStream
                     "The sealed-bin resolver replaced its preallocated plan slot.");
             _sealScratchPlanAssigned[headerIndex] = 1;
             _sealScratchRanges[headerIndex] = range;
+            if (rangeStrategy != EMeshSubmissionStrategy.CpuDirect)
+                _sealScratchRangeOwners[rangeIndex] = headerIndex;
         }
 
         // One global counter copy after the final instrumented range reports

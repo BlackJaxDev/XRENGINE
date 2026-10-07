@@ -16,7 +16,7 @@ restore. The profiler's Component Timings panel has had no producer since the
 modularization refactor.
 
 Gate record for
-[S14](../../todo/rendering/vulkan-stall-remediation-todo.md#s14-address-the-actual-core-update-owner)
+[S14](../../progress/rendering/vulkan-stall-remediation-results.md)
 under the todo document's one-by-one protocol. Evidence root:
 `Build/_AgentValidation/20260927-095558-s14-core-update/` (ignored, disposable;
 findings are copied here). Prior validated item: S13i, with no reordering.

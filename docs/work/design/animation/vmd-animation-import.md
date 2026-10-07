@@ -1,6 +1,6 @@
 # VMD Animation Import Design
 
-[<- Architecture index](../README.md)
+[<- Architecture index](../../../architecture/README.md)
 
 Last Updated: 2026-06-12
 Owner: Animation

@@ -25,6 +25,7 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     bool EnableBuiltInAmbientOcclusion = false,
     bool EnableLightProbesAndIbl = false,
     bool RequiresMaterialSurfaceExports = false,
+    bool SuppressBaselineDiffuse = false,
     bool IsMinimalVisibilityOutput = false,
     uint NativeViewIndex = 0u,
     Commands.AdvancedSharedGpuSceneDatabase? SceneDatabase = null,

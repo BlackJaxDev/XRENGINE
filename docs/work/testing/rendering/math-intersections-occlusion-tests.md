@@ -1,73 +1,51 @@
-# Math Intersections Occlusion Tests
+# Math Intersections Occlusion Validation
 
-Last updated: 2026-08-03
-Owner: Rendering
-Status: Interactive qualification rigs implemented
+Scope: Validate the three occlusion rigs in the Math Intersections Unit Testing World. The rigs use the same wall, hidden targets, visible controls, and moving disocclusion target so the modes are comparable.
 
-The Math Intersections Unit Testing World contains three deterministic occlusion
-rigs built from the same scene: a large blue wall, twelve red targets behind the
-wall, two cyan targets outside it, and one orange target that repeatedly moves
-from behind the wall into view. Reusing the geometry makes behavior and
-telemetry comparable across modes.
+Architecture: [CPU Query Async Occlusion](../../../developer-guides/rendering/cpu-query-async-occlusion.md), [CPU Software Occlusion](../../../architecture/rendering/cpu-software-occlusion.md), [GPU Hi-Z Occlusion Culling](../../../architecture/rendering/gpu-hiz-occlusion-culling.md), [GPU Scene BVH](../../../architecture/rendering/gpu-scene-bvh.md)  
+Code todos: [CPU Async Query Camera Motion](../../todo/rendering/cpu-async-query-camera-motion-todo.md), [Masked Software Occlusion Culling](../../todo/rendering/masked-software-occlusion-culling-todo.md), [GPU-Driven Occlusion Culling Architecture](../../todo/rendering/gpu/gpu-driven-occlusion-culling-architecture-todo.md)
 
-| Test | Requested configuration | Passing evidence |
+## Setup
+
+- Build task: `Build-Editor`.
+- Launch profile: `Editor (Unit Testing World)`.
+- Environment variables: `XRE_WORLD_MODE=UnitTesting` and `XRE_UNIT_TEST_WORLD_KIND=MathIntersections`.
+- Alternative setup: set `WorldKind` to `MathIntersections` in `Assets/UnitTestingWorldSettings.jsonc` and launch the editor with `--unit-testing`.
+- In the editor, select the Math Intersections root node. Open **Math Intersections Test Controls**.
+- Enable only one occlusion test at a time. The controls make the three rigs mutually exclusive because each rig owns process-wide occlusion and submission settings.
+- Keep the root selected to use the expanded properties group, or select the active test node. Both views retain the same live fields.
+- Inspect **Validation Status** and **Frame Telemetry**. For the GPU rig, also inspect **GPU BVH** and **Hi-Z Phases**.
+
+## Checks
+
+### CPU Async Query Occlusion Rig
+
+Architecture: [CPU Query Async Occlusion](../../../developer-guides/rendering/cpu-query-async-occlusion.md)
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Run CPU async query rig. | Enable **CPU Async Query Occlusion Test**. It requests `CpuQueryAsync` and `CpuDirect`. | Hardware queries submit and resolve asynchronously. Hidden render commands are rejected after warmup. | Open | 2026-08-03 passed on Vulkan with 15 commands tested and 8 culled in the final sample. |
+| Move the orange target. | Pause, restart, slow, or widen the orange target motion from either UI location. | The target starts behind the wall and crosses a side edge. Stale visibility and disocclusion remain visible in telemetry. | Open | none |
+| Restore settings after the rig. | Disable the last active rig or deactivate the controller. | The previous occlusion mode, mesh submission strategy, and CPU SOC force-visible value are restored. | Open | none |
+
+### CPU Rasterized Occlusion Rig
+
+Architecture: [CPU Software Occlusion](../../../architecture/rendering/cpu-software-occlusion.md)
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Run CPU rasterized occlusion rig. | Enable **CPU Rasterized Occlusion Test**. It requests `CpuSoftwareOcclusion` and `CpuDirect`. | The wall is selected and rasterized as a software occluder. AABBs are tested. Hidden bounds are rejected. | Open | 2026-08-03 passed on Vulkan with 30 bounds tested and 24 culled in the final sample. |
+| Confirm debug bypass is disabled for the rig. | Enable the CPU SOC rig when `CpuSocDebugForceVisible` was on. | The rig disables force-visible behavior while it runs, so visible frames cannot be mistaken for culling. | Open | none |
+
+### GPU Two-Pass Hi-Z + GPU BVH Rig
+
+Architecture: [GPU Hi-Z Occlusion Culling](../../../architecture/rendering/gpu-hiz-occlusion-culling.md), [GPU Scene BVH](../../../architecture/rendering/gpu-scene-bvh.md)
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Run GPU two-pass rig. | Enable **GPU Two-Pass Hi-Z + GPU BVH Test**. It requests `GpuHiZ` and `GpuIndirectZeroReadback`. | GPU BVH is ready. Zero-readback submissions advance. Hi-Z reports two-phase current-depth execution. | Open | 2026-08-03 GPU BVH was ready with 18 logical primitives and 35 nodes. The rig correctly failed because the renderer reported `single-phase-current-depth`. |
+| Verify two-pass acceptance. | Inspect **Hi-Z Phases** in the active test UI. | The rig passes only when telemetry reports two-phase GPU Hi-Z. A mode name or an active dispatch is not enough. | Open | none |
+| Verify visual evidence. | View screenshots from more than one camera position. | The viewport is not accepted as evidence if a separate shader compile or pipeline error produces a blank image. | Open | 2026-08-03 blank viewport captures were not accepted because a `DeferredLightingDir` rewrite or compile failure was present. |
+
+## Failures
+| Check | Symptom | Investigation or code item |
 |---|---|---|
-| CPU Async Query Occlusion | `CpuQueryAsync` + `CpuDirect` | Asynchronous query decisions resolve and reject hidden render commands. |
-| CPU Rasterized Occlusion | `CpuSoftwareOcclusion` + `CpuDirect` | The wall is selected and rasterized as a software occluder, AABBs are tested, and hidden bounds are rejected. |
-| GPU Two-Pass Hi-Z + GPU BVH | `GpuHiZ` + `GpuIndirectZeroReadback` | The GPU BVH is ready, submissions remain zero-readback, and telemetry reports persistent phase-1/phase-2 visibility with non-stale disocclusion recovery. |
-
-The GPU acceptance contract follows
-[Two-Pass Occlusion Culling](https://medium.com/@mil_kru/two-pass-occlusion-culling-4100edcad501):
-draw last-frame-visible geometry first, build the current frame's depth pyramid,
-then retest and draw newly visible geometry in a second phase. The qualification
-must fail when the renderer only performs a single Hi-Z refine; a mode name or
-an active GPU dispatch alone is not sufficient.
-
-## Running the rigs
-
-1. Set `WorldKind` to `MathIntersections` in
-   `Assets/UnitTestingWorldSettings.jsonc` and launch the editor with
-   `--unit-testing`.
-2. Select the Math Intersections root node and open **Math Intersections Test
-   Controls**.
-3. Enable one occlusion test. Root-UI toggles keep these three tests mutually
-   exclusive because each one owns the process-wide occlusion and submission
-   configuration.
-4. Keep the root selected to use the expanded `<test> Properties` group, or
-   select the active test node to use the same controls there. Both views retain
-   the same field objects and therefore the same live state.
-5. Inspect **Validation Status** and **Frame Telemetry**. For the GPU rig, also
-   inspect **GPU BVH** and **Hi-Z Phases**.
-
-Enabling a rig captures the current occlusion mode, forced mesh-submission
-strategy, and CPU-SOC force-visible flag. Disabling the last active rig or
-deactivating the controller restores those values. The CPU SOC rig temporarily
-disables force-visible debug behavior so a visually populated frame cannot be
-mistaken for a culling pass.
-
-The orange target's motion can be paused, restarted, slowed, or widened from
-either UI location. It starts behind the wall and crosses a side edge so stale
-visibility and disocclusion behavior remain visually observable.
-
-## Current live qualification (2026-08-03)
-
-- CPU async query passed on Vulkan: 15 commands tested and 8 culled in the final
-  sample, with asynchronous decision/latency telemetry active.
-- CPU rasterization passed on Vulkan: 30 bounds tested and 24 culled in the
-  final sample, with the wall rasterized as an occluder.
-- The GPU strategy resolved to `GpuIndirectZeroReadback`; its strategy-driven
-  GPU BVH was ready with 18 logical primitives and 35 nodes, and zero-readback
-  submissions advanced.
-- The GPU qualification correctly failed because Hi-Z telemetry reported
-  `single-phase-current-depth`, one-phase frames, and zero phase-two draws.
-  Persistent visibility and the second disocclusion draw remain architecture
-  work tracked by
-  [GPU-Driven Occlusion Culling Architecture TODO](../../todo/rendering/gpu/gpu-driven-occlusion-culling-architecture-todo.md).
-- The activated GPU pipeline variant also encountered an existing Vulkan
-  `DeferredLightingDir` rewrite/compile failure, so its blank viewport captures
-  are not accepted as occlusion evidence. Configuration, BVH, zero-readback,
-  and Hi-Z phase telemetry remain valid evidence for the qualification failure.
-
-Live screenshots, MCP responses, and the investigation record are linked from
-[Math Intersections Occlusion Qualification Investigation](../../investigations/rendering/archive/math-intersections-occlusion-qualification-2026-08-03.md).
-
+| GPU two-pass qualification | The 2026-08-03 run reported `single-phase-current-depth`, one-phase frames, and zero late draws. | [Math Intersections Occlusion Qualification Investigation](../../investigations/rendering/archive/math-intersections-occlusion-qualification-2026-08-03.md), [GPU-driven occlusion todo](../../todo/rendering/gpu/gpu-driven-occlusion-culling-architecture-todo.md) |
+| GPU viewport capture | The activated GPU pipeline variant hit a `DeferredLightingDir` rewrite or compile failure. Blank captures were not accepted as occlusion evidence. | [Math Intersections Occlusion Qualification Investigation](../../investigations/rendering/archive/math-intersections-occlusion-qualification-2026-08-03.md) |

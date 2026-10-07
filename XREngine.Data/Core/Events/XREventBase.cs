@@ -38,23 +38,29 @@ namespace XREngine.Data.Core
                 : BeginLinkedProfiling(context, name);
         }
 
-        private Dictionary<(string Prefix, TListener Listener, int Index), string>? _listenerProfilingNames;
+        private ConcurrentDictionary<(string Prefix, TListener Listener, int Index), string>? _listenerProfilingNames;
 
         private string GetListenerProfilingName(string prefix, TListener listener, int index)
         {
-            Dictionary<(string Prefix, TListener Listener, int Index), string> cache =
-                _listenerProfilingNames ??= [];
+            var cache = Volatile.Read(ref _listenerProfilingNames);
+            if (cache is null)
+            {
+                var created = new ConcurrentDictionary<(string Prefix, TListener Listener, int Index), string>();
+                cache = Interlocked.CompareExchange(ref _listenerProfilingNames, created, null) ?? created;
+            }
             var key = (prefix, listener, index);
             if (cache.TryGetValue(key, out string? cached))
                 return cached;
 
-            var method = listener.Method;
-            string owner = method.DeclaringType?.FullName
-                ?? listener.Target?.GetType().FullName
-                ?? "<unknown>";
-            string name = $"{prefix}[{index}] {owner}.{method.Name}";
-            cache.Add(key, name);
-            return name;
+            // Concurrent event calls can discover the same listener at the same time.
+            return cache.GetOrAdd(key, static key =>
+            {
+                var method = key.Listener.Method;
+                string owner = method.DeclaringType?.FullName
+                    ?? key.Listener.Target?.GetType().FullName
+                    ?? "<unknown>";
+                return $"{key.Prefix}[{key.Index}] {owner}.{method.Name}";
+            });
         }
 
         protected void WithProfiling(string name, Action action)

@@ -115,6 +115,7 @@ public sealed partial class AdvancedGpuDeformationResources :
             new AdvancedActiveBlendshape[InitialActiveBlendshapeCapacity];
         _groupedJobIndexScratch =
             new uint[options.MaximumDeformationJobs];
+        _externalPaletteCopies = new AdvancedGpuPaletteCopy[options.MaximumDraws];
 
         _staticGenerations = new AdvancedGpuDeformationStaticGeneration[
             checked(_frameSlotCount + 1)];
@@ -322,6 +323,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         _staticGeneration.InputWitnesses.Clear();
         _poseEntries.Clear();
         _controlsByPose.Clear();
+        Array.Clear(_externalPaletteCopies, 0, _externalPaletteCopyCount);
+        _externalPaletteCopyCount = 0;
         _sourceVertexCount = 0u;
         _skinInfluenceCount = 0u;
         _spillInfluenceCount = 0u;
@@ -455,6 +458,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         else
             _paletteCopyCount = 0;
         _paletteCount = 0u;
+        Array.Clear(_externalPaletteCopies, 0, _externalPaletteCopyCount);
+        _externalPaletteCopyCount = 0;
         _activeBlendshapeCount = 0u;
         _previousOutputValid =
             frameId != 0UL &&
@@ -541,6 +546,8 @@ public sealed partial class AdvancedGpuDeformationResources :
 
         if (gpuPalette)
             CapturePaletteCopy(paletteSource!, paletteBase, paletteCount);
+        else if (inputs.GpuOwnedPalette && paletteCount != 0)
+            CaptureDesktopPaletteCopies(renderer, paletteSource!, paletteBase, paletteCount, inputs.UsesLocalBoneOwnership);
         else if (paletteCount != 0)
             CopyPalette(paletteSource!, paletteBase, _paletteScratch, _paletteCount, paletteCount);
         CopyActiveBlendshapes(
@@ -675,18 +682,21 @@ public sealed partial class AdvancedGpuDeformationResources :
         PinCurrentStaticGeneration(_currentFrameSlot);
         try
         {
-            bool executed = _executor.TryExecute(
+            bool palettesReady = TryCopyExternalPalettes(renderer, out bool copyAccepted);
+            uint enqueuedDispatchCount = 0u;
+            AdvancedDeformationDispatchTelemetry telemetry = default;
+            bool executed = palettesReady && _executor.TryExecute(
                 planner,
                 this,
                 jobs,
                 consumers,
                 EAdvancedDeformationExecutionMode.AggregateCompute,
                 admissionOverflowCount,
-                out AdvancedDeformationDispatchTelemetry telemetry,
+                out telemetry,
                 out _,
-                out uint enqueuedDispatchCount);
+                out enqueuedDispatchCount);
             LastTelemetry = telemetry;
-            if (enqueuedDispatchCount == 0u)
+            if (enqueuedDispatchCount == 0u && !copyAccepted)
             {
                 ReleaseStaticGenerationPin(_currentFrameSlot);
                 return false;
@@ -875,6 +885,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         _poseEntries.Clear();
         foreach (AdvancedGpuDeformationPaletteCopy[] copies in _paletteCopies)
             Array.Clear(copies);
+        Array.Clear(_externalPaletteCopies, 0, _externalPaletteCopyCount);
+        _externalPaletteCopyCount = 0;
     }
 
     private void EnsureDynamicPoseCapacity(

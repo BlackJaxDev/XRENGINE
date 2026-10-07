@@ -5,7 +5,7 @@
 **Source baseline:** `de9ee0d4018668c9b961be82a7e138266c4a0feb`; the independent software-rendering design document is committed separately at `c894abff71ad99ecbc6163b177eaf36f340fa00f`
 **Status:** Software implementation and regression validation; hardware acceptance remains open
 
-This historical record supports the software contracts in the [integration guide](../../../developer-guides/vr/openxr-body-tracking.md). The [acceptance procedure](../../testing/avatar/openxr-calibration-spectator-validation.md) retains the outstanding hardware checks. See the [Windows validation pass](../../investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md) for later results; neither record establishes complete hardware acceptance.
+This historical record supports the software contracts in the [integration guide](../../../developer-guides/vr/openxr-body-tracking.md). The [acceptance procedure](../../testing/avatar/avatar-validation.md#openxr-body-calibration-and-spectator) retains the outstanding hardware checks. See the [Windows validation pass](../../investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md) for later results; neither record establishes complete hardware acceptance.
 
 ## Implemented behavior
 

@@ -12,7 +12,7 @@ type contracts, development/shipping parity, and executable downloadable content
 
 Related docs:
 
-- [Runtime Regression And NativeAOT Hardening TODO](../../todo/runtime-regression-and-nativeaot-hardening-todo.md)
+- [Runtime Regression And NativeAOT Hardening TODO](../../todo/runtime/runtime-regression-and-nativeaot-hardening-todo.md)
 - [AOT Final Game Builds](../../../developer-guides/runtime/aot-final-game-builds.md)
 - [Cooked Asset Serialization: AOT And I/O](../../../architecture/assets/cooked-asset-aot-and-io.md)
 - [Hot-Path Memory Control](../../../developer-guides/runtime/hot-path-memory.md)
@@ -53,7 +53,7 @@ Conclusions:
 
 The prior review is accurate about the large decisions. Most of its concrete
 recommendations, however, repeat work the
-[NativeAOT hardening TODO](../../todo/runtime-regression-and-nativeaot-hardening-todo.md)
+[NativeAOT hardening TODO](../../todo/runtime/runtime-regression-and-nativeaot-hardening-todo.md)
 already tracks. It also spends the most attention on its least useful item:
 REDox.
 

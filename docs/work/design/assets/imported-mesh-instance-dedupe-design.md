@@ -15,7 +15,7 @@ Related docs:
 - [Zero-readback GPU-driven rendering plan](../rendering/zero-readback-gpu-driven-rendering-plan.md)
 - [GPU meshlet zero-readback rendering design](../rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [Avatar optimization and virtualized rendering design](../rendering/avatar-optimization-and-virtualized-rendering-design.md)
-- [Avatar mesh/submesh geometry optimization TODO](../../todo/avatar/avatar-mesh-submesh-geometry-optimization-todo.md)
+- [Avatar mesh/submesh geometry optimization TODO](../../todo/avatar/avatar-optimization-roadmap.md#mesh-submesh-and-geometry)
 
 ## 1. Summary
 

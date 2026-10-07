@@ -9,7 +9,7 @@ about 3.9 ms and 360 KB per recording) is bound to the per-frame scene
 realization and cannot be retained across generations under the current
 lifetime contract, so it is recorded here as attributed handoff evidence rather
 than fixed. Gate record for
-[S13f](../../todo/rendering/vulkan-stall-remediation-todo.md#s13f-retain-plan-derived-operation-metadata)
+[S13f](../../progress/rendering/vulkan-stall-remediation-results.md)
 under the todo document's one-by-one protocol. Evidence root:
 `Build/_AgentValidation/20260926-180440-s13f-plan-metadata/` (ignored,
 disposable; findings are copied here). Fixture, camera and session type are

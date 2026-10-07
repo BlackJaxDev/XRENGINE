@@ -89,7 +89,6 @@ This avoids replacing a Vulkan buffer after descriptor capture and guarantees
 that every build stage can report overflow without a CPU reset upload.
 
 Nodes use one canonical 48-byte `std430` layout:
-
 | Offset | Field |
 |---:|---|
 | 0 | `vec3 minBounds` |
@@ -159,6 +158,35 @@ Missing programs, invalid bounds, malformed topology, or unavailable provider
 buffers keep the flat GPU culler visible as an explicit logged fallback. The
 runtime strategy remains the kill switch. Zero-readback strategies do not
 enqueue overflow or stats mappings.
+
+### Overflow readback
+
+The build kernels write capacity and malformed-tree conditions into a one-word
+overflow flag (`OverflowMortonBit`, `OverflowNodeBit`, `OverflowQueueBit`,
+`OverflowBvhBit`). `GpuBvhTree.Overflow.cs` reads the flag without stalling
+the build:
+
+1. After the build dispatch chain, `EnqueueOverflowFlagReadback` inserts an
+   `XRGpuFence` through `AbstractRenderer.InsertGpuFence()`. The OpenGL
+   renderer uses a sync object; the Vulkan renderer uses an ordered compute
+   fence.
+2. The next `Build(...)` and `GPUScene.PrepareBvhForCulling(...)` call
+   `PollPendingOverflow()`. The poll does not wait. The buffer is mapped only
+   after the fence reports signaled.
+3. An observed overflow logs a warning, clears the node and primitive counts,
+   and marks the tree dirty. Culling then uses the flat GPU path. Overflow is
+   reported at most about one frame late.
+
+There is one readback slot. A new build drops a still-pending fence, because an
+overflow repeats on the next build. After three pending polls, the tree logs one
+delayed-fence warning. A failed fence drops the flag for that build. Each
+observed read records four bytes in `GpuReadbackBytes` and in the synchronous
+or asynchronous BVH readback counter.
+
+A backend that returns no fence falls back to an immediate synchronous map.
+Zero-readback strategies do not enqueue a fence and drop any pending fence.
+The overflow buffer is never resized after creation. `XRE_HIZ_CULL_TRACE=1`
+adds capacity and required figures to each overflow report.
 
 Ray traversal uses the same compact node layout. It visits the nearer child
 first, falls back to the node primitive range on stack pressure, and masks

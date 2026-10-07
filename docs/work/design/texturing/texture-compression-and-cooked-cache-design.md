@@ -9,7 +9,7 @@ Related docs:
 - [Texture Runtime, Streaming, And Virtual Texturing Design](texture-runtime-streaming-virtual-texturing-design.md)
 - [Texture Runtime, Streaming, And Virtual Texturing TODO](../../todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md)
 - [Texture Compression And Cooked Texture Cache TODO](../../todo/texturing/texture-compression-and-cooked-cache-todo.md)
-- [Texture Runtime Streaming Validation](../../testing/texture-runtime-streaming-validation.md)
+- [Texture Validation](../../testing/texturing/texture-validation.md)
 - [Model Import Cooked Asset Cache Design](../assets/model-import-binary-cache-design.md)
 - [Model import feature guide](../../../developer-guides/assets/model-import.md)
 

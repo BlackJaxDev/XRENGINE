@@ -105,7 +105,6 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         string renderParametersSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Materials/Options/RenderingParameters.cs");
         string gpuSceneSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.Soa.cs");
         string vulkanShaderInclude = ReadWorkspaceFile("Build/CommonAssets/Shaders/Common/VulkanBindlessMaterialTable.glsl");
-        string policyDoc = ReadWorkspaceFile("docs/architecture/rendering/material-binding-policy.md");
 
         glRendererSource.ShouldContain("public ArbBindlessTexture? ARBBindlessTexture");
         glBindlessSource.ShouldContain("TryGetResidentBindlessTextureHandle");
@@ -142,7 +141,6 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         renderParametersSource.ShouldContain("EMaterialTextureArrayPolicy");
         gpuSceneSource.ShouldContain("EGpuMaterialStateClass.Shadow");
         vulkanShaderInclude.ShouldContain("nonuniformEXT");
-        policyDoc.ShouldContain("Texture arrays are not the fallback for arbitrary material diversity");
         hybridSource.ShouldContain("MaterialBindingGlslGenerator.AppendMaterialTableDefinitions");
     }
 

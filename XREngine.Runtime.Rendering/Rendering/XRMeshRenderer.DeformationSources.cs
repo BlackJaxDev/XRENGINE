@@ -70,7 +70,10 @@ public partial class XRMeshRenderer
             skinning && (HasExternalSkinPaletteSource || HasGpuDrivenBoneSource),
             blendshapes ? morphs.ActiveWeights : null,
             blendshapes ? checked((uint)morphs.ActiveCount) : 0,
-            SkinnedOutputVersion, morphs.WeightsVersion);
+            SkinnedOutputVersion, morphs.WeightsVersion)
+        {
+            UsesLocalBoneOwnership = skinning && !HasExternalSkinPaletteSource && HasGpuDrivenBoneSource,
+        };
         return true;
     }
 

@@ -47,6 +47,21 @@ internal sealed partial class PhysicsChainReadbackService
     private long _latencyFiveToEightFrames;
     private long _latencyNineOrMoreFrames;
 
+    public bool HasPendingTransfers()
+    {
+        for (int i = 0; i < _stagingSlots.Length; ++i)
+            if (_stagingSlots[i].State != StagingSlotState.Free)
+                return true;
+
+        for (int i = 0; i < _liveHandles.Count; ++i)
+            if (TryGet(_liveHandles[i], out PhysicsChainReadbackRequestInfo? info) &&
+                info is not null &&
+                info.Status is PhysicsChainReadbackStatus.Pending or PhysicsChainReadbackStatus.InFlight)
+                return true;
+
+        return false;
+    }
+
     public bool TryBuildGatherPlan(
         PhysicsChainReadbackHandle handle,
         PhysicsChainReadbackSourceEpoch sourceEpoch,

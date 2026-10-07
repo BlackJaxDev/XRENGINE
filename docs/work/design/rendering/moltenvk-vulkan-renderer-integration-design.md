@@ -471,7 +471,7 @@ The MoltenVK renderer integration is complete when:
 - [Vulkan Pipeline Compilation](../../../architecture/rendering/vulkan-pipeline-compilation.md)
 - [Vulkan Render-Loop Target Architecture](vulkan-render-loop-target-architecture.md)
 - [Runtime Rendering Host Capability Inventory](runtime-rendering-host-capability-inventory.md)
-- [Completed Vulkan Presentation-Independent Renderer Refactor](../../todo/COMPLETED/vulkan-presentation-independent-renderer-refactor-todo.md)
+- [Vulkan Renderer: Presentation-Independent Hosts](../../../architecture/rendering/vulkan-renderer.md#presentation-independent-hosts)
 
 ## External References
 

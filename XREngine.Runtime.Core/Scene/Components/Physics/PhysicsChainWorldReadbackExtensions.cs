@@ -187,6 +187,9 @@ public static class PhysicsChainWorldReadbackExtensions
         return GetService(world).GetTransferCounters();
     }
 
+    public static bool HasPendingReadbackTransfers(this PhysicsChainWorld world)
+        => GetService(world).HasPendingTransfers();
+
     private static PhysicsChainReadbackService GetService(PhysicsChainWorld world)
         => Services.GetValue(world, static _ => new PhysicsChainReadbackService(PhysicsChainReadbackLimits.Default));
 }

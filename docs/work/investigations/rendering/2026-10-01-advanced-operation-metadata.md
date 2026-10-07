@@ -1,6 +1,6 @@
 # Advanced operation metadata scan attribution
 
-Status: **Deferred/Not Applicable**, October 1, 2026. The selected Advanced family discovery/filter scans are below the predeclared entry threshold and allocate nothing. No structural cache or runtime behavior change is retained. This is the S13f disposition for the [Vulkan stall remediation TODO](../../todo/rendering/vulkan-stall-remediation-todo.md#s13f-retain-plan-derived-operation-metadata); it is not a Fixed or Validated optimization claim. Next permitted item: S13g, with a fresh comparable readiness baseline.
+Status: **Deferred/Not Applicable**, October 1, 2026. The selected Advanced family discovery/filter scans are below the predeclared entry threshold and allocate nothing. No structural cache or runtime behavior change is retained. This is the S13f disposition for the [Vulkan stall remediation TODO](../../progress/rendering/vulkan-stall-remediation-results.md); it is not a Fixed or Validated optimization claim. Next permitted item: S13g, with a fresh comparable readiness baseline.
 
 ## Scope and source audit
 

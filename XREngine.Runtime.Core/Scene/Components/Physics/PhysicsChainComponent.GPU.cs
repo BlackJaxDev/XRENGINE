@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using XREngine.Scene.Transforms;
 
@@ -14,14 +15,26 @@ public partial class PhysicsChainComponent
     private readonly List<Matrix4x4> _gpuTransforms = [];
     private readonly List<PhysicsChainGpuCollider> _gpuColliders = [];
     private readonly List<PhysicsChainGpuBone> _gpuBones = [];
-    private int _gpuStaticVersion = -1;
-    private int _gpuParticleVersion = -1;
+    private bool _gpuInputPrepared;
+    private int _gpuParticleSourceVersion;
+    private int _gpuStaticSourceVersion;
+    private int _gpuStaticDataVersion;
+    private int _gpuTreeDataVersion;
+    private int _gpuBoneSignature;
+    private int _gpuTransformSignature;
+    private int _gpuColliderSignature;
     private int _gpuExecutionGeneration;
     private long _gpuSubmissionId;
     private long _lastAppliedGpuSubmissionId;
 
     /// <summary>Renderer supplied GPU backend state; unavailable is explicit and never selects a CPU fallback.</summary>
     public PhysicsChainGpuBackendState GpuBackendState => RuntimePhysicsChainRendering.Current.BackendState;
+
+    /// <summary>Reads cumulative timing for this component's physics chain world.</summary>
+    public PhysicsChainLateTickTelemetrySnapshot? WorldLateTickTelemetry
+        => World is { } world && PhysicsChainWorld.TryGet(world, out PhysicsChainWorld? scheduler)
+            ? scheduler?.LateTickTelemetry
+            : null;
 
     private void ActivateGpuExecutionMode()
     {
@@ -79,18 +92,47 @@ public partial class PhysicsChainComponent
 
     private void ExecuteGpuLateUpdate()
     {
+        bool observe = RuntimeWorldTickTelemetry.Enabled;
+        long prepareStart = observe ? Stopwatch.GetTimestamp() : 0L;
         CheckDistance();
         if (!IsNeedUpdate())
+        {
+            if (observe)
+                PhysicsChainWorld.RecordGpuComponentPreparation(Stopwatch.GetTimestamp() - prepareStart);
+            return;
+        }
+
+        Prepare(snapshotForCpuJobs: false);
+        if (_particleTrees.Count == 0)
+        {
+            _lastSimulationProducedResults = false;
+            if (observe)
+                PhysicsChainWorld.RecordGpuComponentPreparation(Stopwatch.GetTimestamp() - prepareStart);
+            return;
+        }
+
+        ResolveSimulationLoopAndTimeScale(_deltaTime, out int loopCount, out float timeVar);
+        _lastSimulationProducedResults = loopCount > 0;
+        if (observe)
+            PhysicsChainWorld.RecordGpuComponentPreparation(Stopwatch.GetTimestamp() - prepareStart);
+        if (loopCount == 0)
             return;
 
-        Prepare();
+        long packingStart = observe ? Stopwatch.GetTimestamp() : 0L;
         PrepareGpuDispatchData();
+        if (observe)
+            PhysicsChainWorld.RecordGpuInputPacking(Stopwatch.GetTimestamp() - packingStart);
+        long dispatchStart = observe ? Stopwatch.GetTimestamp() : 0L;
         RuntimePhysicsChainRendering.Current.Execute(this, new PhysicsChainGpuDispatchSnapshot(
             CollectionsMarshal.AsSpan(_gpuParticles), CollectionsMarshal.AsSpan(_gpuParticleStatic),
             CollectionsMarshal.AsSpan(_gpuTrees), CollectionsMarshal.AsSpan(_gpuTransforms), CollectionsMarshal.AsSpan(_gpuColliders), CollectionsMarshal.AsSpan(_gpuBones),
             _deltaTime, _objectScale, _weight, Force, Gravity, _objectMove, (int)FreezeAxis,
-            1, 1.0f, _gpuExecutionGeneration, ++_gpuSubmissionId, _gpuStaticVersion, _gpuParticleVersion, 0, 0));
-        _lastSimulationProducedResults = true;
+            loopCount, timeVar, _gpuExecutionGeneration, ++_gpuSubmissionId,
+            _gpuStaticDataVersion, _gpuTreeDataVersion, _particleStateVersion,
+            _gpuTransformSignature, _gpuColliderSignature,
+            _gpuBoneSignature));
+        if (observe)
+            PhysicsChainWorld.RecordGpuBridgeDispatch(Stopwatch.GetTimestamp() - dispatchStart);
     }
 
     private void ApplyPendingGpuBoneSync()
@@ -145,40 +187,90 @@ public partial class PhysicsChainComponent
 
     private void PrepareGpuDispatchData()
     {
-        _gpuParticles.Clear();
-        _gpuParticleStatic.Clear();
-        _gpuTrees.Clear();
+        HashCode transformHash = new();
+        HashCode colliderHash = new();
+        HashCode boneHash = new();
+        bool rebuildStatic = !_gpuInputPrepared || _gpuStaticSourceVersion != _particlesVersion;
+        bool rebuildParticles = rebuildStatic || _gpuParticleSourceVersion != _particleStateVersion;
+        bool treeChanged = rebuildStatic;
+        if (rebuildParticles)
+            _gpuParticles.Clear();
+        if (rebuildStatic)
+        {
+            _gpuParticleStatic.Clear();
+            _gpuTrees.Clear();
+            _gpuBones.Clear();
+        }
         _gpuTransforms.Clear();
         _gpuColliders.Clear();
-        _gpuBones.Clear();
         int particleOffset = 0;
         for (int treeIndex = 0; treeIndex < _particleTrees.Count; ++treeIndex)
         {
             ParticleTree tree = _particleTrees[treeIndex];
-            _gpuTrees.Add(new(tree.RestGravity, particleOffset, tree.Particles.Count));
+            if (rebuildStatic)
+                _gpuTrees.Add(new(tree.RestGravity, particleOffset, tree.Particles.Count));
+            else if (_gpuTrees[treeIndex].RestGravity != tree.RestGravity)
+            {
+                _gpuTrees[treeIndex] = _gpuTrees[treeIndex] with { RestGravity = tree.RestGravity };
+                treeChanged = true;
+            }
             for (int particleIndex = 0; particleIndex < tree.Particles.Count; ++particleIndex)
             {
                 Particle particle = tree.Particles[particleIndex];
-                _gpuParticles.Add(new(particle.Position, particle.PrevPosition, particle.IsColliding ? 1 : 0, particle.PreviousPhysicsPosition));
-                _gpuParticleStatic.Add(new(particle.TransformLocalPosition,
-                    particle.ParentIndex >= 0 ? particle.ParentIndex + particleOffset : -1,
-                    particle.Damping, particle.Elasticity, particle.Stiffness, particle.Inert, particle.Friction,
-                    particle.Radius, particle.SegmentLength, treeIndex));
-                _gpuTransforms.Add(particle.Transform is not null ? particle.TransformLocalToWorldMatrix : Matrix4x4.Identity);
-                _gpuBones.Add(new(particle.Transform, particle.ParentIndex >= 0 ? particle.ParentIndex + particleOffset : -1, particle.Transform is not null ? particle.InitLocalPosition : particle.EndOffset));
+                if (rebuildParticles)
+                    _gpuParticles.Add(new(particle.Position, particle.PrevPosition, particle.IsColliding ? 1 : 0, particle.PreviousPhysicsPosition));
+                if (rebuildStatic)
+                {
+                    _gpuParticleStatic.Add(new(particle.TransformLocalPosition,
+                        particle.ParentIndex >= 0 ? particle.ParentIndex + particleOffset : -1,
+                        particle.Damping, particle.Elasticity, particle.Stiffness, particle.Inert, particle.Friction,
+                        particle.Radius, particle.SegmentLength, treeIndex));
+                    PhysicsChainGpuBone bone = new(particle.Transform,
+                        particle.ParentIndex >= 0 ? particle.ParentIndex + particleOffset : -1,
+                        particle.Transform is not null ? particle.InitLocalPosition : particle.EndOffset);
+                    _gpuBones.Add(bone);
+                    boneHash.Add(bone.Transform);
+                    boneHash.Add(bone.ParentIndex);
+                    boneHash.Add(bone.RestLocalDirection);
+                }
+                // Root motion uses its transform matrix. Only child local offsets
+                // are read from the static template by the GPU solver.
+                Matrix4x4 transformMatrix = particle.Transform is not null
+                    ? particle.TransformLocalToWorldMatrix
+                    : particle.ParentIndex >= 0
+                        ? tree.Particles[particle.ParentIndex].TransformLocalToWorldMatrix
+                        : Matrix4x4.Identity;
+                _gpuTransforms.Add(transformMatrix);
+                transformHash.Add(transformMatrix);
             }
             particleOffset += tree.Particles.Count;
         }
+
+        if (rebuildStatic)
+            unchecked { ++_gpuStaticDataVersion; }
+        if (treeChanged)
+            unchecked { ++_gpuTreeDataVersion; }
+        if (rebuildStatic)
+            _gpuBoneSignature = boneHash.ToHashCode();
+        _gpuStaticSourceVersion = _particlesVersion;
+        _gpuParticleSourceVersion = _particleStateVersion;
+        _gpuInputPrepared = true;
 
         if (_effectiveColliders is not null)
             for (int i = 0; i < _effectiveColliders.Count; ++i)
                 AppendGpuCollider(_effectiveColliders[i]);
 
-        unchecked
+        for (int i = 0; i < _gpuColliders.Count; ++i)
         {
-            ++_gpuStaticVersion;
-            ++_gpuParticleVersion;
+            PhysicsChainGpuCollider collider = _gpuColliders[i];
+            colliderHash.Add(collider.Center);
+            colliderHash.Add(collider.Params);
+            colliderHash.Add(collider.Orientation);
+            colliderHash.Add(collider.Type);
         }
+
+        _gpuTransformSignature = transformHash.ToHashCode();
+        _gpuColliderSignature = colliderHash.ToHashCode();
     }
 
     private void AppendGpuCollider(PhysicsChainColliderBase collider)

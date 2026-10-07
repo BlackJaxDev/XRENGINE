@@ -47,12 +47,38 @@ Collision filtering parity is defined around shared `LayerMask` behavior plus `P
 
 `CharacterControllerComponent` is the reusable controller owner for gameplay code that wants controller lifecycle separated from movement behavior. `CharacterMovement3DComponent` can bind to a sibling controller component, or continue to create its legacy private controller when no reusable controller owner is present. Controller lifecycle and contact-state changes are exposed through backend-neutral events.
 
+### Character controller contract
+
+- Motion commands carry a `CharacterMotionInputModel`: `Velocity` (units per second, the default) or `Displacement` (distance for the command duration). Each queued command keeps its model and duration, so a runtime model change never reinterprets queued work. Model changes apply on a physics-step boundary.
+- `TickInputWithPhysics = false` produces movement commands on the Update thread with `Engine.Delta`. `true` produces them on the fixed PrePhysics thread with `Engine.FixedDelta`. Update-thread commands cross to physics as a duration-tagged stream and are resampled by duration. Update cadence does not change distance, acceleration, gravity, or jump count. Movement never reads a render or present delta.
+- Each backend converts the model once at its native boundary. PhysX passes displacement through and converts velocity with the fixed delta. Jolt passes velocity through and converts displacement with the fixed delta. A zero or invalid fixed delta causes no native move and keeps queued remainders.
+- Jolt calls `CharacterVirtual.ExtendedUpdate` on every fixed step, also with zero input. `MinMoveDistance` does not suppress contact refresh, floor sticking, stair logic, or moving ground. Ground velocity is added once.
+- `TotalHeight` is the full capsule height. Backends convert it to a native cylinder height of `max(0, totalHeight - 2 * radius)`.
+- Jolt `CharacterPadding`, `PredictiveContactDistance`, `CollisionTolerance`, floor-stick distance, step-up distance, and extra step-down distance are independent settings.
+- `CharacterSupportState` (`Unknown`, `InAir`, `Supported`, `TooSteep`, `NotSupported`) comes from the backend support model. `CollidingUp`, `CollidingDown`, and `CollidingSides` report contact location relative to `UpDirection` only. Movement exposes `GroundNormal` and `GroundVelocity` through neutral types.
+- Locomotion math projects along and across the normalized `UpDirection`. It does not assume world Y up.
+- `PhysicsCharacterControllerCapabilities` reports per-backend features such as displacement and velocity input, arbitrary up, moving ground, predictive contacts, independent step-down, and PhysX-only materials, invisible walls, and constrained climbing. Unsupported fields stay visible as capability differences.
+
 Collider/material authoring should prefer `PhysicsMaterialDefinition` and `PhysicsColliderShape`. Rigid-body components still accept the legacy single `Geometry`/`Material` fields, but `ColliderShapes` is the compound-authoring surface. PhysX and Jolt iterate all enabled collider shapes, retaining each shape's local pose and material settings. Runtime edits should call `RebuildCollisionShapes()` so ownership, registration, and cached velocities are handled coherently.
 
 
 ### Runtime ownership and diagnostics
 
 Rigid-body components expose `ReplicationAuthority` and `OwnerClient` metadata so networking code can make explicit ownership decisions for rigid bodies, controllers, and joints. Isolated Windows editor runs have exercised both PhysX and Jolt, and targeted tests cover selected lifecycle and query behavior. Full backend parity, reload/leak behavior, and browser qualification remain validation gates before changing the default. Jolt exposes `GetDiagnostics()` plus debug-render collection hooks so tests can assert actor/controller/joint counts without reaching into backend dictionaries.
+
+### Backend service, ownership, and boundary rules
+
+- Components create actors, controllers, and colliders through `IPhysicsBackendService` (`XREngine.Runtime.Core/Scene/Physics/PhysicsBackendService.cs`). Shared code does not switch on concrete scene types.
+- Joint components (Fixed, Distance, Hinge, Prismatic, Spherical, D6) own native joint creation, destruction, and rebinding. Settings are serialized component properties and are pushed to the active native joint. A joint rebinds when its connected bodies activate before or after the joint component.
+- Runtime-only constraints, such as grab constraints, use `RuntimeDistanceConstraintOwner`. Creation and removal are idempotent and lifecycle-owned. Authored constraints use the joint component family.
+- Reusable collider data uses `PhysicsColliderAsset` (`PhysicsMeshGeometry.cs`). Convex-decomposition output converts to this asset. Shape-authoring data stays independent from backend cooking artifacts.
+- Live shape replacement keeps native identity: Jolt keeps the body identifier, and PhysX keeps the actor pointer, releases old shape and material references, and recomputes mass and inertia.
+- Unsupported backend-native geometry is rejected explicitly. A backend never substitutes a different collision shape.
+- Jolt queries return PhysX-compatible triangle barycentric UVs for authored triangle meshes and zero UV for other shapes. Authored source face IDs survive compound and decorated shapes.
+- Replication handoff uses `PhysicsReplicationAuthority`, network identity, lease-owner metadata, and server fallback (`PhysicsReplicationPolicy`).
+- Jolt native debug extraction for shapes, constraints, and contacts is in `JoltEngineDebugRenderer`.
+
+Boundary tests enforce these rules: `PhysicsBackendBoundaryTests`, `PhysicsGameplayApiBoundaryTests`, `PhysicsGeometryAdapterBoundaryTests`, and `PhysicsP0ApiContractTests` reject `Physx*`, `Jolt*`, and `MagicPhysX.Px*` types in shared gameplay APIs outside named backend extensions. Parity fixtures include `JoltQueryParityTests`, `JoltGeometryParityTests`, `JoltControllerParityTests`, `JoltProductionHardeningTests`, `PhysicsSceneSerializationTests`, `PhysicsReplicationPolicyTests`, `RuntimeDistanceConstraintOwnerTests`, and `PhysxShapeMutationTests`.
 
 ## PhysX Backend
 PhysX 5 is the current primary, fully-featured integration. Its scene, actors, controllers, joints, geometry adapter, and backend service live in `XREngine.Runtime.Physics.PhysX` under the stable `XREngine.Scene.Physics.Physx` namespace.
@@ -96,7 +122,7 @@ PhysX character controllers are fully supported:
 
 ### Joint Library & Debugging
 - PhysX joints (`PhysxJoint_*`) are created and tracked by the scene to maintain managed wrappers for Px joint pointers. Utility constructors centralize the PxTransform plumbing needed to connect two actors.
-- Debug visualization uses `InstancedDebugVisualizer` to stream data from `PxRenderBuffer` (points, lines, triangles). Runtime toggles link back to `Engine.Rendering.Settings.PhysicsVisualizeSettings`, so enabling debug flags in the engine UI automatically pushes the same configuration into the PxScene.
+- Debug visualization copies `PxRenderBuffer` points, lines, and triangles into a backend-neutral frame once per step. See [Physics Debug Frame](physics-debug-frame.md). Runtime toggles link back to `Engine.Rendering.Settings.PhysicsVisualizeSettings`, so enabling debug flags in the engine UI automatically pushes the same configuration into the PxScene.
 - `ShiftOrigin`, solver parameters, CCD controls, and GPU copy helpers are also exposed for advanced tooling and streaming scenarios.
 
 ---
@@ -131,12 +157,11 @@ Shared rendered and headless world hosts initialize the native physics scene bef
 ## Physics Chain Simulation
 `PhysicsChainComponent` powers rope/cloth/hair-style simulations without depending on an external solver.
 
-- Particles are organized per root transform (`ParticleTree`). The component supports multiple roots, optional exclusions, and automatically inserts end bones based on `EndLength`/`EndOffset`.
-- Integration uses a verlet-style step with damping, elasticity, stiffness, and inertia curves that can vary along the length of the chain via distribution assets. Gravity, external forces, and object motion (to allow parenting to animated rigs) all feed into the solver.
-- Collision support is provided through lightweight collider components (`PhysicsChainSphereCollider`, `PhysicsChainBoxCollider`, `PhysicsChainCapsuleCollider`, `PhysicsChainPlaneCollider`). Colliders implement `Prepare()`/`Collide()` so they can be shared across multiple chains each frame.
-- When `UpdateMode` is set to `FixedUpdate`, `InterpolationMode` controls how authored bone transforms are presented on render frames between fixed ticks: `Discrete` keeps the previous behavior, `Interpolate` blends from the prior fixed-step pose to the latest result, and `Extrapolate` predicts one fixed-step ahead from the last two solved poses.
-- A multithreaded worker pool kicks in when `Multithread` is enabled. The component queues pending work during the main update, the pool processes particle updates in parallel, and results are blended back during `LateUpdate()`.
-- Distance-based disabling (`DistantDisable`) and blend weights allow gameplay systems to fade simulation in/out depending on camera proximity or animation needs. Debug rendering uses `Engine.Rendering.Debug` helpers to visualize particle positions, radii, and parent links.
+- The component is an authoring facade. `PhysicsChainWorld` owns registration, scheduling, shared templates and collider sets, arenas, quality tiers, and outputs. See [Physics Chain World Runtime](physics-chain-world-runtime.md).
+- Particles are organized per root (`PhysicsChainTemplateTree`). The component supports multiple roots, optional exclusions, and end bones from `EndLength`/`EndOffset`.
+- Integration uses a verlet-style step with damping, elasticity, stiffness, and inertia curves that can vary along the chain. Gravity, external forces, and root motion feed the solver.
+- Collision uses shared collider components (`PhysicsChainSphereCollider`, `PhysicsChainBoxCollider`, `PhysicsChainCapsuleCollider`, `PhysicsChainPlaneCollider`) that become versioned collider sets.
+- CPU (`PhysicsChainCpuBackend`) and GPU (`GPUPhysicsChainDispatcher`) backends write current and previous palettes and conservative bounds directly. See [Physics-chain compute backends](physics-chain-compute-backends.md) and [Physics-chain output and readback](physics-chain-output-and-readback.md).
 
 ---
 
@@ -173,11 +198,13 @@ Known gaps to keep in mind:
 ---
 
 ## Related Documentation
+- [Physics Debug Frame](physics-debug-frame.md)
+- [Physics Chain World Runtime](physics-chain-world-runtime.md)
 - [Component API](../../developer-guides/components/component-api.md)
 - [Scene Architecture](../scene/overview.md)
 - [Rendering Runtime Overview](../rendering/runtime-overview.md)
 - [Animation API](../../developer-guides/animation/animation-api.md)
 - [Physics API](../../developer-guides/physics/physics-api.md)
 - [Physics Chain Performance](../../developer-guides/rendering/physics-chain-performance.md)
-- [Physics Chain Performance Testing](../../work/testing/physics-chain-performance.md)
+- [Physics Validation](../../work/testing/physics/physics-validation.md)
 - [GPU Physics Chain Zero-Readback Skinned Mesh Plan](../../work/design/transforms/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)

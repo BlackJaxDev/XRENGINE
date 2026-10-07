@@ -119,4 +119,4 @@ fixtures with two mirrors have continued through publication changes, resizing
 and complete retirement. Distinct publications retain independent payloads;
 occupied-slot growth waits for a completed empty boundary and respects the
 existing memory ceilings. The broader mirror pressure/fault profile remains
-tracked separately from [ARP-I95](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md#arp-i95).
+tracked separately from [ARP-I95](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md).

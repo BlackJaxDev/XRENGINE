@@ -3,7 +3,7 @@
 This note records the live Phase 3 ownership and dependency inventory on branch
 `codex/runtime-modularization-phase3`. It is a progress snapshot, not a replacement
 for the user-maintained execution checklist in
-[`runtime-modularization-phase3-todo.md`](../../todo/runtime-modularization-phase3-todo.md).
+`runtime-modularization-phase3-todo.md` (retired; see [Runtime Project Organization](../../../architecture/runtime/project-organization.md)).
 Rendering-bound work remains owned by the Phase 4 checklist.
 
 ## Current Source Ownership

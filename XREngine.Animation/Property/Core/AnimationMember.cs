@@ -357,6 +357,8 @@ namespace XREngine.Animation
                     _fieldCache?.SetValue(_parentObject, value);
                     break;
                 case EAnimationMemberType.Property:
+                    if (_propertyCache is null && _parentObject is not null)
+                        _propertyCache = _parentObject.GetImmediateType().GetProperty(_memberName);
                     _propertyCache?.SetValue(_parentObject, value);
                     break;
                 case EAnimationMemberType.Method:
@@ -713,6 +715,16 @@ namespace XREngine.Animation
             if (parentObj is null || MemberNotFound)
                 return null;
 
+            if (AnimationMemberBindingRegistry.TryGetGetter(parentObj.GetType(), _memberName, out Func<object, object?>? getter))
+            {
+                if (Animation is not null)
+                    ConfigureTypedValueAppliers(parentObj);
+
+                object? typedValue = getter!(parentObj);
+                DefaultValue = typedValue;
+                return Cache(typedValue);
+            }
+
             _propertyCache ??= parentObj.GetImmediateType().GetProperty(_memberName);
 
             MemberNotFound = _propertyCache is null;
@@ -791,6 +803,9 @@ namespace XREngine.Animation
                         AssignFieldValueAppliers(fieldInfo, fieldInfo.DeclaringType ?? targetType);
                     break;
                 case EAnimationMemberType.Property:
+                    // A registered getter can bypass the property lookup during
+                    // initialization. Keep the legacy cache for discrete values.
+                    _propertyCache ??= parentObj.GetImmediateType().GetProperty(_memberName);
                     if (ResolvePropertyInfo(targetType) is PropertyInfo propertyInfo)
                         AssignPropertyValueAppliers(propertyInfo, propertyInfo.DeclaringType ?? targetType);
                     break;

@@ -875,6 +875,35 @@ stability gates. Control-fixture results are diagnostic renderer-submit
 evidence; they are not equivalent to desktop WSI, OpenXR, or a production
 render-graph cohort.
 
+### Evidence Lanes And Promotion
+
+`RenderExecutionMode` identifies the Vulkan evidence lanes below. It also has
+`BrowserCanvas` for browser renderers. Results from different lanes have
+different manifest identities. Do not compare them as equivalent workloads.
+
+| Lane | Target | Use |
+| --- | --- | --- |
+| `Component` | Minimal valid fixture for one CPU or GPU target | Root-cause and scaling experiments |
+| `Presentationless` | Engine-owned offscreen color and depth images; no surface or swapchain | Renderer-only full-frame evidence |
+| `HeadlessWsi` | `VK_EXT_headless_surface` surface and swapchain, when the driver supports it | Swapchain lifecycle; presentation is a no-op |
+| `DesktopWsi` | Real Windows surface and compositor present | Desktop evidence |
+| `OpenXr` | Selected OpenXR runtime and view family | XR evidence |
+
+Component and presentationless results can explain an optimization. Only the
+desktop or OpenXR lane that the change targets can promote it. To promote a
+component optimization:
+
+1. Capture a component baseline. Change one architectural variable.
+2. Pass the component correctness, operation-count, allocation, and stability
+   gates with repeated compatible runs.
+3. Run the nearest subsystem fixture, the full presentationless frame, the
+   desktop WSI cohort, and the OpenXR cohort when the change affects XR.
+4. Run validation and synchronization-validation cohorts separately from
+   performance captures.
+5. Reject the change if it moves cost to another stage, increases tail
+   latency, reduces CPU and GPU overlap, adds churn, readbacks, or fallbacks, or
+   regresses a broader lane. Report both component and whole-frame savings.
+
 ### RenderBench Runtime Profile MCP Tools
 
 The editor-independent implementation lives in `XREngine.Runtime.Automation`.
@@ -1095,7 +1124,7 @@ recipe and effective configuration, workload identity, source executable and
 assembly hashes, hardware/driver identity, timing intervals, and gate status.
 The source and workload hashes prevent an unrelated build or workload change
 from silently entering a clean comparison. Current live evidence and validation
-are recorded in the [Vulkan component profiling progress report](../../work/progress/rendering/vulkan-component-profiling.md#previously-recorded-local-evidence).
+are recorded in the [Vulkan component profiling progress report](../../work/progress/rendering/vulkan-component-profiling.md#local-validation-evidence).
 
 External GPU captures made by RenderDoc, Nsight, RGP, or an existing capture
 bridge can be attached after the measured interval with `external_capture`:

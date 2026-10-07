@@ -25,6 +25,7 @@ internal static class WebGpuAdvancedShadingParameters
         words[7] = (request.RequireNativeOutput ? 2u : 0u) | (request.EnableBuiltInAmbientOcclusion ? 4u : 0u) |
             (request.EnableLightProbesAndIbl ? 8u : 0u) |
             (request.EnableAuthoredDecals ? 16u : 0u) |
+            (request.SuppressBaselineDiffuse ? 32u : 0u) |
             ((uint)request.ShadingDebugView << 8);
         words[8] = request.FroxelDepthSlices;
         words[10] = (uint)visibility.Scene!.Snapshot.GlobalResources.Lights.PhysicalRecords.Length;

@@ -110,6 +110,26 @@ switches, and shader variant changes.
 - The dedupe table is allocated once and reused by per-frame hash insertion.
 - Crowd scenes with identical idle poses can pay closer to single-renderer
   palette upload cost than N-renderer cost.
+- Dedupe shares palette upload only. Each renderer still records its own
+  compute skinning dispatch.
+
+## Change Rules
+
+- Every skinning change covers the direct vertex path
+  (`DefaultVertexShaderGenerator`, `WriteSkinningCalc`,
+  `WriteUniformBufferBlocks`, active when `UseComputeSkinning` is false) and the
+  compute path (active when
+  `RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader` is true).
+  A change on one path only is a regression.
+- Each new layout or precision mode is a shader permutation. Encode it in the
+  shader cache key and bump the on-disk shader cache schema version when the
+  shader contract changes.
+- An incompatible cooked skinning layout bumps the cooked mesh payload schema.
+  Document the migration of cached assets under `Cache/` and `Build/Cache/`.
+- Steady-state skinning work allocates no heap memory per frame. Caches are
+  preallocated pooled buffers.
+- New mutation paths on `XRMeshRenderer`, mesh assets, or palette types use
+  `SetField(...)`.
 
 ## Derived Fourth Weight Evaluation
 

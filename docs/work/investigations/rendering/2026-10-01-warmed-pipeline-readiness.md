@@ -1,6 +1,6 @@
 # Warmed Advanced pipeline readiness allocations
 
-Status: **Validated for the measured allocation-only scope**, October 1, 2026. This is the S13g increment of the [Vulkan stall remediation TODO](../../todo/rendering/vulkan-stall-remediation-todo.md#s13g-bound-warmed-pipeline-readiness-work). Generation/transaction readiness reuse is **Deferred**. No readiness cache or state-machine change is retained; the original stalls, image-quality report and cumulative acceptance remain open.
+Status: **Validated for the measured allocation-only scope**, October 1, 2026. This is the S13g increment of the [Vulkan stall remediation TODO](../../progress/rendering/vulkan-stall-remediation-results.md). Generation/transaction readiness reuse is **Deferred**. No readiness cache or state-machine change is retained; the original stalls, image-quality report and cumulative acceptance remain open.
 
 ## Mechanism and retained change
 

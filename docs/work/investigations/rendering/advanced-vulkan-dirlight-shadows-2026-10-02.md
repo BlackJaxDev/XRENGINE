@@ -11,8 +11,8 @@ Work resumed from `79ab16f8f` on October 2, 2026. Both recorded test filters and
 two strict-parity import checks pass together: **342 passed, zero failures or
 skips**. All 50 originally listed failing methods also pass in separate test
 processes. Test updates followed live validation and explicit user clearance.
-The [completed failure checklist](../../todo/rendering/shadow-and-pipeline-validation-failures-todo.md)
-records each resolution. No user confirmation of visual quality was supplied;
+The completed failure checklist recorded each resolution. It is deleted; its
+lasting rules are in [Render Pipeline Resource Lifecycle](../../../architecture/rendering/render-pipeline-resource-lifecycle.md). No user confirmation of visual quality was supplied;
 the runtime results below are agent-observed checks.
 
 - The validation machine initially had SDK 10.0.100; this checkout pins

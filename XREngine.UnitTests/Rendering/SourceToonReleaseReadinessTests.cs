@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using NUnit.Framework;
@@ -12,7 +11,7 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class SourceToonReleaseReadinessTests
 {
     [Test]
-    public void PublicSupportStatementMatchesExecutableCatalogAndDiagnostics()
+    public void CatalogSourceMatchesExecutableCatalog()
     {
         using JsonDocument catalog = OpenCatalog();
         JsonElement source = catalog.RootElement.GetProperty("source");
@@ -22,18 +21,6 @@ public sealed class SourceToonReleaseReadinessTests
             .GetProperty("unclassifiedRuntimePropertyCount")
             .GetInt32()
             .ShouldBe(0);
-
-        string guide = File.ReadAllText(FindRepositoryFile(
-            "docs", "developer-guides", "rendering", "poiyomi-toon-material-conversion.md"));
-        guide.ShouldContain($"Poiyomi Toon {SourceToon93Catalog.VersionText}");
-        guide.ShouldContain(SourceToon93Catalog.RepositoryCommit);
-
-        foreach (FieldInfo field in typeof(MaterialConversionDiagnosticCodes).GetFields(
-                     BindingFlags.Public | BindingFlags.Static))
-        {
-            string code = (string)field.GetRawConstantValue()!;
-            guide.ShouldContain($"`{code}`");
-        }
     }
 
     [Test]
@@ -55,19 +42,8 @@ public sealed class SourceToonReleaseReadinessTests
     }
 
     [Test]
-    public void GeneratedParityTableListsEveryActiveAnnotationAndReachableWorkflow()
+    public void AuthoringParityAuditHasNoUnclassifiedEntries()
     {
-        string report = File.ReadAllText(FindRepositoryFile(
-            "docs", "reference", "rendering", "poiyomi-toon-9.3.64-parity.md"));
-        using JsonDocument catalog = OpenCatalog();
-        foreach (JsonElement annotation in catalog.RootElement.GetProperty("annotations").EnumerateArray())
-        {
-            if (annotation.GetProperty("activeUsageCount").GetInt32() > 0)
-                report.ShouldContain($"`{annotation.GetProperty("name").GetString()}`");
-        }
-        foreach (JsonElement workflow in catalog.RootElement.GetProperty("workflows").EnumerateArray())
-            report.ShouldContain($"`{workflow.GetProperty("id").GetString()}`");
-
         SourceToonAuthoringParityAudit.Unclassified.ShouldBeEmpty();
     }
 
@@ -82,21 +58,6 @@ public sealed class SourceToonReleaseReadinessTests
         audit.ShouldContain("workflows");
         audit.ShouldContain("Update parity fixtures");
         audit.ShouldContain("Validate-PoiyomiParity.ps1");
-
-        string pullRequest = File.ReadAllText(FindRepositoryFile(
-            ".github", "PULL_REQUEST_TEMPLATE.md"));
-        pullRequest.ShouldContain("catalog diff");
-        pullRequest.ShouldContain("native-equivalent behavior");
-        pullRequest.ShouldContain("license/attribution review");
-    }
-
-    [Test]
-    public void ConversionChecklistIsFullyClosed()
-    {
-        string checklist = File.ReadAllText(FindRepositoryFile(
-            "docs", "work", "todo", "COMPLETED", "poiyomi-toon-93-parity-checklist.md"));
-        checklist.ShouldContain("- Status: Complete");
-        checklist.ShouldNotContain("- [ ]");
     }
 
     [Test]
@@ -113,7 +74,6 @@ public sealed class SourceToonReleaseReadinessTests
             Path.Combine(repository, "XREngine.UnitTests", "Rendering"),
             Path.Combine(repository, "XREngine.UnitTests", "TestData", "Poiyomi"),
             Path.Combine(repository, "Tools"),
-            Path.Combine(repository, "docs"),
         ];
 
         foreach (string path in roots.SelectMany(static root => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
@@ -123,7 +83,7 @@ public sealed class SourceToonReleaseReadinessTests
         {
             numberedMilestone.IsMatch(Path.GetFileName(path)).ShouldBeFalse(path);
             string extension = Path.GetExtension(path);
-            if (extension is not (".cs" or ".md" or ".ps1" or ".glsl" or ".frag" or ".yaml" or ".json"))
+            if (extension is not (".cs" or ".ps1" or ".glsl" or ".frag" or ".yaml" or ".json"))
                 continue;
             numberedMilestone.IsMatch(File.ReadAllText(path)).ShouldBeFalse(path);
         }

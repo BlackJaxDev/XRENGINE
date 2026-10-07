@@ -60,7 +60,7 @@ Backend implementations report the same state categories through:
 
 The migration audit remains useful for call-site ownership and policy
 classification:
-[XRDataBuffer RHI Write Model Audit](../../work/audit/xrdatabuffer-rhi-write-model-audit.md).
+[XRDataBuffer RHI Write Model Audit](../../work/audit/COMPLETED/xrdatabuffer-rhi-write-model-audit.md).
 
 ## Buffer Identity
 
@@ -85,7 +85,6 @@ source of truth.
 `XRBufferMemoryPolicy` is the engine-level statement of intent. It is reconciled
 with legacy `EBufferUsage` so callers do not have two unrelated knobs for the
 same allocation decision.
-
 | Policy | Intended use | Backend route examples |
 | --- | --- | --- |
 | `GpuOnly` | Static or heavy shader-read storage. | Vulkan device-local final buffer with staging upload; OpenGL ordinary buffer with upload diagnostics. |
@@ -302,4 +301,4 @@ backend internals, serialized asset restore, diagnostics, and unmigrated legacy
 paths. New runtime code should prefer scoped writers or direct dirty commits.
 
 Remaining hardware, barrier, and strategy validation is tracked in
-[XRDataBuffer RHI Write Model Validation](../../work/testing/xrdatabuffer-rhi-write-model-validation.md).
+[XRDataBuffer RHI Write Model Validation](../../work/testing/rendering/xrdatabuffer-rhi-write-model-validation.md).

@@ -131,7 +131,7 @@ no per-frame fetch, parsing or hashing.
 
 ## Tracking and remaining work
 
-The active [runtime TODO](../../todo/rendering/mobile-webgpu-runtime-todo.md) now
+The active [runtime TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md) now
 has checked code-completion rows as well as the original acceptance checklist.
 This makes implemented source visible without treating skipped validation as a
 pass. Older canvas status prose was reconciled with the already-landed draw packet.

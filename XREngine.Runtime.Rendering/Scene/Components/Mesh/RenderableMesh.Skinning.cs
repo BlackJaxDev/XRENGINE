@@ -136,11 +136,19 @@ namespace XREngine.Components.Scene.Mesh
         private readonly Dictionary<TransformBase, int> _trackedSkinnedBones = new();
         private readonly Dictionary<TransformBase, Matrix4x4> _relativeBoneMatrices = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         private readonly object _relativeCacheLock = new();
+        private bool _relativeBasisInverseValid;
+        private Matrix4x4 _relativeBasisMatrix;
+        private Matrix4x4 _relativeBasisInverse;
         private readonly object _skinnedDataLock = new();
         private readonly TransformBase? _skinnedBoundsRootTransform;
         private SkinnedBoneCullingVolume[] _skinnedBoneCullingVolumes = [];
         private XRMesh? _skinnedBoneCullingSourceMesh;
         private bool _skinnedBoneCullingVolumesDirty = true;
+        private SkinnedBoneCullingVolume[]? _aggregateSourceVolumes;
+        private Matrix4x4[] _aggregateBoneMatrices = [];
+        private AABB _aggregateWorldBounds;
+        private bool _aggregateCacheValid;
+        private bool _aggregateBoundsValid;
 
         /// <summary>
         /// Tracks whether this skinned renderable was collected in the previous diagnostic generation.
@@ -425,19 +433,27 @@ namespace XREngine.Components.Scene.Mesh
 
         private bool UpdateRelativeBoneMatrix(TransformBase bone, bool initialize = false)
         {
-            Matrix4x4 relative;
-            if (RootBone is not null && ReferenceEquals(bone, RootBone))
-                relative = bone.LocalMatrix;
-            else
-            {
-                var inverseBasis = Matrix4x4.Invert(GetSkinnedBasisMatrix(), out var inv)
-                    ? inv
-                    : Matrix4x4.Identity;
-                relative = bone.RenderMatrix * inverseBasis;
-            }
+            bool isRoot = RootBone is not null && ReferenceEquals(bone, RootBone);
+            // Read transform state before taking the cache lock. Keep the current
+            // matrix read even when a render event supplied an earlier snapshot.
+            Matrix4x4 basis = isRoot ? default : GetSkinnedBasisMatrix();
+            Matrix4x4 boneMatrix = isRoot ? bone.LocalMatrix : bone.RenderMatrix;
 
             lock (_relativeCacheLock)
             {
+                Matrix4x4 relative = boneMatrix;
+                if (!isRoot)
+                {
+                    if (!_relativeBasisInverseValid || !MatrixEqual(_relativeBasisMatrix, basis))
+                    {
+                        _relativeBasisInverse = Matrix4x4.Invert(basis, out Matrix4x4 inverse)
+                            ? inverse : Matrix4x4.Identity;
+                        _relativeBasisMatrix = basis;
+                        _relativeBasisInverseValid = true;
+                    }
+                    relative = boneMatrix * _relativeBasisInverse;
+                }
+
                 if (!_relativeBoneMatrices.TryGetValue(bone, out var previous) || initialize)
                 {
                     _relativeBoneMatrices[bone] = relative;
@@ -481,7 +497,15 @@ namespace XREngine.Components.Scene.Mesh
                 pair.Key.RenderMatrixChanged -= Bone_RenderMatrixChanged;
             _trackedSkinnedBones.Clear();
             lock (_relativeCacheLock)
+            {
                 _relativeBoneMatrices.Clear();
+                _relativeBasisInverseValid = false;
+            }
+            lock (_skinnedDataLock)
+            {
+                _aggregateCacheValid = false;
+                _aggregateSourceVolumes = null;
+            }
         }
 
         private void Bone_RenderMatrixChanged(TransformBase bone, Matrix4x4 renderMatrix)
@@ -489,10 +513,15 @@ namespace XREngine.Components.Scene.Mesh
             if (!IsSkinned)
                 return;
 
+            long t = RenderableMeshStageTelemetry.Begin();
             if (!UpdateRelativeBoneMatrix(bone))
+            {
+                RenderableMeshStageTelemetry.End(11, t);
                 return;
+            }
 
             MarkSkinnedDataDirty();
+            RenderableMeshStageTelemetry.End(11, t);
         }
 
         private void MarkSkinnedDataDirty()
@@ -622,7 +651,7 @@ namespace XREngine.Components.Scene.Mesh
             lock (_skinnedDataLock)
             {
                 if (!TryEnsureSkinnedBoneCullingVolumesLocked(out SkinnedBoneCullingVolume[] volumes) ||
-                    !TryComputeSkinnedBoneAggregateWorldBounds(volumes, out AABB aggregateWorldBounds))
+                    !TryGetCachedSkinnedBoneAggregateWorldBoundsLocked(volumes, out AABB aggregateWorldBounds))
                 {
                     return false;
                 }
@@ -793,7 +822,7 @@ namespace XREngine.Components.Scene.Mesh
             lock (_skinnedDataLock)
             {
                 return TryEnsureSkinnedBoneCullingVolumesLocked(out SkinnedBoneCullingVolume[] volumes) &&
-                    TryComputeSkinnedBoneAggregateWorldBounds(volumes, out aggregateWorldBounds);
+                    TryGetCachedSkinnedBoneAggregateWorldBoundsLocked(volumes, out aggregateWorldBounds);
             }
         }
 
@@ -822,6 +851,8 @@ namespace XREngine.Components.Scene.Mesh
                 return volumes.Length > 0;
             }
 
+            _aggregateCacheValid = false;
+            _aggregateSourceVolumes = null;
             _skinnedBoneCullingVolumes = BuildSkinnedBoneCullingVolumes(mesh, Component.Transform);
             _skinnedBoneCullingSourceMesh = mesh;
             _skinnedBoneCullingVolumesDirty = false;
@@ -925,6 +956,52 @@ namespace XREngine.Components.Scene.Mesh
                 ? reboundBone
                 : bone;
 
+        /// <summary>Reuses raw aggregate bounds only when every selected bone matrix is unchanged.</summary>
+        private bool TryGetCachedSkinnedBoneAggregateWorldBoundsLocked(
+            SkinnedBoneCullingVolume[] volumes,
+            out AABB aggregateWorldBounds)
+        {
+            bool changed = !_aggregateCacheValid || !ReferenceEquals(_aggregateSourceVolumes, volumes);
+            // The retained array is both the previous key and the next capture.
+            // A failed matrix read must not leave a partial capture marked valid.
+            _aggregateCacheValid = false;
+            if (_aggregateBoneMatrices.Length < volumes.Length)
+                Array.Resize(ref _aggregateBoneMatrices, volumes.Length);
+
+            for (int i = 0; i < volumes.Length; ++i)
+            {
+                Matrix4x4 matrix = GetCurrentTransformMatrix(volumes[i].Transform);
+                changed |= !MatrixEqual(_aggregateBoneMatrices[i], matrix);
+                _aggregateBoneMatrices[i] = matrix;
+            }
+
+            if (changed)
+            {
+                AABB bounds = default;
+                bool initialized = false;
+                for (int i = 0; i < volumes.Length; ++i)
+                {
+                    AABB worldBounds = TransformBounds(volumes[i].LocalBounds, _aggregateBoneMatrices[i]);
+                    if (!worldBounds.IsValid)
+                        continue;
+                    if (!initialized)
+                    {
+                        bounds = worldBounds;
+                        initialized = true;
+                    }
+                    else
+                        bounds.ExpandToInclude(worldBounds);
+                }
+                _aggregateWorldBounds = bounds;
+                _aggregateBoundsValid = initialized;
+            }
+
+            _aggregateSourceVolumes = volumes;
+            _aggregateCacheValid = true;
+            aggregateWorldBounds = _aggregateWorldBounds;
+            return _aggregateBoundsValid;
+        }
+
         private static bool TryComputeSkinnedBoneAggregateWorldBounds(
             ReadOnlySpan<SkinnedBoneCullingVolume> volumes,
             out AABB aggregateWorldBounds)
@@ -979,6 +1056,8 @@ namespace XREngine.Components.Scene.Mesh
                 _skinnedBoneCullingVolumesDirty = true;
                 _skinnedBoneCullingSourceMesh = null;
                 _skinnedBoneCullingVolumes = [];
+                _aggregateCacheValid = false;
+                _aggregateSourceVolumes = null;
             }
         }
 

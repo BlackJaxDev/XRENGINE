@@ -3,11 +3,11 @@
 Status: reference design
 Last Updated: 2026-06-17
 
-Implementation prerequisite: [Vulkan Fully Bindless Materials TODO](../../todo/rendering/vulkan-fully-bindless-materials-todo.md).
+Implementation prerequisite: [Vulkan Bindless Material Texture Table](../../../architecture/rendering/vulkan-renderer.md#bindless-material-texture-table).
 
 Related docs:
 
-- [Vulkan Bindless And Deferred Texturing Audit](../../audit/vulkan-bindless-and-deferred-texturing-audit-2026-06-17.md)
+- [Vulkan Bindless And Deferred Texturing Audit](../../audit/COMPLETED/vulkan-bindless-and-deferred-texturing-audit-2026-06-17.md)
 - [Bindless Deferred Texturing Plan](../texturing/bindless-deferred-texturing-plan.md)
 - [Dynamic Indirect Material Bindings](dynamic-indirect-material-bindings.md)
 - [Default Render Pipeline Notes](../../../architecture/rendering/default-render-pipeline-notes.md)

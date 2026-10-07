@@ -28,12 +28,15 @@ public readonly record struct AdvancedGlobalResourceCapture(
     // snapshot. Frozen output ownership is the canonical publication's responsibility.
     internal AdvancedAuthoredDecalCaptureLease AuthoredDecals { get; init; }
 
+    /// <summary>World ambient light captured without a resource array.</summary>
+    public AdvancedEnvironmentRecord? AmbientEnvironment { get; init; }
+
     public static AdvancedGlobalResourceCapture Empty(ulong frameId)
         => new(frameId, default, default, default, default, default, default, default, default);
 
     /// <summary>
-    /// Captures world-owned light/probe state and explicitly requested browser
-    /// authored decals. Environment and GI owners remain valid-empty.
+    /// Captures world-owned light, probe, and ambient state plus explicitly
+    /// requested browser authored decals. GI owners remain valid-empty.
     /// </summary>
     public static AdvancedGlobalResourceCapture Capture(
         ulong frameId,
@@ -126,11 +129,24 @@ public readonly record struct AdvancedGlobalResourceCapture(
         AdvancedProbeRecord[] probes = new AdvancedProbeRecord[probeRows.Count];
         for (int probeIndex = 0; probeIndex < probeRows.Count; ++probeIndex)
             probes[probeIndex] = probeRows[probeIndex].Record;
+        Vector3 ambient = world.GetEffectiveAmbientColor();
         return new(frameId, lightSources, lights, default, shadowRows.ToArray(), probes, default, default, default)
         {
             ProbeRows = probeRows.ToArray(),
             AuthoredDecals = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
                 world.VisualScene.GPUCommands.AdvancedAuthoredDecalsRequested ? AdvancedAuthoredDecalRegistry.Capture(world, frameId) : default,
+            AmbientEnvironment = new AdvancedEnvironmentRecord
+            {
+                Flags = 1u,
+                Environment = AdvancedTextureReference.Invalid(EAdvancedResourceFallback.Zero),
+                Irradiance = AdvancedTextureReference.Invalid(EAdvancedResourceFallback.Zero),
+                PrefilteredRadiance = AdvancedTextureReference.Invalid(EAdvancedResourceFallback.Zero),
+                BrdfLut = AdvancedTextureReference.Invalid(EAdvancedResourceFallback.Zero),
+                RotationAndExposure = new Vector4(0.0f, 0.0f, 0.0f, 1.0f),
+                AmbientColorAndIntensity = new Vector4(ambient, 1.0f),
+                ViewMaskLo = uint.MaxValue,
+                ViewMaskHi = uint.MaxValue,
+            },
         };
     }
 

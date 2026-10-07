@@ -1,274 +1,61 @@
 # CPU Direct Fast Path TODO
 
-Last Updated: 2026-07-28
-Owner: Rendering
-Status: Technical Child Of Workstreams 01, 02, And 04
-Execution: Current worktree only; do not create or switch branches for this effort.
+Last Updated: 2026-10-06
+Status: Active
+Architecture: [Mesh Submission Strategies](../../../../architecture/rendering/mesh-submission-strategies.md), [XRDataBuffer RHI Write Model](../../../../architecture/rendering/xrdatabuffer-rhi-write-model.md)
+Validation: [GPU-Driven Submission Validation](../../../testing/rendering/gpu-driven-submission-validation.md), [XRDataBuffer RHI Write Model Validation](../../../testing/rendering/xrdatabuffer-rhi-write-model-validation.md)
 
-## Canonical Ownership
+## Current State
+`CpuDirect` remains the correctness baseline and the fallback for unsupported accelerated paths. Workstream 01 recorded measurement, attribution, manifests, and gates. Workstream 02 recorded primary reuse and invalidation. `XRDataBuffer` now has writer scopes, dirty ranges, persistent-ring and upload allocator types, readback tickets, and device-address telemetry. The open work is backend-neutral CPU submission cost, upload reuse, state caching, warmup, and test coverage.
 
-This remains the backend-neutral technical child for CPU-direct constants,
-dirty-range uploads, persistent mapped arenas, state sorting/caching, and
-warmup. It does not independently own Vulkan measurement or primary reuse:
+## Open Code Items
 
-- baselines, trustworthy counters, and regression gates were completed by
-  workstream 01 and are recorded in the
-  [Vulkan framerate root-cause investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md);
-- Vulkan primary reuse and invalidation were completed by workstream 02 in the
-  same [investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md);
-- backend-ready collect-side preparation is owned by
-  [workstream 04 completion and validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation).
+### Command handoff and allocations
+- [ ] Build visible collection into stable command buffers without copying full command payloads. Rendering collection and submission code. Done when: render submission consumes stable command storage.
+- [ ] Preallocate per-frame command, state-key, and pass scratch storage. Submission hot paths. Done when: representative frames reuse storage.
+- [ ] Replace LINQ in render submission with explicit loops. Rendering submission code. Done when: hot paths do not allocate enumerators or closures.
+- [ ] Replace captured callbacks with cached delegates or static helpers. Rendering submission and profiler hooks. Done when: per-frame callback allocation is absent.
+- [ ] Replace boxing-prone counters and enum log payloads with typed structs or pooled records. Stats and diagnostics. Done when: counter logging does not box.
+- [ ] Replace `foreach` over class enumerators in hot paths with index loops or struct enumerators. Rendering submission code. Done when: no class enumerator allocation remains in hot paths.
+- [ ] Make profiler labels stable strings or interned identifiers. Profiler labels in rendering code. Done when: no per-frame string concatenation creates labels.
+- [ ] Add source-contract tests for known no-allocation hot-path methods. `XREngine.UnitTests/Rendering/`. Done when: tests fail on managed allocation in the selected methods.
 
-Complete this child through the canonical workstream and Phase 5.2A gates, not
-as a separate promotion claim.
+### Object constants and data separation
+- [ ] Define a stable per-object constant block layout. Rendering constants and shader records. Done when: transform ID, material ID, previous transform ID, skin ID, flags, masks, and editor ID have one documented layout.
+- [ ] Separate per-object, per-material, per-camera, and per-pass data. Rendering data publication. Done when: per-draw uploads are minimized.
+- [ ] Upload object constants through dirty ranges. Upload paths. Done when: full-scene rebuilds are not used for ordinary dirty updates.
+- [ ] Bind per-pass object constant buffers once where possible. Backend binding code. Done when: per-draw bind churn is reduced.
+- [ ] Keep per-material state in material tables or stable material buffers where supported. CPU direct and material table code. Done when: CPU direct does not force per-draw material uploads unnecessarily.
+- [ ] Keep Vulkan buffer and descriptor topology stable across value-only updates. Vulkan binding code. Done when: ordinary frame changes use frame slots or dynamic offsets.
+- [ ] Add counters for object constant bytes, dirty ranges, and constant-buffer binds. Stats and profiler capture JSON. Done when: each counter appears in captures.
+- [ ] Validate static, skinned, blendshape, instanced, shadow, velocity, editor ID, and override pass consumers. `XREngine.UnitTests/Rendering/` or source contracts. Done when: each consumer accepts the layout.
 
-Design source:
+### Persistent uploads and state cache
+- [ ] Verify the OpenGL persistent-mapped ring buffer path for per-frame dynamic uploads. OpenGL buffer code. Done when: dynamic upload routes use fence-protected slots where supported.
+- [ ] Verify Vulkan frame-indexed, persistently mapped upload arenas. Vulkan buffer code. Done when: stable descriptor bindings advance offsets or slots instead of recreating resources.
+- [ ] Use fence sync or timelines to prevent overwriting GPU-visible ranges. Upload allocators. Done when: slot reuse waits on the correct completion signal.
+- [ ] Provide fallback paths for drivers without persistent mapping. Backend buffer routes. Done when: fallback is visible and safe.
+- [ ] Route transforms, previous transforms, bone matrices, blendshape weights, object constants, and small pass constants through the upload allocator where appropriate. Rendering data upload code. Done when: eligible buffers use the allocator.
+- [ ] Avoid steady-state `glBufferSubData` except documented fallback paths. OpenGL renderer. Done when: production steady frames use ring or allocator routes.
+- [ ] Update Vulkan dirty subranges of capacity-backed buffers. Vulkan buffer code. Done when: logical element-count changes do not recreate backing allocations unless capacity is exceeded.
+- [ ] Add upload allocator counters. Stats and profiler. Done when: bytes reserved, bytes committed, wraps, stalls, fence waits, fallback events, and high-water mark are visible.
+- [ ] Grow capacity only at safe generation boundaries. Buffer ownership code. Done when: old backing storage remains alive until last timeline use completes.
+- [ ] Build compact state keys and caches for programs, VAOs, buffers, textures, descriptors, and render state. CPU direct submission code. Done when: redundant binds are skipped and counted.
+- [ ] Sort opaque CPU-direct commands where pass semantics allow it. CPU direct submission code. Done when: opaque sorting does not affect transparent, UI, overlay, or diagnostic order.
+- [ ] Add Vulkan equivalents for avoided pipeline, descriptor, vertex, index, dynamic-offset, and push-constant state changes. Vulkan renderer. Done when: repeated state changes are counted and skipped.
+- [ ] Add tests or source-contract checks for transparent order preservation. `XREngine.UnitTests/Rendering/`. Done when: sorting cannot reorder transparent draws.
 
-- [Canonical Vulkan Core Hardening And Device-Loss TODO](../vulkan-core-hardening-and-device-loss-todo.md)
-- [Engine Rendering Optimization Design](../../../design/rendering/engine-optimization-and-avatar-optimizer-design.md)
-- [Engine Rendering Optimization Roadmap](engine-rendering-optimization-roadmap.md)
-- [Render Submission Performance Debug Plan](../../../design/rendering/render-submission-perf-debug-plan.md)
-- [Frame Lifecycle And Dispatch Paths](../../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
-- [Mesh Submission Strategies Contract](../../../../architecture/rendering/mesh-submission-strategies.md)
+### Warmup boundaries
+- [ ] Ensure world shader prewarm includes CPU direct variants for static, skinned, blendshape, instanced, shadow, depth, velocity, editor, forward, deferred, and override passes. Shader prewarm code. Done when: measured scenes do not link these programs during render.
+- [ ] Prepare material table rows and texture residency before measured interactive frames where possible. Material and texture systems. Done when: known scene rows and textures are ready before first measured frame.
+- [ ] Keep model import and cooked-cache work out of render submission. Asset and rendering boundaries. Done when: render submission does not call importer or cooker work.
+- [ ] Bound texture upload budgets. Texture upload scheduler. Done when: texture upload cannot consume the whole frame.
+- [ ] Surface missing warmup variants in editor diagnostics. Editor diagnostics. Done when: late variants warn instead of silently compiling in render.
+- [ ] Add profiler events for startup, warmup, steady-state, and streaming. Profiler code. Done when: captures separate these phases.
 
-Related todos (overlap guard):
+## Decisions Needed
+- [ ] Choose which no-allocation source-contract tests are stable enough for CI. Owner: rendering lead.
 
-- Completed Vulkan primary reuse owns primary state and invalidation; do not
-  duplicate it here. See the
-  [recorded evidence](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md).
-- [Workstream 04 completion and validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation)
-  owns backend-ready command handoff and preparation placement.
-- [Default Pipeline GPU Hotspots](default-pipeline-gpu-hotspots-todo.md) is a
-  child of workstream 06 and owns shader/quality pass cost; this TODO covers
-  CPU submission cost only.
-
-## Goal
-
-Make CPU direct rendering a fast, allocation-free, easy-to-debug baseline. It
-should stay useful for small and medium scenes, editor diagnostics, unsupported
-backend cases, and performance comparisons against GPU-driven strategies.
-
-## Scope
-
-- Render command collection handoff.
-- Per-object constant data upload.
-- Persistent mapped or ring-buffered uploads.
-- State caching and state-change counters.
-- Pass-local sorting where semantics allow it.
-- Shader/material/texture prewarm boundaries.
-- Hot-path allocation elimination.
-
-## Backend Scope
-
-- Every phase defines a backend-neutral `CpuDirect` performance contract and is
-  validated on matched OpenGL and Vulkan workloads.
-- OpenGL implements the contract with persistent-mapped rings and redundant
-  program/VAO/buffer/texture-bind elimination.
-- Vulkan implements it with frame-indexed upload/storage arenas, stable
-  descriptor/dynamic-offset bindings, capacity-backed resources, compatible
-  primary/secondary reuse, and redundant pipeline/descriptor/mesh-bind
-  elimination. The Vulkan recording details remain owned by
-  [Vulkan command-recording code changes](../vulkan-core-hardening-and-device-loss-todo.md#3-make-command-recording-snapshot-driven-and-reusable),
-  while the canonical Phase 5.2A gate owns promotion.
-
-## Non-Goals
-
-- Do not replace zero-readback GPU-driven rendering.
-- Do not remove diagnostic or editor-only paths.
-- Do not reorder transparent draws in a way that changes blending behavior.
-- Do not add per-frame shader parsing, material layout synthesis, or asset
-  deserialization to render submission.
-
-## Phase 0 - Baseline And Audit
-
-- [ ] Execute and report this supporting work through the canonical Phase 5.2A
-  gate; do not create a separate branch or independent completion status.
-- [ ] Capture Release CPU direct baseline for the unit-testing avatar scene,
-  Sponza/static high-object scene, and a material-diverse scene. Use the
-  existing tasks (`Measurement-Baseline-CpuDirect`,
-  `Measurement-P3-CpuDirect-Census`, `Measurement-P3-CpuDirect-Census-NoOcclusion`,
-  `Measurement-GameLoopRenderPipeline-Release-All`, backed by
-  `Tools/Measure-MeshSubmissionBaselines.ps1`) rather than new ad-hoc capture.
-- [ ] Capture current counters: draw calls, program switches, VAO binds, buffer
-  binds, SSBO/UBO binds, texture binds, uniform calls, buffer upload bytes,
-  barriers, and readback bytes.
-- [ ] Capture a sampled CPU profile with ETW, Superluminal, or `dotnet-trace`.
-- [ ] Inventory render-submission hot paths for `new`, LINQ, captured
-  closures, boxing, string concatenation, and `foreach` over class enumerators.
-  Start from the `Report-NewAllocations` task output.
-- [ ] Inventory places where shader linking, asset deserialization, texture
-  upload, or meshlet generation can occur during visible render frames.
-
-Acceptance criteria:
-
-- [ ] Baseline captures include build configuration, backend, GPU, driver,
-  scene, camera, lights, stereo mode, shader-cache state, texture-cache state,
-  validation/debug layer state (Vulkan validation is opt-in via
-  `XRE_VULKAN_VALIDATION=1` and materially skews CPU cost when loaded), and
-  profiler attach state.
-- [ ] Hot-path allocation and late-work inventory is recorded in this TODO or a
-  linked audit note.
-
-## Phase 1 - Command Handoff And Hot-Path Allocation Cleanup
-
-- [ ] Ensure visible collection builds stable command buffers that can be
-  handed to rendering without copying full command payloads.
-- [ ] Preallocate per-frame command, state-key, and pass scratch storage.
-- [ ] Replace LINQ in render submission with explicit loops.
-- [ ] Replace captured callbacks or closures with cached delegates or static
-  helpers.
-- [ ] Replace boxing-prone counters/enums/log payloads with typed structs or
-  pooled event records.
-- [ ] Replace `foreach` over class enumerators in hot paths with index loops or
-  struct enumerators.
-- [ ] Ensure profiler labels are stable strings or interned/static identifiers,
-  not per-frame concatenations. Partially landed already (XRWindow viewport
-  profile scope, Vulkan FBO timing labels); audit the remaining submission
-  paths.
-- [ ] Add source-contract tests for known no-allocation hot-path methods where
-  practical.
-
-Acceptance criteria:
-
-- [ ] CPU direct steady-state render submission allocates zero managed bytes on
-  representative static and skinned-avatar scenes, excluding explicitly opted
-  diagnostic modes. Verify with `dotnet-counters` GC allocation-rate sampling
-  or an equivalent allocation trace, plus a clean `Report-NewAllocations` pass
-  over the submission paths.
-
-## Phase 2 - SRP-Batcher-Equivalent Constant Fast Path
-
-- [ ] Define a stable per-object constant block layout for transform ID, material
-  ID, previous transform ID, skin ID, flags, layer/pass masks, and editor ID.
-- [ ] Separate per-object, per-material, per-camera, and per-pass data so
-  per-draw uploads are minimized.
-- [ ] Upload object constants through dirty ranges, not full-scene rebuilds.
-- [ ] Bind per-pass object constant buffers once where possible.
-- [ ] Keep per-material state in material tables or stable material buffers,
-  even for CPU direct where backend support allows it.
-- [ ] On Vulkan, keep the buffer/descriptor binding topology stable across
-  value-only updates and address ordinary frame changes through frame-slot or
-  dynamic offsets. Data publication must not dirty compatible command ranges.
-- [ ] Add counters for object constant bytes uploaded, dirty ranges merged, and
-  constant-buffer bind count.
-- [ ] Validate static, skinned, blendshape, instanced, shadow, velocity, editor
-  ID, and override pass consumers.
-
-Acceptance criteria:
-
-- [ ] A scene with many unchanged objects does not upload unchanged object
-  constants every frame.
-- [ ] CPU direct object constant upload bytes scale with dirty objects, not
-  visible objects.
-
-## Phase 3 - Persistent-Mapped And Frame-Indexed Uploads
-
-- [ ] Implement or verify an OpenGL persistent-mapped ring buffer path for
-  per-frame dynamic uploads.
-- [ ] Implement or verify Vulkan frame-indexed, persistently mapped host-visible
-  upload arenas with safe device-local copies or direct bindings as appropriate.
-  Reuse stable descriptor bindings and advance offsets/slots instead of
-  recreating resources.
-- [ ] Use fence sync to prevent overwriting GPU-visible ranges.
-- [ ] Provide a safe fallback path for drivers without persistent mapping.
-- [ ] Route transforms, previous transforms, bone matrices, blendshape weights,
-  object constants, and small pass constants through the upload allocator where
-  appropriate.
-- [ ] Avoid `glBufferSubData` in steady-state production submission except for
-  explicitly documented fallback paths.
-- [ ] On Vulkan, update dirty subranges of capacity-backed buffers. Exact logical
-  element-count changes, including `LinesBuffer` debug geometry, must not
-  recreate backing allocations unless capacity is exceeded.
-- [ ] Add upload allocator counters: bytes reserved, bytes committed, wraps,
-  stalls, fence waits, orphan/fallback events, and high-water mark.
-- [ ] Fail loud in diagnostics if the upload ring is undersized and would block
-  repeatedly.
-- [ ] Grow capacity only at a safe generation boundary, preserve old backing
-  until its last timeline use completes, and report growth separately from
-  steady uploads.
-
-Acceptance criteria:
-
-- [ ] Upload stalls are visible and rare under representative scenes.
-- [ ] Persistent upload ranges are not overwritten before the GPU has consumed
-  them.
-
-## Phase 4 - State Cache And Sorting
-
-- [ ] Build a compact state key for pass, state class, shader program, material
-  table layout, texture-binding rung, VAO/mesh format, blend/depth/cull state,
-  and instancing/skinning flags.
-- [ ] Sort opaque CPU-direct commands by expensive state where pass semantics
-  allow it.
-- [ ] Preserve explicit ordering for transparent, UI, editor overlay, and
-  ordered diagnostic passes.
-- [ ] Add state caches for shader program, VAO, buffer binding, texture binding,
-  SSBO/UBO binding, and render state.
-- [ ] Skip redundant `glUseProgram`, `glBindVertexArray`, `glBindBufferBase`,
-  texture bind, and uniform calls.
-- [ ] Add counters for avoided redundant binds and unavoidable state changes.
-- [ ] Add Vulkan equivalents for avoided/repeated pipeline, descriptor-set,
-  vertex-buffer, index-buffer, dynamic-offset, and push-constant state changes.
-- [ ] Ensure opaque Vulkan sorting/bucketing is compatible with reusable
-  secondary command ranges and does not mix volatile overlays into static work.
-- [ ] Add tests or source-contract checks for transparent order preservation.
-
-Acceptance criteria:
-
-- [ ] Opaque CPU direct state changes scale with state groups, not raw draw
-  count.
-- [ ] Transparent and ordered passes preserve visual ordering.
-
-## Phase 5 - Warmup And Late-Work Boundaries
-
-- [ ] Ensure world shader prewarm includes all CPU direct variants needed by
-  visible static, skinned, blendshape, instanced, shadow, depth, velocity,
-  editor, forward, deferred, and override passes.
-- [ ] Ensure material table rows and texture residency are prepared before
-  measured interactive frames where possible.
-- [ ] Ensure model import/cooked-cache work does not run from render submission.
-- [ ] Ensure texture upload budgets cannot consume the entire frame.
-- [ ] Surface missing warmup variants in editor diagnostics instead of silently
-  compiling/linking during render.
-- [ ] Add profiler events that separate startup, warmup, steady-state, and
-  streaming phases.
-
-Acceptance criteria:
-
-- [ ] Warm-start frame 0 does not link shader programs for the measured scene.
-- [ ] After declared Vulkan warmup, required pipeline pending/compile counts,
-  pipeline-caused `RecordDeferred`, and whole-frame rejection are zero.
-- [ ] Late asset or texture work is visible as asset-streaming-bound, not
-  mistaken for CPU direct submission cost.
-
-## Phase 6 - Validation
-
-- [ ] Run targeted unit/source-contract tests for render command collection,
-  material table bindings, shader prewarm, and upload allocator behavior.
-- [ ] Run Release CPU direct baseline after each major phase (same
-  `Measurement-*` tasks as Phase 0).
-- [ ] Run matched Release OpenGL/Vulkan low-, medium-, and high-draw-count plus
-  material-diverse cohorts with identical scene/output/occlusion/debug/warmup
-  manifests. Separate collection/recording, native API, and GPU execution time.
-- [ ] Compare before/after p50, p90, p99 frame time and state counters.
-- [ ] Capture at least one CPU sampled profile after optimization.
-- [ ] Validate unit-testing avatar scene with lights disabled and enabled.
-- [ ] Validate a high-object-count static scene.
-- [ ] Validate a material-diverse scene.
-- [ ] Validate editor overlays and selection IDs.
-
-Acceptance criteria:
-
-- [ ] CPU direct is stable, allocation-free in steady-state submission, and no
-  longer performs render-thread shader linking or asset deserialization during
-  measured frames.
-- [ ] Vulkan reaches the canonical command-reuse, no-buffer-recreation,
-  no-pipeline-deferral, absolute frame-time, and matched-OpenGL Phase 5.2A gates.
-
-## Final Validation And Closeout
-
-- [ ] Update linked design or architecture docs if the CPU direct contract
-  changes.
-- [ ] Record final before/after results in this TODO.
-- [ ] Close this supporting tracker only when the canonical Phase 5.2A gate
-  records the same implementation, validation, and documentation evidence.
+## Out Of Scope
+- Zero-readback GPU-driven promotion.
+- Shader quality changes and default pipeline GPU pass cost.

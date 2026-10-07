@@ -15,7 +15,7 @@ Status (October 3, 2026):
   criterion is now **met**: memory is flat from the first to the third round
   trip.
 
-Owner item: [S14g](../../todo/rendering/vulkan-stall-remediation-todo.md#s14g-close-the-steady-state-gap-after-play-round-trips)
+Owner item: [S14g](../../progress/rendering/vulkan-stall-remediation-results.md)
 of the Vulkan stall remediation TODO. Opened by the
 [S14d disposition](2026-09-27-s14d-post-exit-publication.md#disposition), which
 saw mesh requests cost 24 us before play and 95 us after, attributed by sampled

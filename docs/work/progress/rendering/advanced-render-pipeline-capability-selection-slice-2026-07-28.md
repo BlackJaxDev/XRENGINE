@@ -2,7 +2,7 @@
 
 Status: Complete
 Parent TODO:
-[01 - Pipeline Identity And Frame Contract](../../todo/COMPLETED/01-pipeline-identity-and-frame-contract-todo.md)
+[Default Render Pipeline Notes: Selecting AdvancedRenderPipeline](../../../architecture/rendering/default-render-pipeline-notes.md#selecting-advancedrenderpipeline)
 
 Subsequent routing contract:
 [Output-Purpose And Feature-Contract Slice](advanced-render-pipeline-output-purpose-and-feature-contract-slice-2026-07-28.md)

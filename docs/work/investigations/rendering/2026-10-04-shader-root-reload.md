@@ -2,7 +2,7 @@
 
 Status: investigation active, October 4, 2026.
 
-The integrated reload gate in the [stall remediation checklist](../../todo/rendering/vulkan-stall-remediation-todo.md)
+The integrated reload gate in the [stall remediation checklist](../../progress/rendering/vulkan-stall-remediation-results.md)
 remains open. Restoring a temporary Vulkan native opaque shader probe left old
 top-level text around refreshed includes, producing undeclared identifiers. A
 fresh named editor session recovered. Earlier evidence and restored-file

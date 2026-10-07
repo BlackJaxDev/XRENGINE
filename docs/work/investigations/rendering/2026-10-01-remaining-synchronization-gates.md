@@ -1,6 +1,6 @@
 # Remaining GPUScene and Vulkan storage synchronization
 
-Status: **Deferred**, October 1, 2026. This is the conditional S13h assessment in the [Vulkan stall remediation TODO](../../todo/rendering/vulkan-stall-remediation-todo.md#s13h-change-synchronization-only-for-a-measured-remaining-bottleneck). No synchronization change is retained. The measured workloads do not establish a material contention bottleneck or the concurrent lifetime proof required to narrow or partition these gates. The conditional assessment is dispositioned; the cumulative S13i gate and S15 visual acceptance remain open.
+Status: **Deferred**, October 1, 2026. This is the conditional S13h assessment in the [Vulkan stall remediation TODO](../../progress/rendering/vulkan-stall-remediation-results.md). No synchronization change is retained. The measured workloads do not establish a material contention bottleneck or the concurrent lifetime proof required to narrow or partition these gates. The conditional assessment is dispositioned; the cumulative S13i gate and S15 visual acceptance remain open.
 
 ## Ownership and review
 

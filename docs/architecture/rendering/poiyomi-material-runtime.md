@@ -12,7 +12,6 @@ outline work. Definitions carry pass-specific shaders and fixed-function state
 without duplicating the authored material.
 
 Pass order is deterministic:
-
 | Order | Identity |
 | ---: | --- |
 | 100 | Early depth |

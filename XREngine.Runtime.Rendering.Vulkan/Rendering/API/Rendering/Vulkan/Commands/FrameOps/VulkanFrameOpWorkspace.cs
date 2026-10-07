@@ -14,6 +14,7 @@ internal sealed class VulkanFrameOpWorkspace
     private readonly Pool<IndirectDrawOp> _indirectDrawOps = new();
     private readonly Pool<MemoryBarrierOp> _memoryBarrierOps = new();
     private readonly Pool<ComputeDispatchOp> _computeDispatchOps = new();
+    private readonly Pool<BufferCopyOp> _bufferCopyOps = new();
 
     internal bool TryRent<T>(ulong frameId, out T? reusable)
         where T : FrameOp
@@ -46,6 +47,7 @@ internal sealed class VulkanFrameOpWorkspace
         _indirectDrawOps.Reset();
         _memoryBarrierOps.Reset();
         _computeDispatchOps.Reset();
+        _bufferCopyOps.Reset();
     }
 
     private Pool<T> GetPool<T>()
@@ -61,6 +63,8 @@ internal sealed class VulkanFrameOpWorkspace
             return (Pool<T>)(object)_memoryBarrierOps;
         if (typeof(T) == typeof(ComputeDispatchOp))
             return (Pool<T>)(object)_computeDispatchOps;
+        if (typeof(T) == typeof(BufferCopyOp))
+            return (Pool<T>)(object)_bufferCopyOps;
 
         throw new NotSupportedException($"Frame-operation pooling is not configured for {typeof(T).FullName}.");
     }

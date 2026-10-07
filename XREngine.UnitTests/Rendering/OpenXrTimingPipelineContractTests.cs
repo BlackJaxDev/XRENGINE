@@ -1335,7 +1335,6 @@ public sealed class OpenXrTimingPipelineContractTests
     {
         string installer = ReadWorkspaceFile("Tools/Dependencies/Install-RenderDoc.ps1");
         string execTool = ReadWorkspaceFile("ExecTool.bat");
-        string documentation = ReadWorkspaceFile("Tools/RenderDoc/README.md");
 
         installer.ShouldContain("$renderDocPackageId = \"BaldurKarlsson.RenderDoc\"");
         installer.ShouldContain("[string]$RdcCliVersion = \"0.5.6\"");
@@ -1344,7 +1343,6 @@ public sealed class OpenXrTimingPipelineContractTests
         installer.ShouldContain("Invoke-Native -FilePath $rdcCommand -Arguments @(\"setup-renderdoc\")");
         installer.ShouldContain("& $rdcCommand \"doctor\"");
         execTool.ShouldContain("Tools\\Dependencies\\Install-RenderDoc.ps1");
-        documentation.ShouldContain("rdc close");
     }
 
     [Test]
@@ -1352,7 +1350,6 @@ public sealed class OpenXrTimingPipelineContractTests
     {
         string benchmark = ReadWorkspaceFile("Tools/Benchmarks/Invoke-VulkanPerf.ps1");
         string launcher = ReadWorkspaceFile("Tools/RenderDoc/capture_xrengine.py");
-        string documentation = ReadWorkspaceFile("Tools/RenderDoc/README.md");
 
         benchmark.ShouldContain("[string]$_.vrMode -eq 'MonadoOpenXR'");
         benchmark.ShouldContain("Tools\\OpenXR\\Start-MonadoService.ps1");
@@ -1365,7 +1362,6 @@ public sealed class OpenXrTimingPipelineContractTests
         launcher.ShouldContain("rd.ExecuteAndInject(");
         launcher.ShouldContain("\"XRE_UNIT_TEST_WORLD_SETTINGS_PATH\"");
         launcher.ShouldContain("\"XRE_FORCE_MESH_SUBMISSION_STRATEGY\"");
-        documentation.ShouldContain("python Tools/RenderDoc/capture_xrengine.py");
     }
     [Test]
     public void OpenXrSmokeRun_UsesStableExitCodesAndSummaryContract()

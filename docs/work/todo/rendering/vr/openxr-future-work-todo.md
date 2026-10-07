@@ -1,42 +1,34 @@
 # OpenXR Future Work TODO
 
-Last updated: 2026-05-13
+Last Updated: 2026-10-06
+Status: Active
+Architecture: [OpenXR VR Rendering](../../../../architecture/rendering/openxr-vr-rendering.md), [OpenXR Runtime](../../../../developer-guides/vr/openxr-runtime.md)
+Validation: [OpenXR Validation](../../../testing/xr/openxr-validation.md), [OpenXR SteamVR Hardware Validation](../../../testing/xr/openxr-steamvr-hardware-validation.md)
 
-OpenXR timing/pipeline Round 1+2 (Phases 0-8 of the now-retired `openxr-timing-todo.md`) shipped: observability stats, post-render frame prep, visibility policy, input/pose sync cleanup, thread-safety hardening, dedicated render-pacing thread, and Round 1 polish. This doc tracks what is still genuinely open after that work.
+## Current State
 
-Sibling test tracker: [openxr-timing-tests-todo.md](../../tests/openxr-timing-tests-todo.md).
-No-HMD runtime testing design: [OpenXR Monado Testing Pipeline](../../../design/VR/openxr-monado-testing-pipeline.md).
-Dedicated no-HMD runtime implementation tracker: [openxr-monado-testing-pipeline-todo.md](openxr-monado-testing-pipeline-todo.md).
-CI, hardware, and deterministic follow-ups: [openxr-monado-ci-hardware-followups-todo.md](openxr-monado-ci-hardware-followups-todo.md).
+The OpenXR path has timing stats, post-render frame preparation, visibility policy, input and pose sync cleanup, thread-safety hardening, and a dedicated pacing thread. `RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode` now defaults to `OpenXrRenderPacingMode.DedicatedThread`. Extension work, runtime-specific policy decisions, and hardware qualification remain open.
 
-## Phase 6 — Compositor extensions (P3, gated on hardware metrics)
+## Open Code Items
 
-Hold these until Phase 7 (`DedicatedThread`) has hardware-validated numbers; depth/foveation interactions are easier to interpret against a stable pacing baseline.
+### Compositor extensions
 
-- [ ] **`XR_KHR_composition_layer_depth`.** Probe extension support at session init. Allocate a depth swapchain alongside each color swapchain; submit a `XrCompositionLayerDepthInfoKHR` chained off the projection layer. Gate behind a setting (`OpenXrSubmitDepthLayer`, default off) so misbehaving runtimes can opt out. Validate depth range and reverse-Z convention match the engine's projection matrix.
-- [ ] **`XR_FB_foveation` / `XR_VARJO_foveated_rendering`.** Probe at session init; wire into the existing foveated `RenderCommandCollection` ViewSet path (`EnableVrFoveatedViewSet`). Add a profile/levels setting; respect runtime-reported max level.
-- [ ] **`XR_KHR_visibility_mask`.** Probe at session init; convert mask polygons to a stencil pre-pass per eye on session start / mask-change events. Skip masked fragments in the eye render pass.
+- [ ] Add optional `XR_KHR_composition_layer_depth` support. Update `XREngine.Runtime.XR.OpenXR` swapchain creation and frame submission, and add an `OpenXrSubmitDepthLayer` setting that defaults off. Done when: supported runtimes receive `XrCompositionLayerDepthInfoKHR`, unsupported or disabled runtimes use color-only projection layers with a clear diagnostic, and depth range and reverse-Z conventions are documented.
+- [ ] Add optional `XR_FB_foveation` and `XR_VARJO_foveated_rendering` support. Update `XREngine.Runtime.XR.OpenXR` foveation probing and the view-set path that consumes `EnableVrFoveatedViewSet`. Done when: a setting selects profile and level, the runtime-reported maximum is respected, and unsupported runtimes report a fallback reason.
+- [ ] Add optional `XR_KHR_visibility_mask` support. Update `XREngine.Runtime.XR.OpenXR` session initialization and eye rendering. Done when: mask polygons become a per-eye stencil pre-pass on session start or mask-change events, and masked fragments are skipped without changing the visibility frustum.
 
-Acceptance: each extension lands behind a setting, default off; profiler shows lower GPU time per eye with the extension on; no regression in `VrXrMissedDeadlineFrames`.
+### Runtime policy
 
-## Promote `DedicatedThread` to default (P2)
+- [ ] Decide whether `RelocatePredicted` remains opt-in or becomes per-runtime policy. Update `OpenXrCollectVisiblePosePolicy` and the runtime guide. Done when: the policy has a clear default and runtime-specific exceptions are capability-driven or explicitly documented.
+- [ ] Decide the gameplay-visible `ViewStateFlags` tracking-loss policy. Update `OpenXrTrackingLossPolicy` and the runtime guide. Done when: freeze, identity, and skip behavior are documented for gameplay systems that read view pose during tracking loss.
+- [ ] Document the depth-layer convention and runtime opt-out policy. Update the runtime guide and settings docs when depth-layer submission lands. Done when: depth ranges, projection matrices, reverse-Z behavior, and opt-out controls are clear.
 
-- [ ] After the hardware validation matrix in the [tests doc](../../tests/openxr-timing-tests-todo.md) is green, flip `Engine.Rendering.Settings.OpenXrRenderPacingMode` default from `PostRenderCallback` to `DedicatedThread`.
-- [ ] Update [openxr-vr-rendering.md](../../../architecture/rendering/openxr-vr-rendering.md) "Render Pacing Mode" section to reflect the new default.
+## Decisions Needed
 
-## Open Design Questions
+- [ ] Which runtimes must pass extension and pacing validation before OpenXR becomes the default SteamVR path? Owner: Rendering / XR.
+- [ ] Which compositor extensions are required for v1, and which remain optional diagnostics or quality settings? Owner: Rendering / XR.
 
-- [ ] Some OpenXR runtimes may serialize `xrWaitFrame` internally; pacing-thread benefit depends on whether the runtime returns the next predicted time eagerly. Confirm on SteamVR and Oculus.
-- [ ] `RelocatePredicted` cost on Oculus vs. SteamVR: keep opt-in or promote per-runtime?
-- [ ] `ViewStateFlags` policy choice (freeze vs identity vs skip) is gameplay-visible; needs design sign-off if any gameplay system reads view pose during tracking loss.
-- [ ] Depth swapchain submission can interact badly with some runtimes if depth ranges or projection matrices disagree; keep behind a setting and document the convention.
+## Out Of Scope
 
-## Related
-
-- [OpenXR Timing Tests TODO](../../tests/openxr-timing-tests-todo.md)
-- [OpenXR Monado Testing Pipeline](../../../design/VR/openxr-monado-testing-pipeline.md)
-- [OpenXR Monado Testing Pipeline TODO](openxr-monado-testing-pipeline-todo.md)
-- [OpenXR Monado CI And Hardware Follow-ups](openxr-monado-ci-hardware-followups-todo.md)
-- [OpenXR VR Rendering (architecture)](../../../architecture/rendering/openxr-vr-rendering.md)
-- [OpenXR Implementation Comparison (design)](../../../design/VR/openxr-implementation-comparison.md)
-- [OpenVR VRClient GPU Handoff TODO](../gpu/openvr-vrclient-gpu-handoff-todo.md)
+- Reverting the `DedicatedThread` default. The code already sets it as the default.
+- Retiring OpenVR before the SteamVR OpenXR hardware matrix is accepted.

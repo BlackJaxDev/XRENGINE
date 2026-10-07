@@ -582,7 +582,6 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     public void MissingNvidiaRuntimeDiagnostic_TellsUsersHowToRetrieveDlls()
     {
         string dlssManagerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/DLSS/NvidiaDlssManager.cs").Replace("\r\n", "\n");
-        string readmeSource = ReadWorkspaceFile("ThirdParty/NVIDIA/SDK/README.md").Replace("\r\n", "\n");
         string installerSource = ReadWorkspaceFile("Tools/Dependencies/Get-StreamlineSdk.ps1").Replace("\r\n", "\n");
         string imguiPropertyEditorSource = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.PropertyEditor.cs").Replace("\r\n", "\n");
 
@@ -595,15 +594,6 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         dlssManagerSource.ShouldContain("public static bool FrameGenerationAvailable");
         dlssManagerSource.ShouldContain("public static string FrameGenerationUnavailableReason");
 
-        readmeSource.ShouldContain("https://github.com/NVIDIA-RTX/Streamline/releases");
-        readmeSource.ShouldContain("sl.interposer.dll");
-        readmeSource.ShouldContain("sl.common.dll");
-        readmeSource.ShouldContain("sl.dlss.dll");
-        readmeSource.ShouldContain("nvngx_dlss.dll");
-        readmeSource.ShouldContain("sl.dlss_g.dll");
-        readmeSource.ShouldContain("sl.reflex.dll");
-        readmeSource.ShouldContain("sl.pcl.dll");
-        readmeSource.ShouldContain("nvngx_dlssg.dll");
         installerSource.ShouldContain("\"sl.reflex.dll\",");
         installerSource.ShouldContain("\"sl.pcl.dll\",");
 

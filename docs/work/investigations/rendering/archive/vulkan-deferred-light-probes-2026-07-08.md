@@ -8,7 +8,7 @@ User report included an editor screenshot with `VK[DefaultRenderPipeline]`, defe
 
 ## Durable Evidence
 
-- Existing work item `docs/work/todo/rendering/vulkan-deferred-and-probe-gi-fixes-todo.md` documents prior Vulkan deferred/probe fixes from 2026-06-09, but runtime Vulkan visual validation remained open.
+- The former work item `vulkan-deferred-and-probe-gi-fixes-todo.md` (now `docs/work/testing/rendering/global-illumination-validation.md`) documented prior Vulkan deferred/probe fixes from 2026-06-09, but runtime Vulkan visual validation remained open.
 - Current validation root: `Build/_AgentValidation/20260708-0000-vulkan-light-probes`.
 
 ## Working Hypotheses

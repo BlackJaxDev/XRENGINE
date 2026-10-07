@@ -4,7 +4,8 @@ Updated: 2026-10-02
 
 Status: Active; strict publication and exhaustive regression acceptance remain open.
 
-Checklist: [runtime regression and NativeAOT hardening](../../todo/runtime-regression-and-nativeaot-hardening-todo.md).
+Checklist: [runtime regression and NativeAOT hardening](../../todo/runtime/runtime-regression-and-nativeaot-hardening-todo.md).
+The [branch stopping-point handoff](runtime-hardening-branch-handoff-2026-10-07.md) preserves the exact 2026-10-03 unaccepted edits, warning counts, validation limits, and resume order. Current code work and checks use the new todo and validation destinations.
 
 ## Current baseline
 
@@ -97,9 +98,7 @@ Checklist: [runtime regression and NativeAOT hardening](../../todo/runtime-regre
 
 ## Requested stopping point — 2026-10-03
 
-The user requested wrap-up before completion. The todo document now contains the
-authoritative completed/unvalidated/remaining/blocked handoff. No commit or merge
-was performed; unrelated working-tree changes remain untouched.
+The user requested wrap-up before completion. The [branch handoff](runtime-hardening-branch-handoff-2026-10-07.md) preserves the completed, unvalidated, remaining, and blocked state at that time. No commit or merge was performed at that stopping point; unrelated working-tree changes remained untouched.
 
 - Latest humanoid result: 37/42 (`humanoid-eye-6.trx`). Named-eye selection now
   passes. Four authored-axis cases remain production defects; one automatic
@@ -123,4 +122,4 @@ was performed; unrelated working-tree changes remain untouched.
 - Final broad-suite, three-seed randomized, strict-zero-warning, packaged-runtime
   and full allocation gates remain open. The missing exact Unity exporter/clip
   corpus is still externally blocked. Preserve the open tracker and resume from
-  its ordered handoff.
+  the [ordered branch handoff](runtime-hardening-branch-handoff-2026-10-07.md).

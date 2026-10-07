@@ -3,6 +3,9 @@
 #if !defined(XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION) || XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION != 1
 #error Native shading requires the AO flag and neutral-binding semantic contract.
 #endif
+#if !defined(XR_ADV_WORLD_AMBIENT_SCHEMA_VERSION) || XR_ADV_WORLD_AMBIENT_SCHEMA_VERSION != 1
+#error Native shading requires world ambient and separate diffuse-suppression flags.
+#endif
 
 struct XRAdvancedGpuHandle
 {

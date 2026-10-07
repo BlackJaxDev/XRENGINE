@@ -113,6 +113,7 @@ public sealed partial class AdvancedGpuScenePublisher
         if (_plannedDecalMutationCount != 0 ||
             _plannedLightMutationCount != 0 ||
             _plannedShadowPayloadUpdateCount != 0 ||
+            _plannedAmbientMutation ||
             _plannedMaterialReleaseCount != 0 ||
             _resourceAcquireCount != 0 ||
             _resourceReleaseCount != 0)

@@ -33,6 +33,17 @@ evaluator are rejected; schedule them through deferred `SetParent` instead.
 
 ## Simulation and notifications
 
+Scene nodes subscribe to transform property events through cached
+`XRPropertyNotificationHandlers` filters. They observe `Parent` before a change
+and `Parent` or `World` after a change. Pose setters still use `SetField` and run
+their matrix invalidation hooks. When only these internal listeners are present,
+a pose change creates no property event arguments. `XRBase` uses an immutable
+delegate snapshot and keeps listener order. It creates one fresh typed argument
+object for the first matching listener and shares it with the remaining matching
+listeners. Public listeners can retain the arguments, and changing listeners keep
+the same cancellation behavior. Filter names are copied at subscription setup;
+dispatch does not use shared mutable argument objects or scratch storage.
+
 `MarkLocalModified` preserves immediate local recalculation by default. Deferred
 local changes are evaluated during propagation. Dirty registration sets a slot
 bit, so duplicate registrations require neither hash sets nor ancestor walks.
@@ -40,6 +51,22 @@ bit, so duplicate registrations require neither hash sets nor ancestor walks.
 subtree ranges and walks those ranges once. Ordinary world composition reads
 `local * parentWorld` from the arrays. Custom world owners retain their explicit
 virtual evaluator.
+
+For immediate recalculation of an attached transform, the store reads both
+dirty flags in one operation. It commits a changed local matrix and clears its
+local dirty flag in one write. For an ordinary child with a valid cached parent
+order, it composes and commits the world matrix, marks render publication, and
+clears the world dirty flag in one write. Root transforms, external parents,
+custom world evaluators, and invalid cached order use the existing composition
+path. Local callbacks run before world composition; world callbacks and render
+publication keep their order. The store checks ownership again after local
+callbacks because a callback can detach or transfer the transform. It does not
+clear global dirty registration bits in the immediate path.
+
+For an exact `Transform` instance with a clean local matrix and a valid cached
+parent order, one store gate covers the dirty check and world composition.
+Derived types, dirty local matrices, and invalid parent order keep the general
+path. World callbacks still run after the store gate is released.
 
 `Sequential` processes ranges on the caller. `Parallel` and `Asynchronous` both
 join persistent world-owned workers at the simulation barrier, rather than

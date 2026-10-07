@@ -65,4 +65,4 @@ The [session store](calibration-session-continuity.md) retains only body binding
 
 ## Qualification
 
-See the [integration guide](openxr-body-tracking.md), [Windows validation record](../../work/investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md), and [hardware acceptance procedure](../../work/testing/avatar/openxr-calibration-spectator-validation.md). Headless tests and software Vulkan checks do not qualify a headset, SteamVR role-independent tracker streaming, actual spectator visuals, controller ergonomics, or frame-deadline cost.
+See the [integration guide](openxr-body-tracking.md), [Windows validation record](../../work/investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md), and [hardware acceptance procedure](../../work/testing/avatar/avatar-validation.md#openxr-body-calibration-and-spectator). Headless tests and software Vulkan checks do not qualify a headset, SteamVR role-independent tracker streaming, actual spectator visuals, controller ergonomics, or frame-deadline cost.

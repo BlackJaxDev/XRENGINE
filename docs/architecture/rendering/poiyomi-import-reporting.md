@@ -53,3 +53,11 @@ paths selected by an avatar import. Each material is isolated, so one failure
 becomes a failure report instead of aborting the corpus. Aggregate counters and
 per-material reports can be written as deterministic JSON with
 `WriteJsonAsync`.
+
+## Visual parity policy
+
+- Each feature family has numeric image-difference thresholds. Expected
+  engine-native differences are reported as native-equivalent and keep human
+  review.
+- Use RenderDoc for pass/resource discrepancies not explained by screenshots
+  or logs.

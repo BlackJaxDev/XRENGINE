@@ -23,7 +23,7 @@ Remaining integration gates:
 - [x] Dispositioned Not Applicable (September 25, user decision): exercise two distinct runtime-world owners across frames with in-flight consumers, deformation/static inputs, same-owner topology replacement, and teardown. No supported runtime fixture exists; the evidence and reopening condition are recorded below. The same-host world-restore experiment was not used as proof.
 - [ ] Retain the incoming AA output/resource-transition dependencies and the explicitly untested forced growth/failure, duplicate-key, hardware XR and long-duration churn limits. Narrow passing churn/stereo checks do not close those separate gates.
 
-The September 23 `render<-collect` experiment and the full S13a-S13i plan remain in the [stall TODO](../../todo/rendering/vulkan-stall-remediation-todo.md) and [collect-wait investigation](2026-09-23-vulkan-render-collect-wait.md). The temporary identity filter was reverted; this merge does not implement S13 or claim the roughly 60 ms wait is fixed. Resolve or explicitly disposition the remaining S12 integration gate before promoting dependent S13 implementation work.
+The September 23 `render<-collect` experiment and the full S13a-S13i plan remain in the [stall TODO](../../progress/rendering/vulkan-stall-remediation-results.md) and [collect-wait investigation](2026-09-23-vulkan-render-collect-wait.md). The temporary identity filter was reverted; this merge does not implement S13 or claim the roughly 60 ms wait is fixed. Resolve or explicitly disposition the remaining S12 integration gate before promoting dependent S13 implementation work.
 
 ### Merged Source Validation
 
