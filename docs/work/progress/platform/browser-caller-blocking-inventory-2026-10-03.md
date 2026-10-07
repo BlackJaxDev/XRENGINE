@@ -4,9 +4,9 @@ Updated: 2026-10-07. This is a source inventory for the shared browser compile c
 
 ## Committed-source refresh (2026-10-07)
 
-The scan is pinned to [commit 2b11b0c2](https://github.com/BlackJaxDev/XRENGINE/commit/2b11b0c2fff378a7df0d1b2079ccab458ef226ee).
+The scan is pinned to [commit 4422849b](https://github.com/BlackJaxDev/XRENGINE/commit/4422849bde5585b0ca30060134d4f06060af1b48).
 It uses the 19 project roots in that commit's `Build/Portable/PortableProjects.tsv`
-and 5,235 tracked C# paths from `git ls-tree -r -z --name-only <commit>`.
+and 5,243 tracked C# paths from `git ls-tree -r -z --name-only <commit>`.
 Each expression is passed to `git grep -E <expression> <commit> -- <paths>`.
 This reads committed blobs, including tracked paths hidden by ignore rules.
 It excludes generated files and external source imports. The 17 tracked
@@ -34,7 +34,7 @@ Markdown table.
 | `XREngine.Animation` | 1 | 0 | 0 |
 | `XREngine.Input` | 0 | 0 | 0 |
 | `XREngine.Modeling` | 0 | 0 | 0 |
-| `XREngine.Runtime.Core` | 28 | 5 | 7 |
+| `XREngine.Runtime.Core` | 24 | 2 | 7 |
 | `XREngine.Runtime.Rendering` | 42 | 2 | 9 |
 | `XREngine.Runtime.Host` | 17 | 2 | 3 |
 | `XREngine.Runtime.AudioIntegration` | 3 | 0 | 2 |
@@ -48,34 +48,58 @@ Markdown table.
 | `XREngine.Runtime.Net.WebSockets` | 0 | 0 | 0 |
 | `XREngine.Runtime.Physics.Jolt` | 0 | 0 | 0 |
 
-The thread expression finds ten locations in nine files: six locations in Core,
-two in Rendering, and two in Host. They belong to job domains, transform and
-physics workers, render/context threads, the timer, and profiler statistics.
-Their placement remains open work. The wait expression finds 211 lines, including
-74 `string.Join` lines across 51 files. Other matches include result properties
-and comments. These numbers do not establish browser reachability or blocking.
+The thread expression finds six locations in six files, two each in Core,
+Rendering, and Host:
 
-A separate Core/Rendering/Host/Data scan finds 43 files and 231 lines with static
+- `XREngine.Runtime.Core/Execution/RenderWorkDomain.cs`
+- `XREngine.Runtime.Core/Scene/Transforms/TransformPropagationWorkers.cs`
+- `XREngine.Runtime.Rendering/Runtime/RuntimeEngine.Rendering.SecondaryContext.cs`
+- `XREngine.Runtime.Rendering/Runtime/RuntimeRenderThreadHost.cs`
+- `XREngine.Runtime.Host/Core/Time/EngineTimer.cs`
+- `XREngine.Runtime.Host/Engine/Subclasses/Engine.CodeProfiler.cs`
+
+Their placement remains open work. The wait expression finds 203 lines across
+109 files, including 74 `string.Join` lines across 51 files. Other matches
+include result properties and comments. The task/parallel/pool expression finds
+64 lines across 31 files. These numbers do not establish browser reachability
+or blocking.
+
+A separate Core/Rendering/Host/Data scan finds 42 files and 203 lines with static
 `File`/`Directory` member tokens or explicit `new FileStream`, `new FileInfo`, and
-`new DirectoryInfo` constructors. It misses target-typed constructors. A broader
-type-token scan finds 18 Core, 22 Rendering, four Host, and 21 Data files, including
-declarations and comments. These are different metrics from the historical 136
-direct-call count. The direct and broad expressions are:
+`new DirectoryInfo` constructors. Core has 16 files/71 lines, Rendering has
+11/39, Host has 3/38, and Data has 12/55. It misses target-typed constructors
+and includes comments. The remaining `AssetManager.Metadata.cs` match is its
+`File.GetAttributes` comment; its physical operations use the host provider.
+The earlier broad type-token scan at `2b11b0c2` found 18 Core, 22 Rendering,
+four Host, and 21 Data files, including declarations and comments. That broader
+scan is not refreshed here. These are different metrics from the historical
+136 direct-call count. The direct and broad expressions are:
 
 ```regex
 \b(File|Directory)\.[A-Za-z_][A-Za-z0-9_]*|\bnew[[:space:]]+(FileStream|FileInfo|DirectoryInfo)[[:space:]]*\(
 \b(File|Directory|FileStream|FileInfo|DirectoryInfo)\b
 ```
 
-The following native metadata extraction in
+Compared with the earlier pinned `2b11b0c2` scan, the manifest roots are unchanged
+and eight C# paths were added. The wait expression decreased from 211 lines in
+113 files to 203 in 109. Explicit thread construction decreased from ten locations
+in nine files to six in six. General, auxiliary, and physics worker mechanisms
+now reside outside the portable roots; metadata retry waiting also moved to its
+host provider. Task/parallel/pool counts remain 31 files/64 lines. The direct
+filesystem scan decreased from 43 files/231 lines to 42/203 after metadata and
+GL submit-log file operations moved to host providers. This is placement
+evidence, not runtime or performance acceptance.
+
+The post-baseline native metadata extraction in
 [commit 9e024e33](https://github.com/BlackJaxDev/XRENGINE/commit/9e024e331a638004f7be0e33a48a70ecd5f59524)
-removes the shared frontend's target-typed `FileInfo` read. The
+removed the shared frontend's target-typed `FileInfo` read. The direct expression
+missed that constructor, so this move did not change its count. The
 [runtime asset I/O record](browser-runtime-asset-io-boundaries-2026-10-03.md)
 records its scope. Neither inventory closes the physical-placement requirements.
 
 ## Physics worker placement (2026-10-07)
 
-The later physics worker extraction keeps `PhysicsChainCpuWorkScheduler` in Core
+The physics worker extraction keeps `PhysicsChainCpuWorkScheduler` in Core
 and moves its thread construction, signals, completion wait, and joins into
 Desktop. The public scheduler keeps its handle buffer, range claiming, metrics,
 inline conditions, and execution/disposal guards. Each scheduler captures one
@@ -84,8 +108,9 @@ the factory. Native positive-worker standalone consumers must install the
 factory; an absent or invalid group fails instead of selecting inline fallback.
 The [project ownership contract](../../../architecture/runtime/project-organization.md)
 records this composition requirement and the constructor/caller-fault cleanup.
-General, auxiliary, render, transform, timer, and profiler worker placement stays
-open. This does not change the requirement count.
+At that commit, general, auxiliary, render, transform, timer, and profiler worker
+placement remained open. The next section records the general/auxiliary move.
+This does not change the requirement count.
 
 Core, Desktop platform, and Browser platform Release builds pass with zero
 warnings and errors. The existing three `PhysicsChainCpuWorkSchedulerTests`
