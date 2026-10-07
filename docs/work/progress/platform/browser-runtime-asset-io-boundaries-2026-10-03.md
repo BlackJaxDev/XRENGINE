@@ -312,3 +312,35 @@ jobs and the five baseline game cases. UI still failed its animation-frame check
 Shadow ON exceeded the 45-second first-frame limit while
 `engine-advanced-shade-native-depth-no-decals` remained pending for 38.2 seconds;
 the recorded GPU resource list had no failure. Those browser checks remain open.
+
+## GL submit trace file placement
+
+Shared `GLSubmitTracer` now obtains an owned text log through the optional
+`IRuntimeGLSubmitTraceFileOutput` capability on the installed diagnostic output
+service. The existing Desktop provider creates the directory and persistent
+file resources. The path remains `Build/Logs/gl-submit-trace.log` under the
+current working directory. It keeps Create mode, write access, read sharing,
+the 4096-byte WriteThrough stream, BOM-free UTF-8, AutoFlush, and LF lines.
+The public levels, environment activation, headers, timestamps, and line format
+remain in the shared tracer. No startup registration or fixture changes were
+needed.
+
+The tracer owns a returned lease before reading its writer. A failed open closes
+partial resources, and the desktop lease attempts writer and stream disposal
+separately. Close detaches shared ownership before disposal. Active logs retain
+their owner when the installed provider changes. Missing capability leaves this
+optional trace off; custom hosts must install it before first use or request the
+level again afterward.
+
+Provider calls run under the tracer's lock and must not wait for another thread
+to enter it. Callback level changes wait until the active transition or trace
+line finishes. The last requested level runs next, with a four-transition bound
+per request that leaves tracing off if a provider continues changing it. Recursive trace
+writes return immediately. These rules protect the new host callback boundary
+without changing the ordinary Desktop writer's serialized path.
+
+Independent source and lifetime review passed. Focused Rendering, Desktop, Host,
+and OpenGL builds qualify the affected source closure; no trace was activated,
+no output probe was run, and no test was added or changed. Actual log output,
+flush behavior, and crash evidence remain untested for this move. The broader
+runtime-I/O inventory remains open.
