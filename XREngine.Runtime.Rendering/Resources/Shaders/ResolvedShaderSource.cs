@@ -30,6 +30,7 @@ public sealed class ResolvedShaderSource
     public string ResolvedSource { get; }
     public string[] ResolvedPaths { get; }
     public ShaderSourceFileDependency[] FileDependencies { get; }
+    internal ShaderSourceDirectoryDependency[] SearchRootDependencies { get; init; } = [];
     public ShaderSourceMacroSummary MacroSummary { get; }
     public ShaderSourceMapSpan[] SourceMapSpans { get; }
     public string SourceIdentity { get; }
@@ -46,7 +47,10 @@ public sealed class ResolvedShaderSource
             resolution.Source,
             resolution.ResolvedPaths,
             resolution.FileDependencies,
-            ShaderSourceMacroSummary.Scan(resolution.Source));
+            ShaderSourceMacroSummary.Scan(resolution.Source))
+        {
+            SearchRootDependencies = resolution.SearchRootDependencies,
+        };
 
     private string ComputeIdentity()
     {

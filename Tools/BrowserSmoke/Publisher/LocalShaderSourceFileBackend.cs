@@ -1,10 +1,8 @@
 using System.Text;
 using XREngine.Rendering;
 
-namespace XREngine.Runtime.Platform.Desktop;
-
-/// <summary>Reads shader source files through desktop file handles.</summary>
-public sealed class DesktopShaderSourceFileBackend : IShaderSourceFileBackend
+/// <summary>Reads authored shader files for the local publisher.</summary>
+internal sealed class LocalShaderSourceFileBackend : IShaderSourceFileBackend
 {
     public bool FileExists(string path) => File.Exists(path);
 

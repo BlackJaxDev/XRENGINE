@@ -18,27 +18,35 @@ public readonly record struct ShaderSourceFileDependency(string Path, long LastW
 
 internal sealed class ShaderSourceResolutionResult
 {
-    public ShaderSourceResolutionResult(string source, string[] resolvedPaths, ShaderSourceFileDependency[] fileDependencies)
+    public ShaderSourceResolutionResult(string source, string[] resolvedPaths, ShaderSourceFileDependency[] fileDependencies,
+        ShaderSourceDirectoryDependency[] searchRootDependencies, ShaderSourceProviderOwner owner)
     {
         Source = source;
         ResolvedPaths = resolvedPaths;
         FileDependencies = fileDependencies;
+        SearchRootDependencies = searchRootDependencies;
+        Owner = owner;
     }
 
     public string Source { get; }
     public string[] ResolvedPaths { get; }
     public ShaderSourceFileDependency[] FileDependencies { get; }
+    public ShaderSourceDirectoryDependency[] SearchRootDependencies { get; }
+    public ShaderSourceProviderOwner Owner { get; }
 }
 
 internal static partial class ShaderSourceResolver
 {
     private static readonly string[] SupportedSnippetExtensions = [".glsl", ".snip", ".frag", ".vert", ".fs", ".vs"];
-    private static readonly ConcurrentDictionary<string, CachedTextFile> TextFileCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<(string Path, ShaderSourceProviderOwner Owner), CachedTextFile> TextFileCache = new();
     private static readonly ConcurrentDictionary<IncludeExpansionCacheKey, IncludeExpansionCacheEntry> IncludeExpansionCache = new();
-    private static readonly ConcurrentDictionary<string, FileIndexCacheEntry> ShaderRootFileIndexCache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly ConcurrentDictionary<string, FileIndexCacheEntry> SnippetFileIndexCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<(string Path, ShaderSourceProviderOwner Owner), FileIndexCacheEntry> ShaderRootFileIndexCache = new();
+    private static readonly ConcurrentDictionary<(string Path, ShaderSourceProviderOwner Owner), FileIndexCacheEntry> SnippetFileIndexCache = new();
     private static readonly ConcurrentDictionary<SnippetResolutionCacheKey, SnippetResolutionCacheEntry> SnippetResolutionCache = new();
     private static readonly ConcurrentDictionary<string, string> RegisteredSnippets = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object CacheOwnerGate = new();
+    private static ShaderSourceProviderOwner _cacheOwner;
+    private static bool _hasCacheOwner;
 
     private static long _registeredSnippetVersion;
 
@@ -46,12 +54,41 @@ internal static partial class ShaderSourceResolver
 
     // The shader service reflects the bound asset owner; the execution checks also
     // cover direct resolver calls made before that service has been installed.
-    internal static bool CanAccessHostShaderFiles
+    private static bool HostShaderFilesAdmitted
         => !OperatingSystem.IsBrowser()
         && !RuntimeWorkScheduler.IsCallerThread
         && DirectStorageIO.Source is not IRuntimeAssetCatalog
         && DirectStorageIO.Source is not { SupportsSynchronousReads: false }
         && RuntimeShaderServices.Current?.SupportsSynchronousShaderWork != false;
+
+    internal static bool CanAccessHostShaderFiles => CaptureOwner().HostFileAccess;
+
+    internal static ShaderSourceProviderOwner CaptureOwner()
+    {
+        bool admitted = HostShaderFilesAdmitted;
+        ShaderSourceFileBackendServices.TryCapture(out IShaderSourceFileBackend? backend, out int backendGeneration);
+        AssetFileSystemServices.TryCapture(out IAssetFileSystem? fileSystem, out long fileSystemGeneration);
+        ShaderSourceProviderOwner owner = new(backend, backendGeneration, fileSystem, fileSystemGeneration,
+            admitted && backend is not null && fileSystem is not null);
+        lock (CacheOwnerGate)
+        {
+            if ((!_hasCacheOwner || !_cacheOwner.Equals(owner)) && IsOwnerInstallationCurrent(owner))
+            {
+                ClearCaches();
+                _cacheOwner = owner;
+                _hasCacheOwner = true;
+            }
+        }
+        return owner;
+    }
+
+    internal static bool IsOwnerCurrent(ShaderSourceProviderOwner owner)
+        => owner.HostFileAccess == (HostShaderFilesAdmitted && owner.FileBackend is not null && owner.FileSystem is not null)
+        && IsOwnerInstallationCurrent(owner);
+
+    internal static bool IsOwnerInstallationCurrent(ShaderSourceProviderOwner owner)
+        => ShaderSourceFileBackendServices.IsCurrent(owner.FileBackend, owner.FileBackendGeneration)
+        && AssetFileSystemServices.IsCurrent(owner.FileSystem, owner.FileSystemGeneration);
 
     // Default-disabled. See ExpandIncludesRecursive for rationale.
     private static bool EmitIncludeDceMarkers
@@ -64,26 +101,26 @@ internal static partial class ShaderSourceResolver
     [GeneratedRegex(@"#pragma\s+snippet\s+[""<](?<name>[^"">]+)["">]", RegexOptions.Compiled)]
     private static partial Regex SnippetDirectiveRegex();
 
-    private readonly record struct IncludeExpansionCacheKey(string Path, bool AnnotateIncludes, bool EmitDeadCodeMarkers, string SearchRootsKey);
+    private readonly record struct IncludeExpansionCacheKey(string Path, bool AnnotateIncludes, bool EmitDeadCodeMarkers, string SearchRootsKey, ShaderSourceProviderOwner Owner);
     private readonly record struct SnippetResolutionCacheKey(
         string ExpandedSource,
         string SearchRootsKey,
         bool HostFileAccess,
         long RegisteredSnippetVersion,
-        bool EnableDeadCodeElimination);
-    private readonly record struct DirectoryDependency(string Path, long LastWriteTimeUtcTicks);
+        bool EnableDeadCodeElimination,
+        ShaderSourceProviderOwner Owner);
 
     private sealed class SearchContext
     {
         public SearchContext(string? sourceDirectory, string[] shaderRoots, string searchRootsKey, Action<string>? warningLogger,
-            IReadOnlyDictionary<string, string>? canonicalSnippets = null, bool hostFileAccess = true)
+            ShaderSourceProviderOwner owner, IReadOnlyDictionary<string, string>? canonicalSnippets = null)
         {
             SourceDirectory = sourceDirectory;
             ShaderRoots = shaderRoots;
             SearchRootsKey = searchRootsKey;
             WarningLogger = warningLogger;
             CanonicalSnippets = canonicalSnippets;
-            HostFileAccess = hostFileAccess;
+            Owner = owner;
         }
 
         public string? SourceDirectory { get; }
@@ -91,7 +128,10 @@ internal static partial class ShaderSourceResolver
         public string SearchRootsKey { get; }
         public Action<string>? WarningLogger { get; }
         public IReadOnlyDictionary<string, string>? CanonicalSnippets { get; }
-        public bool HostFileAccess { get; }
+        public ShaderSourceProviderOwner Owner { get; }
+        public bool HostFileAccess => Owner.HostFileAccess;
+        public IShaderSourceFileBackend FileBackend => Owner.FileBackend!;
+        public IAssetFileSystem FileSystem => Owner.FileSystem!;
     }
 
     private sealed class CachedTextFile
@@ -112,7 +152,7 @@ internal static partial class ShaderSourceResolver
             string expandedSource,
             string[] resolvedPaths,
             ShaderSourceFileDependency[] fileDependencies,
-            DirectoryDependency[] searchRootDependencies)
+            ShaderSourceDirectoryDependency[] searchRootDependencies)
         {
             ExpandedSource = expandedSource;
             ResolvedPaths = resolvedPaths;
@@ -123,7 +163,7 @@ internal static partial class ShaderSourceResolver
         public string ExpandedSource { get; }
         public string[] ResolvedPaths { get; }
         public ShaderSourceFileDependency[] FileDependencies { get; }
-        public DirectoryDependency[] SearchRootDependencies { get; }
+        public ShaderSourceDirectoryDependency[] SearchRootDependencies { get; }
     }
 
     private sealed class SnippetResolutionCacheEntry
@@ -131,7 +171,7 @@ internal static partial class ShaderSourceResolver
         public SnippetResolutionCacheEntry(
             string resolvedSource,
             ShaderSourceFileDependency[] fileDependencies,
-            DirectoryDependency[] searchRootDependencies)
+            ShaderSourceDirectoryDependency[] searchRootDependencies)
         {
             ResolvedSource = resolvedSource;
             FileDependencies = fileDependencies;
@@ -140,19 +180,19 @@ internal static partial class ShaderSourceResolver
 
         public string ResolvedSource { get; }
         public ShaderSourceFileDependency[] FileDependencies { get; }
-        public DirectoryDependency[] SearchRootDependencies { get; }
+        public ShaderSourceDirectoryDependency[] SearchRootDependencies { get; }
     }
 
     private sealed class FileIndexCacheEntry
     {
-        public FileIndexCacheEntry(Dictionary<string, string> pathsByName, DirectoryDependency[] directoryDependencies)
+        public FileIndexCacheEntry(Dictionary<string, string> pathsByName, ShaderSourceDirectoryDependency[] directoryDependencies)
         {
             PathsByName = pathsByName;
             DirectoryDependencies = directoryDependencies;
         }
 
         public Dictionary<string, string> PathsByName { get; }
-        public DirectoryDependency[] DirectoryDependencies { get; }
+        public ShaderSourceDirectoryDependency[] DirectoryDependencies { get; }
     }
 
     public static string ResolveSource(string source, string? sourcePath, bool annotateIncludes = false)
@@ -174,12 +214,13 @@ internal static partial class ShaderSourceResolver
     internal static ShaderSourceResolutionResult ResolveSourceDetailed(string source, string? sourcePath, ShaderSourceResolverOptions? options = null, bool annotateIncludes = false)
     {
         if (string.IsNullOrWhiteSpace(source))
-            return new(source, [], []);
-
-        if (!CanAccessHostShaderFiles && IncludeRegex().IsMatch(source))
-            throw new NotSupportedException("ShaderSource.HostFileIncludeUnavailable: shader includes require host files; use already resolved source or an explicit cooked shader artifact on this runtime.");
+            return new(source, [], [], [], CaptureOwner());
 
         SearchContext context = CreateSearchContext(sourcePath, options);
+
+        if (!context.HostFileAccess && IncludeRegex().IsMatch(source))
+            throw new NotSupportedException("ShaderSource.HostFileIncludeUnavailable: shader includes require host files; use already resolved source or an explicit cooked shader artifact on this runtime.");
+
         List<string> resolvedPaths = [];
         Dictionary<string, ShaderSourceFileDependency> fileDependencies = new(StringComparer.OrdinalIgnoreCase);
 
@@ -199,7 +240,8 @@ internal static partial class ShaderSourceResolver
             options?.EnableSnippetDeadCodeElimination == true);
         MergeDependencies(fileDependencies, resolvedSnippets.FileDependencies);
 
-        return new(resolvedSnippets.ResolvedSource, [.. resolvedPaths], [.. fileDependencies.Values]);
+        return new(resolvedSnippets.ResolvedSource, [.. resolvedPaths], [.. fileDependencies.Values],
+            resolvedSnippets.SearchRootDependencies, context.Owner);
     }
 
     internal static ResolvedShaderSource ResolveSourcePayload(
@@ -207,25 +249,45 @@ internal static partial class ShaderSourceResolver
         string? sourcePath,
         ShaderSourceResolverOptions? options = null,
         bool annotateIncludes = false)
+        => ResolveSourcePayload(source, sourcePath, out _, options, annotateIncludes);
+
+    internal static ResolvedShaderSource ResolveSourcePayload(
+        string source,
+        string? sourcePath,
+        out ShaderSourceProviderOwner owner,
+        ShaderSourceResolverOptions? options = null,
+        bool annotateIncludes = false)
     {
         ShaderSourceResolutionResult result = ResolveSourceDetailed(source, sourcePath, options, annotateIncludes);
+        owner = result.Owner;
         return ResolvedShaderSource.Create(sourcePath, source, result);
     }
 
     internal static bool AreDependenciesCurrent(IReadOnlyList<ShaderSourceFileDependency>? dependencies)
+        => AreDependenciesCurrent(dependencies, CaptureOwner());
+
+    internal static bool AreDependenciesCurrent(IReadOnlyList<ShaderSourceFileDependency>? dependencies, ShaderSourceProviderOwner owner)
+        => AreDependenciesCurrent(dependencies, null, owner);
+
+    internal static bool AreDependenciesCurrent(
+        IReadOnlyList<ShaderSourceFileDependency>? dependencies,
+        IReadOnlyList<ShaderSourceDirectoryDependency>? directoryDependencies,
+        ShaderSourceProviderOwner owner)
     {
+        if (!IsOwnerCurrent(owner))
+            return false;
         if (dependencies is null)
-            return true;
+            return directoryDependencies is null || AreDirectoriesCurrent(directoryDependencies, owner);
 
         // A file-expanded cache from a prior owner cannot be validated against
         // virtual catalog paths or a host without synchronous file access.
-        if (dependencies.Count != 0 && !CanAccessHostShaderFiles)
+        if (dependencies.Count != 0 && !owner.HostFileAccess)
             return false;
 
         for (int i = 0; i < dependencies.Count; i++)
         {
             ShaderSourceFileDependency dependency = dependencies[i];
-            if (!TryGetCurrentFileDependency(dependency.Path, out ShaderSourceFileDependency currentDependency))
+            if (!TryGetCurrentFileDependency(dependency.Path, owner, out ShaderSourceFileDependency currentDependency))
                 return false;
 
             if (currentDependency.LastWriteTimeUtcTicks != dependency.LastWriteTimeUtcTicks ||
@@ -235,7 +297,7 @@ internal static partial class ShaderSourceResolver
             }
         }
 
-        return true;
+        return (directoryDependencies is null || AreDirectoriesCurrent(directoryDependencies, owner)) && IsOwnerCurrent(owner);
     }
 
     internal static void RegisterSnippet(string snippetName, string snippetSource)
@@ -285,7 +347,7 @@ internal static partial class ShaderSourceResolver
         }
         // Share the desktop expansion algorithm, including annotations and duplicate
         // directives, but neither its search providers nor its global resolution cache.
-        SearchContext context = new(null, [], string.Empty, null, snapshot);
+        SearchContext context = new(null, [], string.Empty, null, CaptureOwner(), snapshot);
         return ResolveSnippetsRecursive(source, context, new(StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase));
     }
 
@@ -299,7 +361,7 @@ internal static partial class ShaderSourceResolver
 
         foreach (string shaderRoot in context.ShaderRoots)
         {
-            if (!TryGetSnippetFileIndex(shaderRoot, out FileIndexCacheEntry? snippetIndex) || snippetIndex is null)
+            if (!TryGetSnippetFileIndex(context, shaderRoot, out FileIndexCacheEntry? snippetIndex) || snippetIndex is null)
                 continue;
 
             foreach (string snippetName in snippetIndex.PathsByName.Keys)
@@ -338,12 +400,13 @@ internal static partial class ShaderSourceResolver
 
     private static SearchContext CreateSearchContext(string? sourcePath, ShaderSourceResolverOptions? options)
     {
-        if (!CanAccessHostShaderFiles)
+        ShaderSourceProviderOwner owner = CaptureOwner();
+        if (!owner.HostFileAccess)
         {
             Action<string>? nonFileWarningLogger = options?.WarningLogger;
             if (nonFileWarningLogger is null && RuntimeShaderServices.Current is IRuntimeShaderServices nonFileShaderServices)
                 nonFileWarningLogger = nonFileShaderServices.LogWarning;
-            return new(null, [], string.Empty, nonFileWarningLogger, hostFileAccess: false);
+            return new(null, [], string.Empty, nonFileWarningLogger, owner);
         }
 
         string? sourceDirectory = string.IsNullOrWhiteSpace(sourcePath)
@@ -352,11 +415,11 @@ internal static partial class ShaderSourceResolver
 
         List<string> shaderRoots = [];
 
-        AddShaderRoot(shaderRoots, FindShaderRoot(sourcePath, sourceDirectory));
+        AddShaderRoot(shaderRoots, FindShaderRoot(sourcePath, sourceDirectory, owner.FileBackend!), owner.FileBackend!);
         if (options?.AdditionalShaderRoots is not null)
         {
             foreach (string shaderRoot in options.AdditionalShaderRoots)
-                AddShaderRoot(shaderRoots, shaderRoot);
+                AddShaderRoot(shaderRoots, shaderRoot, owner.FileBackend!);
         }
 
         string searchRootsKey = shaderRoots.Count == 0
@@ -371,12 +434,13 @@ internal static partial class ShaderSourceResolver
             sourceDirectory,
             [.. shaderRoots],
             searchRootsKey,
-            warningLogger);
+            warningLogger,
+            owner);
     }
 
-    private static void AddShaderRoot(List<string> shaderRoots, string? shaderRoot)
+    private static void AddShaderRoot(List<string> shaderRoots, string? shaderRoot, IShaderSourceFileBackend backend)
     {
-        if (string.IsNullOrWhiteSpace(shaderRoot) || !Directory.Exists(shaderRoot))
+        if (string.IsNullOrWhiteSpace(shaderRoot) || !backend.DirectoryExists(shaderRoot))
             return;
 
         string normalizedRoot = Path.GetFullPath(shaderRoot);
@@ -459,17 +523,17 @@ internal static partial class ShaderSourceResolver
 
         try
         {
-            IncludeExpansionCacheKey cacheKey = new(normalizedPath, annotateIncludes, emitIncludeDeadCodeMarkers, context.SearchRootsKey);
+            IncludeExpansionCacheKey cacheKey = new(normalizedPath, annotateIncludes, emitIncludeDeadCodeMarkers, context.SearchRootsKey, context.Owner);
             if (IncludeExpansionCache.TryGetValue(cacheKey, out IncludeExpansionCacheEntry? cachedEntry) &&
                 cachedEntry is not null &&
-                AreDependenciesCurrent(cachedEntry.FileDependencies) &&
-                AreDirectoriesCurrent(cachedEntry.SearchRootDependencies))
+                AreDependenciesCurrent(cachedEntry.FileDependencies, context.Owner) &&
+                AreDirectoriesCurrent(cachedEntry.SearchRootDependencies, context))
             {
                 EnsureNoRecursiveDependency(normalizedPath, cachedEntry.FileDependencies, includeStack);
                 return cachedEntry;
             }
 
-            string includedSource = ReadTextFile(normalizedPath, out ShaderSourceFileDependency sourceDependency);
+            string includedSource = ReadTextFile(normalizedPath, context, out ShaderSourceFileDependency sourceDependency);
             Dictionary<string, ShaderSourceFileDependency> fileDependencies = new(StringComparer.OrdinalIgnoreCase)
             {
                 [sourceDependency.Path] = sourceDependency,
@@ -490,8 +554,9 @@ internal static partial class ShaderSourceResolver
                 expandedSource,
                 [.. resolvedPaths],
                 [.. fileDependencies.Values],
-                CaptureSearchRootDependencies(context.ShaderRoots));
-            IncludeExpansionCache[cacheKey] = includeEntry;
+                CaptureSearchRootDependencies(context));
+            if (IsOwnerCurrent(context.Owner))
+                IncludeExpansionCache[cacheKey] = includeEntry;
             return includeEntry;
         }
         finally
@@ -519,11 +584,11 @@ internal static partial class ShaderSourceResolver
         bool enableDeadCodeElimination)
     {
         if (string.IsNullOrEmpty(source))
-            return new(source, [], CaptureSearchRootDependencies(context.ShaderRoots));
+            return new(source, [], CaptureSearchRootDependencies(context));
 
         MatchCollection matches = SnippetDirectiveRegex().Matches(source);
         if (matches.Count == 0)
-            return new(source, [], CaptureSearchRootDependencies(context.ShaderRoots));
+            return new(source, [], CaptureSearchRootDependencies(context));
 
         long registeredSnippetVersion = Volatile.Read(ref _registeredSnippetVersion);
         SnippetResolutionCacheKey cacheKey = new(
@@ -531,11 +596,12 @@ internal static partial class ShaderSourceResolver
             context.SearchRootsKey,
             context.HostFileAccess,
             registeredSnippetVersion,
-            enableDeadCodeElimination);
+            enableDeadCodeElimination,
+            context.Owner);
         if (SnippetResolutionCache.TryGetValue(cacheKey, out SnippetResolutionCacheEntry? cachedEntry) &&
             cachedEntry is not null &&
-            AreDependenciesCurrent(cachedEntry.FileDependencies) &&
-            AreDirectoriesCurrent(cachedEntry.SearchRootDependencies))
+            AreDependenciesCurrent(cachedEntry.FileDependencies, context.Owner) &&
+            AreDirectoriesCurrent(cachedEntry.SearchRootDependencies, context))
         {
             return cachedEntry;
         }
@@ -552,8 +618,9 @@ internal static partial class ShaderSourceResolver
         SnippetResolutionCacheEntry resolvedEntry = new(
             resolvedSource,
             [.. fileDependencies.Values],
-            CaptureSearchRootDependencies(context.ShaderRoots));
-        SnippetResolutionCache[cacheKey] = resolvedEntry;
+            CaptureSearchRootDependencies(context));
+        if (IsOwnerCurrent(context.Owner))
+            SnippetResolutionCache[cacheKey] = resolvedEntry;
         return resolvedEntry;
     }
 
@@ -623,10 +690,10 @@ internal static partial class ShaderSourceResolver
 
         foreach (string shaderRoot in context.ShaderRoots)
         {
-            if (!TryResolveSnippetPath(shaderRoot, snippetName, out string? snippetPath) || snippetPath is null)
+            if (!TryResolveSnippetPath(context, shaderRoot, snippetName, out string? snippetPath) || snippetPath is null)
                 continue;
 
-            snippetSource = ReadTextFile(snippetPath, out fileDependency);
+            snippetSource = ReadTextFile(snippetPath, context, out fileDependency);
             return true;
         }
 
@@ -638,29 +705,29 @@ internal static partial class ShaderSourceResolver
         return false;
     }
 
-    private static bool TryResolveSnippetPath(string shaderRoot, string snippetName, out string? snippetPath)
+    private static bool TryResolveSnippetPath(SearchContext context, string shaderRoot, string snippetName, out string? snippetPath)
     {
         snippetPath = null;
-        if (!TryGetSnippetFileIndex(shaderRoot, out FileIndexCacheEntry? snippetIndex) || snippetIndex is null)
+        if (!TryGetSnippetFileIndex(context, shaderRoot, out FileIndexCacheEntry? snippetIndex) || snippetIndex is null)
             return false;
 
         return snippetIndex.PathsByName.TryGetValue(snippetName, out snippetPath);
     }
 
-    private static bool TryGetSnippetFileIndex(string shaderRoot, out FileIndexCacheEntry? snippetIndex)
+    private static bool TryGetSnippetFileIndex(SearchContext context, string shaderRoot, out FileIndexCacheEntry? snippetIndex)
     {
         snippetIndex = null;
         if (string.IsNullOrWhiteSpace(shaderRoot))
             return false;
 
         string snippetsDirectory = Path.Combine(shaderRoot, "Snippets");
-        if (!Directory.Exists(snippetsDirectory))
+        if (!context.FileBackend.DirectoryExists(snippetsDirectory))
             return false;
 
         string normalizedDirectory = Path.GetFullPath(snippetsDirectory);
-        if (SnippetFileIndexCache.TryGetValue(normalizedDirectory, out FileIndexCacheEntry? cachedIndex) &&
+        if (SnippetFileIndexCache.TryGetValue((normalizedDirectory, context.Owner), out FileIndexCacheEntry? cachedIndex) &&
             cachedIndex is not null &&
-            AreDirectoriesCurrent(cachedIndex.DirectoryDependencies))
+            AreDirectoriesCurrent(cachedIndex.DirectoryDependencies, context))
         {
             snippetIndex = cachedIndex;
             return true;
@@ -669,25 +736,26 @@ internal static partial class ShaderSourceResolver
         Dictionary<string, string> pathsByName = new(StringComparer.OrdinalIgnoreCase);
         foreach (string extension in SupportedSnippetExtensions)
         {
-            foreach (string filePath in AssetFileSystemServices.Required.EnumerateFiles(normalizedDirectory, "*" + extension, SearchOption.TopDirectoryOnly))
+            foreach (string filePath in context.FileSystem.EnumerateFiles(normalizedDirectory, "*" + extension, SearchOption.TopDirectoryOnly))
                 pathsByName.TryAdd(Path.GetFileNameWithoutExtension(filePath), Path.GetFullPath(filePath));
 
-            foreach (string filePath in AssetFileSystemServices.Required.EnumerateFiles(normalizedDirectory, "*" + extension, SearchOption.AllDirectories))
+            foreach (string filePath in context.FileSystem.EnumerateFiles(normalizedDirectory, "*" + extension, SearchOption.AllDirectories))
                 pathsByName.TryAdd(Path.GetFileNameWithoutExtension(filePath), Path.GetFullPath(filePath));
         }
 
-        FileIndexCacheEntry rebuiltIndex = new(pathsByName, CaptureDirectoryDependencies(normalizedDirectory));
-        SnippetFileIndexCache[normalizedDirectory] = rebuiltIndex;
+        FileIndexCacheEntry rebuiltIndex = new(pathsByName, CaptureDirectoryDependencies(normalizedDirectory, context));
+        if (IsOwnerCurrent(context.Owner))
+            SnippetFileIndexCache[(normalizedDirectory, context.Owner)] = rebuiltIndex;
         snippetIndex = rebuiltIndex;
         return true;
     }
 
-    private static string ReadTextFile(string normalizedPath, out ShaderSourceFileDependency dependency)
+    private static string ReadTextFile(string normalizedPath, SearchContext context, out ShaderSourceFileDependency dependency)
     {
-        if (!TryGetCurrentFileDependency(normalizedPath, out dependency))
+        if (!TryGetCurrentFileDependency(normalizedPath, context.Owner, out dependency))
             throw new FileNotFoundException($"Shader source file '{normalizedPath}' does not exist.", normalizedPath);
 
-        if (TextFileCache.TryGetValue(normalizedPath, out CachedTextFile? cachedFile) &&
+        if (TextFileCache.TryGetValue((normalizedPath, context.Owner), out CachedTextFile? cachedFile) &&
             cachedFile is not null &&
             cachedFile.Dependency.LastWriteTimeUtcTicks == dependency.LastWriteTimeUtcTicks &&
             cachedFile.Dependency.Length == dependency.Length)
@@ -695,58 +763,66 @@ internal static partial class ShaderSourceResolver
             return cachedFile.Text;
         }
 
-        string text = File.ReadAllText(normalizedPath);
-        TextFileCache[normalizedPath] = new(text, dependency);
+        string text = context.FileBackend.ReadAllText(normalizedPath);
+        if (IsOwnerCurrent(context.Owner))
+            TextFileCache[(normalizedPath, context.Owner)] = new(text, dependency);
         return text;
     }
 
-    private static bool TryGetCurrentFileDependency(string path, out ShaderSourceFileDependency dependency)
+    private static bool TryGetCurrentFileDependency(string path, ShaderSourceProviderOwner owner, out ShaderSourceFileDependency dependency)
     {
         dependency = default;
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        if (!owner.HostFileAccess || string.IsNullOrWhiteSpace(path) || !owner.FileBackend!.FileExists(path))
             return false;
 
         string normalizedPath = Path.GetFullPath(path);
-        FileInfo info = new(normalizedPath);
-        if (!info.Exists)
+        if (!owner.FileBackend.TryGetFileMetadata(normalizedPath, out long ticks, out long length))
             return false;
 
-        dependency = new(normalizedPath, info.LastWriteTimeUtc.Ticks, info.Length);
+        dependency = new(normalizedPath, ticks, length);
         return true;
     }
 
-    private static bool AreDirectoriesCurrent(IReadOnlyList<DirectoryDependency> directoryDependencies)
+    private static bool AreDirectoriesCurrent(IReadOnlyList<ShaderSourceDirectoryDependency> directoryDependencies, SearchContext context)
+        => AreDirectoriesCurrent(directoryDependencies, context.Owner);
+
+    private static bool AreDirectoriesCurrent(IReadOnlyList<ShaderSourceDirectoryDependency> directoryDependencies, ShaderSourceProviderOwner owner)
     {
+        if (!IsOwnerCurrent(owner) || (directoryDependencies.Count != 0 && !owner.HostFileAccess))
+            return false;
         for (int i = 0; i < directoryDependencies.Count; i++)
         {
-            DirectoryDependency dependency = directoryDependencies[i];
-            if (!Directory.Exists(dependency.Path))
+            ShaderSourceDirectoryDependency dependency = directoryDependencies[i];
+            if (!owner.FileBackend!.TryGetDirectoryLastWriteTimeUtcTicks(dependency.Path, out long currentTicks))
                 return false;
 
-            long currentTicks = new DirectoryInfo(dependency.Path).LastWriteTimeUtc.Ticks;
             if (currentTicks != dependency.LastWriteTimeUtcTicks)
                 return false;
         }
 
-        return true;
+        return IsOwnerCurrent(owner);
     }
 
-    private static DirectoryDependency[] CaptureDirectoryDependencies(string rootDirectory)
+    private static ShaderSourceDirectoryDependency[] CaptureDirectoryDependencies(string rootDirectory, SearchContext context)
     {
-        List<DirectoryDependency> dependencies = [];
-        foreach (string directory in AssetFileSystemServices.Required.EnumerateDirectories(rootDirectory, "*", SearchOption.AllDirectories))
-            dependencies.Add(new(Path.GetFullPath(directory), new DirectoryInfo(directory).LastWriteTimeUtc.Ticks));
+        List<ShaderSourceDirectoryDependency> dependencies = [];
+        foreach (string directory in context.FileSystem.EnumerateDirectories(rootDirectory, "*", SearchOption.AllDirectories))
+        {
+            context.FileBackend.TryGetDirectoryLastWriteTimeUtcTicks(directory, out long ticks);
+            dependencies.Add(new(Path.GetFullPath(directory), ticks));
+        }
 
-        dependencies.Add(new(Path.GetFullPath(rootDirectory), new DirectoryInfo(rootDirectory).LastWriteTimeUtc.Ticks));
+        context.FileBackend.TryGetDirectoryLastWriteTimeUtcTicks(rootDirectory, out long rootTicks);
+        dependencies.Add(new(Path.GetFullPath(rootDirectory), rootTicks));
         return [.. dependencies];
     }
 
-    private static DirectoryDependency[] CaptureSearchRootDependencies(IReadOnlyList<string> shaderRoots)
+    private static ShaderSourceDirectoryDependency[] CaptureSearchRootDependencies(SearchContext context)
     {
-        Dictionary<string, DirectoryDependency> dependencies = new(StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < shaderRoots.Count; i++)
+        Dictionary<string, ShaderSourceDirectoryDependency> dependencies = new(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < context.ShaderRoots.Length; i++)
         {
-            foreach (DirectoryDependency dependency in CaptureDirectoryDependencies(shaderRoots[i]))
+            foreach (ShaderSourceDirectoryDependency dependency in CaptureDirectoryDependencies(context.ShaderRoots[i], context))
                 dependencies[dependency.Path] = dependency;
         }
 
@@ -767,21 +843,21 @@ internal static partial class ShaderSourceResolver
         if (Path.IsPathRooted(includePath))
         {
             string absolutePath = Path.GetFullPath(includePath);
-            if (File.Exists(absolutePath))
+            if (context.FileBackend.FileExists(absolutePath))
                 return absolutePath;
         }
 
         if (!string.IsNullOrWhiteSpace(currentDirectory))
         {
             string fromCurrentDirectory = Path.GetFullPath(Path.Combine(currentDirectory, includePath));
-            if (File.Exists(fromCurrentDirectory))
+            if (context.FileBackend.FileExists(fromCurrentDirectory))
                 return fromCurrentDirectory;
         }
 
         foreach (string shaderRoot in context.ShaderRoots)
         {
             string fromRoot = Path.GetFullPath(Path.Combine(shaderRoot, includePath));
-            if (File.Exists(fromRoot))
+            if (context.FileBackend.FileExists(fromRoot))
                 return fromRoot;
         }
 
@@ -790,53 +866,54 @@ internal static partial class ShaderSourceResolver
 
         foreach (string shaderRoot in context.ShaderRoots)
         {
-            if (TryResolveIndexedShaderFile(shaderRoot, includePath, out string? indexedPath))
+            if (TryResolveIndexedShaderFile(context, shaderRoot, includePath, out string? indexedPath))
                 return indexedPath;
         }
 
         return null;
     }
 
-    private static bool TryResolveIndexedShaderFile(string shaderRoot, string fileName, out string? resolvedPath)
+    private static bool TryResolveIndexedShaderFile(SearchContext context, string shaderRoot, string fileName, out string? resolvedPath)
     {
         resolvedPath = null;
-        if (!TryGetShaderRootFileIndex(shaderRoot, out FileIndexCacheEntry? fileIndex) || fileIndex is null)
+        if (!TryGetShaderRootFileIndex(context, shaderRoot, out FileIndexCacheEntry? fileIndex) || fileIndex is null)
             return false;
 
         return fileIndex.PathsByName.TryGetValue(fileName, out resolvedPath);
     }
 
-    private static bool TryGetShaderRootFileIndex(string shaderRoot, out FileIndexCacheEntry? fileIndex)
+    private static bool TryGetShaderRootFileIndex(SearchContext context, string shaderRoot, out FileIndexCacheEntry? fileIndex)
     {
         fileIndex = null;
-        if (string.IsNullOrWhiteSpace(shaderRoot) || !Directory.Exists(shaderRoot))
+        if (string.IsNullOrWhiteSpace(shaderRoot) || !context.FileBackend.DirectoryExists(shaderRoot))
             return false;
 
         string normalizedRoot = Path.GetFullPath(shaderRoot);
-        if (ShaderRootFileIndexCache.TryGetValue(normalizedRoot, out FileIndexCacheEntry? cachedIndex) &&
+        if (ShaderRootFileIndexCache.TryGetValue((normalizedRoot, context.Owner), out FileIndexCacheEntry? cachedIndex) &&
             cachedIndex is not null &&
-            AreDirectoriesCurrent(cachedIndex.DirectoryDependencies))
+            AreDirectoriesCurrent(cachedIndex.DirectoryDependencies, context))
         {
             fileIndex = cachedIndex;
             return true;
         }
 
         Dictionary<string, string> pathsByName = new(StringComparer.OrdinalIgnoreCase);
-        foreach (string filePath in AssetFileSystemServices.Required.EnumerateFiles(normalizedRoot, "*", SearchOption.AllDirectories))
+        foreach (string filePath in context.FileSystem.EnumerateFiles(normalizedRoot, "*", SearchOption.AllDirectories))
             pathsByName.TryAdd(Path.GetFileName(filePath), Path.GetFullPath(filePath));
 
-        FileIndexCacheEntry rebuiltIndex = new(pathsByName, CaptureDirectoryDependencies(normalizedRoot));
-        ShaderRootFileIndexCache[normalizedRoot] = rebuiltIndex;
+        FileIndexCacheEntry rebuiltIndex = new(pathsByName, CaptureDirectoryDependencies(normalizedRoot, context));
+        if (IsOwnerCurrent(context.Owner))
+            ShaderRootFileIndexCache[(normalizedRoot, context.Owner)] = rebuiltIndex;
         fileIndex = rebuiltIndex;
         return true;
     }
 
-    private static string? FindShaderRoot(string? sourcePath, string? sourceDirectory)
+    private static string? FindShaderRoot(string? sourcePath, string? sourceDirectory, IShaderSourceFileBackend backend)
     {
         IEnumerable<string?> candidates = [sourcePath, sourceDirectory, AppContext.BaseDirectory];
         foreach (string? candidate in candidates)
         {
-            string? root = WalkForShaderRoot(candidate);
+            string? root = WalkForShaderRoot(candidate, backend);
             if (!string.IsNullOrWhiteSpace(root))
                 return root;
         }
@@ -844,25 +921,27 @@ internal static partial class ShaderSourceResolver
         return null;
     }
 
-    private static string? WalkForShaderRoot(string? startPath)
+    private static string? WalkForShaderRoot(string? startPath, IShaderSourceFileBackend backend)
     {
         if (string.IsNullOrWhiteSpace(startPath))
             return null;
 
-        DirectoryInfo? directory = Directory.Exists(startPath)
-            ? new DirectoryInfo(startPath)
-            : new FileInfo(startPath).Directory;
+        string fullPath = Path.GetFullPath(startPath);
+        string? directory = backend.DirectoryExists(startPath)
+            ? fullPath
+            : Path.GetDirectoryName(fullPath);
 
         while (directory is not null)
         {
-            if (string.Equals(directory.Name, "Shaders", StringComparison.OrdinalIgnoreCase))
-                return directory.FullName;
+            string trimmedDirectory = Path.TrimEndingDirectorySeparator(directory);
+            if (string.Equals(Path.GetFileName(trimmedDirectory), "Shaders", StringComparison.OrdinalIgnoreCase))
+                return directory;
 
-            string buildCommonAssetsShaders = Path.Combine(directory.FullName, "Build", "CommonAssets", "Shaders");
-            if (Directory.Exists(buildCommonAssetsShaders))
+            string buildCommonAssetsShaders = Path.Combine(directory, "Build", "CommonAssets", "Shaders");
+            if (backend.DirectoryExists(buildCommonAssetsShaders))
                 return buildCommonAssetsShaders;
 
-            directory = directory.Parent;
+            directory = Path.GetDirectoryName(trimmedDirectory);
         }
 
         return null;
