@@ -1734,14 +1734,16 @@ public static partial class Engine
                 XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Speed profile output");
                 string sessionDirectory = Debug.EnsureLogRunDirectory();
                 string profileRoot = Path.Combine(sessionDirectory, RuntimeCaptureDirectoryName);
-                Directory.CreateDirectory(profileRoot);
+                IRuntimeProfileCaptureFileOutput output = RuntimeDiagnosticCaptureFileOutput.Require() as IRuntimeProfileCaptureFileOutput
+                    ?? throw new InvalidOperationException("Installed diagnostic capture file output does not support speed profile files.");
+                output.EnsureProfileDirectory(profileRoot);
 
                 string stamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss", CultureInfo.InvariantCulture);
                 string safeLabel = SanitizePathSegment(label);
                 string directoryName = string.IsNullOrWhiteSpace(safeLabel) ? stamp : stamp + "_" + safeLabel;
                 outputDirectory = Path.Combine(profileRoot, directoryName);
-                Directory.CreateDirectory(outputDirectory);
-                EnforceRuntimeCaptureRetention(profileRoot);
+                output.EnsureProfileDirectory(outputDirectory);
+                EnforceRuntimeCaptureRetention(profileRoot, output);
 
                 error = null;
                 return true;
@@ -1753,31 +1755,11 @@ public static partial class Engine
             }
         }
 
-        private static void EnforceRuntimeCaptureRetention(string profileRoot)
+        private static void EnforceRuntimeCaptureRetention(string profileRoot, IRuntimeProfileCaptureFileOutput output)
         {
             try
             {
-                string rootFullPath = Path.GetFullPath(profileRoot);
-                string rootWithSeparator = rootFullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-
-                foreach (DirectoryInfo directory in new DirectoryInfo(rootFullPath)
-                    .GetDirectories()
-                    .OrderByDescending(static d => d.CreationTimeUtc)
-                    .Skip(RuntimeCaptureRetentionCount))
-                {
-                    string directoryFullPath = Path.GetFullPath(directory.FullName);
-                    if (!directoryFullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    try
-                    {
-                        directory.Delete(recursive: true);
-                    }
-                    catch
-                    {
-                        // Retention must not disrupt profiling.
-                    }
-                }
+                output.EnforceProfileRetention(profileRoot, RuntimeCaptureRetentionCount);
             }
             catch
             {
@@ -1815,12 +1797,11 @@ public static partial class Engine
             try
             {
                 XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Speed profile output");
-                Directory.CreateDirectory(directory);
+                IRuntimeProfileCaptureFileOutput output = RuntimeDiagnosticCaptureFileOutput.Require() as IRuntimeProfileCaptureFileOutput
+                    ?? throw new InvalidOperationException("Installed diagnostic capture file output does not support speed profile files.");
+                output.EnsureProfileDirectory(directory);
                 string path = Path.Combine(directory, fileName);
-                if (append)
-                    File.AppendAllText(path, contents, Encoding.UTF8);
-                else
-                    File.WriteAllText(path, contents, Encoding.UTF8);
+                output.WriteProfileText(path, contents, append);
             }
             catch
             {

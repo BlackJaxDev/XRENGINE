@@ -25,10 +25,16 @@ byte identity, actual browser spill success, or memory savings.
 
 Release builds of Host, WebGPU, Desktop platform, and Browser platform pass
 with zero warnings and errors. Independent source/lifetime review passes.
-The normal Windows validation filter now includes the six existing
-`XRBufferClientSpillTests`; their execution result must be recorded from the
-exact published commit. Shared timer placement and the broader physical-I/O
-inventory remain open. The extraction does not change any requirement state.
+The six unchanged `XRBufferClientSpillTests` passed in the Windows job of
+[run 37566337192](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37566337192)
+at commit `684585eb33cdda9513c99213306f743d5f2ddb90`. The complete filtered TRX
+has 15 passed tests and no failures or skips. Artifact `11459706677` has
+SHA-256 `b8610c11f7911090cf9075d89078a7370f305ad4cf7106b5eb737ff02878fecc`.
+These tests cover private clones, explicit disposal, source retention during a
+spill read, write-race rejection, scoped writers, and dynamic-buffer exclusion.
+They do not establish browser mapping success, timer behavior, finalizer
+execution, or memory reduction. Shared timer placement and the broader
+physical-I/O inventory remain open. No requirement state changed.
 
 The browser world loader already uses the asset manager's asynchronous catalog path for the startup world, settings, default font, essential roots and streamed scenes. The catalog loader resolves dependency closures before a bounded deserialize/publication batch and owns the resulting objects until its source is unbound. Synchronous `AssetManager.Load` wrappers can return only an already cached catalog asset; unloaded packaged paths require `LoadAsync` or `LoadFromRuntimeSourceAsync`. The prefab loader follows that asynchronous catalog route. These facts narrow, but do not close, the remaining shared-code I/O inventory.
 
@@ -105,6 +111,8 @@ Independent source review passed for the output boundary and the admission
 helper. A Release build of the desktop platform leaf and its shared dependencies
 passed with zero warnings and zero errors. No capture-output runtime check or
 new test was run for this move.
+
+Speed profile file output now uses an optional capability on the same registered diagnostic capture file output service. `Engine.ProfileCapture` keeps the host-file guard, `Debug.EnsureLogRunDirectory`, path naming, timestamp generation, label cleaning, JSON payloads, and sample timing. It asks the desktop platform leaf to create the profile root before it generates the timestamp, create the capture directory, apply retention, and write text. Retention still keeps three directories by descending UTC creation time. The desktop leaf normalizes each candidate path and checks that it is inside the profile root before deletion. Enumeration failure remains opportunistic; each deletion failure remains isolated. Text output still creates its directory before it joins the file name, then appends or replaces with `Encoding.UTF8`. Empty text still returns before file access. An unregistered standalone host or a custom diagnostic writer now needs this optional capability to start a capture. Its capture-start error follows the existing error path; later write failures remain swallowed. Host and Desktop platform Release builds pass with zero warnings and errors. Independent source review confirms the retention, encoding, ordering, and ownership contracts. This is source ownership only. No capture, profiler, or trace was run for this move.
 
 ## Network host-file transfer boundary
 

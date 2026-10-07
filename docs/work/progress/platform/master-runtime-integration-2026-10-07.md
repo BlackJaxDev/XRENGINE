@@ -76,3 +76,13 @@ The WebGPU parent's [CI run](https://github.com/BlackJaxDev/XRENGINE/actions/run
 finished with seven passes and two failures. UI animation-frame progress and
 the shadow-enabled native shader compile deadline remain open. The merge does
 not claim to repair those prior failures or change their deadlines.
+
+The exact merge commit `46a5a09c4243873e4ead239e996b30b9dbc1db63` also finished
+with seven passes and two failures in
+[run 37564030178](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37564030178).
+Portable/browser and Windows publication checks passed, as did RollingBall,
+RenderingParity, modular pipelines, static meshlets, and basic Advanced.
+The UI animation-frame check still failed. Small shadow ON still exceeded its
+45-second startup limit while `engine-advanced-shade-native-depth-no-decals`
+compute pipeline creation was pending for 38.5 seconds. These results do not
+qualify a known-value ambient comparison or the full shadow path.

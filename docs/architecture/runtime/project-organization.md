@@ -26,6 +26,8 @@ These projects target `net10.0` and compile their full source set for desktop an
 
 `XREngine.Runtime.Rendering.WebGPU`, `XREngine.Runtime.Platform.Browser`, and `XREngine.Browser` also belong to the compile closure. They provide the browser renderer, canvas platform leaf, and application composition; their presence does not imply that the browser host can run every engine world or desktop feature. Browser gameplay integration is tracked separately from compilation.
 
+`Engine.ProfileCapture` stays in the shared Host project. It selects speed profile paths, labels, output data, and retention count. The optional `IRuntimeProfileCaptureFileOutput` contract stays in Rendering. The desktop platform leaf implements it through the existing diagnostic capture file output service. That leaf creates directories, applies the retention policy, and writes profile text with `Encoding.UTF8`. The Host still checks host-file admission and obtains the log run directory before it requests profile output. A host without the service or this capability reports a capture-start directory error; later profile writes keep their catch-all behavior.
+
 ### Dependency direction
 
 - `XREngine.Runtime.Core` references only `XREngine.Data` and `XREngine.Extensions`. It has no rendering, feature-library, integration, Bootstrap, Editor, or application dependency.
