@@ -185,8 +185,17 @@ Its local tool-only Release build passed with zero warnings and errors. The
 normal build stopped at offline restore because BenchmarkDotNet and
 AssimpNetter are absent from the local package cache. The Windows validation
 workflow now compiles both modes with separate output roots and retains the
-build logs. The normal build and runtime import remain unqualified until the
-corresponding checks run; no benchmark workload ran for this repair.
+build logs. Exact commit `87dffaeadfacec93c50515f7e5aca10fc3c2f8f9`
+passed both Windows Release builds with zero warnings and errors in
+[run 37607320065](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37607320065).
+Artifact `11477607675` retains both build logs. Its ZIP is 421,383 bytes with
+SHA-256 `6d410506e351f8540320ceb25763bd093a737106cf062bb867e249351dff4a55`.
+The same commit passed the existing 80 filtered unit cases; artifact
+`11477801078` is 17,273 bytes with SHA-256
+`dac3b1f656ee4640d5af6c243643f542275ba60eb6b0e5baee743005799a4ac9`.
+These checks verify compilation and the existing unit cases. They do not
+exercise the glTF report or a benchmark workload; runtime import remains
+unqualified.
 
 The existing local Headless project also built with zero warnings and errors
 and passed **144/144** selected animation, VR, routing, and filesystem unit
