@@ -185,3 +185,62 @@ are byte-identical. Main native WGSL is 367,990 bytes, SHA-256
 These checks establish source/ABI preservation and changed call structure.
 They do not establish a native compiler speed improvement; the next exact
 browser run must measure pipeline readiness and retain the original deadline.
+
+## One pending-shadow compiler observation
+
+The shadow ON program still misses the original startup deadline at
+`37db74ddb1524b31f4536b0d95556919d88fa689`. The complete result is in the
+[shadow investigation](../platform/browser-shadow-capture-timeout-2026-10-06.md).
+An earlier retained GPU process used 44.58 CPU seconds over about 44.01 wall
+seconds. That is evidence of sustained CPU work for that earlier shader. It
+does not identify a private compiler pass. The installed Chrome and SwiftShader
+binaries have dynamic symbols and unwind data, but the inspected matching debug
+files are absent.
+
+A dedicated, inactive workflow prepares one observation of the exact shadow
+program. It uses both immutable bundles from
+[run 37546153259](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37546153259):
+
+- ON artifact `11451741926`, 56,878,530 bytes, ZIP SHA-256
+  `238a375e3c29f54ea53a510f29333f41ecde0ab1749deaae777e3813f5ffb69a`.
+- OFF artifact `11451337986`, 56,878,765 bytes, ZIP SHA-256
+  `8871ac4bd9d226960892bc681596476a22757a53b3a0eb458340e802f48ac2a4`.
+
+The request selects only the first small-profile ON failure and the
+`shade-native-depth-no-decals` program. It pins descriptor SHA-256
+`f81f44c6868773f0936efebaf72f03b146bc6d6c98aacf4e0f462d044eaf8a6c`,
+the 344,708-byte WGSL SHA-256
+`15c26ae39bfb45b1640e9091e381c357fd889429b84888fe61f49f05b66269df`,
+and entry point `advancedShadeNative`. Replay starts only after the application
+browser closes, with verified matching backend metadata. Trace flags and the
+retired profile flag are rejected.
+
+The ordinary build workflow no longer adds `--native-compile-trace` to the
+Advanced job. Its existing compile-only isolation, build checks, assertions,
+and deadlines remain. The dedicated observation does not reactivate that older
+Chromium trace path.
+
+A separate activation must name the exact request hash, code commit, workflow
+run, and first attempt. A single exclusive claim precedes scheduling. Early
+completion or failed setup consumes this attempt. The observer requires at
+least 20 seconds of pending creation measured in the replay page. The external
+45-second compile watchdog, cancellation checks, and final cleanup margin stay
+active. No alternate program, retry, or ordinary matrix run can use the request.
+
+The installed collector samples only the owned GPU process's original threads,
+up to 64, with 49 Hz user-space samples and at most 32 frame-pointer addresses.
+Sampling targets eight seconds. Its root supervisor sends interrupt at nine
+seconds and kill at ten seconds from supervisor start. Setup can shorten the
+sample window; this is not an operating-system hard-cancellation guarantee.
+The existing 8 MiB perf size option, 16 MiB decoder ceiling, and 128 KiB
+sanitized artifact limit remain. No new profiling tool, symbol download,
+security setting, system-wide sample, or kernel stack is added.
+
+The stream can contain user addresses, mapped paths, host and process metadata,
+and incidental kernel-symbol records. Extra records are discarded. Raw files
+stay outside artifact paths. The upload admits only the sanitized summary after
+verified raw deletion and owned process exit. Uncertain cleanup prevents upload
+and requires the disposable job to end. The request, activation, and dedicated
+workflow will be removed after the single attempt. The result may identify a
+busy binary or code region; stripped symbols can prevent compiler-pass names.
+This preparation is not a capture result, rendering pass, or speed claim.

@@ -1250,6 +1250,7 @@ async function main() {
         node: process.version, platform: process.platform, architecture: process.arch,
         playwright: require('playwright/package.json').version, gpuMode: config.gpuMode,
         gpuDiagnostics: config.gpuDiagnostics, nativeCompileTrace: config.nativeCompileTrace,
+        nativeOwnedShadowProfileOnce: config.nativeOwnedShadowProfileOnce,
         uiFrameTraceRequested: config.uiFrameTrace,
         executable: config.executablePath ? path.basename(config.executablePath) : 'playwright-managed-chromium',
         browserLogs: {}, externalRequests: [], requests: [], checks: [],
@@ -1354,13 +1355,20 @@ async function main() {
         console.error(error);
     } finally {
         if (browser) {
-            if (report.advancedRenderingFailures?.length)
-                await captureGpuProcessState(browser, report, 'after-failed-advanced-application');
+            if (report.advancedRenderingFailures?.length ||
+                config.nativeOwnedShadowProfileOnce && report.advancedShadowFailures?.length)
+                await captureGpuProcessState(browser, report, config.nativeOwnedShadowProfileOnce
+                    ? 'after-failed-shadow-application' : 'after-failed-advanced-application');
             report.browserCloseRequested = true;
             await (config.uiFrameTrace ? closeUiTraceBrowser(browser) : browser.close())
                 .catch(error => { report.cleanupError = String(error); report.passed = false; });
+            if (config.nativeOwnedShadowProfileOnce && browser.isConnected()) {
+                report.cleanupError = 'The application browser remained connected after close.';
+                report.passed = false;
+            }
         }
-        if (origin && !report.cleanupError && report.advancedRenderingFailures?.length) {
+        if (origin && !report.cleanupError &&
+            (report.advancedRenderingFailures?.length || config.nativeOwnedShadowProfileOnce)) {
             try { await runNativeCompileIsolation(chromium, origin, report, config, instrumentedPage); }
             catch (error) {
                 if (!report.nativeCompileIsolation?.ownedGpuProfile?.requiresJobTermination) throw error;

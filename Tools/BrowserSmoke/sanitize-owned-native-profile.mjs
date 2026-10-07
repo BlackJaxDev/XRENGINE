@@ -1,10 +1,10 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateActivation, validateInvocation, validateRequest } from './prepare-owned-native-profile.mjs';
+import { REQUEST_SHA256, validateActivation, validateInvocation, validateRequest } from './prepare-owned-native-profile.mjs';
 
-const reportDirectory = 'Build/_AgentValidation/00000000-000000-shared/owned-native-profile-once/report';
-const requestPath = '.github/diagnostic-requests/owned-native-profile-20261005.json';
+const reportDirectory = 'Build/_AgentValidation/00000000-000000-shared/owned-native-shadow-profile-once/report';
+const requestPath = '.github/diagnostic-requests/owned-native-shadow-profile-20261007.json';
 const reportPath = path.join(reportDirectory, 'smoke-report.json');
 const summaryPath = path.join(reportDirectory, 'owned-native-profile-summary.json');
 const maxReportBytes = 8 * 1024 * 1024;
@@ -155,11 +155,43 @@ function collectorSummary(value) {
 export function sanitizeReport(report, request, invocation) {
     object(report, 'Smoke report');
     requireValue(report.schemaVersion === 1 && report.gpuMode === 'software', 'Smoke report scope is invalid.');
+    requireValue(report.nativeOwnedShadowProfileOnce === true && report.nativeCompileTrace === false &&
+        report.gpuDiagnostics === false && report.uiFrameTraceRequested === false &&
+        report.nativeCompileIsolationComparison === undefined,
+    'Smoke report is not the isolated shadow diagnostic.');
     const checks = list(report.checks, 256, 'Application checks', value => value);
-    const app = checks.filter(value => value?.name === 'advanced-rendering-parity-editor-published-world');
-    requireValue(app.length === 1, 'Advanced application check is absent or ambiguous.');
+    const app = checks.filter(value => value?.name === 'advanced-shadow-parity-editor-published-world');
+    requireValue(app.length === 1, 'Shadow application check is absent or ambiguous.');
     const applicationStatus = choice(app[0].status, ['passed', 'failed', 'skipped'], 'Application outcome');
+    requireValue(applicationStatus === 'failed', 'The selected shadow application did not fail.');
+    const selectedFailures = list(report.advancedShadowFailures, 16, 'Shadow failures', value => value)
+        .filter(value => value?.profile === 'small' && value?.state === 'on' && value?.iteration === 0);
+    requireValue(selectedFailures.length === 1, 'The selected shadow failure is absent or ambiguous.');
+    const selectedCapture = selectedFailures[0].nativeCompile;
+    const selectedRecords = selectedCapture?.records?.filter(value => value.status === 'pending') ?? [];
+    requireValue(Array.isArray(selectedCapture?.captureErrors) && selectedCapture.captureErrors.length === 0 &&
+        selectedRecords.length === 1 && selectedRecords[0].recipeStatus === 'ready' &&
+        selectedRecords[0].pass === request.selectedPass &&
+        selectedRecords[0].recipe?.pipeline?.label === `engine-advanced-${request.selectedPass}` &&
+        selectedRecords[0].recipe?.compute?.entryPoint === request.entryPoint &&
+        selectedRecords[0].recipe?.module?.sha256 === request.wgslSha256 &&
+        selectedRecords[0].recipe?.module?.byteLength === request.wgslBytes,
+    'The selected shadow recipe differs from the request.');
     const native = object(report.nativeCompileIsolation, 'Native compile');
+    requireValue(native.applicationBrowserClosed === true && native.cleanup?.browserClosed === true &&
+        native.catalogKey === `advanced::${request.selectedPass}` &&
+        native.shadowTarget?.profile === 'small' && native.shadowTarget?.state === 'on' &&
+        native.shadowTarget?.iteration === 0 && native.shadowTarget?.pass === request.selectedPass &&
+        native.shadowTarget?.descriptorIdentity === request.descriptorSha256 &&
+        native.shadowTarget?.wgslSha256 === request.wgslSha256 &&
+        native.shadowTarget?.wgslBytes === request.wgslBytes &&
+        native.shadowTarget?.entryPoint === request.entryPoint &&
+        native.verifiedCookedArtifact?.descriptorIdentity === request.descriptorSha256 &&
+        native.verifiedCookedArtifact?.sha256 === request.wgslSha256 &&
+        native.verifiedCookedArtifact?.byteLength === request.wgslBytes &&
+        native.verifiedCookedArtifact?.entryPoint === request.entryPoint &&
+        native.backendComparison?.status === 'matched',
+    'Native replay identity, backend, or browser lifetime differs.');
     requireValue(native.compileBudgetMs === 45000, 'Native compile budget changed.');
     const nativeStatus = choice(native.status,
         ['skipped', 'compiled', 'compile-timeout', 'gpu-error', 'failed', 'compile-watchdog-timeout', 'diagnostic-failed'],
@@ -178,7 +210,8 @@ export function sanitizeReport(report, request, invocation) {
     allowedKeys(profile, ['scope', 'status', 'limits', 'event', 'frequencyHz', 'callchainAddresses',
         'targetSamplingMs', 'maximumCollectorMs', 'requestedBoundaryMeaning', 'interpretation',
         'cleanup', 'timing', 'reasons', 'authorization', 'collector', 'target', 'privilegedProcesses',
-        'stdoutBytes', 'stderrBytes', 'summary', 'requiresJobTermination'], 'Owned profile');
+        'stdoutBytes', 'stderrBytes', 'summary', 'requiresJobTermination', 'pendingGate',
+        'prerequisiteCommands'], 'Owned profile');
     const cleanup = exactKeys(profile.cleanup,
         ['rawDeleted', 'recorderExitVerified', 'supervisorExitVerified', 'sudoTreeExitVerified'], 'Collector cleanup');
     requireValue(Object.values(cleanup).every(value => typeof value === 'boolean'), 'Collector cleanup is invalid.');
@@ -192,11 +225,44 @@ export function sanitizeReport(report, request, invocation) {
         ['analysisMs', 'cleanupFinishedNodeMs', 'collectorExitNodeMs', 'collectorLifetimeMs',
             'collectorSpawnNodeMs', 'disableAcknowledgedNodeMs', 'disableRequestedNodeMs',
             'enableAcknowledgedNodeMs', 'enableRequestedNodeMs', 'pingAcknowledgedNodeMs',
-            'requestedSampleMs', 'stopAcknowledgedNodeMs', 'stopRequestedNodeMs', 'totalMs'],
+            'requestedSampleMs', 'stopAcknowledgedNodeMs', 'stopRequestedNodeMs', 'totalMs',
+            'authorizationClaimedNodeMs', 'setupMs', 'beforeSpawnPendingMs', 'beforeSpawnDeadlineRemainingMs'],
         'Profile timing');
     const durations = {};
-    for (const field of ['analysisMs', 'collectorLifetimeMs', 'requestedSampleMs', 'totalMs'])
+    for (const field of ['analysisMs', 'collectorLifetimeMs', 'requestedSampleMs', 'totalMs',
+        'setupMs', 'beforeSpawnPendingMs', 'beforeSpawnDeadlineRemainingMs'])
         if (timing[field] !== undefined) durations[field] = number(timing[field], 200_000, `Profile ${field}`, true);
+    const pendingGate = profile.pendingGate === undefined ? null : (() => {
+        exactKeys(profile.pendingGate, ['minimumPendingMs', 'startedAtPageMs', 'observedAtPageMs',
+            'pendingMs', 'observedAtNodeMs'], 'Pending gate');
+        requireValue(profile.pendingGate.minimumPendingMs === request.minimumPendingMilliseconds,
+            'Pending gate threshold differs.');
+        const started = number(profile.pendingGate.startedAtPageMs, 1_000_000_000, 'Page compile start');
+        const observed = number(profile.pendingGate.observedAtPageMs, 1_000_000_000, 'Page observation');
+        const elapsed = number(profile.pendingGate.pendingMs, 45_000, 'Page pending time');
+        number(profile.pendingGate.observedAtNodeMs, 1_000_000_000, 'Node observation');
+        requireValue(observed >= started && Math.abs(observed - started - elapsed) < 5 &&
+            elapsed >= request.minimumPendingMilliseconds,
+        'Pending gate elapsed time is inconsistent.');
+        return { observedPendingMs: elapsed };
+    })();
+    const labels = ['expected-package-metadata', 'installed-file-package-owner',
+        'owning-package-version', 'owned-fifo-creation'];
+    const prerequisites = profile.prerequisiteCommands === undefined ? [] :
+        list(profile.prerequisiteCommands, 4, 'Prerequisite commands', (value, index) => {
+            exactKeys(value, ['label', 'budgetMs', 'elapsedMs', 'outcome', 'exitCode',
+                'expectedOutputMatched'], 'Prerequisite command');
+            requireValue(value.label === labels[index], 'Prerequisite command order differs.');
+            number(value.budgetMs, 1000, 'Prerequisite command budget');
+            const elapsedMs = number(value.elapsedMs, 5000, 'Prerequisite command elapsed time');
+            const outcome = choice(value.outcome, ['completed', 'timed-out', 'output-limit', 'failed'],
+                'Prerequisite command outcome');
+            if (value.exitCode !== null) integer(value.exitCode, 255, 'Prerequisite command exit');
+            requireValue(typeof value.expectedOutputMatched === 'boolean',
+                'Prerequisite command expected-output match is invalid.');
+            return { label: value.label, elapsedMs, outcome, exitCode: value.exitCode,
+                expectedOutputMatched: value.expectedOutputMatched };
+        });
     let authorizationConsumed = false;
     if (profile.authorization !== undefined) {
         const auth = exactKeys(profile.authorization, ['requestId', 'runId', 'profilerCodeCommit',
@@ -211,18 +277,20 @@ export function sanitizeReport(report, request, invocation) {
         authorizationConsumed = true;
     }
     if (profile.summary !== undefined) requireValue(authorizationConsumed && cleanup.recorderExitVerified
-        && cleanup.supervisorExitVerified && cleanup.sudoTreeExitVerified,
+        && cleanup.supervisorExitVerified && cleanup.sudoTreeExitVerified && pendingGate !== null &&
+        prerequisites.length === labels.length && prerequisites.every(value =>
+            value.outcome === 'completed' && value.exitCode === 0 && value.expectedOutputMatched),
     'Collector summary lacks verified authorization or exit.');
     const output = {
         schema: 1,
-        provenance: { requestId: request.requestId, requestSha256: '8ac2d5c4fa0ff42e575e8768758e6c21f5b45f6005d31e65df0acf5babb2311b',
+        provenance: { requestId: request.requestId, requestSha256: REQUEST_SHA256,
             workflowRunId: invocation.runId, profilerCodeCommit: invocation.sha,
             sourceBundleCommit: request.sourceCommit, sourceBundleRunId: request.sourceRunId,
             sourceBundleArtifactId: request.sourceArtifactId, sourceArchiveSha256: request.sourceArchiveSha256 },
         application: { status: applicationStatus },
         nativeCompile: { status: nativeStatus, budgetMs: 45000,
             watchdogExpired: native.compileWatchdog?.expired === true, compile: compileOutcome },
-        profile: { status: profileStatus, reasons, authorizationConsumed,
+        profile: { status: profileStatus, reasons, authorizationConsumed, pendingGate, prerequisites,
             cleanup: { rawDeleted: cleanup.rawDeleted, recorderExitVerified: cleanup.recorderExitVerified,
                 supervisorExitVerified: cleanup.supervisorExitVerified, sudoTreeExitVerified: cleanup.sudoTreeExitVerified },
             timing: durations },

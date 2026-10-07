@@ -3,6 +3,7 @@ import { constants, closeSync, openSync, writeSync } from 'node:fs';
 import { spawn, execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { REQUEST_SHA256, validateRequest, validateInvocation, validateActivation } from './prepare-owned-native-profile.mjs';
 
 // This observer is deliberately unavailable to ordinary smoke runs. Its one-shot
 // permission is consumed even when setup, ownership validation or recording fails.
@@ -14,9 +15,10 @@ const limits = Object.freeze({ raw: 16 * 1024 * 1024, stderr: 64 * 1024, summary
     control: 1024, tids: 64, startupMs: 2000, collectorMs: 10000, analysisMs: 5000 });
 const ackFrame = Buffer.from([0x61, 0x63, 0x6b, 0x0a, 0]);
 const noFollow = constants.O_NOFOLLOW | constants.O_CLOEXEC;
-const requestId = 'owned-native-profile-20261005-7f240de6';
-const requestHash = '8ac2d5c4fa0ff42e575e8768758e6c21f5b45f6005d31e65df0acf5babb2311b';
-const requestFile = '.github/diagnostic-requests/owned-native-profile-20261005.json';
+const requestId = 'owned-native-shadow-profile-20261007-06b49ec1';
+const requestFile = '.github/diagnostic-requests/owned-native-shadow-profile-20261007.json';
+const minimumPendingMs = 20000;
+const admissionBudgetMs = 5000, finishBudgetMs = 18000;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const fail = code => { throw Object.assign(new Error(code), { profileCode: code }); };
 const requireProfile = (condition, code) => { if (!condition) fail(code); };
@@ -41,11 +43,25 @@ async function readSmall(file, maximum = 64 * 1024) {
     } finally { await handle.close(); }
 }
 
-async function nativeCommand(executable, args, milliseconds = 1000, maximum = 64 * 1024) {
-    return new Promise((resolve, reject) => execFile(executable, args,
-        { env: cleanEnv, shell: false, timeout: milliseconds, maxBuffer: maximum, killSignal: 'SIGKILL', encoding: 'utf8' },
-        (error, stdout) => error ? reject(Object.assign(new Error('NativeCommandUnavailable'),
-            { profileCode: 'NativeCommandUnavailable' })) : resolve(stdout)));
+async function prerequisiteCommand(label, executable, args, expected, setup) {
+    const started = now(), budgetMs = Math.min(1000, setup.remaining());
+    const outcome = { label, budgetMs, elapsedMs: 0, outcome: 'failed', exitCode: null, expectedOutputMatched: false };
+    setup.commands.push(outcome);
+    const output = await new Promise(resolve => execFile(executable, args,
+        { env: cleanEnv, shell: false, timeout: budgetMs, maxBuffer: 64 * 1024, killSignal: 'SIGKILL', encoding: 'utf8' },
+        (error, stdout) => {
+            outcome.elapsedMs = now() - started;
+            outcome.outcome = !error ? 'completed' : error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+                ? 'output-limit' : error.killed ? 'timed-out' : 'failed';
+            outcome.exitCode = Number.isInteger(error?.code) ? error.code : error ? null : 0;
+            outcome.expectedOutputMatched = !error && expected(stdout);
+            resolve(outcome.expectedOutputMatched ? stdout : null);
+        }));
+    // Raw output is used only for the fixed value checks. It never enters a report.
+    requireProfile(outcome.outcome === 'completed', 'NativeCommandUnavailable');
+    requireProfile(outcome.expectedOutputMatched, 'NativeCommandOutputRejected');
+    setup.remaining();
+    return output;
 }
 
 function parseIdentity(stat, status) {
@@ -207,24 +223,23 @@ export class OwnedGpuControl {
     }
 }
 
-async function checkInstalledCollector() {
+async function checkInstalledCollector(setup) {
     const executable = await fs.lstat(perfPath);
     requireProfile(executable.isFile() && executable.uid === 0 && !(executable.mode & 0o022)
         && (executable.mode & 0o111) !== 0 && !(executable.mode & 0o6000), 'InstalledPerfRejected');
-    const packageText = await nativeCommand('/usr/bin/dpkg-query',
-        ['-W', '-f=${binary:Package}\t${Version}\t${db:Status-Status}\n', perfPackage]);
-    requireProfile(packageText === `${perfPackage}\t${perfVersion}\tinstalled\n`, 'InstalledPerfVersionChanged');
-    const ownerText = await nativeCommand('/usr/bin/dpkg-query', ['-S', perfPath]);
-    requireProfile(ownerText.trim().endsWith(`: ${perfPath}`)
-        && /^[a-z0-9.+-]+: \/usr\/lib\/linux-azure-6\.17-tools-6\.17\.0-1022\/perf\n?$/.test(ownerText), 'InstalledPerfPackageRejected');
+    await prerequisiteCommand('expected-package-metadata', '/usr/bin/dpkg-query',
+        ['-W', '-f=${binary:Package}\t${Version}\t${db:Status-Status}\n', perfPackage],
+        text => text === `${perfPackage}\t${perfVersion}\tinstalled\n`, setup);
+    const ownerText = await prerequisiteCommand('installed-file-package-owner', '/usr/bin/dpkg-query', ['-S', perfPath],
+        text => /^[a-z0-9.+-]+: \/usr\/lib\/linux-azure-6\.17-tools-6\.17\.0-1022\/perf\n?$/.test(text), setup);
     const actualPackage = ownerText.slice(0, ownerText.indexOf(':'));
-    const actualVersion = await nativeCommand('/usr/bin/dpkg-query',
-        ['-W', '-f=${Version}\t${db:Status-Status}\n', actualPackage]);
-    requireProfile(actualVersion === `${perfVersion}\tinstalled\n`, 'InstalledPerfVersionChanged');
+    await prerequisiteCommand('owning-package-version', '/usr/bin/dpkg-query',
+        ['-W', '-f=${Version}\t${db:Status-Status}\n', actualPackage],
+        text => text === `${perfVersion}\tinstalled\n`, setup);
     // No collector is run as a preflight. The disabled recording attempt is the
     // only event/flag/access probe, and failure consumes the authorization.
     return { executable: 'perf', package: actualPackage, version: perfVersion,
-        inode: String(executable.ino), byteLength: executable.size };
+        inode: String(executable.ino), device: String(executable.dev), byteLength: executable.size };
 }
 
 async function createTemporaryDirectory(output) {
@@ -240,8 +255,9 @@ async function createTemporaryDirectory(output) {
     return { directory, identity };
 }
 
-async function openControlFiles(directory) {
-    await nativeCommand('/usr/bin/mkfifo', ['--mode=600', '--', `${directory}/control`, `${directory}/ack`]);
+async function openControlFiles(directory, setup) {
+    await prerequisiteCommand('owned-fifo-creation', '/usr/bin/mkfifo',
+        ['--mode=600', '--', `${directory}/control`, `${directory}/ack`], text => text.length === 0, setup);
     const opened = [];
     try {
         for (const name of ['control', 'ack']) {
@@ -356,19 +372,22 @@ async function readElfManifest(file, expectedInode = null) {
 
 async function consumeAuthorization(config) {
     requireProfile(process.platform === 'linux' && process.getuid?.() === 1001 && process.geteuid?.() === 1001, 'RunnerIdentityRejected');
-    requireProfile(config.nativeOwnedProfileOnce === true && config.gameOnly === true
-        && config.gameKind === 'advanced-rendering-parity' && config.gpuMode === 'software', 'ProfileScopeRejected');
-    const exact = { GITHUB_EVENT_NAME: 'push', GITHUB_RUN_ATTEMPT: '1', GITHUB_REPOSITORY: 'BlackJaxDev/XRENGINE',
-        GITHUB_REF: 'refs/heads/codex/webgpu-readiness-audit', GITHUB_WORKFLOW: 'Owned native GPU profile once',
-        GITHUB_WORKFLOW_REF: 'BlackJaxDev/XRENGINE/.github/workflows/browser-native-profile-once.yml@refs/heads/codex/webgpu-readiness-audit' };
-    for (const [key, value] of Object.entries(exact)) requireProfile(process.env[key] === value, 'WorkflowGateRejected');
-    requireProfile(/^[1-9]\d{0,19}$/.test(process.env.GITHUB_RUN_ID ?? '')
-        && /^[0-9a-f]{40}$/.test(process.env.GITHUB_SHA ?? ''), 'WorkflowIdentityRejected');
+    requireProfile(config.nativeOwnedShadowProfileOnce === true && config.nativeOwnedProfileOnce !== true
+        && config.gameOnly === true && config.gameKind === 'advanced-shadow-parity' && config.gpuMode === 'software'
+        && config.nativeCompileTrace !== true && config.uiFrameTrace !== true && config.gpuDiagnostics !== true,
+    'ProfileScopeRejected');
     const request = await readSmall(path.resolve(requestFile), 4096);
-    requireProfile(createHash('sha256').update(request).digest('hex') === requestHash, 'RequestIdentityRejected');
-    const expectedRequest = JSON.parse(request.toString('utf8'));
-    requireProfile(expectedRequest.requestId === requestId, 'RequestIdentityRejected');
+    requireProfile(createHash('sha256').update(request).digest('hex') === REQUEST_SHA256, 'RequestIdentityRejected');
+    const expectedRequest = validateRequest(request);
+    const event = JSON.parse((await readSmall(process.env.GITHUB_EVENT_PATH, 256 * 1024)).toString('utf8'));
+    const invocation = validateInvocation(process.env, event);
+    requireProfile(expectedRequest.requestId === requestId && expectedRequest.minimumPendingMilliseconds === minimumPendingMs,
+        'RequestIdentityRejected');
+    requireProfile(path.isAbsolute(process.env.RUNNER_TEMP ?? ''), 'RunnerTemporaryDirectoryMissing');
     const temporaryRoot = await fs.realpath(process.env.RUNNER_TEMP ?? '');
+    const temporaryIdentity = await fs.lstat(temporaryRoot);
+    requireProfile(temporaryIdentity.isDirectory() && temporaryIdentity.uid === 1001
+        && !(temporaryIdentity.mode & 0o022), 'RunnerTemporaryDirectoryRejected');
     const activationFile = process.env.XRE_OWNED_PROFILE_ACTIVATION_FILE;
     requireProfile(typeof activationFile === 'string' && path.isAbsolute(activationFile), 'ActivationMissing');
     const activationPath = await fs.realpath(activationFile);
@@ -376,12 +395,10 @@ async function consumeAuthorization(config) {
     const stat = await fs.lstat(activationFile);
     requireProfile(stat.isFile() && !stat.isSymbolicLink() && stat.uid === 1001
         && !(stat.mode & 0o022) && stat.size <= 4096, 'ActivationFileRejected');
-    const activation = JSON.parse((await readSmall(activationFile, 4096)).toString('utf8'));
-    requireProfile(activation.schema === 1 && activation.requestId === requestId && activation.requestSha256 === requestHash
-        && activation.triggerCommit === process.env.GITHUB_SHA && String(activation.workflowRunId) === process.env.GITHUB_RUN_ID,
-    'ActivationIdentityRejected');
-    const marker = path.join(temporaryRoot, `owned-native-profile-consumed-${process.env.GITHUB_RUN_ID}`);
-    const handle = await fs.open(marker, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o600);
+    validateActivation(await readSmall(activationFile, 4096), expectedRequest, invocation);
+    const marker = path.join(temporaryRoot, `owned-native-shadow-profile-consumed-${process.env.GITHUB_RUN_ID}`);
+    const handle = await fs.open(marker, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o600)
+        .catch(error => { if (error.code === 'EEXIST') fail('AuthorizationAlreadyConsumed'); throw error; });
     try {
         await handle.writeFile(JSON.stringify({ requestId, runId: process.env.GITHUB_RUN_ID, commit: process.env.GITHUB_SHA,
             consumedUtc: new Date().toISOString() }));
@@ -839,38 +856,66 @@ async function nativeReport(rawFile, allowedModules, budgetMs) {
     } finally { clearTimeout(timer); clearTimeout(finalTimer); await input.close(); }
 }
 
-/** Diagnostic only. No flag, application arm, or Uber arm can invoke this observer. */
+/** Diagnostic only. Only the exact activated shadow replay can invoke this observer. */
 export function createOwnedGpuProfile({ browser, page, config, result }) {
-    if (config.nativeOwnedProfileOnce !== true) return null;
+    if (config.nativeOwnedShadowProfileOnce !== true) return null;
     const diagnostic = result.ownedGpuProfile = {
         scope: 'One owned Native-isolation CPU observation; original application verdict and 45000 ms compile budget remain authoritative.',
         status: 'scheduled', limits, event: 'cpu-clock:u', frequencyHz: 49, callchainAddresses: 32,
         targetSamplingMs: 8000, maximumCollectorMs: 10000, requestedBoundaryMeaning: 'FIFO acknowledgements confirm processing, not ioctl success.',
         interpretation: 'Timings include profiler overhead. Stripped binaries and frame-pointer chains cannot establish private functions, source lines, compiler passes, or the separate application stall.',
         cleanup: { rawDeleted: false, recorderExitVerified: false, supervisorExitVerified: false, sudoTreeExitVerified: false },
-        timing: {}, reasons: [],
+        timing: {}, prerequisiteCommands: [], reasons: [],
     };
-    let scheduled, running, started = false, cancelled = false;
+    let scheduled, running, claimScheduling, finishing, started = false, cancelled = false;
     let resolveFatal;
     const fatal = new Promise(resolve => { resolveFatal = resolve; });
     const terminateJob = () => { diagnostic.requiresJobTermination = true; resolveFatal(); };
     const note = code => { if (!diagnostic.reasons.includes(code) && diagnostic.reasons.length < 16) diagnostic.reasons.push(code); };
-    const check = () => requireProfile(!cancelled, 'ProfileCancelled');
+    const cancel = () => { cancelled = true; clearTimeout(scheduled); };
+    const check = () => {
+        requireProfile(!cancelled, 'ProfileCancelled');
+        requireProfile(!result.compileWatchdog?.expired && !result.replay, 'CompileNotPending');
+    };
+    const deadlineRemaining = () => {
+        const watchdog = result.compileWatchdog;
+        requireProfile(watchdog?.budgetMs === 45000 && Number.isFinite(watchdog.startedAtNodeMonotonicMs)
+            && watchdog.startedAtNodeMonotonicMs >= 0 && now() >= watchdog.startedAtNodeMonotonicMs,
+        'CompileDeadlineUnavailable');
+        const remaining = watchdog.startedAtNodeMonotonicMs + watchdog.budgetMs - now();
+        requireProfile(!watchdog.expired && remaining > 0, 'CompileDeadlineExpired');
+        return remaining;
+    };
     const compilePending = async () => {
         check();
-        requireProfile(!result.compileWatchdog?.expired && !result.replay, 'CompileNotPending');
+        deadlineRemaining();
+        requireProfile(result.backendComparison?.status === 'matched', 'BackendEvidenceRejected');
         requireProfile(browser.isConnected() && !page.isClosed(), 'OwnedBrowserDisconnected');
-        const pending = await bounded(page.evaluate(() => {
+        const observed = await bounded(page.evaluate(() => {
             const snapshot = globalThis.nativeCompileIsolation?.snapshot();
-            return snapshot?.compile?.status === 'pending' && !snapshot.deviceLoss && !snapshot.explicitDestroyRequested;
+            return { startedAtPageMs: snapshot?.compile?.startedAtMs, observedAtPageMs: performance.now(),
+                pending: snapshot?.compile?.status === 'pending', deviceLost: !!snapshot?.deviceLoss,
+                destroyRequested: snapshot?.explicitDestroyRequested !== false };
         }),
             500, 'CompileStateUnavailable');
-        requireProfile(pending === true, 'CompileNotPending'); check();
+        requireProfile(observed?.pending === true && observed.deviceLost === false
+            && observed.destroyRequested === false, 'CompileNotPending');
+        requireProfile(Number.isFinite(observed.startedAtPageMs) && observed.startedAtPageMs >= 0
+            && Number.isFinite(observed.observedAtPageMs) && observed.observedAtPageMs >= observed.startedAtPageMs,
+        'CompileTimingUnavailable');
+        const pendingMs = observed.observedAtPageMs - observed.startedAtPageMs;
+        requireProfile(pendingMs >= minimumPendingMs && pendingMs < 45000, 'CompilePendingTimeRejected');
+        requireProfile(!diagnostic.pendingGate || diagnostic.pendingGate.startedAtPageMs === observed.startedAtPageMs,
+            'CompileStartChanged');
+        requireProfile(pendingMs <= 45000 - deadlineRemaining(), 'CompileTimingInconsistent');
+        check();
+        return { minimumPendingMs, startedAtPageMs: observed.startedAtPageMs,
+            observedAtPageMs: observed.observedAtPageMs, pendingMs, observedAtNodeMs: now() };
     };
     async function run() {
         let temporary, fifo, rawFd = null, owned, decoder, tree, collector, collectorClosed, closeResult;
         let stdoutBytes = 0, stderrBytes = 0, stopRequested = false, parserFailed = false, stopped = false;
-        let candidate = null, manifest = null, collectorTimer, shutdownPromise;
+        let candidate = null, manifest = null, collectorTimer, shutdownPromise, setupUncertain = false;
         const pinned = [], privilegedPinned = [];
         const overallStarted = now();
         const stop = reason => { note(reason); stopRequested = true; };
@@ -910,17 +955,34 @@ export function createOwnedGpuProfile({ browser, page, config, result }) {
             if (closeResult && closeResult.at - diagnostic.timing.collectorSpawnNodeMs > limits.collectorMs) note('CollectorDurationExceeded');
         })();
         try {
-            diagnostic.authorization = await consumeAuthorization(config);
-            diagnostic.status = 'preparing'; check(); await compilePending();
+            diagnostic.status = 'preparing'; check(); diagnostic.pendingGate = await compilePending();
             // Setup is finite and complete before privileged launch. No command
             // except the one fixed recorder invocation will use sudo.
-            const setupDeadline = now() + 5000;
-            diagnostic.collector = await checkInstalledCollector(); check();
-            owned = await pinOwnedTargets(browser, pinned); check();
-            manifest = await readElfManifest(owned.owner.original.executable, owned.owner.original.inode);
-            requireProfile(now() < setupDeadline, 'ProfileSetupTimeout');
-            temporary = await createTemporaryDirectory(config.output); check();
-            fifo = await openControlFiles(temporary.directory); check();
+            const setupStarted = now(), setupDeadline = setupStarted + 5000;
+            const setup = {
+                commands: diagnostic.prerequisiteCommands,
+                remaining() {
+                    check();
+                    const remaining = Math.floor(setupDeadline - now());
+                    requireProfile(remaining > 0, 'ProfileSetupTimeout');
+                    return remaining;
+                },
+                async step(operation) {
+                    const budget = this.remaining();
+                    let settled = false;
+                    const pending = Promise.resolve().then(operation).finally(() => { settled = true; });
+                    try { return await bounded(pending, budget, 'ProfileSetupTimeout'); }
+                    catch (error) {
+                        if (!settled) { setupUncertain = true; terminateJob(); }
+                        throw error;
+                    } finally { diagnostic.timing.setupMs = now() - setupStarted; }
+                },
+            };
+            diagnostic.collector = await setup.step(() => checkInstalledCollector(setup)); check();
+            owned = await setup.step(() => pinOwnedTargets(browser, pinned)); check();
+            manifest = await setup.step(() => readElfManifest(owned.owner.original.executable, owned.owner.original.inode));
+            temporary = await setup.step(() => createTemporaryDirectory(config.output)); check();
+            fifo = await setup.step(() => openControlFiles(temporary.directory, setup)); check();
             rawFd = openSync(`${temporary.directory}/user-profile.pipe`, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow, 0o600);
             decoder = new OwnedGpuPerfDecoder({ pid: owned.ids.gpu, tids: owned.tids, write: bytes => {
                 let offset = 0;
@@ -929,12 +991,18 @@ export function createOwnedGpuProfile({ browser, page, config, result }) {
             diagnostic.target = { browserPid: owned.ids.browser, gpuPid: owned.ids.gpu, threadIds: owned.tids,
                 executable: manifest.module, executableBuildId: manifest.buildId, originalDescriptors: pinned.length,
                 source: 'Fresh owned-browser CDP; pinned original proc directories, UID/executable/starttime/ancestry/thread-group checks.' };
-            await compilePending();
-            for (const process of pinned) await process.revalidate();
-            const installed = await fs.lstat(perfPath);
+            for (const process of pinned) await setup.step(() => process.revalidate());
+            const installed = await setup.step(() => fs.lstat(perfPath));
             requireProfile(installed.isFile() && installed.uid === 0 && !(installed.mode & 0o022)
-                && String(installed.ino) === diagnostic.collector.inode && installed.size === diagnostic.collector.byteLength, 'InstalledPerfChanged');
-            requireProfile(now() < setupDeadline, 'ProfileSetupTimeout'); check();
+                && (installed.mode & 0o111) !== 0 && !(installed.mode & 0o6000)
+                && String(installed.ino) === diagnostic.collector.inode && String(installed.dev) === diagnostic.collector.device
+                && installed.size === diagnostic.collector.byteLength, 'InstalledPerfChanged');
+            const beforeSpawn = await setup.step(compilePending);
+            diagnostic.timing.beforeSpawnPendingMs = beforeSpawn.pendingMs;
+            diagnostic.timing.beforeSpawnDeadlineRemainingMs = deadlineRemaining();
+            requireProfile(diagnostic.timing.beforeSpawnDeadlineRemainingMs >= limits.collectorMs + limits.analysisMs + 1000,
+                'CompileCleanupMarginUnavailable');
+            setup.remaining(); check();
             const args = ownedGpuRecordArguments(owned.tids, temporary.directory);
             diagnostic.timing.collectorSpawnNodeMs = now();
             collector = spawn('/usr/bin/sudo', args, { shell: false, env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -1034,7 +1102,7 @@ export function createOwnedGpuProfile({ browser, page, config, result }) {
                     catch (error) { if (error.code !== 'ENOENT') throw error; }
                     diagnostic.cleanup.rawDeleted = true;
                 } catch (error) { note(safeReason(error)); }
-            } else diagnostic.cleanup.rawDeleted = true;
+            } else diagnostic.cleanup.rawDeleted = !setupUncertain;
             diagnostic.timing.cleanupFinishedNodeMs = now();
             diagnostic.timing.totalMs = now() - overallStarted;
             diagnostic.timing.collectorLifetimeMs = closeResult ? closeResult.at - diagnostic.timing.collectorSpawnNodeMs : null;
@@ -1042,7 +1110,7 @@ export function createOwnedGpuProfile({ browser, page, config, result }) {
                 ? diagnostic.timing.disableRequestedNodeMs - diagnostic.timing.enableRequestedNodeMs : null;
             // Summary admission is last. No raw file, maps, command lines, kernel
             // metadata or original addresses can leave this observer.
-            if (candidate && diagnostic.cleanup.rawDeleted && diagnostic.cleanup.recorderExitVerified
+            if (candidate && !diagnostic.requiresJobTermination && diagnostic.cleanup.rawDeleted && diagnostic.cleanup.recorderExitVerified
                 && diagnostic.cleanup.supervisorExitVerified && diagnostic.cleanup.sudoTreeExitVerified) {
                 diagnostic.summary = candidate;
                 diagnostic.status = diagnostic.reasons.length ? 'incomplete' : 'completed';
@@ -1058,20 +1126,46 @@ export function createOwnedGpuProfile({ browser, page, config, result }) {
     }
     return {
         fatal,
+        cancel,
         begin() {
-            if (started) return;
+            if (started || finishing) return;
             started = true;
-            scheduled = setTimeout(() => {
-                running = run().catch(() => {
-                    diagnostic.status = 'unavailable'; note('ObserverCleanupFailed'); terminateJob();
-                });
-            }, 1000);
+            const admissionDeadline = now() + admissionBudgetMs;
+            claimScheduling = (async () => {
+                try {
+                    const authorization = await bounded(consumeAuthorization(config), admissionBudgetMs,
+                        'AuthorizationClaimTimeout');
+                    requireProfile(now() < admissionDeadline, 'AuthorizationClaimTimeout');
+                    diagnostic.authorization = authorization;
+                    diagnostic.timing.authorizationClaimedNodeMs = now();
+                    if (cancelled) return;
+                    scheduled = setTimeout(() => {
+                        if (cancelled) return;
+                        running = run().catch(() => {
+                            diagnostic.status = 'unavailable'; note('ObserverCleanupFailed'); terminateJob();
+                        });
+                    }, minimumPendingMs);
+                } catch (error) {
+                    diagnostic.status = 'unavailable'; diagnostic.cleanup.rawDeleted = true; note(safeReason(error));
+                    if (error?.profileCode === 'AuthorizationClaimTimeout') { cancel(); terminateJob(); }
+                }
+            })();
         },
-        async finish() {
-            cancelled = true; clearTimeout(scheduled);
-            if (running) await Promise.race([running, fatal.then(() => bounded(running, 1000, 'ProfileCleanupTimeout')
-                .catch(() => note('ProfileCleanupTimeout')))]);
-            else { diagnostic.status = 'skipped'; diagnostic.cleanup.rawDeleted = true; note('CompileSettledBeforeCapture'); }
+        finish() {
+            cancel();
+            return finishing ??= bounded((async () => {
+                // A completed claim cannot create a timer after finish has returned.
+                await claimScheduling;
+                clearTimeout(scheduled);
+                if (running) await Promise.race([running, fatal.then(() => bounded(running, 1000, 'ProfileCleanupTimeout')
+                    .catch(() => note('ProfileCleanupTimeout')))]);
+                else {
+                    if (diagnostic.status !== 'unavailable') { diagnostic.status = 'skipped'; note('CompileSettledBeforeCapture'); }
+                    diagnostic.cleanup.rawDeleted = true;
+                }
+            })(), finishBudgetMs, 'ProfileFinishTimeout').catch(error => {
+                cancel(); diagnostic.status = 'unavailable'; note(safeReason(error)); terminateJob();
+            });
         },
     };
 }
