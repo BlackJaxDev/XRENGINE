@@ -7,6 +7,32 @@ Intersections world. Verify visible mesh deformation, GPU palette motion,
 zero simulation readback, and repeated benchmark start and stop. Measure
 scaling before choosing performance changes.
 
+## Current bottleneck evidence
+
+Last checked: 2026-10-07 23:23 UTC. The [valid scope timeline](#valid-2000-chain-scope-timeline)
+supports overlapping render/collection work followed by serial swap as the
+observed critical cycle. It does not prove CPU-on-core costs. Hiding the whole
+chain rendering path in three cycles reached 52.0–58.9 Hz, against
+16.3–19.2 Hz for the full scene. This includes collection, publication,
+deformation, and drawing; it is not a raster-only result. Frozen physics
+varied from about 13 to 25 Hz, so no quantitative physics benefit is established.
+See the [second ablation cycle](#second-ablation-cycle-and-measurement-limits)
+for timing limits. The [engine-side cycle 3 measurement](#engine-side-ablation-meter-first-results)
+records full and frozen results. The [third hidden result and restoration](#third-hidden-result-and-ablation-restoration)
+complete the three-mode set.
+The [frozen timeline](#frozen-physics-scope-timeline-comparison) still shows
+render work followed by serial swap after world update cost falls sharply.
+
+The 100 Hz target remains unmet. Grouped GPU indexed-instance draws already
+exist and have native validation. The next structural candidate is to separate
+stable scene registration from pose/bounds publication in `ScenePlan`, whose
+diagnostic residual averaged about 7 ms per call. It is not an implemented
+fix. The collider proof remains deferred; the cache's gathering-stage gain
+does not establish an end-to-end frame-rate gain.
+Stable registration and per-draw/group templates are the next structural
+priority. The owned editor is stopped; all 40 existing targeted tests passed
+on final source. See the [final validation and allocation exclusion](#final-validation-and-scoped-allocation-exclusion).
+
 ## Configuration and evidence
 
 - Named isolated editor session: `skinned-chain`.
@@ -1977,3 +2003,1319 @@ Work stopped at the owner's request on 2026-10-07. The owned editor session
 edits, commit, staging, or push were made in this continuation. The
 [implementation status](../../progress/physics/physics-chain-scale-status-2026-10-07.md)
 records completed code, validation limits, and the resume order.
+
+## Resume after the latest pull
+
+Work resumed on 2026-10-07 on the Intel Core Ultra 9 185H and RTX 4070
+Laptop GPU. These results must stay separate from the prior Ryzen 9 7950X3D
+and RTX 3090 results. The scene uses strict Vulkan GPU-indirect submission,
+the Advanced pipeline, animated directional shadows, and uncapped presentation.
+The desktop output is 1920 by 1080; the observed internal target is 1286 by 723.
+
+Debug and selective readback now acquire active admission before storage
+access. The bounded review also found exception paths that retained logical
+staging slots and buffer growth that destroyed the old buffer before a new
+one was ready. Both paths now release or retain the correct owner. Quarantined
+Vulkan slots retire only after counted users finish and native reuse reports
+Ready. Missing native proof keeps the slot until dispatcher teardown.
+Available compute operations reuse their own sealed snapshot storage.
+Detached copies keep independent storage. The combined Release build passed
+with zero warnings and errors in 52.79 seconds. Per-frame allocation profiling
+and the native fault matrix remain open.
+
+The current 32-chain smoke window completed 284 frames in 6.038 seconds.
+No new deferred, rejected, or failed frame appeared. Input storage did not
+grow, and physics readback stayed at zero. Wide and near images showed visible
+bent meshes. Four explicit selective requests then returned 216 bytes each in
+three frames. Bone translations matched the selected solved particle positions.
+Successive results changed. These requests transferred 864 bytes in total;
+they were outside the zero-readback timing windows.
+
+Dense GPU timing and CPU frame timing identified a GPU wait. One active CPU
+frame spent 366.717 ms in the next-slot wait out of 400.448 ms total. A dense
+GPU frame reported 233.178 ms around HiZ testing and 123.431 ms around
+directional cascades. These timestamp ranges include upstream work drain;
+they are not exclusive shader costs. Group append paths had shared CAS retry
+loops. Early visibility, late visibility, and directional shadow membership
+now use one atomic reservation. Capacity checks still guard writes, and the
+finalizer clamps attempted counts to each group's reserved capacity.
+
+After all group-counter changes, the strict 2,000-chain window completed
+656 frames in 30.403 seconds: 21.577 Hz, with frame-interval p95 52.948 ms.
+It added no deferred, rejected, or failed frames. All 2,000 chains remained
+registered. Physics readback, dispatch failure, input allocation, and input
+failure deltas were zero. Accepted shadow groups advanced by 768; rejected,
+unconsumed, and generic counts did not change. Wide and near images were
+viewed. The four Debug observers and RenderDoc were off; world telemetry
+remained on. This is a diagnostic result and does not meet the 100 Hz target.
+Static upload increased by 3,601,500 bytes; this is not proof of complete
+steady-state GPU residency.
+
+Earlier 30-second benchmark attempts ran past the controller's 120-second
+limit because the script tried to recover every missed one-second sample.
+Those windows ended with zero chains and are invalid. Sampling now uses a
+wall-clock deadline and skips missed sample positions. Actual elapsed time
+includes slow calls. The optional trace tool is checked before scene mutation.
+
+The next memory experiment changes only Advanced visibility storage. It
+prefers host-visible device-local memory and retains the existing mapping,
+flush, and fence contracts. Cold allocation logs expose the actual memory
+type and flags. Other lanes retain their existing policy. The policy and
+capacity-failure retry passed review; build and measured results follow below.
+
+The memory build passed with zero warnings and errors in 57.81 seconds after
+the frame-slot growth caller received the same lane policy. A live allocation
+registry query confirmed five 16 MiB visibility chunks. Each used memory type
+4 with DeviceLocal, HostVisible, and HostCoherent flags. The ordinary Vulkan
+log category did not emit the cold allocation lines in this session, so the
+registry query supplied the placement evidence.
+
+The first telemetry-on memory run completed 568 frames in 30.065 seconds:
+18.892 Hz, p95 64.582 ms. A separate dense GPU sample then recorded 34 active
+frames. The directional cascade interval averaged 0.228 ms; HiZ averaged
+0.181 ms. Pipeline p50 was 6.716 ms. These intervals are inclusive and do not
+cover all physics or CPU work. A CPU snapshot had 0.022 ms next-slot wait and
+10.729 ms command recording. Collection and update still had large wall times.
+No matched measurement isolates a frame-rate gain from memory placement.
+
+With world telemetry, the four Debug observers, and RenderDoc disabled, three
+60-second strict 2,000-chain cycles produced:
+
+| Cycle | Completed frames | Completed Hz | Frame-interval p95 |
+| --- | ---: | ---: | ---: |
+| 1 | 1,338 | 21.805 | 52.598 ms |
+| 2 | 1,195 | 19.879 | 62.596 ms |
+| 3 | 1,176 | 19.458 | 60.881 ms |
+
+Every window held 2,000 registered chains and passed strict package, moving
+shadow, frame-outcome, input-storage, and zero physics-readback checks. After
+each stop, counters returned to one chain, one palette slice, and one renderer
+binding. All wide and near images were viewed. Restored-source image pairs
+from all three cycles show continuing motion. Exact all-member visibility
+and native output containment still need a current capture. The 100 Hz target
+failed in all three cycles.
+
+A same-call selective request/cancel/release returned Cancelled and released
+the handle. A subsequent request returned 216 bytes in three frames. Bone
+translations matched particles and the returned linear rows had nonidentity
+rotations. This makes five successful 216-byte requests in this continuation.
+
+The primary directional shadow collection bypass was rejected during source
+review. The primary tile uses ShadowRenderPipeline, which clears canonical
+publication. Its general GPU path still executes collected CPU-owned mesh and
+non-mesh commands. Preparing an empty GPU package would remove real casters.
+The generic GPU culling shader also lacks CastShadow and mirror policy checks.
+An explicit native primary-shadow consumer and ownership contract must exist
+before this collection can be removed.
+
+The update profile contains a large RuntimeWorld.Update scope with no inner
+tick detail. Fixed update can also wait on the world's tick gate. Repeated
+rest-input ancestry checks are a candidate, but a shared cache needs an exact
+same-phase hierarchy/topology witness. Measure quality and GPU input-gather
+stage deltas before choosing that change. Do not cache across frames using
+only registration or particle-rebuild dirtiness.
+
+Static upload counters include template and depth-topology writes. The
+2,111,928-byte delta in the memory run does not prove a per-frame upload bug.
+Cold and structural publication can account for part of it. UpdateParameters
+also advances the particle version for edits that do not change particle
+static data. Compare exact per-request static versions and the depth-topology
+signature across a stable window before changing this invalidation contract.
+
+### Advanced debug drawing and shader ownership
+
+The Advanced command chain did not invoke selected GPU chain debug drawing.
+A conditional depth-tested pass now loads the scene color and depth targets.
+It runs only when GPU chain debug selection is active. It excludes unrelated
+world physics debug drawing. This change does not enable debug work in the
+clean benchmark windows.
+
+The first native capture did not contain the two expected debug indirect
+draws, although the authoring snapshot reported them. Those counters can
+retain an earlier successful submission and are not native execution proof.
+The native frame did contain the main skinned mesh and four shadow draws.
+
+An off/on cycle then exposed a separate shader ownership defect. A cold live
+probe found seven debug items, a destroyed cached compute shader, no program,
+and no buffers. ShaderHelper returned its completed cached shader load.
+The debug batch had destroyed that shared shader when its selection retired.
+The batch now borrows the shader and destroys only its owned program. The
+next build must validate the first debug draw and repeated reselection.
+
+RenderDoc capture and replay must use the same compatible build. The first
+capture loaded the installed 1.44 layer, while the available replay module was
+1.41. A process-only VK_IMPLICIT_LAYER_PATH override selected the existing
+1.41 layer for the owned session. Module inspection and replay confirmed the
+match. No installation or registry setting changed. Native targets were
+exported and viewed; replay sessions were closed.
+
+### Full-grid native evidence and input-bank growth
+
+The repaired debug batch passed three off/on cycles. One native frame contains
+the compute dispatch and both indexed indirect debug draws with seven
+instances. Both draws use depth test and depth writes. Other captures caught
+busy frames without debug draws. The bounded batch can skip these frames;
+continuous debug overlays are not proven.
+
+Two MainThread MCP captures contain one indexed group with 2,000 members.
+Each has 2,000 unique payloads and draw handles. Replay checked the actual
+index stream, shader push constants, per-member deformation offsets, route
+generations, and bounds. All 208,000 current and 208,000 valid previous
+positions are finite and inside their own bounds. Each of the 2,000 members
+changes its centered radii and anchor distances by more than 0.001 world
+units. This excludes rigid translation and rotation alone; world scaling
+can also change those distances. All 2,000 current-position digests also
+change between the two captures. The final native images were viewed.
+
+The replay reports are `native-mainthread-wide-exact-members.json` and
+`native-mainthread-second-exact-members.json` in the current run's `reports/`
+folder. One incorrect helper assertion was removed: the first atomically
+appended member is not necessarily the group's fixed representative. The
+actual native index decode and per-member range checks remain.
+
+An earlier restart retained Direct MCP dispatch. Its long spawn call timed
+out and the captured frame was incomplete. That run is discarded. Set
+MainThread MCP dispatch after every restart, as the canonical harness does.
+
+The corrected full-grid camera is (0, 400, 450), looking at the origin.
+The older (0, 260, 310) camera could clip front rows, so the older clean
+timings do not prove performance with every chain visible. The harness now
+uses the corrected camera and scales its distance above 2,000 chains.
+
+The first clean full-grid window failed measurement acceptance because input
+buffer allocations increased from 10 to 15. Native failures, quarantine,
+and arena generation did not increase. Allocation occurs in groups of five
+when an input bank is first used or grows. Capacity planning now provisions
+all eight safe banks at rounded, monotonic capacities. It preserves native
+reuse checks, renderer ownership, and the selected-bank fallback. Failed
+provisioning remains pending and reports a diagnostic. A complete warm target
+does not scan or poll the banks. This requires a fresh three-cycle check.
+
+### Math world camera and label defaults
+
+Only the Math Intersections pawn camera now starts with bloom disabled and
+manual exposure 1.0. Live Advanced pipeline settings confirmed both values
+before and after source-chain activation. No shared camera default changed.
+
+The world labels already calculated camera-facing text matrices, but cached
+them while the camera moved. Math labels now invalidate their text matrices
+before rendering. Front, side, rear, and far-to-near views were captured and
+viewed. Names, descriptions, and sublabels remain readable and face the
+camera. The mesh stays visible against the black background. The combined
+input-bank and camera build passed with zero warnings and errors in 108.19
+seconds. User confirmation of the visual result is not yet recorded.
+
+### Repeated-run resource blocker
+
+The first three full-grid windows after input provisioning passed measurement
+checks at 22.243, 19.969, and 18.987 Hz. Interval p95 was 51.739, 63.093,
+and 62.536 ms. All had zero new input allocations and failures. These are
+not performance acceptance. An immediate post-stop probe ran before gradual
+teardown ended, so it reported zero registered chains. A later probe found
+the restored source. The lifecycle check now waits for that restoration.
+
+A fourth window passed at 21.152 Hz and p95 59.902 ms. Its viewed wide and
+near images show the grid and deformed meshes. After teardown, one source,
+one palette slice, and one binding returned. Viewed source images show motion.
+
+The fifth window failed after 189 completed frames and 18 deferred frames.
+The following snapshot reported persistent `ResourceGenerationBlocked` at
+FramePacing. No device loss or renderer reload occurred. The main viewport
+reported a valid 1920 by 1080 display, 1286 by 723 internal size, an active
+resource generation, no pending generation, and no generation error. The
+source returned to one chain, but completed rendering stopped. Input and
+output fence failures then increased. Their ordering does not prove they
+caused the global viewport resource blocker. This failure remains under
+investigation; do not report the extended restart sequence as passed.
+
+Evidence: `final-lifecycle-2-summary.json`, `final-defer-profiler.json`,
+`final-defer-render-state.json`, and `final-defer-restored.json` in the run's
+`reports/` folder. The same combined binary passed all 40 existing targeted
+Release tests in 35.036 seconds. No unit tests were added or changed.
+
+Rendering later recovered without a restart or a setting change. Two
+read-only probes found no blocker, no pending generation, and a cleared skip
+marker. Completed-frame counters advanced again. Resource preparation runs
+before desktop preflight, so a simple preflight-before-preparation deadlock
+is ruled out. Unsubmitted frames fail their input/output markers; the later
+fence failures can be consequences of the viewport blocker. The old
+MeshMaterialization failure predates this episode and is not its cause.
+
+The benchmark harness now saves failure snapshots before teardown. A retained
+first/latest resource-blocker diagnostic was added because live polling
+after automatic recovery loses the decline reason. No recovery policy change
+is justified by the current evidence.
+
+Two runs after recovery passed at 14.856 and 16.574 Hz, with p95 85.304 and
+70.603 ms. Both restored the source and its palette binding; wide, near, and
+source motion images were viewed. The next start request timed out after 180
+seconds although the editor started the benchmark. This is a separate failed
+automation check. The harness now marks a start as pending before sending it,
+so an uncertain reply still triggers failure snapshots and stop cleanup.
+
+The final diagnostic build passed with zero warnings and errors in 48.27
+seconds. Its retained startup episode spans frames 1 through 78, with the
+resource guard passing at frame 79. The snapshot retains the pending Building
+key and the resource-profile decline after recovery. Its synchronized getter
+prevents a torn read across app and render threads. No admission policy changed.
+
+The final clean 2,000-chain window completed 603 frames at 19.985 Hz, with
+interval p95 59.574 ms. There were no new deferred, rejected, or failed frames,
+input allocations, input failures, or physics readback. Strict submission and
+moving-shadow admission passed. Stop restored one source chain, one palette
+slice, and one binding. Wide, near, source motion, and front/side label images
+were viewed. Bloom remains disabled; auto exposure remains disabled with
+exposure 1.0. The retained episode stayed unchanged after the run. The current
+owned session was stopped. The 100 Hz target and extended restart checks
+remain open; the successful final window does not erase the earlier faults.
+
+### Six repeat windows and CPU diagnostic follow-up
+
+The later `async-repeat-1` through `async-repeat-6` summaries all passed the
+harness correctness checks. The report label does not indicate asynchronous
+physics submission. Physics still uses the graphics queue.
+
+| Window | Completed frames | Elapsed seconds | Completed Hz | Interval p95 ms |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 650 | 30.421 | 21.367 | 57.320 |
+| 2 | 616 | 30.750 | 20.032 | 58.574 |
+| 3 | 625 | 30.435 | 20.535 | 58.445 |
+| 4 | 583 | 30.123 | 19.354 | 57.377 |
+| 5 | 489 | 30.588 | 15.987 | 75.280 |
+| 6 | 551 | 33.949 | 16.230 | 70.183 |
+
+World telemetry and the four profiler observers were off. All windows held
+2,000 chains and strict directional-shadow admission. They added no deferred,
+rejected, or failed frames, input growth, or physics readback. All 24 wide,
+near, and restored-source images were viewed. Each stop restored one source
+chain. No window meets 100 Hz or 10 ms p95. The retained snapshot after all
+six windows contains only the cold startup episode at frames 1–80 and recovery
+at 81. This does not resolve the earlier intermittent resource blocker.
+
+The next Release build includes the opt-in MCP request trace. It passed with
+zero warnings and errors in 34.44 seconds. The broker review completed and
+found that `SetBenchmarkRunToggle` returns `void`. Its invocation does not
+wait for settling or measurement. The supplied path does not establish a
+synchronous Task wait or a lost completion signal. Trace request enqueue,
+callback entry, reflection entry/exit, completion, and response boundaries
+before changing synchronization or timeouts. A timed-out client request does
+not prove that the server mutation stopped.
+
+The `cpu-diagnostic-trace-1` window enabled world telemetry and passed the
+harness checks. It completed 661 frames in 30.1239 seconds: 21.94269 Hz, with
+p95 53.7217 ms. The four profiler observers remained off. All four images were
+viewed. After stop, the source count is one and the source still deforms.
+The post-stop resource snapshot is healthy. Its retained episode covers only
+startup frames 1–78 and recovery at 79. The intermittent blocker remains open.
+
+The full-world before/after snapshots span 20.6824944 seconds. Callback rows
+were matched by `DeclaringType`, `Method`, `TargetType`, `InnerDeclaringType`,
+`InnerMethod`, `Group`, and `Order`, not by array position. `PhysicsChainWorld`
+recorded 624 `LateTick` calls at 23.788 ms per call, 621 `FixedTick` calls at
+10.322 ms per call, and 624 `UpdateTick` calls at 0.978 ms per call. Benchmark
+root motion averaged 1.238 ms over 624 calls. All four callbacks recorded zero
+allocation on their calling thread. Fixed tick can wait on the shared tick
+gate; its measured duration is not exclusive physics computation.
+
+The separate detailed telemetry pair covers 1,064 late ticks. Body time
+averaged 23.790 ms per tick. Quality evaluation plus prerequisite/dependency
+preparation averaged 5.588 ms; world rest-input gathering averaged 7.161 ms.
+GPU component preparation averaged 3.112 ms, input packing 1.905 ms, bridge
+submission 1.424 ms, and activity scanning 1.415 ms. These timers are nested.
+Do not sum parent and child timers or combine concurrent callback time into
+exclusive frame time. Quality is not isolated from dependency preparation.
+World gathering also includes compatibility and collider-dependency checks.
+Bridge time includes submission locks and packet work. Committed spatial
+queries still have no separate exclusive timer.
+
+Evidence is in `Build/_AgentValidation/20261007-102900-chain-scale-resume/reports/`:
+`async-repeat-1-summary.json` through `async-repeat-6-summary.json`,
+`async-repeat-after-six-episode.json`, `mcp-timeout-broker-review.json`,
+`cpu-diagnostic-trace-1-summary.json`, the matching telemetry pair,
+`cpu-diagnostic-window-world-before.json` and `-after.json`, and
+`cpu-diagnostic-post-stop-resource.json`. These files are disposable; the
+measurements and limits above are the durable record.
+
+Nsight is installed. Its environment check reports no OS administrator access
+and failed sampling support. An API-only trace trial has not been attempted.
+Queue availability does not prove hardware overlap. The remaining experiment
+needs actual queue timelines, same-frame producer/consumer dependencies, and
+matched total-frame timing. No asynchronous physics path or performance gain
+is established. The owned editor is running for further diagnostics.
+
+### API-only Vulkan trace and activity-scan scope
+
+The Nsight API-only trial succeeded despite the unavailable OS sampling
+support. The benchmark window completed 650 frames in 30.767 seconds at
+21.126 Hz, with p95 55.535 ms. Harness correctness checks passed with no new
+deferred, rejected, or failed frames. The source returned to one chain.
+Both restored-source images were viewed and show different deformation.
+The owned editor is now stopped, and the profiler launch session has exited.
+
+The trace began at 20:52:58.467 UTC. The benchmark window began at
+20:52:43.447 UTC. Analysis uses trace offsets 1 through 12 seconds, an
+11-second interval that ends before the benchmark window ends. It contains
+684 workload rows, 229 submit calls, and one queue context, ID 2. Correlation
+grouping finds 228 complete submission groups with three workloads each.
+
+| Trace measure | Result |
+| --- | ---: |
+| Mean complete-group GPU span | 8.798 ms |
+| Median complete-group GPU span | 8.188 ms |
+| Complete-group GPU span p95 | 12.826 ms |
+| Maximum complete-group GPU span | 15.764 ms |
+| Mean submit spacing | 48.082 ms |
+| Mean submit-return to GPU-start delay | 0.177 ms |
+| Observed workload coverage | 18.22% |
+
+The full-trace API summary reports mean `vkQueueSubmit2` duration of 0.094 ms,
+mean `vkQueuePresentKHR` duration of 0.066 ms, and mean `vkWaitSemaphores`
+duration of 0.019 ms. These API means use the full trace, not only the stable
+interval. The warning states, "Not all Vulkan events might have been
+collected." Workload rows are submission units, not individual shader scopes.
+Observed coverage is not device utilization, and missing events limit precise
+busy/idle claims. The short observed GPU spans and larger submit spacing
+support a CPU submission-gap hypothesis. They do not isolate an exclusive CPU
+cause or prove that asynchronous compute will help.
+
+Evidence is `vulkan-api-trace.nsys-rep`, `vulkan-api-trace.sqlite`,
+`vulkan-api-trace-analysis.json`, `vulkan-api-stats_vulkan_api_sum.csv`, and
+`nsys-api-diagnostic-summary.json` in the same run's `reports/` directory.
+The bounded analysis is in `scratch/analyze-nsys.py`.
+
+Source review limits the 1.415 ms activity-scan measurement to
+`PhysicsChainWorld.PublishActivityDiagnostics` in
+`PhysicsChainWorld.ActivityDiagnostics.cs`. It scans live slots, reads sleep
+and wake state, checks hierarchy activity for awake components, and updates
+changed sleep/wake counters. Selected diagnostics run under a separate timer.
+`IsRuntimeSleeping` and `WakeCount` are direct field reads. The hierarchy path
+is `XRComponent.IsActiveInHierarchy` to `SceneNode.IsActiveInHierarchy`, which
+recursively visits `Parent` until the root or an inactive node. `SceneNode.Parent`
+reads the transform's virtual parent and scene-node properties. The default
+getters do not recalculate matrices, allocate, or take a lock.
+
+This scan is linear in live slots times ancestor depth, not a scan of all
+other chains. Its timer also includes slot access and counter work, so the
+1.415 ms does not prove hierarchy traversal owns that time. The next narrow
+measurement should separate hierarchy checks from the rest of this loop.
+Do not replace the current check with a cached active flag without an exact
+activation, world-membership, and parent-change witness. A slot-copy reduction
+can be reviewed separately, but no speed gain is measured. The larger quality
+and world input-gather intervals remain higher-priority CPU measurements.
+
+### Rejected ancestry-cache experiment
+
+`ancestry-cache-diagnostic-1-summary.json` passed the harness checks at
+21.129 Hz and p95 60.0716 ms. The detailed telemetry pair measured mean
+late-tick body time of 31.864 ms, against the earlier 23.790 ms baseline.
+Quality plus dependency preparation rose from 5.588 to 11.926 ms. World
+rest-input gathering changed from 7.161 to 7.393 ms. These nested stage
+measurements reject the cache as a performance improvement; the similar
+completed-frame rate does not override the CPU regression.
+
+All 13 compatibility-reason counts stayed at zero. The run added no physics
+readback or new deferred, rejected, or failed frames. All four images were
+viewed, and stop restored one source chain. The cache was removed.
+Its patch is retained at `reports/ancestry-cache-rejected.patch` in the current
+run. Do not retain this experiment as finished cache architecture.
+
+The next authorized design permits lower physics rates by distance with
+interpolated GPU poses. Current solver records retain `PreviousPhysicsPosition`,
+but `PhysicsChainBonePalette.comp` uses only current solved positions. No
+palette interpolation alpha or mode is bound. The debug shader has an
+interpolation helper, but the bridge currently supplies alpha zero. A zero-step
+Core update returns before submission, and GPU active-work compaction excludes
+zero-step and cadence-skipped trees. The solvers' skip branches therefore do
+not supply root-motion maintenance for this route.
+
+The design must separate solver endpoints from previous rendered output.
+Output pages already retain the prior published palette with exact source
+witnesses; Advanced deformation separately checks the preceding render frame
+and its output-page token. Interpolation needs render-pose publication between
+solves, consistent root motion for both endpoints, and bounds for the actual
+current and previous rendered palettes. The existing lower-rate metadata alone
+does not provide these contracts. No interpolation implementation or gain has
+been validated.
+
+### Existing reduced-rate comparison and temporal design review
+
+After the ancestry cache was removed, `cadence-full-rate-baseline-summary.json`
+passed the harness checks with 675 completed frames in 30.809218 seconds:
+21.909 Hz and p95 53.9809 ms. `cadence-hz15-existing-summary.json` also passed,
+with 681 frames in 30.520027 seconds: 22.313 Hz and p95 52.0613 ms. Neither
+window added deferred, rejected, or failed frames. Neither meets the target.
+
+The detailed full-rate pair covers 1,124 late ticks: body time averaged
+24.389 ms, quality plus dependency preparation 5.848 ms, and world rest
+gathering 7.123 ms. The existing 15 Hz pair covers 1,116 late ticks: body
+22.294 ms, quality plus dependency preparation 5.824 ms, and rest gathering
+7.304 ms. These are nested stage measurements. Reduced cadence still pays
+the world gathering cost before the current due decision.
+
+All four 15 Hz images were viewed. The wide grid is present; the near view
+contains bent skinned meshes. The restored-source images show different bent
+poses. Stop restored source count one and the `Strict`/`Discrete` settings.
+Still images do not prove smooth interpolation. The owned editor was stopped;
+`pre-distance-lod-stop.log` records that cleanup.
+
+The current `Interpolate` setting does not interpolate the GPU palette.
+Existing reduced tiers also change the physical time reference instead of
+batching equivalent authored fixed steps. The comparison therefore supports
+moving due admission before expensive CPU gathering. It does not validate
+smooth GPU LOD or equivalent wall-time physics.
+
+The completed temporal review in `distance-lod-temporal-review.json` rejects
+a single endpoint pair with cadence-derived alpha as a general rate-transition
+contract. Normalized cadence phase does not preserve displayed pose when the
+endpoint interval changes. A new batch can replace endpoints still needed
+for presentation. The reviewed safe reference uses authored 60 Hz physical
+ticks, retained timestamped endpoints, and a fixed presentation delay of at
+least four ticks, about 67 ms, plus bounded endpoint delivery. This is not a
+final latency decision. Delivery bounds, continuous recovery, and latency
+reduction remain open.
+
+The user-authorized full feature also needs retained GPU tick debt, sampled
+root motion across fixed substeps, root-relative presentation on render-only
+frames, separate previous-render history, conservative skin/root bounds, and
+multi-view relevance. The first bounded code slice is early due admission for
+the existing reduced tiers. It must not be reported as the full smooth-LOD
+feature. See the [distance cadence design](../../design/physics/distance-cadence-gpu-presentation.md)
+for the proposed ownership and temporal contracts.
+
+### Workgroup comparison with invalid marker windows
+
+The 32, 64, and 128 workgroup trials used the unchanged editor binary, full-rate
+source settings, and world telemetry off. The new CPU early-admission patch
+was not built into these runs. The results are:
+
+| Workgroup size | Completed frames | Elapsed seconds | Reported Hz | Reported p95 ms | Validity |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 32 | 634 | 30.287 | 20.933 | 55.0141 | Harness passed; interval samples valid. |
+| 64 | 657 | 30.443 | 21.581 | 52.1825 | Failed `InputPageFenceFailed`; interval telemetry invalid, four dropped samples. |
+| 128 | 595 | 30.249 | 19.670 | 63.3182 | Failed `InputPageFenceFailed`; interval telemetry invalid, two dropped samples. |
+
+All three windows reported zero new deferred, rejected, or failed native
+frame outcomes. That does not override the input-page failures. At 64 threads,
+both input- and output-page failure counts rose from one to six. Dispatch
+failure count stayed zero; input quarantine stayed zero. These are rejected
+measurement windows, not evidence that a particular workgroup size causes
+the marker fault.
+
+`solver-artifact-workgroups.json` confirms compiled local sizes of 32, 64,
+and 128. The current 32-thread artifact was created at 17:42:03 UTC; the new
+64- and 128-thread artifacts were created at 21:28:14 and 21:33:21 UTC.
+These artifacts confirm the compiled variants, not a performance winner.
+The shader include returns to 32 for the next run.
+
+GPU CSV timestamps are local PDT. They were converted with UTC offset -07:00
+and filtered to each `window-start` timestamp through that timestamp plus the
+summary's actual elapsed seconds. No startup, teardown, or source-only samples
+were included in the following table.
+
+| Workgroup | Samples | Graphics MHz mean (range) | Memory MHz mean | Power W mean | Temperature C mean | Sampled utilization mean |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| 32 | 30 | 1,266.5 (885–1,635) | 7,468.3 | 13.31 | 57.8 | 25.4% |
+| 64 | 29 | 1,239.8 (780–1,470) | 7,270.9 | 13.14 | 57.8 | 28.3% |
+| 128 | 30 | 872.0 (420–1,365) | 3,483.4 | 10.68 | 59.3 | 30.6% |
+
+The 32- and 64-thread windows include P0, P3, and P5 samples. The 128-thread
+window includes P0 and P5. Memory clocks range from 810 to 8,101 MHz in all
+three windows. These are coarse device samples, not per-pass GPU timings.
+Clock and power variation further limits comparisons. Do not infer a winner
+or a causal thermal explanation from this small set.
+
+All four 32-thread images were viewed. The wide grid is visible, near meshes
+are bent, and the restored source changes pose. The failed 64- and 128-thread
+harness runs ended before wide/near capture. Their separately saved restored
+source pairs were viewed. Both show a visible source with different bent
+poses. No screen image establishes all-member visibility or smoothness.
+
+Source review shows that `CanReuseInputPage` records a failed fence marker,
+then can reuse a Vulkan page if native buffer reuse checks pass. Zero
+quarantine therefore does not establish that a failure was harmless.
+`VulkanTimelineGpuFence.Fail` is also used for abandoned or unsubmitted plans,
+as well as native query failure. The 64-thread profiler snapshot retains a
+strict directional-shadow pipeline compilation retry at frame 1192. Later
+frames completed with unchanged bad-outcome totals. Delayed observation of
+an earlier marker failure is possible, but there is no marker origin identity
+to prove it. The available session logs do not identify the first failure
+site. Keep the failure classification until creation, bind, failure, and
+observation identities can be correlated.
+
+Evidence is in the `workgroup32-clean-1`, `workgroup64-clean-1`, and
+`workgroup128-clean-1` summary, window-start, and GPU-clock reports, plus the
+64/128 failure and restored-source reports. The 128-thread session was being
+stopped before the next build. No CPU optimization validation is implied by
+these old-binary trials.
+
+### Provisional early-admission comparison
+
+Last checked: 2026-10-07 21:49 UTC. The early-admission Release build passed
+in 64.31 seconds with zero warnings and errors after two missing imports
+were corrected. This is an attempted optimization. It is not yet a retained
+performance fix or a complete smooth distance-cadence implementation.
+
+| Diagnostic | Harness result | Completed Hz | Interval p95 ms | Mean late-tick body ms | Mean rest gathering ms | Mean component preparation ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Previous Hz15 | Accepted | 22.313218 | 52.0613 | 22.294 | 7.304 | 2.834 |
+| Early admission, run 1 | Accepted | 21.085118 | 59.8461 | 24.793 | 7.699 | 4.413 |
+| Early admission, run 2 | Accepted | 21.462904 | 56.5694 | 23.967 | 7.373 | 4.328 |
+| Early admission, run 3 | Accepted | 21.653223 | 54.7638 | 24.076 | 7.418 | 4.300 |
+| Current Strict control | Accepted | 19.571711 | 62.6706 | 27.043 | 8.409 | 3.271 |
+
+The CPU stages are nested. Do not add their means. Run 1 recorded 1,076,000
+capture skips and matching preparation skips across 1,112 ticks. Run 2
+recorded 1,096,000 of each across 1,080 ticks. Run 3 recorded 1,064,000 of each
+across 1,052 ticks. The Strict control recorded zero skips across 1,016 ticks.
+The admission gate executes,
+but these results show no measured gain. Rest gathering remains near the
+previous cost, and component preparation is higher in all three new reduced-rate runs.
+The current Strict body mean is 27.043 ms, against the earlier 24.389 ms.
+System drift limits the old-baseline comparison; it does not establish the
+cause of the change.
+
+All four images from each reduced-rate run and the Strict control were viewed.
+The wide images show the grid;
+the near images show bent skinned meshes. Each restored source pair has
+different bent poses. In run 2, the first source bends upward, while the
+second has a lower, flatter bend and a different position. These images do
+not count all 2,000 members or prove smooth interpolation. The Strict source
+pair shows a small change in slope and position. The third reduced-rate pair
+shows a stronger upward bend followed by a flatter pose. All three reduced-rate
+restarts restored the source count to one.
+
+The Strict control and third repeat are complete. A temporary private flag
+and an ignored setter are being added for an admission-on/off comparison in
+the same process. This measurement control must be removed after the decision.
+Keep the implementation provisional; it can still be rejected. The ancestry-cache experiment remains
+rejected and removed. The workgroup baseline remains 32; the invalid 64/128
+windows establish no winner. The 100 Hz target is not met.
+
+Evidence is in the `early-admission-hz15-1`, `early-admission-hz15-2`,
+`early-admission-hz15-3`, and `early-admission-strict-control`
+summary, world telemetry, and restored-source reports. Keep these scoped
+correctness results separate from performance acceptance and from the open
+fixed-tick GPU presentation design.
+
+### Retained fence diagnostic build
+
+Last checked: 2026-10-07 21:53 UTC. The Release build with retained fence
+diagnostics and the temporary same-process admission comparison control
+passed in 82.37 seconds with zero warnings and errors. The helper build
+passed in 3.55 seconds.
+
+The implemented diagnostics assign a marker rental ID, preserve its first
+failure site and native submission evidence, and retain 512 value records
+in the Vulkan renderer. The dispatcher copies the input ordinal or output
+epoch with the marker identity before disposal. The finished contract is in
+[resource lifecycle diagnostics](../../../architecture/rendering/render-pipeline-resource-lifecycle.md#retained-vulkan-fence-failures).
+The existing inspection API can read the snapshots without a new MCP tool.
+
+Runtime capture and correlation are pending. No failure cause is established
+by this build result. Failure counters and reuse rules are unchanged, and
+the earlier invalid workgroup windows remain invalid.
+
+### Same-process admission comparison setup and first valid OFF window
+
+Last checked: 2026-10-07 21:55 UTC. `admission-off-a1` is invalid as an OFF
+comparison. Its setup helper reported `enabled=false` but `worlds=0`: the
+physics world did not yet exist, so no world received the setting. The window
+recorded 1,038,000 capture skips and matching preparation skips across 1,040
+ticks. Admission therefore remained on. Harness correctness passed at
+21.045436 Hz and p95 55.8750 ms, but exclude this result from the A/B comparison.
+
+The setup guard now requires at least one world. `admission-off-a2` reported
+`enabled=false` and `worlds=1`. Both skip deltas were zero across 1,056 ticks,
+which confirms the intended OFF path. This window passed the harness checks
+at 20.336777 Hz and p95 62.5163 ms. Mean late-tick body time was 23.8537 ms;
+rest gathering was 7.5057 ms and component preparation was 3.2333 ms. These
+are nested CPU stages. The ON window `admission-on-b1` is running in the same
+process. Keep the result provisional until the matched comparison completes.
+
+Both restored-source image pairs were viewed. Each pair shows a visible source
+with a different pose. A1 changes from a strong upward bend to a flatter pose;
+A2 changes its slope and position. These images do not prove smooth GPU
+interpolation or establish the validity of A1's OFF setting.
+
+The retained fence history increased from 82 to 104 records across A1. It
+stayed at 104 across A2. The captured records contain only `UnsubmittedMarker`,
+`PlanUnsubmitted`, and `RequiredProducerMissing` sites. All report
+`EGpuFenceNativeSubmission.NotCalled` (value 1), with `NativeResultValid=false`.
+These records describe this new diagnostic session. They do not identify the
+origin of the older 64/128 workgroup failures, and they do not justify changing
+failure counters or classifying all marker failures as benign.
+
+Evidence is in the `admission-off-a1` and `admission-off-a2` admission, summary,
+before/after fence, and restored-source reports. The setup failure remains part
+of the attempt history; it is not a rejected implementation result.
+
+### Same-process ON/OFF repeats, decision pending
+
+Last checked: 2026-10-07 21:59 UTC. The next two windows used the same process
+and `Hz15` profile as valid OFF window A2. Both passed harness correctness.
+The table contains nested mean CPU costs per late tick, not exclusive costs.
+
+| Window | Admission | Completed Hz | Interval p95 ms | Body ms | Rest gathering ms | Component preparation ms | Capture / preparation skips | Late ticks |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| A2 | OFF | 20.336777 | 62.5163 | 23.8537 | 7.5057 | 3.2333 | 0 / 0 | 1,056 |
+| B1 | ON | 19.271190 | 60.5043 | 26.6603 | 7.9385 | 4.7142 | 894,000 / 894,000 | 984 |
+| A3 | OFF | 19.825627 | 65.5226 | 24.4788 | 7.6949 | 3.3858 | 0 / 0 | 1,012 |
+
+B1's CPU body, rest gathering, and component preparation means are higher
+than both OFF windows. This supports rejection of the current optimization,
+but the final ON repeat B2 is still running. Keep the decision provisional.
+Do not infer smooth GPU interpolation or completion of distance-based LOD.
+
+Both restored-source pairs were viewed. Each source is visible and changes
+pose. B1 changes from an almost flat pose to a lower curved pose; A3 changes
+from an upward curve to a flatter downward slope. The images do not establish
+smooth interpolation.
+
+Fence history remained at 104 records before and after both B1 and A3. The
+retained sites remain `UnsubmittedMarker`, `PlanUnsubmitted`, and
+`RequiredProducerMissing`, with `NativeSubmission=NotCalled` and no valid
+native result. This is evidence for the captured diagnostic session only.
+It does not prove the origins of the older invalid 64/128 workgroup windows.
+
+Evidence is in the `admission-on-b1` and `admission-off-a3` summary,
+before/after fence, and restored-source reports. A1 remains excluded because
+its OFF setting did not reach a world.
+
+### Early-admission prototype rejected after final repeat
+
+Last checked: 2026-10-07 22:04 UTC. `admission-on-b2` passed harness correctness
+at 15.684604 Hz and p95 78.1362 ms. Its mean late-tick body time was 24.2712 ms,
+rest gathering was 7.1681 ms, and component preparation was 4.3445 ms. It
+recorded 1,418,000 capture skips and matching preparation skips across 1,412
+ticks. These CPU values are nested per-call measurements.
+
+Decision: reject the early-admission prototype. The same-process sequence
+shows no measured end-to-end benefit. Both ON windows have higher component
+preparation cost than both OFF windows: 4.7142 and 4.3445 ms ON, against
+3.2333 and 3.3858 ms OFF. B2's body mean is close to the OFF means despite
+its much lower completed rate. Do not attribute all of B2's slowdown to this
+change. System drift and other frame costs remain possible contributors.
+The coordinator is arranging removal of the prototype and its temporary
+comparison control. Keep the retained fence diagnostics. This rejects this
+implementation, not the user-authorized distance-cadence feature.
+
+Both B2 restored-source images were viewed. The source changes from a clear
+upward bend to a flatter downward slope and a different position. This is
+pose-change evidence, not smooth-interpolation proof.
+
+Fence history remains 104 records before and after B2. Only the already
+recorded `UnsubmittedMarker`, `PlanUnsubmitted`, and `RequiredProducerMissing`
+sites occur, with `NativeSubmission=NotCalled` and `NativeResultValid=false`.
+No new failure origin is shown. The old 64/128 workgroup windows remain
+invalid; their origins cannot be reconstructed from this session's history.
+
+Evidence is in the `admission-on-b2` summary, before/after fence, and
+restored-source reports. Keep A1's setup failure separate from this measured
+implementation rejection. The 100 Hz target and full smooth LOD remain open.
+
+### Prototype removal and next rest-input cache experiment
+
+Last checked: 2026-10-07 22:14 UTC. Removal of the rejected early-admission
+prototype is complete. The six prototype-only Core files have no remaining
+content diff. The skip counters and temporary comparison flag are removed.
+The `QualityAssignment` and `GpuRestDependency` timing split and all retained
+fence diagnostics remain. Build and live validation after removal are pending.
+
+The rejected patch is saved as `reports/early-admission-rejected.patch` in the
+run evidence. It also contains pre-existing timing-split changes. Treat it as
+evidence only; do not replay the whole patch to restore the experiment.
+
+The next attempted change is the explicit runtime-only
+`EnableRigidGpuRestInputCache` option. Its Core path reuses root-relative rest
+capture while preserving all dependency checks. It targets the measured
+approximately 7 ms gathering stage. It does not change the GPU ABI, shaders,
+or simulation timing. The Math source and clone flag are added. Implementation
+and review are in progress, and the code item is open. No build, runtime, or
+performance result exists yet. This is an experiment, not a retained gain.
+
+### Rigid rest-input cache build and mutation checks
+
+Last checked: 2026-10-07 22:25 UTC. The first cache build passed in 72.60
+seconds, but it received no live validation before the invalidation review
+correction. The revised Release build passed in 70.61 seconds with zero
+warnings and errors. The updated comparison helper also built successfully.
+
+The runtime-only option preserves the ordinary dependency checks. Review
+required a child-input mutation to latch the range as blocked. Explicitly
+disable and enable the option to rearm it. Root-parent affine changes remain
+eligible and must preserve ordinary transform and stretch results. No GPU
+ABI, shader, or simulation timing change is part of this cache experiment.
+
+All nine `rigid-cache-*-comparison.json` reports passed. Each compared one
+range of seven inputs against ordinary capture; all values were finite.
+
+| Check | Maximum absolute difference | Blocked ranges | Candidate/reference stretch |
+| --- | ---: | ---: | --- |
+| Initial, before mutations, after mutations | 0 | 0 | 1 / 1 |
+| Child translation, rotation, and order | 0 | 1 | 1 / 1 |
+| Child scale | 0 | 1 | 1.2 / 1.2 |
+| Explicit scale rearm | 0 | 0 | 1 / 1 |
+| Root-parent affine change | 1.1920929e-7 | 0 | 1.3989542 / 1.3989542 |
+
+These reports support the bounded input-equivalence and invalidation checks.
+They do not establish performance or cover every hierarchy mutation. The first
+cache-OFF Strict 2,000-chain diagnostic window is running. Keep the experiment
+undecided until the matched ON/OFF evidence is available. No benefit is claimed.
+
+### Rigid cache first OFF timing window
+
+Last checked: 2026-10-07 22:26 UTC. `rigid-cache-off-a1` passed harness
+correctness at 18.511600 Hz and p95 65.8224 ms with 2,000 chains on the Strict
+profile. Across 964 late ticks, mean body time was 28.73283 ms, gathering was
+9.17030 ms, and dependency preparation was 5.27137 ms. These CPU costs are
+nested. Cache hit and miss deltas were zero, as required for the OFF path.
+
+All four referenced images were viewed. The wide grid is visible and the near
+meshes are bent. The restored source pair has a different slope and position.
+These images do not count all members or prove smooth interpolation. After
+restoration, the source cache was enabled and the seven-input comparison
+passed: finite values, no blocked range, maximum absolute difference
+1.1920929e-7, and matching stretch 1.
+
+The matched ON window B1 is running in the same process. This OFF result is
+a baseline, not evidence of cache benefit. Retention remains undecided.
+Evidence is in the `rigid-cache-off-a1` summary, cache, matrix-comparison,
+and restored-source reports.
+
+### Rigid cache first ON timing window
+
+Last checked: 2026-10-07 22:28 UTC. `rigid-cache-on-b1` passed at 20.536405 Hz
+and p95 59.6709 ms. Across 1,024 late ticks, mean body time was 23.80021 ms,
+gathering was 6.18292 ms, and dependency preparation was 4.87492 ms. These
+are nested CPU stages. The window recorded 2,040,000 cache hits, zero misses,
+and zero blocked ranges. Against OFF A1's 18.511600 Hz and 9.17030 ms gathering,
+this is a preliminary improvement. It is not a final retention decision.
+Repeated OFF A2 is running in the same process, with ON B2 still required.
+
+All four images were viewed. The grid and bent near meshes are visible.
+The restored source changes from a curved, downward pose to an upward slope.
+The images do not count all members or prove smooth interpolation.
+
+The before source-witness report contains one cache with six subscriptions.
+The after report passes with one witness, zero alive, zero subscribed, and
+zero subscriptions. This supports retirement of that observed cache instance.
+It is not a general lifetime proof. Fence history stayed at 135 records, with
+the same `UnsubmittedMarker`, `PlanUnsubmitted`, and `RequiredProducerMissing`
+sites and `NativeSubmission=NotCalled`. The last retained rental remains
+100735. These snapshots do not resolve the earlier workgroup failures.
+
+Evidence is in the `rigid-cache-on-b1` summary, source-witness, before/after
+fence, and restored-source reports. Keep the cache decision open until the
+matched repeats complete.
+
+### Rigid cache repeated OFF window
+
+Last checked: 2026-10-07 22:31 UTC. `rigid-cache-off-a2` passed at 20.260129 Hz
+and p95 55.8190 ms. Across 1,096 ticks, cache hit, miss, and blocked-range deltas
+were zero. The current same-process comparison is:
+
+| Window | Completed Hz | Interval p95 ms | Mean body ms | Mean gathering ms | Mean dependency preparation ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| OFF A1 | 18.511600 | 65.8224 | 28.73283 | 9.17030 | 5.27137 |
+| ON B1 | 20.536405 | 59.6709 | 23.80021 | 6.18292 | 4.87492 |
+| OFF A2 | 20.260129 | 55.8190 | 25.10158 | 7.21414 | 4.472225 |
+
+CPU stages are nested. A1 was slower than A2 without the cache, which shows
+variation between windows. Do not attribute all of B1's gain over A1 to the
+cache. B1 gathering is lower than both OFF values, but final ON repeat B2 is
+still running. Retention remains undecided.
+
+All four A2 images were viewed. The grid and bent near meshes are visible;
+the restored source pair changes its slope and position. The restored cache
+comparison passed with seven finite inputs, zero blocked ranges, maximum
+absolute difference 1.1920929e-7, and matching stretch 1. Fence history stayed
+at 135 records with the same last rental 100735 and the same known sites.
+No earlier failure origin is established. Evidence is in the
+`rigid-cache-off-a2` summary, matrix-comparison, fence, and restored-source
+reports. These image checks do not prove all-member visibility or smooth LOD.
+
+### Rigid cache complete A/B/A/B timing set
+
+Last checked: 2026-10-07 22:33 UTC. `rigid-cache-on-b2` passed harness
+correctness. All four windows used the Strict profile in the same process.
+CPU costs below are nested means per late tick.
+
+| Window | Completed Hz | Interval p95 ms | Body ms | Gathering ms | Dependency preparation ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| OFF A1 | 18.511600 | 65.8224 | 28.73283 | 9.17030 | 5.27137 |
+| ON B1 | 20.536405 | 59.6709 | 23.80021 | 6.18292 | 4.87492 |
+| OFF A2 | 20.260129 | 55.8190 | 25.10158 | 7.21414 | 4.472225 |
+| ON B2 | 21.342219 | 54.3646 | 22.910193 | 5.900462 | 4.677170 |
+
+B2 recorded 2,200,000 hits, zero misses, and zero blocked ranges across
+1,100 ticks. Both ON gathering means are lower than both OFF means. This
+repeats the targeted stage reduction. OFF A1/A2 variability still limits the
+size of the gain that can be assigned to the cache. Keep the candidate decision
+pending the remaining reparent and lifecycle checks. The initial mutation
+checks have passed. Neither 100 Hz nor complete smooth LOD is achieved.
+
+All four B2 images were viewed. The wide grid and bent near meshes are visible.
+The restored source changes from an upward bend to a flatter downward slope.
+The restored matrix comparison passed with seven finite inputs, zero blocked
+ranges, maximum absolute difference 1.1920929e-7, and matching stretch 1.
+Fence history remained at 135 records, with last rental 100735 unchanged and
+the same known unsubmitted sites. No earlier failure origin is established.
+
+A sampled six-part diagnostic timer is planned to separate remaining gathering
+and dependency costs. This is diagnostic work only; no further optimization
+or result is implied. Evidence is in the `rigid-cache-on-b2` summary,
+matrix-comparison, fence, and restored-source reports.
+
+### Rigid cache full-batch input and retirement check
+
+Last checked: 2026-10-07 22:36 UTC. A third cache-ON benchmark start compared
+all 2,000 ranges and 14,000 matrices with ordinary capture. The summary reports
+zero failures and maximum absolute difference 1.5258789e-5. This was a
+correctness check; it adds no timing claim to the A/B/A/B set.
+
+The before witness report counted 2,000 caches and 12,000 tracked child
+registrations. Each registration uses two filtered handlers, so the reported
+registration count is not a raw delegate count. After teardown, 2,000 witnesses
+were still alive, but `subscribed` and registration counts were both zero.
+The retirement check passed. This proves removal of the observed registrations,
+not garbage collection of those objects.
+
+Both wide images and both restored-source images were viewed. The grid remains
+visible in both wide views. The restored source changes its slope and position.
+These images do not count all visible members or prove smooth interpolation.
+The all-range count comes from the input comparison report.
+
+Reparent/reset checks remain before the keep decision. The sampled six-part
+timer source is written and review is pending. No new timer result or further
+optimization is claimed. Evidence is in the `rigid-cache-all-inputs` summary,
+comparison, before/after witness, wide, and restored-source reports.
+
+### Rigid cache reparent/reset checks and keep decision
+
+Last checked: 2026-10-07 22:38 UTC. Moving `Bone6` under `Bone4` set
+`BlockedRanges=1`. World capture rejected the unsupported hierarchy, and
+`HierarchyInputDependency` rose from 0 to 74. The comparison report has
+`captured=false` and `passed=false` because no capture was admitted. This is
+the expected route rejection, not an input matrix equality failure.
+
+Restoring the parent and rearming returned seven finite inputs, zero blocked
+ranges, maximum absolute difference 1.1920929e-7, and matching stretch 1.
+Disabling and enabling the source passed the reset check. The old cache
+witness remained alive but had zero subscriptions and registrations. The
+new seven-input capture passed with the same maximum difference. Both reset
+restored-source images were viewed; the visible source changes slope, bend,
+and position. No smooth-interpolation claim follows from these images.
+
+Decision: keep the explicit `EnableRigidGpuRestInputCache` option. Both ON
+windows reduced gathering against both OFF windows, and the full-batch input,
+child mutation, rearm, reparent rejection/recovery, and registration retirement
+checks passed. This is bounded validation of the explicit cache. The 100 Hz
+target, complete quality coverage, and smooth distance LOD remain open.
+
+The sampled six-part diagnostic timer passed review. Rebuild and runtime
+measurement are pending. This adds diagnostic detail only, not another
+optimization. Evidence is in the `rigid-cache-reparent-*` and
+`rigid-cache-reset-*` reports and restored-source images.
+
+### Sampled rest-input diagnostic
+
+Last checked: 2026-10-07 22:44 UTC. The sampled telemetry Release build passed
+in 98.85 seconds with zero warnings and errors. `rigid-cache-sampled-1` passed
+harness correctness at 19.671051 Hz and interval p95 68.8781 ms. Mean late-tick
+body time was 26.39866 ms, rest gathering was 6.84516 ms, and dependency
+preparation was 5.35305 ms. These stage timers are nested. Do not add them or
+treat concurrent costs as exclusive frame time. This instrumented window does
+not establish a timing benefit from the sampled build.
+
+| Sampled rest-input stage | Actual samples | Mean microseconds per sample |
+| --- | ---: | ---: |
+| Opaque dependency check | 62,996 | 1.881916 |
+| Owner dependency check | 62,996 | 0.785317 |
+| Collider dependency check | 62,996 | 1.773095 |
+| Root preparation | 62,996 | 0.851897 |
+| Cached input expansion | 62,996 | 0.315760 |
+| Input publication | 62,996 | 0.206396 |
+
+These means describe sampled operations, not complete update totals. The
+window recorded 1,992,000 cache hits, zero misses, and zero blocked ranges.
+The next bounded source review will inspect repeated hierarchy walks. No
+optimization follows from this diagnostic alone.
+
+All four images were viewed. The wide grid and bent near meshes are visible.
+The restored source changes from a gentle bend to a strong downward bend,
+with a different position. These images do not prove all-member visibility or
+smooth interpolation.
+
+Fence history grew from 111 to 135 records. Comparing rental identities found
+24 new records, all with `Site=PlanUnsubmitted`,
+`NativeSubmission=NotCalled`, and `NativeResultValid=false`. Their failure
+frames range from 2637 through 3463. Keep these observed origins separate from
+the earlier 64/128-thread failures, whose origins were not retained. Do not
+classify these failures as benign. Evidence is in the
+`rigid-cache-sampled-1-*` summary, telemetry, fence, and image reports.
+
+### Pending phase-local collider dependency proof
+
+Last checked: 2026-10-07 22:52 UTC. The next attempted optimization targets
+repeated collider ancestor walks during GPU rest-input preparation. The
+sampled collider dependency check averaged 1.773095 microseconds per operation,
+while the whole dependency preparation stage averaged 5.35305 ms per late
+tick. These are different scopes. Neither gives a proven saving for the
+proposed change.
+
+The proposed `PhysicsChainWorld.GpuInputs` path records the collider references
+used by owner-marking ancestor walks in a per-range witness. Capture can reuse
+the result only when the phase, handle, ownership generation, list identity,
+list count, each element, activity, `Transform`, `RootTransformOverride`, and
+type-specific `ColliderTransform` still match. Publication requires a complete
+valid walk of built-in collider types with no forced slot. Every mismatch
+runs the original fresh `HasGpuRestColliderDependency` path. No proof survives
+the phase boundary.
+
+Implementation and review are pending. Matching and mutation/fallback checks
+must precede a retention decision. No success, performance gain, or quality
+change is claimed. The pending manual check is in the
+[rigid rest input cache validation](../../testing/physics/physics-validation.md#rigid-rest-input-cache).
+
+### Priority change: isolate physics and rendering before more optimization
+
+Last checked: 2026-10-07 22:52 UTC. The user's critique is accepted. The API
+trace shows gaps between GPU submissions, but it does not identify the CPU
+critical thread, the work on that path, or its waits. The cache repeats a
+gathering-stage reduction in the diagnostic comparison. End-to-end frame-rate
+gain remains unproven because the windows vary.
+
+Defer the phase-local collider proof. Its attempted source is being removed;
+it was not built or validated. It is not a retained optimization. The proposed
+witness contract above records the attempted design, not finished behavior.
+
+First compare frozen physics with mesh rendering retained. Then compare
+active physics with mesh rendering off. Keep the full scene as the control
+and label each ablation. Next collect CPU scheduling and stack evidence to
+identify the critical thread and blocking dependencies. Do not use summed
+nested timers or a GPU submission gap as that proof. Grouped GPU indexed-instance
+draws already exist, with native all-member evidence. Do not describe this
+scene as lacking instancing.
+
+The current cache-OFF control window is running. No new ablation or thread
+timeline result is available at this boundary.
+
+### Invalid clean cache window and ablation timeline setup correction
+
+Last checked: 2026-10-07 22:59 UTC. `rigid-cache-clean-off-a1` is invalid.
+The harness recorded 42 completed and two rejected outcomes during readiness
+or measurement and set `accepted=false`. Do not use this result in a cache
+comparison. No further cache A/B window is planned; the ablations now take
+priority.
+
+The first full-scene control, `ablation-full-a1`, held 2,000 chains before and
+after its timed interval. It completed 580 frames in 30.237905 seconds at
+19.181223 Hz, with p95 64.6672 ms and zero new deferred, rejected, or failed
+outcomes. This is a diagnostic control, not target acceptance.
+
+The later `ablation-full-timeline.json` does not describe that population.
+Before timeline capture, the benchmark reached its 120-second maximum and
+automatically restored the single source. Exclude that timeline from
+2,000-chain evidence. The `SetChainVisibility` guard found one chain and
+changed nothing. The `ablation-full-wide` image was viewed: it shows the test
+label on a black background, with no full grid visible. It is an invalid
+single-source capture for this comparison. The large invalid timeline was
+not analyzed.
+
+The scratch `start-ablation.ps1` helper now holds only the benchmark duration
+stopwatch after settling. It does not pause simulation time. A fresh
+2,000-chain batch is starting to repeat the evidence collection with a valid
+population. No corrected ablation or timeline result is claimed yet.
+
+WPR could not collect the planned scheduling trace. `wpr -start CPU -filemode`
+returned "Failed to enable policy to profile system performance" with code
+`0xc5585011`; status reports no active recording. This is an OS privilege
+failure, not an automatic approval rejection. A scratch `CriticalTimelineProbe`
+will use existing `CodeProfiler` absolute scope timestamps. It can correlate
+instrumented scopes, but it does not provide kernel scheduling events or
+sampled call stacks.
+
+### Active physics with chain rendering hidden
+
+Last checked: 2026-10-07 23:03 UTC. `ablation-render-hidden-b1` retained
+2,000 chains before and after its 30.497386-second window. It completed
+1,797 frames at 58.923083 Hz, with interval p95 23.5708 ms and zero new
+deferred, rejected, or failed outcomes. The earlier full-scene control was
+19.181223 Hz with p95 64.6672 ms.
+
+Physics remained active. Palette slices and renderer bindings remained at
+2,000. Output producer epoch advanced from 31803 to 33635; input acquisitions
+advanced from 31806 to 33638. Both deltas are 1,832. Input and output failures
+remained at nine, dispatch failures remained at zero, and physics readback
+remained at zero.
+
+This ablation removes the whole chain rendering path: scene collection,
+publication, deformation, and drawing. It is not a raster-only comparison.
+The result supports further investigation of rendering-path CPU and GPU work,
+but it does not identify the critical thread or separate these costs. It
+does not meet 100 Hz or validate the full-scene quality target.
+
+Four images were viewed. `ablation-full-wide-held` shows the grid, and
+`ablation-hidden-wide` shows no chains. The immediate `ablation-show-wide`
+image is black. The later `ablation-frozen-wide`, taken after about ten
+seconds of warmup, shows the grid again. Settled visual restoration passed;
+the immediate image alone did not prove it. Two frozen state checks two
+seconds apart retained 2,000 chains and bindings, producer epoch 35417,
+input acquisitions 35420, and unchanged failures. Frozen-physics timing is
+still pending.
+
+A separate valid 2,000-chain timeline captured 156,959 scopes in 341 snapshots.
+Its analysis is in progress. Keep it separate from the excluded single-source
+timeline. The batch remains active with only its duration stopwatch held.
+
+### Valid 2,000-chain scope timeline
+
+Last checked: 2026-10-07 23:04 UTC. The compact
+`ablation-full-2000-timeline-analysis.json` covers 12.005951 seconds,
+341 snapshots, and 156,959 recovered scopes. It includes 252 render scopes.
+The raw timeline was not needed for this summary.
+
+| Scope or relation | Mean wall ms | Median wall ms |
+| --- | ---: | ---: |
+| Render start spacing | 47.320 | Not reported |
+| `EngineTimer.DispatchRender` | 30.243 | 28.7649 |
+| `DispatchCollectVisible` | 25.319 | 24.4265 |
+| Collection overlap with render | 25.053 | Not reported |
+| `WaitForRender` | 5.081 | 4.8487 |
+| `DispatchSwapBuffers` | 16.914 | 16.6715 |
+| Gap between render scopes | 17.089 | Not reported |
+| Swap within that gap | 16.813 | Not reported |
+| Swap publication to next render | 0.035 | Not reported |
+
+The observed start spacing is about 21.13 Hz. The overlap and gap pattern
+supports `max(render, collect) + serial swap` as the instrumented cycle.
+Update duration alone does not explain this render cadence. The next source
+review should inspect the render path and serial swap/publication work.
+
+| Producer path | Largest residual scope | Mean exclusive wall ms per call | Calls |
+| --- | --- | ---: | ---: |
+| Render | `XRWindow.GlobalPreRender` | 10.544306 | 252 |
+| Render | `Vulkan.FrameLifecycle.RecordCommandBuffer` | 6.702438 | 253 |
+| Render | `Advanced.VisibilityPreparation` | 6.176109 | 252 |
+| Render | `Vulkan.RecordPrimary.MainOpLoop` | 2.588775 | 253 |
+| Collection | `VisualScene3D.CollectRenderedItemsGpu` | 6.167977 | 504 |
+| Collection | `RuntimeWorldRenderer.GlobalPreCollectVisible` | 8.946527 | 252 |
+| Swap/publication | `GpuIndirect.AdvancedPublication.ScenePlan` | 6.962563 | 253 |
+| Swap/publication | `RuntimeWorldRenderer.GlobalSwapBuffers` | 4.589236 | 253 |
+| Swap/publication | `CpuBvhRenderTree.Swap` | 1.628615 | 505 |
+
+Collection and BVH swap occur about twice per rendered cycle. Do not confuse
+their per-call means with per-cycle totals. These names identify source-review
+targets; they do not establish a specific faulty algorithm.
+
+All 341 snapshot publications were incomplete. The report records maxima of
+39 active, 49 queued, and 178 pending scopes, zero unresolved linked children,
+and 341 stale completed scopes. Exclusive time here subtracts recovered
+instrumented children only. Residual time can include uninstrumented work,
+waits, and missing children. These are diagnostic wall times, not CPU-on-core
+time or OS scheduling evidence. Do not sum concurrent thread totals. The
+frozen-physics C1 comparison is still measuring and has no result here.
+
+### Frozen physics with chain rendering retained
+
+Last checked: 2026-10-07 23:05 UTC. `ablation-physics-frozen-c1` completed
+753 frames in 30.069258 seconds at 25.042188 Hz, with interval p95 53.021 ms.
+There were zero new deferred, rejected, or failed outcomes. The window kept
+2,000 chains before and after, with 2,000 renderer bindings. Output producer
+epoch stayed at 35417, input acquisitions stayed at 35420, and input/output
+failure counts stayed at nine.
+
+The ablation removes physics callbacks, but root motion remains active and
+CPU root/hierarchy work continues. It is not an all-static scene. Do not
+infer an all-static frame-rate ceiling or assign all remaining cost to drawing.
+The earlier full control was 19.181223 Hz; active physics with chain rendering
+hidden was 58.923083 Hz. These first-cycle diagnostic results require repeats
+and do not meet the full-scene 100 Hz target.
+
+Callbacks were restored before teardown. The source returned to one chain.
+Both `ablation-first-cycle-restored-source` images were viewed: the source
+changes position and bend. This confirms visible restored-source motion,
+not continuous-motion quality for the full grid.
+
+The second cycle is running three 45-second windows, with a third cycle
+planned. No production edits came from these ablations. The next structural
+decision is whether `ScenePlan` can separate stable registration work from
+pose and bounds publication while preserving invalidation and ownership.
+That is a source-review candidate, not an implemented fix or measured gain.
+
+### Second ablation cycle and measurement limits
+
+Last checked: 2026-10-07 23:11 UTC. All three `ablation-cycle2` windows kept
+2,000 chains and recorded zero new bad native outcomes or input/output
+failure deltas.
+
+| Mode | Elapsed seconds | Completed frames | Completed Hz | Interval p95 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Full scene | 50.745166 | 841 | 16.573007 | 73.4802 |
+| Chain rendering hidden | 45.143268 | 2,346 | 51.967882 | 26.4986 |
+| Physics callbacks frozen | 45.361378 | 591 | 13.028705 | 84.9136 |
+
+The frozen window retained producer epoch 43589 and 2,000 bindings. Root
+motion and CPU hierarchy work continued. Its lower rate than the full scene
+weakens any quantitative claim of benefit from freezing physics. Do not
+average the two frozen cycles into a small claimed improvement. The broad
+increase when chain rendering is hidden repeats, but its exact size still
+needs the improved measurement method.
+
+The first two cycles used a client stopwatch and separate counter queries.
+Transport latency means the counter boundaries were not atomic with that
+clock. Keep these method limits explicit; they do not discard the repeated
+large rendering-hidden effect. Cycle 3 uses an engine-side meter with counter
+timestamps, GPU clock samples, GC counts, and process CPU evidence. Its
+45-second full-scene baseline is running; no result is recorded here.
+
+The hidden, frozen, and two restored-source images were viewed. The hidden
+view shows no chains, the frozen view shows the grid, and the restored source
+changes bend and position. The restored canonical resident draw count is one.
+The next source-review priority remains incremental stable registration in
+`ScenePlan`, not another local physics micro-optimization.
+
+### Engine-side ablation meter first results
+
+Last checked: 2026-10-07 23:15 UTC. Cycle 3 uses engine-side counter captures
+bracketed by stopwatch timestamps. The full captures took 2.136 and 1.005 ms;
+the frozen captures took 1.501 and 0.240 ms. This bounds local snapshot skew
+and removes client transport time from the elapsed interval. It does not make
+all counters a simultaneous atomic hardware measurement.
+
+| Mode | Elapsed seconds | Completed frames | Completed Hz | Interval p95 ms | Producer epoch delta |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Full scene | 45.137701 | 737 | 16.327814 | 70.5093 | 736 |
+| Physics callbacks frozen | 45.117139 | 975 | 21.610413 | 57.0191 | 0 |
+
+Both summaries are valid, with 2,000 registered chains, slices, and bindings
+before and after. Bad native outcomes, input/output failures, dispatch failures,
+and physics readback did not increase. Frozen producer epoch remained at 57148.
+Root motion and hierarchy work still continued. The third rendering-hidden
+window is pending. No production change came from these ablations.
+
+The full window allocated 978,770,192 managed bytes process-wide and recorded
+78/4/0 generation 0/1/2 collections. Process CPU time averaged 2.732610 logical
+core equivalents. The frozen window allocated 1,365,504,616 bytes, recorded
+109/5/0 collections, and averaged 3.745459 core equivalents. These are whole
+process counters, not physics allocation or critical-thread attribution. The
+windows also completed different frame counts. Do not assign their allocation
+or CPU difference to physics alone.
+
+The continuous GPU clock CSV files are empty, so full-window clock evidence
+is unavailable. The frozen before/after samples changed from graphics/memory
+495/810 MHz at P5 to 1560/8101 MHz at P0. This proves varying endpoint states,
+not the clock distribution within the window or the cause of all timing
+variation. Do not claim clocks were controlled.
+
+Both cycle 3 images were viewed. The frozen image shows the grid, and the
+hidden image shows no chains. A separate 12-second frozen scope timeline is
+available for worker analysis. Its findings are not included in this result.
+
+### Frozen physics scope timeline comparison
+
+Last checked: 2026-10-07 23:18 UTC. The compact
+`ablation-frozen-2000-timeline-analysis.json` covers 12.009805 seconds,
+340 snapshots, 934,421 recovered scopes, and 275 render scopes. The batch
+still contained 2,000 chains after capture. The raw timeline was not read
+for this summary.
+
+| Wall-time measure | Full mean ms | Frozen mean ms |
+| --- | ---: | ---: |
+| Render start interval | 47.320 | 43.442 |
+| Render scope | 30.243 | 30.186 |
+| Collection scope | 25.319 | 21.921 |
+| Serial swap scope | 16.914 | 13.316 |
+| `RuntimeWorld.Update` callback per call | 26.527 | 1.583 |
+| Fixed-update dispatch per call | 9.764 | 0.0075 |
+| `XRWindow.GlobalPreRender` residual per call | 10.544 | 0.347 |
+| `Advanced.VisibilityPreparation` residual per call | 6.176 | 19.466 |
+| Command-recording residual per rendered cycle | 6.729 | 5.371 |
+
+The frozen render gap averaged 13.254 ms, with 13.201 ms occupied by swap.
+Publication-to-render delay averaged 0.038 ms. World callback cost falls,
+but the observed cycle still contains render work followed by serial swap.
+The distribution of render work also changes: pre-render falls while
+visibility preparation rises. Do not select one fixed hotspot or assign the
+whole interval change to physics from these comparisons. GPU clock state
+varied, and these are wall scopes rather than on-core measurements.
+
+All 340 frozen snapshot publications were incomplete. Exclusive residuals
+subtract only recovered instrumented children and can include missing work
+or waits. The different scope populations also limit direct comparison.
+The full and frozen process allocation totals normalize to approximately
+1.33 and 1.40 MB per completed frame, respectively. These remain process-wide
+ratios, not proven render-specific or physics-specific allocation.
+
+The third hidden 45-second window is running. No production code change or
+timing-target claim follows from this diagnostic comparison.
+
+### Third hidden result and ablation restoration
+
+Last checked: 2026-10-07 23:19 UTC. The engine-side
+`ablation-cycle3-hidden-summary.json` is valid. It completed 2,597 frames in
+45.288487 seconds at 57.343492 Hz, with interval p95 24.2503 ms. The window
+kept 2,000 chains, palette slices, and bindings. Producer epoch advanced by
+2,454. Bad native outcomes, input/output failures, dispatch failures, and
+physics readback did not increase. Hidden render state had zero resident
+draws and four commands; requested and resolved strict submission values
+both remained 2.
+
+Process-wide allocation increased by 640,818,504 bytes. Generation 0/1/2
+collection deltas were 52/6/1, and process CPU averaged 2.409208 core
+equivalents. The before and after snapshot brackets took 3.0644 and 1.7122 ms.
+These counters describe the process, not isolated physics or rendering work.
+
+| Cycle | Full scene Hz | Hidden chain rendering Hz | Frozen physics Hz |
+| --- | ---: | ---: | ---: |
+| 1, client timer | 19.181223 | 58.923083 | 25.042188 |
+| 2, client timer | 16.573007 | 51.967882 | 13.028705 |
+| 3, engine-side timer | 16.327814 | 57.343492 | 21.610413 |
+
+Whole-chain rendering removal has a large repeated effect. It removes more
+than raster work. Frozen-physics results remain variable and do not establish
+a stable quantitative benefit. None of these modes meets 100 Hz, and ablated
+modes cannot satisfy full-scene quality acceptance. Controlled-clock hardware
+and complete scheduling/profile acceptance remain open.
+
+Physics callbacks, mesh visibility, the duration-clock hold, and the camera
+were restored before teardown. The source count returned to one. The
+disposable session retained benchmark UI copy/duration values of 2000/120;
+not every UI setting returned to its original value. Both cycle 3
+restored-source images were viewed; the
+source changes from a tight downward bend to a long upward curve and moves
+position. The final time-state query reported no terminal fault, running true,
+paused false, and render time 6.13 ms after source restoration. The owned
+session is closing; final existing tests are next. No production optimization
+came from the ablations.
+
+### Final validation and scoped allocation exclusion
+
+Last checked: 2026-10-07 23:23 UTC. The owned editor is confirmed stopped in
+`logs/ablation-final-session-stop.log`. All 40 existing targeted tests passed
+on final source in 9.9753 seconds, as recorded in
+`logs/physics-chain-post-ablation-tests.log`. No tests were added or changed.
+The full test suite was not run. Test-log warning review remains separate.
+
+The owned process session-log scan found zero matches for `Unhandled`,
+`DeviceLost`, `VK_ERROR`, terminal-fault, `[Error]`, and `Exception` patterns.
+This bounded scan does not prove that all warnings or other failures are absent.
+
+The compact `advanced-preparation-scoped-existing-windows.json` derives
+Advanced preparation deltas from saved render-state snapshots:
+
+| Earlier window | Builds | Scoped allocated bytes | Build ms per call | Extract ms per call | Deform ms per call |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Cache OFF A2 | 736 | 0 | 5.728234 | 4.089726 | 0.122271 |
+| Cache ON B2 | 751 | 0 | 5.949250 | 4.379416 | 0.113800 |
+| Sampled cache diagnostic | 721 | 0 | 6.267012 | 4.564788 | 0.125094 |
+
+These earlier warm windows are not the cycle 3 process-allocation window.
+They provide no basis to assign its process-wide allocation to the shared
+Advanced build scope. They also do not prove that all rendering allocation
+is zero. Keep allocation profiling as a separate next measurement.
+
+The current structural priority is stable scene registration and per-draw/group
+templates, with pose and bounds publication kept separate. No new structural
+optimization was implemented or measured by these ablations. The 100 Hz
+target remains unmet.

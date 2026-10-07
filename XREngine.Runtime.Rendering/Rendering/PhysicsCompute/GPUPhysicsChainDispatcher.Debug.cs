@@ -21,6 +21,10 @@ public sealed partial class GPUPhysicsChainDispatcher
     private int _gpuDebugSelectionRevision;
     private PhysicsChainGpuDebugDiagnostics _gpuDebugDiagnostics;
 
+    /// <summary>True when at least one registered chain requests GPU debug drawing.</summary>
+    internal bool HasSelectedGpuDebugChains
+        => Volatile.Read(ref _selectedGpuDebugChainCount) != 0;
+
     private sealed class PhysicsChainGpuDebugBatch : RenderResourceLeaseOwner
     {
         internal readonly List<PhysicsChainGpuDebugItem> Items = [];
@@ -28,6 +32,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         internal XRDataBuffer? PointsBuffer;
         internal XRDataBuffer? LinesBuffer;
         internal XRDataBuffer? IndirectArguments;
+        // ShaderHelper owns this shared cached shader. The batch only borrows it.
         internal XRShader? Shader;
         internal XRRenderProgram? Program;
         internal XRMeshRenderer? PointsRenderer;
@@ -49,7 +54,6 @@ public sealed partial class GPUPhysicsChainDispatcher
             PointsRenderer?.Destroy();
             LinesRenderer?.Destroy();
             Program?.Destroy();
-            Shader?.Destroy();
             Items.Clear();
         }
     }
@@ -176,68 +180,87 @@ public sealed partial class GPUPhysicsChainDispatcher
             };
             _gpuDebugBatches.Add(world, batch);
         }
-        else if (batch.GeneratedRenderer is not null &&
-                 (!ReferenceEquals(batch.GeneratedRenderer, renderer) ||
-                  batch.GeneratedBackendGeneration != _readbackBackendGeneration))
+        if (!batch.TryAcquireActiveUse())
+            return;
+        if (batch.GeneratedRenderer is not null &&
+            (!ReferenceEquals(batch.GeneratedRenderer, renderer) ||
+             batch.GeneratedBackendGeneration != _readbackBackendGeneration))
         {
-            _gpuDebugBatchesReadyToRetire.Add(batch);
-            batch = new PhysicsChainGpuDebugBatch
+            PhysicsChainGpuDebugBatch previousBatch = batch;
+            try
             {
-                GeneratedRenderer = renderer,
-                GeneratedBackendGeneration = _readbackBackendGeneration,
-            };
-            _gpuDebugBatches[world] = batch;
+                batch = new PhysicsChainGpuDebugBatch
+                {
+                    GeneratedRenderer = renderer,
+                    GeneratedBackendGeneration = _readbackBackendGeneration,
+                };
+                _gpuDebugBatchesReadyToRetire.Add(previousBatch);
+                _gpuDebugBatches[world] = batch;
+            }
+            finally
+            {
+                previousBatch.ReleaseAuthoringUse();
+            }
+            if (!batch.TryAcquireActiveUse())
+                return;
         }
 
-        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-        // A successful batch stays fixed until the next frame. Earlier view
-        // requests can still be waiting for deferred native materialization.
-        if (batch.GeneratedFrame != frameId ||
-            !ReferenceEquals(batch.GeneratedRenderer, renderer) ||
-            batch.GeneratedBackendGeneration != _readbackBackendGeneration)
+        try
         {
-            if (!CanRegenerateGpuDebugBatch(batch, renderer, out string reuseFailure))
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            // A successful batch stays fixed until the next frame. Earlier view
+            // requests can still be waiting for deferred native materialization.
+            if (batch.GeneratedFrame != frameId ||
+                !ReferenceEquals(batch.GeneratedRenderer, renderer) ||
+                batch.GeneratedBackendGeneration != _readbackBackendGeneration)
+            {
+                if (!CanRegenerateGpuDebugBatch(batch, renderer, out string reuseFailure))
+                {
+                    Debug.PhysicsWarningEvery(
+                        "PhysicsChain.Debug.AuthoringBusy", TimeSpan.FromSeconds(2),
+                        "GPU chain debug draw skipped: {0}.", reuseFailure);
+                    return;
+                }
+                if (!GenerateGpuDebugBatch(backend, world, batch, frameId))
+                    return;
+            }
+
+            int particleCount = batch.Items.Count;
+            if (particleCount == 0)
+                return;
+
+            batch.PointsRenderer?.Material?.SetInt(1, particleCount);
+            batch.LinesRenderer?.Material?.SetInt(1, particleCount);
+            if (batch.IndirectArguments is not { } arguments ||
+                batch.PointsRenderer is not { } pointsRenderer ||
+                batch.LinesRenderer is not { } linesRenderer)
+                return;
+            bool pointsSubmitted = pointsRenderer.RenderIndexedIndirect(
+                arguments, 0, EPrimitiveType.Points, out string pointFailure,
+                authoringLease: batch);
+            bool linesSubmitted = linesRenderer.RenderIndexedIndirect(
+                arguments, 0, EPrimitiveType.Points, out string lineFailure,
+                authoringLease: batch);
+            if (!pointsSubmitted || !linesSubmitted)
             {
                 Debug.PhysicsWarningEvery(
-                    "PhysicsChain.Debug.AuthoringBusy", TimeSpan.FromSeconds(2),
-                    "GPU chain debug draw skipped: {0}.", reuseFailure);
+                    "PhysicsChain.Debug.IndirectDraw", TimeSpan.FromSeconds(2),
+                    "GPU chain debug indirect draw was not submitted: points={0}; lines={1}.",
+                    pointFailure, lineFailure);
                 return;
             }
-            if (!GenerateGpuDebugBatch(backend, world, batch, frameId))
-                return;
+            _gpuDebugDiagnostics = new PhysicsChainGpuDebugDiagnostics(
+                batch.SelectedChainCount,
+                particleCount,
+                batch.SelectedChainCount >= MaximumGlobalDebugChains || particleCount >= MaximumGlobalDebugParticles,
+                ComputeDispatchCount: 1,
+                DrawSubmissionCount: 2,
+                UsesCpuReadback: false);
         }
-
-        int particleCount = batch.Items.Count;
-        if (particleCount == 0)
-            return;
-
-        batch.PointsRenderer?.Material?.SetInt(1, particleCount);
-        batch.LinesRenderer?.Material?.SetInt(1, particleCount);
-        if (batch.IndirectArguments is not { } arguments ||
-            batch.PointsRenderer is not { } pointsRenderer ||
-            batch.LinesRenderer is not { } linesRenderer)
-            return;
-        bool pointsSubmitted = pointsRenderer.RenderIndexedIndirect(
-            arguments, 0, EPrimitiveType.Points, out string pointFailure,
-            authoringLease: batch);
-        bool linesSubmitted = linesRenderer.RenderIndexedIndirect(
-            arguments, 0, EPrimitiveType.Points, out string lineFailure,
-            authoringLease: batch);
-        if (!pointsSubmitted || !linesSubmitted)
+        finally
         {
-            Debug.PhysicsWarningEvery(
-                "PhysicsChain.Debug.IndirectDraw", TimeSpan.FromSeconds(2),
-                "GPU chain debug indirect draw was not submitted: points={0}; lines={1}.",
-                pointFailure, lineFailure);
-            return;
+            batch.ReleaseAuthoringUse();
         }
-        _gpuDebugDiagnostics = new PhysicsChainGpuDebugDiagnostics(
-            batch.SelectedChainCount,
-            particleCount,
-            batch.SelectedChainCount >= MaximumGlobalDebugChains || particleCount >= MaximumGlobalDebugParticles,
-            ComputeDispatchCount: 1,
-            DrawSubmissionCount: 2,
-            UsesCpuReadback: false);
     }
 
     private bool GenerateGpuDebugBatch(IPhysicsChainComputeBackend backend,
@@ -311,7 +334,7 @@ public sealed partial class GPUPhysicsChainDispatcher
     private static bool CanRegenerateGpuDebugBatch(
         PhysicsChainGpuDebugBatch batch, AbstractRenderer renderer, out string failure)
     {
-        if (batch.AuthoringUseCount != 0)
+        if (batch.AuthoringUseCount != 1)
         {
             failure = "the prior batch still has deferred render work";
             return false;
@@ -399,15 +422,22 @@ public sealed partial class GPUPhysicsChainDispatcher
         EnsureRawDebugBuffer(ref batch.LinesBuffer, "PhysicsChainGlobalDebugLines", particleCount, 12u);
         if (batch.IndirectArguments is null)
         {
-            batch.IndirectArguments = new XRDataBuffer(
+            XRDataBuffer arguments = new(
                 "PhysicsChainGlobalDebugIndirect", EBufferTarget.DrawIndirectBuffer,
-                1u, EComponentType.UInt, 5u, false, false, true)
+                1u, EComponentType.UInt, 5u, false, false, true);
+            try
             {
-                Usage = EBufferUsage.StreamDraw,
-                DisposeOnPush = false,
-            };
-            batch.IndirectArguments.SetDataRaw(new uint[5]);
-            batch.IndirectArguments.PushData();
+                arguments.Usage = EBufferUsage.StreamDraw;
+                arguments.DisposeOnPush = false;
+                arguments.SetDataRaw(new uint[5]);
+                arguments.PushData();
+            }
+            catch
+            {
+                arguments.Dispose();
+                throw;
+            }
+            batch.IndirectArguments = arguments;
         }
 
         batch.PointsRenderer ??= new XRMeshRenderer(
@@ -448,8 +478,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         if (buffer is not null && buffer.ElementCount >= elementCount)
             return;
 
-        buffer?.Dispose();
-        buffer = new XRDataBuffer(
+        XRDataBuffer replacement = new(
             name,
             EBufferTarget.ShaderStorageBuffer,
             Math.Max(elementCount, 1u),
@@ -457,14 +486,23 @@ public sealed partial class GPUPhysicsChainDispatcher
             componentCount,
             false,
             false,
-            true)
+            true);
+        try
         {
-            BindingIndexOverride = 0,
-            Usage = EBufferUsage.StreamDraw,
-            DisposeOnPush = false,
-        };
-        buffer.SetDataRaw(new float[Math.Max(elementCount, 1u) * componentCount]);
-        buffer.PushData();
+            replacement.BindingIndexOverride = 0;
+            replacement.Usage = EBufferUsage.StreamDraw;
+            replacement.DisposeOnPush = false;
+            replacement.SetDataRaw(new float[Math.Max(elementCount, 1u) * componentCount]);
+            replacement.PushData();
+        }
+        catch
+        {
+            replacement.Dispose();
+            throw;
+        }
+        XRDataBuffer? previous = buffer;
+        buffer = replacement;
+        previous?.Dispose();
     }
 
     private void DisposeGlobalDebugResources()

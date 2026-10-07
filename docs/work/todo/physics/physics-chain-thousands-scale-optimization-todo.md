@@ -5,24 +5,18 @@ Status: Active
 Branch: `physics-chain-gpu-covered-rendering`
 Architecture: [Physics Chain World Runtime](../../../architecture/physics/physics-chain-world-runtime.md), [Compute Backends](../../../architecture/physics/physics-chain-compute-backends.md), [Output And Readback](../../../architecture/physics/physics-chain-output-and-readback.md), [Mesh Submission Strategies](../../../architecture/rendering/mesh-submission-strategies.md), [Advanced Render Pipeline](../../../architecture/rendering/advanced-render-pipeline.md)
 Guide: [Physics Chain Performance](../../../developer-guides/rendering/physics-chain-performance.md)
+Design: [Distance cadence and GPU presentation](../../design/physics/distance-cadence-gpu-presentation.md)
 Validation: [Physics Validation](../../testing/physics/physics-validation.md#gpu-skinned-chain-scale)
 Investigation: [Skinned GPU chain benchmark](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
 Implementation summary: [Completed code, validation, and resume point](../../progress/physics/physics-chain-scale-status-2026-10-07.md)
 
 ## Current State
 
-The main GPU input, bounds, covered rendering, shadow, world clock, rest-input capture, and selective readback paths are implemented. Debug submission and deferred resource lifetime have two known code defects listed first below. The latest Release build passes; final runtime acceptance and the 100 Hz target remain open. Every checkbox describes unfinished code or test work. Completed changes and their validation limits are in the [implementation summary](../../progress/physics/physics-chain-scale-status-2026-10-07.md#completed-code). Implementation remains stopped at the owner's request.
-
-## Next Implementation Fixes
-
-Resume with these two reviewed defects in the current implementation.
-
-- [ ] Acquire an active admission lease before the first debug or readback resource access. `RenderResourceLeaseOwner`, `GPUPhysicsChainDispatcher.Debug`, `EnsureSelectiveReadbackSlotResources`, and `PhysicsChainSelectiveReadbackSlotResources`. The current first retain occurs during enqueue, after some resource reads and writes. Done when: retirement rejects admission before storage is accessed; each admitted caller holds a scoped lease and releases it in `finally`; and regeneration/reuse checks exclude only that caller's guard while still rejecting all other readers.
-- [ ] Reuse sealed compute snapshot storage on each available `ComputeDispatchOp`. `VulkanFrameLoop.AutoExposure.TryDispatchCompute` and `ComputeDispatchOp`. The current leased path constructs a new `ComputeDispatchSnapshot` for each dispatch. Done when: recurring leased debug/readback dispatches allocate no snapshot, retained operations cannot have their snapshot overwritten, and enqueue failures release all acquired uses.
+The main GPU input, bounds, covered rendering, shadow, world clock, rest-input capture, and selective readback paths are implemented. Mapped input banks use capacity planning. Debug and readback resource access require active admission leases. Compute operations reuse sealed snapshot storage. The explicit rigid rest-input cache reduces gathering work; a reliable end-to-end gain remains unproven. Grouped GPU draws already exist. The current priority is stable scene registration planning on the render and swap path. The [investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md) owns the ablation and thread timeline evidence. Extended acceptance and the 100 Hz target remain open. Every checkbox describes unfinished code or test work.
 
 ## Remaining Implementation Backlog
 
-These features and refactors remain in scope. Use measurements to set their order. Keep runtime checks and performance acceptance in the [validation plan](../../testing/physics/physics-validation.md#gpu-skinned-chain-scale); the [investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md) records the missing GPU timing and CPU wall-time evidence.
+These features and refactors remain in scope. Use measurements to set their order. Keep runtime checks and performance acceptance in the [validation plan](../../testing/physics/physics-validation.md#gpu-skinned-chain-scale); the [investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md) records the GPU timing, remaining CPU costs, and rejected shortcuts.
 
 ### World ownership and outputs
 
@@ -48,6 +42,11 @@ These features and refactors remain in scope. Use measurements to set their orde
 - [ ] Allocate permanent GPU arenas for templates, dynamic state, collider sets, roots and inputs, instance headers, active IDs, palettes, bounds, indirect commands, activity, and readback gather output. Bind them through stable offsets and generations in compact instance records. Done when: steady-state frames allocate no GPU buffers.
 - [ ] Add capacity checks, clamped counts, overflow counters, and a next-frame resize policy for active lists and indirect arguments. Done when: a unit test overflows the active list and sees a counter and no corruption.
 
+### Vulkan asynchronous submission experiment
+
+- [ ] Add retained per-queue GPU timestamp ranges for split submissions. `VulkanCommandRuntime.AdvancedQueueOverlap`, `VulkanExplicitTargetRendererHost.GpuDiagnostics`, and Vulkan timing snapshots. Done when: each completed sample identifies its queue, submission, source frame, timestamp validity, and begin/end range; retrieval never waits; query storage remains retained until completion; and incomplete samples cannot appear as valid elapsed time.
+- [ ] Add an opt-in physics submission split after an exact resource-use audit identifies independent work. `VulkanPhysicsChainComputeBackend`, `VulkanFrameLoop`, and `VulkanCommandRuntime` submission and lifetime owners. Done when: the selected secondary queue belongs to the graphics family and supports compute; captured inputs and all output resources remain retained through every submission; explicit dependencies join before same-frame palette, bounds, deformation, visibility, and shadow consumers; rejected or partially accepted work cannot reuse in-flight storage; and unsupported requested execution rejects without a hidden lane change. Keep cadence and output latency unchanged. Use the [research constraints](../../../developer-guides/rendering/physics-chain-performance.md#vulkan-asynchronous-compute-research) and the separate [runtime experiment](../../testing/physics/physics-validation.md#vulkan-asynchronous-physics-experiment).
+
 ### GPU kernels
 
 - [ ] Extend the existing `ShortLinear` and `BranchedOrLong` buckets with justified feature and collider classes and small-count handling. `PhysicsChainKernelBucket` and the active-work shaders. Done when: the retained classes have explicit selection and empty-work behavior.
@@ -62,12 +61,19 @@ These features and refactors remain in scope. Use measurements to set their orde
 
 ### Skinning and draw submission
 
+- [ ] Retain stable scene membership and registration plans across publications. `AdvancedGpuScenePublisher`, `AdvancedGpuScenePublisher.MaterialTransitions`, `GPUScene.ResidentPublication`, and canonical source revision owners. Done when: unchanged membership and source, geometry, material, and render-state revisions do not rebuild registration lookup, identity plans, or structural transaction plans; each frame still captures current GPU bounds and output-page witnesses; and membership changes, source replacement, compaction, failures, and retirement invalidate the retained plan before reuse. Reuse the existing committed material plan. Do not retain frame scratch closures as lifetime leases.
+- [ ] Separate stable Advanced preparation templates from frame bindings. `AdvancedPreparationExtractor`, `AdvancedSharedPreparationService`, `AdvancedGpuDeformationResources`, `VulkanAdvancedVisibilityInputStorage`, and `VulkanPreparedStableBinStream`. Done when: unchanged mesh, material, topology, and group revisions reuse immutable preparation templates across render frames; current pose, bounds, root motion, interpolation, previous-render history, frame-specific resources, and output-page leases remain fresh; and an unsupported or changed source takes the existing strict preparation path. A held physics output page alone must not authorize reuse of a complete frame request or displayed deformation.
+- [ ] Give the primary directional shadow tile an explicit native GPU consumer and command ownership contract. `DirectionalLightComponent.CascadeShadows`, `ShadowRenderPipeline`, `RenderCommandCollection`, and GPU shadow culling. Done when: eligible primary tiles avoid CPU mesh collection while retaining CastShadow, layer, mirror, and non-mesh policy, and rejected strict work remains dirty without an empty or CPU fallback draw. The existing cascade contract alone does not make the primary path safe.
 - [ ] Use direct palette lookup in the vertex shader for small or one-pass meshes. Done when: the renderer selects direct lookup by mesh size.
 - [ ] Route remaining chain compute-skinning paths through aggregate deformation. `AdvancedGpuDeformationResources`, `AdvancedDeformationDispatchPlanner`, and renderer skinning submission. Done when: no chain renderer issues its own skinning command or barrier.
 - [ ] Batch the skinned-vertex bounds reduction for skinned meshes without chains. `SkinnedMeshBoundsCalculator.DispatchPathADirectWrite` dispatches once and uploads one sentinel for each command slot. Done when: one dispatch reduces all registered renderers, and the reduction can read the Advanced aggregate deformation output.
 
 ### Sleep and quality on the GPU
 
+- [ ] Decide whether a reduced-rate GPU chain has work before full rest-input capture and preparation. `PhysicsChainWorld.GpuInputs`, `PhysicsChainWorld.Clock`, and `PhysicsChainComponent.GPU`. Done when: a no-solve update skips particle input gathering, the normal serial boundary advances the clock exactly once, reset and source changes invalidate the decision, and root movement remains pending until a solve consumes it.
+- [ ] Separate physical step time from distance-based submission cadence. `PhysicsChainSimulationClock`, GPU dispatch snapshots, dispatcher state arenas, and the short and branched solver shaders. Done when: cumulative physical target ticks survive packet replacement and native retries, 60/30/15 Hz submission batches retain the authored physical step, and bounded catch-up retains unprocessed time.
+- [ ] Add GPU presentation on rendered frames with no new solve. `GPUPhysicsChainDispatcher`, palette shaders, output history, and spatial bounds. Done when: timestamped root-relative simulation history produces the displayed palette, rate changes preserve a continuous presentation clock, reset seeds valid history, and CPU and GPU bounds cover the displayed mesh. Keep previous-render history separate from simulation history.
+- [ ] Supply safe camera relevance for distance quality. `PhysicsChainWorld.QualityBudget`, component observation APIs, and the Math Intersections controller. Done when: observations enter under world ownership, use active color views from the same world, exclude shadow and probe cameras, and stale or unsupported observations retain full-rate GPU execution.
 - [ ] Keep current and previous outputs coherent while a chain sleeps. Done when: a unit test wakes a chain and sees no history jump.
 - [ ] Compute GPU activity, tier assignment, and sleep compaction without CPU readback. Done when: a strict zero-readback test passes with sleeping chains.
 
@@ -125,6 +131,7 @@ These items identify missing or stale tests. Most cover code that is already imp
 ## Decisions Needed
 
 - Set additional named-hardware physics budgets and scaling targets. The current requirement is at least 100 completed rendered frames per second with 2,000 visible animated chains and frame-interval p95 at most 10 ms. Keep acceptance in the [validation plan](../../testing/physics/physics-validation.md). Owner: physics runtime.
+- Select the presentation latency and history policy for distance quality. The user permits lower simulation cadence with smooth rendered interpolation. Keep full-rate measurements as the reference and report the exact distance profile for quality-tiered acceptance. Owner: physics runtime.
 - Name the cross-vendor GPU and lower-tier CPU and GPU targets. Owner: physics runtime.
 - Approve any serialized data change before implementation. Use a separate migration plan. Owner: maintainer.
 - Decide whether a temporary old-versus-new runtime selector is necessary for comparison. Owner: physics runtime.
@@ -142,7 +149,7 @@ Experiments. Promote one only when a named workload proves the benefit, with a c
 - Quaternion or dual-quaternion palette output.
 - Shared-memory collider staging.
 - Persistent GPU work queues or cooperative kernels.
-- Vulkan asynchronous compute.
+- General cross-family Vulkan asynchronous scheduling and automatic async-physics promotion. The bounded same-family experiment is listed above.
 - GPU-only broadphase. GPU activity, tier assignment, and sleep compaction remain backlog items.
 - Core-class-aware scheduling and NUMA partitioning.
 

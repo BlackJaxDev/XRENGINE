@@ -56,11 +56,13 @@ void main()
         return;
     uint memberCount = XR_ADV_VisibilityEarlyGroupCounts.records[countIndex];
 #endif
+    // Reservations count attempts. Only the bounded prefix has member payloads.
+    memberCount = min(memberCount, group.memberCapacity);
     if (memberCount == 0u)
         return;
     uint rangeCount = uint(XR_ADV_VisibilityRangeOffsets.records.length());
     uint payloadCount = uint(XR_ADV_VisibilityPayloads.records.length());
-    if (memberCount > group.memberCapacity || group.rangeIndex >= rangeCount ||
+    if (group.rangeIndex >= rangeCount ||
         group.representativePayloadIndex >= payloadCount ||
         group.firstMember > XR_ADV_VisibilityPush.payloadCapacity ||
         group.memberCapacity > XR_ADV_VisibilityPush.payloadCapacity - group.firstMember)

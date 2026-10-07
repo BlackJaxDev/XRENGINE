@@ -1015,6 +1015,11 @@ public partial class PhysicsChainComponent : XRComponent
             ApplyCpuQualityPolicy();
         if (propName is nameof(RuntimeVisible) or nameof(RuntimeHandle))
             return;
+        if (propName == nameof(EnableRigidGpuRestInputCache))
+        {
+            _cpuBackendWorld?.InvalidateRigidGpuRestInputCache(_runtimeHandle, this);
+            return;
+        }
         if (propName == nameof(UseGpuDrivenSkinning))
         {
             InvalidateGpuDrivenRenderers();

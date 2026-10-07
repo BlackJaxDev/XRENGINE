@@ -23,6 +23,13 @@ public sealed partial class GPUPhysicsChainDispatcher
     private long _inputPageBufferAllocationCount;
     private long _inputPageMappedWriteCount;
     private string _lastInputPageFailure = string.Empty;
+    private int _provisionedHeaderCount;
+    private int _provisionedInstanceCount;
+    private int _provisionedTreeWorkCount;
+    private int _provisionedColliderCount;
+    private int _provisionedTransformCount;
+    private byte _inputPagesPendingProvision;
+    private byte _inputPagesProvisionFailed;
 
     /// <summary>Reports input pages that cannot yet accept new CPU writes.</summary>
     public PhysicsChainInputPageDiagnostics InputPageDiagnostics
@@ -153,6 +160,8 @@ public sealed partial class GPUPhysicsChainDispatcher
         if (page.FailedMarkerRecorded)
             return;
         page.FailedMarkerRecorded = true;
+        RecordFenceFailureObservation(true, Array.IndexOf(_inputPages, page),
+            page.SubmissionOrdinal, stage, page.Fence);
         RecordInputPageFailure(stage);
     }
 
@@ -173,16 +182,8 @@ public sealed partial class GPUPhysicsChainDispatcher
         if (page is null)
             return RecordInputPageFailure("InputPageNotReserved");
 
-        if (!TryEnsureMappedInputBuffer(backend, ref page.Headers, "PhysicsChainDynamicHeaderPage",
-                headerCount) ||
-            !TryEnsureMappedInputBuffer(backend, ref page.Instances, "PhysicsChainInstancePage",
-                instanceCount) ||
-            !TryEnsureMappedInputBuffer(backend, ref page.TreeWork, "PhysicsChainTreeWorkPage",
-                treeWorkCount) ||
-            !TryEnsureMappedInputBuffer(backend, ref page.Colliders, "PhysicsChainColliderPage",
-                colliderCount) ||
-            !TryEnsureMappedInputBuffer(backend, ref page.Transforms, "PhysicsChainTransformPage",
-                transformCount))
+        if (!EnsureInputPageBuffers(backend, page, headerCount, instanceCount,
+                treeWorkCount, colliderCount, transformCount))
             return RecordInputPageFailure("InputPageMapOrCapacity");
 
         _perTreeParamsBuffer = page.Headers;
@@ -192,6 +193,104 @@ public sealed partial class GPUPhysicsChainDispatcher
         _transformMatricesBuffer = page.Transforms;
         return true;
     }
+
+    private bool EnsureInputPageBuffers(IPhysicsChainComputeBackend backend,
+        PhysicsChainInputPage page, int headerCount, int instanceCount,
+        int treeWorkCount, int colliderCount, int transformCount)
+        => TryEnsureMappedInputBuffer(backend, ref page.Headers, "PhysicsChainDynamicHeaderPage",
+                headerCount) &&
+            TryEnsureMappedInputBuffer(backend, ref page.Instances, "PhysicsChainInstancePage",
+                instanceCount) &&
+            TryEnsureMappedInputBuffer(backend, ref page.TreeWork, "PhysicsChainTreeWorkPage",
+                treeWorkCount) &&
+            TryEnsureMappedInputBuffer(backend, ref page.Colliders, "PhysicsChainColliderPage",
+                colliderCount) &&
+            TryEnsureMappedInputBuffer(backend, ref page.Transforms, "PhysicsChainTransformPage",
+                transformCount);
+
+    private static bool HasMappedInputPageCapacity(PhysicsChainInputPage page,
+        int headerCount, int instanceCount, int treeWorkCount, int colliderCount,
+        int transformCount)
+        => HasMappedCapacity(page.Headers, headerCount) &&
+            HasMappedCapacity(page.Instances, instanceCount) &&
+            HasMappedCapacity(page.TreeWork, treeWorkCount) &&
+            HasMappedCapacity(page.Colliders, colliderCount) &&
+            HasMappedCapacity(page.Transforms, transformCount);
+
+    private static bool HasMappedCapacity<T>(XRDataBuffer<T>? buffer, int requiredCount)
+        where T : unmanaged
+        => buffer is { IsMapped: true } && buffer.ElementCount >= (uint)Math.Max(requiredCount, 1);
+
+    private void PreprovisionInputPages(IPhysicsChainComputeBackend backend,
+        int headerCount, int instanceCount, int treeWorkCount, int colliderCount,
+        int transformCount)
+    {
+        headerCount = RoundInputPageCapacity(headerCount);
+        instanceCount = RoundInputPageCapacity(instanceCount);
+        treeWorkCount = RoundInputPageCapacity(treeWorkCount);
+        colliderCount = RoundInputPageCapacity(colliderCount);
+        transformCount = RoundInputPageCapacity(transformCount);
+
+        if (headerCount > _provisionedHeaderCount ||
+            instanceCount > _provisionedInstanceCount ||
+            treeWorkCount > _provisionedTreeWorkCount ||
+            colliderCount > _provisionedColliderCount ||
+            transformCount > _provisionedTransformCount)
+        {
+            _provisionedHeaderCount = Math.Max(_provisionedHeaderCount, headerCount);
+            _provisionedInstanceCount = Math.Max(_provisionedInstanceCount, instanceCount);
+            _provisionedTreeWorkCount = Math.Max(_provisionedTreeWorkCount, treeWorkCount);
+            _provisionedColliderCount = Math.Max(_provisionedColliderCount, colliderCount);
+            _provisionedTransformCount = Math.Max(_provisionedTransformCount, transformCount);
+            _inputPagesPendingProvision = byte.MaxValue;
+            _inputPagesProvisionFailed = 0;
+        }
+
+        if (_inputPagesPendingProvision == 0)
+            return;
+
+        for (int index = 0; index < InputPageCount; ++index)
+        {
+            byte bit = (byte)(1 << index);
+            if ((_inputPagesPendingProvision & bit) == 0)
+                continue;
+
+            PhysicsChainInputPage page = _inputPages[index];
+            if (page.Reserved || page.Quarantined ||
+                page.ProducerRenderer is not null && !ReferenceEquals(page.ProducerRenderer, backend.Renderer))
+                continue;
+
+            if (HasMappedInputPageCapacity(page, _provisionedHeaderCount,
+                    _provisionedInstanceCount, _provisionedTreeWorkCount,
+                    _provisionedColliderCount, _provisionedTransformCount))
+            {
+                _inputPagesPendingProvision &= (byte)~bit;
+                continue;
+            }
+
+            if (!CanReuseInputPage(backend, page))
+                continue;
+
+            page.ProducerRenderer = backend.Renderer;
+            if (EnsureInputPageBuffers(backend, page, _provisionedHeaderCount,
+                    _provisionedInstanceCount, _provisionedTreeWorkCount,
+                    _provisionedColliderCount, _provisionedTransformCount))
+            {
+                _inputPagesPendingProvision &= (byte)~bit;
+                _inputPagesProvisionFailed &= (byte)~bit;
+            }
+            else if ((_inputPagesProvisionFailed & bit) == 0)
+            {
+                _inputPagesProvisionFailed |= bit;
+                RecordInputPageFailure("InputPagePreprovisionMapOrCapacity");
+            }
+        }
+    }
+
+    private static int RoundInputPageCapacity(int requiredCount)
+        => requiredCount > MaxArenaElementCount
+            ? requiredCount
+            : (int)XRMath.NextPowerOfTwo((uint)Math.Max(requiredCount, 1));
 
     private bool TryEnsureMappedInputBuffer<T>(IPhysicsChainComputeBackend backend,
         ref XRDataBuffer<T>? buffer, string name, int requiredCount) where T : unmanaged
@@ -389,6 +488,8 @@ public sealed partial class GPUPhysicsChainDispatcher
                 if ((page.HasWritten || page.HasQueuedWork) && page.Fence is null)
                 {
                     page.Quarantined = true;
+                    RecordFenceFailureObservation(true, Array.IndexOf(_inputPages, page),
+                        page.SubmissionOrdinal, "InsertFenceUnavailable", null);
                     RecordInputPageFailure("InputPageFenceUnavailable");
                 }
                 else if (page.Fence is not null)
@@ -405,6 +506,8 @@ public sealed partial class GPUPhysicsChainDispatcher
             catch (Exception exception)
             {
                 page.Quarantined = true;
+                RecordFenceFailureObservation(true, Array.IndexOf(_inputPages, page),
+                    page.SubmissionOrdinal, "InsertFenceException", page.Fence);
                 RecordInputPageFailure("InputPageFenceFailed");
                 XREngine.Debug.LogException(exception);
             }
@@ -426,6 +529,13 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     private void RetireInputPages()
     {
+        _provisionedHeaderCount = 0;
+        _provisionedInstanceCount = 0;
+        _provisionedTreeWorkCount = 0;
+        _provisionedColliderCount = 0;
+        _provisionedTransformCount = 0;
+        _inputPagesPendingProvision = 0;
+        _inputPagesProvisionFailed = 0;
         for (int index = 0; index < _inputPages.Length; index++)
         {
             PhysicsChainInputPage page = _inputPages[index];

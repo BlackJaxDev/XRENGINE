@@ -431,11 +431,14 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     private void InvalidateFailedPublishedPages()
     {
-        foreach (PhysicsChainOutputPage page in _outputPages)
+        for (int pageIndex = 0; pageIndex < _outputPages.Length; pageIndex++)
         {
+            PhysicsChainOutputPage page = _outputPages[pageIndex];
             if (!page.KnownProducerFailure &&
                 page.ProducerFence?.SubmissionStatus == EGpuFenceSubmissionStatus.Failed)
             {
+                RecordFenceFailureObservation(false, pageIndex, page.ProducerEpoch,
+                    "PublishedOutputFenceFailed", page.ProducerFence);
                 page.KnownProducerFailure = true;
                 ++_outputPageFailureCount;
             }
@@ -484,6 +487,8 @@ public sealed partial class GPUPhysicsChainDispatcher
             catch (Exception exception)
             {
                 XREngine.Debug.LogException(exception);
+                RecordFenceFailureObservation(false, _writingOutputPageIndex,
+                    (ulong)_outputProducerEpoch + 1UL, "InsertFenceException", page.ProducerFence);
                 page.HasUnfencedGpuWork = true;
                 ++_outputPageFailureCount;
                 _writingOutputPageIndex = -1;
@@ -492,6 +497,10 @@ public sealed partial class GPUPhysicsChainDispatcher
             if (page.ProducerFence is null
                 || page.ProducerFence.SubmissionStatus == EGpuFenceSubmissionStatus.Failed)
             {
+                RecordFenceFailureObservation(false, _writingOutputPageIndex,
+                    (ulong)_outputProducerEpoch + 1UL,
+                    page.ProducerFence is null ? "InsertFenceUnavailable" : "OutputPageFenceFailed",
+                    page.ProducerFence);
                 page.HasUnfencedGpuWork = true;
                 page.KnownProducerFailure = page.ProducerFence?.SubmissionStatus == EGpuFenceSubmissionStatus.Failed;
                 ++_outputPageFailureCount;
@@ -688,18 +697,27 @@ public sealed partial class GPUPhysicsChainDispatcher
                 page.SpatialCheckpoints.Clear();
                 if (page.HasQueuedGpuWork)
                 {
+                    bool insertFenceThrew = false;
                     try
                     {
                         page.ProducerFence = backend.InsertFence();
                     }
                     catch (Exception exception)
                     {
+                        insertFenceThrew = true;
                         XREngine.Debug.LogException(exception);
+                        RecordFenceFailureObservation(false, _writingOutputPageIndex,
+                            (ulong)_outputProducerEpoch + 1UL, "AbandonInsertFenceException", page.ProducerFence);
                         page.ProducerFence = null;
                     }
                     page.HasUnfencedGpuWork = page.ProducerFence is null;
                     if (page.HasUnfencedGpuWork)
+                    {
+                        if (!insertFenceThrew)
+                            RecordFenceFailureObservation(false, _writingOutputPageIndex,
+                                (ulong)_outputProducerEpoch + 1UL, "AbandonFenceUnavailable", page.ProducerFence);
                         ++_outputPageFailureCount;
+                    }
                 }
             }
             _writingOutputPageIndex = -1;

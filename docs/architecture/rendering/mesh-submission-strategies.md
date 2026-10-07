@@ -290,6 +290,22 @@ multi-instance payloads keep a separate group and their original instance count.
 
 Each group has a fixed member segment. GPU visibility appends visible payload IDs
 to that segment. A finalizer writes one indexed argument per nonempty group.
+`BuildVisibilityIndirect`, `LateVisibility`, and
+`CullDirectionalShadowCasters` use one atomic increment per group-member
+reservation. Their counters record attempted reservations. A capacity check
+rejects excess writes and increments the overflow diagnostic.
+`FinalizeIndexedInstanceGroups` clamps member counts to the reserved segment
+capacity, so an overflow cannot discard the valid prefix or expose unwritten
+payloads. Each candidate belongs to one group. Member segments do not overlap.
+Counters start at zero for each view or cascade, and a storage barrier separates
+member writes from finalization. Member reservations have no retry loop; range
+reservations retain their existing bounded compare-and-swap loops.
+
+`LateVisibility` also uses one atomic increment for its visible-output
+reservation. It bounds the deferred input count by the payload capacity and
+checks each output index before a write. The `lateDraws` counter is diagnostic
+data; it does not supply an indirect draw count.
+
 The argument uses `VertexOffset=0` and `FirstInstance` as the member-table base.
 The vertex shader selects each member's draw, material, transform, current and
 previous deformation offsets, selection ID, and primitive base. Shared indexed
@@ -300,3 +316,32 @@ raster phase selects the matching table for indexed and meshlet consumers.
 OpenGL stereo first combines the eye masks, then appends each visible payload
 once. Vulkan retains its packed vertex binding for pipeline compatibility; the
 indexed shader reads member vertices through the canonical storage buffers.
+
+## Vulkan Visibility Memory Placement
+
+`VulkanFrameDataArena` requests mapped device-local memory only for
+`AdvancedVisibilityStorage`. `VulkanMappedFrameArenaBackend` tries compatible
+memory types in this order:
+
+1. Host-visible, device-local, and host-coherent.
+2. Host-visible and device-local, including noncoherent memory.
+3. Host-visible and host-coherent.
+4. Host-visible.
+
+Each memory type is attempted at most once. Only `ErrorOutOfDeviceMemory`
+permits another allocation attempt. Device loss closes admission, and other
+native errors stop the allocation. A successful retry increments the existing
+Vulkan OOM fallback counter. Other frame-data lanes, including scene storage,
+upload, and readback, retain their existing memory selection policy.
+
+All choices remain mapped. The selected memory type's actual flags control
+coherent writes and noncoherent flushes. Flush alignment, slot fences, buffer
+usage, and device-address allocation flags remain in force.
+
+The existing allocation registry retains the actual `MemoryTypeIndex` and
+memory property flags for each chunk. A cold Vulkan allocation log records the
+visibility chunk's owner, buffer and memory handles, allocated bytes, type
+index, numeric and named property flags, and whether allocation was retried.
+This record is emitted once per chunk allocation, not each frame. Use the
+selected flags to verify placement; the requested preference alone does not
+prove device-local storage.

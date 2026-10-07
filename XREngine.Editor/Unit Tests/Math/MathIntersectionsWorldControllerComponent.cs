@@ -964,6 +964,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
             target.SleepVelocityThreshold = source.SleepVelocityThreshold;
             target.SleepQuietFrameCount = source.SleepQuietFrameCount;
             target.GpuSyncToBones = source.GpuSyncToBones;
+            target.EnableRigidGpuRestInputCache = source.EnableRigidGpuRestInputCache;
             target.Multithread = source.Multithread;
             target.UseGPU = source.UseGPU;
             target.UseBatchedDispatcher = source.UseBatchedDispatcher;
@@ -1327,6 +1328,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     {
         public void Render()
         {
+            Text.InvalidateTextMatrix();
             Text.Render();
         }
 
@@ -1341,7 +1343,9 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     {
         public void Render()
         {
+            Title.InvalidateTextMatrix();
             Title.Render();
+            Description.InvalidateTextMatrix();
             Description.Render();
         }
 

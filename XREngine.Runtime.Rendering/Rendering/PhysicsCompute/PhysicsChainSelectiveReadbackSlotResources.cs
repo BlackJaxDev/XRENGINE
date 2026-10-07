@@ -18,13 +18,33 @@ internal sealed class PhysicsChainSelectiveReadbackSlotResources : RenderResourc
     internal bool Quarantined;
 
     internal bool CanRetire()
-        => !StagingSource.IsValid && AuthoringUseCount == 0
-            && (!HasQueuedWork || ProducerBackend is { } backend && TryBeginReuse(backend));
+    {
+        if (AuthoringUseCount != 0 || StagingSource.IsValid)
+            return false;
+        if (!HasQueuedWork)
+            return true;
+        if (Quarantined)
+            return HasCompletedNativeBufferUses();
+        return ProducerBackend is { } backend && TryBeginReuse(backend);
+    }
+
+    /// <summary>Releases a quarantined slot only when native buffer use has ended.</summary>
+    private bool HasCompletedNativeBufferUses()
+    {
+        if (ProducerRenderer is not IRuntimeRendererHost host
+            || host.BackendId != RendererBackendId.Vulkan
+            || host.IsDeviceLost || !ProducerRenderer.AcceptsBackendWork
+            || !host.TryGetBackendCapability<IGpuBufferContentReuseCapability>(out var reuse)
+            || reuse is null)
+            return false;
+        return IsReady(reuse, Items) && IsReady(reuse, PackedOutput) && IsReady(reuse, MappedStaging);
+    }
 
     /// <summary>Reuses storage only after native work has finished or has no remaining buffer use.</summary>
-    internal bool TryBeginReuse(IPhysicsChainComputeBackend backend)
+    internal bool TryBeginReuse(IPhysicsChainComputeBackend backend, bool callerHasActiveUse = false)
     {
-        if (Quarantined || _disposeRequested || StagingSource.IsValid || AuthoringUseCount != 0
+        if (Quarantined || _disposeRequested || StagingSource.IsValid
+            || AuthoringUseCount != (callerHasActiveUse ? 1 : 0)
             || ProducerRenderer is not null && !ReferenceEquals(ProducerRenderer, backend.Renderer))
             return false;
         if (!HasQueuedWork)
@@ -83,14 +103,14 @@ internal sealed class PhysicsChainSelectiveReadbackSlotResources : RenderResourc
     public void Dispose()
     {
         _disposeRequested = true;
-        StagingSource.Dispose();
-        Fence.Reject();
-        Fence.Dispose();
         RetireAuthoringResources();
     }
 
     protected override void DisposeRetainedResources()
     {
+        StagingSource.Dispose();
+        Fence.Reject();
+        Fence.Dispose();
         CompletionFence?.Dispose();
         CompletionFence = null;
         Items?.Dispose();

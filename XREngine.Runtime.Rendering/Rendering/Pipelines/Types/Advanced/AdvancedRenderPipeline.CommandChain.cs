@@ -2,6 +2,10 @@ using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.GI.Integration;
 using XREngine.Rendering.Resources;
+using XREngine.Data.Rendering;
+using XREngine.Rendering.Compute;
+using XREngine.Rendering.Models.Materials;
+using XREngine.Scene.Physics.DebugVisualization;
 
 namespace XREngine.Rendering;
 
@@ -68,6 +72,7 @@ public partial class AdvancedRenderPipeline
                 break;
             case EAdvancedRenderStage.LatePasses:
                 AppendAdvancedLatePassCommands(commands);
+                AppendAdvancedPhysicsDebugCommands(commands);
                 break;
             case EAdvancedRenderStage.TemporalAndPostProcessing:
                 AppendAdvancedPostProcessCommands(commands);
@@ -80,6 +85,37 @@ public partial class AdvancedRenderPipeline
                 break;
         }
         commands.Add<VPRC_GPUTimerEnd>().Label = descriptor.GpuLabel;
+    }
+
+    /// <summary>Draws selected GPU chains against the completed scene depth.</summary>
+    private void AppendAdvancedPhysicsDebugCommands(ViewportRenderCommandContainer commands)
+    {
+        var selected = commands.Add<VPRC_IfElse>();
+        selected.Label = "AdvancedSelectedPhysicsDebug";
+        selected.ConditionEvaluator = static () =>
+            RuntimeEngine.Rendering.State.DebugInstanceRenderingAvailable &&
+            !RuntimeEngine.Rendering.State.IsLightProbePass &&
+            !RuntimeEngine.Rendering.State.IsShadowPass &&
+            GPUPhysicsChainDispatcher.Instance.HasSelectedGpuDebugChains;
+        var selectedCommands = new ViewportRenderCommandContainer(this);
+        RenderCaptureCommandPolicy.AddConditional(
+            selectedCommands, this, ERenderCapturePass.DebugOverlays, debugCommands =>
+            {
+                using (debugCommands.AddUsing<VPRC_PushViewportRenderArea>(x => x.UseInternalResolution = true))
+                using (debugCommands.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(
+                    ForwardPassFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+                {
+                    debugCommands.Add<VPRC_ColorMask>().Set(true, true, true, true);
+                    debugCommands.Add<VPRC_DepthTest>().Enable = true;
+                    debugCommands.Add<VPRC_DepthWrite>().Allow = true;
+                    debugCommands.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
+                    var physics = debugCommands.Add<VPRC_RenderDebugPhysics>();
+                    physics.RenderGraphPassName = "Advanced.PhysicsWorldDebug";
+                    physics.DepthMode = PhysicsDebugDepthMode.DepthTested;
+                    physics.RenderWorldPhysics = false;
+                }
+            });
+        selected.TrueCommands = selectedCommands;
     }
 
     /// <summary>Runs the selected shared GI module against Advanced native-shading outputs.</summary>

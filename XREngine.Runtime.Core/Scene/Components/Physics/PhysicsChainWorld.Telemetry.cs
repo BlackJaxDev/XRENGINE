@@ -20,11 +20,25 @@ public sealed partial class PhysicsChainWorld
     private long _lateGpuBridgeDispatchTicks;
     private long _lateStructuralBoundaryTicks;
     private long _lateQualityBudgetTicks;
+    private long _lateQualityAssignmentTicks;
+    private long _lateGpuRestDependencyPreparationTicks;
     private long _lateGpuRestPoseTicks;
     private long _lateGpuHierarchyTicks;
     private long _lateGpuParticleTransformReadTicks;
     private long _lateActivityScanTicks;
     private long _lateSelectedActivityTicks;
+    private long _gpuRestOpaqueSampleTicks;
+    private long _gpuRestOpaqueSampleCount;
+    private long _gpuRestOwnerMarkSampleTicks;
+    private long _gpuRestOwnerMarkSampleCount;
+    private long _gpuRestColliderSampleTicks;
+    private long _gpuRestColliderSampleCount;
+    private long _rigidRestRootSampleTicks;
+    private long _rigidRestRootSampleCount;
+    private long _rigidRestExpandSampleTicks;
+    private long _rigidRestExpandSampleCount;
+    private long _rigidRestPublishSampleTicks;
+    private long _rigidRestPublishSampleCount;
 
     /// <summary>Reads cumulative late-tick timing without resetting it.</summary>
     public PhysicsChainLateTickTelemetrySnapshot LateTickTelemetry => new(
@@ -51,6 +65,20 @@ public sealed partial class PhysicsChainWorld
         Interlocked.Read(ref _lateSelectedActivityTicks))
     {
         GpuWorldInputGatherTicks = Interlocked.Read(ref _lateGpuWorldInputGatherTicks),
+        QualityAssignmentTicks = Interlocked.Read(ref _lateQualityAssignmentTicks),
+        GpuRestDependencyPreparationTicks = Interlocked.Read(ref _lateGpuRestDependencyPreparationTicks),
+        GpuRestOpaqueSampleTicks = Interlocked.Read(ref _gpuRestOpaqueSampleTicks),
+        GpuRestOpaqueSampleCount = Interlocked.Read(ref _gpuRestOpaqueSampleCount),
+        GpuRestOwnerMarkSampleTicks = Interlocked.Read(ref _gpuRestOwnerMarkSampleTicks),
+        GpuRestOwnerMarkSampleCount = Interlocked.Read(ref _gpuRestOwnerMarkSampleCount),
+        GpuRestColliderSampleTicks = Interlocked.Read(ref _gpuRestColliderSampleTicks),
+        GpuRestColliderSampleCount = Interlocked.Read(ref _gpuRestColliderSampleCount),
+        RigidRestRootSampleTicks = Interlocked.Read(ref _rigidRestRootSampleTicks),
+        RigidRestRootSampleCount = Interlocked.Read(ref _rigidRestRootSampleCount),
+        RigidRestExpandSampleTicks = Interlocked.Read(ref _rigidRestExpandSampleTicks),
+        RigidRestExpandSampleCount = Interlocked.Read(ref _rigidRestExpandSampleCount),
+        RigidRestPublishSampleTicks = Interlocked.Read(ref _rigidRestPublishSampleTicks),
+        RigidRestPublishSampleCount = Interlocked.Read(ref _rigidRestPublishSampleCount),
     };
 
     internal static void RecordGpuComponentPreparation(long ticks)
