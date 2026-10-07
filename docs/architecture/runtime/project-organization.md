@@ -26,6 +26,48 @@ These projects target `net10.0` and compile their full source set for desktop an
 
 `XREngine.Runtime.Rendering.WebGPU`, `XREngine.Runtime.Platform.Browser`, and `XREngine.Browser` also belong to the compile closure. They provide the browser renderer, canvas platform leaf, and application composition; their presence does not imply that the browser host can run every engine world or desktop feature. Browser gameplay integration is tracked separately from compilation.
 
+`XREngine.Runtime.Execution.Threads` is a separate `net10.0` implementation leaf.
+It owns the general and auxiliary worker loops, thread creation, wake signals,
+and joins. It references Core and uses BCL threading. It has no Host, Desktop,
+renderer, native-library, or external package dependency. It is excluded from
+the browser compile closure. Core retains `JobManager`, scheduler state, queue
+policy, topology, metrics, and the domain factory contracts. One deliberate
+Core friend-assembly declaration lets the moved code use existing internal
+dispatch and worker-context methods. The physical render-lane implementation
+remains in Core and is separate open placement work.
+
+Native hosts register `ThreadedWorkerBackend.EnsureRegistered()` before asking
+for threaded jobs. The registration installs the built-in factory only if the
+slot is empty; it creates no worker or scheduler. Constructors capture one
+factory for their general and auxiliary domains. An absent factory produces an
+explicit failure. Implicit `RuntimeWorkScheduler.Jobs` creation remains available
+after registration. Caller-thread construction does not consult this service.
+Native zero-general-worker scheduling still has two auxiliary lanes.
+
+Desktop composition registers the worker leaf. Bootstrap also exposes
+`RuntimeApplicationBootstrap.PrepareWorkerServices()` for callers that need only
+workers before full Desktop setup. The shared RenderBench scope and NUnit setup
+use that entry point. SoftwareVulkan and the standalone browser smoke publisher
+reference and register the worker leaf directly. The publisher keeps its
+`net10.0` target and its local file adapters. Browser, Core, Host, and RollingBall
+have no project reference to this leaf; ShaderCooker has no worker dependency.
+These registrations preserve custom providers and existing schedulers. They do
+not initialize windows, apply QoS, or change desktop/VR clocks.
+Full Desktop bootstrap registers workers before other backend registration.
+Replacing an existing asset source can invoke cancellation callbacks during
+DirectStorage registration; those callbacks must already have worker support.
+
+The job manager owns each created domain before either starts. Startup failure
+requests cancellation and signals both domains before joining them. A clean
+rollback rethrows the startup exception; a failed cleanup reports an aggregate
+with that startup exception first. Shutdown attempts both domains even when a
+custom domain throws. Domain joins and manager completion waits share the
+remaining cooperative wait budget. Existing domain/render startup cleanup has
+its own bounds, so total constructor failure time is not a fixed two seconds.
+An incomplete or faulted domain prevents manager synchronization disposal in
+that call. A later clean shutdown can finish disposal. Normal shutdown returns
+false for incomplete work and reports collected errors after cleanup attempts.
+
 `Engine.ProfileCapture` stays in the shared Host project. It selects speed profile paths, labels, output data, and retention count. The optional `IRuntimeProfileCaptureFileOutput` contract stays in Rendering. The desktop platform leaf implements it through the existing diagnostic capture file output service. That leaf creates directories, applies the retention policy, and writes profile text with `Encoding.UTF8`. The Host still checks host-file admission and obtains the log run directory before it requests profile output. A host without the service or this capability reports a capture-start directory error; later profile writes keep their catch-all behavior.
 
 `ShaderSourceResolver` and `UberShaderVariantBuilder` use captured host services

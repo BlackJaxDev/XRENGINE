@@ -34,6 +34,7 @@ internal static unsafe class Program
             Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanSynchronizationValidation, "1");
             if (RuntimeWorkScheduler.Scheduler is null)
             {
+                ThreadedWorkerBackend.EnsureRegistered();
                 RuntimeWorkScheduler.Configure(EngineExecutionTopology.Resolve(new EngineExecutionTopologyRequest
                 {
                     EffectiveProcessorCount = Environment.ProcessorCount,

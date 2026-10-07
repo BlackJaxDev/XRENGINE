@@ -7,7 +7,7 @@ namespace XREngine.Execution;
 /// Foreground affinities remain phase-polled; auxiliary affinities have their
 /// own scheduler domain.
 /// </summary>
-internal sealed class EngineGeneralWorkDomain
+internal sealed class EngineGeneralWorkDomain : IEngineGeneralWorkDomain
 {
     private static readonly TimeSpan WorkerJoinTimeout = TimeSpan.FromSeconds(2);
     private readonly JobManager _jobs;
@@ -45,15 +45,15 @@ internal sealed class EngineGeneralWorkDomain
         }
     }
 
-    internal int WorkerCount => _workers.Length;
-    internal long DispatchCount => Interlocked.Read(ref _dispatchCount);
-    internal long WakeCount => Interlocked.Read(ref _wakeCount);
-    internal long ThrottledDispatchCount
+    public int WorkerCount => _workers.Length;
+    public long DispatchCount => Interlocked.Read(ref _dispatchCount);
+    public long WakeCount => Interlocked.Read(ref _wakeCount);
+    public long ThrottledDispatchCount
         => Interlocked.Read(ref _throttledDispatchCount);
-    internal long ThrottleWaitTicks
+    public long ThrottleWaitTicks
         => Interlocked.Read(ref _throttleWaitTicks);
 
-    internal void Start()
+    public void Start()
     {
         if (Interlocked.Exchange(ref _started, 1) != 0)
             throw new InvalidOperationException("The general work domain was already started.");
@@ -76,7 +76,7 @@ internal sealed class EngineGeneralWorkDomain
         }
     }
 
-    internal void NotifyWorkAvailable()
+    public void NotifyWorkAvailable()
     {
         if (Volatile.Read(ref _shutdownState) != 0)
             return;
@@ -99,15 +99,19 @@ internal sealed class EngineGeneralWorkDomain
         }
     }
 
-    internal bool Shutdown(bool waitForWorkers)
+    public bool Shutdown(bool waitForWorkers)
         => Shutdown(waitForWorkers, WorkerJoinTimeout);
 
-    internal bool Shutdown(bool waitForWorkers, TimeSpan timeout)
+    public bool Shutdown(bool waitForWorkers, TimeSpan timeout)
     {
         if (Interlocked.Exchange(ref _shutdownState, 1) == 0)
         {
             if (_workers.Length == 0)
+            {
+                if (Interlocked.Exchange(ref _synchronizationDisposed, 1) == 0)
+                    _readySignal.Dispose();
                 return true;
+            }
 
             try
             {
