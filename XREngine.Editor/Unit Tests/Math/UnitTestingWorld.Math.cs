@@ -27,6 +27,11 @@ public static partial class EditorUnitTests
         scene.RootNodes.Add(rootNode);
 
         Pawns.CreatePlayerPawn(setUI, isServer, rootNode);
+        rootNode.IterateComponents<CameraComponent>(static camera =>
+        {
+            camera.SetManualExposure(1.0f);
+            camera.SetBloomEnabled(false);
+        }, iterateChildHierarchy: true);
         if (Toggles.DirLight)
             Lighting.AddDirLight(rootNode);
 
@@ -1108,6 +1113,7 @@ public static partial class EditorUnitTests
             // CPU transform-updated palette, according to the scenario.
             chain.InvalidateGpuDrivenRenderers();
         }
+        chain.EnableRigidGpuRestInputCache = useGpuDrivenSkinning && !gpuSyncToBones;
 
         var debug = testNode.AddComponent<DebugDrawComponent>()!;
         // Run in Late tick group AFTER PhysicsChainComponent.LateUpdate (Late+Animation)

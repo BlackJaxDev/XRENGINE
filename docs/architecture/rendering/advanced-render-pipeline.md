@@ -40,6 +40,30 @@ FrameBegin
 - Native opaque shading reconstructs surface attributes from visibility identity, evaluates material lighting, and writes HDR scene color.
 - Late passes hold transparent, refractive, volumetric, particle, editor-overlay, gizmo, and other special work.
 
+### Selected GPU chain debug
+
+`AppendAdvancedPhysicsDebugCommands` runs after late scene work and before
+temporal and post-processing work. It is independent of the transparent mesh
+count. The hook binds `ForwardPassFBO` and loads its existing HDR color and
+native visibility depth without clearing either attachment. It uses the
+internal viewport, depth testing, depth writes, and `LessEqual`.
+
+`VPRC_RenderDebugPhysics` declares the dynamic `Advanced.PhysicsWorldDebug`
+pass. The Advanced hook sets `RenderWorldPhysics` to `false`, so selecting a
+GPU chain does not also draw the world's general physics debug frame. Other
+callers keep the option's default value of `true`.
+
+No selected GPU chain means no framebuffer setup, debug generation, or draw.
+The hook also respects `DebugInstanceRenderingAvailable` and the capture
+policy's `DebugOverlays` permission. Shadow and light-probe passes skip it.
+Minimal depth and visibility output profiles omit the late stage entirely.
+
+The dispatcher generates one bounded batch per world and reuses successful
+content across views in the same frame. Deferred or native uses can block
+batch reuse, so a later frame can skip debug output. The hook adds no CPU
+readback. Buffer ownership, barriers, and indirect draw rules are defined in
+the [physics-chain compute contract](../physics/physics-chain-compute-backends.md#global-gpu-chain-debug).
+
 ### Synchronization boundaries
 
 OpenGL and Vulkan lower the same four logical boundaries (`EAdvancedSynchronizationBoundary`) through their own encodings:

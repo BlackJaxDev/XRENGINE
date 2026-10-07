@@ -8,6 +8,10 @@ param(
     [ValidateRange(0, 30)][int]$CpuTraceSeconds = 0,
     [ValidateSet('CpuDirect', 'GpuIndirectZeroReadback')]
     [string]$SubmissionStrategy = 'GpuIndirectZeroReadback',
+    [ValidateSet('Authored', 'Strict', 'Hz30', 'Hz15', 'Hz7_5', 'Automatic')]
+    [string]$QualityTier = 'Authored',
+    [ValidateSet('Authored', 'Discrete', 'Interpolate', 'Extrapolate')]
+    [string]$InterpolationMode = 'Authored',
     [string]$Label = 'physics-chain-scale',
     [string]$OutputFolder = '',
     [switch]$Telemetry,
@@ -26,11 +30,16 @@ $benchmarkStarted = $false
 $controllerId = $null
 $summaryPath = $null
 $traceProcess = $null
+$traceCommand = $null
 $lastToolName = $null
 $lastMethodName = $null
 $profilerSettingsToRestore = [ordered]@{}
 $submissionOverrideToRestore = $null
 $submissionOverrideChanged = $false
+$sourceNodeId = $null
+$sourceChainId = $null
+$sourceProfileToRestore = $null
+$sourceProfileChanged = $false
 $summary = [ordered]@{
     label = $Label
     session = $Session
@@ -40,6 +49,7 @@ $summary = [ordered]@{
     cpuTraceSeconds = $CpuTraceSeconds
     requireDirectionalShadows = [bool]$RequireDirectionalShadows
     submissionStrategy = $SubmissionStrategy
+    requestedSourceProfile = [ordered]@{ qualityTier = $QualityTier; interpolationMode = $InterpolationMode }
     accepted = $false
     reason = $null
 }
@@ -71,6 +81,20 @@ function Get-ProfilerObserverSettings {
         $settings[$name] = [bool]$entry.value
     }
     return $settings
+}
+
+function Get-SourceProfileValue([string]$NodeId, [string]$PropertyName, [string[]]$Names) {
+    $value = (Invoke-ScaleTool 'get_component_property' @{
+        node_id = $NodeId; component_type = 'PhysicsChainComponent'; property_name = $PropertyName
+    }).value
+    if ($null -eq $value) { throw "Source $PropertyName is unavailable." }
+    $name = [string]$value
+    if ($name -in $Names) { return $name }
+    $index = 0
+    if ([int]::TryParse($name, [ref]$index) -and $index -ge 0 -and $index -lt $Names.Count) {
+        return $Names[$index]
+    }
+    throw "Source $PropertyName has an unknown value '$name'."
 }
 
 function Get-OutcomeCounts {
@@ -123,9 +147,12 @@ function Get-Count {
 
 function Get-TelemetrySnapshot([string]$SourceNodeId) {
     $worldLateTick = (Invoke-ScaleTool 'get_component_property' @{ node_id = $SourceNodeId; component_type = 'PhysicsChainComponent'; property_name = 'WorldLateTickTelemetry' }).value
+    $rigidRestCache = (Invoke-ScaleTool 'get_component_property' @{ node_id = $SourceNodeId; component_type = 'PhysicsChainComponent'; property_name = 'RigidGpuRestInputCacheDiagnostics' }).value
     $collection = (Invoke-ScaleTool 'invoke_method' @{ type_name = 'RuntimeWorldRenderer'; method_name = 'get_CollectionTelemetry'; arguments = @() }).result
     $stages = (Invoke-ScaleTool 'invoke_method' @{ type_name = 'RenderableMeshStageTelemetry'; method_name = 'Snapshot'; arguments = @() }).result
-    return [ordered]@{ worldLateTick = $worldLateTick; collection = $collection; renderableMeshStages = $stages }
+    $worldTicks = (Invoke-ScaleTool 'invoke_method' @{ type_name = 'RuntimeWorldTickTelemetry'; method_name = 'CaptureSnapshot'; arguments = @() }).result
+    $contention = (Invoke-ScaleTool 'invoke_method' @{ type_name = 'TransformHierarchyStore'; method_name = 'GetReadContentionTelemetrySnapshot'; arguments = @() }).result
+    return [ordered]@{ worldLateTick = $worldLateTick; rigidRestCache = $rigidRestCache; collection = $collection; renderableMeshStages = $stages; worldTicks = $worldTicks; transformReadContention = $contention }
 }
 
 function Get-NumericDifferences($Before, $After) {
@@ -152,12 +179,29 @@ function Get-NumericDifferences($Before, $After) {
 function Get-TickRates($Differences, [double]$Frequency, [long]$CallCount, [long]$RenderedFrames, [string]$Prefix = '') {
     $rates = [ordered]@{}
     foreach ($name in $Differences.Keys) {
-        if ($name -notlike '*Ticks' -or (-not [string]::IsNullOrEmpty($Prefix) -and $name -notlike "$Prefix*")) { continue }
+        if ($name -notlike '*Ticks' -or $name -like '*SampleTicks' -or
+            (-not [string]::IsNullOrEmpty($Prefix) -and $name -notlike "$Prefix*")) { continue }
         $milliseconds = [double]$Differences[$name] * 1000.0 / $Frequency
         $rates[$name] = [ordered]@{
             totalMilliseconds = $milliseconds
             millisecondsPerCall = $(if ($CallCount -gt 0) { $milliseconds / $CallCount } else { $null })
             millisecondsPerRenderedFrame = $(if ($RenderedFrames -gt 0) { $milliseconds / $RenderedFrames } else { $null })
+        }
+    }
+    return $rates
+}
+
+function Get-SampledTickRates($Differences, [double]$Frequency) {
+    $rates = [ordered]@{}
+    foreach ($name in $Differences.Keys) {
+        if ($name -notlike '*SampleTicks') { continue }
+        $countName = $name.Substring(0, $name.Length - 'Ticks'.Length) + 'Count'
+        $count = [long]$Differences[$countName]
+        $milliseconds = [double]$Differences[$name] * 1000.0 / $Frequency
+        $rates[$name] = [ordered]@{
+            sampleCount = $count
+            sampledMilliseconds = $milliseconds
+            millisecondsPerSample = $(if ($count -gt 0) { $milliseconds / $count } else { $null })
         }
     }
     return $rates
@@ -189,6 +233,9 @@ function Get-StageDifference([string]$Before, [string]$After, [long]$RenderedFra
 try {
     if ($CpuTraceSeconds -gt 0 -and $CpuTraceSeconds -gt $WindowSeconds - 5) {
         throw 'The CPU trace must end at least five seconds before the measurement window.'
+    }
+    if ($CpuTraceSeconds -gt 0) {
+        $traceCommand = Get-Command dotnet-trace -ErrorAction Stop
     }
     if ([string]::IsNullOrWhiteSpace($OutputFolder)) {
         & (Join-Path $repoRoot 'Tools\Limit-AgentValidation.ps1') -ReserveTaskRun | Out-Null
@@ -244,17 +291,50 @@ try {
         Where-Object { $_.path -like "$($source.path)/*" })
     if ($chainNodes.Count -ne 1) { throw "Expected one source physics chain; found $($chainNodes.Count)." }
     $sourceChainId = [string]$chainNodes[0].id
+    $sourceNodeId = [string]$chainNodes[0].id
     $rootInfo = Invoke-ScaleTool 'get_scene_node_info' @{ node_id = [string]$root.id }
     $controllers = @($rootInfo.components | Where-Object { $_.type -like '*MathIntersectionsWorldControllerComponent' })
     if ($controllers.Count -ne 1) { throw "Expected one Math Intersections controller; found $($controllers.Count)." }
     $controllerId = [string]$controllers[0].id
 
+    $qualityNames = @('Strict', 'Hz30', 'Hz15', 'Hz7_5', 'Sleep', 'Automatic')
+    $interpolationNames = @('Discrete', 'Interpolate', 'Extrapolate')
+    $sourceProfileToRestore = [ordered]@{
+        qualityTier = Get-SourceProfileValue $sourceNodeId 'QualityTier' $qualityNames
+        interpolationMode = Get-SourceProfileValue $sourceNodeId 'InterpolationMode' $interpolationNames
+    }
+    $summary.originalSourceProfile = $sourceProfileToRestore
+    if ($QualityTier -ne 'Authored' -or $InterpolationMode -ne 'Authored') {
+        $sourceProfileChanged = $true
+        if ($QualityTier -ne 'Authored') {
+            Invoke-ScaleTool 'set_component_property' @{
+                node_id = $sourceNodeId; component_type = 'PhysicsChainComponent'; property_name = 'QualityTier'; value = $QualityTier
+            } | Out-Null
+        }
+        if ($InterpolationMode -ne 'Authored') {
+            Invoke-ScaleTool 'set_component_property' @{
+                node_id = $sourceNodeId; component_type = 'PhysicsChainComponent'; property_name = 'InterpolationMode'; value = $InterpolationMode
+            } | Out-Null
+        }
+    }
+    $summary.effectiveSourceProfile = [ordered]@{
+        qualityTier = Get-SourceProfileValue $sourceNodeId 'QualityTier' $qualityNames
+        interpolationMode = Get-SourceProfileValue $sourceNodeId 'InterpolationMode' $interpolationNames
+    }
+    if (($QualityTier -ne 'Authored' -and $summary.effectiveSourceProfile.qualityTier -ne $QualityTier) -or
+        ($InterpolationMode -ne 'Authored' -and $summary.effectiveSourceProfile.interpolationMode -ne $InterpolationMode)) {
+        throw 'Source physics-chain profile does not match the requested profile.'
+    }
+
     Invoke-ScaleTool 'set_object_property' @{ object_id = [string]$source.id; property_name = 'IsActiveSelf'; value = $true } | Out-Null
-    Invoke-ScaleTool 'set_editor_camera_view' @{ position_x = 0; position_y = 260; position_z = 310; look_at_x = 0; look_at_y = 0; look_at_z = 0; duration = 0 } | Out-Null
+    $cameraScale = [Math]::Max(1.0, [Math]::Sqrt($ChainCount / 2000.0))
+    $summary.measurementCamera = [ordered]@{ x = 0; y = 400 * $cameraScale; z = 450 * $cameraScale }
+    Invoke-ScaleTool 'set_editor_camera_view' @{ position_x = 0; position_y = $summary.measurementCamera.y; position_z = $summary.measurementCamera.z; look_at_x = 0; look_at_y = 0; look_at_z = 0; duration = 0 } | Out-Null
     Invoke-ScaleTool 'set_component_property' @{ node_id = [string]$root.id; component_id = $controllerId; property_name = '_benchmarkCopyCount'; value = $ChainCount } | Out-Null
     Invoke-ScaleTool 'set_component_property' @{ node_id = [string]$root.id; component_id = $controllerId; property_name = '_benchmarkDurationSeconds'; value = 120 } | Out-Null
-    Invoke-ScaleTool 'invoke_method' @{ object_id = $controllerId; method_name = 'SetBenchmarkRunToggle'; arguments = @($true, $false) } 180 | Out-Null
+    # A timeout can occur after the editor starts the benchmark.
     $benchmarkStarted = $true
+    Invoke-ScaleTool 'invoke_method' @{ object_id = $controllerId; method_name = 'SetBenchmarkRunToggle'; arguments = @($true, $false) } 180 | Out-Null
 
     $readinessStart = Get-OutcomeCounts
     $readinessLimitSeconds = [Math]::Min(80, 110 - $WindowSeconds)
@@ -313,7 +393,6 @@ try {
     $samples = New-Object 'System.Collections.Generic.List[object]'
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
     if ($CpuTraceSeconds -gt 0) {
-        $traceCommand = Get-Command dotnet-trace -ErrorAction Stop
         $tracePath = Join-Path $outputPath "$safeLabel-cpu.nettrace"
         $traceArguments = @('collect', '--process-id', [string]$sessionView.processId,
             '--profile', 'dotnet-sampled-thread-time', '--duration', ('00:00:{0:00}' -f $CpuTraceSeconds),
@@ -323,14 +402,18 @@ try {
             -RedirectStandardError (Join-Path $outputPath "$safeLabel-trace-error.log")
         $summary.cpuTraceStartedUtc = [DateTime]::UtcNow.ToString('O')
     }
-    for ($second = 1; $second -le $WindowSeconds; $second++) {
-        $remaining = $second - $timer.Elapsed.TotalSeconds
+    $nextSampleSeconds = 1.0
+    while ($timer.Elapsed.TotalSeconds -lt $WindowSeconds) {
+        $remaining = [Math]::Min($nextSampleSeconds, $WindowSeconds) - $timer.Elapsed.TotalSeconds
         if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int][Math]::Ceiling($remaining * 1000)) }
+        if ($timer.Elapsed.TotalSeconds -ge $WindowSeconds) { break }
         $sample = Get-OutcomeCounts
         Assert-StableOutcomes $beforeOutcomes $sample
         $count = Get-Count
         if ($count -ne $ChainCount) { throw "Registered chain count changed to $count during the window." }
         $samples.Add([ordered]@{ elapsedSeconds = $timer.Elapsed.TotalSeconds; completed = $sample.completed; registeredChainCount = $count })
+        # Slow tool calls skip missed slots instead of extending the wall-clock window.
+        $nextSampleSeconds = [Math]::Floor($timer.Elapsed.TotalSeconds) + 1.0
     }
     $afterOutcomes = Get-OutcomeCounts
     $timer.Stop()
@@ -426,6 +509,8 @@ try {
     $summary.frameIntervalP95Milliseconds = [double]$afterIntervals.P95Milliseconds
     $summary.frameIntervalSampleCount = [int]$afterIntervals.SampleCount
     $summary.frameIntervalTargetMet = [double]$afterIntervals.P95Milliseconds -le 10.0
+    $summary.completedHzTargetMet = $summary.completedHz -ge 100.0
+    $summary.timingTargetsMet = $summary.completedHzTargetMet -and $summary.frameIntervalTargetMet
     $summary.frameIntervalTelemetry = $afterIntervals
     $summary.outcomeChanges = $delta
     $summary.registeredChainCountBefore = $beforeCount
@@ -449,7 +534,9 @@ try {
         }
         $summary.telemetryDifferences = [ordered]@{
             worldLateTick = $worldDifferences
+            rigidRestCache = Get-NumericDifferences $beforeTelemetry.rigidRestCache $afterTelemetry.rigidRestCache
             worldLateTickRates = Get-TickRates $worldDifferences ([double]$worldValue.StopwatchFrequency) ([long]$worldDifferences.TickCount) $delta.completed
+            sampledInputRates = Get-SampledTickRates $worldDifferences ([double]$worldValue.StopwatchFrequency)
             collection = $collectionDifferences
             collectionRates = [ordered]@{
                 collect = Get-TickRates $collectionDifferences ([double]$collectionValue.StopwatchFrequency) ([long]$collectionDifferences.CollectCalls) $delta.completed 'Collect'
@@ -472,6 +559,16 @@ catch {
     $summary.reason = $_.Exception.Message
     $summary.failureTool = $script:lastToolName
     $summary.failureMethod = $script:lastMethodName
+    if ($benchmarkStarted) {
+        try {
+            Invoke-ScaleTool 'get_render_profiler_stats' | ConvertTo-Json -Depth 40 |
+                Set-Content -LiteralPath (Join-Path $outputPath "$safeLabel-failure-profiler.json") -Encoding UTF8
+            Get-DispatcherSnapshot | ConvertTo-Json -Depth 40 |
+                Set-Content -LiteralPath (Join-Path $outputPath "$safeLabel-failure-dispatcher.json") -Encoding UTF8
+            Invoke-ScaleTool 'get_render_state' @{ viewport_index = 0 } | ConvertTo-Json -Depth 40 |
+                Set-Content -LiteralPath (Join-Path $outputPath "$safeLabel-failure-render-state.json") -Encoding UTF8
+        } catch { Write-Warning "Could not capture benchmark failure state: $($_.Exception.Message)" }
+    }
     Write-Error $_
 }
 finally {
@@ -481,6 +578,23 @@ finally {
     if ($benchmarkStarted -and -not [string]::IsNullOrWhiteSpace($controllerId)) {
         try { Invoke-ScaleTool 'invoke_method' @{ object_id = $controllerId; method_name = 'SetBenchmarkRunToggle'; arguments = @($false, $false) } | Out-Null }
         catch { Write-Warning "Could not stop benchmark: $($_.Exception.Message)" }
+    }
+    if ($sourceProfileChanged -and $null -ne $sourceProfileToRestore) {
+        $restoreFailures = @()
+        foreach ($propertyName in @('QualityTier', 'InterpolationMode')) {
+            $key = if ($propertyName -eq 'QualityTier') { 'qualityTier' } else { 'interpolationMode' }
+            try {
+                Invoke-ScaleTool 'set_component_property' @{
+                    node_id = $sourceNodeId; component_type = 'PhysicsChainComponent'
+                    property_name = $propertyName; value = $sourceProfileToRestore[$key]
+                } | Out-Null
+            } catch {
+                $message = "Could not restore source ${propertyName}: $($_.Exception.Message)"
+                $restoreFailures += $message
+                Write-Warning $message
+            }
+        }
+        $summary.sourceProfileRestoreFailures = $restoreFailures
     }
     foreach ($name in $profilerSettingsToRestore.Keys) {
         try { Invoke-ScaleTool 'set_editor_preference' @{ property_name = $name; value = $profilerSettingsToRestore[$name]; session_only = $true } | Out-Null }

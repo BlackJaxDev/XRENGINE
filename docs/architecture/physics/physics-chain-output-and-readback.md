@@ -244,6 +244,18 @@ A retired slot with no counted use cannot return to active use. Renderer
 replacement retains the old banks and rejects their logical transfers; the
 new renderer gets separate banks. Old storage waits for its original owner.
 
+Slot preparation acquires an active resource use before it accesses staging
+storage. This use covers growth, gather, copy, and enqueue. Every uncommitted
+logical staging lease fails in cleanup, including preparation exceptions. The
+caller releases its resource use in `finally`. Retirement defers staging-source,
+fence, and buffer disposal until the final counted use ends.
+
+A quarantined Vulkan slot can retire after its original backend reports Ready
+for every owned native buffer and all counted uses and staging readers end.
+Quarantine still prevents reuse. If native completion cannot be proved, the
+bank stays retained until dispatcher teardown; a logical failure does not
+permit early native disposal.
+
 A held chain can service a pending request without another simulation step.
 The dispatcher publishes the retained accepted input page and gathers the
 solved output. It seals that page after the output readers finish.

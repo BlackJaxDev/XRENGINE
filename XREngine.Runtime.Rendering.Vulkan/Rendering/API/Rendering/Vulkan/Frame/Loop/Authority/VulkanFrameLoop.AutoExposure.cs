@@ -295,13 +295,6 @@ internal sealed partial class VulkanFrameLoop
         // The sealed frame-plan preparation owns native compute-pipeline
         // readiness. Admission must preserve this dispatch while that request
         // is Pending; dropping it here would make an async compile invisible.
-        ComputeDispatchSnapshot? ownedSnapshot = null;
-        if (authoringLease is not null)
-        {
-            ownedSnapshot = new ComputeDispatchSnapshot();
-            ownedSnapshot.CopySealedFrom(snapshot);
-            snapshot = ownedSnapshot;
-        }
         ComputeDispatchOp? operation = null;
         try
         {
@@ -313,18 +306,14 @@ internal sealed partial class VulkanFrameLoop
                 z,
                 snapshot,
                 context);
-            if (ownedSnapshot is not null)
-            {
-                operation.OwnAuthoringSnapshot(ownedSnapshot);
-                ownedSnapshot = null;
-            }
+            if (authoringLease is not null)
+                operation.SealAuthoringSnapshot();
             operation.AttachAuthoringResource(authoringLease);
             EnqueueFrameOp(operation);
         }
         catch
         {
             operation?.ReleaseAuthoringSnapshot();
-            ownedSnapshot?.ReleaseReadOnlyStorageBindings();
             throw;
         }
         return ERendererComputeEnqueueStatus.Enqueued;

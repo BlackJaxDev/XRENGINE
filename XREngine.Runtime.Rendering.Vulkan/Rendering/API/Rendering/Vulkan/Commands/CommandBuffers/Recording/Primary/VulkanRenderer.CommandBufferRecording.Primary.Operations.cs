@@ -1457,7 +1457,8 @@ internal sealed partial class VulkanCommandRuntime
         }
         else
         {
-            payload.Fence.Fail();
+            payload.Fence.Fail(EGpuFenceFailureSite.RequiredProducerMissing,
+                EGpuFenceNativeSubmission.NotCalled);
             state.FrameOpsRequireRerecordLocal = true;
             throw new VulkanPlanPreconditionException(
                 "A required GPU producer operation was not recorded; the partial primary command buffer must not be submitted.");

@@ -34,6 +34,9 @@ internal sealed class PhysicsChainGpuRestInputRange
     internal ulong ConsumedPhase;
     internal PhysicsChainRuntimeHandle CapturedHandle;
     internal ExceptionDispatchInfo? CaptureFault;
+    internal readonly PhysicsChainRigidGpuRestInputCache RigidCache = new();
+    internal long CachedCaptureGeneration;
+    internal long CachedOwnershipGeneration;
 
     internal void EnsureCapacity(int count)
     {
@@ -182,7 +185,7 @@ internal sealed class PhysicsChainGpuRestInputRange
         return _localMatrices[index];
     }
 
-    private static bool HasSameBits<T>(in T first, in T second) where T : unmanaged
+    internal static bool HasSameBits<T>(in T first, in T second) where T : unmanaged
         => MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref Unsafe.AsRef(in first), 1))
             .SequenceEqual(MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref Unsafe.AsRef(in second), 1)));
 }

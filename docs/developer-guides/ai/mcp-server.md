@@ -110,6 +110,16 @@ The MCP server settings are located in the **Global Editor Preferences** panel u
 
 Changes take effect immediately - the server will start or stop based on the `McpServerEnabled` setting, and will restart on a new port if `McpServerPort` is changed while running.
 
+Set `XRE_MCP_REQUEST_TRACE=1` before editor startup to trace single-request
+`invoke_method` calls. The trace records the JSON-RPC ID, tool and target
+type/method names, request milestones, elapsed time, and managed thread ID. It
+does not record method arguments, object data, headers, or credentials. The
+server keeps the latest 512 milestones and writes each milestone to the MCP
+log. After a request timeout or recovery, call the static
+`McpServerHost.GetRequestTraceSnapshot()` method to read the retained records.
+Restart the editor to turn the flag on or off. Use the flag only during an MCP
+request investigation.
+
 ### Command Line Arguments (Override)
 
 Command-line arguments can be used to override preferences at startup:

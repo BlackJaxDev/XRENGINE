@@ -391,7 +391,8 @@ internal sealed partial class VulkanCommandRuntime
 
             if (!submissionAccepted)
             {
-                ResolveSubmissionMarkers(ref submitInfo, false);
+                ResolveSubmissionMarkers(ref submitInfo, false,
+                    EGpuFenceNativeSubmission.Called, (int)result);
                 return VulkanSubmissionReceipt.Rejected(
                     result,
                     queueAdmissionWait,
@@ -2068,7 +2069,9 @@ internal sealed partial class VulkanCommandRuntime
         }
     }
 
-    internal unsafe void ResolveSubmissionMarkers(ref SubmitInfo submitInfo, bool submissionSucceeded)
+    internal unsafe void ResolveSubmissionMarkers(ref SubmitInfo submitInfo, bool submissionSucceeded,
+        EGpuFenceNativeSubmission nativeSubmission = EGpuFenceNativeSubmission.NotCalled,
+        int nativeResult = 0)
     {
         ResolveSubmissionTimelineSignal(ref submitInfo, out ulong semaphoreHandle, out ulong timelineValue);
         using (VulkanFrameLockScope.Enter(
@@ -2089,7 +2092,13 @@ internal sealed partial class VulkanCommandRuntime
                     if (canBind)
                         markers[markerIndex].Bind(semaphoreHandle, timelineValue);
                     else
-                        markers[markerIndex].Fail();
+                        markers[markerIndex].Fail(
+                            submissionSucceeded ? EGpuFenceFailureSite.MissingTimelineSignal :
+                            nativeSubmission == EGpuFenceNativeSubmission.Called ?
+                                EGpuFenceFailureSite.NativeSubmitFailed :
+                                EGpuFenceFailureSite.NativeSubmitRejected,
+                            submissionSucceeded ? EGpuFenceNativeSubmission.Accepted : nativeSubmission,
+                            nativeResult);
                 markers.Clear();
             }
         }

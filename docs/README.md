@@ -42,6 +42,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Physics Debug Frame](architecture/physics/physics-debug-frame.md)
 - [Physics Chain World Runtime](architecture/physics/physics-chain-world-runtime.md)
 - [Physics Chain Scale Implementation Status](work/progress/physics/physics-chain-scale-status-2026-10-07.md)
+- [Distance Cadence and GPU Pose Presentation Proposal](work/design/physics/distance-cadence-gpu-presentation.md)
 - [Audio Architecture](architecture/audio/audio-architecture.md)
 - [Networking Overview](architecture/networking/overview.md)
 - [Control Plane Runtime Architecture](architecture/runtime/control-plane.md)

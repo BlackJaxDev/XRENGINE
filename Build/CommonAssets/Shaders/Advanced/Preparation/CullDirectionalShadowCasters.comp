@@ -190,16 +190,7 @@ void main()
         return;
     }
     uint member = atomicAdd(
-        XR_ADV_VisibilityEarlyGroupCounts.records[groupCountIndex], 0u);
-    while (member < group.memberCapacity)
-    {
-        uint prior = atomicCompSwap(
-            XR_ADV_VisibilityEarlyGroupCounts.records[groupCountIndex],
-            member, member + 1u);
-        if (prior == member)
-            break;
-        member = prior;
-    }
+        XR_ADV_VisibilityEarlyGroupCounts.records[groupCountIndex], 1u);
     if (member >= group.memberCapacity)
     {
         atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);

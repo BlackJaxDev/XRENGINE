@@ -2776,7 +2776,12 @@ public sealed partial class GPUPhysicsChainDispatcher
         if (!EnsureResidentArenaCapacity(backend, requiredTreeHeaderCount))
             return false;
 
-        return EnsureActiveWorkCapacity(backend, requests.Count, requiredTreeHeaderCount);
+        if (!EnsureActiveWorkCapacity(backend, requests.Count, requiredTreeHeaderCount))
+            return false;
+
+        PreprovisionInputPages(backend, requiredTreeHeaderCount, requests.Count,
+            requiredTreeHeaderCount, _colliderArenaHighWater, _particleArenaHighWater);
+        return true;
     }
 
     private static bool HasSingleDispatchGroup(IReadOnlyList<GPUPhysicsChainRequest> requests)
@@ -3050,25 +3055,22 @@ public sealed partial class GPUPhysicsChainDispatcher
         if (!world.TryAcquireReadbackStagingSlot(plan, out PhysicsChainReadbackStagingLease lease, out _))
             return;
 
-        if (!TryFindRequest(world, plan.InstanceHandle, out GPUPhysicsChainRequest? request)
-            || !TryBuildGpuGatherItems(plan, request!, _selectiveReadbackGatherItems)
-            || !EnsureSelectiveReadbackSlotResources(world, backend, lease.Slot, plan.ElementCount, plan.ByteCount,
-                out PhysicsChainSelectiveReadbackSlotResources? resources))
-        {
-            world.FailReadbackStagingSlot(lease, _readbackFrameIndex);
-            return;
-        }
-
-        XRDataBuffer<PhysicsChainGpuReadbackGatherItem> itemBuffer = resources!.Items!;
-        XRDataBuffer<uint> packedOutput = resources.PackedOutput!;
-        XRDataBuffer<uint> staging = resources.MappedStaging!;
-
+        PhysicsChainSelectiveReadbackSlotResources? resources = null;
         bool committed = false;
-        resources.ProducerRenderer = backend.Renderer;
-        resources.ProducerBackend = backend;
-        resources.HasQueuedWork = true;
         try
         {
+            if (!TryFindRequest(world, plan.InstanceHandle, out GPUPhysicsChainRequest? request)
+                || !TryBuildGpuGatherItems(plan, request!, _selectiveReadbackGatherItems)
+                || !EnsureSelectiveReadbackSlotResources(world, backend, lease.Slot, plan.ElementCount, plan.ByteCount,
+                    out resources))
+                return;
+
+            XRDataBuffer<PhysicsChainGpuReadbackGatherItem> itemBuffer = resources!.Items!;
+            XRDataBuffer<uint> packedOutput = resources.PackedOutput!;
+            XRDataBuffer<uint> staging = resources.MappedStaging!;
+            resources.ProducerRenderer = backend.Renderer;
+            resources.ProducerBackend = backend;
+            resources.HasQueuedWork = true;
             uint itemBytes = itemBuffer.WriteDataRaw(CollectionsMarshal.AsSpan(_selectiveReadbackGatherItems));
             PushBufferUpdate(itemBuffer, fullPush: false, itemBytes);
             RecordCpuUploadBytes(itemBytes, _currentDispatchGroupIsBatched);
@@ -3133,18 +3135,28 @@ public sealed partial class GPUPhysicsChainDispatcher
         }
         finally
         {
-            if (!committed)
+            try
             {
-                if (resources.CompletionFence is null)
+                if (!committed)
                 {
-                    try { resources.CompletionFence = backend.InsertFence(); }
-                    catch (Exception exception) { XREngine.Debug.LogException(exception); }
-                    if (resources.CompletionFence is null)
-                        resources.Quarantined = true;
+                    if (resources is not null)
+                    {
+                        if (resources.HasQueuedWork && resources.CompletionFence is null)
+                        {
+                            try { resources.CompletionFence = backend.InsertFence(); }
+                            catch (Exception exception) { XREngine.Debug.LogException(exception); }
+                            if (resources.CompletionFence is null)
+                                resources.Quarantined = true;
+                        }
+                        resources.StagingSource.Dispose();
+                        resources.Fence.Dispose();
+                    }
+                    world.FailReadbackStagingSlot(lease, _readbackFrameIndex);
                 }
-                resources.StagingSource.Dispose();
-                resources.Fence.Dispose();
-                world.FailReadbackStagingSlot(lease, _readbackFrameIndex);
+            }
+            finally
+            {
+                resources?.ReleaseAuthoringUse();
             }
         }
     }
@@ -3260,17 +3272,31 @@ public sealed partial class GPUPhysicsChainDispatcher
             bank = new PhysicsChainSelectiveReadbackWorldResources(SelectiveReadbackSlotCount);
             _selectiveReadbackWorldResources.Add(world, bank);
         }
-        slot = bank.Slots[slotIndex];
-        if (!slot.TryBeginReuse(backend))
-            return RecordReadbackEnqueueFailure("SelectiveReadbackSlotBusyOrUnsafe");
-        uint requiredItems = (uint)itemCount;
-        uint requiredWords = (uint)((byteCount + sizeof(uint) - 1) / sizeof(uint));
-        EnsureSelectiveBufferCapacity(ref slot.Items, $"PhysicsChainReadbackItems{slotIndex}", requiredItems, EBufferUsage.StreamDraw);
-        EnsureSelectiveBufferCapacity(ref slot.PackedOutput, $"PhysicsChainReadbackPacked{slotIndex}", requiredWords, EBufferUsage.StreamCopy);
-        EnsureSelectiveBufferCapacity(ref slot.MappedStaging, $"PhysicsChainReadbackStaging{slotIndex}", requiredWords, EBufferUsage.StreamRead, mappedReadback: true);
+        PhysicsChainSelectiveReadbackSlotResources candidate = bank.Slots[slotIndex];
+        if (!candidate.TryAcquireActiveUse())
+            return RecordReadbackEnqueueFailure("SelectiveReadbackSlotRetired");
+        bool admitted = false;
+        try
+        {
+            if (!candidate.TryBeginReuse(backend, callerHasActiveUse: true))
+                return RecordReadbackEnqueueFailure("SelectiveReadbackSlotBusyOrUnsafe");
+            uint requiredItems = (uint)itemCount;
+            uint requiredWords = (uint)((byteCount + sizeof(uint) - 1) / sizeof(uint));
+            EnsureSelectiveBufferCapacity(ref candidate.Items, $"PhysicsChainReadbackItems{slotIndex}", requiredItems, EBufferUsage.StreamDraw);
+            EnsureSelectiveBufferCapacity(ref candidate.PackedOutput, $"PhysicsChainReadbackPacked{slotIndex}", requiredWords, EBufferUsage.StreamCopy);
+            EnsureSelectiveBufferCapacity(ref candidate.MappedStaging, $"PhysicsChainReadbackStaging{slotIndex}", requiredWords, EBufferUsage.StreamRead, mappedReadback: true);
 
-        XRDataBuffer<uint> staging = slot.MappedStaging!;
-        return backend.EnsureGpuBufferReady(staging);
+            if (!backend.EnsureGpuBufferReady(candidate.MappedStaging!))
+                return false;
+            slot = candidate;
+            admitted = true;
+            return true;
+        }
+        finally
+        {
+            if (!admitted)
+                candidate.ReleaseAuthoringUse();
+        }
     }
 
     private static bool EnsureSelectiveBufferCapacity<T>(
@@ -3284,18 +3310,26 @@ public sealed partial class GPUPhysicsChainDispatcher
         if (buffer is not null && buffer.ElementCount >= requiredElements)
             return false;
 
-        buffer?.Dispose();
-        buffer = new XRDataBuffer<T>(name, EBufferTarget.ShaderStorageBuffer, XRMath.NextPowerOfTwo(Math.Max(requiredElements, 1u)))
+        XRDataBuffer<T> replacement = new(name, EBufferTarget.ShaderStorageBuffer, XRMath.NextPowerOfTwo(Math.Max(requiredElements, 1u)));
+        try
         {
-            DisposeOnPush = false,
-            Usage = usage,
-        };
-        if (mappedReadback)
-        {
-            buffer.DefaultMemoryPolicy = XRBufferMemoryPolicy.GpuToCpuReadback;
-            buffer.StorageFlags = EBufferMapStorageFlags.Read | EBufferMapStorageFlags.ClientStorage;
-            buffer.RangeFlags = EBufferMapRangeFlags.Read;
+            replacement.DisposeOnPush = false;
+            replacement.Usage = usage;
+            if (mappedReadback)
+            {
+                replacement.DefaultMemoryPolicy = XRBufferMemoryPolicy.GpuToCpuReadback;
+                replacement.StorageFlags = EBufferMapStorageFlags.Read | EBufferMapStorageFlags.ClientStorage;
+                replacement.RangeFlags = EBufferMapRangeFlags.Read;
+            }
         }
+        catch
+        {
+            replacement.Dispose();
+            throw;
+        }
+        XRDataBuffer<T>? previous = buffer;
+        buffer = replacement;
+        previous?.Dispose();
         return true;
     }
 

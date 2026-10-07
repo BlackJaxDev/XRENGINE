@@ -266,15 +266,7 @@ void main()
                 storeVisibilityState(candidateIndex, candidate.Draw, 0u);
                 return;
             }
-            uint member = atomicAdd(XR_ADV_VisibilityLateGroupCounts.records[countIndex], 0u);
-            while (member < group.memberCapacity)
-            {
-                uint prior = atomicCompSwap(
-                    XR_ADV_VisibilityLateGroupCounts.records[countIndex], member, member + 1u);
-                if (prior == member)
-                    break;
-                member = prior;
-            }
+            uint member = atomicAdd(XR_ADV_VisibilityLateGroupCounts.records[countIndex], 1u);
             if (member >= group.memberCapacity)
             {
                 atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
@@ -343,20 +335,10 @@ void main()
 bool reserveLateOutput(out uint outputIndex)
 {
     uint capacity = XR_ADV_VisibilityPush.payloadCapacity;
-    uint observed = atomicAdd(XR_ADV_VisibilityCounters.lateDraws, 0u);
-    while (observed < capacity)
-    {
-        uint prior = atomicCompSwap(
-            XR_ADV_VisibilityCounters.lateDraws,
-            observed,
-            observed + 1u);
-        if (prior == observed)
-        {
-            outputIndex = observed;
-            return true;
-        }
-        observed = prior;
-    }
+    // Each bounded deferred entry reserves at most one output.
+    outputIndex = atomicAdd(XR_ADV_VisibilityCounters.lateDraws, 1u);
+    if (outputIndex < capacity)
+        return true;
     outputIndex = 0u;
     atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
     return false;

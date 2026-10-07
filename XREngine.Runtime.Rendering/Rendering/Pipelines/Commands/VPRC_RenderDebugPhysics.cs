@@ -12,6 +12,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string? RenderGraphPassName { get; set; }
         public PhysicsDebugDepthMode DepthMode { get; set; } = PhysicsDebugDepthMode.DepthTested;
 
+        /// <summary>Draws the world's physics debug frame when enabled.</summary>
+        public bool RenderWorldPhysics { get; set; } = true;
+
         protected override void Execute()
         {
             if (RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass)
@@ -21,7 +24,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
             {
                 IRuntimeRenderWorld? world = ActivePipelineInstance.RenderState.WindowViewport?.World;
-                world?.DebugRenderPhysics(DepthMode);
+                if (RenderWorldPhysics)
+                    world?.DebugRenderPhysics(DepthMode);
                 if (DepthMode == PhysicsDebugDepthMode.DepthTested && world is not null)
                     GPUPhysicsChainDispatcher.Instance.RenderSelectedGpuDebug(world.WorldContext);
             }

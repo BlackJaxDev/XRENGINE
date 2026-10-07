@@ -14,6 +14,21 @@ public abstract class RenderResourceLeaseOwner : IRenderResourceLeaseOwner
     /// <summary>Gets whether this owner has stopped admitting new independent work.</summary>
     protected bool IsAuthoringRetired => (Volatile.Read(ref _lifetimeState) & RetiringFlag) != 0;
 
+    /// <summary>Admits new work only while this owner is active.</summary>
+    internal bool TryAcquireActiveUse()
+    {
+        while (true)
+        {
+            int state = Volatile.Read(ref _lifetimeState);
+            if ((state & (RetiringFlag | DisposedFlag)) != 0)
+                return false;
+            if ((state & CountMask) == CountMask)
+                throw new InvalidOperationException("Render resource authoring lease count overflowed.");
+            if (Interlocked.CompareExchange(ref _lifetimeState, state + 1, state) == state)
+                return true;
+        }
+    }
+
     /// <summary>Retains a use. A retiring owner permits transfers from a counted use.</summary>
     public void RetainAuthoringUse()
     {

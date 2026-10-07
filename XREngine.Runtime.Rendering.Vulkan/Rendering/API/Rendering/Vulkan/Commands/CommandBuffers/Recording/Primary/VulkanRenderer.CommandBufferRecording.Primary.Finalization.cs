@@ -495,7 +495,8 @@ namespace XREngine.Rendering.Vulkan
 
                 if (!hasRequiredOperation || !complete)
                 {
-                    fence.Fail();
+                    fence.Fail(EGpuFenceFailureSite.OutputCohortIncomplete,
+                        EGpuFenceNativeSubmission.NotCalled);
                     throw new VulkanPlanPreconditionException(
                         $"Output-completion receipt {receipt.ReceiptId} did not record its complete exact producer cohort and terminal output. Bound={bound}, terminal={terminalAttested}, hasOperations={hasRequiredOperation}, firstMissingOperation={firstMissingOperation}.");
                 }

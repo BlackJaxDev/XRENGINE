@@ -23,17 +23,47 @@ skinned-chain scene in a named isolated Release session. Put output in the
 current task run:
 
 ```powershell
-pwsh Tools/Benchmarks/Measure-PhysicsChainScale.ps1 -Session physics-chain-scale -ChainCount 2000 -WindowSeconds 30 -OutputFolder "Build/_AgentValidation/<task-run>/reports/scale"
+pwsh Tools/Benchmarks/Measure-PhysicsChainScale.ps1 -Session physics-chain-scale -ChainCount 2000 -WindowSeconds 30 -OutputFolder "Build/_AgentValidation/<task-run>/reports"
 ```
 
 `-Session` is required. Chain count defaults to 2,000 and accepts 1 to 10,000.
 The timing window defaults to 30 seconds and accepts 5 to 60 seconds.
+The measurement camera uses (0, 400, 450), looking at the grid origin. A
+native 2,000-chain capture confirmed all members at this view. Counts above
+2,000 scale the camera distance by the square root of the count ratio; those
+larger views still need their own native visibility checks. The summary saves
+the camera position. Do not compare this full-grid view with earlier partially
+clipped camera measurements as a matched performance result.
+Sampling uses a wall-clock deadline. If a tool call passes one or more sample
+times, the command skips those times instead of collecting missed samples.
+The final in-flight sample and the after-window query can extend the measured
+duration by their tool latency. Before/after checks remain required, and each
+raw sample retains its actual elapsed time.
 `-SubmissionStrategy` defaults to `GpuIndirectZeroReadback`. Use `CpuDirect`
 for an explicit CPU submission comparison. The command restores the prior
 runtime override after cleanup. It checks the frozen package before and after
 timing and rejects a changed strategy, a downgrade, or new physics readback
 in the strict GPU window.
+`-QualityTier` accepts `Authored` (default), `Strict`, `Hz30`, `Hz15`,
+`Hz7_5`, or `Automatic`. `-InterpolationMode` accepts `Authored` (default),
+`Discrete`, `Interpolate`, or `Extrapolate`. The command reads the source chain
+before cloning, applies explicit values to that source, and reads the effective
+values back. The benchmark copies these source settings to new chains. The
+summary records the requested, original, and effective source profile. It does
+not check each clone's profile. Cleanup restores the original source values and
+reports any restore failure in the summary.
 `-Telemetry` enables stage counters for a separate diagnostic window.
+It also saves world callback and transform-read contention snapshots. Set
+`XRE_WORLD_TICK_TELEMETRY=1` before session launch for world callback counters.
+Compare cumulative values over the same window. Callback identity includes
+the declaring type, method, target type, inner callback, group, and order.
+Do not add nested stage times or treat time spent waiting as CPU execution.
+The diagnostic snapshot also records rigid rest cache hits, misses, and blocked
+ranges. Six input stages use rotating 1/32 sampling: opaque dependency checks,
+owner marking, collider dependency checks, root capture, matrix/stretch
+expansion, and output publication. `sampledInputRates` uses each stage's actual
+sample count. Its sampled milliseconds are not whole-stage totals. Use the
+ordinary gather and dependency counters for time per physics update.
 `-UseExistingSession` uses the named running session and leaves it running.
 `-CaptureEvidence` writes wide and near MCP images after timing. Native
 RenderDoc exports remain necessary when MCP readback does not match the target.
@@ -44,11 +74,19 @@ The command waits for canonical readiness. It rejects changed chain counts,
 new bad frame outcomes, new dispatch or input-page failures, quarantined input
 pages, new input-buffer allocations, and input writes or a producer epoch that
 do not advance. On a readiness timeout, it saves the final frame counters,
-profiler, and dispatcher. Completed Hz uses the actual elapsed window. A preallocated ring
+profiler, and dispatcher. A failed active benchmark also saves profiler,
+dispatcher, and render-state snapshots before teardown. Completed Hz uses the actual elapsed window. A preallocated ring
 records completed-frame timestamps. The command calculates frame-interval p95
 from these timestamps and rejects a reset, overwritten samples, or incomplete
-coverage. The summary reports whether p95 meets the 10 ms target. One-second
-counter samples remain for rate trends only. Benchmark cleanup restores the source rig.
+coverage. The summary reports `completedHzTargetMet` for at least 100 completed
+frames per second and `frameIntervalTargetMet` for p95 at most 10 ms.
+`timingTargetsMet` requires both. `accepted` records a valid measurement with
+the required runtime checks; it does not mean that the timing targets passed.
+Native member and image checks must also confirm the visible workload.
+Scheduled counter samples remain for rate trends only. Benchmark cleanup starts
+gradual teardown and restores the source rig when that teardown ends. For a
+restart check, wait for one source chain and its palette binding before the
+next start. The stop call alone does not prove that teardown has finished.
 The count sample calls `GPUPhysicsChainDispatcher.CaptureRegisteredComponentCount()`.
 It does not serialize the full dispatcher. The command calls `get_render_state`
 with `viewport_index: 0` before and after the timed window. This selects the
@@ -58,8 +96,10 @@ saves the final profiler and a
 `<label>-window-start.json` marker. Set `-CpuTraceSeconds 15` with a window of
 at least 20 seconds to collect a bounded `dotnet-trace` sampled-thread trace.
 The harness starts the trace inside the timed window and saves its output
-beside the summary. This requires `dotnet-trace` on `PATH`. A traced or
-telemetry window is diagnostic evidence. Run a separate unobserved acceptance
+beside the summary. This requires `dotnet-trace` on `PATH`. The command checks
+that tool before it starts a session or benchmark when `-CpuTraceSeconds` is
+greater than zero. A traced or telemetry window is diagnostic evidence.
+Run a separate unobserved acceptance
 window. Set `-RequireDirectionalShadows` to require new accepted cascade
 groups with no new rejected, unconsumed, or generic groups. These counters
 prevent a cached static atlas from passing a moving-shadow check.
@@ -73,6 +113,20 @@ evidence before it checks the final frozen strategy snapshot. The
 disable the editor code profiler.
 Failed setup removes the partial benchmark root, resets the run state, and
 records the exception and stack.
+
+## Rigid rest input cache
+
+`PhysicsChainComponent.EnableRigidGpuRestInputCache` retains child rest inputs
+for a supported rigid GPU chain. It defaults to false and is runtime-only.
+The Math GPU-skinned scenario enables it; benchmark copies inherit the source
+value. Compare the same Strict profile with this option off and on before
+attributing a timing change to it.
+
+Child authoring blocks reuse until explicit rearm. Finish authoring, then toggle
+the option off and on at a quiescent boundary. Disable the option before writes
+that suppress property notifications. Unsupported or blocked input keeps the
+ordinary GPU preparation route. This option does not lower simulation cadence
+or add GPU pose interpolation. See the [input ownership contract](../../architecture/physics/physics-chain-compute-backends.md#retained-rigid-rest-inputs).
 
 ## World-owned runtime architecture
 
@@ -125,6 +179,54 @@ Strict mode forbids `WaitForGpu`, blocking maps, current-frame readback, and
 hidden CPU fallback. A capability or capacity failure is a visible backend
 failure. The last valid output may remain visible according to the selected
 failure policy, but CPU simulation cannot silently become authoritative.
+
+## Vulkan asynchronous compute research
+
+Physics-chain dispatches currently enter the ordered frame-operation stream
+and run on the graphics queue. `VulkanQueueFamilySelector` can select distinct
+compute and transfer families, but the generic frame-graph multi-queue executor
+is disabled. Queue availability does not change physics submission ownership.
+The existing `VulkanCommandRuntime.AdvancedQueueOverlap` path is narrower:
+explicit `GraphicsCompute` mode forks classification from independent
+GTAO/lighting work for one presentationless mono Advanced output. It uses two
+queues in the graphics family. Physics remains before that split. See the
+[Vulkan queue contract](../../architecture/rendering/vulkan-renderer.md).
+
+Queue count does not prove parallel execution or a performance gain. Extra
+submissions and semaphore dependencies can increase cost. Select independent
+work with complementary resource demands, then inspect a GPU scheduling trace.
+Do not reduce solver occupancy to make space for other work.
+[NVIDIA synchronization guidance](https://developer.nvidia.com/blog/advanced-api-performance-synchronization/)
+supports these measurement rules; it does not predict a gain on this workload.
+
+The same-frame dependency is `solver -> palette/bounds -> skinning/culling ->
+shadows/draws`. A physics experiment must preserve this dependency and the
+simulation cadence. The first candidate is a second compute-capable queue in
+the graphics family, only when a resource-use audit finds independent work.
+This avoids queue-family ownership transfer, but still requires correct
+semaphore dependencies, resource visibility, and completion-based reuse. Do
+not add a frame of delay or use prior solved output to create artificial
+independence.
+
+Use the actual consumers to select barrier scopes: compute storage reads,
+indirect-command reads, vertex-shader storage reads, or vertex-input reads.
+Batch independent dispatches before their shared dependency where valid.
+Follow the [Vulkan synchronization examples](https://docs.vulkan.org/guide/latest/synchronization_examples.html)
+and [Synchronization2 sample](https://docs.vulkan.org/samples/latest/samples/extensions/synchronization_2/README.html).
+[Timeline semaphores](https://www.khronos.org/blog/vulkan-timeline-semaphores)
+can express completion values; they do not replace resource lifetime ownership
+or the required memory dependencies.
+
+Whole-frame timing, queue-submission counts, and overlap-candidate counters do
+not prove simultaneous GPU execution. Collect completed per-queue GPU timestamp
+ranges and a scheduling trace, plus CPU submission and completed-frame costs.
+Retrieve timestamp diagnostics asynchronously without a stall. Strict
+zero-readback forbids solved physics-data readback; it does not forbid these
+timing queries. The approximately 20 Hz full-grid result warrants further CPU
+analysis, but does not by itself identify an exclusive CPU or GPU bottleneck.
+Keep diagnostic runs separate from unobserved acceptance windows. The
+[async experiment checks](../../work/testing/physics/physics-validation.md#vulkan-asynchronous-physics-experiment)
+define the comparison and correctness evidence.
 
 ## Shared collision data
 

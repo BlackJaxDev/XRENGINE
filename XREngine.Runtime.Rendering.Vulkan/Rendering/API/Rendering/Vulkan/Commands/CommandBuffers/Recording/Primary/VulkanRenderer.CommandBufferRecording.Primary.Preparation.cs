@@ -179,7 +179,8 @@ namespace XREngine.Rendering.Vulkan
                     header.OriginalIndex >
                         state.RequiredProducerRecordingOutcomesBySourceIndex.Length)
                 {
-                    marker.Fence.Fail();
+                    marker.Fence.Fail(EGpuFenceFailureSite.RequiredProducerIntervalInvalid,
+                        EGpuFenceNativeSubmission.NotCalled);
                     throw new VulkanPlanPreconditionException(
                         "A required-producer marker references an invalid source-operation interval.");
                 }

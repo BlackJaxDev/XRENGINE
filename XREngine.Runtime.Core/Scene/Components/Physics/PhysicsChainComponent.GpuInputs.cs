@@ -75,6 +75,7 @@ public partial class PhysicsChainComponent
 
     internal void CaptureGpuRestTopology(PhysicsChainGpuRestInputRange range)
     {
+        range.RigidCache.Clear();
         int count = 0;
         for (int treeIndex = 0; treeIndex < _particleTrees.Count; ++treeIndex)
             count = checked(count + _particleTrees[treeIndex].Particles.Count);

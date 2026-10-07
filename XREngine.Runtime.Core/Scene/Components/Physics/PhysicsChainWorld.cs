@@ -467,9 +467,16 @@ public sealed partial class PhysicsChainWorld
         PhysicsChainComponent.AdvancePreparedColliderFrame();
         long qualityStart = observe ? Stopwatch.GetTimestamp() : 0L;
         AssignQualityTiers();
+        long dependencyStart = observe ? Stopwatch.GetTimestamp() : 0L;
+        if (observe)
+            Interlocked.Add(ref _lateQualityAssignmentTicks, dependencyStart - qualityStart);
         PrepareGpuRestInputPhase();
         if (observe)
-            Interlocked.Add(ref _lateQualityBudgetTicks, Stopwatch.GetTimestamp() - qualityStart);
+        {
+            long qualityEnd = Stopwatch.GetTimestamp();
+            Interlocked.Add(ref _lateGpuRestDependencyPreparationTicks, qualityEnd - dependencyStart);
+            Interlocked.Add(ref _lateQualityBudgetTicks, qualityEnd - qualityStart);
+        }
         long inputGatherStart = observe ? Stopwatch.GetTimestamp() : 0L;
         CaptureGpuRestInputsForWorldPhase();
         if (observe)
@@ -883,6 +890,7 @@ public sealed partial class PhysicsChainWorld
         slot.Component = null;
         slot.Graph = null;
         _clocks[slotIndex] = default;
+        _gpuRestInputRanges[slotIndex]?.RigidCache.Clear();
         _gpuRestInputRanges[slotIndex] = null;
         MarkGpuRestOwnershipDirty();
         slot.DenseIndex = -1;
