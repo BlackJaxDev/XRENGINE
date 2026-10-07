@@ -26,6 +26,13 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Texture Streaming](architecture/rendering/texture-streaming.md)
 - [Advanced Render Pipeline](architecture/rendering/advanced-render-pipeline.md)
 - [Shadow Atlas](architecture/rendering/shadow-atlas.md)
+- [Transparency And OIT](architecture/rendering/transparency-and-oit.md)
+- [GPU Hi-Z Occlusion Culling](architecture/rendering/gpu-hiz-occlusion-culling.md)
+- [CPU Software Occlusion](architecture/rendering/cpu-software-occlusion.md)
+- [CPU Memory Ownership](architecture/rendering/cpu-memory-ownership.md)
+- [Vulkan Memory Allocation](architecture/rendering/vulkan-memory-allocation.md)
+- [OpenVR VRClient GPU Handoff](architecture/rendering/openvr-vrclient-gpu-handoff.md)
+- [Cooked Texture Payloads](architecture/assets/cooked-texture-payloads.md)
 - [Vulkan Pipeline Compilation, Readiness And Depth-Only Coverage](architecture/rendering/vulkan-pipeline-compilation.md)
 - [CPU Scene BVH](architecture/rendering/cpu-scene-bvh.md)
 - [GPU Scene BVH](architecture/rendering/gpu-scene-bvh.md)
@@ -33,9 +40,11 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Transform Architecture](architecture/scene/transforms.md)
 - [Physics Architecture](architecture/physics/overview.md)
 - [Physics Debug Frame](architecture/physics/physics-debug-frame.md)
+- [Physics Chain World Runtime](architecture/physics/physics-chain-world-runtime.md)
 - [Audio Architecture](architecture/audio/audio-architecture.md)
 - [Networking Overview](architecture/networking/overview.md)
 - [Control Plane Runtime Architecture](architecture/runtime/control-plane.md)
+- [Portable Engine Host](architecture/runtime/portable-engine-host.md)
 - [Modeling XRMesh Editing](architecture/modeling/xrmesh-editing.md)
 - [Play Mode Architecture](architecture/editor/play-mode-architecture.md)
 - [Editor Undo System](architecture/editor/undo-system.md)
@@ -44,6 +53,8 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Developer Guides
 
 - [Software Vulkan Correctness Validation](developer-guides/testing/software-vulkan-validation.md)
+- [Test Suite Layout](developer-guides/testing/test-suite-layout.md)
+- [Work Doc Templates](developer-guides/ai/work-doc-templates.md)
 - [Continuous Integration And Releases](developer-guides/ci-cd.md)
 - [Windows CI Build Preparation Investigation](work/investigations/platform/windows-ci-build-preparation-2026-10-05.md)
 - [Windows CI Test Coverage](developer-guides/testing/windows-ci.md)
@@ -70,7 +81,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Profiler](developer-guides/diagnostics/profiler.md)
 - [Dedicated Vulkan RenderBench](developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench)
 - [Runtime Data Layout Measurements](developer-guides/diagnostics/runtime-data-layout-measurements.md)
-- [Runtime Regression And NativeAOT Hardening](work/todo/runtime-regression-and-nativeaot-hardening-todo.md): current software regression and strict packaged-player acceptance, with an active [progress ledger](work/progress/runtime/runtime-regression-and-nativeaot-hardening-progress.md).
+- [Runtime Regression And NativeAOT Hardening](work/todo/runtime/runtime-regression-and-nativeaot-hardening-todo.md): current software regression and strict packaged-player acceptance, with an active [progress ledger](work/progress/runtime/runtime-regression-and-nativeaot-hardening-progress.md).
 - [Self-Iterating Rendering Performance Loop](developer-guides/diagnostics/self-iterating-performance-loop.md)
 - [Skinning](developer-guides/rendering/skinning.md)
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
@@ -115,11 +126,9 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Animation and IK Stability](work/investigations/avatar/animation-ik-stability-2026-09-30.md)
 - [Tracked Body Solver Validation](work/investigations/avatar/tracked-body-solver-2026-09-30.md)
 - [Spectator and Calibration Feedback Validation](work/investigations/avatar/spectator-validation-2026-09-30.md)
-- [Vulkan Lifecycle Evidence Harness](work/testing/rendering/vulkan-lifecycle-evidence-harness.md)
-- [Vulkan Stall Remediation: Remaining Tasks](work/todo/rendering/vulkan-stall-remediation-todo.md)
+- [Vulkan Core Validation](work/testing/rendering/vulkan-core-validation.md)
 - [Vulkan Stall Separate Findings](work/todo/rendering/vulkan-stall-separate-findings-todo.md)
 - [Vulkan Stall Remediation Results](work/progress/rendering/vulkan-stall-remediation-results.md)
-- [Vulkan Stall Validation Protocol](work/testing/rendering/vulkan-stall-validation.md)
 - [Control Plane Managed Server Instances and Client Synchronization Todo](work/todo/networking/control-plane-managed-server-instances-todo.md)
 - [Apple Platform and MoltenVK Support Design](work/design/platform/apple-platform-moltenvk-support-design.md)
 - [Runtime Modularization Plan](work/design/runtime-modularization-plan.md)
@@ -176,7 +185,7 @@ Generated output stays in `docs/docfx/_site`, which is ignored by Git.
 
 [Portable browser scene boot](work/progress/rendering/portable-browser-scene-boot.md) records the implemented shared runtime, browser validation, build instructions and remaining rendering work.
 
-[Mobile browser readiness](work/progress/rendering/mobile-browser-readiness.md) records the source dependency audit, sample contract, budgets and unvalidated device matrix for the [WebGPU runtime TODO](work/todo/rendering/mobile-webgpu-runtime-todo.md).
+[Mobile browser readiness](work/progress/rendering/mobile-browser-readiness.md) records the source dependency audit, sample contract, budgets and unvalidated device matrix for the [WebGPU work in the unified runtime TODO](work/todo/platform/unified-desktop-browser-runtime-todo.md).
 
 
 [Canvas output, visibility and live resource updates](work/progress/rendering/browser-webgpu-frame-output.md) records portable output metadata, the explicit canvas pass, per-view culling and resource replacement. Source implementation remains unvalidated.

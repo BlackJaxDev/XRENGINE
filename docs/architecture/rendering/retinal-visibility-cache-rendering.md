@@ -489,11 +489,34 @@ The validation plan intentionally treats diagnostics as product behavior. A
 missing extension, missing backend feature, unsupported material, overflow, or
 kernel-pending state must be observable.
 
+## Debug View Contract
+
+RVC debug views use the same `RenderFrameViewSet` identity as rendering. A debug
+view selects a frame view by index, role, parent eye, wide/inset relation,
+mirror/debug flag, and runtime OpenXR view index. It does not assume exactly two
+eyes.
+
+`ERvcDebugViewMode` is the stable setting surface for debug output. Current
+contracts cover view-set, mask, depth, visibility payload, reconstruction,
+shadelet, reuse, lighting, temporal, resolve, transparency, composition, and
+performance views. The contract can grow, but each new mode must name the
+source resource, view identity, format, fallback reason, and expected counter
+behavior.
+
+Debug semantics are identical across `SequentialViews`, `SinglePassStereo`, and
+`ParallelCommandBufferRecording`. Only scheduling and resource layout can
+change. Quad-view uses the same model for left wide, right wide, left inset,
+and right inset views.
+
+Debug output is opt-in unless it is a cheap steady-state counter. GPU counter
+readback is delayed. A debug view must not add synchronous render-loop readback
+or per-frame heap allocation when disabled. Unsupported debug output must report
+a reason instead of substituting an unrelated texture.
+
 ## Quality Tolerances
 
 `RvcQualityToleranceSet.Default` defines the current comparison gates against
 the Forward+ oracle.
-
 | Region | Max Error | Min SSIM | Max FLIP |
 |--------|-----------|----------|----------|
 | Fovea | `1/255` | `0.995` | `0.010` |
@@ -505,7 +528,6 @@ Captures must use fixed scene state, fixed camera/gaze, fixed frame timing, and
 a documented warm-cache policy.
 
 ## Source Map
-
 | Source | Role |
 |--------|------|
 | `XREngine.Runtime.Core/Settings/RvcRenderingContracts.cs` | Pipeline modes, capabilities, fallback reasons, quality tolerances, frame-graph resources, visibility payloads, shadelet keys, reservoirs, temporal hash keys. |

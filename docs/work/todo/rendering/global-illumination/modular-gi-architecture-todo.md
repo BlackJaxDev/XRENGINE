@@ -27,3 +27,8 @@ Both pipelines resolve one `GlobalIlluminationPlan` through `GlobalIlluminationP
 ## Decisions Needed
 
 - [ ] Define a coverage and energy policy before more than one diffuse provider can be active, and before multi-volume blending. Owner: rendering lead.
+
+## Out Of Scope
+
+- A shared scene-input schema before a second provider needs the same CPU metadata and revision rules.
+- Combining two diffuse providers before a coverage and energy policy exists.

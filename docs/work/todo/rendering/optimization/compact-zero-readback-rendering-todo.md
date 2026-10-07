@@ -1,256 +1,56 @@
 # Compact Zero-Readback Rendering TODO
 
-Last Updated: 2026-07-28
-Owner: Rendering
-Status: Workstream 03 Implementation Landed; Validation And Workstream 07 Open
-Execution: Current worktree only; do not create or switch branches for this effort.
+Last Updated: 2026-10-06
+Status: Active
+Architecture: [Mesh Submission Strategies](../../../../architecture/rendering/mesh-submission-strategies.md), [GPU Record Layouts](../../../../architecture/rendering/gpu-record-layouts.md)
+Validation: [GPU-Driven Submission Validation](../../../testing/rendering/gpu-driven-submission-validation.md)
 
-## Canonical Ownership
+## Current State
+The bounded Vulkan implementation has a three-tier compact data model, portable workgroup prefix scan, one clamped reservation per workgroup and tier, bounded indirect output, coalesced compute-to-indirect barriers, Vulkan indirect-count consumption, diagnostic-only scan and readback modes, delayed fence-polled counters, and source contracts. The optimized subgroup rung, exhaustive runtime matrix, GPU trace acceptance, scaling crossover, and workstream-07 Hi-Z work remain open.
 
-This document remains the technical implementation child for active-list
-compaction, overflow, Hi-Z, barrier batching, indirect-count submission, and
-delayed diagnostics.
+## Open Code Items
 
-- [Workstream 03 validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation)
-  owns Phases 0-3 and 5-7 plus the production zero-readback completion gate.
-- [Vulkan occlusion code changes](../vulkan-core-hardening-and-device-loss-todo.md#9-make-occlusion-modes-bounded-and-effective)
-  owns Phase 4, Hi-Z effectiveness, and any production promotion decision.
+### Active-list data model
+- [ ] Define active draw, material, state-class, and bucket buffers with explicit capacities and ownership. `GPUScene`, `GPURenderPassCollection`. Done when: each buffer has a named owner, capacity rule, and writer.
+- [ ] Make GPU culling write compact active draw IDs. Culling shaders and `GPUScene` buffers. Done when: production culling does not preserve upper-bound scene-size lists as real work.
+- [ ] Make material scatter consume active draw IDs. `GPURenderMaterialScatter.comp`. Done when: scatter work is proportional to active draws.
+- [ ] Make bucket submission consume active buckets. `HybridRenderingManager`, scatter shaders. Done when: production submission does not loop full material-table capacity for strict paths.
+- [ ] Add static-scene reuse rules. `GPURenderPassCollection`, `GPUScene`. Done when: unchanged camera, topology, BVH, material table, and visibility inputs short-circuit safely.
+- [ ] Keep diagnostic full scans behind explicit flags and profiler labels. Rendering diagnostics. Done when: full scans cannot run unnoticed in production zero-readback.
 
-Do not promote this child independently. Do not begin Phase 4 while executing
-workstream 03; it remains blocked until workstream 07 opens. The other
-applicable phase evidence is consumed by workstream 03 after completed
-workstream 02; its primary-reuse evidence is recorded in the
-[Vulkan framerate root-cause investigation](../../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md).
+### Compaction and overflow
+- [ ] Implement subgroup or wave partitioned prefix sums for stream compaction. Compaction shaders. Done when: production compaction can use a subgroup rung where supported.
+- [ ] Use one workgroup-level atomic to reserve each group's output span. Compaction shaders. Done when: per-survivor `atomicAdd` is absent from production compaction.
+- [ ] Provide a fallback compaction shader for hardware without subgroup arithmetic. Shader set and profiler labels. Done when: fallback is reported as a lower rung.
+- [ ] Add counters for input count, survivor count, group count, atomics, and compaction time. Stats and profiler capture JSON. Done when: each counter appears in profile output.
+- [ ] Size active-list and indirect-output buffers from historical visible counts with a safety multiplier. GPU-driven buffer allocation code. Done when: capacities adjust across frames and never mid-frame.
+- [ ] Add capacity checks to every active-list and indirect-output writer. Shaders. Done when: overflow cannot corrupt adjacent buffers or indirect-count arguments.
+- [ ] Add conservative overflow handling. Shaders and resolver policy. Done when: overflow either emits conservative GPU-visible work or reports an explicit unsupported result without hidden CPU-direct switching.
+- [ ] Surface overflow in editor diagnostics and profile capture JSON. Editor diagnostics and stats. Done when: overflow has a visible counter and message.
+- [ ] Add deterministic tests for empty input, exact capacity, overflow, and resize-on-next-frame behavior. `XREngine.UnitTests/Rendering/`. Done when: each case asserts counts, diagnostics, and guard safety.
 
-Design source:
+### Hi-Z integration
+- [ ] Define one render-graph contract for last-frame and current-frame Hi-Z consumers. Render graph and `GPURenderPassCollection`. Done when: producers and consumers have explicit resource declarations.
+- [ ] Complete one-phase Hi-Z mode. `GPURenderOcclusionHiZ.comp`, pass collection. Done when: accepted work renders and skipped reasons are visible.
+- [ ] Complete current-frame two-pass Hi-Z validation hooks. `GPURenderPassCollection.TwoPassOcclusion.cs`. Done when: phase-one and phase-two draw counts and diagnostics are published.
+- [ ] Keep one-phase mode available for diagnostics and cheaper cases. Resolver and settings. Done when: the active mode appears in profiler output.
+- [ ] Add stereo-safe Hi-Z handling. Hi-Z shaders and view resources. Done when: stereo depth sources use a per-eye chain, array variant, or explicit conservative fallback.
+- [ ] Add tests for missing depth, stale depth, stereo depth, dirty bypass, and no-depth fallback. `XREngine.UnitTests/Rendering/`. Done when: each case reports the expected skipped reason or result.
 
-- [Canonical Vulkan Core Hardening And Device-Loss TODO](../vulkan-core-hardening-and-device-loss-todo.md)
-- [Engine Rendering Optimization Design](../../../design/rendering/engine-optimization-and-avatar-optimizer-design.md)
-- [Zero-Readback GPU-Driven Rendering Plan](../../../design/rendering/zero-readback-gpu-driven-rendering-plan.md)
-- [Production GPU-Driven Rendering Roadmap](../gpu/production-rendering-pipeline-roadmap.md)
-- [GPU-Driven Occlusion Culling Architecture TODO](../gpu/gpu-driven-occlusion-culling-architecture-todo.md)
+### Barriers, submission, and diagnostics
+- [ ] Group compute dispatches by resource dependency before barriers. Render graph and pass collection. Done when: redundant broad barriers are not emitted between independent stages.
+- [ ] Replace per-dispatch broad barriers with resource and stage-specific grouped barriers. Backend barrier code. Done when: GPU traces show fewer redundant bubbles.
+- [ ] Emit command-buffer and shader-storage barriers only when needed. Backend barrier code. Done when: barriers match following usage.
+- [ ] Make GPU timestamp query density opt-in and pass-level by default. Profiler and query code. Done when: timestamp queries do not add per-dispatch default overhead.
+- [ ] Ensure OpenGL uses indirect-count support where available. OpenGL renderer. Done when: `ARB_indirect_parameters` or equivalent path submits GPU-written counts.
+- [ ] Ensure Vulkan uses indirect-count draw. Vulkan renderer. Done when: `vkCmdDrawIndexedIndirectCount` or equivalent path consumes the count buffer.
+- [ ] Add source-contract checks that prevent CPU draw-count readback in `GpuIndirectZeroReadback`. `XREngine.UnitTests/Rendering/`. Done when: source tests fail on current-frame count readback.
+- [ ] Keep diagnostic count readback in instrumented or delayed profiler paths only. Diagnostics code. Done when: strict zero-readback profiles assert zero current-frame readback bytes.
+- [ ] Publish active draw count, bucket count, empty-bucket skips, full bucket scans, indirect command count, Hi-Z phase counts, and overflow counts. Stats and profile capture JSON. Done when: each field is present.
 
-## Goal
+## Decisions Needed
+- [ ] Choose the production Hi-Z mode default after workstream-07 evidence passes. Owner: rendering lead.
 
-Make strict zero-readback rendering fast by replacing broad scans with compact
-active work. No current-frame CPU readback is allowed, but zero readback alone
-is not success: the path must compact, cull, batch barriers, handle overflow,
-and report its true cost.
-
-## Scope
-
-- Active draw/material/bucket list generation.
-- Subgroup/wave prefix-sum compaction.
-- Overflow handling and diagnostics.
-- One-phase and two-phase Hi-Z integration.
-- Barrier and synchronization batching.
-- Indirect-count draw/dispatch submission.
-- Stable reusable pass-level dispatch/barrier/indirect command topology.
-- Delayed diagnostics that do not affect the current frame.
-
-## Non-Goals
-
-- Do not remove `GpuIndirectInstrumented`; it remains the diagnostic path.
-- Do not make CPU direct slower to make zero-readback look better.
-- Do not rely on CPU-visible counters for current-frame draw decisions.
-- Do not hide fallback draws in strict zero-readback profiles.
-- Do not classify changing GPU-written contents or counts as structurally
-  mutable command operations. Strict production frames rerecord only for a
-  reported topology, capacity, binding, pipeline, or resource-generation change.
-
-## Phase 0 - Baseline And Audit
-
-- [ ] Execute and report this supporting work through the canonical Phase 5.2B
-  gate; do not create a separate branch or independent completion status.
-- [ ] Capture Release baselines for `CpuDirect`, `GpuIndirectInstrumented`, and
-  `GpuIndirectZeroReadback` on low-object, high-object, occluded, material-diverse,
-  and skinned-avatar scenes.
-- [ ] Record active zero-readback draw path, material path, Hi-Z mode, and
-  readback bytes.
-- [ ] Inventory every CPU readback helper reachable from
-  `GpuIndirectZeroReadback`.
-- [ ] Inventory every full material, bucket, tier, object, or meshlet scan in
-  the production zero-readback path.
-- [ ] Inventory every memory barrier issued by the cull, scatter, compact, and
-  draw stages.
-
-Acceptance criteria:
-
-- [ ] The audit distinguishes production zero-readback work from instrumented
-  diagnostic work.
-
-## Phase 1 - Active-List Data Model
-
-- [ ] Define active draw, active material, active state-class, and active bucket
-  buffers with explicit capacities and ownership.
-- [ ] Ensure GPU culling writes compact active draw IDs rather than preserving
-  upper-bound scene-size lists as real work.
-- [ ] Ensure material scatter consumes active draw IDs, not all possible draws.
-- [ ] Ensure bucket draw submission consumes active buckets, not all theoretical
-  material slots.
-- [ ] Add static-scene reuse or short-circuit rules where camera, topology, BVH,
-  material table, and visibility inputs are unchanged.
-- [ ] Keep CPU-recorded dispatch, resource-specific barrier, and
-  `Draw*IndirectCount` packets stable across frames. Frame-slot inputs and
-  GPU-written active lists/counts may change without changing recorded topology.
-- [ ] Keep diagnostic full scans behind explicit flags and profiler labels.
-
-Acceptance criteria:
-
-- [ ] Production zero-readback work scales with active draws/buckets, not scene
-  maxima or material table capacity.
-
-## Phase 2 - Subgroup Prefix-Sum Compaction
-
-- [ ] Implement subgroup/wave partitioned prefix sums for stream compaction.
-- [ ] Use one workgroup-level atomic to reserve each group's output span.
-- [ ] Derive per-lane output slots from subgroup prefix sums.
-- [ ] Remove per-survivor `atomicAdd` compaction from production paths.
-- [ ] Provide a fallback compaction shader for hardware without subgroup
-  arithmetic; mark it as lower rung in profiler output.
-- [ ] Add shader tests or source-contract checks that production compaction
-  does not use per-element atomics.
-- [ ] Add counters for input count, survived count, group count, atomics issued,
-  and compaction time.
-
-Acceptance criteria:
-
-- [ ] Compaction cost is dominated by active data movement, not serialized
-  per-element atomics.
-
-## Phase 3 - Overflow Contract
-
-- [ ] Size active-list and indirect-output buffers from historical visible
-  counts with a configurable safety multiplier.
-- [ ] Add explicit capacity checks to every shader that writes active-list or
-  indirect-command output.
-- [ ] Clamp written counts on overflow.
-- [ ] Increment `GpuCompactionOverflow` or a more specific overflow counter.
-- [ ] Emit a conservative fallback where possible, such as parent cluster,
-  coarser LOD, or explicitly visible uncullable GPU work. Strict zero-readback
-  must never switch to next-frame CPU-direct automatically; a user-authorized
-  strategy transition is a separate, reported policy event.
-- [ ] Resize buffers across frames, never mid-frame.
-- [ ] Surface overflow in editor diagnostics and profile capture JSON.
-- [ ] Add tests for empty input, exact-capacity input, overflow input, and
-  resize-on-next-frame behavior.
-
-Acceptance criteria:
-
-- [ ] Visible work is never silently truncated without a diagnostic.
-- [ ] Overflow cannot corrupt adjacent buffers or indirect-count arguments.
-
-## Phase 4 - One-Phase And Two-Phase Hi-Z
-
-Execution gate: this phase is owned by workstream 07 and must not begin during
-workstream 03.
-
-- [ ] Define a single render-graph contract for last-frame Hi-Z and
-  current-frame Hi-Z consumers.
-- [ ] Implement phase 1: cull against last-frame Hi-Z, draw accepted work.
-- [ ] Rebuild current-frame Hi-Z after phase 1 depth is available.
-- [ ] Implement phase 2: recull the rejected or uncertain set against
-  current-frame Hi-Z, then draw newly accepted work.
-- [ ] Report one-phase vs two-phase mode and draw counts for each phase.
-- [ ] Keep one-phase available for editor diagnostics and cases where measured
-  cheaper.
-- [ ] Add stereo-safe Hi-Z handling: per-eye Hi-Z chain, array view variant, or
-  explicit conservative fallback with warning.
-- [ ] Add tests for missing depth source, stale depth source, stereo depth
-  source, dirty bypass, and no-depth fallback.
-
-Acceptance criteria:
-
-- [ ] Hi-Z failures are visible as skipped reasons, not silent pass-through.
-- [ ] Two-phase mode improves heavily occluded scenes without regressing simple
-  scenes beyond the acceptance threshold.
-
-## Phase 5 - Barrier And Synchronization Batching
-
-- [ ] Group compute dispatches that produce SSBO or indirect-command writes
-  before issuing barriers.
-- [ ] Replace per-dispatch broad barriers with resource/stage-specific grouped
-  barriers.
-- [ ] Ensure indirect command buffers receive `GL_COMMAND_BARRIER_BIT` or
-  backend equivalent only when needed.
-- [ ] Ensure shader storage writes receive `GL_SHADER_STORAGE_BARRIER_BIT` or
-  backend equivalent only when needed.
-- [ ] Avoid synchronous `glGet*`, query waits, blocking maps, and fence waits in
-  production hot paths.
-- [ ] Make GPU timestamp query density opt-in and pass-level by default.
-- [ ] Add counters for barriers by kind and stalls by reason.
-
-Acceptance criteria:
-
-- [ ] GPU traces show fewer bubbles from redundant barriers.
-- [ ] Production frames contain no blocking sync calls required for current
-  zero-readback draw decisions.
-
-## Phase 6 - Indirect-Count Submission
-
-- [ ] Ensure OpenGL uses `ARB_indirect_parameters` / multi-draw indirect count
-  where available.
-- [ ] Ensure Vulkan uses `vkCmdDrawIndexedIndirectCount` or equivalent strategy.
-- [ ] Ensure DX12 path design maps to `ExecuteIndirect` when implemented.
-- [ ] Validate count-buffer reset happens on GPU before command generation.
-- [ ] Validate zero-count draws are skipped or harmless without CPU inspection.
-- [ ] Ensure unsupported backend capability falls back explicitly and reports
-  the selected strategy.
-- [ ] Add source-contract checks preventing CPU draw-count readback in
-  `GpuIndirectZeroReadback`.
-- [ ] Ensure ordinary GPU-written command/count changes do not set a generic
-  mutable-frame-op flag, invalidate the primary, or rebuild the pass-level
-  command packet.
-
-Acceptance criteria:
-
-- [ ] The CPU submits stable pass-level indirect calls and does not inspect the
-  generated draw count for the current frame.
-- [ ] Warm steady-state frames reuse the pass-level dispatch/barrier/indirect
-  topology; every rerecord identifies a topology, capacity, binding, pipeline,
-  or resource-generation change.
-
-## Phase 7 - Delayed Diagnostics
-
-- [ ] Keep diagnostic count readback in `GpuIndirectInstrumented` or delayed
-  profiler paths only.
-- [ ] Read delayed counters at least one frame later and never gate current draw
-  submission on them.
-- [ ] Publish active draw count, active bucket count, empty bucket skips, full
-  bucket scans, indirect command count, Hi-Z phase counts, and overflow counts.
-- [ ] Include readback bytes in every profiler frame and profile capture.
-- [ ] Add assertions that strict zero-readback profiles have zero current-frame
-  readback bytes.
-
-Acceptance criteria:
-
-- [ ] Diagnostics explain what the GPU path did without changing what the
-  current frame renders.
-
-## Final Validation And Closeout
-
-- [ ] Run targeted GPU indirect, material table, Hi-Z, and profiler tests.
-- [ ] Run Release baselines after implementation on low-count, high-count,
-  occluded, material-diverse, and skinned-avatar scenes.
-- [ ] Compare matched Phase 5.2A/5.2B scaling curves with CPU recording and GPU
-  execution separated. A production accelerated lane must demonstrate its
-  approved high-count/occlusion crossover or scaling advantage.
-- [ ] Capture at least one GPU trace showing barrier and compaction behavior.
-- [ ] Update the engine optimization roadmap with final results.
-- [ ] Close this supporting tracker only when the canonical Phase 5.2B gate
-  records the same implementation, validation, and documentation evidence.
-
-## Workstream 03 Bounded Result
-
-The workstream-03 implementation now supplies the three-tier compact data
-model, portable workgroup prefix scan, one clamped reservation per
-workgroup/tier, bounded indirect output, coalesced compute-to-indirect barrier,
-Vulkan indirect-count consumption, explicit diagnostic-only scan/readback
-modes, delayed fence-polled counter path, and source/GLSL contracts. The
-selected lower-capability compaction rung is reported as
-`WorkgroupPrefixScan64`.
-
-This child remains open because the subgroup-optimized rung, exhaustive
-empty/exact/overflow/resize runtime matrix, successful GPU trace, matched
-scaling crossover, and Phase 4 Hi-Z work are not complete. Phase 4 remains
-owned by workstream 07.
+## Out Of Scope
+- CPU direct state-cache optimization.
+- Material row layout generation beyond the active zero-readback consumption contract.

@@ -23,6 +23,8 @@ namespace XREngine.Rendering.Commands
 
         private XRMeshRenderer? _mesh;
         private XRMeshRenderer? _observedRenderer;
+        // A published renderer has all mutation subscriptions from the last bind.
+        private XRMeshRenderer? _currentRendererMutationBinding;
         private bool _rendererMutationsAttached;
         // These flags are owned by the subscription gate. A failed refresh leaves
         // its group invalid so a same-reference assignment can retry it.
@@ -128,7 +130,8 @@ namespace XREngine.Rendering.Commands
                 {
                     // A notification can throw after SetField installs the new value.
                     // Keep subscriptions aligned with the value actually retained.
-                    if (_rendererMutationsAttached)
+                    if (System.Threading.Volatile.Read(ref _rendererMutationsAttached)
+                        && !HasCurrentRendererMutationBinding(_mesh))
                         BindRendererMutations(_mesh);
                 }
             }
@@ -137,7 +140,8 @@ namespace XREngine.Rendering.Commands
         /// <summary>Rebind after this command is added to a render info.</summary>
         internal void AttachRendererMutationTracking()
         {
-            _rendererMutationsAttached = true;
+            InvalidateRendererMutationBinding();
+            System.Threading.Volatile.Write(ref _rendererMutationsAttached, true);
             BindRendererMutations(_mesh);
             // Changes made while detached must be copied at the next swap.
             MarkDirty();
@@ -146,7 +150,8 @@ namespace XREngine.Rendering.Commands
         /// <summary>Release renderer event roots when the owning render info removes this command.</summary>
         internal void DetachRendererMutationTracking()
         {
-            _rendererMutationsAttached = false;
+            InvalidateRendererMutationBinding();
+            System.Threading.Volatile.Write(ref _rendererMutationsAttached, false);
             BindRendererMutations(null);
             lock (_rendererSubscriptionsGate)
             {
@@ -159,6 +164,7 @@ namespace XREngine.Rendering.Commands
         {
             lock (_rendererSubscriptionsGate)
             {
+                InvalidateRendererMutationBinding();
                 if (!ReferenceEquals(_observedRenderer, renderer) || !_rendererSubscriptionsCurrent)
                 {
                     _rendererSubscriptionsCurrent = false;
@@ -181,7 +187,33 @@ namespace XREngine.Rendering.Commands
                 EnsureObservedMaterialsCurrent();
                 if (!_meshSubscriptionsCurrent)
                     RefreshObservedMeshes();
+
+                if (_rendererMutationsAttached && renderer is not null
+                    && ReferenceEquals(_observedRenderer, renderer)
+                    && _rendererSubscriptionsCurrent && _materialSubscriptionsCurrent
+                    && _materialOptionsSubscriptionsCurrent && _meshSubscriptionsCurrent
+                    && ReferenceEquals(_observedMaterialOverride, _materialOverride)
+                    && ReferenceEquals(_observedRenderOptionsOverride, _renderOptionsOverride))
+                    System.Threading.Volatile.Write(ref _currentRendererMutationBinding, renderer);
             }
+        }
+
+        private void InvalidateRendererMutationBinding()
+            => System.Threading.Volatile.Write(ref _currentRendererMutationBinding, null);
+
+        private bool HasCurrentRendererMutationBinding(XRMeshRenderer? renderer)
+        {
+            if (renderer is null
+                || !ReferenceEquals(System.Threading.Volatile.Read(ref _currentRendererMutationBinding), renderer)
+                || !System.Threading.Volatile.Read(ref _rendererSubscriptionsCurrent)
+                || !System.Threading.Volatile.Read(ref _materialSubscriptionsCurrent)
+                || !System.Threading.Volatile.Read(ref _materialOptionsSubscriptionsCurrent)
+                || !System.Threading.Volatile.Read(ref _meshSubscriptionsCurrent)
+                || !ReferenceEquals(_observedMaterialOverride, _materialOverride)
+                || !ReferenceEquals(_observedRenderOptionsOverride, _renderOptionsOverride))
+                return false;
+
+            return ReferenceEquals(System.Threading.Volatile.Read(ref _currentRendererMutationBinding), renderer);
         }
 
         private void ObservedRendererPropertyChanged(object? sender, IXRPropertyChangedEventArgs args)
@@ -213,6 +245,7 @@ namespace XREngine.Rendering.Commands
 
         private void BindSubmeshMutations(EventList<XRMeshRenderer.SubMesh> submeshes)
         {
+            InvalidateRendererMutationBinding();
             _rendererSubscriptionsCurrent = false;
             _materialSubscriptionsCurrent = false;
             _meshSubscriptionsCurrent = false;
@@ -226,6 +259,7 @@ namespace XREngine.Rendering.Commands
 
         private void UnbindSubmeshMutations()
         {
+            InvalidateRendererMutationBinding();
             _rendererSubscriptionsCurrent = false;
             if (_observedSubmeshes is not null)
             {
@@ -241,6 +275,7 @@ namespace XREngine.Rendering.Commands
 
         private void ObserveSubmesh(XRMeshRenderer.SubMesh submesh)
         {
+            InvalidateRendererMutationBinding();
             if (_observedSubmeshCounts.TryGetValue(submesh, out int count))
             {
                 _observedSubmeshCounts[submesh] = count + 1;
@@ -255,6 +290,7 @@ namespace XREngine.Rendering.Commands
         {
             lock (_rendererSubscriptionsGate)
             {
+                InvalidateRendererMutationBinding();
                 bool wasCurrent = _rendererSubscriptionsCurrent;
                 _rendererSubscriptionsCurrent = false;
                 ObserveSubmesh(submesh);
@@ -269,6 +305,7 @@ namespace XREngine.Rendering.Commands
         {
             lock (_rendererSubscriptionsGate)
             {
+                InvalidateRendererMutationBinding();
                 bool wasCurrent = _rendererSubscriptionsCurrent;
                 _rendererSubscriptionsCurrent = false;
                 if (_observedSubmeshCounts.TryGetValue(submesh, out int count))
@@ -315,6 +352,7 @@ namespace XREngine.Rendering.Commands
 
         private void RefreshObservedMaterials()
         {
+            InvalidateRendererMutationBinding();
             _materialSubscriptionsCurrent = false;
             XRMaterial? materialOverride = _materialOverride;
             HashSet<XRMaterial> current = _currentMaterialsScratch;
@@ -361,6 +399,7 @@ namespace XREngine.Rendering.Commands
 
         private void RefreshObservedMaterialOptions()
         {
+            InvalidateRendererMutationBinding();
             _materialOptionsSubscriptionsCurrent = false;
             RenderingParameters? renderOptionsOverride = _renderOptionsOverride;
             HashSet<RenderingParameters> current = _currentMaterialOptionsScratch;
@@ -391,6 +430,7 @@ namespace XREngine.Rendering.Commands
 
         private void ClearObservedMaterials()
         {
+            InvalidateRendererMutationBinding();
             _materialSubscriptionsCurrent = false;
             _materialOptionsSubscriptionsCurrent = false;
             _observedMaterialOverride = null;
@@ -405,6 +445,7 @@ namespace XREngine.Rendering.Commands
 
         private void RefreshObservedMeshes()
         {
+            InvalidateRendererMutationBinding();
             _meshSubscriptionsCurrent = false;
             HashSet<XRMesh> current = _currentMeshesScratch;
             Dictionary<XRMesh, XREvent<XRMesh>> next = _nextMeshDataEventsScratch;
@@ -458,6 +499,7 @@ namespace XREngine.Rendering.Commands
 
         private void ClearObservedMeshes()
         {
+            InvalidateRendererMutationBinding();
             _meshSubscriptionsCurrent = false;
             foreach ((XRMesh mesh, XREvent<XRMesh> dataChanged) in _observedMeshDataEvents)
             {

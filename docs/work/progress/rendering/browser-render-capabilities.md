@@ -45,5 +45,5 @@ resource contract currently covers static meshes, uploaded RGBA8 textures
 and opaque materials only. No arbitrary buffers, texture formats/mips,
 render/compute pipeline construction, general render graph, readback, error
 scope tickets, or automatic desktop resource lowering is claimed. The active
-[browser runtime TODO](../../todo/rendering/mobile-webgpu-runtime-todo.md)
+[browser runtime TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md)
 continues to track the broader integration and runtime acceptance.

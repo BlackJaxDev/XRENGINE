@@ -1,7 +1,5 @@
 # Box3D Physics Backend Integration Design
 
-Last Updated: 2026-10-06
-Status: Proposed. Upstream Box3D is alpha software. The dependency is not approved.
 Code todo: [Box3D Backend Integration TODO](../../todo/physics/box3d-backend-integration-todo.md)
 Architecture: [Physics Architecture](../../../architecture/physics/overview.md)
 Validation: [Physics Validation](../../testing/physics/physics-validation.md#box3d-backend)
@@ -160,7 +158,7 @@ The inspector must show an authored field as unsupported for Box3D. Native creat
 - Debug: adapt `b3World_Draw` callbacks to `PhysicsDebugFrameWriter`. Never render from a native callback or keep transient native pointers. See [Physics Debug Frame](../../../architecture/physics/physics-debug-frame.md).
 - Threading: no world read or write while `b3World_Step` runs. Use the engine physics mutation queue.
 - Character mover: keep `CharacterControllerCapabilities` at `None` until a complete fixed-step mover exists. Do not promote Box3D for player movement until the shared v1 controller capabilities pass.
-- Recording: store `.b3rec` captures as disposable evidence under `Build/_AgentValidation/<run>/`. They are not project data.
+- Recording: store `.b3rec` captures as disposable local evidence. They are not project data.
 
 ## Risk Register
 

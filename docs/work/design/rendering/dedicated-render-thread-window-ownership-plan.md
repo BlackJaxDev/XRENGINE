@@ -89,7 +89,7 @@ The practical result is that the thread that entered the engine becomes:
 
 ### Existing frame handoff is already multithreaded
 
-The current frame model is documented in [../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md](../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md).
+The current frame model is documented in [../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md](../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md).
 
 Relevant code:
 

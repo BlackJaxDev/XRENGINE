@@ -111,7 +111,7 @@ Important observation:
 Relevant code:
 
 - [XRENGINE/Rendering/Compute/SkinnedMeshBoundsCalculator.cs](../../../XRENGINE/Rendering/Compute/SkinnedMeshBoundsCalculator.cs)
-- [docs/work/design/zero-readback-gpu-driven-rendering-plan.md](./zero-readback-gpu-driven-rendering-plan.md)
+- [docs/work/design/zero-readback-gpu-driven-rendering-plan.md](../rendering/zero-readback-gpu-driven-rendering-plan.md)
 
 The current bounds calculator:
 

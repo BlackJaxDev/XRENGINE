@@ -15,7 +15,7 @@ Related docs:
 - `docs/developer-guides/gi/voxel-cone-tracing.md`
 - `docs/architecture/secondary-gpu-context.md`
 - `docs/work/design/vxao-implementation-plan.md`
-- `docs/work/todo/voxel-cone-tracing-and-vxao-implementation-todo.md`
+- `docs/work/todo/rendering/global-illumination/voxel-cone-tracing-and-vxao-implementation-todo.md`
 - Morgan McGuire DDGI introduction: `https://morgan3d.github.io/articles/2019-04-01-ddgi/index.html`
 - Morgan McGuire DDGI overview: `https://morgan3d.github.io/articles/2019-04-01-ddgi/overview.html`
 - Morgan McGuire DDGI algorithm: `https://morgan3d.github.io/articles/2019-04-01-ddgi/algorithm.html`
@@ -91,7 +91,7 @@ The most relevant current files and systems are:
 - `XRENGINE/Rendering/Pipelines/Types/DefaultRenderPipeline2.CommandChain.cs`
 - `XRENGINE/Rendering/Pipelines/Commands/Features/GI/VPRC_SurfelGIPass.cs`
 - `XRENGINE/Rendering/Pipelines/Commands/Features/GI/VPRC_ReSTIRPass.cs`
-- `XRENGINE/Rendering/Pipelines/Commands/Features/GI/VPRC_VoxelConeTracingPass.cs`
+- Voxel cone tracing: no C# VCT pass exists. See the legacy VCT shaders and `DefaultRenderPipeline.CreateVXAOPassCommands`.
 - `XRENGINE/Scene/Components/Capture/LightProbeComponent.cs`
 - `XRENGINE/Scene/Components/Capture/LightProbeComponent.IBL.cs`
 - `XRENGINE/Scene/Components/Capture/LightProbeGridSpawnerComponent.cs`

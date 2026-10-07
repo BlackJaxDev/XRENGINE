@@ -1,428 +1,128 @@
 # Texture Compression And Cooked Texture Cache TODO
 
-Last Updated: 2026-06-04
-Status: active phased roadmap
-Source design: [Texture Compression And Cooked Texture Cache Design](../../design/texturing/texture-compression-and-cooked-cache-design.md)
-Parent roadmap: [Texture Runtime, Streaming, And Virtual Texturing TODO](texture-runtime-streaming-virtual-texturing-todo.md)
-Validation ledger: [Texture Validation](../../testing/texturing/texture-validation.md)
+Last Updated: 2026-10-06
+Status: Active
+Architecture: [Cooked Texture Payloads](../../../architecture/assets/cooked-texture-payloads.md)  Design: [Texture Compression And Cooked Texture Cache Design](../../design/texturing/texture-compression-and-cooked-cache-design.md)  Validation: [Texture Validation](../../testing/texturing/texture-validation.md)
 
-## Goal
+## Current State
 
-Move imported and generated `XRTexture2D` content from uncompressed `Rgba8` cooked payloads toward role-aware, GPU-native cooked texture payloads while keeping existing YAML assets and `XRTS` v1 caches readable.
+`XRTexture2D` can write and read binary `XRTS` payloads through `XRTexture2D.StreamingPayload.cs`, and `TextureStreamingCacheCodec` uses a v3 uncompressed `Rgba8` preview cache key. `EPixelInternalFormat` has BC, ETC2/EAC, and ASTC enum values, but cooked payloads still store uncompressed mip bytes. Texture role, color-space, compression-profile, and normal-convention metadata remain incomplete. OpenGL and Vulkan dense compressed texture upload are not implemented.
 
-The first production target is Windows desktop with OpenGL 4.6:
+## Open Code Items
 
-- BC7 for albedo/color textures.
-- BC5 for normal maps.
-- BC4/BC5 or BC7 for masks.
-- BC6H for HDR textures.
-- Existing uncompressed `Rgba8`/`R16`/`Rgba16f` fallback when explicitly configured or required.
+### Metadata and import contract
 
-## Current Baseline
+- [ ] Add texture role metadata for unknown, albedo/base color, normal/bump, roughness, metallic, occlusion/AO, packed mask/ORM/RMSE, emissive, height/displacement, HDR environment, UI color, and UI mask/font/SDF. Files or types: `XRTexture`, texture import settings, material import code. Done when import and diagnostics carry a stable role value.
+- [ ] Add color-space metadata for unknown, linear, sRGB, and HDR linear. Files or types: `XRTexture.ImportedColorSpace`, import settings, cache manifest. Done when cache keys and imports preserve the selected color space.
+- [ ] Add compression profile metadata for none/uncompressed, desktop high quality BC, desktop memory saver BC, mobile ASTC, mobile ETC2/EAC, and KTX2/Basis source or interchange. Files or types: texture import settings, cache manifest, diagnostics. Done when profile changes affect the cache key.
+- [ ] Add normal-map convention metadata for OpenGL/Y+, DirectX/Y-, explicit green flip, and unknown. Files or types: import settings, material import code, shader sampling metadata. Done when normal maps record storage and reconstruction semantics.
+- [ ] Add import-option fields for role, color space, compression profile, normal convention, alpha mode, and mip policy. Files or types: import UI and texture importer. Done when explicit user settings override auto-detection.
+- [ ] Implement role auto-detection from material sampler name, material slot name, filename suffix, and `.exr` or `.hdr` source extension. Files or types: material and texture importers. Done when deterministic unit tests cover role and color-space detection.
+- [ ] Update the ImGui third-party texture import selection to show resolved role, color space, and compression profile. Files or types: editor ImGui texture import UI. Done when a user can see and override the resolved values.
+- [ ] Update texture diagnostics to log role and color space when loading or writing caches. Files or types: `TextureRuntimeDiagnostics`, cache write path. Done when `log_textures.*` rows include these fields.
 
-Browser delivery source update: [Browser cooked content delivery](../../progress/rendering/browser-cooked-content.md)
-adds a bounded manifest and upload path for preconverted ASTC 4×4, ETC2 RGBA8 and
-matching RGBA8 mip variants. It does not replace XRTS, supply a compression encoder,
-or close the native/mobile qualification tasks below. KTX2/Basis conversion remains
-offline and unimplemented by this browser packager. Runtime validation is deferred.
+### Metadata-only generated texture assets
 
-Implemented today:
+- [ ] Define a generated texture asset metadata shape with source identity, role, color space, compression profile, payload format/version/path, cache key, GPU format, dimensions, and mip count. Files or types: `XRTexture2D`, generated asset serializers. Done when generated assets no longer need large inline payloads.
+- [ ] Decide whether payload references are cache-root-relative or project-root-relative. Files or types: generated asset serializer, asset loader. Done when the path policy is documented and tests cover moved project roots.
+- [ ] Keep `XRTexture2DYamlTypeConverter` cooked payload reading for legacy assets. Files or types: YAML converter. Done when legacy YAML `Format: CookedBinary` assets still load.
+- [ ] Prefer a fresh cooked payload when loading a generated texture asset. Files or types: asset loader, `AssetTextureStreamingSource`. Done when fresh metadata assets load from the payload without source decode.
+- [ ] Fall back to source import in the editor when a payload is missing or stale and the source exists. Files or types: asset loader, diagnostics. Done when the fallback logs the reason.
+- [ ] Add a runtime and published-build policy for missing payloads. Files or types: asset loader, runtime diagnostics. Done when runtime fails with diagnostics unless an explicit fallback is configured.
+- [ ] Add metadata-only texture asset round-trip tests and missing/stale payload fallback tests. Files or types: `XREngine.UnitTests`. Done when metadata, editor fallback, and runtime failure behavior are covered.
+- [ ] Add ImGui inspector fields for payload path, cache key, and freshness status. Files or types: editor inspector. Done when the inspector shows payload state.
+- [ ] Preserve texture preview for metadata-only assets. Files or types: preview generation and editor UI. Done when preview works without inline mip bytes.
 
-- [x] Third-party `XRTexture2D` cache writes can use a pure binary `XRTS` payload instead of a YAML envelope.
-- [x] `XRTS` payloads are mip-addressable and include preview mip selection plus per-mip offsets.
-- [x] Runtime texture streaming can read selected resident mip ranges from cooked texture cache bytes.
-- [x] Normal `XRTexture2D` `.asset` serialization still supports YAML `Format: CookedBinary` envelopes.
-- [x] `EPixelInternalFormat` already contains BC/S3TC, RGTC, BPTC, ETC2/EAC, and ASTC enum values.
-- [x] Texture streaming diagnostics and ImGui texture streaming panels already exist.
+### `XRTS` payload schema and cache keys
 
-Known current limits:
+- [ ] Add `XRTS` v2 constants and version dispatch. Files or types: `XRTexture2D.StreamingPayload.cs`. Done when v1 and v2 readers dispatch by version.
+- [ ] Add a v2 header with payload version, flags, texture role, color space, storage format, data encoding, block geometry, source dimensions, mip count, preview base mip index, encoder id/version, and optional quality metrics. Files or types: payload structs. Done when the header can be read without hydrating mips.
+- [ ] Add v2 mip descriptors with mip index, logical dimensions, storage format, data encoding, block dimensions, row pitch, slice pitch, data offset, data length, and optional checksum. Files or types: payload structs. Done when descriptor validation catches invalid block layout.
+- [ ] Implement v2 uncompressed writer and reader before compressed bytes. Files or types: `XRTexture2D.StreamingPayload.cs`. Done when runtime streaming can read resident mip ranges from v2.
+- [ ] Keep v1 reader compatibility. Files or types: `XRTexture2D.StreamingPayload.cs`. Done when old cache payloads still load.
+- [ ] Add metadata-first manifest reads and resident mip range reads for v2. Files or types: streamability check and payload reader. Done when preview and promotion requests read only needed data.
+- [ ] Add unit tests for NPOT descriptors, final 1x1 mips, bad magic, unsupported version, invalid offset, invalid length, truncated payload, unsupported storage format, and cache freshness. Files or types: `XREngine.UnitTests`. Done when the reader rejects corrupt payloads and key freshness is deterministic.
+- [ ] Update cache logging to distinguish `XRTS v1`, `XRTS v2 uncompressed`, and future `XRTS v2 compressed`. Files or types: `TextureRuntimeDiagnostics`. Done when logs name the payload schema.
+- [ ] Define the v4 texture cache variant key with schema version, source dimensions/hash mode, role, color space, compression profile, backend profile, storage format, encoder id/version, encoder settings hash, mip policy, normal convention, and alpha mode. Files or types: `TextureStreamingCacheCodec`. Done when all inputs are present in a stable key builder.
+- [ ] Add cache miss reasons for missing, source newer, import options newer, unsupported schema, unsupported backend format, source hash mismatch, encoder version mismatch, role/color-space mismatch, corrupt payload, and user-forced reimport. Files or types: cache diagnostics. Done when exactly one primary reason logs per miss.
+- [ ] Add ImGui diagnostics and tests for cache miss reason, selected fallback, changed settings, and unchanged stable keys. Files or types: texture streaming panel, import UI, `XREngine.UnitTests`. Done when key behavior is visible and covered.
 
-- [ ] Current `XRTS` streaming cache payloads store uncompressed `Rgba8` mip bytes.
-- [ ] Texture role and color-space metadata are incomplete.
-- [ ] Normal map convention, green-channel flip, XY storage, and Z reconstruction are not a formal import contract.
-- [ ] Generated texture `.asset` files can still carry large YAML cooked payloads.
-- [ ] OpenGL compressed texture upload is not implemented.
-- [ ] Vulkan compressed texture format mapping and upload are not implemented.
-- [ ] Compressed sparse residency is not validated and must remain disabled until dense compressed upload is proven.
-- [ ] KTX2/Basis, ASTC, and ETC2/EAC target profiles are not implemented.
+### Desktop BC cooking
 
-## Phase 0: Branch, Baseline, And Tracker Setup
+- [ ] Choose the initial encoder path. Decide between an external `texconv`/DirectXTex executable and an in-process DirectXTex wrapper. Owner: Rendering.
+- [ ] Complete dependency and license review before adding or vendoring an encoder. Files or types: dependency manifests and legal docs. Done when the selected encoder is approved.
+- [ ] Add encoder configuration for executable path or integration mode, quality preset, concurrency cap, timeout, and output directory policy. Files or types: settings, import UI, cooker. Done when compression is bounded and cancelable.
+- [ ] Add BC cooking for albedo/base color. Files or types: texture cooker. Done when BC7 sRGB is default, BC1 sRGB is available for opaque memory-saver output, and BC3 sRGB is available when BC7 is unsupported.
+- [ ] Add BC cooking for normal maps. Files or types: texture cooker and shader metadata. Done when normals store XY, optional green flip applies, output uses BC5, and convention is recorded.
+- [ ] Add BC cooking for masks and HDR textures. Files or types: texture cooker. Done when BC4, BC5, BC7 packed RGBA, and BC6H choices are supported.
+- [ ] Make source alpha mode, sRGB rules, and linear scalar rules affect selected format. Files or types: format selection code. Done when color data uses sRGB and normal/scalar data uses linear formats.
+- [ ] Add first-import progress, cancellation, and bounded compression concurrency. Files or types: import UI and cooker scheduler. Done when the editor stays responsive during compression.
+- [ ] Validate cook output in code. Files or types: cooker validation. Done when block dimensions, mip count, data length, and selected format are checked before cache write.
+- [ ] Add import tests using tiny fixture textures where possible. Files or types: `XREngine.UnitTests`. Done when fixtures exercise albedo, normal, mask, and HDR paths where samples exist.
 
-**Goal:** create a clean implementation lane and capture the current behavior before changing cache formats.
+### OpenGL and Vulkan compressed upload
 
-- [ ] Create a dedicated branch, for example `texture-compression-cooked-cache`.
-- [ ] Confirm no unrelated dirty work will be touched by this tracker.
-- [ ] Run and record baseline builds:
-  - [ ] `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore`
-  - [ ] `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore`
-- [ ] Run the narrowest existing texture tests that compile in the current tree.
-- [ ] Capture a baseline third-party PNG import:
-  - [ ] generated `.asset` path
-  - [ ] cooked cache path
-  - [ ] `XRTS` cache hit/miss logs
-  - [ ] preview behavior in ImGui
-  - [ ] warm-cache load timing
-- [ ] Capture a baseline normal-map import and material preview if an existing sample is available.
-- [ ] Add this TODO to any active planning surface that needs it.
-- [ ] Keep the source design linked from this tracker and update the design if implementation decisions change.
+- [ ] Add OpenGL compression capability detection for S3TC/BC1-BC3, RGTC/BC4-BC5, BPTC/BC6H-BC7, ETC2/EAC, and ASTC. Files or types: OpenGL renderer capabilities. Done when renderer logs supported formats.
+- [ ] Map cooked storage formats to GL compressed internal formats. Files or types: OpenGL texture format conversion. Done when each supported payload format maps to a GL format.
+- [ ] Add a compressed upload branch for `XRTexture2D` dense textures. Files or types: `GLTexture2D`. Done when compressed mips use `glCompressedTexImage2D` or `glCompressedTexSubImage2D`.
+- [ ] Use immutable storage where compatible and validate block-aligned byte lengths before GL calls. Files or types: `GLTexture2D`. Done when invalid lengths fail before driver calls.
+- [ ] Handle NPOT final mips correctly. Files or types: OpenGL upload validation. Done when final block extents are correct.
+- [ ] Disable row-chunk progressive upload for compressed blocks until block-row chunking exists. Files or types: upload scheduler. Done when compressed upload does not split on invalid row boundaries.
+- [ ] Record compressed upload bytes separately from logical decoded bytes. Files or types: texture telemetry. Done when diagnostics show both values.
+- [ ] Keep the uncompressed upload path unchanged and add fallback diagnostics when selected compression is unsupported. Files or types: `GLTexture2D`, diagnostics. Done when existing `Rgba8` tests still pass.
+- [ ] Add Vulkan texture compression feature detection for `textureCompressionBC`, `textureCompressionETC2`, and `textureCompressionASTC_LDR`. Files or types: Vulkan capability probing. Done when backend-visible capabilities are exposed.
+- [ ] Add a renderer-visible texture capability profile. Files or types: renderer capability interfaces. Done when import and streaming can query supported compression.
+- [ ] Extend `VkFormatConversions` with BC, ETC2/EAC, and ASTC formats. Done when conversions are complete.
+- [ ] Validate sampled image and filtering support with physical-device format properties. Files or types: Vulkan format selection. Done when unsupported sampled formats are rejected before use.
+- [ ] Allocate `VkImage` with compressed `VkFormat` and add staging-buffer upload for compressed mip byte ranges. Files or types: Vulkan texture creation and upload service. Done when compressed bytes upload without decoding.
+- [ ] Make `VkBufferImageCopy` extents and offsets follow compressed block rules. Files or types: Vulkan upload validation. Done when NPOT final mips and block extents are valid.
+- [ ] Reject unsupported compressed formats before queue submission and log selected format, feature support, and upload byte counts. Files or types: Vulkan diagnostics. Done when failures are diagnostic and no bad command is submitted.
 
-## Phase 1: Texture Metadata Contract
+### Material sampling and mip quality
 
-**Goal:** add stable metadata needed for role-aware cooking without changing payload bytes yet.
+- [ ] Add shader and material metadata for normal-map XY storage, BC5 normal Z reconstruction, and normal scale after reconstruction. Files or types: material descriptors and shaders. Done when compressed normal maps shade correctly.
+- [ ] Enforce sampler color space by role. Files or types: material import and sampler setup. Done when normals and scalar data are linear and color/emissive data uses sRGB where appropriate.
+- [ ] Add material import remap support for packed masks. Files or types: material importer. Done when packed channels map to expected material fields.
+- [ ] Add role-aware fallback textures for albedo, flat normal, neutral roughness/AO, zero metallic, and zero emissive. Files or types: default textures and material binding. Done when missing textures bind role-correct fallbacks.
+- [ ] Add a validation material set that exercises each role. Files or types: assets or test scene. Done when validation can compare compressed and uncompressed output.
+- [ ] Generate color mips in linear light. Files or types: mip generator. Done when color mip generation converts through linear space.
+- [ ] Add coverage-preserving alpha mips and premultiplied-alpha mip handling where material alpha mode requires it. Files or types: mip generator. Done when alpha coverage stays stable.
+- [ ] Add normal-aware mip generation that decodes normal vectors, averages vectors, renormalizes, and encodes XY. Files or types: mip generator. Done when normal mips preserve orientation.
+- [ ] Add roughness, mask, and HDR linear mip generation. Files or types: mip generator. Done when scalar and HDR mips use the correct math.
+- [ ] Record the mip-generation policy version in the cache key. Files or types: `TextureStreamingCacheCodec`. Done when policy changes invalidate caches.
+- [ ] Add tests for normal mip orientation and alpha coverage preservation. Files or types: `XREngine.UnitTests`. Done when known fixtures stay within tolerance.
+- [ ] Add cook-time quality metrics where practical. Files or types: cooker diagnostics. Done when color, normal, scalar, and alpha metrics are recorded.
 
-- [ ] Add texture role metadata:
-  - [ ] unknown
-  - [ ] albedo/base color
-  - [ ] normal/bump
-  - [ ] roughness
-  - [ ] metallic
-  - [ ] occlusion/AO
-  - [ ] packed mask/ORM/RMSE
-  - [ ] emissive
-  - [ ] height/displacement
-  - [ ] HDR environment
-  - [ ] UI color
-  - [ ] UI mask/font/SDF
-- [ ] Add texture color-space metadata:
-  - [ ] unknown
-  - [ ] linear
-  - [ ] sRGB
-  - [ ] HDR linear
-- [ ] Add compression profile metadata:
-  - [ ] none/uncompressed
-  - [ ] desktop high quality BC
-  - [ ] desktop memory saver BC
-  - [ ] mobile ASTC
-  - [ ] mobile ETC2/EAC
-  - [ ] KTX2/Basis source/interchange
-- [ ] Add normal-map convention metadata:
-  - [ ] OpenGL/Y+
-  - [ ] DirectX/Y-
-  - [ ] explicit green flip
-  - [ ] unknown
-- [ ] Add import-option fields for role, color space, compression profile, normal convention, alpha mode, and mip policy.
-- [ ] Implement role auto-detection from:
-  - [ ] material sampler name
-  - [ ] material slot name
-  - [ ] filename suffix
-  - [ ] source extension such as `.exr`/`.hdr`
-- [ ] Ensure explicit user import settings always override auto-detection.
-- [ ] Add deterministic unit tests for role and color-space detection.
-- [ ] Update ImGui third-party texture import selection to show resolved role, color space, and compression profile.
-- [ ] Update texture diagnostics to log role and color space when loading or writing caches.
+### Mobile, KTX2, streaming integration, and docs
 
-## Phase 2: Metadata-Only Generated Texture Assets
+- [ ] Add ASTC profile definitions for 4x4 high quality, 5x5 balanced, 6x6 memory saver, and larger low-frequency blocks. Files or types: compression profile settings. Done when ASTC profiles are selectable.
+- [ ] Add `astcenc` external-tool support after dependency and license review. Files or types: cooker tooling. Done when ASTC payloads can be cooked.
+- [ ] Add ETC2/EAC profile definitions. Files or types: compression profile settings. Done when ETC2/EAC profiles are selectable.
+- [ ] Add a KTX2 import support plan in code-facing design. Cover metadata load, Basis payload read, transcode or cook to platform target, and source authority. Done when the implementation plan is ready for code.
+- [ ] Decide whether KTX2 is an import source only or an alternate cooked payload. Owner: Assets and Rendering.
+- [ ] Add cache keys and backend capability gates for ASTC, ETC2/EAC, and KTX2 profile selection. Files or types: `TextureStreamingCacheCodec`, OpenGL and Vulkan capability profiles. Done when profile changes invalidate the cache and unsupported targets diagnose or fall back.
+- [ ] Keep Windows desktop BC as the default profile. Files or types: profile selection. Done when desktop imports choose BC unless overridden.
+- [ ] Keep compressed sparse residency disabled until dense compressed upload is validated. Files or types: residency policy and capability gates. Done when compressed sparse paths cannot activate accidentally.
+- [ ] Add compressed byte estimates and separate logical decoded, cooked stored, upload, and committed GPU bytes. Files or types: texture telemetry and policy. Done when each byte class is named.
+- [ ] Add storage format and color space to resident-data reuse cache keys. Files or types: `TextureStreamingResidentDataReuseCache`. Done when incompatible prepared data cannot be reused.
+- [ ] Update texture streaming logs with compressed or uncompressed payload state. Files or types: `TextureRuntimeDiagnostics`. Done when logs identify payload encoding.
+- [ ] Validate tiered residency with compressed dense textures. Files or types: OpenGL and Vulkan dense residency backends. Done when compressed dense textures stream without sparse residency.
+- [ ] Design compressed sparse full-mip residency separately if needed. Owner: Rendering.
+- [ ] Defer page-addressable compressed payloads to full streaming virtual texture work. Files or types: architecture docs. Done when no v1 code depends on page-addressable payloads.
+- [ ] Prevent compressed payload work from regressing existing `Rgba8` sparse streaming. Files or types: source-contract tests. Done when existing sparse streaming tests remain valid.
+- [ ] Update feature docs for model and texture import behavior, settings, compression profiles, cache invalidation, manual recook, dependency/tool setup, and troubleshooting. Files or types: feature, user, or developer docs. Done when users can diagnose missing encoder, unsupported GPU format, stale/corrupt cache, wrong normal-map convention, and unexpected sRGB/linear results.
+- [ ] Create follow-up code items for unresolved mobile, KTX2, sparse, or SVT work that remains after desktop compressed payload support lands. Files or types: texturing TODOs. Done when deferred work has clear owners.
 
-**Goal:** make generated texture `.asset` files describe the imported texture while heavy texture bytes live in a cooked payload/cache file.
+## Decisions Needed
 
-- [ ] Define a generated texture asset metadata shape that records:
-  - [ ] source path
-  - [ ] source timestamp
-  - [ ] optional source hash
-  - [ ] texture role
-  - [ ] color space
-  - [ ] compression profile
-  - [ ] cooked payload format
-  - [ ] cooked payload version
-  - [ ] cooked payload/cache path
-  - [ ] cache variant key
-  - [ ] selected GPU format
-  - [ ] source dimensions
-  - [ ] mip count
-- [ ] Decide whether the initial payload reference is cache-root-relative or project-root-relative.
-- [ ] Keep existing `XRTexture2DYamlTypeConverter` cooked payload reading for legacy assets.
-- [ ] Ensure generated `.asset` loading prefers the cooked payload when fresh.
-- [ ] Ensure generated `.asset` loading falls back to source import in editor when payload is missing/stale and the source exists.
-- [ ] Add a runtime/published-build policy for missing payloads:
-  - [ ] fail with diagnostics
-  - [ ] use packaged fallback only if explicitly configured
-- [ ] Add tests for metadata-only texture asset roundtrip.
-- [ ] Add tests for missing/stale payload fallback.
-- [ ] Add ImGui inspector fields for payload path, cache key, and freshness status.
-- [ ] Ensure the texture preview still works when the `.asset` carries metadata only.
+- [ ] Choose the first desktop BC encoder path. Owner: Rendering.
+- [ ] Choose cache-root-relative or project-root-relative payload references. Owner: Assets.
+- [ ] Decide whether KTX2 is an import source only or an alternate cooked payload. Owner: Assets and Rendering.
+- [ ] Decide whether compressed sparse full-mip residency belongs in this TODO or a separate backend TODO. Owner: Rendering.
 
-## Phase 3: `XRTS` v2 Manifest And Descriptor Format
+## Out Of Scope
 
-**Goal:** add a block-aware `XRTS` format while keeping v1 cache compatibility.
-
-- [ ] Add `XRTS` v2 constants and version dispatch.
-- [ ] Add a v2 header containing:
-  - [ ] payload version
-  - [ ] flags
-  - [ ] texture role
-  - [ ] color space
-  - [ ] storage format
-  - [ ] data encoding
-  - [ ] block width/height/depth
-  - [ ] block bytes
-  - [ ] source dimensions
-  - [ ] mip count
-  - [ ] preview base mip index
-  - [ ] encoder id/version
-  - [ ] optional quality metrics
-- [ ] Add v2 mip descriptors containing:
-  - [ ] mip index
-  - [ ] logical width/height
-  - [ ] storage format
-  - [ ] data encoding
-  - [ ] block dimensions
-  - [ ] row pitch
-  - [ ] slice pitch
-  - [ ] data offset
-  - [ ] data length
-  - [ ] optional checksum
-- [ ] Implement v2 writer for uncompressed payloads first.
-- [ ] Implement v2 reader for uncompressed payloads first.
-- [ ] Keep v1 reader compatibility.
-- [ ] Add metadata-first manifest read support for v2.
-- [ ] Add resident mip range reads for v2.
-- [ ] Validate NPOT and final 1x1 mip descriptors.
-- [ ] Add corruption tests:
-  - [ ] bad magic
-  - [ ] unsupported version
-  - [ ] invalid offset
-  - [ ] invalid length
-  - [ ] truncated payload
-  - [ ] unsupported storage format
-- [ ] Add cache freshness tests for v2 variant keys.
-- [ ] Update cache logging to distinguish `XRTS v1`, `XRTS v2 uncompressed`, and future `XRTS v2 compressed`.
-
-## Phase 4: Cache Variant Keys And Diagnostics
-
-**Goal:** ensure cache identity changes whenever import, compression, or backend-relevant settings change.
-
-- [ ] Define the v4 texture cache variant key.
-- [ ] Include in the variant key:
-  - [ ] `XRTS` schema version
-  - [ ] source dimensions or source hash mode
-  - [ ] texture role
-  - [ ] color space
-  - [ ] compression profile
-  - [ ] target backend profile
-  - [ ] selected storage format
-  - [ ] encoder id/version
-  - [ ] encoder settings hash
-  - [ ] mip policy version
-  - [ ] normal convention
-  - [ ] alpha mode
-- [ ] Add cache miss reason enum values:
-  - [ ] missing
-  - [ ] source newer
-  - [ ] import options newer
-  - [ ] unsupported schema
-  - [ ] unsupported backend format
-  - [ ] source hash mismatch
-  - [ ] encoder version mismatch
-  - [ ] role/color-space mismatch
-  - [ ] payload corrupt
-  - [ ] user forced reimport
-- [ ] Log exactly one primary miss reason per cache miss.
-- [ ] Add ImGui diagnostics for miss reason and selected fallback.
-- [ ] Add tests that changing role/color space/compression profile changes the cache key.
-- [ ] Add tests that unchanged settings keep cache keys stable.
-
-## Phase 5: Desktop BC Encoder Integration
-
-**Goal:** produce desktop GPU-native BC payload bytes at cook/import time.
-
-- [ ] Choose initial encoder path:
-  - [ ] external `texconv`/DirectXTex executable, or
-  - [ ] in-process DirectXTex wrapper.
-- [ ] If adding or vendoring any dependency, complete dependency/license review first.
-- [ ] After adding dependencies, run:
-  - [ ] `pwsh Tools/Generate-Dependencies.ps1`
-  - [ ] review `docs/DEPENDENCIES.md`
-  - [ ] review generated license files
-- [ ] Add encoder configuration:
-  - [ ] executable path or integration mode
-  - [ ] quality preset
-  - [ ] thread/concurrency cap
-  - [ ] timeout
-  - [ ] temporary output directory
-- [ ] Add BC cooking for albedo/base color:
-  - [ ] BC7 sRGB default
-  - [ ] BC1 sRGB memory-saver fallback for opaque textures
-  - [ ] BC3 sRGB fallback if BC7 unsupported
-- [ ] Add BC cooking for normal maps:
-  - [ ] convert to XY storage
-  - [ ] apply optional green flip
-  - [ ] cook to BC5
-  - [ ] record unsigned/signed convention
-- [ ] Add BC cooking for masks:
-  - [ ] BC4 single-channel
-  - [ ] BC5 two-channel
-  - [ ] BC7 packed RGBA fallback
-- [ ] Add BC6H cooking for HDR textures.
-- [ ] Ensure source alpha mode affects selected format.
-- [ ] Ensure sRGB formats are used only for color data.
-- [ ] Ensure linear formats are used for normals, masks, roughness, metallic, AO, and height.
-- [ ] Add first-import progress and cancellation support.
-- [ ] Bound compression concurrency so editor responsiveness is preserved.
-- [ ] Add cook output validation:
-  - [ ] block dimensions
-  - [ ] mip count
-  - [ ] data length
-  - [ ] selected format
-- [ ] Add import tests using tiny fixture textures where possible.
-
-## Phase 6: OpenGL Dense Compressed Upload
-
-**Goal:** make compressed BC payloads render in the OpenGL backend without sparse residency.
-
-- [ ] Add OpenGL texture compression capability detection:
-  - [ ] S3TC / BC1-BC3
-  - [ ] RGTC / BC4-BC5
-  - [ ] BPTC / BC6H-BC7
-  - [ ] ETC2/EAC
-  - [ ] ASTC if exposed
-- [ ] Add capability diagnostics to renderer logs.
-- [ ] Map cooked storage formats to GL compressed internal formats.
-- [ ] Add a compressed upload branch for `XRTexture2D` dense textures.
-- [ ] Use immutable storage where compatible.
-- [ ] Use `glCompressedTexImage2D` or `glCompressedTexSubImage2D` for compressed mips.
-- [ ] Validate block-aligned byte lengths before GL calls.
-- [ ] Handle NPOT final mips correctly.
-- [ ] Disable row-chunk progressive upload for compressed blocks until block-row chunking is implemented.
-- [ ] Record compressed upload bytes separately from logical decoded bytes.
-- [ ] Keep existing uncompressed upload path unchanged for uncompressed textures.
-- [ ] Add fallback diagnostics when selected compression is unsupported.
-- [ ] Validate editor previews:
-  - [ ] BC7 color texture
-  - [ ] BC5 normal map
-  - [ ] BC4 scalar mask
-  - [ ] BC6H HDR texture if sample exists
-- [ ] Confirm no texture upload validation failures in normal compressed texture runs.
-- [ ] Confirm no `GL_INVALID_ENUM` or `GL_INVALID_VALUE` in `log_opengl.txt`.
-
-## Phase 7: Material And Shader Sampling Contract
-
-**Goal:** make materials interpret compressed role-specific textures correctly.
-
-- [ ] Add shader/material metadata for normal-map XY storage.
-- [ ] Reconstruct BC5 normal Z in shader.
-- [ ] Apply normal scale after reconstruction.
-- [ ] Ensure normal maps are sampled as linear textures.
-- [ ] Ensure albedo/emissive color textures use hardware sRGB decode when stored as sRGB formats.
-- [ ] Ensure roughness/metallic/AO/height/masks never use sRGB formats.
-- [ ] Add material import remap support for packed masks where needed.
-- [ ] Add fallback textures by role:
-  - [ ] albedo visible fallback
-  - [ ] flat normal
-  - [ ] neutral roughness/AO
-  - [ ] zero metallic/emissive
-- [ ] Add a validation material set that exercises each role.
-- [ ] Add screenshots or rendered comparisons for compressed versus uncompressed samples.
-
-## Phase 8: Quality Mip Generation
-
-**Goal:** improve mip quality before enabling compression broadly.
-
-- [ ] Generate color mips in linear light.
-- [ ] Add coverage-preserving alpha mips for cutout textures.
-- [ ] Add premultiplied-alpha mip handling where material alpha mode requires it.
-- [ ] Add normal-aware mip generation:
-  - [ ] decode normal vectors
-  - [ ] average vectors
-  - [ ] renormalize
-  - [ ] encode XY
-- [ ] Add roughness/mask linear mip generation.
-- [ ] Add HDR linear mip generation.
-- [ ] Record mip-generation policy version in the cache key.
-- [ ] Add tests for normal mip orientation.
-- [ ] Add tests for alpha coverage preservation.
-- [ ] Add cook-time quality metrics where practical:
-  - [ ] color PSNR/SSIM
-  - [ ] normal angular error
-  - [ ] scalar max/mean error
-  - [ ] alpha coverage delta
-
-## Phase 9: Vulkan Compressed Texture Support
-
-**Goal:** add Vulkan parity for dense compressed sampled textures.
-
-- [ ] Add Vulkan texture compression feature detection:
-  - [ ] `textureCompressionBC`
-  - [ ] `textureCompressionETC2`
-  - [ ] `textureCompressionASTC_LDR`
-- [ ] Add renderer-visible texture capability profile.
-- [ ] Extend `VkFormatConversions` with:
-  - [ ] BC1/BC2/BC3 sRGB/unorm
-  - [ ] BC4/BC5 unorm/snorm
-  - [ ] BC6H unsigned/signed float
-  - [ ] BC7 sRGB/unorm
-  - [ ] ETC2/EAC formats
-  - [ ] ASTC block-size formats
-- [ ] Validate sampled image and filtering support with physical-device format properties.
-- [ ] Allocate `VkImage` using compressed `VkFormat`.
-- [ ] Add staging-buffer upload for compressed mip byte ranges.
-- [ ] Ensure `VkBufferImageCopy` extents and offsets respect compressed block rules.
-- [ ] Reject unsupported compressed formats before queue submission.
-- [ ] Add Vulkan diagnostics for selected format, feature support, and upload byte counts.
-- [ ] Validate a BC7 color texture on Vulkan if the backend path is stable enough.
-- [ ] Validate unsupported-format fallback/error behavior.
-
-## Phase 10: Mobile, KTX2, And Cross-Platform Profiles
-
-**Goal:** prepare non-desktop targets after desktop BC is stable.
-
-- [ ] Add ASTC profile definitions:
-  - [ ] 4x4 high quality
-  - [ ] 5x5 balanced
-  - [ ] 6x6 memory saver
-  - [ ] larger blocks for low-frequency textures only
-- [ ] Add `astcenc` external-tool support after dependency/license review.
-- [ ] Add ETC2/EAC profile definitions.
-- [ ] Add KTX2 import support plan:
-  - [ ] load KTX2 metadata
-  - [ ] read Basis Universal payloads
-  - [ ] transcode or cook to platform target profile
-  - [ ] preserve source KTX2 as source authority
-- [ ] Decide whether KTX2 is an import source only or an alternate cooked payload.
-- [ ] Add cache keys for ASTC/ETC2/KTX2 profile selection.
-- [ ] Add backend capability gates for ASTC and ETC2/EAC.
-- [ ] Keep Windows desktop BC as the default profile.
-
-## Phase 11: Streaming, Sparse, And Virtual Texturing Follow-Up
-
-**Goal:** integrate compressed payloads with the broader texture streaming roadmap without destabilizing v1.
-
-- [ ] Keep compressed sparse residency disabled until dense compressed upload is validated.
-- [ ] Add compressed byte estimates to texture streaming budgets.
-- [ ] Track logical decoded bytes, cooked stored bytes, upload bytes, and committed GPU bytes separately.
-- [ ] Update resident-data reuse cache keys to include storage format and color space.
-- [ ] Update texture streaming logs with compressed/uncompressed payload state.
-- [ ] Validate tiered residency with compressed dense textures.
-- [ ] Design compressed sparse full-mip residency separately from this TODO if needed.
-- [ ] Defer page-addressable compressed payloads to the full SVT phase.
-- [ ] Ensure compressed payload work does not regress existing `Rgba8` sparse streaming.
-
-## Phase 12: Packaging, Documentation, And Closeout
-
-**Goal:** make the feature maintainable and safe for users.
-
-- [ ] Update feature docs for model/texture import behavior.
-- [ ] Update texture streaming validation docs with compressed-cache scenarios.
-- [ ] Document import settings and compression profiles.
-- [ ] Document cache invalidation and manual recook behavior.
-- [ ] Document dependency/tool setup if external encoders are used.
-- [ ] Add troubleshooting notes:
-  - [ ] missing encoder
-  - [ ] unsupported GPU format
-  - [ ] stale/corrupt cache
-  - [ ] wrong normal-map convention
-  - [ ] unexpected sRGB/linear result
-- [ ] Run targeted builds:
-  - [ ] `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore`
-  - [ ] `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore`
-- [ ] Run targeted texture/import tests.
-- [ ] Run editor smoke validation:
-  - [ ] import PNG albedo
-  - [ ] import PNG normal
-  - [ ] import EXR/HDR if available
-  - [ ] warm-cache reload
-  - [ ] preview generated `.asset`
-  - [ ] render material using compressed textures
-- [ ] Record validation logs and screenshots in the validation ledger.
-- [ ] Review remaining risks and create follow-up TODOs for unresolved mobile/KTX2/sparse/SVT work.
-- [ ] Merge the dedicated branch back into `main` after implementation and validation are complete.
-
+- Running editor smoke checks, hardware validation, screenshots, profiler runs, and build logs. These belong in [Texture Validation](../../testing/texturing/texture-validation.md).
+- Adding unreviewed compression or training dependencies.
+- Full page-addressable SVT payloads.
+- Neural material compression shader decode.

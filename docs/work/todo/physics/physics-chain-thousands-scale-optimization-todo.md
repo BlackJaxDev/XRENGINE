@@ -8,13 +8,21 @@ Validation: [Physics Validation](../../testing/physics/physics-validation.md#phy
 
 ## Current State
 
-`PhysicsChainWorld` owns all chains with one world-level schedule, command buffers, generational handles, templates (`PhysicsChainTemplate`, `PhysicsChainTemplateCache`), shared collider sets (`PhysicsChainColliderSet`, `PhysicsChainColliderBroadphase`), slot and deferred-lifetime arenas, and quality tiers with a budget controller. `PhysicsChainCpuBackend` runs blittable state with `PhysicsChainScalarReferenceKernel`, `PhysicsChainAvx2LinearBatchKernel`, and `PhysicsChainDepthOrderedBranchedKernel`, and writes palettes and bounds directly. `GPUPhysicsChainDispatcher` runs through `IPhysicsChainComputeBackend` (OpenGL and Vulkan) with resident uploads, GPU active-work compaction, indirect dispatch, dependency-ordered kernels, GPU bounds published to legacy GPUScene slots, and `PhysicsChainReadbackService` selective readback. The benchmark harness (`PhysicsChainBenchmarkRequiredMatrix`, `PhysicsChainBenchmarkDeterministicScenario`) exists. The requested 2,000-chain target is 100 completed rendered frames per second. Current measurements do not meet it. Prioritize canonical bounds ownership, shared renderer preparation, and world-owned input preparation. The [investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md) records the measurements and source audit. Several kernel and residency items below already have implementation support; confirm their remaining acceptance conditions before adding duplicate code.
+`PhysicsChainWorld` schedules the chains, but components still own particle state and prepare GPU inputs. `GPUPhysicsChainDispatcher` has resident state and template buffers, GPU active-work compaction, indirect dispatch, short-linear and depth-ordered kernels, and global palette generation. Advanced aggregate deformation exists. GPU bounds reach legacy GPUScene slots, but not Advanced visibility candidates. The 2,000-chain benchmark remains below the required 100 completed rendered frames per second. Resume with canonical bounds ownership, shared renderer preparation, and world-owned GPU inputs. See the [investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md) for measurements and the [compute contract](../../../architecture/physics/physics-chain-compute-backends.md#implemented-gpu-solver-path) for existing kernel support.
 
 ## Open Code Items
 
+### Canonical bounds and measured CPU costs
+
+- [ ] Publish GPU bounds routes for the exact Advanced scene publication. `GPUPhysicsChainDispatcher.Bounds`, `GPUScene`, and `AdvancedPreparationExtractor`. Done when: each route identifies the draw handle and generation, current candidate index, bounds slot, and full deformation coverage; command compaction or slot reuse cannot redirect a route to another draw.
+- [ ] Apply routed GPU bounds to frame-slot visibility candidates before early and late visibility. `AdvancedPreparationExtractor`, the backend visibility publishers, `EarlyVisibility.comp`, and `LateVisibility.comp`. Done when: route and buffer storage survives GPU consumption, bounds writes have the required barriers, and malformed numeric bounds cause a diagnostic rejection. Writing the legacy `CommandAabbBuffer` alone does not meet this condition.
+- [ ] Preserve CPU view and shadow eligibility for renderers with full GPU deformation coverage. `AdvancedPreparationExtractor.ClassifyCandidatesForViews`, `VisualScene3D`, and `VulkanDirectionalShadowLaneCulling.ComputeRecordMasks`. Done when: stale CPU bone bounds cannot remove an eligible draw before GPU culling; layer, material, and `CastShadow` rules still apply. Partial coverage must retain a conservative bound for the remaining geometry.
+- [ ] Share immutable renderer preparation for identical mesh, material, and pipeline combinations. `AdvancedPreparationExtractor` and `AdvancedGpuDeformationResources`. Done when: compatible chain renderers reuse mesh and material preparation while draw identity, pose, palette offsets, and current and previous outputs remain independent.
+- [ ] Move GPU input gathering into world-owned ranges. `PhysicsChainWorld`, `PhysicsChainComponent.Prepare`, and `PhysicsChainComponent.GPU`. Done when: the normal GPU path consumes current root and authored-pose snapshots without per-component particle hierarchy evaluation; animated roots, rest pose, collider changes, reset, and teleport keep their existing semantics.
+- [ ] Make GPU bone registrations identify their bone-buffer generation, then suspend redundant CPU palette subscriptions. `XRMeshRenderer`, `RuntimePhysicsChainRenderingBridge`. Done when: stale releases cannot change a replacement buffer's ownership; the last GPU owner restores the CPU subscription and current authored matrix; partial coverage, buffer replacement, rollback, and in-flight callbacks retain the locked ownership check. Keep bounds listeners attached until the canonical bounds route is complete.
+
 ### World ownership and outputs
 
-- [ ] Connect GPU chain bounds to the Advanced pipeline's canonical visibility candidates and shadow eligibility. `GPUPhysicsChainDispatcher.Bounds`, `AdvancedPreparationExtractor`, `EarlyVisibility.comp`, `VisualScene3D`, and `VulkanDirectionalShadowLaneCulling`. Done when: these consumers use the GPU bounds source or a conservative eligibility path, preserve layer and shadow policy, and do not reject a chain from stale CPU bone bounds. Writing the legacy `CommandAabbBuffer` alone does not meet this condition. See the [measured bottlenecks and bounds audit](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md).
 - [ ] Make `PhysicsChainComponent` hold only a `PhysicsChainRuntimeHandle` and authoring data. `PhysicsChainComponent.Particle.cs`, `PhysicsChainComponent.ParticleTree.cs`. Done when: the component has no per-particle solver state.
 - [ ] Replace per-component render commands with one render-graph integration point for GPU simulation, palette, bounds, optional readback, and global debug rendering. `PhysicsChainWorld`, `GPUPhysicsChainDispatcher`. Done when: a chain owns no steady-state render command.
 - [ ] Add capacity guards and delayed diagnostics to every arena writer. `PhysicsChainSlotArena`, `PhysicsChainDeferredLifetimeArena`. Done when: each writer reports overflow through `PhysicsChainArenaCapacityException` or a counter, with a unit test.
@@ -43,12 +51,9 @@ Validation: [Physics Validation](../../testing/physics/physics-validation.md#phy
 
 ### GPU kernels
 
-- [ ] Add a one-lane-per-short-linear-chain kernel that advances segments in parent-before-child order. `PhysicsChain.comp` or a new kernel file. Done when: `PhysicsChainGpuKernelMask` can select it and dependency-ordering tests pass.
-- [ ] Add a workgroup-per-long-or-branched-chain kernel with depth ranges and workgroup barriers between depths. Done when: branched dependency-ordering tests pass on it.
-- [ ] Bucket GPU work by length, topology, feature, and collider class. Add empty and small-count handling below the kernel crossover. Done when: `PhysicsChainKernelBucket` covers each class.
-- [ ] Move per-instance loop count and fixed-step accumulation into compact instance state. Done when: the CPU does not split dispatch groups by loop count.
-- [ ] When substep fusion is not possible, batch all compatible chains per iteration with the narrowest storage barrier. Done when: barrier count per frame does not grow with chain count.
-- [ ] Split immutable template data from dynamic state in shader records. Remove or repurpose unused shader fields. Done when: `PhysicsChainShaderContractTests` covers the new layouts.
+- [ ] Extend the existing `ShortLinear` and `BranchedOrLong` buckets with justified feature and collider classes and small-count handling. `PhysicsChainKernelBucket` and the active-work shaders. Done when: the retained classes have explicit selection and empty-work behavior.
+- [ ] Move fixed-step accumulation from the component into compact world-owned instance state. `PhysicsChainComponent.ResolveSimulationLoopAndTimeScale` and `PhysicsChainWorld`. Done when: each instance retains its clock across scheduling boundaries and publishes the resolved loop count and time scale. GPU loop counts and dispatch grouping already support fused per-tree substeps.
+- [ ] Remove or repurpose unused shader-record fields. `GPUParticleData`, `GPUParticleStaticData`, and the physics-chain shaders. Done when: `PhysicsChainShaderContractTests` covers the retained layouts. Static templates and dynamic particle state already use separate buffers.
 - [ ] Replace full 4x4 transform traffic with affine 3x4 or quaternion and translation inputs. Pack indices, flags, and counts to smaller widths. Done when: C# and shader layout tests pass.
 - [ ] Precompute rest lengths, inverse values, capsule terms, and coefficient combinations for the GPU path. Done when: the kernel computes no invariant square root per step.
 - [ ] Prototype palette and bounds writes in the final simulation pass. Done when: a dispatcher option selects fused or separate palette and bounds passes.
@@ -60,7 +65,7 @@ Validation: [Physics Validation](../../testing/physics/physics-validation.md#phy
 ### Skinning, draw submission, and debug
 
 - [ ] Use direct palette lookup in the vertex shader for small or one-pass meshes. Done when: the renderer selects direct lookup by mesh size.
-- [ ] Batch compute skinning globally for large or multi-pass meshes. Done when: no chain renderer issues its own skinning command or barrier.
+- [ ] Route remaining chain compute-skinning paths through aggregate deformation. `AdvancedGpuDeformationResources`, `AdvancedDeformationDispatchPlanner`, and renderer skinning submission. Done when: no chain renderer issues its own skinning command or barrier. Reuse the existing Advanced aggregate path.
 - [ ] Instance identical mesh, material, and pipeline combinations with a palette-base instance attribute or table lookup. Done when: identical chain renderers share draw and canonical preparation work; per-instance pose and palette offsets remain independent. Reducing draw count alone does not remove per-renderer CPU preparation.
 - [ ] Feed chain-driven renderers into GPUScene indirect culling. Done when: chain renderers cause no per-renderer CPU draw submission.
 - [ ] Report renderer, skinning dispatch, indirect command, draw, and triangle counts beside physics timing. Done when: `PhysicsChainRuntimeDiagnostics` exposes the counts.
@@ -102,22 +107,7 @@ Experiments. Promote one only when a named workload proves the benefit, with a c
 - Shared-memory collider staging.
 - Persistent GPU work queues or cooperative kernels.
 - Vulkan asynchronous compute.
-- GPU-only quality assignment and broadphase.
+- GPU-only broadphase. GPU activity, tier assignment, and sleep compaction remain open code items above.
 - Core-class-aware scheduling and NUMA partitioning.
 
 Not planned: replacing the rigid-body solver or character controller, a broad ECS rewrite, silent quality reduction, silent CPU fallback, current-frame full-state readback, bit-identical CPU and GPU trajectories, and permanent support for two runtime architectures.
-
-## Recovered Items To Triage
-
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/physics/physics-chain-thousands-scale-optimization-todo.md`
-
-- [ ] Evaluate an angular/joint representation for linear chains that preserves
-  segment length by construction; adopt only if it matches authored behavior
-  and beats positional correction end to end.
-- [ ] Reset both palette histories correctly on spawn, teleport, template
-  change, backend switch, and slot reuse.
-- [ ] Evaluate GPU-driven quality assignment and broadphase entirely on the GPU
-  when root/collider inputs already reside there.
-- [ ] Unpromoted experiments do not complicate the shipping runtime.

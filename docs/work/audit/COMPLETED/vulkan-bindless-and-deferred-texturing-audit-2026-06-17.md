@@ -11,9 +11,9 @@ Reference material:
 
 - [TheRealMJP/DeferredTexturing](https://github.com/TheRealMJP/DeferredTexturing)
 - [MJP: Bindless Texturing For Deferred Rendering And Decals](https://therealmjp.github.io/posts/bindless-texturing-for-deferred-rendering-and-decals/)
-- [Bindless Deferred Texturing Plan](../design/texturing/bindless-deferred-texturing-plan.md)
-- [Dynamic Indirect Material Bindings](../design/rendering/dynamic-indirect-material-bindings.md)
-- [Material Binding Policy](../../architecture/rendering/material-binding-policy.md)
+- [Bindless Deferred Texturing Plan](../../design/texturing/bindless-deferred-texturing-plan.md)
+- [Dynamic Indirect Material Bindings](../../design/rendering/dynamic-indirect-material-bindings.md)
+- [Material Binding Policy](../../../architecture/rendering/material-binding-policy.md)
 
 ## Executive Summary
 

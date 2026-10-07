@@ -4,7 +4,7 @@ Updated: 2026-10-02
 
 Status: Active; strict publication and exhaustive regression acceptance remain open.
 
-Checklist: [runtime regression and NativeAOT hardening](../../todo/runtime-regression-and-nativeaot-hardening-todo.md).
+Checklist: [runtime regression and NativeAOT hardening](../../todo/runtime/runtime-regression-and-nativeaot-hardening-todo.md).
 
 ## Current baseline
 

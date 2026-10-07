@@ -3,7 +3,7 @@
 Last Updated: 2026-10-06
 Status: Planned. No avatar optimizer code exists.
 Design: [Avatar Optimization And Virtualized Avatar Rendering](../../design/rendering/avatar-optimization-and-virtualized-rendering-design.md), [Engine Optimization And Avatar Optimizer](../../design/rendering/engine-optimization-and-avatar-optimizer-design.md), [Model Import Binary Cache](../../design/assets/model-import-binary-cache-design.md), [Texture Runtime Streaming](../../design/texturing/texture-runtime-streaming-virtual-texturing-design.md), [GPU Skinning Buffer Compression](../../design/rendering/gpu/gpu-skinning-buffer-compression-plan.md), [GPU-Accelerated Modeling Tools](../../design/modeling/gpu-accelerated-modeling-tools-design.md), [GPU Meshlet Zero-Readback Rendering](../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md), [GPU Skinned BVH Proxy LOD](../../design/rendering/gpu/gpu-skinned-bvh-proxy-lod-design.md)
-Architecture: [Mesh Submission Strategies](../../../architecture/rendering/mesh-submission-strategies.md)
+Architecture: [Mesh Submission Strategies](../../../architecture/rendering/mesh-submission-strategies.md). Write `docs/architecture/avatar/avatar-optimization.md` when the optimizer code lands.
 Validation: [Avatar Validation](../../testing/avatar/avatar-validation.md#avatar-optimization)
 
 ## Current State

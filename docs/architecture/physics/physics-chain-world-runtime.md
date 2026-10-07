@@ -15,10 +15,19 @@ PhysicsChainWorld (one simulation owner, one schedule)
     -> optional selective asynchronous readback or transform mirror
 ```
 
-- Components own editable settings and references. They do not own solver storage.
+- The target component boundary contains editable settings and a runtime handle. Components still contain `Particle` and `ParticleTree` state and prepare GPU inputs until the world-owned input path replaces them.
 - `PhysicsChainWorld` owns registration, capacity, scheduling, state transitions, and output publication. One world-level tick schedules all chains. A component does not register its own tick callbacks.
 - Chains are addressed through `PhysicsChainRuntimeHandle`, a slot plus a generation. Every external operation checks the generation. A stale handle fails deterministically. It never aliases reused storage.
 - Activation, deactivation, and destruction are safe while work from an earlier frame is in flight. `PhysicsChainDeferredLifetimeArena` keeps resources alive until every frame that uses them completes.
+
+## Implementation Map
+
+- `PhysicsChainWorld.cs` owns the scheduler entry points. Its partial files add lifecycle snapshots, template and collider-set cache access, readback extensions, telemetry, quality-budget evaluation, and selected activity diagnostics.
+- `PhysicsChainComponent` is the authoring facade. Its partial files keep current component-owned particle state, GPU input preparation, CPU fallback preparation, quality settings, lifecycle hooks, and diagnostics.
+- `GPUPhysicsChainDispatcher` in `XREngine.Runtime.Rendering` owns GPU simulation, active-work compaction, indirect dispatch, resident palette storage, bounds publication, selective readback gather, and debug geometry output.
+- `PhysicsChainReadbackService` and `PhysicsChainWorldReadbackExtensions` own delayed selected readback. Requests use `PhysicsChainReadbackFields`, limits, generations, expiry, and terminal states.
+- `PhysicsChainWorld.QualityBudget`, `PhysicsChainQualityBudgetDiagnostics`, and `PhysicsChainQualityPolicy` own automatic tier pressure. They do not change chains that request `Strict`.
+- `PhysicsChainWorld.Telemetry` and `PhysicsChainLateTickTelemetrySnapshot` own delayed timing counters. `PhysicsChainWorld.ActivityDiagnostics` owns bounded selected activity output.
 
 ## Commands
 
@@ -48,7 +57,7 @@ Template identity is computed at structural change time and cached. The runtime 
 - `PhysicsChainSlotArena` uses free lists and generational slots. Capacity grows geometrically. Live count and capacity are reported separately (`PhysicsChainArenaSnapshot`).
 - `PhysicsChainArenaCompactionPolicy` defines fragmentation thresholds. Compaction is an explicit out-of-band rebuild. Live GPU slices never move while a consumer uses them.
 - Capacity failure raises `PhysicsChainArenaCapacityException` or a reported rejection. The runtime never truncates particles, chains, colliders, palettes, bounds, or readback requests.
-- Small dynamic header uploads use the frame-slot principles of `XRBufferPersistentRingAllocator`.
+- Dynamic header storage currently uses `StreamDraw`. A persistent multi-frame ring such as `XRBufferPersistentRingAllocator` is the target upload model for the resident path.
 
 ## Backends
 
@@ -69,7 +78,7 @@ Template identity is computed at structural change time and cached. The runtime 
 - Indirect dispatch arguments (`PhysicsChainIndirectDispatchArguments`) are GPU-written. GPU-written counts are dynamic data. They do not cause rerecording of stable pass topology.
 - Kernels run in explicit parent-before-child order. No invocation reads a parent that another invocation may still write without a synchronization boundary. Substeps are fused in the kernel where register and watchdog limits allow.
 - The dispatcher ping-pongs current and previous palette atlas roles (`PhysicsChainPaletteAtlasAllocator`) without copying unchanged history.
-- Bounds envelope current and previous particle positions with influence radius and publish to stable slots that GPUScene culling reads directly. No production chain-renderer path waits on the GPU for bounds.
+- Bounds envelope current and previous particle positions with influence radius and publish to legacy GPUScene command slots. Advanced canonical visibility still uses separate CPU bounds. See the [bounds integration limit](physics-chain-output-and-readback.md#current-bounds-integration-limit).
 - Strict zero-readback profiles read nothing back for simulation, palettes, bounds, culling, or dispatch sizing.
 
 Pass kinds are listed in `PhysicsChainComputePassKind`: arena growth, active-work reset and compaction, indirect argument generation, simulation, selective readback gather, bounds publication, bone palette publication, readback transfer, and debug visualization.

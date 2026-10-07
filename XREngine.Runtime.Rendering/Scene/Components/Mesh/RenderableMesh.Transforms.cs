@@ -153,16 +153,24 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void RootBone_WorldMatrixChanged(TransformBase rootBone, Matrix4x4 renderMatrix)
         {
+            long t = RenderableMeshStageTelemetry.Begin();
             if (RuntimeEngine.IsRenderThread)
             {
                 ApplyImmediateRenderMatrixUpdate(componentMatrix: null, rootMatrix: renderMatrix);
+                RenderableMeshStageTelemetry.End(12, t);
                 return;
             }
 
             MarkPendingRootBoneRenderMatrix(renderMatrix);
+            RenderableMeshStageTelemetry.End(12, t);
         }
 
-        private void RootBone_WorldMatrixPreviewChanged(TransformBase rootBone, Matrix4x4 worldMatrix)
+        /// <summary>
+        /// Seeds the skinned basis and culling bounds when a root bone is assigned. Later
+        /// root motion arrives through <see cref="RootBone_WorldMatrixChanged"/> after the
+        /// render-matrix publication that the bounds read.
+        /// </summary>
+        private void InitializeRootBoneCullingBasis(TransformBase rootBone, Matrix4x4 worldMatrix)
         {
             bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             if (!hasSkinning)
@@ -274,6 +282,8 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ApplyPendingRenderMatrixUpdates()
         {
+            long tTotal = RenderableMeshStageTelemetry.Begin();
+            long tHead = tTotal;
             int componentVersion;
             int rootBoneVersion;
             Matrix4x4 componentMatrix;
@@ -317,13 +327,21 @@ namespace XREngine.Components.Scene.Mesh
                 }
             }
 
+            RenderableMeshStageTelemetry.End(1, tHead);
+            long tBounds = RenderableMeshStageTelemetry.Begin();
             ProcessSkinnedBoundsRefresh();
+            RenderableMeshStageTelemetry.End(2, tBounds);
+            long tApply = RenderableMeshStageTelemetry.Begin();
             if (hasSkinning)
                 _ = TryApplySkinnedBoneCullingBounds();
+            RenderableMeshStageTelemetry.End(3, tApply);
 
             // Visible collection has already finished. Publish the final matrix and bounds
             // together so the command does not lag a frame or publish an intermediate state.
+            long tSwap = RenderableMeshStageTelemetry.Begin();
             _rc?.SwapBuffers();
+            RenderableMeshStageTelemetry.End(4, tSwap);
+            RenderableMeshStageTelemetry.End(0, tTotal);
         }
 
         internal static void ProcessPendingRenderMatrixUpdates()

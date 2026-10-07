@@ -1,6 +1,6 @@
 # Affine Matrix Phase 4 Closeout - 2026-03-19
 
-Reference design: [Affine Matrix Integration Plan](../design/affine-matrix-integration-plan.md)
+Reference design: [Affine Matrix Integration Plan](../../design/transforms/affine-matrix-integration-plan.md)
 
 This closeout now serves as the consolidated final record for the affine rollout. It supersedes the earlier phase todo, baseline notes, and intermediate validation snapshots.
 

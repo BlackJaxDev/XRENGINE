@@ -23,7 +23,6 @@ The application can mirror the rendered eye output to the desktop without changi
 Frame diagnostics use compositor timing samples for GPU, CPU, total time, and frame rate. The OpenVR backend owns the native timing records and returns `RuntimeVrFrameStats` to the host. The prediction and submission path should be checked in the live editor before treating this extraction as runtime-qualified.
 
 ## Source map
-
 | Responsibility | Source |
 |---|---|
 | Native runtime, prediction, actions, manifests | `XREngine.Runtime.XR.OpenVR/OpenVrRuntimeBackend.cs`, `OpenVrActionBackend.cs`, `OpenVrActionManifestAdapter.cs` |

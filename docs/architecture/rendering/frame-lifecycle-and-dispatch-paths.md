@@ -40,7 +40,6 @@ The engine splits a frame into three rendering-facing phases:
 The important design rule is that gameplay mutation and render submission do not operate on the same buffers at the same time. Update-side data is staged, then explicitly published.
 
 ## Main Runtime Actors
-
 | Actor | Responsibility |
 |---|---|
 | `EngineTimer` | Owns the thread/fence model for `Update`, `PreCollectVisible`, `CollectVisible`, `SwapBuffers`, `RenderFrame`, and `FixedUpdate`. |
@@ -595,7 +594,6 @@ Also distinguish between:
 
 `EngineTimer.CollectVisibleLatePolicy` controls what the render thread does
 when collect/swap publication is late:
-
 | Policy | Behavior |
 |---|---|
 | `BlockUntilFresh` | Default. Render waits on `_swapDone` so every render consumes the newest published collect/swap snapshot. |

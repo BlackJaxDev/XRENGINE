@@ -63,6 +63,11 @@ publication keep their order. The store checks ownership again after local
 callbacks because a callback can detach or transfer the transform. It does not
 clear global dirty registration bits in the immediate path.
 
+For an exact `Transform` instance with a clean local matrix and a valid cached
+parent order, one store gate covers the dirty check and world composition.
+Derived types, dirty local matrices, and invalid parent order keep the general
+path. World callbacks still run after the store gate is released.
+
 `Sequential` processes ranges on the caller. `Parallel` and `Asynchronous` both
 join persistent world-owned workers at the simulation barrier, rather than
 creating per-root tasks. They parallelize disjoint ranges only when all included

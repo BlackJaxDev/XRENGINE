@@ -78,7 +78,7 @@ visual captures are required; a successful SR dispatch alone does not validate F
 
 No tests are added or modified during this live regression investigation.
 User confirmation is pending. The separate remaining TSR thin-edge shimmer
-quality gate remains open in the [validation tracker](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md#motion-history-and-reset-matrix).
+quality gate remains open in the [validation tracker](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md).
 
 The bounded broker inventory completed on the requested `gpt-6-luna` model and
 confirmed the input extent checks and temporal accessor/scale assignments.

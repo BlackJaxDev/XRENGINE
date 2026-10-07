@@ -7,7 +7,6 @@ A logical world, component, or texture identity never proves that two GPU alloca
 ## Type Map
 
 All paths are under `XREngine.Runtime.Rendering/Rendering/GI/`.
-
 | Type | File | Responsibility |
 |---|---|---|
 | `GlobalIlluminationProviderRegistry` | `Contracts/GlobalIlluminationProviderRegistry.cs` | The only mapping from `EGlobalIlluminationMode` to a provider descriptor. Resolves the plan for a host. |
@@ -29,7 +28,6 @@ All paths are under `XREngine.Runtime.Rendering/Rendering/GI/`.
 - One diffuse provider is selected at a time. Specular is selected independently. Combining diffuse providers needs a coverage and energy policy that does not exist yet.
 
 Current descriptors:
-
 | Mode | Status | Required capability | Consumers |
 |---|---|---|---|
 | `LightProbesAndIbl` | Supported | `ProbeSampling` | Deferred opaque, forward opaque, transparent |
@@ -38,7 +36,6 @@ Current descriptors:
 | `PathTracing` (ReSTIR), `VoxelConeTracing`, `LightVolumes`, `SurfelGI` | Unavailable | None | None |
 
 ## Host Adapters
-
 | Capability | Default | Advanced |
 |---|---|---|
 | `DeferredSurface` | Yes | No |
@@ -71,7 +68,6 @@ Current descriptors:
 ## Shared Inputs
 
 DDGI is the only working field provider. No second consumer proves a reusable GPU scene-input schema, so these inputs stay provider-local:
-
 | Input | Owner | Reason |
 |---|---|---|
 | Triangle packing, material atlas, BVH tracing | `DDGI/GpuDdgiGeometryService` through `DDGIGeometryResources` | DDGI needs its own packed triangle and BVH layout. Voxel, LPV, and raster fields can use other representations. |
@@ -82,7 +78,6 @@ DDGI is the only working field provider. No second consumer proves a reusable GP
 When a second provider needs the same CPU metadata with the same revision rules, add a neutral immutable scene-input snapshot for that need. Keep emission, cutout and transmission, deformation, light-limit, and environment-revision diagnostics. Do not rename a DDGI GPU buffer into a generic service.
 
 ## Lifetime And Invalidation Domains
-
 | Domain | Identity | Rule |
 |---|---|---|
 | Authored field selection | `DDGIVolumeComponent.ID`, render world, `SelectionPriority` | Each render frame snapshots the winning valid component. The highest priority wins. A top-priority tie is rejected with the IDs in a rate-limited diagnostic. Bounds do not select or blend fields. |

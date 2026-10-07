@@ -15,7 +15,7 @@ passes are the authoritative render-command lookup source, and Vulkan uses the
 package's pass metadata as its resource-planning input.
 
 The missing producer-side binding/data handoff and its validation are retained
-in the [combined workstreams 03-05 gate](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation).
+in the [combined workstreams 03-05 gate](../../testing/rendering/gpu-driven-submission-validation.md#vulkan-03-05-gate).
 
 ## 2026-08-17 render-thread prepared-cohort bridge
 

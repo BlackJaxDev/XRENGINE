@@ -5,7 +5,6 @@ This document describes the frame flow, invariants, capability floor, and output
 `AdvancedRenderPipeline` uses a visibility-buffer opaque renderer. `DefaultRenderPipeline` stays the visual reference and the explicit legacy source. New renderer work goes into `AdvancedRenderPipeline` only. No `DefaultRenderPipeline2` type, alias, or `XRE_USE_PIPELINE_V2` selector exists.
 
 ## Code Map
-
 | Area | Location |
 |---|---|
 | Pipeline partials | `XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/` |
@@ -73,7 +72,6 @@ Each declared resource has one ownership class (`EAdvancedRenderResourceOwnershi
 ## Capability Floor
 
 `AdvancedRenderPipelineCapabilityResolver` rejects an output with an `EAdvancedRenderPipelineRejectionReason` when a required capability is missing:
-
 | Requirement | Rejection reason |
 |---|---|
 | A live renderer on a supported backend | `RendererUnavailable`, `UnsupportedBackend` |
@@ -93,7 +91,6 @@ Optional acceleration flags (`SupportsBufferDeviceAddress`, `SupportsDescriptorI
 ## Output Ownership
 
 Every pipeline request carries an explicit output purpose. Outputs can share scene, mesh, and material data and compatible GI, temporal, froxel, and post-process feature contracts. They never share output-local pipeline instances, command recordings, frame-slot ownership, or temporal histories.
-
 | Output | Owner |
 |---|---|
 | Desktop scene | The standard selection policy. `AdvancedRenderPipeline` is the configured source for new desktop cameras under the `Available` or `Required` mode (`XRE_ADVANCED_RENDER_PIPELINE_MODE`, `AdvancedRenderPipelineMode`). The camera pipeline asset is authoritative; capability results and visibility-family reservations live on each `XRRenderPipelineInstance`. |

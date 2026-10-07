@@ -42,7 +42,6 @@ Each section below states a rule, the reason, the implementation, and the
 invariants that must stay true.
 
 ## Rules At A Glance
-
 | Rule | Reason | Main mechanisms |
 | --- | --- | --- |
 | [The render thread never waits for compilation, linking or uploads](#the-render-thread-never-waits-for-compilation-linking-or-uploads) | A cold compile or upload is tens to thousands of milliseconds | Readiness states, background preparation, revision tickets, upload service |
@@ -305,7 +304,7 @@ pauses turn into hitches.
 
 Remaining measured owners, chiefly sealed binding snapshots at about 1 MB per
 present, are tracked in the
-[stall remediation TODO](../../work/todo/rendering/vulkan-stall-remediation-todo.md).
+[modular GI architecture TODO](../../work/todo/rendering/global-illumination/modular-gi-architecture-todo.md).
 
 ## Invalidation Is Scoped And Retirement Waits For The GPU
 
@@ -528,7 +527,8 @@ previous restore's copy (`SnapshotRestoredContent`).
 ## Known Limits
 
 Open work that affects this design is tracked in the
-[stall remediation TODO](../../work/todo/rendering/vulkan-stall-remediation-todo.md):
+[Vulkan core frame loop TODO](../../work/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md)
+and the [Vulkan stall separate findings backlog](../../work/todo/rendering/vulkan-stall-separate-findings-todo.md):
 
 - the directional caster lane is limited to desktop depth pages and CpuDirect;
   other shadow sources and submission strategies retain generic recording;

@@ -1,31 +1,44 @@
 # Vulkan Core Validation
 
-Architecture: [Vulkan Renderer](../../../architecture/rendering/vulkan-renderer.md), [Vulkan Command Recording](../../../architecture/rendering/vulkan-command-recording.md), [Frame Loop Design](../../../architecture/rendering/frame-loop-design.md), [Vulkan Scene Preparation And Publication](../../../architecture/rendering/vulkan-scene-preparation-and-publication.md), [Vulkan Pipeline Compilation](../../../architecture/rendering/vulkan-pipeline-compilation.md), [Advanced Render Pipeline](../../../architecture/rendering/advanced-render-pipeline.md). Design: [Vulkan Render Loop Target Architecture](../../design/rendering/vulkan-render-loop-target-architecture.md).
+## Scope
 
-Code todos: [Vulkan frame-loop master](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md), [Vulkan core hardening](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md), [Vulkan OpenXR and Advanced rendering](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md), [Vulkan dynamic rendering and modern backend](../../todo/rendering/vulkan-dynamic-rendering-migration-todo.md), [Vulkan stall remediation](../../todo/rendering/vulkan-stall-remediation-todo.md), [Vulkan stall separate findings](../../todo/rendering/vulkan-stall-separate-findings-todo.md).
+This document owns Vulkan core runtime validation. It covers startup, descriptor and material state, resource lifetime, swapchain and resize behavior, frame contracts, synchronization, OpenXR handoff, resident recording, source structure, unsafe data, Advanced pipeline cohorts, dynamic rendering, modern Vulkan backends, stall remediation, benchmarks, and promotion checks.
 
-Related validation: [Vulkan Backend Parity Validation](vulkan-backend-parity-validation.md). Diagnostics how-to: [Vulkan Diagnostics](../../../developer-guides/rendering/vulkan-diagnostics.md).
+Architecture: [Vulkan Renderer](../../../architecture/rendering/vulkan-renderer.md), [Vulkan Command Recording](../../../architecture/rendering/vulkan-command-recording.md), [Frame Loop Design](../../../architecture/rendering/frame-loop-design.md), [Vulkan Scene Preparation And Publication](../../../architecture/rendering/vulkan-scene-preparation-and-publication.md), [Vulkan Pipeline Compilation](../../../architecture/rendering/vulkan-pipeline-compilation.md), [Advanced Render Pipeline](../../../architecture/rendering/advanced-render-pipeline.md), [OpenXR VR Rendering](../../../architecture/rendering/openxr-vr-rendering.md).
+
+Code todos: [Vulkan frame-loop master](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md), [Vulkan core hardening](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md), [Vulkan OpenXR and Advanced rendering](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md), [Vulkan stall separate findings](../../todo/rendering/vulkan-stall-separate-findings-todo.md).
+
+Related validation: [Vulkan Backend Parity Validation](vulkan-backend-parity-validation.md), [Window And Render Thread Validation](window-and-render-thread-validation.md). Diagnostics how-to: [Vulkan Diagnostics](../../../developer-guides/rendering/vulkan-diagnostics.md).
 
 ## Setup
 
-### Run Header
+Use the smallest run mode that can show the behavior. Do not run the editor from this document during documentation-only work.
 
-Record this header for each validation session:
-
-| Field | Value |
+Tasks from `.vscode/tasks.json`:
+| Task | Purpose |
 |---|---|
-| Date and time | |
-| Commit and dirty state | |
-| GPU model, driver version, OS build | |
-| Vulkan API version, SDK and layer versions | |
-| Active Vulkan feature profile and enabled extensions | |
-| `VulkanRobustnessSettings.SyncBackend`, `AllocatorBackend`, `DescriptorUpdateBackend`, `DynamicUniformBufferEnabled` | |
-| OpenXR or OpenVR runtime and headset | |
-| World mode, scene, and scene hash | |
-| Resolution, refresh rate, present mode | |
-| Duration and frame count | |
+| `Build-Editor` | Build the editor before a runtime validation run. |
+| `Start-Editor-NoDebug` | Start the default editor world outside the debugger. |
+| `Start-Editor-RendererDevelopment-NoDebug` | Start the editor with renderer-development mode. |
+| `Start-Editor-UnitTesting-OpenXR-Monado-NoDebug` | Start the Unit Testing World with Monado OpenXR. |
+| `Start-Editor-UnitTesting-OpenXR-SteamVR-NoDebug` | Start the Unit Testing World with SteamVR OpenXR. |
+| `Test-VulkanPhase3-Regression` | Run the Vulkan frame-loop regression cohort. |
+| `Benchmark-Vulkan-Quick` | Run a short Vulkan benchmark. |
+| `Benchmark-Vulkan-Clean-Desktop` | Run a clean desktop Vulkan benchmark. |
+| `Benchmark-Vulkan-Clean-OpenXR` | Run a clean OpenXR Vulkan benchmark. |
+| `Benchmark-Vulkan-Compare-Desktop` | Compare desktop Vulkan benchmark data. |
+| `Benchmark-Vulkan-Gate` | Run the Vulkan benchmark gate. |
 
-### Run Modes
+Launch profiles from `.vscode/launch.json`:
+| Profile | Purpose |
+|---|---|
+| `Editor (Default World)` | Run the editor with the default world. |
+| `Editor (Renderer Development)` | Run the editor with `--renderer-development`. |
+| `Editor (Unit Testing World)` | Run the Unit Testing World with `XRE_WORLD_MODE=UnitTesting`. |
+| `Editor (Unit Testing OpenXR SteamVR)` | Run the Unit Testing World with SteamVR OpenXR variables. |
+| `Editor (Unit Testing World, Validation Layers)` | Run the Unit Testing World with Vulkan and OpenGL validation variables. |
+
+Run modes:
 
 ```powershell
 dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj
@@ -44,11 +57,18 @@ dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -- --unit-testing
 Remove-Item Env:XRE_VK_RENDER_TARGET_MODE
 ```
 
-Environment variables, black-frame triage, capture recipes, the prewarm workflow, and the lifecycle evidence collector are in [Vulkan Diagnostics](../../../developer-guides/rendering/vulkan-diagnostics.md).
+Useful environment variables:
+| Variable | Purpose |
+|---|---|
+| `XRE_VULKAN_VALIDATION=1` | Enable Vulkan validation layers. |
+| `XRE_VULKAN_SYNC_VALIDATION=1` | Enable synchronization validation. |
+| `XRE_VK_RENDER_TARGET_MODE=DynamicRendering|LegacyRenderPass|Auto` | Select the Vulkan render-target mode for one process. |
+| `XRE_VULKAN_BINDLESS_MATERIAL_MODE` | Select the bindless material policy. |
+| `XRE_FORCE_SWAPCHAIN_MAGENTA=1` | Force a magenta swapchain clear for presentation triage. |
+| `XRE_SKIP_IMGUI=1` | Skip ImGui overlay recording. |
+| `XRE_SKIP_UI_PIPELINE=1` | Skip screen-space UI pipeline recording. |
 
-### Fast Software Checks
-
-Run these after Vulkan code or shader changes. They do not replace the manual checks.
+Fast software checks do not replace manual validation:
 
 ```powershell
 dotnet build XREngine.Editor/XREngine.Editor.csproj --nologo -v minimal
@@ -60,76 +80,57 @@ dotnet test XREngine.UnitTests/XREngine.UnitTests.csproj --filter VulkanShaderPr
 dotnet test XREngine.UnitTests/XREngine.UnitTests.csproj --filter VulkanDesktopFrameLoopPolicyTests --nologo -v minimal
 ```
 
-The VS Code task `Test-VulkanPhase3-Regression` runs the frame-loop regression cohort. If a local dependency blocks a test, record the missing framework or native dependency.
+Tools:
 
-### Tools
+- Use `Tools/Manage-McpEditorSession.ps1 Start|Stop -Name <name>` for isolated editor sessions.
+- Use `Tools/Invoke-Mcp.ps1 -Session <name> -Method <method>` for MCP calls.
+- Use `Tools/Measure-VulkanFrameLoop.ps1` for frame-loop measurements.
+- Use `Tools/Collect-VulkanLifecycleEvidence.py` for lifecycle evidence.
+- Use `Tools/Reports/VulkanCoreStructuralExceptions.json` for source-structure exceptions.
+- Use `Install-Monado`, `Test-OpenXR-Monado-Smoke`, and `Start-Editor-UnitTesting-OpenXR-Monado-NoDebug` for Monado lanes.
 
-- Isolated editor sessions: `Tools/Manage-McpEditorSession.ps1 Start|Stop -Name <name>` and `Tools/Invoke-Mcp.ps1 -Session <name> -Method <method>`.
-- Frame-loop measurement: `Tools/Measure-VulkanFrameLoop.ps1`.
-- Lifecycle evidence: `Tools/Collect-VulkanLifecycleEvidence.py`.
-- Structural exceptions: `Tools/Reports/VulkanCoreStructuralExceptions.json`.
-- Monado: tasks `Install-Monado`, `Test-OpenXR-Monado-Smoke`, `Start-Editor-UnitTesting-OpenXR-Monado-NoDebug`.
-- Benchmarks: tasks `Benchmark-Vulkan-Quick`, `Benchmark-Vulkan-Compare-Desktop`, `Benchmark-Vulkan-Gate`.
+Historical hardening evidence files in this folder:
 
-<a id="stall-change-protocol"></a>
+- [vulkan-core-hardening-phase21-validation-2026-07-09.json](vulkan-core-hardening-phase21-validation-2026-07-09.json)
+- [vulkan-core-hardening-phase4-validation-2026-07-09.json](vulkan-core-hardening-phase4-validation-2026-07-09.json)
+- [vulkan-core-hardening-phase5-validation-2026-07-09.json](vulkan-core-hardening-phase5-validation-2026-07-09.json)
+- [vulkan-core-hardening-phase521-validation-2026-07-09.json](vulkan-core-hardening-phase521-validation-2026-07-09.json)
+- [vulkan-core-hardening-phase522-validation-2026-07-09.json](vulkan-core-hardening-phase522-validation-2026-07-09.json)
+- [vulkan-core-hardening-phase523-validation-2026-07-10.json](vulkan-core-hardening-phase523-validation-2026-07-10.json)
+- [vulkan-core-hardening-phase524-validation-2026-07-10.json](vulkan-core-hardening-phase524-validation-2026-07-10.json)
+- [vulkan-core-hardening-phase524a-validation-2026-07-10.json](vulkan-core-hardening-phase524a-validation-2026-07-10.json)
+- [vulkan-core-hardening-phase524b-validation-2026-07-10.json](vulkan-core-hardening-phase524b-validation-2026-07-10.json)
 
 ### Stall Change Protocol
 
-Use this protocol for each change in the [stall remediation todo](../../todo/rendering/vulkan-stall-remediation-todo.md). Prior results and their limits are in the [stall remediation results](../../progress/rendering/vulkan-stall-remediation-results.md).
+Use this procedure for each stall or frame-loop performance change. Results history is in [Vulkan Stall Remediation Results](../../progress/rendering/vulkan-stall-remediation-results.md).
 
-Only one implementation item may be Active. Do not start the next fix until the current fix passes its focused build, live behavior, performance, and regression checks, and the evidence is recorded. Split a change that has independent parts into child items. Read-only evidence work can run at the same time. Overlapping edits, runtime mutations, and A/B measurements must run one at a time.
-
-For each item:
-
-1. Record the entry evidence, the owning path, one hypothesis that a check can disprove, the affected workloads, and the smallest coherent change.
-2. Before you edit, define the acceptance: correctness invariants, target metric, numeric budget or tolerance, sample count, observation window, and observer overhead. Use measured baseline variation.
-3. Record thread affinity, source and configuration generations, cancellation, lock order, publication, and retirement dependencies. Get a design review before you change concurrent or native lifetimes.
-4. Change only this item. Identify the exact diff and the binaries that you validate.
-5. Run the owning project build with no new warnings, then the relevant isolated editor path. A build, a quiet log, or `git diff --check` alone does not close a runtime item.
-6. Use the original trigger and the cold, warm, pending, failure, mutation, and lifetime cases. View the saved images when rendering or UI changes.
-7. Compare baseline and changed captures under the same conditions. Make sure that neighboring stages did not absorb the removed cost.
-8. Check regressions, warnings, allocation and retention growth, and teardown separately from steady state.
-9. Record pass or fail, evidence, risks, and user feedback. Then mark the item Validated.
+1. Validate one change at a time. Do not start the next change until the current change passes its build, live behavior, performance, and regression checks.
+2. Before you edit, record the entry evidence, the owning code path, one hypothesis that a check can reject, the affected workloads, and the acceptance budget. Use the measured baseline variability to set the budget.
+3. Record thread ownership, lock order, cancellation, publication, and retirement dependencies before you change concurrent or native lifetimes.
+4. Build the owning project with no new warnings. Then run the isolated editor path. A build, a quiet log, or `git diff --check` alone does not close a runtime change.
+5. Run the original trigger and the cold, warm, pending, failure, mutation, and lifetime cases. View the saved images when the change affects rendering or UI.
+6. Compare baseline and changed captures under matching conditions. Confirm that the target mechanism changed, the budget passed, and no neighboring stage took the removed cost.
+7. Check regressions, warnings, allocation and retention growth, and teardown. Explain each new diagnostic.
+8. Record pass or fail, evidence, and remaining risks.
 
 Failure rules:
 
-- On failure, stop. Repair the same item and run its checks again. If the hypothesis is false, record that and find the nearest owner.
-- A flaky or unclear result is not a pass. Repeat with a better capture, or mark the item Blocked.
-- If the entry condition is false, mark the item Deferred or Not Applicable with evidence and a reopen condition.
-- Roll back only the edits of this item. Do not reset the worktree or switch branches to get a baseline.
-- A change to instrumentation needs a new comparable baseline.
+- If a check fails, stop. Repair the same change and run its checks again. If the check rejects the hypothesis, record the result and find the next owner.
+- A flaky or unclear result is not a pass. Repeat with a better capture, or mark the check Blocked.
+- If the entry condition is false, mark the item Deferred with the evidence and the condition to reopen it.
+- Roll back only the edits of the failed change. Do not reset the worktree or switch branches to get a baseline.
+- After a change to instrumentation or measurement settings, capture a new comparable baseline.
+- Do not add or change regression tests until live validation passes and the user gives test clearance.
 
-Status values are Pending, Active, Blocked, Validated, Closed, and Deferred or Not Applicable. Validated means the live gates passed. Closed also means the follow-ups and the cleared test work are done. Do not add or change tests until live validation passes and the user gives clearance.
+Comparable workload rules:
 
-Comparable workloads:
-
-- Freeze the source revision, local diff, and binary hashes. Record build configuration, SDK, device, driver, power state, backend, submission mode, validation layers, debugger, observers, and logging.
-- Record scene readiness, camera path, output and internal resolution, AA, executed features, and native and canonical draw coverage. A HUD draw count is not the native workload.
-- Keep cold process, cache-warm restart, warm stationary, and controlled-motion conditions separate. Use at least three matched runs and at least 60 seconds per warm window, unless you declare an alternative before the capture. Do not delete user caches to force a cold run.
-- Count fresh frames from `frame_lifecycle.outcome_counts.completed`. Render IDs can include rejected attempts.
-- Follow the [frame-loop measurement contract](../../../architecture/rendering/frame-loop-design.md#measuring-the-frame-loop).
-- For detailed attribution, account for at least 99% of the root interval and show unattributed gaps of 50 µs or more. EventPipe samples alone do not prove on-CPU time.
-- Do not add overlapping CPU and GPU intervals or subtract unrelated medians.
-
-Per-item gate record (copy into the investigation):
-
-```text
-Item / owner / status:
-Prior validated item and any approved reordering:
-Hypothesis and disconfirming check:
-Baseline source/configuration/cache/scene identity:
-Change scope and dependency/lifetime invariants:
-Predeclared metrics, budgets, tolerance, repetitions and window:
-Changed source diff and validated binary/session identity:
-Focused build command and result, including warnings:
-Live scenarios and exact evidence paths:
-Before/after distributions, sample validity and observer overhead:
-Correctness/images, failure cases, retention and adjacent regressions:
-Pass/fail decision and reason; does it explain the original symptom?:
-Test clearance state, approved focused checks and results:
-User confirmation / remaining risks / next permitted item:
-Temporary settings and owned session cleanup:
-```
+- Record the source revision, local diff, binary hashes, build configuration, device, driver, power state, backend, submission mode, validation layers, debugger, observers, and logging.
+- Record scene readiness, camera path, output and internal resolution, antialiasing mode, executed features, and native draw coverage. A HUD draw count is not the full native workload.
+- Keep cold process, persisted-cache restart, warmed stationary, and controlled motion conditions separate. Use at least three matched runs per condition and at least 60 seconds per warmed window. Do not delete user caches to force a cold run.
+- Record all-frame counts, p50, p95, p99, max, successful presents, missing GPU samples, dropped events, queue delay, loading time, and backlogs. Count fresh frames from `frame_lifecycle.outcome_counts.completed`.
+- Follow the [frame-loop measurement contract](../../../architecture/rendering/frame-loop-design.md#measuring-the-frame-loop). For detailed attribution, account for at least 99% of the root interval and show each unattributed gap of 50 µs or more.
+- Do not add overlapping CPU and GPU intervals. Do not subtract unrelated medians to get an exclusive cost.
 
 ## Checks
 
@@ -217,15 +218,15 @@ Procedure: Release build, warm caches, default and Sponza scenes, profiler count
 - [ ] Multiview capability logging, stereo render path, OpenXR path, and SteamVR/OpenVR path. Last evidence: none.
 - [ ] Mirror-to-window output while in VR. Expected: synchronized with the submitted eye frame, with no extra GPU readback or queue idle. Last evidence: none.
 - [ ] VR render-target array layers, layouts, and attachment metadata. Expected: validation-clean. Last evidence: none.
-- [ ] OpenXR and OpenVR compositor submission timing. Expected: acquire, render, submit, and present or compositor phases are recorded separately. Last evidence: none.
+- [ ] OpenXR and OpenVR compositor submission timing. Expected: acquire, render, submit, and present or compositor stages are recorded separately. Last evidence: none.
 - [ ] Stereo and multiview frame diagnostics. Expected: the same fields as mono (scene writer count, dropped operations, descriptor fallback, pipeline miss summary). Last evidence: none.
 - [ ] Run the OpenXR paths against a live supported runtime after each frame-loop structural change. Last evidence: none.
 
-<a id="phase-6-openxr-checks"></a>
+<a id="openxr-submission-and-lifecycle-checks"></a>
 
 ### OpenXR Submission And Lifecycle
 
-Procedure: Monado through the Monado tasks, then one hardware runtime. Entry points: `OpenXrVulkanSubmissionTracker`, `VulkanCommandRuntime.OpenXrSubmission`, `VulkanXrGraphicsBinding`, `OpenXRAPI.SwapchainLifecycle`. Evidence: [mirror and placement investigation](../../investigations/rendering/arp-mirror-placement-2026-09-14.md), [Phase 6/7 investigation](../../investigations/rendering/vulkan-phase67-implementation.md). Service fault injection needs an owned Monado service.
+Procedure: Monado through the Monado tasks, then one hardware runtime. Entry points: `OpenXrVulkanSubmissionTracker`, `VulkanCommandRuntime.OpenXrSubmission`, `VulkanXrGraphicsBinding`, `OpenXRAPI.SwapchainLifecycle`. Evidence: [mirror and placement investigation](../../investigations/rendering/arp-mirror-placement-2026-09-14.md), [OpenXR and Advanced investigation](../../investigations/rendering/vulkan-phase67-implementation.md). Service fault injection needs an owned Monado service.
 
 - [ ] XR-V04: run the three-command `[left, right, publish]` path. Expected: both eye renders and the publish command are in the accepted receipt and retire once. Last evidence: none.
 - [ ] XR-V05: external-target submission. Expected: output captures and exact ownership and settlement for its path from the XR-A01 inventory. Last evidence: none.
@@ -258,7 +259,7 @@ Procedure: physical Vulkan/OpenXR strict stereo with the CpuDirect Sponza fixtur
 <a id="from-vulkan-runtime-code-organization-todomd"></a>
 
 - [ ] Run the targeted tests, the runtime-rendering build, the editor build, a Vulkan startup, and the OpenXR smoke lanes after a structural change. Expected: no new warnings or validation errors. The SteamVR lane needs a connected HMD; without one, `xrGetSystem` returns `ErrorFormFactorUnavailable`. Last evidence: none.
-- [ ] Measure allocations for the frame attempt and phase results, and inspect generated code where needed. Expected: no context copy, boxing, closure, task, or heap allocation per frame. Last evidence: none.
+- [ ] Measure allocations for the frame attempt and stage results, and inspect generated code where needed. Expected: no context copy, boxing, closure, task, or heap allocation per frame. Last evidence: none.
 - [ ] Review migrated source-contract tests. Expected: no test passes only because it stopped reading moved code. Last evidence: none.
 - [ ] Start the Vulkan editor and the Vulkan Unit Testing World with MCP. Capture and view at least two camera positions. Compare final output, ImGui, dynamic text, viewport size, and startup presentation with a known-good build. Last evidence: none.
 - [ ] Exercise texture uploads and command-buffer invalidation while frames record. Use fault injection for rare deferred or dirty paths. Last evidence: none.
@@ -288,7 +289,7 @@ Procedure: physical Vulkan/OpenXR strict stereo with the CpuDirect Sponza fixtur
 
 ### Component Profiling And RenderBench
 
-Guide: [Dedicated Vulkan RenderBench](../../../developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench). Evidence: [Vulkan Component Profiling](../../progress/rendering/vulkan-component-profiling.md). Code items: [Editor Profiler And UI Render Cost TODO](../../todo/rendering/optimization/editor-profiler-ui-render-cost-todo.md#open-code-items-moved-from-vulkan-headless-mcp-component-profiling-todomd).
+Guide: [Dedicated Vulkan RenderBench](../../../developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench). Evidence: [Vulkan Component Profiling](../../progress/rendering/vulkan-component-profiling.md). Code items: [Editor Profiler And UI Render Cost TODO](../../todo/rendering/optimization/editor-profiler-ui-render-cost-todo.md).
 
 - [ ] Record editor-process baselines for one static Deferred cohort, one forced-dirty recording cohort, and one RVC cohort. Expected: the baselines quantify the editor, window, and observer costs that RenderBench removes. Last evidence: none.
 - [ ] Measure MCP-disabled, MCP-idle, and MCP-active overhead on the same cohort. Expected: MCP-idle and MCP-disabled are equal within the observer-overhead threshold. Last evidence: none.
@@ -318,7 +319,7 @@ Architecture: [Presentation-Independent Hosts](../../../architecture/rendering/v
 
 ### Advanced Pipeline GPU Attribution
 
-Investigation: [cumulative publication validation](../../investigations/rendering/2026-10-01-cumulative-publication-validation.md). Code items: [Editor Profiler And UI Render Cost TODO](../../todo/rendering/optimization/editor-profiler-ui-render-cost-todo.md#open-code-items-moved-from-advanced-pipeline-gpu-attribution-todomd). These checks allow no quality reduction and make no GPU speedup claim.
+Investigation: [cumulative publication validation](../../investigations/rendering/2026-10-01-cumulative-publication-validation.md). Code items: [Editor Profiler And UI Render Cost TODO](../../todo/rendering/optimization/editor-profiler-ui-render-cost-todo.md#open-code-items). These checks allow no quality reduction and make no GPU speedup claim.
 
 - [ ] Freeze an accepted `AdvancedRenderPipeline` fixture, source, and observer binary. Keep row coverage, AA, output and internal resolution, and quality. Last evidence: none.
 - [ ] Compare dense timestamp overhead with the coarse observer in repeated stationary and motion pairs. Keep query identity, availability, and coverage. Do not count a repeated query result as a new frame. Last evidence: none.
@@ -372,7 +373,7 @@ Record conclusions as measured findings or as hypotheses from source review. The
 ### Recording And Resident Streams
 
 - [ ] RC-V05: measure hot-stream layouts and bytes touched against active work, including compatibility conversion passes. Expected: no unconsumed conversion path, and layout changes keep or reduce owners, files, allocations, descriptor bindings, and lifetime transitions. Last evidence: none.
-- [ ] RC-V06: resident-stream allocation matrix with warm storage and pool high-water marks and measured managed-byte deltas. Expected: a named matrix artifact. Last evidence: 2026-08-17, partial; see [Phase 0 investigation](../../investigations/rendering/vulkan-resident-draw-stream-phase0-2026-08-17.md).
+- [ ] RC-V06: resident-stream allocation matrix with warm storage and pool high-water marks and measured managed-byte deltas. Expected: a named matrix artifact. Last evidence: 2026-08-17, partial; see [resident draw stream investigation](../../investigations/rendering/vulkan-resident-draw-stream-phase0-2026-08-17.md).
 - [ ] RC-V07: primary and secondary pending state, command-pool synchronization, query inheritance, and dynamic-rendering and legacy render-scope inheritance across desktop, OpenXR, resize, reload, churn, and shutdown. Expected: completion-owned artifact retirement and clean validation for each entry. Last evidence: none.
 - [ ] RC-V08: Release stable-static cohort of about 647 draws. Expected p95: frontend binding ≤0.15 ms, frame/view/pass publication ≤0.15 ms, unchanged material/object publication ≤0.05 ms, descriptor reuse ≤0.10 ms, artifact reuse ≤0.15 ms, total Vulkan prepare/record/submit ≤1.00 ms, excluding OS and GPU waits. Last evidence: none.
 - [ ] RC-V09: Release moving-object cohort. Expected: only dirty object ranges update and total prepare/record/submit ≤1.50 ms p95. Last evidence: none.
@@ -475,8 +476,7 @@ Stereo, mirrors, editor, and diagnostics:
 
 <a id="static-surfaces-ao-and-gi"></a>
 
-Accepted Advanced and XR records (scope is limited to the named cohort; evidence is in the [Phase 6/7 investigation](../../investigations/rendering/vulkan-phase67-implementation.md) and the [mirror closeout](../../investigations/rendering/arp-mirror-placement-2026-09-14.md)):
-
+Accepted Advanced and XR records (scope is limited to the named cohort; evidence is in the [OpenXR and Advanced investigation](../../investigations/rendering/vulkan-phase67-implementation.md) and the [mirror closeout](../../investigations/rendering/arp-mirror-placement-2026-09-14.md)):
 | ID | Accepted scope | Date |
 |---|---|---|
 | XR-V01 | Monado strict SPS, 351 submissions, zero validation or EndFrame failures | 2026-09-06 |
@@ -649,7 +649,6 @@ Hardware and worker gates:
 - [ ] Vulkan promotion from opt-in to regular development use: smoke passes on one NVIDIA, one AMD, and one Intel or laptop GPU; Sync2 and legacy sync match; stress checks pass without validation errors, device loss, or unbounded allocation; no unexplained visual differences from OpenGL; pipeline misses are quiet after warmup; black-frame diagnostics are not needed for routine failures. Keep legacy allocator and sync fallbacks for one stable milestone after promotion. Last evidence: none.
 
 ## Hardware Matrix
-
 | System | Role | Status |
 |---|---|---|
 | Intel Core Ultra 9 185H / RTX 4070 Laptop | Named laptop for budgets | Partial baselines (2026-08-17) |
@@ -661,30 +660,12 @@ Hardware and worker gates:
 | SteamVR/OpenVR | OpenVR path | Not run |
 
 ## Failures
-
 | Check | Symptom | Investigation or code item |
 |---|---|---|
 | ARP-V17 | Thin-edge TSR shimmer on Vulkan mono at 0.67 scale | [TSR jitter investigation](../../investigations/rendering/2026-09-24-advanced-vulkan-tsr-jitter.md) |
-| Stall cumulative acceptance | Desktop motion below 100 FPS; original CPU/TSR report open | [Stall remediation todo](../../todo/rendering/vulkan-stall-remediation-todo.md) |
+| Stall cumulative acceptance | Desktop motion below 100 FPS; original CPU/TSR report open | [Vulkan stall separate findings](../../todo/rendering/vulkan-stall-separate-findings-todo.md) |
 | OpenXR stereo regression | Mostly black output, Sponza flicker, old-frame jitter on hardware | [Hardware record](../../investigations/rendering/2026-10-03-retained-rendering-hardware.md) |
 | XR memory | 13.5 GB private versus 8 GB target | [Editor memory reduction todo](../../todo/rendering/optimization/editor-memory-reduction-todo.md) |
 | OpenGL control | Black interior scene on the measurement host | [OpenGL admission record](../../investigations/rendering/2026-10-03-s16a-opengl-admission.md) |
 | XR-V11, XR-V20, XR-V21 | Lifecycle recovery defects | XR-I14, XR-I16 in the [XR and Advanced todo](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md) |
 | Mirror compute slots | Missing native compute slot-3 resources | XR-I22 in the [XR and Advanced todo](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md) |
-
-## Recovered Items To Triage
-
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md`
-
-- [ ] Verify reductions were not achieved by combining unrelated top-level
-  types, hiding behavior in generated files, relocating Vulkan-specific code to
-  a backend-neutral assembly, or replacing partials with a service locator or
-  forwarding-only abstraction layer.
-
-### From `todo/COMPLETED/vulkan-desktop-frame-loop-decomposition-todo.md`
-
-- [ ] **11.4** Exercise resize by dragging, maximizing, restoring, minimizing,
-  restoring, and changing DPI/display where available. Confirm no blocking
-  interactive wait and no persistent stale generation.

@@ -190,7 +190,6 @@ MCP exposes `get_renderer_reload_status`, `reload_renderer_shaders`,
 read-only, allow-list, and deny-list policy still applies.
 
 Use this current routing matrix:
-
 | Change | Vulkan action | Process retained |
 |---|---|---|
 | GLSL, include, or generated shader source | **Reload Shaders** or `reload_renderer_shaders` | Yes |

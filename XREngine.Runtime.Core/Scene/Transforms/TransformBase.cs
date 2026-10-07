@@ -1054,8 +1054,19 @@ namespace XREngine.Scene.Transforms
         {
             bool localChanged;
             bool worldChanged;
+            bool fastPath = false;
             if (HierarchyStore is { } store)
-                store.ReadDirtyPair(HierarchyHandle, out localChanged, out worldChanged);
+            {
+                if (GetType() == typeof(Transform)
+                    && store.TryRecalculateOrdinaryWorld(
+                        HierarchyHandle, forceWorldRecalc, out worldChanged))
+                {
+                    fastPath = true;
+                    localChanged = false;
+                }
+                else
+                    store.ReadDirtyPair(HierarchyHandle, out localChanged, out worldChanged);
+            }
             else
             {
                 localChanged = IsLocalMatrixDirty;
@@ -1063,11 +1074,18 @@ namespace XREngine.Scene.Transforms
             }
             bool recalcWorld = worldChanged || forceWorldRecalc;
 
-            if (localChanged)
-                RecalcLocal();
-
-            if (recalcWorld)
-                RecalcWorld();
+            if (fastPath)
+            {
+                if (recalcWorld)
+                    NotifyMatrixChange(4 | 8);
+            }
+            else
+            {
+                if (localChanged)
+                    RecalcLocal();
+                if (recalcWorld)
+                    RecalcWorld();
+            }
 
             // The global override can force every render-matrix publish to be deferred or synchronous,
             // regardless of what the caller requested. A transform with no world always publishes

@@ -279,9 +279,7 @@ namespace XREngine.Components.Scene.Mesh
             if (RootBone is not { } rootBone)
                 return;
 
-            rootBone.WorldMatrixChanged -= RootBone_WorldMatrixPreviewChanged;
             rootBone.RenderMatrixChanged -= RootBone_WorldMatrixChanged;
-            rootBone.WorldMatrixChanged += RootBone_WorldMatrixPreviewChanged;
             rootBone.RenderMatrixChanged += RootBone_WorldMatrixChanged;
         }
 
@@ -292,7 +290,11 @@ namespace XREngine.Components.Scene.Mesh
         private void RenderInfoPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
             if (e.PropertyName is nameof(RenderInfo3D.LocalCullingVolume) or nameof(RenderInfo3D.CullingOffsetMatrix))
+            {
+                long t = RenderableMeshStageTelemetry.Begin();
                 PublishRenderCommandCullingVolume();
+                RenderableMeshStageTelemetry.End(13, t);
+            }
         }
 
         private void PublishRenderCommandCullingVolume()
@@ -317,6 +319,8 @@ namespace XREngine.Components.Scene.Mesh
 
         private bool BeforeAdd(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
         {
+            long tTotal = RenderableMeshStageTelemetry.Begin();
+            long tHead = tTotal;
             var rend = CurrentLODRenderer;
             bool skinned = (rend?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             TransformBase tfm = skinned ? RootBone ?? Component.Transform : Component.Transform;
@@ -357,6 +361,8 @@ namespace XREngine.Components.Scene.Mesh
                 _vertexSkinSeedSettled = rend.ReseedSkinPaletteUntilPoseStable();
             }
 
+            RenderableMeshStageTelemetry.End(6, tHead);
+            long tBounds = RenderableMeshStageTelemetry.Begin();
             if (skinned)
             {
                 bool skinnedBoundsOk = RefreshSkinnedCullingBoundsForSceneCulling();
@@ -369,7 +375,9 @@ namespace XREngine.Components.Scene.Mesh
                 RenderInfo.LocalCullingVolume = ExpandVertexEffectLocalBounds(_bindPoseBounds, mat);
                 RenderInfo.CullingOffsetMatrix = basis;
             }
+            RenderableMeshStageTelemetry.End(7, tBounds);
 
+            long tSet = RenderableMeshStageTelemetry.Begin();
             _rc.Mesh = rend;
             _rc.MaterialOverride = materialOverride;
 
@@ -379,11 +387,17 @@ namespace XREngine.Components.Scene.Mesh
                     XRTexture2D.RecordImportedTextureStreamingUsage(mat, BuildImportedTextureStreamingUsage(rend?.Mesh, camera as XRCamera, distance));
                 _rc.RenderPass = mat.RenderPass;
             }
+            RenderableMeshStageTelemetry.End(8, tSet);
 
+            long tSync = RenderableMeshStageTelemetry.Begin();
             SyncMaterialPassCommands(rend, mat, passes.IsShadowPass);
+            RenderableMeshStageTelemetry.End(9, tSync);
+            long tTail = RenderableMeshStageTelemetry.Begin();
             ApplyHighlightRenderOptionsOverride(mat);
             ModelRenderDiagnostics.LogCommandCollect(this, _rc, passes, camera, distance);
             ProcessPendingGpuMeshBvhRefresh();
+            RenderableMeshStageTelemetry.End(10, tTail);
+            RenderableMeshStageTelemetry.End(5, tTotal);
 
             return true;
         }
@@ -471,10 +485,7 @@ namespace XREngine.Components.Scene.Mesh
                 {
                     case nameof(RootBone):
                         if (RootBone is not null)
-                        {
-                            RootBone.WorldMatrixChanged -= RootBone_WorldMatrixPreviewChanged;
                             RootBone.RenderMatrixChanged -= RootBone_WorldMatrixChanged;
-                        }
                         break;
 
                     case nameof(Component):
@@ -499,9 +510,11 @@ namespace XREngine.Components.Scene.Mesh
                 case nameof(RootBone):
                     if (RootBone is not null)
                     {
-                        RootBone.WorldMatrixChanged += RootBone_WorldMatrixPreviewChanged;
+                        // Skinned culling bounds read published render matrices. A world-matrix
+                        // listener would run before publication and recompute the previous
+                        // bounds, so only the render-matrix listener follows later motion.
                         RootBone.RenderMatrixChanged += RootBone_WorldMatrixChanged;
-                        RootBone_WorldMatrixPreviewChanged(RootBone, RootBone.WorldMatrix);
+                        InitializeRootBoneCullingBasis(RootBone, RootBone.WorldMatrix);
                         RootBone_WorldMatrixChanged(RootBone, RootBone.RenderMatrix);
                     }
                     break;
@@ -548,10 +561,7 @@ namespace XREngine.Components.Scene.Mesh
             RenderInfo.PropertyChanged -= RenderInfoPropertyChanged;
             RenderInfo.RenderCommands.Clear();
             if (RootBone is { } rootBone)
-            {
-                rootBone.WorldMatrixChanged -= RootBone_WorldMatrixPreviewChanged;
                 rootBone.RenderMatrixChanged -= RootBone_WorldMatrixChanged;
-            }
 
             TransformBase transform = Component.Transform;
             transform.WorldMatrixChanged -= Component_WorldMatrixPreviewChanged;

@@ -77,7 +77,6 @@ public static void Run(
 ```
 
 `Initialize()` performs these steps in order:
-
 | Step | Description |
 |------|-------------|
 | 1 | Store `GameSettings` and `UserSettings` (includes `PreferredRenderBackend` / compatibility `RenderLibrary` choice) |
@@ -145,7 +144,6 @@ after logging the requested backend, fallback policy, and exception summary.
 ### Render Settings Ownership
 
 Render settings are grouped by owner. Backend policy stays in its backend group.
-
 | Owner | Holds |
 |---|---|
 | `UserSettings` | Personal preferences: preferred backend, display, audio, quality, and `UserRenderingOverrides`. |
@@ -174,7 +172,6 @@ contains the execution mode, presentation target, backend generation, and
 fixed-output properties where applicable. Desktop services are available only
 through `IRendererDesktopWindowServices`; non-window modes never receive a
 synthetic `XRWindow`.
-
 | Execution mode | Presentation target and initialization contract |
 |---|---|
 | `DesktopWsi` | `DesktopWindowRenderTarget`; the desktop host owns the native window and render loop, while the backend target driver owns surface/swapchain policy. |
@@ -268,7 +265,6 @@ public XRWindow(RuntimeWindowCreateOptions options)
 ```
 
 Step by step:
-
 | Step | What Happens |
 |------|--------------|
 | `RuntimeWindowBackendRegistry.RequireFactory()` | Resolves the installed desktop window factory; `DesktopSilkWindowBackendFactory` owns Silk.NET creation. |
@@ -378,7 +374,6 @@ The window owner separately pumps native events through `_desktopBackend.PumpEve
 ## Window Ownership And Render Thread
 
 The window thread and the render thread are separate roles, even when one OS thread holds both. New code must not treat "main thread" and "render thread" as the same term; `EnqueueMainThreadTask(...)`-style names are compatibility names for render-thread work.
-
 | Role | Owns |
 |---|---|
 | Window thread | Native window creation and destruction, event pumping, callbacks, title, size, focus, cursor, and raw input configuration. |
@@ -406,7 +401,6 @@ Keep the process entry thread STA-capable. ImGui file dialogs, clipboard, drag-a
 ## Interactive Resize
 
 `WindowResizeController` (render-thread owned) tracks four extents in `WindowResizeExtents`:
-
 | Extent | Meaning |
 |---|---|
 | `NativeClientExtent` | Latest native client size from the window thread. Updates camera and display aspect only. |
@@ -421,7 +415,6 @@ The Win32 Vulkan swapchain is not a lag layer. Without present scaling, Vulkan r
 ### Resize strategies
 
 `EInteractiveWindowResizeStrategy` selects how a window behaves during a native border drag. `XRWindow` owns one `IInteractiveResizeStrategy`, logs the resolved strategy and the actual windowing backend, and routes callback renders through one guarded `RenderInteractiveResizeFrame(...)` helper. `ProcessPendingFramebufferResize()` is the only code that changes viewport sizes and calls `Renderer.FrameBufferInvalidated()`.
-
 | Strategy | `XRE_INTERACTIVE_RESIZE_STRATEGY` | Behavior |
 |---|---|---|
 | `Default` | `default` | No callbacks, hooks, or backend change. Baseline. |

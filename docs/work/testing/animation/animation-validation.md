@@ -14,7 +14,6 @@ Code todos: [Baked Animation Value Compression](../../todo/animation/baked-value
   - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~UnityAnimImporter`
   - `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter FullyQualifiedName~AnimationClipComponent`
 - Allocation audit: the `Report-NewAllocations` task.
-- Keep reports under the active `Build/_AgentValidation/<run>/reports/` root.
 
 ## Checks
 

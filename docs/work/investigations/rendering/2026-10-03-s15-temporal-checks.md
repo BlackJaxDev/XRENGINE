@@ -7,7 +7,7 @@ judge, the original ghosting report is not reproduced, and the user has not
 confirmed. Temporal behaviour is therefore **unverified for closing the original
 report**, with no failing case found.
 
-Owner item: [S15](../../todo/rendering/vulkan-stall-remediation-todo.md#s15-preserve-temporal-correctness-and-resolve-the-original-report).
+Owner item: [S15](../../progress/rendering/vulkan-stall-remediation-results.md).
 
 ## Setup
 

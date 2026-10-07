@@ -868,7 +868,7 @@ isolated editor was stopped after validation; no new regression tests were added
 
 At the user's request, `Tools/Collect-VulkanLifecycleEvidence.py` was written and
 run to collect evidence first, leaving screenshot and log interpretation for a
-subsequent review. Its [usage and scope](../../testing/rendering/vulkan-lifecycle-evidence-harness.md)
+subsequent review. Its [usage and scope](../../testing/rendering/vulkan-core-validation.md)
 describe the collection contract and untested cases. The isolated Release build
 completed with zero warnings and errors. The collector was corrected to wait
 for world readiness after MCP startup and to avoid a Python argument-name

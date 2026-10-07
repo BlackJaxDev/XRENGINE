@@ -17,7 +17,7 @@ original frame-rate report remain open and are handed to named owners; they
 are not closed by this gate.
 
 Gate record for
-[S13i](../../todo/rendering/vulkan-stall-remediation-todo.md#s13i-prove-the-cumulative-fix-on-the-reported-workload)
+[S13i](../../progress/rendering/vulkan-stall-remediation-results.md)
 under the todo document's one-by-one protocol. Evidence root:
 `Build/_AgentValidation/20260926-205821-s13i-cumulative/` (ignored, disposable;
 findings are copied here). Related gate records:

@@ -183,7 +183,7 @@ node exposes the same fields.
 
 The three root toggles are mutually exclusive and temporarily apply the mode's
 renderer settings. Turning the active test off restores the prior settings. See
-[Math Intersections Occlusion Tests](../../work/testing/rendering/math-intersections-occlusion-tests.md)
+[Math Intersections Occlusion Validation](../../work/testing/rendering/math-intersections-occlusion-tests.md)
 for scene layout, pass criteria, and current qualification status.
 
 ### Compare continuous rendering and idle reuse

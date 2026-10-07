@@ -245,6 +245,39 @@ public sealed class TransformHierarchyStore : IDisposable
         }
     }
 
+    /// <summary>Reads and composes an ordinary world matrix under one hierarchy gate.</summary>
+    internal bool TryRecalculateOrdinaryWorld(
+        TransformHandle handle, bool forceWorldRecalc, out bool recalcWorld)
+    {
+        recalcWorld = false;
+        lock (_gate)
+        {
+            int i = Require(handle);
+            if (_localDirty[i] || _orderDirty || _worldOverride[i])
+                return false;
+
+            int parentIndex = _parent[i];
+            if ((uint)parentIndex >= (uint)_used || _owners[parentIndex] is null)
+                return false;
+
+            recalcWorld = _worldDirty[i] || forceWorldRecalc;
+            if (!recalcWorld)
+                return true;
+
+            Matrix4x4 matrix = _local[i] * _world[parentIndex];
+            BeginWrite();
+            try
+            {
+                _world[i] = matrix;
+                if (!TransformBase.IsDiagnosticEvaluationActive)
+                    _publication[i] = true;
+                _worldDirty[i] = false;
+            }
+            finally { EndWrite(); }
+            return true;
+        }
+    }
+
     /// <summary>Publishes one local matrix and clears its dirty flag before callbacks run.</summary>
     internal void WriteLocalAndClearDirty(TransformHandle handle, Matrix4x4 matrix)
     {

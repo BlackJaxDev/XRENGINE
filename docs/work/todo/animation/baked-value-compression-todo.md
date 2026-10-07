@@ -9,8 +9,6 @@ Validation: [Animation Validation](../../testing/animation/animation-validation.
 
 `EAnimationValueCompressionAlgorithm` has the lossless values `None`, `Constant`, `RunLength`, `Delta`, and `DeltaRunLength`. `BakedValueStore<T>` holds encoded values in memory only. `BasePropAnimBakeable` stores the requested and the effective algorithm. No cooked encoded payload, delta checkpoint, bool or matrix store, editor estimate, or lossy codec exists in `XREngine.Animation`.
 
-Rules for all items: lossless stores decode exact values. Lossy formats are opt-in only, never default, and apply only to float-family baked samples (`float`, `Vector2`, `Vector3`, `Vector4`, `Quaternion`, transform `Matrix4x4`). A codec that cannot encode a track fails visibly. It never substitutes another codec. Playback decode allocates no heap memory.
-
 ## Open Code Items
 
 ### Cooked encoded payloads
@@ -69,41 +67,3 @@ Rules for all items: lossless stores decode exact values. Lossy formats are opt-
 - Lossy formats for bool, string, object, or method-backed tracks.
 - GPU-only decode paths before CPU decode and tests are complete.
 - One global tolerance for all property types.
-
-## Recovered Items To Triage
-
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/animation/baked-value-compression-followups-todo.md`
-
-- [ ] Add tests for seeking before, at, and after checkpoints.
-- [ ] Add tests for looped playback and reverse playback when a caller seeks
-  non-monotonically.
-- [ ] Checkpoints improve random seek time on long tracks without erasing the
-  memory benefit that justified delta compression.
-- [ ] Add a bool codec chooser that can select `Constant`, bitset, or RLE based
-  on measured payload size.
-
-### From `todo/animation/lossy-float-baked-value-compression-todo.md`
-
-- [ ] noisy mocap-style data,
-- [ ] Add `Float16` or equivalent binary16 scalar storage using deterministic
-  conversion rules.
-- [ ] Add delta-predictive quantization: previous decoded value plus quantized
-  residual.
-- [ ] Add scalar tests for NaN, infinities, negative zero, denormals, constant
-  values, tiny ranges, huge ranges, and monotonic curves.
-- [ ] Add unorm/snorm specializations for known normalized tracks such as
-  weights, colors, and directions.
-- [ ] Vector codecs reduce payload size while staying within both component and
-  vector-level error budgets.
-- [ ] Verify slerp between decoded adjacent baked samples does not exceed the
-  track's angular error budget by more than the documented interpolation margin.
-- [ ] Add an offline estimator that tries candidate lossy codecs against the
-  requested error budget.
-- [ ] Add tests proving adaptive selection does not pick a codec that violates
-  the budget.
-- [ ] Users can request a quality target without manually guessing the best
-  codec for each track.
-- [ ] Artists and technical animators can see what memory was saved and what
-  error was introduced before accepting a lossy bake.

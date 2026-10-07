@@ -116,7 +116,7 @@ Keep code work and debugging/validation work in separate documents:
 - Before you check, remove, or report a todo item, confirm its state in code. Correct stale "current state" text when you touch a todo.
 - `docs/work/todo/COMPLETED/` must not contain open code items. Reopened work moves back to an active todo.
 - Do not copy standing rules, exit-criteria prose, or branch/merge steps into each todo. Link to one shared copy.
-- Use the templates in [todo doc cleanup](docs/work/todo/documentation/todo-doc-cleanup-todo.md#target-templates).
+- Use the templates in [work doc templates](docs/developer-guides/ai/work-doc-templates.md).
 
 ## Risk, Dependencies, And Licensing
 

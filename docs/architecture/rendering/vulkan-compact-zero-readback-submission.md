@@ -19,7 +19,6 @@ Their obsolete enum aliases exist only for configuration compatibility.
 
 Each `GPURenderPassCollection` owns one compact output range for each geometry
 atlas tier:
-
 | Group | Count element | Indirect range |
 | --- | ---: | --- |
 | Static | 0 | `0 * MaxDrawsPerTier` |

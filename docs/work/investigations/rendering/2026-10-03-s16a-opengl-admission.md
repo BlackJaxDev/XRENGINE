@@ -312,7 +312,7 @@ Two defects originally produced the black or sky-only OpenGL scene:
    "black OpenGL scene in every binary" result. It is not an admission or
    driver failure.
 
-Owner item: [S16a](../../todo/rendering/vulkan-stall-remediation-todo.md#s16a-black-opengl-scene-on-the-measurement-host).
+Owner item: [S16a](../../progress/rendering/vulkan-stall-remediation-results.md).
 
 ## Workload
 

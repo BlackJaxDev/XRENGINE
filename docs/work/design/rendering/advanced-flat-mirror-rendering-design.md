@@ -1,6 +1,6 @@
 # Advanced Flat Mirror Rendering Design
 
-[<- Work docs](../README.md)
+[<- Work docs](../../README.md)
 
 Status note (2026-09-14): this document is a design proposal, not the current
 implementation contract. The implemented component owns bounded private capture

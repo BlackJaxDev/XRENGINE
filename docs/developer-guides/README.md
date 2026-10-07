@@ -10,6 +10,7 @@ These docs are intentionally closer to the code than the user guide. They should
 
 - [AI and MCP](ai/mcp-server.md)
 - [Local Agent Broker](ai/local-agent-broker.md)
+- [Work Doc Templates](ai/work-doc-templates.md)
 - [Animation](animation/animation-api.md)
 - [Assets](assets/model-import.md)
 - [Audio](audio/openal-streaming-audio.md)
@@ -30,6 +31,7 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Hot-Path Memory Control](runtime/hot-path-memory.md)
 - [Scene](scene/scene-graph.md)
 - [Testing](testing/unit-testing-world.md)
+- [Test Suite Layout](testing/test-suite-layout.md)
 - [Windows CI](testing/windows-ci.md)
 - [Software Vulkan Correctness Validation](testing/software-vulkan-validation.md)
 - [UI](ui/native-hierarchy-panel.md)

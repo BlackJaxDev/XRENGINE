@@ -1,346 +1,172 @@
 # Texture Validation
 
-Scope: scene, runtime, visual, profiler, allocation, and hardware checks for imported texture streaming, cooked texture payloads, OpenGL residency, and Vulkan dense texture upload and publication.
-
-Architecture: [Texture Streaming](../../../architecture/rendering/texture-streaming.md), [Vulkan Resource Lifetime And Retirement](../../../architecture/rendering/vulkan-resource-lifetime-and-retirement.md)
-
-Design: [Texture Runtime, Streaming, And Virtual Texturing Design](../../design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
-
-Code todos: [Texture Runtime, Streaming, And Virtual Texturing TODO](../../todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md), [Texture Compression And Cooked Cache TODO](../../todo/texturing/texture-compression-and-cooked-cache-todo.md)
+Architecture: [Texture Streaming](../../../architecture/rendering/texture-streaming.md), [Cooked Texture Payloads](../../../architecture/assets/cooked-texture-payloads.md), [Vulkan Resource Lifetime And Retirement](../../../architecture/rendering/vulkan-resource-lifetime-and-retirement.md)  Code todos: [Texture Runtime, Streaming, And Virtual Texturing TODO](../../todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md), [Texture Compression And Cooked Texture Cache TODO](../../todo/texturing/texture-compression-and-cooked-cache-todo.md)
 
 Evidence notes:
 
 - [Texture Management Runtime Baseline - 2026-05-01](texture-management-runtime-baseline-2026-05-01.md)
-- [Texture Streaming Run Analysis - 2026-05-01 18:06](texture-streaming-run-analysis-2026-05-01-180642.md)
+- [Texture Streaming Run Analysis - 2026-05-01 18:06](../../investigations/texturing/texture-streaming-run-analysis-2026-05-01-180642.md)
 
 ## Setup
 
-- Scene: Unit Testing World with Sponza. Start the editor with `--unit-testing`.
-- Vulkan switches: `XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE`, `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD`, `XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE`, `XRE_VULKAN_TEXTURE_UPLOAD_PREP_BUDGET_MS`, `XRE_VULKAN_TEXTURE_UPLOAD_TRACE`. See [Texture Streaming](../../../architecture/rendering/texture-streaming.md#flags-and-environment-variables).
-- Submission strategy for Vulkan smoke runs: `XRE_FORCE_MESH_SUBMISSION_STRATEGY=CpuDirect`.
-- MCP tools: `get_texture_streaming_summary`, `list_texture_streaming_textures`, `capture_render_pipeline_texture`.
-- Logs: `log_textures.*`, `log_opengl.*`, `log_vulkan.*`, `log_rendering.*`, `log_general.*`, profiler FPS-drop and render-stall logs.
+Use the ImGui editor unless a check names another host.
 
-## Texture Runtime Streaming Validation
+Tasks from `.vscode/tasks.json`:
 
-This section proves that the v1 texture runtime is stable before finer sparse-page residency or full virtual texturing is enabled. It tracks scene runs, log evidence, test blockers, and closeout criteria for the current streamer. Feature follow-ups belong in the code todo.
+- `Build-Editor`, `Build-Editor-Fast`, and `Build-Editor-Release` build the editor.
+- `Generate-UnitTestingWorldSettings` updates Unit Testing World settings.
+- `Cook-CommonAssets-Archive (Manual Slow)` cooks the common asset archive after an editor build.
+- `Report-NewAllocations` runs the allocation scan for hot paths.
 
-### System Under Test
+Launch profiles from `.vscode/launch.json`:
 
-The implemented v1 texture runtime includes:
+- `Editor (Unit Testing World)` starts the Unit Testing World with `XRE_WORLD_MODE=UnitTesting`.
+- `Editor (Unit Testing World, Validation Layers)` starts the Unit Testing World with `XRE_VULKAN_VALIDATION=1` and `XRE_GL_DEBUG=1`.
+- `Editor (Renderer Development)` starts the renderer development profile.
 
-- `ImportedTextureStreamingManager` as the frame-level coordinator.
-- `TextureStreamingRegistry` for weak records, usage, material binding observations, snapshots, and compaction.
-- `TextureResidencyPolicy` for desired residency, priority, fairness, role multipliers, cooldowns, pressure fitting, and promotion fade.
-- `TextureTransitionQueue` for pending transition replacement, cancellation, stale repair, and lifecycle state.
-- `TextureUploadScheduler` for priority queueing, duplicate coalescing, generation cancellation, budget gates, and telemetry.
-- `TextureResidencyState` for mutable `XRTexture2D` sparse runtime fields while preserving `XRBase.SetField(...)` mutation semantics.
-- `GLTieredTextureResidencyBackend` as the dense fallback path.
-- `GLSparseTextureResidencyBackend` as the OpenGL sparse mip residency path for page-aligned `Rgba8` textures.
-- Metadata-first cooked texture streamability checks and mip-addressable `XRTS` payloads.
-- `log_textures.txt` and the ImGui texture streaming diagnostics panel.
-
-Known current limits:
-
-- Partial sparse page residency is scaffolded but disabled by policy.
-- Cooked payloads are mip-addressable, not page-addressable.
-- Unit-test execution was blocked by unrelated duplicate `Engine` type compile errors in the unit-test project. Confirm the current state before the next run.
-- Full cold/warm imported-scene validation still needs fresh runs.
-
-### Historical Baselines
-
-#### May 1 Runtime Baseline
-
-Session root:
-
-`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-05-01_15-37-23_pid47288/`
-
-Compare future runs against:
-
-- `log_opengl.txt`
-- `log_general.txt`
-- `log_rendering.txt`
-- `profiler-fps-drops.log`
-- `profiler-render-stalls.log`
-
-Baseline symptoms:
-
-- Imported-scene texture promotion stayed delayed while import scopes forced `allowPromotions=False`.
-- `XRWindow.ProcessPendingUploads` appeared as a render-thread stall during startup.
-- Runtime-managed progressive uploads still pushed whole mips often enough to produce multi-frame stalls.
-- OpenGL emitted `GL_INVALID_VALUE` from `TexSubImage2D` during imported texture residency changes, including the Sponza bump-map repro path.
-- Resident transitions repeated for textures whose target residency had not materially changed.
-- Shadow atlas tile rendering and texture upload bursts contended during startup.
-
-Full baseline note: [Texture Management Runtime Baseline - 2026-05-01](texture-management-runtime-baseline-2026-05-01.md).
-
-#### May 1 Streaming Analysis
-
-Session root:
-
-`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-05-01_18-06-42_pid6412/`
-
-Key observations:
-
-- No `Texture.UploadValidationFailed` events were logged in this run.
-- `log_opengl.txt` did not show the earlier invalid sparse upload rectangle failure.
-- Preview residency was delayed: at `18:07:15.157`, only 2 of 76 tracked textures had previews ready while all 76 were pending.
-- All 76 previews were not ready until `18:07:52.032`, roughly 37 seconds later.
-- Visible texture work did not fully drain until `18:08:17.362`.
-- The run logged 228 `Texture.UploadSlow` rows and 330 `Texture.TransitionCanceled` rows.
-- Sparse transition cancellations were concentrated in bump maps, especially `sponza_column_b_bump.png`, `sponza_thorn_bump.png`, `background_bump.png`, and `lion_bump.png`.
-- Texture finalization and shadow atlas work overlapped in the same hitch window.
-
-Full analysis: [Texture Streaming Run Analysis - 2026-05-01 18:06](texture-streaming-run-analysis-2026-05-01-180642.md).
-
-#### May 1 Sparse-To-Dense Follow-Up
-
-Session root:
-
-`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-05-01_21-31-27_pid28976/`
-
-Observed failure:
-
-- Six `Texture.UploadValidationFailed` events appeared during promotion-after-demotion.
-- Uploads tried to write `512x512` data to `mip=2` while the allocated GL level was `256x256`.
-- The dense upload path inherited stale sparse residency state, so mip indices were offset by the prior sparse `residentBase`.
-
-Implemented fix:
-
-- `XRTexture2D.ApplyResidentData` clears sparse state when publishing dense/tiered resident data.
-- `GLTexture2D.UpdateMipmaps` recreates GL storage when leaving sparse storage even if logical dimensions and level count appear compatible.
-- `Texture.SparseStateClearedForDenseUpload` identifies the boundary in future logs.
-
-Validation target:
-
-- Promotion-after-demotion should leave `Texture.UploadValidationFailed` at zero.
-- `Texture.SparseStateClearedForDenseUpload` should appear only for legitimate sparse-to-dense handoffs.
-- If black surfaces persist with no upload validation failure, inspect `Texture.BindingRisk` and material/shader binding state.
-
-### Validation Commands
+Useful commands:
 
 ```powershell
 dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore
+dotnet build .\XREngine.Runtime.Rendering.OpenGL\XREngine.Runtime.Rendering.OpenGL.csproj --no-restore
+dotnet build .\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj --no-restore
 dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore
-dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "GLTexture2DContractTests|ImportedTextureStreamingContractTests|ImportedTextureStreamingPhaseTests|RuntimeRenderingHostServicesTests" --no-restore
+dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "GLTexture2DContractTests|ImportedTextureStreamingContractTests|ImportedTextureStreamingPhaseTests|RuntimeRenderingHostServicesTests|XRTextureVulkanParityContractTests" --no-restore
 ```
 
-### Core Validation Checklist
+Settings and environment variables:
 
-- [ ] Run `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore`.
-- [ ] Run `dotnet build .\XREngine.Editor\XREngine.Editor.csproj --no-restore`.
-- [ ] Run the targeted unit tests. If the duplicate `Engine` test-project blocker still exists, record it.
-- [ ] Capture a fresh cold-cache Sponza startup run.
-- [ ] Capture a fresh warm-cache Sponza startup run.
-- [ ] Link the resulting `log_textures.txt`, `log_opengl.txt`, `log_rendering.txt`, `log_general.txt`, profiler FPS-drop log, and profiler render-stall log.
-- [ ] Confirm `log_textures.txt` is created for Debug file-logging sessions.
-- [ ] Confirm no texture upload emits `GL_INVALID_VALUE` in `log_opengl.txt`.
-- [ ] Confirm `Texture.UploadValidationFailed` remains zero in normal scene runs.
-- [ ] Confirm stale-generation cancellation is visible when forced by a resize/recreate test.
-- [ ] Confirm non-sparse full-push storage repair happens only for non-sparse, non-external-memory immutable textures.
-- [ ] Confirm no single texture upload work item exceeds the configured texture budget by more than one chunk.
-- [ ] Confirm large texture promotions advance over multiple frames without black mips or invalid sampling.
-- [ ] Confirm pending texture uploads are visible with count, bytes, and oldest wait.
-- [ ] Confirm `StartProgressiveCoroutine`-style texture jobs no longer take 30-100 ms render-thread slices.
+- Set `XRE_WORLD_MODE=UnitTesting` for Unit Testing World scene runs.
+- Set `XRE_FORCE_MESH_SUBMISSION_STRATEGY=CpuDirect` when a Vulkan texture smoke run must avoid other submission changes.
+- Set `XRE_PROFILER_ENABLED=1` when the check needs FPS-drop and render-stall logs.
+- Set `XRE_GL_DEBUG=1` when an OpenGL upload check needs debug output.
+- Set `XRE_VULKAN_VALIDATION=1` when a Vulkan run needs validation layers.
+- Set `XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE=1` to hold Vulkan imported textures at preview residency.
+- Set `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1` to test the experimental per-mip Vulkan render-thread upload path.
+- Set `XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE=1` to request the transfer queue compatibility path.
+- Set `XRE_VULKAN_TEXTURE_UPLOAD_PREP_BUDGET_MS=<float>` to change the upload preparation budget.
+- Set `XRE_VULKAN_TEXTURE_UPLOAD_TRACE=1` to enable verbose Vulkan imported-texture upload logs.
+- `XRE_VULKAN_ASYNC_TEXTURE_UPLOAD=0` and `XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER=0` are legacy toggles. Imported texture uploads ignore them and log a compatibility message.
 
-### Cold-Cache Sponza Run
+Use `log_textures.*`, `log_opengl.*`, `log_vulkan.*`, `log_rendering.*`, `log_general.*`, profiler FPS-drop logs, profiler render-stall logs, `get_texture_streaming_summary`, `list_texture_streaming_textures`, `capture_render_pipeline_texture`, and the ImGui texture streaming panel.
 
-Record:
+## Checks
 
-- [ ] Session root.
-- [ ] Commit SHA or branch.
-- [ ] GPU, driver, CPU, and memory.
-- [ ] Raw source decode count.
-- [ ] Cache miss count.
-- [ ] Cache write count.
-- [ ] First visible preview time.
-- [ ] All visible previews resident time.
-- [ ] Pending visible transition drain time.
-- [ ] Upload validation failure count.
-- [ ] Final promoted/preview texture counts.
+### Runtime mip streaming
 
-Pass criteria:
+Architecture: [Texture Streaming](../../../architecture/rendering/texture-streaming.md)
 
-- [ ] First import writes streaming-usable cached `XRTexture2D` assets with enough resident data for preview and promotion.
-- [ ] Visible textures begin promotion during import when bound or visible.
-- [ ] The run does not reach a stable visible state with dozens of visible textures and only a handful of previews ready.
-- [ ] Black placeholder surfaces are limited to true failure paths, not normal startup streaming.
-- [ ] `Texture.CacheWrite` and cache fallback events explain all source decode paths.
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Runtime and editor builds | Run the build commands from Setup. | Runtime, OpenGL, Vulkan, and editor projects build. | Open | none |
+| Texture contract tests | Run the targeted `dotnet test` command from Setup. | Texture contract tests pass or unrelated failures are filed. | Open | none |
+| Cold-cache Sponza startup | Start `Editor (Unit Testing World)` with a cold texture cache. Record session root, branch, commit, GPU, driver, CPU, memory, raw source decode count, cache miss count, cache write count, first visible preview time, all visible previews resident time, pending visible transition drain time, upload validation failure count, and final promoted and preview counts. | First import writes streamable cache data. Visible textures get previews quickly. The run does not stabilize with many visible textures and few ready previews. | Open | none |
+| Warm-cache Sponza startup | Start `Editor (Unit Testing World)` with the same scene and a warm cache. Record cache hits, slow cache reads, worst `cacheReadMs`, worst `cacheParseMs`, promotion queue wait, upload timings, preview times, drain time, CPU prep events by phase, cancellations, and final promoted and preview counts. | Warm-cache streaming uses `AssetTextureStreamingSource`. It avoids `MagickImage` source decode except for missing, stale, unreadable, or non-streamable fallback paths. | Open | none |
+| Texture logs | Run a Debug file-logging editor session. Inspect the session logs. | `log_textures.txt` is present. The schema is stable or a breaking change is documented. | Open | none |
+| OpenGL upload validity | Run cold-cache and warm-cache Sponza on OpenGL. Inspect `log_opengl.*` and `log_textures.*`. | No texture upload emits `GL_INVALID_VALUE`. `Texture.UploadValidationFailed` stays at zero in normal scene runs. | Open | 2026-05-01 |
+| Promotion after demotion | Reproduce a texture demotion and promotion. Inspect `log_textures.*`. | The texture does not expose black or invalid mips. `Texture.SparseStateClearedForDenseUpload` appears only for valid sparse-to-dense handoffs. | Open | 2026-05-01 |
+| Stale generation cancellation | Force texture resize or recreate while a residency transition is pending. | Stale work cancels before publication. Logs name the cancellation point. | Open | none |
+| Upload budget | Set a low texture upload budget and move the camera near large textures. | No upload work item exceeds the budget by more than one permitted chunk. Large promotions advance over multiple frames with no black mips or invalid sampling. | Open | none |
+| Pending upload telemetry | Open the texture streaming panel during active streaming. | Pending upload count, bytes, and oldest wait are visible. | Open | none |
+| Render-thread slice removal | Inspect profiler logs during active streaming. | Progressive texture jobs no longer take 30-100 ms render-thread slices. | Open | none |
+| Policy stability | Keep the camera stable during a scene run. | Duplicate `ApplyResidentData` calls disappear. Newly promoted visible textures do not demote during cooldown. Quality is monotonic. | Open | none |
+| Pressure demotion | Run with a small texture budget. | Pressure demotions log bytes reclaimed and reasons. Visible maps keep a preview floor unless explicit pressure requires a 1 px target. | Open | none |
+| Cancellation reuse | Reproduce cancellation-heavy bump maps. | Compatible superseded transitions reuse resident data and do not repeatedly decode or prepare identical data. | Open | 2026-05-01 |
+| Binding-risk diagnosis | Reproduce a black surface with no upload validation failure. | `Texture.BindingRisk` entries explain the binding path, or the failure is filed against material, shader, lighting, or non-streaming binding code. | Open | 2026-05-01 |
 
-### Warm-Cache Sponza Run
+### Cooked texture payloads and compression
 
-Record:
+Architecture: [Cooked Texture Payloads](../../../architecture/assets/cooked-texture-payloads.md)
 
-- [ ] Session root.
-- [ ] Commit SHA or branch.
-- [ ] Cache hit count.
-- [ ] Slow cache read count.
-- [ ] Worst `cacheReadMs`.
-- [ ] Worst `cacheParseMs`.
-- [ ] Promotion queue wait.
-- [ ] Render-thread upload chunk timings.
-- [ ] Time to all visible previews resident.
-- [ ] Time to pending visible transitions drained.
-- [ ] Slow CPU prep events by phase.
-- [ ] Transition cancellation count.
-- [ ] Final promoted/preview texture counts.
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Baseline imports | Import a third-party PNG and a normal-map sample before compressed payload work. Record generated `.asset` path, cooked cache path, `XRTS` cache logs, preview behavior, material preview, and warm-cache load timing. | Existing v1 `XRTS` behavior is documented before a format change. | Open | none |
+| Metadata-only asset round trip | Load and save a generated texture asset that points to a cooked payload. | Metadata survives the round trip. The payload remains the byte authority. | Open | none |
+| Missing or stale payload fallback | Remove or stale the cooked payload for a generated texture in the editor. | The editor falls back to source import with diagnostics. Runtime fails unless a fallback is configured. | Open | none |
+| `XRTS` descriptor validity | Use fixture textures with NPOT dimensions and a final 1x1 mip. | Mip descriptors have valid dimensions, offsets, lengths, row metadata, and checksums. | Open | none |
+| Corrupt payload rejection | Test bad magic, unsupported version, invalid offset, invalid length, truncated payload, and unsupported storage format. | The reader rejects the payload with one primary diagnostic. | Open | none |
+| Cache key freshness | Change role, color space, compression profile, backend profile, encoder id, mip policy, normal convention, and alpha mode. | Each relevant setting changes the variant key. Unchanged settings keep a stable key. | Open | none |
+| BC cook output validation | Cook fixture albedo, normal, mask, and HDR textures when the encoder path exists. | Output has correct block dimensions, mip count, data length, selected format, and source alpha behavior. | Open | none |
+| OpenGL dense compressed upload | Validate BC7 color, BC5 normal, BC4 scalar mask, and BC6H HDR textures when samples exist. | Textures render in the editor preview. No upload validation failure, `GL_INVALID_ENUM`, or `GL_INVALID_VALUE` appears. | Open | none |
+| Material sampling comparison | Render compressed and uncompressed validation materials. Capture screenshots or rendered comparisons. | Role-specific sampling is correct. Normal Z reconstruction and sRGB/linear handling match the material contract. | Open | none |
+| Quality mip metrics | Cook fixture mips for color, alpha, normals, masks, and HDR textures. | Metrics report color, normal, scalar, and alpha error where supported. | Open | none |
+| Vulkan compressed texture support | Run a BC7 color texture on Vulkan after compressed upload lands. | Vulkan uses a supported compressed `VkFormat`, rejects unsupported formats before queue submission, and logs selected format and upload bytes. | Open | none |
+| Tiered compressed residency | Run a compressed dense texture through tiered residency. | Budget telemetry separates logical decoded bytes, cooked stored bytes, upload bytes, and committed GPU bytes. Existing `Rgba8` sparse streaming does not regress. | Open | none |
+| Editor smoke after compression | Import PNG albedo, PNG normal, and EXR/HDR if available. Warm-cache reload. Preview the generated `.asset`. Render a material that uses compressed textures. | Import, cache reload, preview, and rendering all work with clear diagnostics. | Open | none |
 
-Pass criteria:
+### Vulkan dense texture streaming
 
-- [ ] A second import of the same source chooses `AssetTextureStreamingSource`.
-- [ ] Warm-cache streaming does not construct `MagickImage` from the original source path except for missing, stale, unreadable, or non-streamable cache fallback.
-- [ ] Cache usability checks read only the manifest/header and do not hydrate resident mip blobs.
-- [ ] `Texture.CacheReadSlow` parse times are materially lower after metadata-first source loading.
-- [ ] `cacheReadMs` and `cacheParseMs` clearly separate file I/O, manifest parse, mip blob copy, CPU conversion, and GPU upload once that telemetry split lands.
+Architecture: [Texture Streaming](../../../architecture/rendering/texture-streaming.md#vulkan-upload-and-publication-contract)
 
-### Residency And Policy Checks
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Vulkan hitch scenario | Run a reproducible Vulkan texture-streaming hitch scenario in Unit Testing World Sponza. Capture profiler logs during camera motion that triggers promotions and demotions. | Frame-time, upload preparation, upload command recording, descriptor publication, and command-buffer dirty or rerecord p50/p95/p99 are recorded. | Open | none |
+| Promotion and demotion cause | Compare profiler markers during Vulkan texture promotion and stream-out. | Frame drops identify promotion, demotion, or another subsystem. | Open | none |
+| Large visible promotion | Move the camera close to a large visible texture. | No noticeable frame drop occurs in the Vulkan editor. | Open | none |
+| Texture demotion | Move away from high-detail textures under budget pressure. | Stream-out and demotion cause no noticeable frame drop. | Open | none |
+| Render-thread work per transition | Inspect Vulkan upload telemetry. | Render-thread work includes only queue polling, publication checks, descriptor swap, command-buffer dirty marking, and retirement enqueue. | Open | none |
+| Upload preparation budget | Inspect Vulkan upload timing during steady movement and active bursts. | Render-thread upload preparation p95 is below 0.5 ms during steady movement and below 1.0 ms during bursts. | Open | none |
+| Upload transfer telemetry | Run with `XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE` enabled and disabled. | Transfer work appears in telemetry. The compatibility log is explicit. No upload failure is hidden. | Open | none |
+| Synchronized publication correctness | Run Vulkan Unit Testing World Sponza with streaming enabled. | No `ErrorDeviceLost`, upload VUID, stale descriptor sample, or black texture frame appears. Descriptor publication is generation-gated and frame-safe. | Open | none |
+| OpenGL parity | Repeat the same texture policy scenario on OpenGL. | Shared policy behavior is unchanged. | Open | none |
+| Device shutdown with queued uploads | Shut down the Vulkan device while uploads are queued. | Teardown is clean. There is no leak or device loss. | Open | none |
+| Reload during upload | Reload or import a texture while uploads are queued. | Stale work cancels. The new generation publishes. | Open | none |
+| Preview freeze | Run with `XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE=1`. | `previewReady` equals `tracked`, `promoted=0`, no device-loss logs appear, and Sponza albedo and final output are visible and nonblack. | Open | none |
+| Low VRAM budget | Run with a small texture budget and fast camera motion. | Queued demotions appear. Old generations retire after frame completion. Pending demotions cancel when textures become visible. Sampling remains valid. | Open | none |
+| Startup cache states | Run cold-cache and warm-cache Vulkan startup. | Preparation, transfer, completion, publication, and retirement cost stays bounded. | Open | none |
+| Camera sweep soak | Run 120 automated close and far camera moves. | Stale generations cancel at every lifecycle state. No invalid sampling occurs. | Open | none |
+| Active panel | Open the texture streaming panel while Vulkan promotions are active. | The panel causes no hitch or invalid state. | Open | none |
+| Render target captures | Capture `AlbedoOpacity`, `Normal`, `RMSE`, `AmbientOcclusionTexture`, `LightingAccumTexture`, `HDRSceneTex`, and final post-process output after promotion. | The outputs are textured and nonblack. | Open | none |
+| Progressive per-mip path | After per-mip Vulkan progressive upload lands, run with `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1` for close stationary view, rapid motion, cancellation during movement, and budget pressure. | Each mip becomes visible only after its upload completes. | Open | none |
+| Validation-layer-clean run | Start `Editor (Unit Testing World, Validation Layers)` and run a streaming scenario. | Vulkan validation logs are clean for dense texture streaming. | Open | none |
 
-- [ ] Duplicate `ApplyResidentData` calls for unchanged residency disappear from logs.
-- [ ] Newly promoted visible textures do not demote during the cooldown window.
-- [ ] Texture quality changes are monotonic under stable camera/view conditions.
-- [ ] Low-VRAM-budget runs log pressure-driven demotions with bytes reclaimed and reasons.
-- [ ] Visible normal, bump, height, alpha, mask, and opacity maps stay at a preview-size floor unless explicit VRAM pressure requires a 1px target.
-- [ ] Cancellation-heavy bump maps no longer repeatedly decode or prepare identical resident data after compatible superseded transitions.
-- [ ] `Texture.SparseStateClearedForDenseUpload` appears only when a texture legitimately crosses from sparse residency to dense/tiered upload.
-- [ ] If a future black-surface repro has no `Texture.UploadValidationFailed` and no sparse-to-dense warning nearby, file the issue against material, shader, lighting, or non-streaming binding paths.
+### Sparse residency and virtual texturing
 
-### Render-Work And Diagnostics Checks
+Architecture: [Texture Streaming](../../../architecture/rendering/texture-streaming.md)
 
-- [ ] Shadow atlas tile bursts no longer coincide with unbounded texture upload queue waits.
-- [ ] Texture promotions continue at a controlled rate while shadows are active.
-- [ ] `Texture.DelayedByShadow` identifies frames where shadow work consumes the shared render-work budget first.
-- [ ] `TextureStreaming.FinalizeSparseTransitions` no longer waits for 15-17 second spans during Sponza startup.
-- [ ] Slow-frame logs identify which subsystem consumed the render-work budget.
-- [ ] The ImGui texture streaming diagnostics panel identifies the top VRAM textures and oldest pending uploads live.
-- [ ] The diagnostics panel remains usable with hundreds of tracked textures.
-- [ ] The panel is disabled or low-overhead by default in normal editor operation.
-- [ ] Summary/slow texture logging does not introduce per-frame allocations in hot paths.
-- [ ] `log_textures.txt` line schema is stable in a fresh editor run or any breaking change is documented.
-- [ ] `Texture.BindingRisk` entries are either expected non-streaming paths or tracked follow-ups.
-- [ ] `Texture0` sampler binding errors are gone or explained by a separate non-streaming path.
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| OpenGL partial sparse gate | Enable the future partial sparse path only after code work lands. Validate material UV transforms, wrapping, oblique anisotropic surfaces, high-speed motion, stereo divergence, and near-full requests. | Partial sparse residency is disabled by default. It enables only behind an explicit renderer setting after cross-vendor validation. | Open | none |
+| Page-aligned math | Run tests for page-aligned region math, sparse-texture2 edge regions, mip-tail behavior, near-full coverage, repeat, mirror, clamp, out-of-range UVs, and generated-UV fallback. | Page selections are valid and never sample uncommitted regions. | Open | none |
+| Large virtual textures | Validate with 16k and larger virtual textures, camera sweeps, high-speed motion, and teleports after SVT lands. | Coarse fallback remains valid. Cache requests stay bounded. | Open | none |
+| SVT filtering | Validate repeat, mirror, clamp borders, bilinear and trilinear seams, compressed block alignment, and oblique anisotropic surfaces. | Sampling has no visible seams and respects the wrap mode. | Open | none |
+| Cache exhaustion | Force physical cache exhaustion and retire old page-table versions. | Page-table mappings revoke before slot reuse. Old versions do not reference retired slots. | Open | none |
+| VR multi-view | Validate stereo divergence, page request union, and foveated priority before SVT is enabled for VR content. | Both eyes share physical pages. The finest important request wins. | Open | none |
+| Vulkan sparse hardware | On supported hardware, run validation-layer-clean Vulkan sparse image residency. | Bind, copy, publish, unbind, and memory reuse are ordered and device-loss-safe. | Open | none |
+| Bindless deferred texturing | Validate non-stereo opaque deferred first. Then validate MSAA, stereo, transparent, and forward-only follow-ups. | Material records never reference invalid dense, sparse, or virtual data. | Open | none |
+| Neural texture compression | Compare material captures and channel metrics after neural cook or decode lands. | The conventional fallback and any shader decode path match the accepted quality targets. | Open | none |
+| Runtime virtual textures | Validate terrain-object blending, large decal cases, dirty regions, and fallback when page generation misses a frame. | RVT pages reuse SVT cache rules and never stall the frame. | Open | none |
 
-### Allocation Audit
+### Diagnostics, profiling, and allocation
 
-Run the allocation reporting tool against these paths and capture the before/after delta in `docs/work/audit/`:
+Architecture: [Texture Streaming](../../../architecture/rendering/texture-streaming.md#diagnostics)
 
-- [ ] Registry snapshot collection.
-- [ ] Usage recording.
-- [ ] Policy scoring.
-- [ ] Transition queueing.
-- [ ] Scheduler submit/execute.
-- [ ] OpenGL upload chunks.
-- [ ] Texture diagnostics panel while closed.
-- [ ] Texture diagnostics panel while open with hundreds of tracked textures.
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Shadow contention | Run Sponza startup while shadow atlas updates are active. | Shadow atlas bursts no longer coincide with unbounded texture upload waits. `Texture.DelayedByShadow` identifies frames where shadow work consumes the shared budget first. | Open | 2026-05-01 |
+| Sparse finalization wait | Inspect `log_general.*` and `log_textures.*` during startup. | `TextureStreaming.FinalizeSparseTransitions` does not wait for 15-17 second spans. | Open | 2026-05-01 |
+| Slow-frame attribution | Inspect FPS-drop and render-stall logs. | Slow-frame logs identify which subsystem consumed the render-work budget. | Open | none |
+| Diagnostics panel scale | Open the texture streaming panel with hundreds of tracked textures. | It identifies top VRAM textures and oldest pending uploads. It remains usable and low-overhead by default. | Open | none |
+| Logging allocation safety | Inspect allocation reports for summary and slow texture logging. | Logging introduces no avoidable per-frame hot-path allocations. | Open | none |
+| Allocation audit | Run `Report-NewAllocations` and inspect registry snapshots, usage recording, policy scoring, transition queueing, scheduler submit/execute, OpenGL upload chunks, Vulkan preparation/publication, and diagnostics panel open and closed. | New LINQ, captured lambdas, string formatting, boxing, transient lists, and avoidable heap allocations are flagged. | Open | none |
+| Hardware profile | Record GPU, driver, CPU, memory, renderer, cache state, and validation switches for each run. | Each validation result can be compared across hardware. | Open | none |
 
-Hot-path validation should flag new LINQ, captured lambdas, string formatting, boxing, transient lists, and avoidable heap allocations.
+## Hardware Matrix
 
-### Run Record Template
-
-Copy this section for each new validation run.
-
-#### YYYY-MM-DD Scenario Name
-
-Session root:
-
-`Build/Logs/...`
-
-Build:
-
-- Branch:
-- Commit:
-- Configuration:
-- Renderer:
-- GPU and driver:
-- CPU and memory:
-- Cache state: cold or warm
-
-Logs:
-
-- [ ] `log_textures.txt`
-- [ ] `log_opengl.txt`
-- [ ] `log_rendering.txt`
-- [ ] `log_general.txt`
-- [ ] `profiler-fps-drops.log`
-- [ ] `profiler-render-stalls.log`
-
-Metrics:
-
-| Metric | Value |
-|---|---:|
-| First visible preview time | |
-| All visible previews resident time | |
-| Pending visible transition drain time | |
-| Cache hits | |
-| Cache misses | |
-| Raw source decodes | |
-| Transition cancellations | |
-| Upload validation failures | |
-| Texture `GL_INVALID_VALUE` errors | |
-| Worst queue wait | |
-| Worst active upload chunk | |
-| Worst sparse finalization wait | |
-| Final promoted textures | |
-| Final preview textures | |
-
-Result:
-
-- [ ] Pass
-- [ ] Fail
-- [ ] Inconclusive
-
-Notes:
-
-- TBD
-
-### Closeout Criteria
-
-This validation line can be closed when:
-
-- [ ] Runtime and editor builds pass.
-- [ ] Targeted texture tests pass or remaining failures are proven unrelated and tracked elsewhere.
-- [ ] Cold-cache and warm-cache Sponza runs are linked with metrics.
-
-## Imported Checks
-
-### From vulkan-async-texture-streaming-upload-todo.md
-
-Baseline and performance:
-
-- [ ] Run a reproducible Vulkan texture-streaming hitch scenario in the Unit Testing World Sponza scene. Capture profiler logs while camera motion triggers promotions and demotions.
-- [ ] Record p50, p95, and p99 for frame time, render-thread upload preparation, upload command recording, descriptor publication, and command-buffer dirty or re-record time.
-- [ ] Confirm whether observed frame drops correlate with promotion, demotion, or both.
-- [ ] Large visible texture promotion. Expected: no noticeable frame drop in the Vulkan editor.
-- [ ] Texture stream-out and demotion. Expected: no noticeable frame drop.
-- [ ] Render-thread upload work per transition. Expected: only queue polling, publication checks, descriptor swap, command-buffer dirty marking, and retirement enqueue.
-- [ ] Render-thread upload preparation p95. Expected: below 0.5 ms during steady camera movement and below 1.0 ms during active streaming bursts.
-- [ ] Upload transfer work. Expected: visible in telemetry; it does not block graphics recording except at descriptor publication.
-- [ ] Telemetry. Expected: shows queue depth, oldest wait, preparation time, transfer time, publication time, bytes uploaded, and render-thread upload cost.
-- [ ] If a dedicated transfer queue path is active, measure whether it improves frame time on target hardware.
-
-Correctness:
-
-- [ ] Run Vulkan Unit Testing World Sponza with texture streaming enabled. Capture before/after profiler logs for camera sweeps that force promotions and demotions.
-- [ ] Expected: no `ErrorDeviceLost`, upload VUID, stale descriptor sample, or black texture frame.
-- [ ] Descriptor publication. Expected: generation-gated and frame-safe; no descriptor points at a retired image.
-- [ ] Compare OpenGL behavior. Expected: shared policy behavior is unchanged.
-- [ ] Run with `XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE` enabled and disabled. Expected: the compatibility log is explicit and no upload failure is hidden.
-- [ ] Shut down the device while uploads are queued. Expected: clean teardown with no leak or device loss.
-- [ ] Reload or import a texture while uploads are queued. Expected: stale work is canceled; the new generation publishes.
-- [ ] Apply memory-pressure demotion with fast camera movement. Expected: pending demotions cancel when textures become visible again; no invalid sampling.
-
-### From vulkan-imported-texture-streaming-todo.md
-
-- [ ] Run with `XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE=1`. Expected: `previewReady` equals `tracked`, `promoted=0`, no device-loss logs, and visible, nonblack Sponza albedo and final output.
-- [ ] Move the camera close with high-priority textures in view. Expected: high-priority textures promote before low-priority or offscreen textures.
-- [ ] Run with a small VRAM budget. Expected: queued demotions appear; old generations retire after frame completion; no material samples invalid image views; quality degrades predictably without popping to missing textures.
-- [ ] Cold-cache startup on Vulkan.
-- [ ] Warm-cache startup on Vulkan.
-- [ ] Run 120 automated close and far camera moves.
-- [ ] Open the texture streaming panel while promotions are active. Expected: no hitch or invalid state.
-- [ ] Capture `AlbedoOpacity`, `Normal`, `RMSE`, `AmbientOcclusionTexture`, `LightingAccumTexture`, `HDRSceneTex`, and the final post-process output after promotion. Expected: textured, nonblack output.
-- [ ] After per-mip Vulkan progressive upload lands, run with `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1` for: close stationary view, rapid camera motion, cancellation during movement, and texture budget pressure.
+| Renderer | Hardware | Driver | Scenario | Status | Last evidence |
+|---|---|---|---|---|---|
+| OpenGL | Windows desktop GPU with sparse texture support | TBD | Cold and warm Sponza, sparse-to-dense handoff, allocation audit | Open | 2026-05-01 |
+| OpenGL | Windows desktop GPU without sparse texture support | TBD | Dense fallback and cache authority | Open | none |
+| Vulkan | Windows desktop GPU with validation layers | TBD | Dense imported streaming and publication | Open | none |
+| Vulkan | Windows desktop GPU without a dedicated transfer queue | TBD | Graphics-queue compatibility path | Open | none |
+| Vulkan | Low-memory or constrained budget profile | TBD | Pressure demotion and cancellation | Open | none |
 
 ## Failures
 
 | Check | Symptom | Investigation or code item |
 |---|---|---|
+| May 1 runtime baseline | Imported-scene texture promotion stayed delayed. OpenGL emitted invalid upload rectangles. Shadow atlas work and texture uploads contended. | [Texture Management Runtime Baseline - 2026-05-01](texture-management-runtime-baseline-2026-05-01.md) |
+| May 1 streaming analysis | Visible previews took about 37 seconds to become ready. The run logged many slow upload and transition cancellation rows. | [Texture Streaming Run Analysis - 2026-05-01 18:06](../../investigations/texturing/texture-streaming-run-analysis-2026-05-01-180642.md) |
+| Sparse-to-dense promotion after demotion | Six uploads tried to write `512x512` data to a `256x256` allocated mip. | [Texture Streaming Run Analysis - 2026-05-01 18:06](../../investigations/texturing/texture-streaming-run-analysis-2026-05-01-180642.md) |
+| Raw source decode remains in hot path | Preview starvation and repeated source decode can keep visible surfaces low resolution or black during startup. | [Texture Runtime, Streaming, And Virtual Texturing TODO](../../todo/texturing/texture-runtime-streaming-virtual-texturing-todo.md#open-code-items) |
+| GPU-native compressed payloads are missing | Cooked payloads stay uncompressed and use more VRAM and upload bandwidth than needed. | [Texture Compression And Cooked Texture Cache TODO](../../todo/texturing/texture-compression-and-cooked-cache-todo.md#open-code-items) |

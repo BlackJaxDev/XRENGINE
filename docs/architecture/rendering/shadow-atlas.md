@@ -5,7 +5,6 @@ This document describes the dynamic shadow atlas: the allocator, relevance, thre
 Related: [Default Render Pipeline Notes](default-render-pipeline-notes.md), [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md). Open work: [Shadow Atlas Overhaul TODO](../../work/todo/rendering/shadows/shadow-atlas-overhaul-todo.md). Checks: [Shadow Validation](../../work/testing/rendering/shadow-validation.md).
 
 ## Type And File Map
-
 | Type | File | Responsibility |
 |---|---|---|
 | `ShadowAtlasManager` | `ShadowAtlasManager.cs` and partials | Request intake, solve, render plan, publication, completions. |
@@ -59,7 +58,6 @@ Sticky demotion keeps a recently demoted entry as the demotion target for `Demot
 - Atlas cameras include every active viewport camera of the world and both VR eye viewports. Render-on-demand viewports stay in the camera set.
 
 ## Threading And Publication
-
 | Step | Thread | Call |
 |---|---|---|
 | Drain completions, build requests, solve, build plan | Collect-visible thread | `Lights3DCollection.CollectVisibleItems` → `PlanShadowAtlasRequests` → `ShadowAtlas.BeginFrame`, `Submit`, `SolveAllocations` |

@@ -172,7 +172,6 @@ and XREngine.Rendering.Vulkan.DeviceBootstrap; renderer adapter partials and
 wrappers remain in XREngine.Rendering.Vulkan. Global usings bridge those
 internal domains without exposing them from the leaf assembly. New code must
 depend on the focused owner rather than ambient facade state.
-
 | Authority | Mutable responsibility |
 | --- | --- |
 | `VulkanDeviceContext` | Physical/logical device identity, queues, enabled capabilities, extension commands, and the per-device backend-object context. |
@@ -181,7 +180,6 @@ depend on the focused owner rather than ambient facade state.
 | `VulkanResourceLifetimeTracker` / `VulkanResourceRetirementQueue` | Resource-use publication and deferred destruction. |
 | `VulkanDescriptorManager` / `VulkanPipelineManager` | Device-lifetime descriptor and graphics/compute pipeline caches. |
 | `VulkanOpenXrBackend` / `VulkanImGuiBackend` | Vulkan-specific XR presentation and ImGui GPU integration over shared authorities. |
-
 | Folder | Purpose |
 | --- | --- |
 | `Bootstrap/` | Instance, surface, physical/logical device setup, extension probes, validation, OBS hook compatibility, and renderer initialization. |
@@ -311,7 +309,6 @@ wrapper code cannot mutate it after device publication.
 - `memoryDecompression` / `copyMemoryIndirect` — RTX IO support (NVIDIA)
 
 **Queues obtained:**
-
 | Queue | Purpose |
 |-------|---------|
 | `graphicsQueue` | Render command submission |
@@ -353,7 +350,6 @@ After logical-device feature resolution, Vulkan selects a render target path
 from `RuntimeEngine.EffectiveSettings.VulkanRenderTargetMode`; the
 `XRE_VK_RENDER_TARGET_MODE` environment variable overrides the persisted
 setting for the current process:
-
 | Value | Behavior |
 |-------|----------|
 | `Auto` | Uses dynamic rendering when `dynamicRendering` is supported; otherwise uses the retained legacy render-pass/framebuffer path. |
@@ -367,7 +363,6 @@ Startup diagnostics report the requested mode, resolved mode, and dynamic-render
 Vulkan material bindless mode is selected by
 `Engine.Rendering.Settings.Vulkan.Descriptors.BindlessMaterialMode` or the
 `XRE_VULKAN_BINDLESS_MATERIAL_MODE` environment variable:
-
 | Value | Behavior |
 |-------|----------|
 | `Auto` | Uses the descriptor-indexed material path when the feature profile and device capabilities allow it. |
@@ -526,7 +521,6 @@ Future changes are tracked in the
 
 Vulkan lowers the sorted `FrameOp` stream into reusable packet schedules before
 recording. `Vulkan.CommandRecording.Mode` controls the policy:
-
 | Mode | Behavior |
 |---|---|
 | `Auto` (default) | Uses the validated hybrid primary/secondary path for desktop targets and retains the safety quarantines below. |
@@ -542,7 +536,6 @@ desktop rendering while OpenXR is active retains its separate explicit allow
 policy.
 
 Additional diagnostic flags are:
-
 | Flag | Purpose |
 |---|---|
 | `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` | Forces deterministic single-thread chain processing for bisection. |
@@ -695,7 +688,6 @@ This is important for Vulkan performance since every state change requires a com
 From `SwapChain.cs`, the renderer negotiates surface format based on HDR preference:
 
 **HDR preferences (highest to lowest priority):**
-
 | Format | Color Space |
 |--------|-------------|
 | `R16G16B16A16_SFLOAT` | `EXTENDED_SRGB_LINEAR_EXT` |
@@ -705,7 +697,6 @@ From `SwapChain.cs`, the renderer negotiates surface format based on HDR prefere
 | `A2R10G10B10_UNORM_PACK32` | `HDR10_ST2084_EXT` |
 
 **SDR preferences:**
-
 | Format | Color Space |
 |--------|-------------|
 | `B8G8R8A8_SRGB` | `SRGB_NONLINEAR_KHR` |
@@ -793,7 +784,6 @@ Graphics timeline:
 `CreateAPIRenderObject()` in
 `BackendObjects/VulkanRenderer.RenderObjectFactory.cs` maps engine-generic
 render objects to Vulkan-specific wrappers:
-
 | Generic (Engine) | Vulkan Wrapper |
 |-------------------|----------------|
 | `XRMaterial` | `VkMaterial` |
@@ -820,7 +810,6 @@ Engine code requests the same generic `XR*` behavior from OpenGL and Vulkan. Eac
 backend wrapper must give equivalent correctness, invalidation, diagnostics,
 resource lifetime, and shader/material binding. Vulkan can use a native mechanism
 instead of an OpenGL-shaped one; code comments must state the difference.
-
 | Generic type | Vulkan wrapper | OpenGL wrapper |
 |---|---|---|
 | `XRMeshRenderer.BaseVersion` | `VkMeshRenderer` | `GLMeshRenderer` |
@@ -837,7 +826,6 @@ mesh wrapper only if duplicated geometry lifetime across direct, indirect, and
 meshlet paths proves that it is cleaner.
 
 Wrapper diagnostics and tests use one readiness vocabulary on both backends:
-
 | State | Meaning |
 |---|---|
 | `Generated` | The backend API object or wrapper cache handle exists. It does not mean that data, descriptors, programs, pipelines, or draws are ready. |
@@ -1024,7 +1012,6 @@ The material row contract is backend-neutral. OpenGL rows store indices into `Ma
 The descriptor-index shader variant emits `GL_EXT_nonuniform_qualifier` and samples `XR_BindlessMaterialTextures[nonuniformEXT(index)]`. It does not emit OpenGL bindless extensions or `uint64_t` sampler handles.
 
 `VulkanRenderer.BindlessMaterialCapability` exposes the current tier:
-
 | Tier | Meaning |
 | `DescriptorIndexingUnavailable` | Required descriptor-indexing features are missing or disabled. |
 | `DescriptorIndexingReady` | Device/profile prerequisites are available. |

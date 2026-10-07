@@ -21,9 +21,14 @@ One native path imports Unity `.anim` files, compiles the `HumanoidComponent` av
 ### Conformance corpus
 
 - [ ] Review and commit the three redistributable FBX fixtures, the five walk `.anim` files, the 15 schema-7 references, the manifest, and the runner files. Done when: the files are tracked.
+- [ ] Add conventional and arbitrary bone naming, distinct proportions and bind axes, missing optional roles, automatic mappings, and persisted editor-corrected mappings to the avatar corpus. Done when: the manifest covers each corpus dimension.
 - [ ] Add purpose-built clips and manifest rows for in-place motion, translation, turns, vertical motion, non-looping motion, mirror, loop pose, authored IK, no IK, weighted tangents, events, PPtr bindings, and supported compressed, dense, and streamed encodings, on each compatible avatar and each root setting. Done when: the manifest declares the rows with hashes, provenance, coordinate spaces, and tolerances.
 - [ ] Add manifest rows for externally referenced state, transition, interrupted transition, and 1D, 2D, and direct blend trees. Done when: each route has a declared reference row.
-- [ ] Add one avatar and one clip that were not used during solver design. Done when: the manifest marks them as unseen.
+- [ ] Add one avatar and one clip that were not used during solver design. Done when: the unseen avatar and clip pass the same native path and strict gates without source changes, clip-specific setup, or manual coordinate-flip configuration.
+
+### Editor persistence
+
+- [ ] Preserve explicit avatar mapping corrections across save, reopen, move, and reimport when the skeleton is structurally compatible. Report a precise conflict when it is not compatible. `HumanoidComponentEditor`, import mapping persistence. Done when: persisted corrections survive compatible asset changes and incompatible changes fail clearly.
 
 ### Documentation
 
@@ -41,21 +46,3 @@ One native path imports Unity `.anim` files, compiles the `HumanoidComponent` av
 - A second "exact" or "retargetable" playback backend, or any fitted, calibrated, or approximate fallback.
 - Moving the scene root only because a clip has Body Transform curves.
 - Skinned-mesh temporal ghosting. It is tracked as a rendering investigation.
-
-## Recovered Items To Triage
-
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/avatar/humanoid-body-root-compensation-todo.md`
-
-- [ ] Saving, reopening, moving, and reimporting a model preserves explicit
-  corrections when the skeleton is structurally compatible and reports a
-  precise conflict when it is not.
-- [ ] A previously unseen compatible avatar and clip satisfy the ratified
-  Unity-parity tolerances through the same native path without source changes,
-  clip-specific setup, or manual coordinate-flip configuration.
-- [ ] Include conventional and arbitrary bone naming, distinct proportions and
-  bind axes, missing optional roles, automatic mappings, and persisted editor-
-  corrected mappings in the avatar corpus.
-- [ ] Pass previously unseen multi-avatar/multi-clip conformance comparisons
-  within the same strict gates used for target-avatar playback.

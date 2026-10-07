@@ -6,6 +6,7 @@ Related:
 
 - [Vulkan Resource Lifetime And Retirement](vulkan-resource-lifetime-and-retirement.md)
 - [Vulkan Renderer](vulkan-renderer.md)
+- [Cooked Texture Payloads](../assets/cooked-texture-payloads.md)
 - [Texture Runtime, Streaming, And Virtual Texturing Design](../../work/design/texturing/texture-runtime-streaming-virtual-texturing-design.md) (future sparse page residency and virtual texturing)
 - [Texture Validation](../../work/testing/texturing/texture-validation.md)
 
@@ -16,7 +17,6 @@ The system streams whole mip levels. It is not virtual texturing. Cooked payload
 ## Service Split
 
 The renderer-neutral kernel is in `XREngine.Runtime.Rendering/Objects/Textures/2D/` and `XREngine.Runtime.Rendering/Runtime/`. Backends plug in through interfaces. The kernel never references a concrete graphics API.
-
 | Type | Responsibility |
 |---|---|
 | `ImportedTextureStreamingManager` | Frame-level coordinator. Collects usage, runs policy, admits transitions, applies per-frame limits, and publishes telemetry. |
@@ -31,7 +31,6 @@ The renderer-neutral kernel is in `XREngine.Runtime.Rendering/Objects/Textures/2
 | `TextureRuntimeDiagnostics` | Shared log and timing surface for cache reads, uploads, transitions, and rejections. |
 
 Backend implementations:
-
 | Backend | Type | Location |
 |---|---|---|
 | OpenGL dense (tiered) | `GLTieredTextureResidencyBackend` | `XREngine.Runtime.Rendering.OpenGL/.../Textures/OpenGLTextureResidencyBackends.cs` |
@@ -50,7 +49,7 @@ Backend implementations:
 - The source falls back to the original file when the cache asset is missing or when its binary payload is incompatible with the current format. The fallback is logged; it is not silent.
 - `TextureStreamingResidentDataReuseCache` keeps deep copies of recently decoded resident chains for a short time, so a canceled and requeued transition does not decode again.
 
-The `XRTS` payload stores a preview mip and per-mip offsets. Streamability checks read only the header and manifest. They do not hydrate mip blobs.
+The `XRTS` payload stores a preview mip and per-mip offsets. Streamability checks read only the header and manifest. They do not hydrate mip blobs. See [Cooked Texture Payloads](../assets/cooked-texture-payloads.md) for payload layout, cache-key rules, compression plans, and known limits.
 
 ## Residency Rules
 
@@ -84,7 +83,6 @@ Foreground readiness: when an accepted frame references an exact texture generat
 ## Flags And Environment Variables
 
 The constants are in `XREngineEnvironmentVariables`. Each flag has an editor preference mirror.
-
 | Variable | Effect |
 |---|---|
 | `XRE_VULKAN_IMPORTED_TEXTURE_PREVIEW_FREEZE=1` | Emergency kill switch. Clamps Vulkan imported textures to preview residency. Telemetry reports `vulkanFrozen` and `freezeReason`. Off by default. |

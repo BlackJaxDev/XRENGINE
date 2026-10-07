@@ -7,7 +7,7 @@ Validation: [Asset Import Validation](../../testing/assets/asset-import-validati
 
 ## Current State
 
-The shared cache contracts (`XREngine.Data/Core/Assets/Caching/`), exclusive `ModelBinaryCacheCodec`, backend registry, producer reports, cache identity, `ImportedEntityKey`, `ModelCookSettings`, and the defensive container reader and writer are in `XREngine.Runtime.ModelAssetPipeline/Importing/Caching/`. `ModelBinaryMeshletSectionCodec` and `ModelBinaryMeshletSectionService` serialize, stage, and hydrate model-owned meshlet payloads with primary-before-secondary precedence and repair from cached core geometry. No shared mesh core, skinning, or morph section codecs exist. Live `XRPrefabSource` hydration and cache publication do not exist; a valid container reports `CodecUnavailable`, so imports still run the cold source path.
+The shared cache contracts are in `XREngine.Data/Core/Assets/Caching/`. The exclusive `ModelBinaryCacheCodec`, backend registry, producer reports, cache identity, `ImportedEntityKey`, `ModelCookSettings`, defensive container reader, and defensive container writer are in `XREngine.Runtime.ModelAssetPipeline/Importing/Caching/`. `ModelBinaryMeshletSectionCodec` and `ModelBinaryMeshletSectionService` exist and handle model-owned meshlet payloads. Shared mesh core, skinning, skeleton, morph, and LOD section codecs are still incomplete. A valid container still reports `CodecUnavailable`, so imports use the cold source path.
 
 ## Open Code Items
 
@@ -33,7 +33,7 @@ The shared cache contracts (`XREngine.Data/Core/Assets/Caching/`), exclusive `Mo
 ### Prefab Hydration And Referenced Subassets
 
 - [ ] Add a cache-local `CookedModelDocument` with no dependency on `AssetManager` or editor assemblies. Done when: the type builds in `XREngine.Runtime.ModelAssetPipeline`.
-- [ ] Add an upper-layer `IImportedComponentCacheCodec` registry with stable keys, versions, required or optional policy, and bounded payloads. Map Unity component records at the `XREngine.Editor` boundary. Done when: ModelAssetPipeline has no Unity types and the registry round-trips a test component.
+- [ ] Add an upper-layer `IImportedComponentCacheCodec` registry with stable keys, versions, required or optional policy, and bounded payloads. Map serialized source component records at the `XREngine.Editor` boundary. Done when: `XREngine.Runtime.ModelAssetPipeline` has no editor importer types and the registry round-trips a test component.
 - [ ] Hydrate `XRPrefabSource` from the document through `SetField(...)`, and rebuild hierarchy, component, mesh, material, skin, morph, and animation references from cache-local IDs without source parsing. `XREngine.Runtime.Core/Scene/Prefabs/XRPrefabSource.cs`. Done when: a cold-versus-warm structural equality test passes.
 - [ ] Keep project-authored materials and remaps authoritative, and never write generated project assets during a warm load. Done when: a project-binding precedence test passes.
 - [ ] Store animation references only, and require durable embedded-texture publication before model-cache publication. Reject only the affected hydration group when a referenced output is missing. Done when: tests show no duplicated animation or texture bytes and a missing texture rejects only its group.
@@ -55,13 +55,13 @@ The shared cache contracts (`XREngine.Data/Core/Assets/Caching/`), exclusive `Mo
 
 - [ ] Stage a complete cache candidate during manual reimport, match entities to generated assets by `ImportedEntityKey`, and keep project GUIDs, remaps, and bindings. `XREngine.Editor/Importers/ThirdParty/AssetManager.ThirdPartyImport.cs`. Done when: a reimport test keeps GUIDs for matched entities.
 - [ ] Preview additions, removals, remaps, and identity breaks, then commit assets and cache as one recoverable transaction. Done when: a cancel or failure test keeps the previous assets and cache.
-- [ ] Show cache state, producer, rejection reason, dependency status, versions, and repair state in the editor, with rebuild, remove, inspect, and reimport actions. `XREngine.Editor/`. Done when: the inspector shows these fields for a cached model.
+- [ ] Show cache state, producer, rejection reason, dependency status, versions, and repair state in the editor. `XREngine.Editor/`. Done when: the inspector shows these fields for a cached model.
 
 ## Decisions Needed
 
-- [ ] Cross-process arbitration: named mutex or file lock, or a unique-temp race-safe protocol only? Owner: asset pipeline.
+- [ ] Choose cross-process arbitration: named mutex, file lock, or a unique-temp race-safe protocol only. Owner: asset pipeline.
 
 ## Out Of Scope
 
-- Texture payload storage (owned by the texture cache).
-- Migration of legacy YAML model caches. They are rebuilt from source.
+- Texture payload storage. The texture cache owns it.
+- Migration of legacy YAML model caches. The pipeline rebuilds them from source.

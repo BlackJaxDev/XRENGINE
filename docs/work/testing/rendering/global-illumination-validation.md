@@ -1,6 +1,27 @@
 # Global Illumination Validation
 
-Architecture: [Global Illumination Ownership And Selection](../../../architecture/rendering/global-illumination-ownership.md), [Global Illumination Providers guide](../../../developer-guides/gi/global-illumination.md), [DDGI guide](../../../developer-guides/gi/ddgi.md), [Vulkan Renderer: Deferred And Probe Resource Rules](../../../architecture/rendering/vulkan-renderer.md#deferred-and-probe-resource-rules), [Default Render Pipeline Notes](../../../architecture/rendering/default-render-pipeline-notes.md)  Code todos: [DDGI](../../todo/rendering/global-illumination/ddgi-implementation-todo.md), [Modular GI](../../todo/rendering/global-illumination/modular-gi-architecture-todo.md), [Radiance Cascades](../../todo/rendering/global-illumination/radiance-cascades-runtime-completion-todo.md), [Surfel GI](../../todo/rendering/global-illumination/surfel-gi-repair-todo.md), [LPV](../../todo/rendering/global-illumination/lpvgi-implementation-todo.md), [VCT and VXAO](../../todo/rendering/global-illumination/voxel-cone-tracing-and-vxao-implementation-todo.md), [Vulkan ReSTIR](../../todo/rendering/vulkan-restir-radiance-cache-gi-todo.md), [Vulkan Core Frame Loop Master TODO](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#open-code-items-moved-from-vulkan-deferred-and-probe-gi-fixes-todomd)
+## Scope
+
+This document owns manual, runtime, visual, hardware, profiler, benchmark, and soak checks for global illumination. It covers DDGI, the modular GI contract, Radiance Cascades, Surfel GI, light propagation volumes, voxel cone tracing, VXAO, ReSTIR GI, and Vulkan deferred/probe GI.
+
+## Architecture Links
+
+- [Global Illumination Ownership And Selection](../../../architecture/rendering/global-illumination-ownership.md)
+- [Global Illumination Providers guide](../../../developer-guides/gi/global-illumination.md)
+- [DDGI guide](../../../developer-guides/gi/ddgi.md)
+- [Vulkan Renderer: Deferred And Probe Resource Rules](../../../architecture/rendering/vulkan-renderer.md#deferred-and-probe-resource-rules)
+- [Default Render Pipeline Notes](../../../architecture/rendering/default-render-pipeline-notes.md)
+
+## Code Todo Links
+
+- [DDGI](../../todo/rendering/global-illumination/ddgi-implementation-todo.md)
+- [Modular GI](../../todo/rendering/global-illumination/modular-gi-architecture-todo.md)
+- [Radiance Cascades](../../todo/rendering/global-illumination/radiance-cascades-runtime-completion-todo.md)
+- [Surfel GI](../../todo/rendering/global-illumination/surfel-gi-repair-todo.md)
+- [LPV](../../todo/rendering/global-illumination/lpvgi-implementation-todo.md)
+- [VCT and VXAO](../../todo/rendering/global-illumination/voxel-cone-tracing-and-vxao-implementation-todo.md)
+- [Vulkan ReSTIR](../../todo/rendering/vulkan-restir-radiance-cache-gi-todo.md)
+- [Vulkan Core Frame Loop Master TODO](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#deferred-and-probe-debug-dumps)
 
 ## Setup
 
@@ -39,7 +60,6 @@ The last runtime attempt lost the Vulkan device during editor GPU BVH picking. G
 ### DDGI
 
 Shared scenes: Cornell box color bleed, sealed versus open room, moving geometry through probe locations, color-changing key light, reflective interior with specular IBL.
-
 | Check | OpenGL / Default | Vulkan / Default | OpenGL / Advanced | Vulkan / Advanced |
 |---|---|---|---|---|
 | Emission off and on, RGB, strength, emission maps | Passed | Passed | Passed | Passed |
@@ -121,13 +141,11 @@ Last evidence for passed cells: 2026-09-21. Details: [DDGI working-copy verifica
 - [ ] Allocation review. Procedure: profiler pass over AS update, descriptor resolution, reservoirs, cache update, tile lists, and denoise. Expected: no hot-path allocations. Last evidence: none.
 
 ## Hardware Matrix
-
 | Feature | NVIDIA | AMD | Intel |
 |---|---|---|---|
 | Vulkan ReSTIR RT pipeline and SBT | Open | Open | Open |
 
 ## Failures
-
 | Check | Symptom | Investigation or code item |
 |---|---|---|
 | DDGI eight-probe specular, Vulkan / Advanced | BRDF lookup is all zero; reflection array is nonzero | [DDGI TODO: Vulkan](../../todo/rendering/global-illumination/ddgi-implementation-todo.md#vulkan) |

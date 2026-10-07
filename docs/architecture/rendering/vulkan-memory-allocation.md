@@ -6,7 +6,7 @@ Related documents:
 
 - [Vulkan Renderer](vulkan-renderer.md#resource-allocator)
 - [Vulkan Resource Lifetime And Retirement](vulkan-resource-lifetime-and-retirement.md)
-- Code todo: [Vulkan Managed Allocator VMA Concepts TODO](../../work/todo/rendering/optimization/vulkan-managed-vma-concepts-allocator-todo.md)
+- Code todo: [Vulkan Wrapper Parity TODO: Allocator Integration](../../work/todo/rendering/vulkan-wrapper-parity-todo.md#allocator-integration)
 - Validation: [Vulkan Backend Parity Validation](../../work/testing/rendering/vulkan-backend-parity-validation.md)
 
 ## Ownership
@@ -14,7 +14,6 @@ Related documents:
 `VulkanResourceRuntime.InitializeMemoryAllocator` creates one allocator for each logical device and stores it in `Allocations.Buffers.MemoryAllocator`. All buffer and image memory goes through that allocator. Engine code outside the Vulkan backend never sees raw VMA handles.
 
 `VulkanRobustnessSettings.AllocatorBackend` selects the backend:
-
 | `EVulkanAllocatorBackend` | Type | Use |
 |---|---|---|
 | `Vma` (default) | `VulkanVmaAllocator` | Native Vulkan Memory Allocator through a P/Invoke bridge. |
@@ -35,7 +34,6 @@ All backends implement `IVulkanMemoryAllocator`:
 `VulkanMemoryAllocation` carries `Memory`, `Offset`, `Size`, `MemoryTypeIndex`, `Properties`, `BlockId`, `NativeAllocation`, and `MappedData`. VMA allocations use `BlockId = -2` and a nonzero `NativeAllocation`. Bind, map, and diagnostic code can therefore use the same record for every backend.
 
 ## Native VMA Bridge
-
 | Part | Location |
 |---|---|
 | Native bridge source | `Build/Native/VulkanMemoryAllocatorBridge/VulkanMemoryAllocatorBridge.cpp` and `.vcxproj` |
@@ -81,4 +79,4 @@ Allocator creation passes the instance, physical device, logical device, API ver
 - Allocator creation passes `Vk.Version13` as the VMA API version, although the renderer requires Vulkan 1.4.
 - No CI job builds the bridge, and no native or P/Invoke smoke test exists.
 
-The [managed VMA concepts TODO](../../work/todo/rendering/optimization/vulkan-managed-vma-concepts-allocator-todo.md) tracks the code items for these limits.
+The [Vulkan wrapper parity TODO](../../work/todo/rendering/vulkan-wrapper-parity-todo.md#allocator-integration) tracks the code items for these limits.
