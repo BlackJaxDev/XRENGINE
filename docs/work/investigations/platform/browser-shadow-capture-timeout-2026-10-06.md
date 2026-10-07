@@ -828,3 +828,27 @@ predates this change and tested the no-decals selection. Native pipeline
 creation was still pending for 37.34 seconds at the 45-second startup limit.
 Its three small-profile OFF captures passed; the full profile did not run.
 The source cook does not prove an ON runtime result or a startup-time benefit.
+
+[Run 37546153259](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37546153259)
+tested the borrowed parameters at commit
+`37db74ddb1524b31f4536b0d95556919d88fa689`. Its real Windows cook produced all
+28 WGSL files with the same bytes as the reviewed local cook. The depth/no-decals
+program is 344,708 bytes, with WGSL SHA-256
+`15c26ae39bfb45b1640e9091e381c357fd889429b84888fe61f49f05b66269df`
+and descriptor SHA-256
+`f81f44c6868773f0936efebaf72f03b146bc6d6c98aacf4e0f462d044eaf8a6c`.
+The run finished with seven passing checks and two failures: UI frame progress
+and the shadow comparison.
+
+The small OFF initial capture and both resized captures passed. The first
+small ON startup reached the unchanged 45-second deadline. At its retained
+failure checkpoint, native creation of
+`engine-advanced-shade-native-depth-no-decals` was still pending after about
+37.30 seconds. Validation and memory error scopes had completed without an
+error after 22.9 milliseconds. This did not establish a rendered ON frame.
+The full-size profile did not run. The owned image-analysis worker stopped.
+The shadow result artifact is `11452016895`, with ZIP SHA-256
+`eef87b49461a7070e430e9064f002fd65fa59988d548d1032f926c2648a8f112`.
+These results do not show an ON rendering pass or a native compilation benefit
+from borrowed parameters. The next diagnosis needs evidence of work inside
+native pipeline creation; the current result does not name a compiler pass.
