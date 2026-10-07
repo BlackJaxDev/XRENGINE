@@ -11,7 +11,7 @@ Related docs:
 - [Implementation tracker](../../todo/assets/model-import-binary-cache-todo.md)
 - [Model import feature guide](../../../developer-guides/assets/model-import.md)
 - [Texture management runtime design](../texturing/texture-management-runtime-design.md)
-- [Texture streaming cooked cache TODO](../../todo/COMPLETED/texture-streaming-cooked-cache-todo.md)
+- [Texture Streaming architecture (cooked-cache authority)](../../../architecture/rendering/texture-streaming.md#cooked-cache-authority)
 - [GPU meshlet zero-readback rendering design](../rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [Production rendering pipeline roadmap](../../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
 
@@ -63,7 +63,7 @@ The repository now has the model-specific deterministic container, defensive rea
 | Existing capability | Location | Reuse or required change |
 |---|---|---|
 | Third-party cache path and load routing | `XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs` | Typed decisions and exclusive ownership are implemented; binary model hydration and publication remain. |
-| Generated asset reimport transaction | `XRENGINE/Core/Engine/AssetManager.ThirdPartyImport.cs` | Extend to stage and publish the binary cache while preserving imported identity. |
+| Generated asset reimport transaction | `XREngine.Editor/Importers/ThirdParty/AssetManager.ThirdPartyImport.cs` | Extend to stage and publish the binary cache while preserving imported identity. |
 | Model backend routing | `XREngine.Runtime.ModelAssetPipeline/Importing/ModelAssetImporter.cs` and `Importing/Caching/` | Stable descriptors, deterministic resolver snapshots, candidate hashing, actual-producer reporting, dependencies, entity keys, and imported reference keys are implemented. |
 | Import options | `XREngine.Runtime.ModelAssetPipeline/Importing/ModelImportOptions.cs` | Versioned model cook policy and canonical semantic projection are implemented; Phase 4 still resolves and executes effective per-submesh cooking. |
 | Model cache identity/path | `XREngine.Runtime.ModelAssetPipeline/Importing/Caching/` and `XRENGINE/Core/Engine/ModelCaching/` | Versioned canonical settings, authored override snapshots, SHA-256 variants, source-origin identity, bounded paths, and legacy-location probing are implemented. |

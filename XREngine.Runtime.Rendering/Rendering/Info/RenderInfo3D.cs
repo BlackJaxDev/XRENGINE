@@ -289,8 +289,19 @@ namespace XREngine.Rendering.Info
         /// </summary>
         private void InvalidateRenderCommandsForOwnerState()
         {
-            foreach (RenderCommand command in RenderCommands)
-                command.MarkDirty();
+            var commands = RenderCommands;
+            if (commands.ThreadSafe)
+            {
+                // Keep snapshot iteration for lists that allow concurrent membership changes.
+                foreach (RenderCommand command in commands)
+                    command.MarkDirty();
+                return;
+            }
+
+            // MarkDirty does not change membership. Index the owner-managed list
+            // directly so bounds updates do not box its enumerator.
+            for (int i = 0, count = commands.Count; i < count; ++i)
+                commands[i].MarkDirty();
         }
 
         protected override void RenderCullingVolume()

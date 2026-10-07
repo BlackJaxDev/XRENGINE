@@ -38,6 +38,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
     private bool _publicationFaulted;
     private bool _terminalDisposalRequested;
     private bool _terminalSnapshotsReleased;
+    private string? _lastPreparationFailure;
 
     public AdvancedSharedGpuSceneDatabase(
         in AdvancedSharedGpuSceneCapacityProfile capacities,
@@ -150,6 +151,16 @@ public sealed class AdvancedSharedGpuSceneDatabase
         {
             lock (_publicationSync)
                 return _publicationFaultSequence;
+        }
+    }
+
+    /// <summary>Gets the first stage that failed while preparing the latest publication.</summary>
+    public string? LastPreparationFailure
+    {
+        get
+        {
+            lock (_publicationSync)
+                return _lastPreparationFailure;
         }
     }
 
@@ -312,9 +323,20 @@ public sealed class AdvancedSharedGpuSceneDatabase
         lock (_publicationSync)
         {
             reference = default;
-            if (!IsActiveTransactionCurrent(in transaction) ||
-                _publicationFaulted || _publicationPrepared)
+            _lastPreparationFailure = null;
+            if (!IsActiveTransactionCurrent(in transaction))
             {
+                _lastPreparationFailure = "Transaction is not active";
+                return false;
+            }
+            if (_publicationFaulted)
+            {
+                _lastPreparationFailure = "Database has a publication fault";
+                return false;
+            }
+            if (_publicationPrepared)
+            {
+                _lastPreparationFailure = "Publication is already prepared";
                 return false;
             }
 
@@ -327,9 +349,14 @@ public sealed class AdvancedSharedGpuSceneDatabase
                 lookupGeneration);
             AdvancedGpuScenePublicationSnapshot snapshot =
                 _publicationSnapshots[transaction.RingIndex];
-            if (!TrySealTablePublication(transaction.Sequence, snapshot) ||
-                !snapshot.TryCaptureCanonicalDependencyState(transaction.Sequence, this))
+            if (!TrySealTablePublication(transaction.Sequence, snapshot))
                 return false;
+            if (!snapshot.TryCaptureCanonicalDependencyState(transaction.Sequence, this))
+            {
+                _lastPreparationFailure =
+                    $"Canonical reverse dependencies: {snapshot.ReverseDependencies.LastCaptureFailure ?? "unknown failure"}";
+                return false;
+            }
 
             _preparedPublication = publication;
             _publicationPrepared = true;
@@ -943,6 +970,10 @@ public sealed class AdvancedSharedGpuSceneDatabase
 
     private int ReclaimAcknowledgedTombstonesCore()
     {
+        // Keep live table rows stable until the active publication is sealed.
+        if (_activePublicationSequence != 0u)
+            return 0;
+
         ulong safeSequence = GetMinimumReclaimableSequence();
         if (safeSequence <= _lastReclaimedPublicationSequence)
             return 0;
@@ -1243,34 +1274,71 @@ public sealed class AdvancedSharedGpuSceneDatabase
         ulong sequence,
         AdvancedGpuScenePublicationSnapshot snapshot)
     {
-        if (!Scene.Draws.TrySealPublication(sequence, snapshot.Draws) ||
-            !Scene.Instances.TrySealPublication(sequence, snapshot.Instances) ||
-            !Scene.Transforms.TrySealPublication(sequence, snapshot.Transforms) ||
-            !Scene.Deformations.TrySealPublication(sequence, snapshot.Deformations) ||
-            !Scene.RenderStates.TrySealPublication(sequence, snapshot.RenderStates) ||
-            !Scene.EditorIdentities.TrySealPublication(sequence, snapshot.EditorIdentities) ||
-            !Scene.Geometry.Records.TrySealPublication(sequence, snapshot.Geometry) ||
-            !Materials.Materials.TrySealPublication(sequence, snapshot.Materials) ||
-            !Materials.Kernels.TrySealPublication(sequence, snapshot.Kernels) ||
-            !Materials.Layouts.TrySealPublication(sequence, snapshot.Layouts) ||
-            !Materials.TrySealPublication(sequence, snapshot.MaterialPayloads) ||
-            snapshot.MaterialPayloads.Sequence != sequence ||
-            !Resources.Textures.TrySealPublication(sequence, snapshot.Textures) ||
-            !Resources.Samplers.TrySealPublication(sequence, snapshot.Samplers) ||
-            !Resources.Lights.TrySealPublication(sequence, snapshot.GlobalResources.Lights) ||
-            !Resources.Shadows.TrySealPublication(sequence, snapshot.GlobalResources.Shadows) ||
-            !Resources.Probes.TrySealPublication(sequence, snapshot.GlobalResources.Probes) ||
-            !Resources.Environments.TrySealPublication(sequence, snapshot.GlobalResources.Environments) ||
-            !Resources.Decals.TrySealPublication(sequence, snapshot.GlobalResources.Decals) ||
-            !Resources.GiResources.TrySealPublication(sequence, snapshot.GlobalResources.GiResources))
+        if (!TrySealTable("Scene.Draws", Scene.Draws, snapshot.Draws, sequence) ||
+            !TrySealTable("Scene.Instances", Scene.Instances, snapshot.Instances, sequence) ||
+            !TrySealTable("Scene.Transforms", Scene.Transforms, snapshot.Transforms, sequence) ||
+            !TrySealTable("Scene.Deformations", Scene.Deformations, snapshot.Deformations, sequence) ||
+            !TrySealTable("Scene.RenderStates", Scene.RenderStates, snapshot.RenderStates, sequence) ||
+            !TrySealTable("Scene.EditorIdentities", Scene.EditorIdentities, snapshot.EditorIdentities, sequence) ||
+            !TrySealTable("Scene.Geometry.Records", Scene.Geometry.Records, snapshot.Geometry, sequence) ||
+            !TrySealTable("Materials.Materials", Materials.Materials, snapshot.Materials, sequence) ||
+            !TrySealTable("Materials.Kernels", Materials.Kernels, snapshot.Kernels, sequence) ||
+            !TrySealTable("Materials.Layouts", Materials.Layouts, snapshot.Layouts, sequence))
+            return false;
+
+        if (!Materials.TrySealPublication(sequence, snapshot.MaterialPayloads) ||
+            snapshot.MaterialPayloads.Sequence != sequence)
         {
+            _lastPreparationFailure = "Materials payload";
             return false;
         }
 
+        if (!TrySealTable("Resources.Textures", Resources.Textures, snapshot.Textures, sequence) ||
+            !TrySealTable("Resources.Samplers", Resources.Samplers, snapshot.Samplers, sequence) ||
+            !TrySealTable("Resources.Lights", Resources.Lights, snapshot.GlobalResources.Lights, sequence) ||
+            !TrySealTable("Resources.Shadows", Resources.Shadows, snapshot.GlobalResources.Shadows, sequence) ||
+            !TrySealTable("Resources.Probes", Resources.Probes, snapshot.GlobalResources.Probes, sequence) ||
+            !TrySealTable("Resources.Environments", Resources.Environments, snapshot.GlobalResources.Environments, sequence) ||
+            !TrySealTable("Resources.Decals", Resources.Decals, snapshot.GlobalResources.Decals, sequence) ||
+            !TrySealTable("Resources.GiResources", Resources.GiResources, snapshot.GlobalResources.GiResources, sequence))
+            return false;
+
         snapshot.GeometryPayloads.Capture();
-        return snapshot.TryCaptureResourceTableState(
-            sequence,
-            Resources.Generations);
+        if (snapshot.TryCaptureResourceTableState(sequence, Resources.Generations))
+            return true;
+
+        _lastPreparationFailure = "Resource table state";
+        return false;
+    }
+
+    private bool TrySealTable<T>(
+        string name,
+        AdvancedGpuRecordTable<T> table,
+        AdvancedGpuRecordTablePublicationSnapshot<T> snapshot,
+        ulong sequence)
+        where T : unmanaged
+    {
+        if (table.TrySealPublication(sequence, snapshot))
+            return true;
+
+        string reason = sequence != table.ActivePublicationGeneration
+            ? "publication generation mismatch"
+            : table.PublicationDeltas.Length > snapshot.DeltaCapacity
+                ? "delta journal exceeds snapshot capacity"
+                : table.PublishedRemaps.Length > snapshot.RemapCapacity
+                    ? "remaps exceed snapshot capacity"
+                    : snapshot.HasRecordImage && table.PhysicalHighWater > (uint)snapshot.RecordCapacity
+                        ? "record image exceeds snapshot capacity"
+                        : snapshot.HasRecordImage && table.LogicalLookupCount > (uint)snapshot.RecordCapacity + 1u
+                            ? "logical lookups exceed snapshot capacity"
+                            : "record image or lookup invariant failed";
+        _lastPreparationFailure =
+            $"{name}: {reason}; sequence={sequence}, active={table.ActivePublicationGeneration}, " +
+            $"rows={table.Count}/{table.Capacity}, highWater={table.PhysicalHighWater}, " +
+            $"lookups={table.LogicalLookupCount}, recordCapacity={snapshot.RecordCapacity}, " +
+            $"deltas={table.PublicationDeltas.Length}/{snapshot.DeltaCapacity}, " +
+            $"remaps={table.PublishedRemaps.Length}/{snapshot.RemapCapacity}";
+        return false;
     }
 
     private static ulong CreateDatabaseEpoch()

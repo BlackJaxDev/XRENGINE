@@ -15,7 +15,7 @@ adapter an individual renderer selected. No active OpenXR runtime was returned
 by the Windows runtime registry query.
 
 The [integration guide](../../../developer-guides/vr/openxr-body-tracking.md)
-describes the engine behavior. The [acceptance procedure](../../testing/avatar/openxr-calibration-spectator-validation.md)
+describes the engine behavior. The [acceptance procedure](../../testing/avatar/avatar-validation.md#openxr-body-calibration-and-spectator)
 retains the unverified hardware and visual checks.
 
 ## Automated behavior

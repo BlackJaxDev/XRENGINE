@@ -345,8 +345,12 @@ public partial class PhysicsChainComponent : XRComponent
         }
     }
 
-    private void Prepare()
+    private void Prepare(bool snapshotForCpuJobs = true)
     {
+        bool observeGpuPrepare = UseGPU && RuntimeWorldTickTelemetry.Enabled;
+        long restPoseTicks = 0L;
+        long hierarchyTicks = 0L;
+        long particleReadTicks = 0L;
         _deltaTime = RuntimeTimingServices.Current.UpdateDeltaSeconds;
         switch (UpdateMode)
         {
@@ -404,17 +408,24 @@ public partial class PhysicsChainComponent : XRComponent
             // writes simulation rotation deltas back to the hierarchy each frame; without this
             // reset the matrices we read below would include the previous frame's deformation,
             // causing the rest reference to drift.
+            long restPoseStart = observeGpuPrepare ? Stopwatch.GetTimestamp() : 0L;
             InitTransforms(pt);
+            if (observeGpuPrepare)
+                restPoseTicks += Stopwatch.GetTimestamp() - restPoseStart;
 
             // Ensure we sample the current (post-InitTransforms / post-animation) pose.
             // Without this, we can end up using stale world matrices from the prior frame,
             // effectively allowing the simulated pose to slowly become the new "rest".
             long hierarchyStart = Stopwatch.GetTimestamp();
             RefreshPreparedParticleTree(pt);
-            RuntimePhysicsChainRendering.Current.RecordHierarchyRecalculationTicks(Stopwatch.GetTimestamp() - hierarchyStart);
+            long hierarchyElapsed = Stopwatch.GetTimestamp() - hierarchyStart;
+            RuntimePhysicsChainRendering.Current.RecordHierarchyRecalculationTicks(hierarchyElapsed);
+            if (observeGpuPrepare)
+                hierarchyTicks += hierarchyElapsed;
 
             pt.RestGravity = pt.Root.TransformDirection(pt.LocalGravity);
 
+            long particleReadStart = observeGpuPrepare ? Stopwatch.GetTimestamp() : 0L;
             for (int j = 0; j < pt.Particles.Count; ++j)
             {
                 Particle p = pt.Particles[j];
@@ -425,7 +436,12 @@ public partial class PhysicsChainComponent : XRComponent
                     p.TransformLocalToWorldMatrix = p.Transform.WorldMatrix;
                 }
             }
+            if (observeGpuPrepare)
+                particleReadTicks += Stopwatch.GetTimestamp() - particleReadStart;
         }
+
+        if (observeGpuPrepare)
+            PhysicsChainWorld.RecordGpuPrepareDetails(restPoseTicks, hierarchyTicks, particleReadTicks);
 
         _effectiveColliders?.Clear();
 
@@ -448,7 +464,8 @@ public partial class PhysicsChainComponent : XRComponent
 
         // Snapshot collections into arrays so job worker threads iterate
         // stable, immutable data instead of the mutable lists above.
-        SnapshotForJobs();
+        if (snapshotForCpuJobs)
+            SnapshotForJobs();
     }
 
     /// <summary>

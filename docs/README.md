@@ -9,7 +9,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
   information, contribution terms, and release guidance.
 - [Work Docs](work/README.md): active design docs, TODOs, audits, testing notes, and historical implementation plans.
 
-[Runtime Project Organization](architecture/runtime/project-organization.md) maps the shared `net10.0` libraries, native modules, application composition, and asset ownership. [Portable Project Rules](developer-guides/runtime/portable-projects.md) describes the package/source policies and browser compile lane. Outstanding integration acceptance is tracked in the [native subsystem debugging and validation TODO](work/todo/platform/native-subsystem-project-split-todo.md); completed local browser, desktop and native callback smokes, full test execution and qualification limits are recorded in the [reference harness investigation](work/investigations/rendering/desktop-browser-reference-harness.md).
+[Runtime Project Organization](architecture/runtime/project-organization.md) maps the shared `net10.0` libraries, native modules, application composition, and asset ownership. [Portable Project Rules](developer-guides/runtime/portable-projects.md) describes the package/source policies and browser compile lane. Outstanding integration acceptance is tracked in [Platform Validation](work/testing/platform/platform-validation.md); completed local browser, desktop and native callback smokes, full test execution and qualification limits are recorded in the [reference harness investigation](work/investigations/rendering/desktop-browser-reference-harness.md).
 
 ## Architecture
 
@@ -26,15 +26,28 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 
 - [Vulkan Scene Preparation And Publication](architecture/rendering/vulkan-scene-preparation-and-publication.md)
 - [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)
+- [Texture Streaming](architecture/rendering/texture-streaming.md)
+- [Advanced Render Pipeline](architecture/rendering/advanced-render-pipeline.md)
+- [Shadow Atlas](architecture/rendering/shadow-atlas.md)
+- [Transparency And OIT](architecture/rendering/transparency-and-oit.md)
+- [GPU Hi-Z Occlusion Culling](architecture/rendering/gpu-hiz-occlusion-culling.md)
+- [CPU Software Occlusion](architecture/rendering/cpu-software-occlusion.md)
+- [CPU Memory Ownership](architecture/rendering/cpu-memory-ownership.md)
+- [Vulkan Memory Allocation](architecture/rendering/vulkan-memory-allocation.md)
+- [OpenVR VRClient GPU Handoff](architecture/rendering/openvr-vrclient-gpu-handoff.md)
+- [Cooked Texture Payloads](architecture/assets/cooked-texture-payloads.md)
 - [Vulkan Pipeline Compilation, Readiness And Depth-Only Coverage](architecture/rendering/vulkan-pipeline-compilation.md)
 - [CPU Scene BVH](architecture/rendering/cpu-scene-bvh.md)
 - [GPU Scene BVH](architecture/rendering/gpu-scene-bvh.md)
 - [Scene Architecture](architecture/scene/overview.md)
 - [Transform Architecture](architecture/scene/transforms.md)
 - [Physics Architecture](architecture/physics/overview.md)
+- [Physics Debug Frame](architecture/physics/physics-debug-frame.md)
+- [Physics Chain World Runtime](architecture/physics/physics-chain-world-runtime.md)
 - [Audio Architecture](architecture/audio/audio-architecture.md)
 - [Networking Overview](architecture/networking/overview.md)
 - [Control Plane Runtime Architecture](architecture/runtime/control-plane.md)
+- [Portable Engine Host](architecture/runtime/portable-engine-host.md)
 - [Modeling XRMesh Editing](architecture/modeling/xrmesh-editing.md)
 - [Play Mode Architecture](architecture/editor/play-mode-architecture.md)
 - [Editor Undo System](architecture/editor/undo-system.md)
@@ -43,6 +56,8 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Developer Guides
 
 - [Software Vulkan Correctness Validation](developer-guides/testing/software-vulkan-validation.md)
+- [Test Suite Layout](developer-guides/testing/test-suite-layout.md)
+- [Work Doc Templates](developer-guides/ai/work-doc-templates.md)
 - [Continuous Integration And Releases](developer-guides/ci-cd.md)
 - [Windows CI Build Preparation Investigation](work/investigations/platform/windows-ci-build-preparation-2026-10-05.md)
 - [Windows CI Test Coverage](developer-guides/testing/windows-ci.md)
@@ -55,6 +70,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [OpenAL Streaming Audio](developer-guides/audio/openal-streaming-audio.md)
 - [Component API](developer-guides/components/component-api.md)
 - [Atmospheric Scattering Component](developer-guides/components/atmospheric-scattering.md)
+- [World and Procedural Skybox Ambient Lighting](developer-guides/components/procedural-skybox-ambient.md)
 - [Global Illumination](developer-guides/gi/global-illumination.md)
 - [Networking](developer-guides/networking/networking.md)
 - [Browser Realtime Transport](developer-guides/networking/browser-realtime.md)
@@ -69,7 +85,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Profiler](developer-guides/diagnostics/profiler.md)
 - [Dedicated Vulkan RenderBench](developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench)
 - [Runtime Data Layout Measurements](developer-guides/diagnostics/runtime-data-layout-measurements.md)
-- [Runtime Regression And NativeAOT Hardening](work/todo/runtime-regression-and-nativeaot-hardening-todo.md): current software regression and strict packaged-player acceptance, with an active [progress ledger](work/progress/runtime/runtime-regression-and-nativeaot-hardening-progress.md).
+- [Runtime Regression And NativeAOT Hardening](work/todo/runtime/runtime-regression-and-nativeaot-hardening-todo.md): current software regression and strict packaged-player acceptance, with an active [progress ledger](work/progress/runtime/runtime-regression-and-nativeaot-hardening-progress.md).
 - [Self-Iterating Rendering Performance Loop](developer-guides/diagnostics/self-iterating-performance-loop.md)
 - [Skinning](developer-guides/rendering/skinning.md)
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
@@ -105,21 +121,18 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Work Docs
 
 - [Work Docs Index](work/README.md)
-- [Shadow and Pipeline Validation — Completed](work/todo/rendering/shadow-and-pipeline-validation-failures-todo.md)
 - [Editor OpenXR Toggle, Rendering, And Import Responsiveness Todo](work/todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md)
 - [Six-Device VR Calibration Baseline](work/investigations/avatar/vr-calibration-baseline-2026-09-24.md)
 - [OpenXR Full-body Implementation Record](work/progress/avatar/openxr-full-body-calibration-spectator-implementation.md)
 - [OpenXR Calibration and Spectator Implementation](work/progress/avatar/openxr-calibration-spectator-implementation-2026-09-30.md)
-- [OpenXR Calibration and Spectator Acceptance](work/testing/avatar/openxr-calibration-spectator-validation.md)
+- [Avatar Validation: OpenXR Calibration and Spectator](work/testing/avatar/avatar-validation.md#openxr-body-calibration-and-spectator)
 - [Windows Calibration and Spectator Validation](work/investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md)
 - [Animation and IK Stability](work/investigations/avatar/animation-ik-stability-2026-09-30.md)
 - [Tracked Body Solver Validation](work/investigations/avatar/tracked-body-solver-2026-09-30.md)
 - [Spectator and Calibration Feedback Validation](work/investigations/avatar/spectator-validation-2026-09-30.md)
-- [Vulkan Lifecycle Evidence Harness](work/testing/rendering/vulkan-lifecycle-evidence-harness.md)
-- [Vulkan Stall Remediation: Remaining Tasks](work/todo/rendering/vulkan-stall-remediation-todo.md)
+- [Vulkan Core Validation](work/testing/rendering/vulkan-core-validation.md)
 - [Vulkan Stall Separate Findings](work/todo/rendering/vulkan-stall-separate-findings-todo.md)
 - [Vulkan Stall Remediation Results](work/progress/rendering/vulkan-stall-remediation-results.md)
-- [Vulkan Stall Validation Protocol](work/testing/rendering/vulkan-stall-validation.md)
 - [Control Plane Managed Server Instances and Client Synchronization Todo](work/todo/networking/control-plane-managed-server-instances-todo.md)
 - [Apple Platform and MoltenVK Support Design](work/design/platform/apple-platform-moltenvk-support-design.md)
 - [Runtime Modularization Plan](work/design/runtime-modularization-plan.md)
@@ -184,7 +197,7 @@ browser representations under one verified managed-admission identity.
 
 [Portable browser scene boot](work/progress/rendering/portable-browser-scene-boot.md) records the implemented shared runtime, browser validation, build instructions and remaining rendering work.
 
-[Mobile browser readiness](work/progress/rendering/mobile-browser-readiness.md) records the source dependency audit, sample contract, budgets and unvalidated device matrix for the [WebGPU runtime TODO](work/todo/rendering/mobile-webgpu-runtime-todo.md).
+[Mobile browser readiness](work/progress/rendering/mobile-browser-readiness.md) records the source dependency audit, sample contract, budgets and unvalidated device matrix for the [WebGPU work in the unified runtime TODO](work/todo/platform/unified-desktop-browser-runtime-todo.md).
 
 
 [Canvas output, visibility and live resource updates](work/progress/rendering/browser-webgpu-frame-output.md) records portable output metadata, the explicit canvas pass, per-view culling and resource replacement. Source implementation remains unvalidated.

@@ -5,6 +5,7 @@ using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Animation;
 using XREngine.Scene.Transforms;
+using XREngine.Scene;
 using XREngine.Extensions;
 using System.Diagnostics;
 using XREngine.Animation.Importers;
@@ -15,6 +16,18 @@ namespace XREngine.Components.Animation
     [XRComponentEditor("XREngine.Editor.ComponentEditors.AnimationClipComponentEditor")]
     public partial class AnimationClipComponent : XRComponent
     {
+        static AnimationClipComponent()
+        {
+            _ = AnimationMemberBindingRegistry.RegisterGetter<XRComponent, SceneNode>(
+                nameof(SceneNode), static component => component.SceneNode);
+            _ = AnimationMemberBindingRegistry.RegisterGetter<SceneNode, TransformBase>(
+                nameof(SceneNode.Transform), static node => node.Transform);
+            _ = AnimationMemberBindingRegistry.RegisterGetter<Transform, float>(
+                nameof(XREngine.Scene.Transforms.Transform.TranslationY), static transform => transform.TranslationY);
+            _ = AnimationMemberBindingRegistry.Register<Transform, float>(
+                nameof(XREngine.Scene.Transforms.Transform.TranslationY), static (transform, value) => transform.TranslationY = value);
+        }
+
         private bool _initialized;
         private bool _isPlaying;
         private bool _isPaused;

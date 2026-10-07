@@ -4,7 +4,7 @@
 
 Execution trackers:
 
-- [Native subsystem integration debugging and validation](../../todo/platform/native-subsystem-project-split-todo.md): qualify the implemented native boundaries and portable projects, resolve integration defects, and complete the physics browser/default-promotion decisions.
+- [Platform Validation](../../testing/platform/platform-validation.md): qualify the implemented native boundaries and portable projects, resolve integration defects, and complete the physics browser/default-promotion decisions.
 - [Unified desktop and browser runtime TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md): run the same engine, worlds, and game code on desktop and in the browser.
 
 Status: unified browser gameplay architecture proposed. Native extraction and whole-project `net10.0` source changes are implemented; their integration qualification remains open. [Runtime Project Organization](../../../architecture/runtime/project-organization.md) describes the current layout.
@@ -246,7 +246,7 @@ Decision:
 
 ### Networking
 
-Replication and session logic depend on a transport contract. Desktop and server keep UDP/TLS transports in a leaf. The browser uses a WebSocket transport leaf first, with WebTransport or WebRTC as capability-gated later options, plus a matching server gateway. The [mobile TODO's MW11](../../todo/rendering/mobile-webgpu-runtime-todo.md#mw11--browser-multiplayer-and-optional-voicemedia) requirements (bounded queues, reconnect/resync, suspension, origin and credential policy) apply unchanged.
+Replication and session logic depend on a transport contract. Desktop and server keep UDP/TLS transports in a leaf. The browser uses a WebSocket transport leaf first, with WebTransport or WebRTC as capability-gated later options, plus a matching server gateway. The browser multiplayer requirements in the [unified runtime TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md) (bounded queues, reconnect/resync, suspension, origin and credential policy) apply unchanged.
 
 ### XR
 
@@ -284,7 +284,7 @@ The editor's publish flow for the browser target becomes:
 | --- | --- |
 | [Runtime modularization plan](../runtime-modularization-plan.md) | This design continues it: native subsystem leaves and the deferred physics split. |
 | [Browser renderer module design](../rendering/browser-wasm-renderer-design.md) | Backend-level content (bridge, resource model, WebGPU and WebGL2 modules, security, diagnostics) remains valid. Its portable-runtime extraction approach is superseded by genuinely portable assemblies. |
-| [Mobile WebGPU runtime TODO](../../todo/rendering/mobile-webgpu-runtime-todo.md) | Device, bridge, recovery, budget, hosting, and physical-device validation items (MW03, MW05, MW07, MW10–MW12) still apply to the WebGPU backend and delivery path. Its portable-profile (MW01), focused pipeline (MW06), and bounded service profiles (MW08) are superseded by the unified TODO. |
+| [Unified desktop and browser runtime TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md) | The former mobile WebGPU TODO is merged into this TODO. Its device, bridge, recovery, budget, hosting, and physical-device items still apply to the WebGPU backend and delivery path. Physical-device checks are in [Platform Validation](../../testing/platform/platform-validation.md). |
 | [Box3D integration TODO](../../todo/physics/box3d-backend-integration-todo.md) | Box3D stays an optional backend candidate; its file map moves to a leaf project. |
 | [Jolt character controller correctness TODO](../../todo/physics/jolt-character-controller-correctness-todo.md) | Becomes a prerequisite for making Jolt the default. |
 | [Physics architecture](../../../architecture/physics/overview.md) | Updated when the default changes. Some Jolt notes there are already stale: the Jolt scene now iterates `ColliderShapes`. |

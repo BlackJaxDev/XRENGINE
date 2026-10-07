@@ -59,6 +59,6 @@ frame loop. Empty imported scenes reject the recolor action without stopping ren
 - Build/publish and runtime acceptance, malformed/stale packet exercises, lifecycle
   and resource-retirement evidence, desktop preservation and physical-device budgets.
 
-The [active TODO](../../todo/rendering/mobile-webgpu-runtime-todo.md) checks source
+The [active TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md) checks source
 completion separately from runtime acceptance. The preceding source delivery is
 [module and snapshot integration](browser-webgpu-module-assets.md).

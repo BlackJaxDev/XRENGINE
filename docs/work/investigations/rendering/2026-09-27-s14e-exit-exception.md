@@ -3,7 +3,7 @@
 Status: In progress (September 27, 2026).
 
 Gate record for
-[S14e](../../todo/rendering/vulkan-stall-remediation-todo.md#s14e-capture-the-intermittent-play-exit-exception)
+[S14e](../../progress/rendering/vulkan-stall-remediation-results.md)
 under the todo document's one-by-one protocol. Opened by S14; see the
 [S14a record](2026-09-27-s14a-play-transitions.md#the-exit-exception).
 Evidence root: `Build/_AgentValidation/20260927-095558-s14-core-update/`

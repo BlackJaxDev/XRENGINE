@@ -6,6 +6,29 @@ and previous palette slices and the bounds slot directly. Scene `Transform`
 mutation and CPU copies are compatibility consumers, not prerequisites for
 simulation, skinning, culling, or dispatch sizing.
 
+## Current bounds integration limit
+
+`GPUPhysicsChainDispatcher.PublishGpuBoundsToScene` writes bounds to the legacy
+`GPUScene.CommandAabbBuffer`. It captures renderer command indices for each
+dispatch because compaction can change those indices.
+
+Advanced visibility has a separate input. `AdvancedPreparationExtractor.ExtractCommand`
+copies bounds from the canonical geometry record into an
+`AdvancedVisibilityCandidate`. `ClassifyCandidatesForViews` then tests its CPU
+sphere. `VulkanDirectionalShadowLaneCulling.ComputeRecordMasks` tests its CPU
+AABB for shadow cascades. The physics bounds atlas does not yet update these
+candidates. Thus, legacy bounds publication does not establish correct
+Advanced visibility for a mesh deformed only on the GPU.
+
+The missing route must use the exact scene publication, draw handle and
+generation, current candidate index, and bounds-slot identity. Route and buffer
+storage must remain valid until GPU consumers finish. Only full deformation
+coverage can bypass stale CPU bone bounds. View and shadow admission must keep
+layer, material, and `CastShadow` policy. Invalid numeric GPU bounds must cause
+an explicit rejection; they are not an unbounded-visible marker. Track the
+implementation in the [scale todo](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md#canonical-bounds-and-measured-cpu-costs)
+and the runtime checks in the [validation plan](../../work/testing/physics/physics-validation.md#gpu-skinned-chain-scale).
+
 ## CPU consumer inventory
 
 The July 2026 source audit found no external caller reading the private

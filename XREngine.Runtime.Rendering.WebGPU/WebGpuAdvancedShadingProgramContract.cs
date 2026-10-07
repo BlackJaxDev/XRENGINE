@@ -87,7 +87,7 @@ internal static class WebGpuAdvancedShadingProgramContract
         if (native)
         {
             if (!HasNativeSchemas(artifact, exports, depthBank, uberRaster, modifiersAbsent, decalsAbsent))
-                throw new NotSupportedException("WebGPU.Advanced.NativeSchemaMismatch: recook native shading and exports with engine-surface schema 5, Uber-base schema 1, the 36-table scene directory, authored-basis/decal/shadow/AO schema 1, and the selected texture-bank contract.");
+                throw new NotSupportedException("WebGPU.Advanced.NativeSchemaMismatch: recook native shading and exports with engine-surface schema 6, Uber-base schema 1, the 36-table scene directory, authored-basis/decal/shadow/AO/world-ambient schema 1, and the selected texture-bank contract.");
             for (uint binding = 0; binding < 7; binding++) Require(artifact, 0, binding, "read-only-storage", 4);
             Require(artifact, 0, 7, "uniform", 944, "FrozenView");
             Require(artifact, 0, 8, "uniform", 160, "Parameters");
@@ -170,11 +170,11 @@ internal static class WebGpuAdvancedShadingProgramContract
                 continue;
             }
             if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray) return false;
-            bool schemaSeen = false, exportsSeen = false, shadowSeen = false, depthSeen = false, ambientOcclusionSeen = false, decalsSeen = false, basisSeen = false, uberSeen = false, directorySeen = false, rasterSeen = false, modifiersAbsentSeen = false, decalsAbsentSeen = false;
+            bool schemaSeen = false, exportsSeen = false, shadowSeen = false, depthSeen = false, ambientOcclusionSeen = false, worldAmbientSeen = false, decalsSeen = false, basisSeen = false, uberSeen = false, directorySeen = false, rasterSeen = false, modifiersAbsentSeen = false, decalsAbsentSeen = false;
             while (reader.Read())
             {
                 if (reader.TokenType == JsonTokenType.EndArray)
-                    return modifiersAbsentSeen == modifiersAbsent && decalsAbsentSeen == decalsAbsent && rasterSeen == uberRaster && schemaSeen && basisSeen && uberSeen && directorySeen && shadowSeen && ambientOcclusionSeen && decalsSeen && exportsSeen == exports && depthSeen == depthBank;
+                    return modifiersAbsentSeen == modifiersAbsent && decalsAbsentSeen == decalsAbsent && rasterSeen == uberRaster && schemaSeen && basisSeen && uberSeen && directorySeen && shadowSeen && ambientOcclusionSeen && worldAmbientSeen && decalsSeen && exportsSeen == exports && depthSeen == depthBank;
                 if (reader.TokenType != JsonTokenType.String) return false;
                 if (reader.ValueTextEquals("XR_ADV_ENGINE_SURFACE_SCHEMA_VERSION=6"u8))
                 {
@@ -230,6 +230,11 @@ internal static class WebGpuAdvancedShadingProgramContract
                 {
                     if (ambientOcclusionSeen) return false;
                     ambientOcclusionSeen = true;
+                }
+                else if (reader.ValueTextEquals("XR_ADV_WORLD_AMBIENT_SCHEMA_VERSION=1"u8))
+                {
+                    if (worldAmbientSeen) return false;
+                    worldAmbientSeen = true;
                 }
                 else if (reader.ValueTextEquals("XR_ADV_AUTHORED_DECAL_SCHEMA_VERSION=1"u8))
                 {

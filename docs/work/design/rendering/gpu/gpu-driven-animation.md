@@ -1,6 +1,6 @@
 # GPU-Driven Animation Architecture
 
-[<- Work docs index](../README.md)
+[<- Work docs index](../../../README.md)
 
 ## Goal
 
@@ -517,4 +517,4 @@ Tests should start with deterministic synthetic clips and tiny skeletons before 
 
 ## Execution Tracker
 
-Implementation phases are tracked in [../todo/gpu-driven-animation-todo.md](../todo/gpu-driven-animation-todo.md).
+Implementation phases are tracked in [../todo/gpu-driven-animation-todo.md](../../../todo/rendering/gpu/gpu-driven-animation-todo.md).

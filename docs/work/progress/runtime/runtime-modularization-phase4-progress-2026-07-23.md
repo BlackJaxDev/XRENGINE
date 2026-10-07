@@ -11,7 +11,7 @@ Final closeout branch: `codex/runtime-modularization-phase5`
 ## Scope
 
 This ledger tracks implementation of P4.0 through P4.8c from
-[runtime-modularization-phase4-todo.md](../../todo/COMPLETED/runtime-modularization-phase4-todo.md).
+`runtime-modularization-phase4-todo.md` (retired; see [Runtime Project Organization](../../../architecture/runtime/project-organization.md)).
 The working tree already contained line-ending-only modifications to the Phase 4
 and Vulkan frame-loop TODOs, a modified `OscCore-NET9` submodule worktree, and
 untracked repository-managed dependency directories. Those pre-existing changes
@@ -344,7 +344,7 @@ P4.8c completed on 2026-07-29.
   and OpenGL reported `NoError`.
 - Complete wrapper, callback, worker, resource, and native-handle teardown is
   also covered by the completed
-  [renderer hot-reload validation](../../todo/COMPLETED/rendering-backend-hot-reload-todo.md).
+  [renderer hot-reload architecture](../../../architecture/rendering/renderer-backend-hot-reload.md).
 - `Tools/Reports/Generate-Dependencies.ps1 -NoPromptForUnknownLicenses` was run
   after the package moves. Network-restricted metadata lookups produced
   repository-wide offline license downgrades, so that unsafe generated license

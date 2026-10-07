@@ -130,9 +130,20 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
                 return;
 
             RuntimeEngine.Rendering.Stats.FrameOutputs.RecordSceneSnapshot();
+            bool observe = RuntimeWorldTickTelemetry.Enabled;
+            long matrixStart = observe ? Stopwatch.GetTimestamp() : 0L;
             ApplyRenderMatrixChanges();
+            long meshStart = observe ? Stopwatch.GetTimestamp() : 0L;
             RenderableMesh.ProcessPendingRenderMatrixUpdates();
+            long sceneStart = observe ? Stopwatch.GetTimestamp() : 0L;
             VisualScene.GlobalCollectVisible();
+            if (observe)
+            {
+                Interlocked.Add(ref s_collectMatrixTicks, meshStart - matrixStart);
+                Interlocked.Add(ref s_collectMeshTicks, sceneStart - meshStart);
+                Interlocked.Add(ref s_collectSceneTicks, Stopwatch.GetTimestamp() - sceneStart);
+                Interlocked.Increment(ref s_collectCalls);
+            }
         }
     }
 
@@ -160,8 +171,12 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
 
     private void GlobalSwapBuffersCore(ulong frameId, bool requireCanonicalFrameId)
     {
+        bool observe = RuntimeWorldTickTelemetry.Enabled;
+        long matrixStart = observe ? Stopwatch.GetTimestamp() : 0L;
         ApplyRenderMatrixChanges();
+        long meshStart = observe ? Stopwatch.GetTimestamp() : 0L;
         RenderableMesh.ProcessPendingRenderMatrixUpdates();
+        long sceneStart = observe ? Stopwatch.GetTimestamp() : 0L;
         // The Advanced global capture must observe the same published atlas and
         // last-rendered shadow snapshots consumed by the frame package.
         Lights.SwapBuffers();
@@ -179,6 +194,13 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
         RuntimeEngine.Rendering.Stats.SkinnedBounds.SwapSkinnedBoundsStats();
         RuntimeEngine.Rendering.Stats.Octree.SwapOctreeStats();
         RuntimeEngine.Rendering.Stats.RenderMatrix.SwapRenderMatrixStats();
+        if (observe)
+        {
+            Interlocked.Add(ref s_swapMatrixTicks, meshStart - matrixStart);
+            Interlocked.Add(ref s_swapMeshTicks, sceneStart - meshStart);
+            Interlocked.Add(ref s_swapSceneTicks, Stopwatch.GetTimestamp() - sceneStart);
+            Interlocked.Increment(ref s_swapCalls);
+        }
     }
 
     public void GlobalPreRender()

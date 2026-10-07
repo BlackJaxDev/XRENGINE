@@ -9,11 +9,11 @@ current owner below explicitly adopts it.
 | --- | --- |
 | Desktop Vulkan camera/input cadence, stale scene output, resize black frames, and dense-scene CPU scaling | [Vulkan Desktop Camera Motion, Stale Frames, And CPU Scaling](../vulkan-camera-motion-black-flicker-2026-08-10.md) |
 | Directional cascades, atlas flicker, mesh displacement, cropped output | [Directional Light Vulkan Stability](../directional-light-inspector-shadow-2026-08-03.md) |
-| Vulkan workstreams 03-05, command recording, and zero-readback acceptance | [03-05 Validation](../../../testing/rendering/03-05-optimization-validation-todo.md) and [Zero-Readback Production Scheduling](../../../progress/rendering/vulkan-zero-readback-production-scheduling-2026-08-03.md) |
+| Vulkan workstreams 03-05, command recording, and zero-readback acceptance | [03-05 Validation](../../../testing/rendering/gpu-driven-submission-validation.md#vulkan-03-05-gate) and [Zero-Readback Production Scheduling](../../../progress/rendering/vulkan-zero-readback-production-scheduling-2026-08-03.md) |
 | OpenXR/Monado rendering and performance | [OpenXR Monado Vulkan 120 Hz Progress](../../../progress/rendering/openxr-monado-vulkan-120hz-performance-2026-06-27.md) |
 | Vulkan core-hardening and lifecycle gates | [Vulkan Core Hardening And Device-Loss TODO](../../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md) |
 | GPU BVH external qualification | [GPU Scene BVH External-Hardware Qualification](../../../testing/rendering/gpu-scene-bvh-external-hardware-qualification.md) |
-| Render-query live and external validation | [Vulkan Render Query System Upgrade TODO](../../../todo/rendering/vulkan-render-query-system-upgrade-todo.md) |
+| Render-query live and external validation | [Render Queries And Occlusion Validation](../../../testing/rendering/render-queries-and-occlusion-validation.md) |
 | Advanced pipeline reference and promotion work | Current advanced-render-pipeline progress and testing ledgers under `docs/work/progress/rendering/` and `docs/work/testing/rendering/` |
 
 ## Editor, windowing, and presentation

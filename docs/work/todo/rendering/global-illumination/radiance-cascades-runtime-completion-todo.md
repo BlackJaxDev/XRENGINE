@@ -1,48 +1,40 @@
-# Radiance Cascades runtime completion
+# Radiance Cascades Runtime Completion TODO
 
-Created: 2026-09-21
-Status: unsupported; screen resolve exists, radiance production does not
+Last Updated: 2026-10-06
+Status: Active (provider rejected at runtime)
+Architecture: [Global Illumination Ownership And Selection](../../../../architecture/rendering/global-illumination-ownership.md), [Radiance Cascades guide](../../../../developer-guides/gi/radiance-cascades.md)
+Validation: [Global Illumination Validation](../../../testing/rendering/global-illumination-validation.md#radiance-cascades)
 
-## Current boundary
+## Current State
 
-`RadianceCascadeComponent` owns up to four externally authored `XRTexture3D`
-radiance volumes. `RadianceCascadesGlobalIlluminationModule` declares mono/stereo
-screen output and history, and `VPRC_RadianceCascadesPass` samples those volumes,
-applies diffuse material response, accumulates history, and uses neutral GI
-composition. This is a consumer of prepared radiance, not a complete Radiance
-Cascades GI implementation.
+`RadianceCascadeComponent` owns up to four authored `XRTexture3D` radiance volumes. `RadianceCascadesGlobalIlluminationModule` declares mono and stereo screen output and history. `VPRC_RadianceCascadesPass` samples the volumes, applies diffuse material response with `1/pi`, accumulates history, and uses neutral GI composition. The active cascade list is cached on authoring changes. No injection, propagation, or live update exists, so the registry rejects the selection. Volume selection uses `RadianceCascadeComponent.Registry.TryGetFirstActive`.
 
-The provider remains deliberately unsupported in
-`GlobalIlluminationProviderRegistry`. Do not enable it by changing the static
-support result until all exit checks below pass.
+## Open Code Items
 
-## Missing implementation
+### Representation
 
-- [ ] Define the cascade representation: direction/angular bins, spatial layout,
-  encoding, mip/level relationship, world transforms, and precision budget.
-- [ ] Implement scene-radiance injection from geometry, emissive materials, direct
-  lights, shadow visibility, and the environment.
-- [ ] Implement cascade propagation/merge and near-to-far update scheduling with
-  explicit barriers and renderer-owned submission receipts.
-- [ ] Add provider-owned persistent runtime state, invalidation revisions, resize
-  and scene-replacement handling, disposal, and renderer-owner recovery.
-- [ ] Define authored/baked asset serialization and validation. Reject incompatible
-  dimensions, formats, transforms, and versions with actionable diagnostics.
-- [ ] Replace first-active selection with the same deterministic single-volume or
-  explicit multi-volume policy used by supported providers.
-- [ ] Confirm temporal history validity across camera cuts, movement, dynamic
-  resolution, normal/reverse depth, mono/stereo, and view-owner replacement.
-- [ ] Validate the material-response contract for diffuse/metallic/AO behavior and
-  prove baseline diffuse is suppressed only after a valid replacement is published.
-- [ ] Exercise Default and Advanced through the shared module boundary on OpenGL
-  and Vulkan; inspect screen output, each cascade, history, and final composition.
-- [ ] Measure update cost and verify no per-frame managed allocations. The active
-  cascade list is already cached on authoring changes rather than materialized in
-  the render pass.
+- [ ] Define the cascade representation: angular bins, spatial layout, encoding, level relationship, world transforms, and precision budget. Done when: the layout is in code constants and in the Radiance Cascades guide.
 
-## Exit gate
+### Radiance Production
 
-The provider may become experimental/supported only when live radiance is produced
-without pre-populated textures, Default and Advanced show equivalent output
-semantics, mono and stereo history are correct, interruption/lifetime evidence is
-clean, and the result is applied exactly once through neutral composition.
+- [ ] Inject scene radiance from geometry, emissive materials, direct lights, shadow visibility, and the environment. Done when: a cascade fills from an empty texture with no pre-populated data.
+- [ ] Implement cascade propagation and merge with near-to-far update scheduling, explicit barriers, and renderer-owned submission receipts. Done when: the passes declare graph accesses and a rejected submission does not advance history.
+
+### Lifetime
+
+- [ ] Add provider-owned persistent runtime state with invalidation revisions, resize and scene-replacement handling, disposal, and renderer-owner recovery. Done when: state is keyed by physical pipeline and renderer owner, as in [Global Illumination Ownership](../../../../architecture/rendering/global-illumination-ownership.md#lifetime-and-invalidation-domains).
+- [ ] Define authored and baked asset serialization and validation. Reject wrong dimensions, formats, transforms, and versions with clear diagnostics. Done when: a load of a bad asset gives a diagnostic and no contribution.
+- [ ] Replace `TryGetFirstActive` with a deterministic single-volume policy (priority plus tie rejection, as DDGI) or an explicit multi-volume policy. Done when: registration order no longer selects the volume.
+
+### Provider Status
+
+- [ ] Change the registry descriptor to supported only after the validation checks pass. `GlobalIlluminationProviderRegistry.cs`. Done when: the static support result changes in the same change that records the passed checks.
+
+## Decisions Needed
+
+- [ ] Choose single-volume or multi-volume blending for v1. Owner: rendering lead.
+
+## Out Of Scope
+
+- ReSTIR radiance-cache reuse.
+- Specular radiance-cascade sampling before diffuse production is valid.

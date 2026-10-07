@@ -669,6 +669,7 @@ namespace XREngine.Editor.Mcp
         /// Gets timing information from the engine timer.
         /// </summary>
         [XRMcp(Name = "get_time_state")]
+        [McpThreadAffinity(McpThreadAffinity.Caller)]
         [Description("Get timing, delta, and target frequency information.")]
         public static Task<McpToolResponse> GetTimeStateAsync(McpToolContext context)
         {

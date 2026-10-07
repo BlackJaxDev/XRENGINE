@@ -11,7 +11,7 @@ This file is preserved as the implementation-era design record for the texture-m
 
 Related docs:
 
-- [Texture management runtime TODO](../../todo/texturing/texture-management-runtime-todo.md)
+- [Texture Streaming architecture](../../../architecture/rendering/texture-streaming.md)
 - [Sparse texture streaming plan](sparse-texture-streaming-plan.md)
 - [Default render pipeline notes](../../../architecture/rendering/default-render-pipeline-notes.md)
 - [Neural texture compression plan](neural%20texture%20compression.md)

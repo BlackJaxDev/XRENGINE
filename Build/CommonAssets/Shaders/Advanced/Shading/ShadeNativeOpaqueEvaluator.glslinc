@@ -86,6 +86,24 @@ void XR_ADV_StoreOpaqueSampleResult(
     XR_ADV_StoreMaterialSurfaceInputs(pixel, viewIndex, result);
 }
 
+// Environment flag bit 0 enables the captured world ambient term.
+vec3 XR_ADV_WorldAmbient(uint viewIndex)
+{
+    vec3 ambient = vec3(0.0);
+    for (uint index = 0u; index < uint(XR_ADV_Environments.records.length()); ++index)
+    {
+        XRAdvancedEnvironmentRecord environment = XR_ADV_LoadEnvironment(index);
+        if ((environment.flags & 1u) == 0u) continue;
+        if ((environment.viewMaskLo != 0u || environment.viewMaskHi != 0u) &&
+            (viewIndex < 32u ? (environment.viewMaskLo & (1u << viewIndex)) == 0u :
+                (viewIndex >= 64u || (environment.viewMaskHi & (1u << (viewIndex - 32u))) == 0u))) continue;
+        vec4 value = environment.ambientColorAndIntensity;
+        if (any(isnan(value)) || any(isinf(value))) continue;
+        ambient += max(value.rgb, vec3(0.0)) * max(value.a, 0.0);
+    }
+    return ambient;
+}
+
 void XR_ADV_EvaluateProbeIbl(
     uint viewIndex,
     vec3 worldPosition,
@@ -336,6 +354,15 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     if (unlit) color += base.rgb;
     else
     {
+        // The baseline diffuse term does not require probes or dynamic GI.
+        // A GI diffuse owner suppresses it with the same flag as probe diffuse.
+        if ((u_Push.flags & 32u) == 0u)
+        {
+            vec3 F0 = mix(vec3(0.04), base.rgb, metallic);
+            vec3 F = XR_ADV_FresnelSchlick(max(dot(N, V), 0.0), F0);
+            color += XR_ADV_WorldAmbient(viewIndex) * base.rgb *
+                (vec3(1.0) - F) * (1.0 - metallic) * ambientOcclusion;
+        }
         uint lightCount = min(u_Push.lightCount, uint(XR_ADV_Lights.records.length()));
         for (uint i = 0u; i < lightCount; ++i)
             if (XR_ADV_Lights.records[i].type == 0u)
@@ -376,7 +403,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             vec3 diffuseIndirect, specularIndirect;
             XR_ADV_EvaluateProbeIbl(viewIndex, surface.worldPosition, N, V,
                 base.rgb, roughness, metallic, diffuseIndirect, specularIndirect);
-            color += ((u_Push.flags & 16u) != 0u
+            color += ((u_Push.flags & 32u) != 0u
                     ? vec3(0.0)
                     : diffuseIndirect * ambientOcclusion) +
                 specularIndirect * XR_ADV_SpecularOcclusion(

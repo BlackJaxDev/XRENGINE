@@ -29,6 +29,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     bool IsMinimalVisibilityOutput = false,
     uint NativeViewIndex = 0u,
     bool RequiresMaterialSurfaceExports = false,
+    bool SuppressBaselineDiffuse = false,
     uint MsaaSampleCount = 1u,
     bool HasAuthoredBackground = false,
     VulkanAdvancedDirectionalShadowLaneStorage? DirectionalShadowLane = null)
@@ -102,6 +103,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            EnableBuiltInAmbientOcclusion == other.EnableBuiltInAmbientOcclusion &&
            EnableLightProbesAndIbl == other.EnableLightProbesAndIbl &&
            RequiresMaterialSurfaceExports == other.RequiresMaterialSurfaceExports &&
+           SuppressBaselineDiffuse == other.SuppressBaselineDiffuse &&
            MsaaSampleCount == other.MsaaSampleCount &&
            HasAuthoredBackground == other.HasAuthoredBackground &&
            IsMinimalVisibilityOutput == other.IsMinimalVisibilityOutput &&

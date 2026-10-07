@@ -106,7 +106,6 @@ actual registration target during shape replacement.
 ## Auxiliary Rows And Dirty Ranges
 
 Each destination stream has its own change test and accepted revision:
-
 | State | Update rule |
 | --- | --- |
 | `BoundsGpu` and `DrawMetadata` comparisons | Use typed equality. Preserve all consumed fields without boxing. |

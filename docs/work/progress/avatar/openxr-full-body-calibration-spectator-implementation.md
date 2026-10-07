@@ -1,6 +1,6 @@
 # OpenXR full-body calibration and spectator implementation record
 
-This record describes the current implementation and validation evidence. The [implementation checklist](../../todo/avatar/openxr-full-body-calibration-spectator-todo.md) defines the intended behavior; checkboxes there require a separate final review.
+This record describes the current implementation and validation evidence. The [body tracking guide](../../../developer-guides/vr/openxr-body-tracking.md) defines the intended behavior. Open checks are in [Avatar Validation](../../testing/avatar/avatar-validation.md), and open code items are in the [VR full-body estimation todo](../../todo/avatar/vr-full-body-estimation-todo.md#calibration-and-spectator-follow-ups).
 
 Root causes, rejected hypotheses, and the live solver measurements are recorded in the [integration investigation](../../investigations/avatar/vr-full-body-calibration-2026-09-26.md).
 

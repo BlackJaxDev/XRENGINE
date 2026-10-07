@@ -2,7 +2,7 @@
 
 Date: 2026-07-22
 Status: Implementation and automated validation in progress; live Vulkan validation blocked before device creation
-Related TODO: [Vulkan render query system upgrade](../../../todo/rendering/vulkan-render-query-system-upgrade-todo.md)
+Related guide: [Render Queries](../../../../developer-guides/rendering/render-queries.md). Validation: [Render Queries And Occlusion Validation](../../../testing/rendering/render-queries-and-occlusion-validation.md)
 Related acceptance owner: [Vulkan CPU-query and Monado regressions](vulkan-cpu-query-monado-regressions-2026-07-14.md)
 
 ## Problem

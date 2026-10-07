@@ -12,6 +12,8 @@ internal sealed partial class VulkanCommandRuntime
 {
     private const byte RequiredProducerRecordedBit = 1 << 0;
     private const byte RequiredProducerOperationBit = 1 << 1;
+    private static readonly string[] EarlyVisibilityRasterGpuProfilerPath = ["Advanced", "Visibility", "RasterEarly"];
+    private static readonly string[] LateVisibilityRasterGpuProfilerPath = ["Advanced", "Visibility", "RasterLate"];
 
     private bool RecordPrimaryOperations(scoped ref PrimaryCommandBufferRecordingState recordingState,
         int firstOperation = 0, int endOperation = -1, int skipOperation = -1)
@@ -805,6 +807,11 @@ internal sealed partial class VulkanCommandRuntime
         // bin binds or indirect-count reads.
         if (state.RenderScope.IsActive)
             EndActiveRenderPass(ref state);
+        using var gpuScope = TryBeginVulkanGpuProfilerScope(
+            state.CommandBuffer,
+            payload.Request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster
+                ? LateVisibilityRasterGpuProfilerPath
+                : EarlyVisibilityRasterGpuProfilerPath);
         EmitAdvancedVisibilityRasterReadBarrier(ref state);
         BeginRenderPassForTarget(
             ref state,

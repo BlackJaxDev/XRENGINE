@@ -12,7 +12,9 @@ struct Particle
     vec3 PrevPosition;
     float _pad1;
     int IsColliding;
-    vec3 _pad2;
+    float _pad2a;
+    float _pad2b;
+    float _pad2c;
     vec3 PreviousPhysicsPosition;
     float _pad3;
 };

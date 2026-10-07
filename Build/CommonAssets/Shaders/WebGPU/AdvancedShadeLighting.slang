@@ -684,6 +684,29 @@ XRAdvancedOpaqueSampleResult XR_ADV_NeutralOpaqueSampleResult()
         0u,
         0u);
 }
+// Environment flag bit 0 enables the captured world ambient term.
+float3 XR_ADV_WorldAmbient(uint viewIndex)
+{
+    float3 ambient = float3(0.0);
+    for (uint index = 0u; index < SceneCount(14u); ++index)
+    {
+        // The canonical 32-word environment record stores flags at word 2,
+        // ambient color and intensity at word 24, and view masks at word 28.
+        uint word = SceneRow(14u, index);
+        if ((SceneArena[word + 2u] & 1u) == 0u) continue;
+        uint viewMaskLo = SceneArena[word + 28u];
+        uint viewMaskHi = SceneArena[word + 29u];
+        if ((viewMaskLo != 0u || viewMaskHi != 0u) &&
+            (viewIndex < 32u ? (viewMaskLo & (1u << viewIndex)) == 0u :
+                (viewIndex >= 64u || (viewMaskHi & (1u << (viewIndex - 32u))) == 0u))) continue;
+        float4 value = asfloat(uint4(SceneArena[word + 24u], SceneArena[word + 25u],
+            SceneArena[word + 26u], SceneArena[word + 27u]));
+        if (any(isnan(value)) || any(isinf(value))) continue;
+        ambient += max(value.rgb, float3(0.0)) * max(value.a, 0.0);
+    }
+    return ambient;
+}
+
 void XR_ADV_EvaluateProbeIbl(
     uint viewIndex,
     float3 worldPosition,
@@ -992,6 +1015,14 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     if (unlit) color += base.rgb;
     else
     {
+        // The world ambient term and probe diffuse use the same GI ownership flag.
+        if ((u_Push.flags & 32u) == 0u)
+        {
+            float3 F0 = lerp(float3(0.04), base.rgb, metallic);
+            float3 F = XR_ADV_FresnelSchlick(max(dot(N, V), 0.0), F0);
+            color += XR_ADV_WorldAmbient(viewIndex) * base.rgb *
+                (float3(1.0) - F) * (1.0 - metallic) * ambientOcclusion;
+        }
         uint lightCount = min(u_Push.lightCount, SceneCount(5u));
         for (uint lightIndex = 0u; lightIndex < lightCount; ++lightIndex)
             color += XR_ADV_EvaluateLight(lightIndex, surface, N, V, base.rgb,
@@ -1005,7 +1036,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             float3 diffuseIndirect, specularIndirect;
             XR_ADV_EvaluateProbeIbl(viewIndex, surface.worldPosition, N, V,
                 base.rgb, roughness, metallic, rmse.z, engineSurface, diffuseIndirect, specularIndirect);
-            color += ((u_Push.flags & 16u) != 0u
+            color += ((u_Push.flags & 32u) != 0u
                     ? float3(0.0)
                     : diffuseIndirect * ambientOcclusion) +
                 specularIndirect * XR_ADV_SpecularOcclusion(

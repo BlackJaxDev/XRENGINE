@@ -212,14 +212,21 @@ public sealed partial class PhysicsChainWorld
             if (component is not { IsActiveInHierarchy: true })
                 continue;
 
-            int baseWorkUnits = Math.Max(component.EstimatedWorldWork, 1);
-            if (component.QualityTier != PhysicsChainQualityTier.Automatic)
+            PhysicsChainQualityTier authoredTier = component.QualityTier;
+            if (authoredTier != PhysicsChainQualityTier.Automatic)
             {
-                ApplyFixedTier(component, ref slot.QualityState, component.QualityTier);
-                _slots[slotIndex] = slot;
+                if (slot.QualityState.RequestedTier != authoredTier ||
+                    slot.QualityState.Reason != PhysicsChainQualityDecisionReason.AuthoredFixedTier ||
+                    slot.QualityState.HasAutomaticTransition ||
+                    component.EffectiveQualityTier != authoredTier)
+                {
+                    ApplyFixedTier(component, ref slot.QualityState, authoredTier);
+                    _slots[slotIndex] = slot;
+                }
                 continue;
             }
 
+            int baseWorkUnits = Math.Max(component.EstimatedWorldWork, 1);
             ++automaticChainCount;
             component.AdvanceAutomaticQualityFrame();
             PhysicsChainQualityTier requestedTier = ResolveRequestedTier(

@@ -833,7 +833,7 @@ public static class UnitTestingWorldSettingsStore
 
         settings.VR.ViewRenderMode = settings.SinglePassStereoVR
             ? EVrViewRenderMode.SinglePassStereo
-            : EVrViewRenderMode.SequentialViews;
+            : EVrViewRenderMode.ParallelCommandBufferRecording;
     }
 
     private static UnitTestingVrLaunchMode ResolveLegacyVrMode(UnitTestingWorldSettings settings)

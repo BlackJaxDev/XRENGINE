@@ -130,7 +130,7 @@ captured static world.
   startup cancellation, multi-canvas isolation, resource teardown and physical
   mobile acceptance.
 
-The active [runtime TODO](../../todo/rendering/mobile-webgpu-runtime-todo.md)
+The active [runtime TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md)
 checks off module and static asset-bridge code separately from those open gates.
 Usage and publish commands remain in the [browser README](../../../../XREngine.Browser/README.md).
 

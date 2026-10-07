@@ -41,6 +41,7 @@ internal sealed class XRMeshDeformationInputs : IDisposable
         bool external = RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
             _externalPalette is not null && _externalPaletteCount > 0;
         bool sharedPalette = false;
+        XRMeshDeformationInputSnapshot sharedInputs = default;
         if (skinning)
         {
             _mesh.EnsureComputeSkinningBuffers();
@@ -50,7 +51,7 @@ internal sealed class XRMeshDeformationInputs : IDisposable
             if (!external && (_owner.HasExternalSkinPaletteSource || _owner.HasGpuDrivenBoneSource))
             {
                 if (_owner.Mesh is not { } primary ||
-                    !_owner.TryPrepareDeformationInputs(primary, true, false, publish, out _, observePose))
+                    !_owner.TryPrepareDeformationInputs(primary, true, false, publish, out sharedInputs, observePose))
                     throw new InvalidOperationException("MeshDeformation.SourcePalettePending: the exact shared primary palette is not yet available.");
                 sharedPalette = HasExactRendererPaletteOrder();
                 if (!sharedPalette)
@@ -64,15 +65,18 @@ internal sealed class XRMeshDeformationInputs : IDisposable
             RefreshActiveMorphs();
         }
         return new(
-            !skinning ? null : external ? _externalPalette : sharedPalette ? _owner.ActiveSkinPaletteBuffer : _palette,
-            !skinning ? null : external ? _externalPreviousPalette : sharedPalette ? _owner.ActivePreviousSkinPaletteBuffer : null,
-            !skinning ? 0 : external ? _externalPaletteBase : sharedPalette ? _owner.ActiveSkinPaletteBase : 0,
-            !skinning ? 0 : external ? _externalPaletteCount : sharedPalette ? _owner.ActiveSkinPaletteCount : checked((uint)_skinningState!.UtilizedBones.Length + 1),
+            !skinning ? null : external ? _externalPalette : sharedPalette ? sharedInputs.Palette : _palette,
+            !skinning ? null : external ? _externalPreviousPalette : sharedPalette ? sharedInputs.PreviousPalette : null,
+            !skinning ? 0 : external ? _externalPaletteBase : sharedPalette ? sharedInputs.PaletteBase : 0,
+            !skinning ? 0 : external ? _externalPaletteCount : sharedPalette ? sharedInputs.PaletteCount : checked((uint)_skinningState!.UtilizedBones.Length + 1),
             skinning && (external || sharedPalette),
             blendshapes ? _activeMorphs : null,
             blendshapes ? _activeCount : 0,
-            sharedPalette ? _owner.SkinnedOutputVersion : _poseVersion,
-            _morphVersion);
+            sharedPalette ? sharedInputs.PoseVersion : _poseVersion,
+            _morphVersion)
+        {
+            UsesLocalBoneOwnership = skinning && sharedPalette && sharedInputs.UsesLocalBoneOwnership,
+        };
     }
 
     private bool HasExactRendererPaletteOrder()

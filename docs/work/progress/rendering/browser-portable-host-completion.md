@@ -43,7 +43,7 @@ only with the corresponding restored build. No report was generated in this deli
 ## Completion and remaining evidence
 
 All source implementation rows through the browser host are tracked separately
-from acceptance in the [active TODO](../../todo/rendering/mobile-webgpu-runtime-todo.md).
+from acceptance in the [active TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md).
 The dependency and initializer inventory tools are implemented; their evaluated
 results still need execution and owner review. The lexical guard is not a semantic
 reachability proof. Proposed physical devices still need availability confirmation

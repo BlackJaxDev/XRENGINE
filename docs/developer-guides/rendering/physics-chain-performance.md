@@ -1,10 +1,10 @@
 # Physics Chain Performance
 
-Last updated: 2026-07-20
+Last updated: 2026-10-06
 
 The physics-chain optimization work reduces `PhysicsChainComponent` CPU cost, GPU transfer bandwidth, synchronization stalls, and hot-path allocations across CPU, standalone GPU, and batched GPU modes.
 
-The implementation now has the core architecture in place: low-allocation buffer upload paths, async readback for compatibility sync, dirty/version-aware uploads, reduced transform propagation cost, reusable CPU scheduling, and regression coverage for the main synchronization and versioning risks. Remaining work is validation and benchmark capture, tracked separately in [Physics Chain Performance Testing](../../work/testing/physics-chain-performance.md).
+The implementation now has the core architecture in place: low-allocation buffer upload paths, async readback for compatibility sync, dirty/version-aware uploads, reduced transform propagation cost, reusable CPU scheduling, and regression coverage for the main synchronization and versioning risks. Remaining work is validation and benchmark capture, tracked separately in [Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md).
 
 ## World-owned runtime architecture
 
@@ -38,9 +38,11 @@ three-row layout, with independent current/previous history for motion vectors.
 
 ## GPU execution and strict zero-readback
 
-The compute dispatcher talks through `IPhysicsChainComputeBackend`; OpenGL is
-the production mapping, while unsupported Vulkan/DX12 capabilities fail
-explicitly instead of silently switching to CPU. Templates and collider shape
+The compute dispatcher talks through `IPhysicsChainComputeBackend`. The Math
+Intersections skinned dispatcher scenario has live Vulkan Advanced-pipeline
+evidence. See the [skinned chain investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
+for scope, repairs, and current scale limits. Unsupported backend capabilities
+fail explicitly instead of switching to CPU. Templates and collider shape
 topology upload once, dynamic headers and poses upload by dirty range, and
 resident arenas retain stable generation-tagged offsets across frames.
 
@@ -168,6 +170,49 @@ A failed GPU status never indicates that a CPU fallback was used.
 
 ## Related Documentation
 
-- [Physics Chain Performance Testing](../../work/testing/physics-chain-performance.md)
+- [Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md)
 - [GPU Physics Chain Zero-Readback Skinned Mesh Plan](../../work/design/transforms/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)
 - [Physics](../../user-guide/physics.md)
+
+
+### Versioned CPU input and GPU arena placement
+
+The component caches particle seed state, static templates, and bone topology
+at their source version boundaries. GPU preparation does not create CPU job
+snapshots. Rest gravity has its own tree version, so a dynamic header change
+does not upload particle templates. The rendering bridge copies request-owned
+inputs only when the matching source version or dynamic signature changes.
+
+The particle arena requests `StaticCopy`. The Vulkan backend can then use
+device-local storage at its normal size threshold. Seed/reset uploads and
+ordered GPU growth copies remain required. Transform and header arenas retain
+their dynamic upload policy. `ParticleArenaBufferStatus.ResolvedRoute` reports
+the actual backend choice; requested usage alone does not prove placement.
+
+`PhysicsChainWorkgroups.glslinc` defines the short-linear group size for both
+the solver and indirect argument builder. Change both through this shared
+constant. A group-size change requires full-population and animation checks.
+The 32-, 64-, and 128-thread development samples do not yet establish a winner;
+CPU stalls and varying GPU clocks prevent a controlled GPU comparison.
+
+The rendering bridge retains one readback coordinator per physics world.
+World tracking ends after the last source leaves and outstanding work drains.
+GPU bounds routing captures renderer command indices once per scene, then
+uses indexed lookups for each palette binding.
+
+With `XRE_WORLD_TICK_TELEMETRY=1`,
+`PhysicsChainComponent.WorldLateTickTelemetry` exposes cumulative late-tick
+stage times and gate wait in Stopwatch ticks. Compare snapshots and divide by
+`StopwatchFrequency`. These are elapsed times, not exclusive CPU use. Keep
+this observer disabled for final performance acceptance.
+
+The same flag enables `RuntimeWorldRenderer.CollectionTelemetry`. Compare
+snapshots to get collect and swap call counts and matrix, mesh, and scene time.
+It also enables
+`TransformHierarchyStore.GetReadContentionTelemetrySnapshot()`, which reports
+contended local, world, and render reads, odd and changed-sequence retries,
+cumulative retry ticks, and the maximum spin count. Divide retry ticks by
+`StopwatchFrequency` to get elapsed time. The read counters are process-wide
+and can add time across threads; they are not one frame's critical-path time.
+Uncontended reads do not call the timer or update contention counters. Disable
+the flag for final performance acceptance.

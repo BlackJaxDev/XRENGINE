@@ -1,101 +1,53 @@
 # Poiyomi Toon 9.3 Parity Validation
 
-parity validation closes the Poiyomi Toon 9.3.64 conversion project with a versioned,
-redistributable corpus and repeatable unit, contract, shader, inspector, visual,
-performance, and live-backend validation.
+Scope: Validate the Poiyomi Toon 9.3.64 conversion corpus, contracts, shader compilation, inspector behavior, visual parity, performance, and live backends.
 
-## Pinned corpus
+Architecture: [Uber Shader Varianting](../../../architecture/rendering/uber-shader-varianting.md)  Code todos: none.
 
-- Manifest: `XREngine.UnitTests/TestData/Poiyomi/ParityCorpus/corpus-manifest.json`
-- License: `XREngine.UnitTests/TestData/Poiyomi/LICENSE.txt` (`CC0-1.0`)
-- Poiyomi source: `9.3.64`, commit
-  `c5aaeeb3a67782b7e8a26e184d5e0a1970792294`
-- Unity authoring baseline: `2022.3.22f1`
-- Catalog integrity SHA-256:
-  `1d72086a4e46344649d0f99d6b17e5666cdb33cfcba20d1fa270c7bae4124236`
+## Setup
 
-The manifest records unlocked and optimized/locked materials, focused feature
-families, every render preset, maximal practical combinations, mesh attributes,
-texture roles, animation binding kinds, schema annotations and inactive
-lookalikes, versioned authoring payloads, multi-material compatibility cases,
-fixed visual conditions, comparison thresholds, and performance budgets.
+Pinned corpus files are `XREngine.UnitTests/TestData/Poiyomi/ParityCorpus/corpus-manifest.json` and `XREngine.UnitTests/TestData/Poiyomi/LICENSE.txt`. The corpus uses Poiyomi source `9.3.64`, commit `c5aaeeb3a67782b7e8a26e184d5e0a1970792294`, Unity `2022.3.22f1`, and catalog SHA-256 `1d72086a4e46344649d0f99d6b17e5666cdb33cfcba20d1fa270c7bae4124236`.
 
-The three reviewed PPM references are intentionally small analytical fixtures.
-They exercise deterministic exact/native-equivalent comparison behavior without
-embedding upstream copyrighted shader assets.
-
-Authoritative Unity reference captures were generated from Unity `2022.3.22f1`
-and the pinned Poiyomi commit using `.poiyomi/Poiyomi Toon`, linear color, a
-fixed 640x360 render target, fixed directional light, and the three manifest
-camera poses. The source package remains a user-provided/pinned checkout and is
-not redistributed. The reviewed metadata and PNGs are versioned under
-`XREngine.UnitTests/TestData/Poiyomi/ParityCorpus/UnityReferences/`; the generated
-images are CC0-1.0 and their source shader is MIT-licensed.
-
-## Automated matrix
-
-`PoiyomiParityCorpusTests` verifies fixture completeness, licensing, catalog
-integrity, classifications, geometry, texture, animation, schema, authoring, and
-multi-material coverage.
-
-`PoiyomiParityContractTests` verifies parsing, conversion, preservation,
-diagnostics, variants, pass isolation, sampler fallback rungs, schema and
-condition semantics, atomic actions, widgets, clipboard/presets/layers, path
-safety, and malformed-input fuzzing.
-
-`PoiyomiInspectorInteractionTests` drives a headless ImGui interaction
-harness through mouse, keyboard, drag/drop, clipboard, reset, animation,
-context-action, persistence, reimport, cancellation, localization, missing-glyph,
-DPI, narrow/wide, and scrolling cases.
-
-`UberShaderCompilationTests` compiles representative minimal, common,
-family-maximal, and global-maximal variants to SPIR-V; checks all semantic passes;
-checks desktop/OpenVR/OpenXR-compatible vertex paths; compares OpenGL and Vulkan
-resolved-source contracts; and covers all feature pairs deterministically.
-Shaderc warnings are promoted to compilation errors.
-
-`PoiyomiVisualPerformanceTests` verifies analytical visual thresholds,
-fixed scene conditions, schema/variant/packing/search/cancellation stress,
-source and sampler pressure, memory bounds, and allocation-free steady probes.
-
-## Running validation
-
-Automated suite only:
+Run automated parity validation with:
 
 ```powershell
 dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~PoiyomiParity"
 ```
 
-Full OpenGL and Vulkan live validation:
+Run full OpenGL and Vulkan live validation with:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Validate-PoiyomiParity.ps1
 ```
 
-The runner uses named isolated editor sessions, waits for the Uber Shader World,
-captures three camera positions and the final pipeline texture per backend,
-dumps CPU/GPU/render-profiler and texture-streaming data, scans backend logs, and
-writes a machine-readable report under `Build/_AgentValidation/<run>/reports/`.
-Before accepting captures, it repeatedly samples `FinalPostProcessOutputTexture`
-and rejects an empty, non-finite, or effectively black target. This prevents a
-backend's deferred swapchain initialization clear from being mistaken for a
-valid rendered frame.
+Use `-NoBuild` only when the isolated editor binaries already contain the source under test. Use `-SkipLiveValidation` only for CI workers without a GPU. That mode does not satisfy live-backend acceptance.
 
-Use `-NoBuild` only when the current isolated editor binaries already contain
-the source under test. Use `-SkipLiveValidation` for CI workers without a GPU;
-that mode does not satisfy live-backend acceptance.
+## Checks
 
-## Acceptance evidence
+### Corpus And Contracts
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Corpus completeness | Run `PoiyomiParityCorpusTests`. | Fixture completeness, licensing, catalog integrity, classifications, geometry, texture, animation, schema, authoring, and multi-material coverage pass. | Open | none |
+| Conversion contracts | Run `PoiyomiParityContractTests`. | Parsing, conversion, preservation, diagnostics, variants, pass isolation, sampler fallback, schema conditions, actions, widgets, clipboard, presets, layers, path safety, and fuzzing pass. | Open | none |
+| Inspector behavior | Run `PoiyomiInspectorInteractionTests`. | Headless ImGui mouse, keyboard, drag/drop, clipboard, reset, animation, context actions, persistence, reimport, cancellation, localization, glyph, DPI, narrow/wide, and scrolling cases pass. | Open | none |
 
-A parity validation closeout requires:
+### Shader And Visual Parity
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Uber shader compilation | Run `UberShaderCompilationTests`. | Representative minimal, common, family-maximal, and global-maximal variants compile to SPIR-V. Shaderc warnings are errors. | Open | none |
+| Visual and performance tests | Run `PoiyomiVisualPerformanceTests`. | Analytical thresholds, scene conditions, stress paths, memory bounds, and allocation probes pass. | Open | none |
+| Unity references | Compare against reviewed Unity reference captures for the three manifest camera poses. | OpenGL and Vulkan captures match thresholds. | Open | none |
 
-1. all parity validation tests passing;
-2. three visibly reviewed OpenGL captures;
-3. three visibly reviewed Vulkan captures;
-4. no non-teardown OpenGL/Vulkan validation or shader errors;
-5. recorded CPU/GPU/render-profiler output for both backends;
-6. all parity validation checklist boxes checked only after the above evidence exists.
+### Live Backends
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Full runner | Run `Tools\Validate-PoiyomiParity.ps1`. | The runner captures three camera positions and final pipeline textures per backend and writes a machine-readable report. | Open | none |
+| OpenGL review | Review OpenGL captures. | Three captures are visibly valid. | Open | none |
+| Vulkan review | Review Vulkan captures. | Three captures are visibly valid. | Open | none |
+| Backend logs | Scan OpenGL and Vulkan logs. | No non-teardown validation or shader errors appear. | Open | none |
+| Profiler output | Review CPU, GPU, render-profiler, and texture-streaming output for both backends. | Costs and streaming behavior are recorded. | Open | none |
+| RenderDoc triage | Use RenderDoc only if captures disagree or logs cannot identify the failing pass or resource. | The failing pass or resource is identified. | Open | none |
 
-RenderDoc is required only if the live captures disagree or the logs do not
-identify the failing pass/resource. The parity validation closeout capture confirmed a
-Vulkan frame with 160 events and 21 draw calls and was closed after inspection.
+## Failures
+| Check | Symptom | Investigation or code item |
+|---|---|---|

@@ -4,6 +4,35 @@ Physics-chain GPU simulation is selected explicitly. The dispatcher depends on
 `IPhysicsChainComputeBackend`; renderer-specific casts, raw buffer handles,
 copy commands, and readback details belong only in the backend adapter.
 
+## Implemented GPU solver path
+
+`PhysicsChainGpuKernelMask` and `PhysicsChainKernelBucket` select two families:
+
+| Family | Shader | Work ownership |
+| --- | --- | --- |
+| `ShortLinear` | `PhysicsChain.comp` | One invocation advances one linear tree in parent-before-child order. The current cutoff is 32 particles. |
+| `BranchedOrLong` | `PhysicsChainBranched.comp` | One workgroup advances one tree through precomputed depth ranges. Storage visibility and workgroup barriers separate dependent depths. |
+
+`GPUPhysicsChainDispatcher.Kernels.DispatchSpecializedPhysics` uses GPU-authored
+active lists and indirect arguments for these families. Each shader runs the
+tree's resolved substeps inside its dispatch. `GPUDispatchGroupKey` contains
+dispatch isolation, not loop count. The component still resolves fixed-step
+accumulation and time scale before submission; a shared CPU/GPU clock contract
+remains open.
+
+Dynamic particle state and static particle templates use separate buffers.
+Source versions control seed/reset and static-template uploads. Dynamic
+per-tree headers carry the resolved loop count and time scale. This separation
+does not establish that all shader fields are needed or that the header upload
+uses a persistent mapped ring.
+
+`PhysicsChainShaderContractTests` and `PhysicsChainGpuKernelFamilyTests` cover
+record layouts and source contracts. `PhysicsChainGpuDependencyOrderingTests`
+and `PhysicsChainGpuBranchedDependencyOrderingTests` provide GPU ordering
+checks. The source audit on 2026-10-06 did not run these tests. See the
+[validation plan](../../work/testing/physics/physics-validation.md#physics-chain-scale)
+for runtime and hardware acceptance.
+
 ## Required capabilities and failure behavior
 
 A backend used by the current pipeline must report all of these capabilities:

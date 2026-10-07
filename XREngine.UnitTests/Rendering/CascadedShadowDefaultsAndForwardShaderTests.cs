@@ -709,7 +709,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     }
 
     [Test]
-    public void DirectionalCascadeLayeredModes_AreExposedInRuntimeAndDocs()
+    public void DirectionalCascadeLayeredModes_AreExposedInRuntime()
     {
         string enumSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "EDirectionalCascadeShadowRenderMode.cs"));
         enumSource.ShouldContain("Sequential = 0");
@@ -728,12 +728,6 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         cascadeSource.ShouldContain("public string CascadeShadowRenderFallbackReason");
         cascadeSource.ShouldContain("DirectionalCascadeRenderModeFallback");
         cascadeSource.ShouldContain("GetPublishedCascadeUnionCullVolume");
-
-        string renderNotes = LoadRepoSource(Path.Combine("docs", "architecture", "rendering", "default-render-pipeline-notes.md"));
-        renderNotes.ShouldContain("CascadeShadowRenderMode");
-        renderNotes.ShouldContain("Auto");
-        renderNotes.ShouldContain("`Auto` is the default request path");
-        renderNotes.ShouldContain("grouped atlas cascade");
     }
 
     [Test]
@@ -773,8 +767,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     /// <summary>
     /// Regression guard for the historical link error
     /// "FragBinorm not declared as input from previous stage" observed in the
-    /// 2026-05-06 12:08 baseline (see
-    /// docs/work/todo/rendering/opengl-shader-linking-stall-followups-todo.md).
+    /// 2026-05-06 12:08 baseline.
     /// The directional cascade shadow geometry shaders are paired with the
     /// shadow-caster fragment variant of UberShader.frag, which still declares
     /// FragTan (location 2) and FragBinorm (location 3) as inputs. If either
@@ -1041,11 +1034,6 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         string editorSource = LoadRepoSource(Path.Combine("XREngine.Editor", "ComponentEditors", "PointLightComponentEditor.cs"));
         editorSource.ShouldContain("Shadow Render Mode");
         editorSource.ShouldContain("Sequential\\0Instanced / Layered\\0Geometry Shader\\0");
-
-        string renderNotes = LoadRepoSource(Path.Combine("docs", "architecture", "rendering", "default-render-pipeline-notes.md"));
-        renderNotes.ShouldContain("Point lights expose `ShadowRenderMode`");
-        renderNotes.ShouldContain("`InstancedLayered` renders selected faces in one layered pass");
-        renderNotes.ShouldContain("compact face indices keep partial masks from stealing mesh-instance semantics");
     }
 
     [Test]

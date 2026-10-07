@@ -2,7 +2,7 @@
 
 Status: the build gate, local reference checks and portable-host checks pass with recorded limits. Browser, editor-published world and OpenGL/Vulkan smokes have viewed captures. Native callbacks and complete test execution/triage are recorded; broader integration acceptance remains open. Current findings are in the [harness investigation](../../investigations/rendering/desktop-browser-reference-harness.md) and [host validation record](../../investigations/platform/portable-engine-host-validation.md).
 
-Tracks: [unified runtime UR00](../../todo/platform/unified-desktop-browser-runtime-todo.md#ur00--stabilize-the-branch-as-a-reference-harness) and the build items of the [native subsystem integration checklist](../../todo/platform/native-subsystem-project-split-todo.md#build-dependency-and-publish-boundaries).
+Tracks: [unified runtime UR00](../../todo/platform/unified-desktop-browser-runtime-todo.md#ur00--stabilize-the-branch-as-a-reference-harness) and the [build and dependency checks](../../testing/platform/platform-validation.md#build-dependency-and-publish-boundaries).
 
 ## Starting state
 

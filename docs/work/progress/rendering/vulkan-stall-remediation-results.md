@@ -3,7 +3,7 @@
 Updated: 2026-10-05. Evidence cutoff: 2026-10-05.
 
 This record consolidates completed work and measured deferrals from the
-[remaining-work checklist](../../todo/rendering/vulkan-stall-remediation-todo.md).
+[remaining-work checklist](../../todo/rendering/vulkan-stall-separate-findings-todo.md).
 Each result applies only to its stated scope. The linked investigations retain
 exact binaries, captures, measurements and case-level decisions.
 
@@ -13,7 +13,7 @@ TSR report remains open. Individual validated changes do not close that report.
 Architecture now lives in
 [Vulkan scene preparation and publication](../../../architecture/rendering/vulkan-scene-preparation-and-publication.md)
 and [editor background preparation](../../../architecture/editor/background-preparation.md).
-The [validation protocol](../../testing/rendering/vulkan-stall-validation.md)
+The [validation protocol](../../testing/rendering/vulkan-core-validation.md)
 owns the repeatable procedure and gate template.
 
 ## Evidence Limits
@@ -268,7 +268,7 @@ rehydration passed two restarts, reaching 7,891 and 6,678 presents with zero
 retirement backlog. These focused results did not yet pass the full matrix.
 The 21-image automated packet required image/log review before acceptance.
 See the [handoff evidence](../../investigations/rendering/2026-09-23-s13b-identity-feedback.md#automated-evidence-collection-awaiting-review)
-and [lifecycle harness](../../testing/rendering/vulkan-lifecycle-evidence-harness.md).
+and [lifecycle harness](../../testing/rendering/vulkan-core-validation.md).
 
 September 25 resolved packet review, snapshot diagnostics, supported-world
 disposition, validation-layer compatibility and focused mutation/failure checks.

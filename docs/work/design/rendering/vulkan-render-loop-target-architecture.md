@@ -24,7 +24,7 @@ every slow frame, including waits and work performed on other threads.
 This is the target-state design. Implementation is tracked in the
 [Vulkan Core Hardening And Recording Code Changes TODO](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md),
 and acceptance evidence is tracked in the
-[Vulkan Core Hardening And Recording Testing TODO](../../testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md).
+[Vulkan Core Hardening And Recording Testing TODO](../../testing/rendering/vulkan-core-validation.md).
 
 ## Current Baseline And Why It Is Not The Target
 
@@ -633,7 +633,7 @@ The standard output presents:
   machine-readable JSON/CSV/trace and MCP results.
 
 The detailed component-profile harness remains owned by the
-[Vulkan Headless MCP Component Profiling TODO](../../todo/rendering/optimization/vulkan-headless-mcp-component-profiling-todo.md).
+[Dedicated Vulkan RenderBench](../../../developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench).
 That harness consumes this lifecycle schema; it must not create a second stage
 taxonomy.
 
@@ -697,6 +697,141 @@ The target is complete only when all of the following are true:
 - current architecture docs, profiler documentation, source maps, and runtime
   behavior agree.
 
+## High-Refresh Program Contracts
+
+These contracts came from the frame-loop master todo. The open work is in the
+[Vulkan frame-loop master todo](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md).
+The checks are in [Vulkan Core Validation](../../testing/rendering/vulkan-core-validation.md#promotion-gates).
+
+### Target Pipeline
+
+The renderer is not rewritten. The resident, data-oriented architecture is finished into one pipeline:
+
+1. **Truthful foreground execution.** `PresentNow` plus `BlockForExact` for desktop and `MeetDeadlineWithGpuFallback` for XR. Late acquire after format-independent readiness. Monotonic generational resource tickets.
+2. **Deliberate presentation pacing.** `Stable` (FIFO) and `LowLatency` (Mailbox with a hybrid sleep and spin limiter) profiles. Attribute every wait above 0.1 ms and at least 99% of detailed frame-root wall time, with explicit gaps of at least 50 µs.
+3. **Sealed submission fast path.** `SealedSubmissionContract` validates static requirements once and runs clean submissions through compact generation checks (below 0.25 ms CPU p95).
+4. **Granular reverse-dependency invalidation.** Invalidate material rows, textures, shaders, and geometry ranges without table-wide clears.
+5. **One canonical resident authority.** `AdvancedSharedGpuSceneDatabase` with ABA-safe `AdvancedGpuHandle(Index, Generation)` handles and frequency-owned SoA streams that feed the direct-slot `VulkanResidentDrawTemplateTable`.
+6. **Stable bins and five strategy lanes.** Numeric `VulkanRenderBinKey` and bin manifests feed `CpuDirect`, `GpuIndirectZeroReadback`, `GpuIndirectInstrumented`, `GpuMeshletZeroReadback`, and `GpuMeshletInstrumented`.
+7. **Asynchronous diagnostic sidecar.** `GpuDiagnosticReadbackPlan` with a fixed staging ring, zero current-frame waits, and strict zero-readback separation.
+8. **Process-wide execution topology.** `EngineExecutionTopology` and a pooled `EngineWorkScheduler` own non-oversubscribed general and render lanes with lane-local command arenas.
+9. **Prepared native command encoding.** One immutable backend-ready packet and a sealed native-resource manifest feed every encoder. Command-local state and bulk lifetime publication replace per-command global discovery.
+10. **Bounded graph, streaming, and tail work.** One Forward+ normal and depth prepass, budgeted cascade updates, chunked texture streaming, and a tombstoned swapchain lifecycle with no normal `vkDeviceWaitIdle`.
+11. **Asynchronous OpenXR.** `OpenXrVulkanSubmissionTracker` removes the synchronous eye fence wait through timeline semaphore or fence-ring completion.
+12. **Advanced Render Pipeline.** GPU material classification, native opaque shading, clustered lighting, visibility-driven transparency and post, and legacy retirement.
+13. **Decoupled editor UI cadence.** `EditorUiRateHz` (`auto`, 30, 60, on-dirty). When the UI is clean or slower than the scene, replay cached secondaries or blit the latest scene without a full Dear ImGui layout on the render critical path.
+
+### Budgets
+
+| Refresh target | Hard frame deadline | Engineering target (p99) |
+|---|---:|---:|
+| 100 Hz (Level A) | 10.000 ms | 8.5-9.0 ms |
+| 120 Hz (Level B, promotion gate) | 8.333 ms | 7.1-7.5 ms |
+| 144 Hz (Level C, stretch gate) | 6.944 ms | 5.9-6.25 ms |
+| 165 Hz / 200 Hz | 6.061 ms / 5.000 ms | Characterization only |
+
+| Stage | Budget (p95) | Behavior |
+|---|---:|---|
+| Inter-thread gate (`CollectWaitForRender`, `RenderWaitForCollect`) | ≤0.50 ms | Visibility for frame N+1 overlaps render of frame N. |
+| Native command encoding (`PrimaryCommandEncoding`) | ≤1.00 ms desktop, ≤1.50 ms laptop | Release dense Sponza. No global bind-state discovery, shared locks, or live `RecordDraw` calls. |
+| Sealed submission | ≤0.25 ms | Validated once; compact generation checks. |
+| Editor UI (`RecordImGuiOverlay` plus layout) | ≤1.50 ms active, ≤0.10 ms cached | Cached secondary replay when the UI is clean or decoupled. |
+| Slot wait with GPU headroom | about 0 ms | Producer or timeline owned. |
+
+Forbidden fixes:
+
+- Raising queue or arena capacities to hide admission livelocks.
+- Raising worker counts above the physical execution budget.
+- Tight polling or busy spinning across the frame interval.
+- CPU readbacks, full bucket scans, or synchronous diagnostic waits in zero-readback passes.
+- `SIMULTANEOUS_USE_BIT` instead of slot-owned command pools.
+- A second scene database or residency registry.
+- `vkDeviceWaitIdle` during normal resize or swapchain recreation.
+- Calling encoding optimized while uncontended locks, dictionary lookups, hashes, generation checks, or dependency insertions remain per command.
+- Forcing native re-encoding only to claim `PresentNow` freshness when a compatible completed artifact can legally run the fresh data.
+
+### Configuration Contract
+
+| Setting | Values | Default | Behavior |
+|---|---|---|---|
+| `PresentationProfile` | `Stable`, `LowLatency`, `Uncapped`, `FrameGeneration` | `Stable` | Pacing, queue depth, and limiter. |
+| `PresentationTargetHz` | `auto`, positive Hz | `auto` | Limiter and deadline target. |
+| `MaxFramesAhead` | `1..2` | `1` for `LowLatency` | Never raised silently to hide waits. |
+| `RenderWorkerThreadCount` | `-1` auto, `0` inline, `1..32` | `0` until auto is measured | Background render workers; startup scoped. |
+| `RenderWorkerThreadCap` | `1..32` | `8` | Upper bound for auto. |
+| `GeneralWorkerThreadCount` | `-1`, `0`, `1..32` | `-1` | General domain workers in `EngineWorkScheduler`. |
+| `GeneralWorkerThreadCap` | `1..32` | `16` | Upper bound for auto. |
+| `ReservedForegroundThreadCount` | `auto`, positive integer | `auto` | Reservations for render, collect, update, window, audio. |
+| `AllowCpuOversubscription` | `true`, `false` | `false` | Rejects configurations above processor count. |
+| `RenderWorkerQos` | `OsDefault`, `High` | `OsDefault` | `High` stays diagnostic until measured. No hard affinity, no `Eco`. |
+| `ForceMeshSubmissionStrategy` | `<auto>` or one of the five strategies | `<auto>` | Override through the existing resolver. |
+| `EditorUiRateHz` | `auto`, `30`, `60`, `on-dirty` | `auto` | UI cadence apart from the scene. |
+| `GpuDiagnosticReadbackCapacity` | bounded startup integer | ring capacity | Saturation drops diagnostics only. |
+
+Worker counts, caps, oversubscription, and QoS are renderer-neutral `RenderExecutionSettings` and are startup scoped. Environment variables are launch-only diagnostic overrides. Startup reports requested and effective values, their source, the processor budget, lane and thread IDs and QoS, queue capacities, and restart requirements. Invalid values are never silently ignored. The strategy resolver is the only strategy authority.
+
+### Invalidation Matrix
+
+| Change | Data upload | Template, bin, and recording effect |
+|---|---|---|
+| Camera or view motion | View stream only | No rebuild, rebin, or rerecord; culling only. |
+| Object transform or bounds | Dirty object slots | No structural effect. |
+| Instance count within reserve | Instance and count range | Indirect data only. |
+| Material scalar | Dirty material slot | None. |
+| Texture or sampler replacement in a stable slot | Resource-table slot | New lease before old release. |
+| Material layout or shader interface | Affected data | Rebuild only dependent variants. |
+| Fixed-function or render-option change | As required | New bin key and artifacts for affected bins. |
+| Mesh content in a stable allocation | Geometry range | Synchronize upload with reads. |
+| Geometry layout, index type, or relocation | Geometry range | Rebuild dependents; retire old lease after GPU completion. |
+| Visibility or LOD result | Indirect data and count | None. |
+| Dense remap or compaction | Lookup ranges | None when identity is unchanged. |
+| Strategy change | Strategy and pass data | Affected output variants only. |
+| Diagnostic request, ring full, or late result | Diagnostic ranges | Never rebin or retry. |
+| Unexpected GPU output overflow | None during the pass | Clamp, report later, no same-frame rebuild. |
+| Swapchain target change | Frame and pass data | Rebuild target-dependent scope only. |
+| OpenXR acquired image change | View and frame data | None when compatible. |
+| Pass compatibility or view-mask change | Pass data | Replace affected pass variants only. |
+| Scene removal | Tombstone | Recycle after consumer and GPU acknowledgement. |
+| Device loss | Republish all | O(1) table-generation invalidation, then full rebuild. |
+
+### Telemetry Schema
+
+Aggregate metrics are allocation-free and low-contention. Detailed capture uses prewarmed per-thread rings and stable IDs; strings, export, and aggregation run off measured threads. Every panel, HUD, and table shows units (`Rate (Hz)`, `CPU (ms)`, `GPU (ms)`, bytes, µs), so that a 16 ms CPU time is not read as 16 Hz.
+
+`VulkanFrameTelemetry` field groups:
+
+- **Frame identity and outcome:** engine, render, source, and accepted frame IDs, accepted epoch, output, view, and pass identity, frame slot, generations, span and cross-thread links, thread and lane, work class, present policy and deadline, submit serial, presented source, terminal outcome, first fault.
+- **Foreground plan and failure:** `AcceptedFrameId`, `AcceptedEpoch`, `OutputGeneration`, `PresentWorkClass`, `ReadinessPolicy`, `FreshSubmitSerial`, `FrameOperationTransactionId`, authored, transferred, settled, and discarded operation counts, retry and supersession disposition, one-shot settlement, `FramePlanCapacity*` fields, `ForegroundReserve*` fields, `TerminalStage`, `TerminalFailureKind`.
+- **Device and context:** device state and loss count, fault payload, TDR risk, memory budget, last successful submission breadcrumbs, context and extent mismatches, frame-rejection reason.
+- **Presentation and pacing:** requested and resolved profile, present mode, target refresh and interval, actual present interval, frames ahead, limiter sleep and spin, acquire time, unavailable count, present admission and native present time.
+- **Frame slot and completion:** slot wait time, queue, target and completed values, age, swapchain image wait, command pool and descriptor arena reuse waits.
+- **Residency and templates:** direct hits, cold misses, replacements, local and broad invalidations, dirty owners and bytes, legacy visits, template creates, rebuilds, mismatches, collisions, lease failures, evictions, retirements, and compatibility draws by reason.
+- **Submission gateway:** image contract, queue ownership, lifetime pins, state and queue gate waits, native submit, publications, sealed hits, fallbacks, and fallback reason.
+- **Scheduler and memory:** resolved counts, active lanes and peak concurrency, built, queued, stolen, inline, cancelled items, wakes, empty wakes, queue-full fallback, faults, queue age, execute time, overlap and imbalance, lock wait, merge cost, high-water marks, managed allocation per stage, render-thread allocation bytes, GC pause, pinned objects, oversubscription rejections, `CollectWaitForRenderMs`, `RenderWaitForCollectMs`.
+- **Uploads and streaming:** queued jobs and oldest age, staging and overflow bytes, preparation, copy, allocation, record, and GPU transfer times, descriptor publication time and items, retirement backlog and age by class, uncapped drain count.
+- **Native command encoding:** the six `Primary*Ms` stages, `RecordImGuiOverlayMs`, `EditorUiTickMs`, secondary wall, worker, wait, merge, and end times, `LiveMeshRecordDrawCalls`, `PreparedMeshEncodeCalls`, `DependencyTrackAttempts`, `UniqueRecordingDependencies`, bind-state lookups and locks, descriptor-heap binds and skips, manifest entries, sampled-validation results, and native commands by type.
+- **Bins, recording, graph, and GPU:** bin and manifest counts, indirect bytes and MDI calls, primary and secondary records and reuses, API counts, graph cache hits and recompiles, barrier, broad barrier, and ownership transfer counts, full-resolution copy bytes, occlusion costs, GPU pass and frame p50/p95/p99.
+- **Strategy and diagnostics:** requested and resolved strategy and downgrade reason, per-strategy counts, readback bytes, maps, query retrievals, waits, CPU fallback attempts, diagnostic requests, ring occupancy, latency, decoded results, mismatches, drops, decoder faults, and dormant overhead.
+- **OpenXR:** eye submit time, completion wait, in-flight count, tracker capacity and high-water, oldest age, image reuse age, forced waits, deferred releases, retired generations, missed, late, and reprojected frames.
+
+### Program Completion
+
+The high-refresh program is complete only when:
+
+1. Desktop Vulkan sustains 120 Hz (p99 below 8.333 ms, target 7.5 ms) across all desktop scenarios on the named systems, and the separate correctness and lifetime matrix passes.
+2. Present cadence matches the CPU and GPU timing story, and `CollectWaitForRender` is at most 0.5 ms p95.
+3. Stable frames have zero managed hot-path allocation, zero per-draw material or descriptor reconstruction, and zero unnecessary re-recording.
+4. Every authored frame operation settles inside one frame transaction; retries do not leak into later plans, generation races do not latch terminal state, and one-shot consumers settle safely.
+5. Local mutations invalidate only exact dependents.
+6. Unchanged submission CPU p95 is below 0.25 ms.
+7. Native encoding uses immutable prepared records and sealed manifests through command-local state and meets its budget.
+8. All execution domains are centralized, non-oversubscribed, and pooled.
+9. OpenXR eye submission returns immediately.
+10. `AdvancedRenderPipeline` is the desktop and offscreen production default; production OpenXR eye output stays with `RvcRenderPipeline` until its XR gates pass.
+11. Standard and Synchronization validation report zero errors.
+12. `GPUScene` mirrors, `VulkanPreparedMeshOperationCohort`, obsolete worker arrays, live object-oriented CPU-direct encoding, per-command global recording discovery, and the original default pipeline are deleted. A temporary opt-in `LegacyDefaultRenderPipeline` keeps the program open until its dated deletion gate.
+13. Editor UI and Dear ImGui recording are decoupled from scene refresh through `EditorUiRateHz`.
+
 ## Related Documents
 
 - [Vulkan CPU SIMD Refactor Pass Design](vulkan-cpu-simd-refactor-pass-design.md) -
@@ -709,5 +844,5 @@ The target is complete only when all of the following are true:
 - [Vulkan Multi-View Render-Graph Design](vulkan-render-loop-design.md) - view,
   render-batch, occlusion, and deadline-scheduling design consumed by this
   lifecycle architecture.
-- [Vulkan Runtime Code Organization TODO](../../todo/rendering/vulkan-runtime-code-organization-todo.md) - historical extraction milestone and audit
+- [Rendering Code Map](../../../architecture/rendering/code-map.md) - current Vulkan source layout after the extraction milestone
   context; remaining target-state debt is consolidated into core hardening.

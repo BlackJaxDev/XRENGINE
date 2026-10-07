@@ -1,0 +1,7 @@
+#ifndef PHYSICS_CHAIN_WORKGROUPS_INCLUDED
+#define PHYSICS_CHAIN_WORKGROUPS_INCLUDED
+
+// The solver and GPU-authored indirect count must use the same group size.
+#define PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE 32
+
+#endif

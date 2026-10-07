@@ -236,7 +236,7 @@ The audit tool and planning records implement the first workstream's reviewable
 deliverables. The complete resolved transitive package/runtime closure, source
 reachability, hardware availability, exact device versions and real browser
 results remain open. The active
-[TODO](../../todo/rendering/mobile-webgpu-runtime-todo.md) records partial items
+[TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md) records partial items
 without marking these missing results complete. The next implementation work is
 portable scene/runtime extraction, followed by browser hosting and scene boot.
 

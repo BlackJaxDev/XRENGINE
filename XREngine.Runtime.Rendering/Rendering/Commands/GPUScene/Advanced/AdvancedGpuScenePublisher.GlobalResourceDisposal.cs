@@ -12,7 +12,8 @@ public sealed partial class AdvancedGpuScenePublisher
         if (System.Threading.Volatile.Read(ref _publishInProgress) != 0)
             throw new InvalidOperationException("Cannot dispose the canonical publisher during publication.");
 
-        if (_publishedLightCount == 0 && _publishedProbeCount == 0 && _publishedDecalCount == 0)
+        if (_publishedLightCount == 0 && _publishedProbeCount == 0 && _publishedDecalCount == 0 &&
+            !_publishedAmbientHandle.IsValid)
         {
             Array.Clear(_plannedDecals);
             Database.ReleasePublicationSnapshotsForDisposal();
@@ -50,6 +51,7 @@ public sealed partial class AdvancedGpuScenePublisher
             !resources.Shadows.CanApply(0, 0, shadowCount) ||
             !resources.Probes.CanApply(0, 0, _publishedProbeCount) ||
             !resources.Decals.CanApply(0, 0, _publishedDecalCount) ||
+            !TryPreflightWorldAmbient(null, out reason) ||
             !_resourcePublisher.TryPreflightTransition(
                 ReadOnlySpan<AdvancedGpuResourceBindingSource>.Empty,
                 _resourceReleaseBindings.AsSpan(0, releaseCursor), out reason))
@@ -60,6 +62,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     : reason);
         }
 
+        ApplyPreflightedWorldAmbient();
         for (int index = 0; index < _publishedLightCount; ++index)
             if (!resources.RemoveLight(_publishedLightHandles[index]))
                 throw new InvalidOperationException("A retained global light could not be retired during disposal.");

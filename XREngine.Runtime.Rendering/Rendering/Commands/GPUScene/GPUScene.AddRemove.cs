@@ -29,6 +29,38 @@ namespace XREngine.Rendering.Commands
 {
     public partial class GPUScene
     {
+        // Keep removal ownership independent of the producer's mutable command list.
+        private readonly Dictionary<RenderInfo, List<IRenderCommandMesh>> _registeredMeshCommandsByRenderInfo = [];
+        private readonly Dictionary<IRenderCommandMesh, RenderInfo> _registeredRenderInfoByMeshCommand = [];
+
+        private void TrackRegisteredMeshCommand(RenderInfo info, IRenderCommandMesh meshCmd)
+        {
+            if (_registeredRenderInfoByMeshCommand.ContainsKey(meshCmd))
+                return;
+
+            if (!_registeredMeshCommandsByRenderInfo.TryGetValue(info, out List<IRenderCommandMesh>? commands))
+            {
+                commands = [];
+                _registeredMeshCommandsByRenderInfo.Add(info, commands);
+            }
+
+            commands.Add(meshCmd);
+            _registeredRenderInfoByMeshCommand.Add(meshCmd, info);
+        }
+
+        private void UntrackRegisteredMeshCommand(IRenderCommandMesh meshCmd)
+        {
+            if (!_registeredRenderInfoByMeshCommand.Remove(meshCmd, out RenderInfo? info))
+                return;
+
+            if (!_registeredMeshCommandsByRenderInfo.TryGetValue(info, out List<IRenderCommandMesh>? commands))
+                return;
+
+            commands.Remove(meshCmd);
+            if (commands.Count == 0)
+                _registeredMeshCommandsByRenderInfo.Remove(info);
+        }
+
         /// <summary>
         /// Adds a render command to the GPU scene.
         /// </summary>
@@ -176,6 +208,7 @@ namespace XREngine.Rendering.Commands
 
                         indices.Add(index);
                         _commandIndexLookup.Add(index, (meshCmd, subMeshIndex, snapshot));
+                        TrackRegisteredMeshCommand(renderInfo, meshCmd);
 
                         DrawMetadata commandValue = stageNativeRecords.Value.Metadata;
                         commandValue.DrawID = index;
@@ -887,29 +920,36 @@ namespace XREngine.Rendering.Commands
         /// <param name="info">The render info containing commands to remove.</param>
         public void Remove(RenderInfo info)
         {
-            if (info is null || info.RenderCommands.Count == 0 || UpdatingCommandCount == 0)
+            if (info is null)
                 return;
 
             using (_lock.EnterScope())
             {
+                if (!_registeredMeshCommandsByRenderInfo.TryGetValue(info, out List<IRenderCommandMesh>? commands))
+                    return;
+
                 bool anyRemoved = false;
-                foreach (RenderCommand command in info.RenderCommands)
+                for (int commandIndex = commands.Count - 1; commandIndex >= 0; commandIndex--)
                 {
-                    if (command is not IRenderCommandMesh meshCmd)
-                        continue;
+                    IRenderCommandMesh meshCmd = commands[commandIndex];
 
                     if (!_commandIndicesPerMeshCommand.TryGetValue(meshCmd, out var indices) || indices.Count == 0)
-                        continue; // Nothing to remove
-
-                    foreach (uint idx in indices.OrderByDescending(v => v))
                     {
-                        RemoveCommandAtIndex(idx);
+                        UntrackRegisteredMeshCommand(meshCmd);
+                        continue;
+                    }
+
+                    indices.Sort();
+                    for (int indexPosition = indices.Count - 1; indexPosition >= 0; indexPosition--)
+                    {
+                        RemoveCommandAtIndex(indices[indexPosition]);
                         anyRemoved = true;
                     }
 
                     indices.Clear();
                     _commandIndicesPerMeshCommand.Remove(meshCmd);
                     meshCmd.GPUCommandIndex = uint.MaxValue;
+                    UntrackRegisteredMeshCommand(meshCmd);
                 }
 
                 // Resize once after batch removals

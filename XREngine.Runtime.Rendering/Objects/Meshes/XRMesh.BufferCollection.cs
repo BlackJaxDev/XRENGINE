@@ -87,6 +87,44 @@ namespace XREngine.Rendering
                 => _publicationLeaseDepth > 0 &&
                    _publicationLeaseThreadId == Environment.CurrentManagedThreadId;
 
+            /// <summary>
+            /// Holds mesh buffers stable while a reader copies canonical geometry.
+            /// A busy or retired source must be retried at a later boundary.
+            /// </summary>
+            internal bool TryAcquireGeometryReadScope(XRMesh expectedOwner, out GeometryReadScope scope)
+            {
+                scope = default;
+                if (!Monitor.TryEnter(_mutationLock))
+                    return false;
+
+                if (_retired || _ownerDestructionPending || _publicationLeaseDepth != 0 ||
+                    !ReferenceEquals(_owner, expectedOwner) ||
+                    !ReferenceEquals(expectedOwner.Buffers, this) ||
+                    expectedOwner.IsDestroyed || expectedOwner.IsDestroyQueued)
+                {
+                    Monitor.Exit(_mutationLock);
+                    return false;
+                }
+
+                scope = new GeometryReadScope(this);
+                return true;
+            }
+
+            internal ref struct GeometryReadScope
+            {
+                private BufferCollection? _owner;
+
+                internal GeometryReadScope(BufferCollection owner) => _owner = owner;
+
+                public void Dispose()
+                {
+                    BufferCollection? owner = _owner;
+                    _owner = null;
+                    if (owner is not null)
+                        Monitor.Exit(owner._mutationLock);
+                }
+            }
+
             internal void AttachOwner(XRMesh owner)
             {
                 lock (_mutationLock)

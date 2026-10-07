@@ -59,4 +59,4 @@ Its explicit software WebGPU mode does not establish device or performance
 acceptance. Browser trimming/AOT remains rejected until separately qualified;
 desktop NativeAOT has its own [cooked-launcher workflow](aot-final-game-builds.md).
 
-When changing a shared contract, retain dependency direction, update its callers and narrow boundary checks, and qualify the affected desktop and browser paths. A successful source review cannot replace evaluated graph/native-asset inspection or application execution. Current outstanding qualification is tracked in the [integration checklist](../../work/todo/platform/native-subsystem-project-split-todo.md).
+When changing a shared contract, retain dependency direction, update its callers and narrow boundary checks, and qualify the affected desktop and browser paths. A successful source review cannot replace evaluated graph/native-asset inspection or application execution. Current outstanding qualification is tracked in [Platform Validation](../../work/testing/platform/platform-validation.md).

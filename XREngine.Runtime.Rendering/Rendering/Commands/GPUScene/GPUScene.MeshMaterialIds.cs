@@ -46,9 +46,12 @@ namespace XREngine.Rendering.Commands
             if (mesh is null)
                 return false;
 
-            bool contains = _meshIDMap.ContainsKey(mesh);
-            index = _meshIDMap.GetOrAdd(mesh, _ => Interlocked.Increment(ref _nextMeshID));
-            _idToMesh.TryAdd(index, mesh);
+            bool contains = _meshIDMap.TryGetValue(mesh, out index);
+            if (!contains)
+                index = _meshIDMap.GetOrAdd(mesh, static (_, scene) => Interlocked.Increment(ref scene._nextMeshID), this);
+            // A concurrent caller can publish the forward entry before the reverse entry.
+            if (!_idToMesh.ContainsKey(index))
+                _idToMesh.TryAdd(index, mesh);
             return contains;
         }
 
@@ -67,10 +70,12 @@ namespace XREngine.Rendering.Commands
             if (material is null)
                 return false;
 
-            bool contains = _materialIDMap.ContainsKey(material);
-            index = _materialIDMap.GetOrAdd(material, _ => Interlocked.Increment(ref _nextMaterialID));
-            // Maintain reverse mapping for render-time lookups
-            _idToMaterial.TryAdd(index, material);
+            bool contains = _materialIDMap.TryGetValue(material, out index);
+            if (!contains)
+                index = _materialIDMap.GetOrAdd(material, static (_, scene) => Interlocked.Increment(ref scene._nextMaterialID), this);
+            // A concurrent caller can publish the forward entry before the reverse entry.
+            if (!_idToMaterial.ContainsKey(index))
+                _idToMaterial.TryAdd(index, material);
 
             if (!contains)
             {

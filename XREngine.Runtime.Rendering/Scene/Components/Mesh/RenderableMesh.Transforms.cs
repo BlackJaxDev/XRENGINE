@@ -213,16 +213,24 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (_retiring)
                 return;
+            long t = RenderableMeshStageTelemetry.Begin();
             if (RuntimeEngine.IsRenderThread)
             {
                 ApplyImmediateRenderMatrixUpdate(componentMatrix: null, rootMatrix: renderMatrix);
+                RenderableMeshStageTelemetry.End(12, t);
                 return;
             }
 
             MarkPendingRootBoneRenderMatrix(renderMatrix);
+            RenderableMeshStageTelemetry.End(12, t);
         }
 
-        private void RootBone_WorldMatrixPreviewChanged(TransformBase rootBone, Matrix4x4 worldMatrix)
+        /// <summary>
+        /// Seeds the skinned basis and culling bounds when a root bone is assigned. Later
+        /// root motion arrives through <see cref="RootBone_WorldMatrixChanged"/> after the
+        /// render-matrix publication that the bounds read.
+        /// </summary>
+        private void InitializeRootBoneCullingBasis(TransformBase rootBone, Matrix4x4 worldMatrix)
         {
             if (!BeginLifetimeMutation())
                 return;
@@ -370,11 +378,13 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (!BeginLifetimeMutation())
             {
-                    Interlocked.Exchange(ref _pendingRenderMatrixQueued, 0);
-                    return;
-                }
-                try
-                {
+                Interlocked.Exchange(ref _pendingRenderMatrixQueued, 0);
+                return;
+            }
+            long tTotal = RenderableMeshStageTelemetry.Begin();
+            long tHead = tTotal;
+            try
+            {
                 int componentVersion;
                 int rootBoneVersion;
                 Matrix4x4 componentMatrix;
@@ -420,16 +430,30 @@ namespace XREngine.Components.Scene.Mesh
                     }
                 }
 
-                // Matrix changes are applied in the world's SwapBuffers phase after visible
-                // collection has already run. Publish the command snapshot here too; otherwise
-                // dirty-delta command swapping can leave the rendered matrix one frame behind.
-                _rc?.SwapBuffers();
-
+                RenderableMeshStageTelemetry.End(1, tHead);
+                long tBounds = RenderableMeshStageTelemetry.Begin();
                 ProcessSkinnedBoundsRefresh();
-                if (!_retiring && hasSkinning && TryApplySkinnedBoneCullingBounds() && !_retiring)
-                    _rc?.SwapBuffers();
+                RenderableMeshStageTelemetry.End(2, tBounds);
+                if (_retiring)
+                    return;
+                long tApply = RenderableMeshStageTelemetry.Begin();
+                if (hasSkinning)
+                    _ = TryApplySkinnedBoneCullingBounds();
+                RenderableMeshStageTelemetry.End(3, tApply);
+                if (_retiring)
+                    return;
+
+                // Visible collection has already finished. Publish the final matrix and bounds
+                // together so the command does not lag a frame or publish an intermediate state.
+                long tSwap = RenderableMeshStageTelemetry.Begin();
+                _rc?.SwapBuffers();
+                RenderableMeshStageTelemetry.End(4, tSwap);
             }
-            finally { EndLifetimeMutation(); }
+            finally
+            {
+                RenderableMeshStageTelemetry.End(0, tTotal);
+                EndLifetimeMutation();
+            }
         }
 
         internal static void ProcessPendingRenderMatrixUpdates()

@@ -8,7 +8,7 @@ Scope: add opt-in lossy compression for fixed-rate skeletal animation clips usin
 Related repository documents:
 
 - [Baked Animation Value Compression](../../../architecture/animation/baked-value-compression.md)
-- [Lossy Float Baked Value Compression TODO](../../todo/animation/lossy-float-baked-value-compression-todo.md)
+- [Baked Value Compression TODO](../../todo/animation/baked-value-compression-todo.md)
 - [GPU-Driven Animation Architecture](../rendering/gpu/gpu-driven-animation.md)
 - [GPU-Driven Animation TODO](../../todo/rendering/gpu/gpu-driven-animation-todo.md)
 - [Neural Texture Compression Implementation Plan](../texturing/neural%20texture%20compression.md)

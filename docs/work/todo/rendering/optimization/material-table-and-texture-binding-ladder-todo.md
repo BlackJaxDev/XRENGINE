@@ -1,214 +1,68 @@
 # Material Table And Texture Binding Ladder TODO
 
-Last Updated: 2026-07-28
-Owner: Rendering
-Status: Bounded Vulkan Rung Implemented; Future Ladder Work Open
-Execution: The bounded Vulkan production rung uses the active workstream 03
-branch/worktree; later cross-backend or sparse/virtual feature work may be
-scheduled separately.
+Last Updated: 2026-10-06
+Status: Active
+Architecture: [Material Binding Policy](../../../../architecture/rendering/material-binding-policy.md)
+Validation: [GPU-Driven Submission Validation](../../../testing/rendering/gpu-driven-submission-validation.md), [Vulkan Backend Parity Validation](../../../testing/rendering/vulkan-backend-parity-validation.md)
 
-## Canonical Ownership
+## Current State
+The bounded Vulkan production rung exists. Code includes `EMaterialTextureBindingRung`, active rung statistics, Vulkan descriptor-indexed material references, material and texture dirty ranges, backend capability probing, GPU-safe texture lifetime paths, and cache keys that include layout and texture-reference mode. OpenGL texture-array policy, sparse or virtual texture integration, portable coarse-bucket fallback, preference overrides, editor diagnostics, and broader visual validation remain open.
 
-This remains the focused technical child for material rows, runtime binding-rung
-selection, texture arrays, bindless lifetime, sparse/virtual texture
-interfaces, coarse buckets, and dirty updates. The production zero-readback
-sequence and promotion decision are owned by
-[workstream 03 validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation).
+## Open Code Items
 
-Workstream 03 may consume a bounded supported rung without requiring every
-future sparse/virtual-texturing phase to be complete, but any production coarse
-bucket must consume compact active work rather than full material-table
-capacity. This child cannot independently promote the GPU-driven path.
+### Rung model and capability probes
+- [ ] Add or complete backend preference settings and environment overrides for texture binding rung selection. Runtime settings and resolver. Done when: users can request a rung and invalid values fail loud.
+- [ ] Probe OpenGL texture array limits, bindless support, sparse texture support, residency behavior, and known vendor limitations. OpenGL renderer. Done when: the resolver has a reason for each OpenGL rung result.
+- [ ] Probe Vulkan descriptor indexing and sparse residency capabilities. Vulkan renderer. Done when: the resolver can select or reject each Vulkan rung with a reason.
+- [ ] Report active rung in editor diagnostics. Editor diagnostics. Done when: frame stats, profile JSON, and editor UI agree on rung and reason.
 
-Design source:
+### Texture array rung
+- [ ] Restrict texture arrays to compatible groups. Material and texture grouping code. Done when: grouping requires identical dimensions, format, mip count, sampler behavior, and color space.
+- [ ] Add deterministic grouping by semantic and compatibility key. Grouping code. Done when: identical inputs produce stable groups.
+- [ ] Add layer allocation and dirty-layer upload tracking. Texture array allocator. Done when: layer writes and uploads are counted.
+- [ ] Reject incompatible wrap modes, UV transforms, mixed color spaces, and mixed compression requirements. Resolver and diagnostics. Done when: incompatible inputs visibly fall back.
+- [ ] Integrate compatible array manifests from avatar or material consolidation. Import and material systems. Done when: declared compatible groups can select the array rung.
+- [ ] Add counters for array count, layer count, layer uploads, and fallback reasons. Stats and profiler. Done when: captures show these counters.
+- [ ] Add tests for compatible groups, incompatible formats, missing mips, and wrap-mode rejection. `XREngine.UnitTests/Rendering/`. Done when: each case has deterministic coverage.
 
-- [Engine Rendering Optimization Design](../../../design/rendering/engine-optimization-and-avatar-optimizer-design.md)
-- [Dynamic Indirect Material Bindings](../../../design/rendering/dynamic-indirect-material-bindings.md)
-- [Texture Runtime Streaming And Virtual Texturing Design](../../../design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
+### Bindless and descriptor-indexed rung
+- [ ] Create and manage 64-bit OpenGL texture handles when `ARB_bindless_texture` is supported and allowed. OpenGL renderer. Done when: handles become resident and lifetime is tracked.
+- [ ] Store OpenGL handles in a GPU buffer indexed by material row texture indices. Material table code. Done when: shaders consume `MaterialTextureHandleTable` for OpenGL bindless.
+- [ ] Add a driver or vendor denylist or warning table when validation exposes broken bindless behavior. Capability code. Done when: denied drivers report a visible reason.
+- [ ] Complete Vulkan descriptor-indexed equivalent through dynamic material binding paths. Vulkan renderer and material binding code. Done when: descriptor indices remain valid in generated material rows.
+- [ ] Add counters for handles created, resident, retired, failed, and fallback events. Stats and profiler. Done when: captures include these counters.
+- [ ] Add tests for handle indexing, lifetime, dirty updates, and unavailable-bindless fallback. `XREngine.UnitTests/Rendering/`. Done when: each behavior is covered.
+- [ ] Add debug names to the global material texture descriptor pool and descriptor set layout. `VulkanRenderer.BindlessMaterialTextureTable.cs`. Done when: RenderDoc shows named pool, layout, and set objects.
+- [ ] Add a deterministic Vulkan bindless material test fixture. `XREngine.UnitTests/Rendering/VulkanFullyBindlessMaterialTests.cs`, `GPUMaterialTable`. Done when: textured, missing-texture, and material-edit cases prove descriptor indices and dirty slots.
+- [ ] Add profiler counters for material-table row upload bytes, bindless draw count, fallback draw count, and material-table shader variant cache misses. Vulkan renderer, `HybridRenderingManager`, stats. Done when: counters appear in profiler and profile JSON.
+- [ ] Prove material descriptor indices stay valid across deferred passes. Material texture slot lifetime. Done when: a contract test or diagnostic proves no slot retires before a deferred pass completes.
 
-## Goal
+### Sparse, virtual, and coarse fallback rungs
+- [ ] Define the material-table to virtual-texture page-table boundary. Material and texturing code. Done when: material rows can reference virtual pages without another row refactor.
+- [ ] Add material row fields for sparse or virtual texture references where pass layouts declare them. Material layout generation. Done when: declared layouts can carry page-table references.
+- [ ] Report `Sparse` as active only when the API boundary is valid. Resolver and diagnostics. Done when: partial support does not claim full virtual texturing.
+- [ ] Route page residency feedback through the texturing runtime. Texturing integration. Done when: rendering does not own ad hoc page feedback.
+- [ ] Add fallback from sparse to bindless, texture arrays, or coarse buckets. Resolver. Done when: unsupported sparse support selects a visible lower rung.
+- [ ] Add counters for sparse page references, feedback writes, fallback events, and page misses. Stats and profiler. Done when: captures include these counters.
+- [ ] Define deterministic texture-set identity for fallback buckets. Material grouping. Done when: equal texture sets produce equal keys.
+- [ ] Group draws by state class and texture-set identity. Scatter and submission code. Done when: buckets consume compact active work.
+- [ ] Bind each bucket once and draw compatible active work. Backend submission code. Done when: fallback bucket cost scales with active buckets.
+- [ ] Preserve pass semantics and transparent ordering. Submission code. Done when: transparent output remains correct.
+- [ ] Add tests for deterministic grouping and transparent-order preservation. `XREngine.UnitTests/Rendering/`. Done when: both cases have coverage.
 
-Make material diversity a data problem instead of a CPU binding problem. The
-renderer should use stable material IDs, generated material row layouts,
-texture indirection, and a deterministic fallback ladder so every backend can
-render correctly while the profiler reports the active rung.
+### Dirty updates and prewarm
+- [ ] Update material rows by dirty ranges. `GPUMaterialTable`. Done when: editing one material updates only affected rows.
+- [ ] Update texture handle tables separately from material rows. Material texture table code. Done when: texture changes do not rewrite unchanged material constants.
+- [ ] Cache generated shader sources by source hash, pass layout hash, backend feature mask, and static property hash. Shader generation. Done when: warm starts reuse known variants.
+- [ ] Include active texture rung in shader and program cache keys where it changes source or bindings. Shader cache. Done when: rung changes cannot reuse incompatible programs.
+- [ ] Persist OpenGL program binaries and Vulkan or DX12 pipeline caches where supported. Backend pipeline caches. Done when: supported backends warm from persisted cache.
+- [ ] Ensure material table rows are ready before measured render frames. Material preparation. Done when: warm frames do not generate or link known material-table variants.
+- [ ] Add counters for row bytes uploaded, dirty row ranges, generated variants, cache hits, and cache misses. Stats and profiler. Done when: captures include these counters.
 
-## Scope
+## Decisions Needed
+- [ ] Choose whether OpenGL bindless needs a default denylist before v1. Owner: rendering lead.
+- [ ] Choose the sparse-rung API boundary shared with virtual texturing. Owner: rendering and texturing leads.
 
-- Runtime backend capability probing.
-- Texture binding rung selection and reporting.
-- Texture arrays for homogeneous groups.
-- Bindless handle tables where supported.
-- Sparse or virtual texture handle interface.
-- Coarse bucket fallback.
-- Material table prewarm, caching, and dirty-range updates.
-
-## Non-Goals
-
-- Do not duplicate pass-declared row layout generation already tracked by
-  [Dynamic Indirect Material Bindings](../../../design/rendering/dynamic-indirect-material-bindings.md).
-- Do not treat texture arrays as the generic solution for arbitrary material
-  diversity.
-- Do not assume `ARB_bindless_texture` is fast or available on every OpenGL
-  driver.
-- Do not silently change material render state to fit a rung.
-
-## Phase 0 - Branch, Baseline, And Audit
-
-- [ ] Execute the bounded Vulkan production-rung subset inside workstream 03;
-  do not create a competing Vulkan promotion branch.
-- [ ] Capture material-table baselines for `MaterialTable`,
-  `BindlessMaterialTable`, and coarse per-material/per-bucket fallback paths.
-- [ ] Inventory all material table buffers, texture handle buffers, row packers,
-  shader includes, and generated shader variants.
-- [ ] Inventory all backend feature probes for texture arrays, bindless,
-  sparse textures, descriptor indexing, and virtual texturing.
-- [ ] Inventory every profiler field that reports material or texture binding
-  mode.
-- [ ] Confirm overlap and ownership boundaries with
-  [Dynamic Indirect Material Bindings](../../../design/rendering/dynamic-indirect-material-bindings.md).
-
-Acceptance criteria:
-
-- [ ] Current material row and texture handle ownership is known before
-  changing runtime selection.
-
-## Phase 1 - Rung Model And Capability Probe
-
-- [ ] Add an explicit enum for active texture binding rung:
-  `TextureArray`, `Bindless`, `Sparse`, `CoarseBucket`, and `Unsupported`.
-- [ ] Probe OpenGL texture array limits, bindless support, sparse texture
-  support, residency behavior, and known vendor/driver limitations.
-- [ ] Probe Vulkan descriptor indexing and sparse residency capabilities.
-- [ ] Add backend preference settings and environment overrides for rung
-  selection.
-- [ ] Validate overrides at launch; invalid values fail loud.
-- [ ] Report active rung in frame stats, profile capture JSON, and editor
-  diagnostics.
-- [ ] Record rung selection reason: highest supported, user override,
-  driver denylist, validation failure, or fallback.
-
-Acceptance criteria:
-
-- [ ] Every frame capture states which texture binding rung rendered it and why.
-
-## Phase 2 - Texture Array Rung
-
-- [ ] Restrict texture arrays to groups with identical dimensions, format,
-  mip count, sampler behavior, and compatible color space.
-- [ ] Add deterministic grouping by semantic and compatibility key.
-- [ ] Add array layer allocation and dirty-layer upload tracking.
-- [ ] Reject incompatible wrap modes, animated UV transforms, mixed sRGB/linear
-  sampling, and mixed compression requirements.
-- [ ] Integrate with avatar/material consolidation output where atlas or array
-  manifests declare compatible groups.
-- [ ] Add counters for array count, layer count, layer uploads, and fallback
-  reasons.
-- [ ] Add tests for compatible groups, incompatible formats, sRGB/linear
-  rejection, missing mips, and wrap-mode rejection.
-
-Acceptance criteria:
-
-- [ ] Texture arrays never silently sample incompatible textures through a
-  shared sampler interpretation.
-
-## Phase 3 - Bindless Rung
-
-- [ ] Create 64-bit OpenGL texture handles when `ARB_bindless_texture` is
-  supported and allowed.
-- [ ] Make handles resident and track residency lifetime.
-- [ ] Store handles in a GPU buffer indexed by material row texture indices.
-- [ ] Retire unused handles only after GPU-safe lifetime has passed.
-- [ ] Add a driver/vendor capability denylist or warning table if runtime
-  validation exposes broken behavior.
-- [ ] Add Vulkan descriptor-indexed equivalent through the dynamic material
-  binding path.
-- [ ] Add counters for handles created, resident, retired, failed, and fallback
-  events.
-- [ ] Add tests for handle table indexing, lifetime, material dirty updates,
-  and fallback when bindless is unavailable.
-
-Acceptance criteria:
-
-- [ ] Bindless is never assumed. It is runtime-probed, reported, and reversible.
-
-## Phase 4 - Sparse And Virtual Texture Interface
-
-- [ ] Define the boundary between material table texture references and the
-  texture streaming/virtual texturing page table.
-- [ ] Add material row fields for sparse/virtual texture page table references
-  where the pass layout declares them.
-- [ ] Ensure the renderer can report `Sparse` as active without requiring full
-  virtual texturing completion for all materials.
-- [ ] Route page residency feedback through the texturing roadmap, not ad hoc
-  render-submission code.
-- [ ] Add fallback to bindless, texture array, or coarse bucket when sparse
-  support is unavailable.
-- [ ] Add counters for sparse page references, feedback writes, fallback events,
-  and page misses.
-
-Acceptance criteria:
-
-- [ ] Sparse/virtual texture integration has a stable API boundary and does not
-  force another material row refactor later.
-
-## Phase 5 - Coarse Bucket Fallback
-
-- [ ] Define a deterministic texture-set identity key for fallback buckets.
-- [ ] Group draws by state class and texture-set identity.
-- [ ] Bind each bucket once and draw all compatible active work inside it.
-- [ ] Ensure fallback bucket generation consumes compact active work, not full
-  material table capacity.
-- [ ] Preserve pass semantics and transparent ordering.
-- [ ] Report bucket count, empty bucket skips, and fallback reason.
-- [ ] Add tests for deterministic grouping and transparent-order preservation.
-
-Acceptance criteria:
-
-- [ ] Coarse bucket fallback is correct on every backend and cheap enough after
-  material consolidation reduces texture-set fan-out.
-
-## Phase 6 - Material Table Dirty Updates And Prewarm
-
-- [ ] Ensure material rows are updated by dirty ranges.
-- [ ] Ensure texture handle tables update separately from material rows.
-- [ ] Cache generated shader sources by source hash, pass layout hash, backend
-  feature mask, and static property hash.
-- [ ] Include active texture rung in shader/program cache keys where it changes
-  source or bindings.
-- [ ] Persist OpenGL program binaries and Vulkan/DX12 pipeline caches where
-  supported.
-- [ ] Ensure material table rows are ready before measured render frames.
-- [ ] Add counters for material row bytes uploaded, dirty row ranges, generated
-  variants, cache hits, and cache misses.
-
-Acceptance criteria:
-
-- [ ] Editing one material updates only affected rows and texture handles.
-- [ ] Warm-start frames do not generate/link material-table shader variants for
-  already-known layouts.
-
-## Final Validation And Merge
-
-- [ ] Run targeted material binding, shader generation, texture table, and
-  profile capture tests.
-- [ ] Run editor smoke with each available rung and fallback.
-- [ ] Validate material-diverse avatar and Sponza-like static scene.
-- [ ] Update linked material binding docs if runtime ladder behavior changes.
-- [ ] Merge branch `rendering-material-table-texture-ladder` back into `main`
-  after implementation, validation, and documentation updates are complete.
-
-## Workstream 03 Bounded Result
-
-The bounded Vulkan production rung is implemented: descriptor-indexing
-capability is probed, `EMaterialTextureBindingRung` is reported with a selection
-reason, material and texture tables have independent dirty ranges, handles are
-retired through the backend's GPU-safe lifetime, generated programs include
-layout/texture-reference mode in their cache identity, and unsupported
-capability skips visibly without a CPU/full-capacity fallback.
-
-The broader OpenGL texture-array policy, sparse/virtual texture integration,
-portable coarse-bucket implementation, preference overrides, editor diagnostics
-surface, and exhaustive material-diverse visual validation remain future ladder
-work. They are not prerequisites for the bounded Vulkan implementation, but
-this child cannot be marked complete until they are done.
+## Out Of Scope
+- Pass-declared row layout generation not needed by this ladder. See dynamic material binding design.
+- Full virtual texturing runtime ownership.

@@ -11,23 +11,18 @@ namespace XREngine.Scene
         private bool _parentChangeWasActiveInHierarchy;
         private bool _parentChangeHadBegunPlay;
 
-        /// <summary>
-        /// Omits notifications that the transform callbacks below do not consume.
-        /// </summary>
-        protected override bool CanSkipPropertyNotification(Delegate handler, string? propertyName)
-        {
-            if (string.IsNullOrEmpty(propertyName) || !ReferenceEquals(handler.Target, this))
-                return false;
+        private XRPropertyChangedEventHandler? _transformPropertyChangedHandler;
+        private XRPropertyChangingEventHandler? _transformPropertyChangingHandler;
 
-            var method = handler.Method;
-            if (method.DeclaringType != typeof(SceneNode))
-                return false;
-            if (handler is XRPropertyChangingEventHandler && method.Name == nameof(TransformPropertyChanging))
-                return propertyName != nameof(TransformBase.Parent);
-            if (handler is XRPropertyChangedEventHandler && method.Name == nameof(TransformPropertyChanged))
-                return propertyName is not (nameof(TransformBase.Parent) or nameof(TransformBase.World));
-            return false;
-        }
+        // The node observes hierarchy changes only. Pose changes must not create
+        // property event arguments for these internal subscriptions.
+        private XRPropertyChangedEventHandler TransformPropertyChangedHandler
+            => _transformPropertyChangedHandler ??= XRPropertyNotificationHandlers.FilterChanged(
+                TransformPropertyChanged, nameof(TransformBase.Parent), nameof(TransformBase.World));
+
+        private XRPropertyChangingEventHandler TransformPropertyChangingHandler
+            => _transformPropertyChangingHandler ??= XRPropertyNotificationHandlers.FilterChanging(
+                TransformPropertyChanging, nameof(TransformBase.Parent));
 
         /// <summary>
         /// Disconnects the current transform from this scene node.
@@ -44,8 +39,8 @@ namespace XREngine.Scene
                 DeactivateTransform();
             if (HasBegunPlay)
                 EndPlayTransform();
-            _transform.PropertyChanged -= TransformPropertyChanged;
-            _transform.PropertyChanging -= TransformPropertyChanging;
+            _transform.PropertyChanged -= TransformPropertyChangedHandler;
+            _transform.PropertyChanging -= TransformPropertyChangingHandler;
             _transform.SceneNode = null;
             _transform.World = null;
             _transform.Parent = null;
@@ -64,8 +59,8 @@ namespace XREngine.Scene
 
             _transform.SceneNode = this;
             _transform.World = World;
-            _transform.PropertyChanged += TransformPropertyChanged;
-            _transform.PropertyChanging += TransformPropertyChanging;
+            _transform.PropertyChanged += TransformPropertyChangedHandler;
+            _transform.PropertyChanging += TransformPropertyChangingHandler;
             if (HasBegunPlay)
                 BeginPlayTransform();
             if (IsActiveInHierarchy)

@@ -4,7 +4,7 @@ Last Updated: 2026-08-04
 Owner: Rendering / Vulkan / Performance Validation
 Status: Paused during the directional-light Vulkan stability pass; final Phase
 0 allocation closure and the 03-05 matrix remain open
-Related Gate: [Vulkan Optimization Workstreams 03-05 Validation TODO](../../../testing/rendering/03-05-optimization-validation-todo.md)
+Related Gate: [Vulkan Optimization Workstreams 03-05 Validation TODO](../../../testing/rendering/gpu-driven-submission-validation.md#vulkan-03-05-gate)
 
 Current-focus boundary: the directional-shadow subsection below is retained as
 historical closeout evidence. Any current directional cascade or atlas issue is

@@ -2,7 +2,7 @@
 
 Status: the recorded browser-only native supply was approved on 2026-09-30, and a browser-only managed source build correcting reviewed ABI and ownership errors was approved on 2026-10-01. The corrected managed source and current pinned native archives compile and statically relink successfully. The published WebAssembly module now passes native simulation, managed callbacks, raycast, teardown and foundation reinitialization under Node; the corrected Chromium run remains required. Desktop package supply and defaults remain unchanged.
 
-Related: [native subsystem debugging and validation](../../todo/platform/native-subsystem-project-split-todo.md).
+Related: [Jolt browser proof checks](../../testing/platform/platform-validation.md#jolt-browser-proof).
 
 Keep the current desktop NuGet supply, `JoltPhysicsSharp` 2.22.0 and `JoltPhysics.Native` 1.1.0. Add a browser-only static archive build using the .NET-pinned Emscripten 3.1.56 toolchain. The checked-in [pin](../../../../Tools/Dependencies/JoltBrowser.lock.json) identifies `joltc` commit `886e088675bae3a086f8318c7803f8ee962c2f2c` and Jolt v5.6.0 commit `e77f175595e64cb44218cc9d9d56fc365ad0e36a`; both upstream projects publish MIT licensing. The installed desktop native package's recorded commit was unavailable from the upstream public repository when reviewed, so this browser source pin requires ABI qualification against the existing managed binding.
 

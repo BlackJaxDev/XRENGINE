@@ -6,9 +6,9 @@ Last Updated: 2026-06-17
 Related docs:
 
 - [Deferred Texturing Integration Design](deferred-texturing-integration-design.md)
-- [Vulkan Fully Bindless Materials TODO](../../todo/rendering/vulkan-fully-bindless-materials-todo.md)
+- [Vulkan Bindless Material Texture Table](../../../architecture/rendering/vulkan-renderer.md#bindless-material-texture-table)
 - [Default Render Pipeline Notes](../../../architecture/rendering/default-render-pipeline-notes.md)
-- [Vulkan Bindless And Deferred Texturing Audit](../../audit/vulkan-bindless-and-deferred-texturing-audit-2026-06-17.md)
+- [Vulkan Bindless And Deferred Texturing Audit](../../audit/COMPLETED/vulkan-bindless-and-deferred-texturing-audit-2026-06-17.md)
 - [TheRealMJP/DeferredTexturing](https://github.com/TheRealMJP/DeferredTexturing)
 - [MJP: Bindless Texturing For Deferred Rendering And Decals](https://therealmjp.github.io/posts/bindless-texturing-for-deferred-rendering-and-decals/)
 

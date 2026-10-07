@@ -73,13 +73,13 @@ from rejected attempts, or use exceptions as an ordinary retry protocol.
 
 > Open requirement moved to [F0-01](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f0-01); its completion status remains active there.
 > Open requirement moved to [F0-02](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f0-02); its completion status remains active there.
-> Open requirement moved to [F0-03](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f0-03); its completion status remains active there.
+> Open requirement moved to [F0-03](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
 > Open requirement moved to [F0-04](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f0-04); its completion status remains active there.
 > Open requirement moved to [F0-05](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f0-05); its completion status remains active there.
-> Open requirement moved to [F0-06](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f0-06); its completion status remains active there.
-> Open requirement moved to [F0-07](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f0-07); its completion status remains active there.
-> Open requirement moved to [F0-08](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f0-08); its completion status remains active there.
-> Open requirement moved to [F0-09](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f0-09); its completion status remains active there.
+> Open requirement moved to [F0-06](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F0-07](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F0-08](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F0-09](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
 
 **Conclusion:** The isolated capacity-one result remains valid, but the
 2026-09-01 avatar incident reopens transactional operation ownership, transient
@@ -129,23 +129,23 @@ for a native command-encoding conclusion.
 
 #### Carried benchmark and attribution gates
 
-> Open requirement moved to [F1-01](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-01); its completion status remains active there.
-> Open requirement moved to [F1-02](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-02); its completion status remains active there.
-> Open requirement moved to [F1-03](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-03); its completion status remains active there.
-> Open requirement moved to [F1-04](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-04); its completion status remains active there.
-> Open requirement moved to [F1-05](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-05); its completion status remains active there.
-> Open requirement moved to [F1-06](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-06); its completion status remains active there.
+> Open requirement moved to [F1-01](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-02](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-03](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-04](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-05](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-06](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
 
 #### Native Command Recording Attribution and Isolation
 
-> Open requirement moved to [F1-07](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-07); its completion status remains active there.
-> Open requirement moved to [F1-08](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-08); its completion status remains active there.
-> Open requirement moved to [F1-09](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-09); its completion status remains active there.
-> Open requirement moved to [F1-10](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-10); its completion status remains active there.
-> Open requirement moved to [F1-11](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-11); its completion status remains active there.
-> Open requirement moved to [F1-12](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-12); its completion status remains active there.
-> Open requirement moved to [F1-13](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-13); its completion status remains active there.
-> Open requirement moved to [F1-14](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f1-14); its completion status remains active there.
+> Open requirement moved to [F1-07](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-08](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-09](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-10](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-11](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-12](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-13](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F1-14](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
 
 **Conclusion:** The final heavy-load revalidation crossed a 21.679 s cold frame
 without losing liveness and achieved 99.9876% sampled attribution after the wait
@@ -629,8 +629,8 @@ required-upload failure after switching to Debug Opaque.
 The lifecycle implementation rows above remain complete; these cross-pipeline
 presentation gates remain:
 
-> Open requirement moved to [F5-01](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f5-01); its completion status remains active there.
-> Open requirement moved to [F5-02](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f5-02); its completion status remains active there.
+> Open requirement moved to [F5-01](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
+> Open requirement moved to [F5-02](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
 - [x] Accept required-texture upload progress without a PresentNow terminal
   pause. Upload scheduling carries the exact renderer owner and backend
   generation, supports a bounded direct pre-frame drain, and cannot lose its
@@ -638,7 +638,7 @@ presentation gates remain:
   final exact run advanced beyond frame 21,000 through repeated any-to-any
   pipeline replacements and stayed live well past the old 30/45-second failure
   windows with no terminal upload watchdog or delayed preparation drain.
-> Open requirement moved to [F5-03](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#f5-03); its completion status remains active there.
+> Open requirement moved to [F5-03](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md); its completion status remains active there.
 
 Deadline handoff (2026-08-31 17:05 local): the Vulkan project builds with zero
 warnings and zero errors, but Phase 5 is **not complete**. Before the final

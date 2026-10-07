@@ -50,11 +50,7 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     private bool IsSpecializedKernelReady()
     {
-        if (_branchedPhysicsProgram is not { IsLinked: false } program)
-            return true;
-        if (!program.LinkReady)
-            program.Link();
-        return false;
+        return _branchedPhysicsProgram is not { } program || EnsureProgramLinked(program);
     }
 
     private bool EnsureSpecializedKernelResources(

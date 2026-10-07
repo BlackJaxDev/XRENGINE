@@ -8,7 +8,7 @@ submission, and generic ASP.NET Core server intake.
 Related docs:
 
 - [Profiler diagnostics](../../../developer-guides/diagnostics/profiler.md)
-- [Runtime GC and hot-path memory control TODO](../../todo/runtime/gc-and-hot-path-memory-control-todo.md)
+- [Hot-Path Memory Control guide](../../../developer-guides/runtime/hot-path-memory.md)
 - [XR Job Manager](../../../developer-guides/runtime/job-system.md)
 - [Networking guide](../../../developer-guides/networking/networking.md)
 

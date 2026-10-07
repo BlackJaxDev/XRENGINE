@@ -38,7 +38,7 @@ internal readonly record struct VulkanComputePreparationResult(
                 $"Compute buffer binding for '{programName}' was superseded before recording and requires a fresh logical plan.",
             EVulkanComputePreparationOutcome.DescriptorPreparationFailed =>
                 $"Compute descriptor resources for '{programName}' could not be prepared before recording " +
-                $"(op {OperationIndex}/{OperationCount}).",
+                $"(op {OperationIndex}/{OperationCount}). {FailureReason}",
             _ => "Compute preparation failed without a typed failure outcome."
         };
     }

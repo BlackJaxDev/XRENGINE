@@ -1,6 +1,6 @@
 # Browser WebGL2 And WebGPU Renderer Modules
 
-Mobile delivery: [implementation TODO](../../todo/rendering/mobile-webgpu-runtime-todo.md) · [readiness audit and acceptance contract](../../progress/rendering/mobile-browser-readiness.md). Source audit complete; browser runtime and device validation remain pending.
+Mobile delivery: [implementation TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md) · [readiness audit and acceptance contract](../../progress/rendering/mobile-browser-readiness.md). Source audit complete; browser runtime and device validation remain pending.
 
 [<- Work docs index](../../README.md)
 
@@ -8,7 +8,7 @@ Mobile delivery: [implementation TODO](../../todo/rendering/mobile-webgpu-runtim
 
 Status: proposed implementation design.
 
-Direction update (2026-09-29): backend-level content here (bridge, resource model, WebGPU and WebGL2 modules, security, diagnostics) remains valid. The portable-runtime extraction approach is superseded by the [unified desktop and browser runtime design](../platform/unified-desktop-browser-runtime-design.md): the shared projects now target `net10.0` with their full source set, while integration into the engine renderer contract remains browser work. [Runtime Project Organization](../../../architecture/runtime/project-organization.md) records current module ownership; the [integration checklist](../../todo/platform/native-subsystem-project-split-todo.md) records deferred native/portable acceptance.
+Direction update (2026-09-29): backend-level content here (bridge, resource model, WebGPU and WebGL2 modules, security, diagnostics) remains valid. The portable-runtime extraction approach is superseded by the [unified desktop and browser runtime design](../platform/unified-desktop-browser-runtime-design.md): the shared projects now target `net10.0` with their full source set, while integration into the engine renderer contract remains browser work. [Runtime Project Organization](../../../architecture/runtime/project-organization.md) records current module ownership; [Platform Validation](../../testing/platform/platform-validation.md) records deferred native/portable acceptance.
 
 Date: 2026-08-13.
 

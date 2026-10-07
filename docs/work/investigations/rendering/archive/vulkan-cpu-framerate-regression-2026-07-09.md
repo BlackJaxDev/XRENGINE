@@ -53,7 +53,7 @@ correctness-proven primary reuse path, eliminate steady resource churn, and then
 record a three-repetition baseline before Phase 6.
 
 The immediate work belongs partly in Phase 5.1 and partly in the separate
-[Vulkan command-recording code changes](../../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md#3-make-command-recording-snapshot-driven-and-reusable).
+[Vulkan command-recording code changes](../../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md).
 It must not remain merely a later optional optimization because the current
 correctness architecture makes fresh recording a self-sustaining invalidation
 loop.
@@ -487,7 +487,7 @@ Tracked context used in the comparison:
 
 - [June 23 Vulkan render-loop speed work](../../../vulkan-render-loop-speed-2026-06-23.md)
 - [Core hardening/device-loss TODO](../../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md)
-- [Dynamic-rendering migration TODO](../../../todo/rendering/vulkan-dynamic-rendering-migration-todo.md)
-- [Vulkan command-recording code changes](../../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md#3-make-command-recording-snapshot-driven-and-reusable)
+- [Dynamic-rendering migration TODO](../../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#vulkan-extension-backlog)
+- [Vulkan command-recording code changes](../../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md)
 
 No renderer source was changed during this investigation.

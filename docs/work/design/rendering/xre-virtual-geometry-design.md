@@ -8,11 +8,11 @@ Related docs:
 
 - [GPU-driven rendering zero-readback plan](zero-readback-gpu-driven-rendering-plan.md)
 - [Production GPU-driven rendering roadmap](../../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
-- [Bindless deferred texturing plan](bindless-deferred-texturing-plan.md)
-- [Texture management runtime design](texture-management-runtime-design.md)
-- [Default render pipeline notes](../../architecture/rendering/default-render-pipeline-notes.md)
-- [OpenGL renderer](../../architecture/rendering/opengl-renderer.md)
-- [Vulkan renderer](../../architecture/rendering/vulkan-renderer.md)
+- [Bindless deferred texturing plan](../texturing/bindless-deferred-texturing-plan.md)
+- [Texture management runtime design](../texturing/texture-management-runtime-design.md)
+- [Default render pipeline notes](../../../architecture/rendering/default-render-pipeline-notes.md)
+- [OpenGL renderer](../../../architecture/rendering/opengl-renderer.md)
+- [Vulkan renderer](../../../architecture/rendering/vulkan-renderer.md)
 
 ## 1. Summary
 

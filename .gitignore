@@ -475,6 +475,7 @@ Samples/RollingBall/Assets/Scripts/*
 !XREngine.Runtime.Core/Assets/**
 !XREngine.Runtime.Rendering.WebGPU/Assets/
 !XREngine.Runtime.Rendering.WebGPU/Assets/**
+!docs/**/assets/
 Build/RenderBench/
 *.code-workspace
 

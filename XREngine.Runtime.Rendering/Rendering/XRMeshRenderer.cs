@@ -2199,10 +2199,12 @@ namespace XREngine.Rendering
         private void ApplyBoneBufferState(BoneBufferState state)
         {
             Volatile.Write(ref _boneBufferState, state);
-            _bones = state.Bones;
-            _boneByTransform = state.BoneByTransform;
             lock (_dirtyBoneSyncRoot)
             {
+                // GPU ownership transitions resolve transforms from _bones while they hold
+                // this lock, so the bone set and its reference counts change together.
+                _bones = state.Bones;
+                _boneByTransform = state.BoneByTransform;
                 _dirtyBoneIndices = state.DirtyIndices;
                 _dirtyBoneFlags = state.DirtyFlags;
                 _dirtyBoneMatrices = state.DirtyMatrices;
@@ -2215,14 +2217,28 @@ namespace XREngine.Rendering
             _bonePaletteStaleReported = state.PaletteStaleReported;
         }
 
+        /// <summary>
+        /// Attaches CPU palette listeners for one bone set. Bones that a GPU owner holds
+        /// stay detached; <see cref="UnregisterGpuDrivenBoneIndices"/> attaches them again.
+        /// </summary>
         private void AttachBoneSubscriptions(BoneBufferState state)
         {
             if (state.BoneByTransform is null)
                 return;
-            foreach (TransformBase transform in state.BoneByTransform.Keys)
+            lock (_dirtyBoneSyncRoot)
             {
-                transform.RenderMatrixChanged -= BoneTransformRenderMatrixChanged;
-                transform.RenderMatrixChanged += BoneTransformRenderMatrixChanged;
+                int[]? gpuDrivenRefCounts = state.GpuDrivenRefCounts;
+                foreach (KeyValuePair<TransformBase, RenderBone> pair in state.BoneByTransform)
+                {
+                    TransformBase transform = pair.Key;
+                    transform.RenderMatrixChanged -= BoneTransformRenderMatrixChanged;
+                    uint boneIndex = pair.Value.Index;
+                    bool gpuDriven = gpuDrivenRefCounts is not null &&
+                        boneIndex < (uint)gpuDrivenRefCounts.Length &&
+                        gpuDrivenRefCounts[boneIndex] > 0;
+                    if (!gpuDriven)
+                        transform.RenderMatrixChanged += BoneTransformRenderMatrixChanged;
+                }
             }
         }
 
@@ -3767,6 +3783,29 @@ namespace XREngine.Rendering
             }
         }
 
+        /// <summary>Captures sorted GPU-owned indices from the current local palette.</summary>
+        internal int CaptureGpuDrivenBoneIndices(XRDataBuffer palette, Span<uint> destination)
+        {
+            ValidateResourcePublicationLease();
+            lock (_dirtyBoneSyncRoot)
+            {
+                if (!ReferenceEquals(palette, SkinPaletteBuffer) ||
+                    _gpuDrivenBoneRefCounts is not { } counts || counts.Length > destination.Length)
+                    throw new InvalidOperationException("AggregateDeformation.MixedPaletteOwnershipChanged: the local palette and its bone ownership must belong to the same preparation capture.");
+
+                int written = 0;
+                for (int index = 0; index < counts.Length; ++index)
+                    if (counts[index] > 0)
+                        destination[written++] = checked((uint)index);
+                return written;
+            }
+        }
+
+        /// <summary>
+        /// Marks bones as driven by an external GPU palette. The first owner of a bone
+        /// detaches its CPU palette listener, because the CPU palette is not read while
+        /// a GPU owner writes that bone.
+        /// </summary>
         internal void RegisterGpuDrivenBoneIndices(IReadOnlyList<uint> boneIndices)
         {
             if (_gpuDrivenBoneRefCounts is null || boneIndices.Count == 0)
@@ -3784,18 +3823,28 @@ namespace XREngine.Rendering
                         continue;
 
                     if (_gpuDrivenBoneRefCounts[boneIndex]++ == 0)
+                    {
                         ++_gpuDrivenBoneCount;
+                        if (TryGetBoneTransformLocked(boneIndex, out TransformBase? transform))
+                            transform.RenderMatrixChanged -= BoneTransformRenderMatrixChanged;
+                    }
 
                     ClearDirtyBoneIndex((int)boneIndex);
                 }
             }
         }
 
+        /// <summary>
+        /// Releases GPU ownership of bones. When the last owner of a bone leaves, the CPU
+        /// palette listener is attached again and the bone is reseeded from its current
+        /// matrix, because the detached listener did not record intermediate changes.
+        /// </summary>
         internal void UnregisterGpuDrivenBoneIndices(IReadOnlyList<uint> boneIndices)
         {
             if (_gpuDrivenBoneRefCounts is null || boneIndices.Count == 0)
                 return;
 
+            bool reseeded = false;
             lock (_dirtyBoneSyncRoot)
             {
                 if (_gpuDrivenBoneRefCounts is null)
@@ -3813,10 +3862,47 @@ namespace XREngine.Rendering
 
                     refCount -= 1;
                     _gpuDrivenBoneRefCounts[boneIndex] = refCount;
-                    if (refCount == 0 && _gpuDrivenBoneCount > 0)
+                    if (refCount != 0)
+                        continue;
+
+                    if (_gpuDrivenBoneCount > 0)
                         --_gpuDrivenBoneCount;
+                    if (!TryGetBoneTransformLocked(boneIndex, out TransformBase? transform))
+                        continue;
+
+                    transform.RenderMatrixChanged -= BoneTransformRenderMatrixChanged;
+                    transform.RenderMatrixChanged += BoneTransformRenderMatrixChanged;
+                    reseeded |= MarkBoneMatrixDirty(boneIndex, GetCurrentBoneMatrix(transform));
                 }
             }
+
+            if (reseeded)
+                MarkSkinnedOutputDirty();
+        }
+
+        /// <summary>
+        /// Resolves the transform of a palette index in the bone set that owns the current
+        /// GPU-driven reference counts. The caller must hold <see cref="_dirtyBoneSyncRoot"/>.
+        /// </summary>
+        private bool TryGetBoneTransformLocked(uint boneIndex, [NotNullWhen(true)] out TransformBase? transform)
+        {
+            transform = null;
+            RenderBone[]? bones = _bones;
+            if (bones is null ||
+                _gpuDrivenBoneRefCounts is null ||
+                bones.Length + 1 != _gpuDrivenBoneRefCounts.Length ||
+                boneIndex == 0u ||
+                boneIndex > (uint)bones.Length)
+            {
+                return false;
+            }
+
+            RenderBone bone = bones[boneIndex - 1u];
+            if (bone.Index != boneIndex)
+                return false;
+
+            transform = bone.Transform;
+            return transform is not null;
         }
 
         internal void SetGpuDrivenSkinPaletteSource(

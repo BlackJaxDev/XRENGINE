@@ -2192,13 +2192,13 @@ public static partial class RuntimeEngine
                 /// Legacy compatibility view of <see cref="VrViewRenderMode"/>.
                 /// </summary>
                 [Category("VR")]
-                [Description("Legacy compatibility toggle. True maps to SinglePassStereo; false maps to SequentialViews.")]
+                [Description("Legacy compatibility toggle. True maps to SinglePassStereo; false maps to ParallelCommandBufferRecording.")]
                 public bool RenderVRSinglePassStereo
                 {
                     get => _vrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
                     set => VrViewRenderMode = value
                         ? EVrViewRenderMode.SinglePassStereo
-                        : EVrViewRenderMode.SequentialViews;
+                        : EVrViewRenderMode.ParallelCommandBufferRecording;
                 }
 
                 /// <summary>
