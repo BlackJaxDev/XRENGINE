@@ -203,22 +203,24 @@ internal sealed partial class VulkanCommandRuntime
 
             bool resourcesReady;
             bool bindingSuperseded;
+            string? failureReason;
             if (framePlan is not null)
             {
                 if (!framePlan.TryGetRecordingPlannerGeneration(frameContext, out ResourcePlannerRuntimeGeneration generation))
                     return new(EVulkanComputePreparationOutcome.DescriptorPreparationFailed,
-                        operationIndex, operations.Length, program.Data.Name);
+                        operationIndex, operations.Length, program.Data.Name,
+                        "The frame plan has no resource-planner generation for the compute operation context.");
                 using VulkanPreparedResourcePlannerThreadScope plannerScope =
                     new(ThreadWorkspace.Current, this, generation);
                 resourcesReady = program.TryPrepareComputeDispatchResources(
                     VulkanProgramPlannerRequest.From(frameContext), imageIndex, snapshot,
-                    reusableDescriptorKey, out bindingSuperseded,
+                    reusableDescriptorKey, out bindingSuperseded, out failureReason,
                     excludeGlobalTextureArray, allowSynchronousResourceUploads);
             }
             else
                 resourcesReady = program.TryPrepareComputeDispatchResources(
                     VulkanProgramPlannerRequest.From(frameContext), imageIndex, snapshot,
-                    reusableDescriptorKey, out bindingSuperseded,
+                    reusableDescriptorKey, out bindingSuperseded, out failureReason,
                     excludeGlobalTextureArray, allowSynchronousResourceUploads);
 
             if (resourcesReady)
@@ -230,7 +232,8 @@ internal sealed partial class VulkanCommandRuntime
                     : EVulkanComputePreparationOutcome.DescriptorPreparationFailed,
                 operationIndex,
                 operations.Length,
-                program.Data.Name);
+                program.Data.Name,
+                failureReason);
         }
 
         return VulkanComputePreparationResult.Success;

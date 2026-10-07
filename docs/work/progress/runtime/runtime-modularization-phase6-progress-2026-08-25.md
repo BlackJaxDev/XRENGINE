@@ -13,7 +13,7 @@ Implementation base and current HEAD at P6.0 closeout:
 `76e241e5937ad29d00d435de3c32be1d095ff327` (`Vulkan work`, 2026-08-25).
 
 Reference tracker:
-[Runtime Modularization Phase 6 TODO](../../todo/COMPLETED/runtime-modularization-phase6-todo.md)
+`runtime-modularization-phase6-todo.md` (retired; see [Runtime Project Organization](../../../architecture/runtime/project-organization.md))
 
 ## P6.0 Decision And Scope
 

@@ -4,7 +4,7 @@ Last Updated: 2026-06-04
 Status: active phased roadmap
 Source design: [Texture Compression And Cooked Texture Cache Design](../../design/texturing/texture-compression-and-cooked-cache-design.md)
 Parent roadmap: [Texture Runtime, Streaming, And Virtual Texturing TODO](texture-runtime-streaming-virtual-texturing-todo.md)
-Validation ledger: [Texture Runtime Streaming Validation](../../testing/texture-runtime-streaming-validation.md)
+Validation ledger: [Texture Validation](../../testing/texturing/texture-validation.md)
 
 ## Goal
 

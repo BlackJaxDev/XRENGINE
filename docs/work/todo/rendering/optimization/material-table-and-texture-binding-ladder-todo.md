@@ -212,3 +212,12 @@ portable coarse-bucket implementation, preference overrides, editor diagnostics
 surface, and exhaustive material-diverse visual validation remain future ladder
 work. They are not prerequisites for the bounded Vulkan implementation, but
 this child cannot be marked complete until they are done.
+
+## Open Code Items Moved From vulkan-fully-bindless-materials-todo.md
+
+Architecture: [Vulkan Renderer: Bindless Material Texture Table](../../../../architecture/rendering/vulkan-renderer.md#bindless-material-texture-table), [Material Binding Policy](../../../../architecture/rendering/material-binding-policy.md). Validation: [Vulkan Backend Parity Validation](../../../testing/rendering/vulkan-backend-parity-validation.md).
+
+- [ ] Add debug names to the global material texture descriptor pool and descriptor set layout. `VulkanRenderer.BindlessMaterialTextureTable.cs` (the descriptor set already uses `SetDebugDescriptorSetName`). Done when: RenderDoc shows named pool, layout, and set objects.
+- [ ] Add a deterministic Vulkan bindless material test fixture. Several materials share one shader with different albedo, normal, and RM textures; one material has a missing texture; one case edits one material. `XREngine.UnitTests/Rendering/VulkanFullyBindlessMaterialTests.cs`, `GPUMaterialTable`. Done when: the tests prove nonzero descriptor indices for textured materials, the fallback index for the missing texture, and that the edit dirties one descriptor slot and one material row.
+- [ ] Add profiler counters for material-table row upload bytes, bindless draw count, fallback draw count, and material-table shader variant cache misses. `VulkanRenderer.BindlessMaterialTextureTable.cs`, `HybridRenderingManager`, Vulkan render stats (descriptor writes and fallback references already exist). Done when: the counters appear in the profiler and the profile capture JSON.
+- [ ] Prove that material descriptor indices stay valid across the full deferred pass sequence. Global material texture slot retirement (`GlobalMaterialTextureRetireDelayFrames`) and the deferred pass order. Done when: a contract test or diagnostic proves that no slot that a deferred pass reads in a frame retires before that pass completes.

@@ -3,7 +3,8 @@
 Updated: 2026-10-01
 Status: Profiling infrastructure implemented; production acceptance remains open.
 
-The [implementation checklist](../../todo/rendering/optimization/vulkan-headless-mcp-component-profiling-todo.md)
+The implementation checklist (now retired; open checks are in the
+[Vulkan core validation doc](../../testing/rendering/vulkan-core-validation.md#from-vulkan-headless-mcp-component-profiling-todomd))
 now has bounded CPU spans, selected GPU timestamps, clock correlation, intrusive
 counter replay, versioned artifacts, repeated comparison, promotion guards, and
 developer/MCP workflows. These facilities explain renderer cost; they do not

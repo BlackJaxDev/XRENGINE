@@ -2,7 +2,7 @@
 
 Status: owner approved the recorded browser-only native supply on 2026-09-30. Both pinned static archives build with the installed Emscripten toolchain. Browser execution is blocked by a managed binding signature conflict; a separate supply decision is required. Implementation paused at the owner's request after recording the failure.
 
-Related: [native subsystem debugging and validation](../../todo/platform/native-subsystem-project-split-todo.md).
+Related: [Jolt browser proof checks](../../testing/platform/platform-validation.md#jolt-browser-proof).
 
 Keep the current desktop NuGet supply, `JoltPhysicsSharp` 2.22.0 and `JoltPhysics.Native` 1.1.0. Add a browser-only static archive build using the .NET-pinned Emscripten 3.1.56 toolchain. The checked-in [pin](../../../../Tools/Dependencies/JoltBrowser.lock.json) identifies `joltc` commit `886e088675bae3a086f8318c7803f8ee962c2f2c` and Jolt v5.6.0 commit `e77f175595e64cb44218cc9d9d56fc365ad0e36a`; both upstream projects publish MIT licensing. The installed desktop native package's recorded commit was unavailable from the upstream public repository when reviewed, so this browser source pin requires ABI qualification against the existing managed binding.
 

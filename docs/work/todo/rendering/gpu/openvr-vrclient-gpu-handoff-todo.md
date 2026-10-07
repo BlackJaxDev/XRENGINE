@@ -174,17 +174,17 @@ Use per-eye 2D textures for the first implementation. Multiview array texture sh
 
 - `XREngine.VRClient/Program.cs`
 - `XRENGINE/Engine/Engine.VRState.cs`
-- `XRENGINE/Engine/Engine.Networking.cs`
-- `XRENGINE/Engine/Subclasses/Rendering/Engine.Rendering.VulkanUpscaleBridge.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridge.cs`
-- `XREngine.Runtime.Rendering/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeSidecar.cs`
+- `XREngine.Runtime.Host/Engine/Engine.Networking.cs`
+- `XREngine.Runtime.Rendering/Runtime/RuntimeEngine.Rendering.VulkanUpscaleBridge.cs`
+- `XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Bootstrap/OpenGLRenderer.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridge.cs`
+- `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Features/Upscaling/VulkanUpscaleBridgeSidecar.cs`
 - `docs/architecture/rendering/openvr-rendering.md`
 - `docs/developer-guides/rendering/vulkan-upscale-bridge.md`
 
 ## Related Documentation
 
-- [OpenVR Rendering](../../architecture/rendering/openvr-rendering.md)
+- [OpenVR Rendering](../../../../architecture/rendering/openvr-rendering.md)
 - [Vulkan Upscale Bridge](../../../../developer-guides/rendering/vulkan-upscale-bridge.md)
 - [VR Development](../../../../user-guide/vr-development.md)
-- [Vulkan Manual Validation Guide](vulkan.md)
+- [Vulkan Manual Validation Guide](../../vulkan.md)

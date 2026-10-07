@@ -10,7 +10,7 @@ Target Architecture: [Vulkan Render Loop Target Architecture](vulkan-render-loop
 
 Implementation Tracker: [Vulkan Core Hardening And Recording Code Changes TODO](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md)
 
-Validation Tracker: [Vulkan Core Hardening And Recording Testing TODO](../../testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md)
+Validation Tracker: [Vulkan Core Hardening And Recording Testing TODO](../../testing/rendering/vulkan-core-validation.md)
 
 ## Purpose
 
@@ -520,4 +520,4 @@ The SIMD refactor pass is complete when:
 - [Vulkan Render Loop Target Architecture](vulkan-render-loop-target-architecture.md)
 - [Masked Software Occlusion Culling Design](masked-software-occlusion-culling-design.md)
 - [Vulkan Core Hardening And Recording Code Changes TODO](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md)
-- [Vulkan Core Hardening And Recording Testing TODO](../../testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md)
+- [Vulkan Core Hardening And Recording Testing TODO](../../testing/rendering/vulkan-core-validation.md)

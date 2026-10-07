@@ -190,6 +190,48 @@ Mesh-shader dialect availability today:
 - `OpenGLNV` (`GL_NV_mesh_shader`): NVIDIA-only; this engine implements direct task dispatch for diagnostics, while the extension's indirect-count entrypoint is not implemented in the production path.
 - `None`: resolver downgrades any forced meshlet strategy.
 
+## Meshlet Payload Cooking Contract
+
+Meshlets are derived asset data. The import and cook service creates them; the
+renderer does not.
+
+- `XRMesh.MeshletPayload` holds portable CPU data: descriptors,
+  vertex-reference indices, local triangle indices, bounds, cones, generation
+  settings, and provenance. Do not cache backend buffers, descriptor handles,
+  command buffers, or pipelines in a mesh or model asset.
+- Import finishes every topology change and generates LODs first. Then it
+  generates one payload for each renderable LOD. A disabled-generation policy
+  is stored as an explicit payload state.
+- The standalone cooked `XRMesh` payload is the first persistence path. The
+  importer fills it before imported sub-assets are externalized.
+- For a model binary cache, the container meshlet section
+  (`ModelBinaryMeshletSectionCodec`) is primary. `MeshletPayloadDiskCache` is
+  secondary and serves repair, standalone, procedural, and legacy meshes. Both
+  use one shared meshlet-section codec.
+- Rendering does no meshlet source hashing, disk reads or writes, native
+  meshoptimizer calls, or cache publication. `GPUScene` registration consumes
+  an immutable validated payload and a revision token.
+  `XRMesh.GetOrCreateMeshletPayload` must not become a disk-cache API that
+  rendering calls.
+- Runtime format compatibility is separate from cook provenance. A runtime
+  without the meshoptimizer cooker accepts a compatible baked payload. A newer
+  cooker version invalidates derived data during import or cache validation,
+  not during a rendered pass.
+- Cache bytes use stable cache-local mesh and LOD IDs. Absolute paths, display
+  names, transient GUIDs, process state, and GPU handles are not part of the
+  bytes.
+- v1 payloads use one portable size profile:
+  `MeshletPayload.PortableMaxVertices` (64) and
+  `MeshletPayload.PortableMaxTriangles` (124). Change it only together with
+  shader specialization and device-limit negotiation.
+- Traditional and task/mesh bins can coexist in one pass without CPU readback.
+  The planner classifies unsupported meshlet draws before the pass plan is
+  sealed. Device capability, shader and pipeline readiness, and per-draw
+  eligibility are separate facts with separate diagnostics.
+
+Broad model and prefab binary-cache hydration is owned by the
+[Model Import Binary Cache TODO](../../work/todo/assets/model-import-binary-cache-todo.md).
+
 ## Production Closeout Status
 
 The unconditional meshlet import/runtime production gate completed on

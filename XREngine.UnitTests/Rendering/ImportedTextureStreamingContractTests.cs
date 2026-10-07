@@ -200,7 +200,6 @@ public sealed class ImportedTextureStreamingContractTests
         managerSource.ShouldContain("&& !freezeResidentSizeForVulkan");
         managerSource.ShouldContain("private static uint ResolveVulkanSafeResidentSize(");
         managerSource.ShouldContain("private static bool ShouldFreezeVulkanImportedTextureResidency(ImportedTextureStreamingSnapshot snapshot)");
-        managerSource.ShouldContain("docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md");
         managerSource.ShouldContain("VulkanProvider.IsSynchronizedUploadAvailable");
         providerSource.ShouldContain("VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable");
         managerSource.ShouldContain("XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze");

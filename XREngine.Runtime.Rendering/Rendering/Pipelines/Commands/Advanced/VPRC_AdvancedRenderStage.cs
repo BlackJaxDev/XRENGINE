@@ -224,6 +224,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         GlobalIlluminationPlan giPlan = GlobalIlluminationPlan ?? pipeline.GlobalIlluminationPlan;
         bool enableLightProbesAndIbl = !isMinimalVisibilityOutput && giPlan.RequiresNativeProbeIblBindings;
         bool requiresMaterialSurfaceExports = !isMinimalVisibilityOutput && giPlan.RequiresNativeMaterialSurfaceExports;
+        bool suppressBaselineDiffuse = !isMinimalVisibilityOutput &&
+            GlobalIlluminationCompositionState.ShouldSuppressBaselineDiffuse(ActivePipelineInstance, giPlan);
         if (requiresNativeOpaqueShading && !isMinimalVisibilityOutput &&
             !giPlan.IsDisabled && !giPlan.IsSupported)
         {
@@ -325,6 +327,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             enableBuiltInAmbientOcclusion,
             enableLightProbesAndIbl,
             RequiresMaterialSurfaceExports: requiresMaterialSurfaceExports,
+            SuppressBaselineDiffuse: suppressBaselineDiffuse,
             IsMinimalVisibilityOutput: isMinimalVisibilityOutput,
             SceneDatabase: world.GpuScene.AdvancedSharedDatabase);
 

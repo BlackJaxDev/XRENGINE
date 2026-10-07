@@ -36,7 +36,7 @@ internal sealed partial class VulkanResourceRuntime
                 deviceContext.Instance,
                 deviceContext.PhysicalDevice,
                 deviceContext.Device,
-                Vk.Version13,
+                deviceContext.InstanceApiVersion,
                 supportsBufferDeviceAddress),
             _ => throw new ArgumentOutOfRangeException(nameof(backend), backend, "Unknown Vulkan allocator backend.")
         };

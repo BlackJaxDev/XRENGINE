@@ -12,6 +12,39 @@ public static class AnimationMemberBindingRegistry
     private readonly record struct BindingKey(Type TargetType, string MemberName, Type ValueType);
 
     private static readonly ConcurrentDictionary<BindingKey, Delegate> Setters = new();
+    private static readonly ConcurrentDictionary<(Type TargetType, string MemberName), Delegate> Getters = new();
+
+    /// <summary>Registers a typed getter for a member on <typeparamref name="TTarget"/>.</summary>
+    public static IDisposable RegisterGetter<TTarget, TValue>(string memberName, Func<TTarget, TValue> getter)
+        where TTarget : class
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(memberName);
+        ArgumentNullException.ThrowIfNull(getter);
+
+        Func<object, object?> accessor = target => getter((TTarget)target);
+        (Type TargetType, string MemberName) key = (typeof(TTarget), memberName);
+        if (!Getters.TryAdd(key, accessor))
+            throw new InvalidOperationException($"An animation getter for {typeof(TTarget).FullName}.{memberName} is already registered.");
+
+        return new GetterRegistrationLease(key, accessor);
+    }
+
+    /// <summary>Finds a typed getter on the target type or one of its base types.</summary>
+    public static bool TryGetGetter(Type targetType, string memberName, out Func<object, object?>? getter)
+    {
+        ArgumentNullException.ThrowIfNull(targetType);
+        for (Type? type = targetType; type is not null; type = type.BaseType)
+        {
+            if (Getters.TryGetValue((type, memberName), out Delegate? found))
+            {
+                getter = (Func<object, object?>)found;
+                return true;
+            }
+        }
+
+        getter = null;
+        return false;
+    }
 
     /// <summary>Registers a typed setter for <paramref name="memberName"/> on <typeparamref name="TTarget"/>.</summary>
     public static IDisposable Register<TTarget, TValue>(string memberName, Action<TTarget, TValue> setter)
@@ -84,6 +117,20 @@ public static class AnimationMemberBindingRegistry
 
             if (Setters.TryGetValue(key, out Delegate? current) && ReferenceEquals(current, applier))
                 Setters.TryRemove(key, out _);
+        }
+    }
+
+    private sealed class GetterRegistrationLease((Type TargetType, string MemberName) key, Delegate accessor) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+
+            if (Getters.TryGetValue(key, out Delegate? current) && ReferenceEquals(current, accessor))
+                Getters.TryRemove(key, out _);
         }
     }
 }

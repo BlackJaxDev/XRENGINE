@@ -289,7 +289,7 @@ This eliminates the need for animated SDFs as a correctness requirement.
 
 The following engine documents constrain this design:
 
-- [Advanced Render Pipeline Architectural Refactor](../../todo/rendering/architectural-refactor/00-advanced-render-pipeline-refactor-todo.md)
+- [Advanced Render Pipeline](../../../architecture/rendering/advanced-render-pipeline.md)
 - [Native Material, Lighting, Decal, And GI Shading](../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md#11-shade-native-opaque-materials-lighting-decals-and-gi)
 - [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md)
 - [Vulkan Compact Zero-Readback Submission](../../../architecture/rendering/vulkan-compact-zero-readback-submission.md)

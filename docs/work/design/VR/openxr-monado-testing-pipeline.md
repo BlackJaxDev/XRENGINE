@@ -507,7 +507,9 @@ That is a real runtime project. Monado should absorb the generic runtime burden 
 
 - [OpenXR VR Rendering](../../../architecture/rendering/openxr-vr-rendering.md)
 - [OpenXR Implementation Comparison](openxr-implementation-comparison.md)
-- [OpenXR Monado Testing Pipeline TODO](../../todo/rendering/vr/openxr-monado-testing-pipeline-todo.md)
+- [OpenXR Runtime - No-HMD test lanes](../../../developer-guides/vr/openxr-runtime.md#no-hmd-test-lanes)
+- [OpenXR Monado CI And Hardware Follow-ups](../../todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md)
+- [OpenXR Validation](../../testing/xr/openxr-validation.md)
 - [OpenXR Timing Tests TODO](../../todo/tests/openxr-timing-tests-todo.md)
 - [OpenXR Future Work TODO](../../todo/rendering/vr/openxr-future-work-todo.md)
 - [Unit Testing World](../../../developer-guides/testing/unit-testing-world.md)

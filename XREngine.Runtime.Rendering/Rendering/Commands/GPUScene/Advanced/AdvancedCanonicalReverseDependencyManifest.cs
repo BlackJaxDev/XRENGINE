@@ -34,6 +34,7 @@ public sealed class AdvancedCanonicalReverseDependencyManifest
 
     public ulong Sequence { get; private set; }
     public bool IsComplete { get; private set; }
+    internal string? LastCaptureFailure { get; private set; }
     public uint BroadFallbackCount => unchecked((uint)Volatile.Read(ref _broadFallbackCount));
 
     public ReadOnlySpan<AdvancedReverseDependencyEdge> MaterialToDraw
@@ -91,16 +92,22 @@ public sealed class AdvancedCanonicalReverseDependencyManifest
             // publication consumer acknowledges them. They are not logical
             // dependencies of the next canonical publication.
             if (!draw.IsValid)
-                return MarkInconsistent();
+                return FailCapture($"Invalid draw handle at physical row {index}");
             if (!scene.Draws.IsCurrent(draw))
                 continue;
             ref readonly AdvancedDrawRecord record = ref drawRecords[index];
-            if (!record.Material.IsValid || !record.Geometry.IsValid ||
-                !materials.Materials.IsCurrent(record.Material) ||
-                !scene.Geometry.Records.IsCurrent(record.Geometry) ||
-                _materialToDrawCount >= _materialToDraw.Length ||
-                _geometryToDrawCount >= _geometryToDraw.Length)
-                return MarkInconsistent();
+            if (!record.Material.IsValid)
+                return FailCapture($"Draw {draw.Index}:{draw.Generation} at physical row {index} has an invalid material handle {record.Material.Index}:{record.Material.Generation}");
+            if (!materials.Materials.IsCurrent(record.Material))
+                return FailCapture($"Draw {draw.Index}:{draw.Generation} at physical row {index} has a stale material handle {record.Material.Index}:{record.Material.Generation}");
+            if (!record.Geometry.IsValid)
+                return FailCapture($"Draw {draw.Index}:{draw.Generation} at physical row {index} has an invalid geometry handle {record.Geometry.Index}:{record.Geometry.Generation}");
+            if (!scene.Geometry.Records.IsCurrent(record.Geometry))
+                return FailCapture($"Draw {draw.Index}:{draw.Generation} at physical row {index} has a stale geometry handle {record.Geometry.Index}:{record.Geometry.Generation}");
+            if (_materialToDrawCount >= _materialToDraw.Length)
+                return FailCapture($"Material-to-draw edge capacity exceeded at draw physical row {index}, handle {draw.Index}:{draw.Generation}");
+            if (_geometryToDrawCount >= _geometryToDraw.Length)
+                return FailCapture($"Geometry-to-draw edge capacity exceeded at draw physical row {index}, handle {draw.Index}:{draw.Generation}");
             _materialToDraw[_materialToDrawCount++] = new(record.Material, draw);
             _geometryToDraw[_geometryToDrawCount++] = new(record.Geometry, draw);
         }
@@ -114,19 +121,25 @@ public sealed class AdvancedCanonicalReverseDependencyManifest
                 continue;
             AdvancedGpuHandle material = materialHandles[index];
             if (!material.IsValid)
-                return MarkInconsistent();
+                return FailCapture($"Invalid material handle at physical row {index}");
             if (!materials.Materials.IsCurrent(material))
                 continue;
             ref readonly AdvancedMaterialRecord record = ref materialRecords[index];
-            if (!materials.TryGetLayoutHandle(material, out AdvancedGpuHandle layout) ||
-                !materials.Kernels.TryGet(new AdvancedGpuHandle(record.ShadingKernelId, record.ShadingKernelGeneration), out _) ||
-                _kernelToMaterialCount >= _kernelToMaterial.Length ||
-                _layoutToMaterialCount >= _layoutToMaterial.Length ||
-                !materials.TryGetTextureBindings(record, out ReadOnlySpan<AdvancedMaterialTextureBinding> bindings))
-                return MarkInconsistent();
+            if (!materials.TryGetLayoutHandle(material, out AdvancedGpuHandle layout))
+                return FailCapture($"Material {material.Index}:{material.Generation} at physical row {index} has a {(layout.IsValid ? "stale" : "missing or invalid")} layout handle {layout.Index}:{layout.Generation}");
+            AdvancedGpuHandle kernel = new(record.ShadingKernelId, record.ShadingKernelGeneration);
+            if (!kernel.IsValid)
+                return FailCapture($"Material {material.Index}:{material.Generation} at physical row {index} has an invalid kernel handle {kernel.Index}:{kernel.Generation}");
+            if (!materials.Kernels.TryGet(kernel, out _))
+                return FailCapture($"Material {material.Index}:{material.Generation} at physical row {index} has a stale kernel handle {kernel.Index}:{kernel.Generation}");
+            if (_kernelToMaterialCount >= _kernelToMaterial.Length)
+                return FailCapture($"Kernel-to-material edge capacity exceeded at material physical row {index}, handle {material.Index}:{material.Generation}");
+            if (_layoutToMaterialCount >= _layoutToMaterial.Length)
+                return FailCapture($"Layout-to-material edge capacity exceeded at material physical row {index}, handle {material.Index}:{material.Generation}");
+            if (!materials.TryGetTextureBindings(record, out ReadOnlySpan<AdvancedMaterialTextureBinding> bindings))
+                return FailCapture($"Material {material.Index}:{material.Generation} at physical row {index} has an invalid texture binding range {record.TextureReferenceOffset}+{record.TextureReferenceCount}/{materials.TextureBindings.Length}");
 
-            _kernelToMaterial[_kernelToMaterialCount++] = new(
-                new AdvancedGpuHandle(record.ShadingKernelId, record.ShadingKernelGeneration), material);
+            _kernelToMaterial[_kernelToMaterialCount++] = new(kernel, material);
             _layoutToMaterial[_layoutToMaterialCount++] = new(layout, material);
             for (int bindingIndex = 0; bindingIndex < bindings.Length; ++bindingIndex)
             {
@@ -134,7 +147,7 @@ public sealed class AdvancedCanonicalReverseDependencyManifest
                 if (!texture.IsValid)
                     continue;
                 if (_textureToMaterialCount >= _textureToMaterial.Length)
-                    return MarkInconsistent();
+                    return FailCapture($"Texture-to-material edge capacity exceeded at material physical row {index}, binding {bindingIndex}, texture {texture.Index}:{texture.Generation}");
                 _textureToMaterial[_textureToMaterialCount++] = new(texture, material);
             }
         }
@@ -158,6 +171,7 @@ public sealed class AdvancedCanonicalReverseDependencyManifest
     {
         Sequence = sequence;
         IsComplete = false;
+        LastCaptureFailure = null;
         _materialToDrawCount = 0;
         _geometryToDrawCount = 0;
         _textureToMaterialCount = 0;
@@ -165,8 +179,14 @@ public sealed class AdvancedCanonicalReverseDependencyManifest
         _layoutToMaterialCount = 0;
     }
 
-    private bool MarkInconsistent()
+    private bool FailCapture(string reason)
     {
+        LastCaptureFailure =
+            $"{reason}; sequence={Sequence}, materialToDraw={_materialToDrawCount}/{_materialToDraw.Length}, " +
+            $"geometryToDraw={_geometryToDrawCount}/{_geometryToDraw.Length}, " +
+            $"textureToMaterial={_textureToMaterialCount}/{_textureToMaterial.Length}, " +
+            $"kernelToMaterial={_kernelToMaterialCount}/{_kernelToMaterial.Length}, " +
+            $"layoutToMaterial={_layoutToMaterialCount}/{_layoutToMaterial.Length}";
         Interlocked.Increment(ref _broadFallbackCount);
         return false;
     }

@@ -334,6 +334,36 @@ canonical Phase 5.2B/5.2C promotion evidence for every supported production lane
 
 ---
 
+## Open Code Items Moved From default-pipeline-gpu-submission-strategy-todo.md
+
+Runtime checks are in the [GPU-driven submission validation doc](../../../testing/rendering/gpu-driven-submission-validation.md).
+
+- [ ] Record `GpuReadbackBytes` at every instrumented readback site. `GPURenderPassCollection.CullingAndSoA.cs` (pass-filter debug map), `GPURenderPassCollection.IndirectAndMaterials.cs` (indirect command dumps), `GPUScene.CommandBuffers.cs`. Done when: each `MapBufferData` read on an instrumented path calls `RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes`, and zero-readback paths call none.
+- [ ] Add render-graph metadata for the GPU-driven preparation stages: counter reset, cull, LOD selection, transparency classification, sort and key build, material-tier scatter, and indirect-count draw submission. `XREngine.Runtime.Rendering/RenderGraph/`, `GPURenderPassCollection`. Done when: each stage appears as a named render-graph pass with its resource declarations.
+- [ ] Separate fixed GPU work from instrumented CPU readback time in `RenderPipelineGpuProfiler` grouping. Done when: profiler output shows readback time in its own group.
+- [ ] Add a GPU pass test that runs a zero-readback pass and asserts `GpuReadbackBytes == 0`. `XREngine.UnitTests/Rendering/`. The current `GpuIndirectPhase7ZeroReadbackTests` checks the counter without a pass. Done when: the test executes a zero-readback pass. Needs owner clearance for new test code.
+- [ ] Add a positive test that `GpuIndirectInstrumented` with readbacks enabled reports nonzero `GpuReadbackBytes`. `XREngine.UnitTests/Rendering/`. Done when: the test fails if the instrumented path stops recording bytes. Needs owner clearance for new test code.
+
+## Open Code Items Moved From gpu-meshlet-zero-readback-rendering-todo.md
+
+- [ ] Add `GpuMeshletZeroReadback_StatsGpuReadbackBytesRemainZero`. `XREngine.UnitTests/Rendering/`. Done when: the test runs a meshlet zero-readback frame and asserts zero readback bytes. Needs owner clearance for new test code.
+- [ ] Add `Meshlet_TaskShaderCull_MatchesBVHFrustumResults`. Done when: task-shader frustum results match `bvh_frustum_cull.comp` results for the same fixture. Needs owner clearance for new test code.
+- [ ] Add `Meshlet_SharedBVHCull_ThenMeshletExpansion`. Done when: the test proves BVH culling output feeds `GPURenderExpandMeshlets.comp`. Needs owner clearance for new test code.
+- [ ] Add hardware integration tests `Meshlet_RenderPath_ProducesCorrectOutput_NVMeshShader`, `Meshlet_RenderPath_ProducesCorrectOutput_EXTMeshShader`, and `Meshlet_VulkanEXT_Parity`. Done when: each test runs on matching hardware and skips with a reason elsewhere. Needs owner clearance for new test code.
+
+## Open Code Items Moved From meshlet-import-cooking-and-production-readiness-todo.md
+
+These items depend on broad model and prefab binary-cache hydration, which the [Model Import Binary Cache TODO](../../assets/model-import-binary-cache-todo.md) owns.
+
+- [ ] Extract the remaining reusable mesh-core codec that broad model and prefab hydration needs. `ModelBinaryMeshletSectionCodec` already serves the meshlet section. Done when: standalone and model-container mesh-core serialization share one codec.
+- [ ] When broad model binary hydration is active, make a valid warm hit hydrate meshlets and LODs without the source parser or the meshlet builder. Done when: the model-cache builder and parser counters both report zero on a warm hit.
+
+## Open Code Items Moved From gpu-bvh-async-overflow-readback-todo.md
+
+- [ ] Add a live GPU fence test: dispatch a compute shader that writes a known value, insert an `XRGpuFence`, poll without waiting, then poll until signaled, and assert the value. `XREngine.UnitTests/Rendering/GpuBvhAsyncOverflowReadbackTests.cs`. Done when: the test runs on OpenGL and Vulkan hardware and skips with a reason elsewhere. Needs owner clearance for new test code.
+
+---
+
 ## 5. Cross-Reference Matrix
 
 For traceability — which subtasks in this doc map back to which source.

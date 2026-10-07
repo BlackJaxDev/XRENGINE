@@ -2,7 +2,7 @@
 
 Last Updated: 2026-04-19
 Current Status: Core transparency taxonomy, GPU-driven scaffolding, masked-path plumbing, alpha-to-coverage state support, weighted blended OIT, and exact-mode prototypes are implemented. Remaining work is validation, diagnostics hardening, quality comparison, experimental follow-up, and documentation.
-Scope: track only unfinished work from the [design plan](../design/transparency-and-oit-implementation-plan.md).
+Scope: track only unfinished work from the [design plan](../design/rendering/transparency-and-oit-implementation-plan.md).
 
 ## Non-Goals
 

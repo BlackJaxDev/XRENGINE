@@ -6,7 +6,7 @@ Scope: production meshlet rendering through mesh shaders, integrated with the ex
 
 Related docs:
 
-- [GPU meshlet zero-readback rendering TODO](../../todo/rendering/gpu/gpu-meshlet-zero-readback-rendering-todo.md)
+- [Mesh submission strategies](../../../architecture/rendering/mesh-submission-strategies.md)
 - [Production rendering pipeline roadmap](../../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
 - [Production GPU-driven rendering roadmap](../../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
 - [Zero-readback GPU-driven rendering plan](zero-readback-gpu-driven-rendering-plan.md)

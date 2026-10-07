@@ -545,12 +545,14 @@ namespace XREngine.Rendering.Commands
 
         private void RemoveMeshCommandIndices(IRenderCommandMesh meshCmd, List<uint> indices)
         {
-            foreach (uint idx in indices.OrderByDescending(v => v))
-                RemoveCommandAtIndex(idx);
+            indices.Sort();
+            for (int indexPosition = indices.Count - 1; indexPosition >= 0; indexPosition--)
+                RemoveCommandAtIndex(indices[indexPosition]);
 
             indices.Clear();
             _commandIndicesPerMeshCommand.Remove(meshCmd);
             meshCmd.GPUCommandIndex = uint.MaxValue;
+            UntrackRegisteredMeshCommand(meshCmd);
             VerifyUpdatingBufferSize(UpdatingCommandCount);
             FlushDrawIndexedSoARange(0u, UpdatingCommandCount);
             FlushCpuLodTransitionWrites();

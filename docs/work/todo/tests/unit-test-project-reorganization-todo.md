@@ -528,8 +528,8 @@ violate placement rules.
 ## Phase 10 - Documentation And Developer Workflow
 
 - [x] Update `docs/work/README.md` with the active test reorganization TODO.
-- [ ] Update `docs/developer-guides/testing.md` or create it if no testing guide
-  exists.
+- [ ] Add a test suite layout guide under `docs/developer-guides/testing/`.
+  No `docs/developer-guides/testing.md` guide exists.
 - [ ] Document common commands:
   - [ ] fast default unit + contract lane,
   - [ ] integration lane,

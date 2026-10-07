@@ -91,4 +91,4 @@ Related contracts:
 - `VulkanPhysicalImageGroup` and `VulkanDescriptorImageLayouts` own tracked and descriptor image layouts.
 - `VulkanDeviceCapabilityReporter` records available/enabled capability state.
 - `VulkanDeviceContext.FeatureQueries.cs` queries unified image-layout features.
-- The phase I and D4 evidence gates are recorded in [the Vulkan 1.4 TODO](../../work/todo/rendering/vulkan-14-performance-and-shader-modernization-todo.md) and [the barrier investigation](../../work/investigations/rendering/vulkan14-phase-d-waits-and-barriers-2026-09-09.md).
+- The phase I and D4 evidence gates are recorded in [the Vulkan master TODO decisions](../../work/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#decisions-needed) and [the barrier investigation](../../work/investigations/rendering/vulkan14-phase-d-waits-and-barriers-2026-09-09.md).

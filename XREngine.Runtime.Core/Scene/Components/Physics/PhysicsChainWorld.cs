@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 
 namespace XREngine.Components;
@@ -313,16 +314,51 @@ public sealed partial class PhysicsChainWorld
 
     private void LateTick()
     {
+        bool observe = RuntimeWorldTickTelemetry.Enabled;
+        long gateStart = observe ? Stopwatch.GetTimestamp() : 0L;
         using (_tickGate.EnterScope())
-            LateTickExclusive();
+        {
+            long bodyStart = observe ? Stopwatch.GetTimestamp() : 0L;
+            if (observe)
+                Interlocked.Add(ref _lateTickGateWaitTicks, bodyStart - gateStart);
+            PhysicsChainWorld? previous = s_activeLateTick;
+            if (observe)
+                s_activeLateTick = this;
+            try
+            {
+                LateTickExclusive();
+            }
+            finally
+            {
+                if (observe)
+                {
+                    s_activeLateTick = previous;
+                    Interlocked.Add(ref _lateTickBodyTicks, Stopwatch.GetTimestamp() - bodyStart);
+                    Interlocked.Increment(ref _lateTickCount);
+                }
+            }
+        }
     }
 
     private void LateTickExclusive()
     {
+        bool observe = RuntimeWorldTickTelemetry.Enabled;
+        long stageStart = observe ? Stopwatch.GetTimestamp() : 0L;
         DrainStructuralCommands();
+        if (observe)
+            Interlocked.Add(ref _lateStructuralBoundaryTicks, Stopwatch.GetTimestamp() - stageStart);
         PhysicsChainComponent.AdvancePreparedColliderFrame();
+        long qualityStart = observe ? Stopwatch.GetTimestamp() : 0L;
         AssignQualityTiers();
+        if (observe)
+            Interlocked.Add(ref _lateQualityBudgetTicks, Stopwatch.GetTimestamp() - qualityStart);
         _parallelComponents.Clear();
+        if (observe)
+        {
+            long now = Stopwatch.GetTimestamp();
+            Interlocked.Add(ref _lateBoundaryTicks, now - stageStart);
+            stageStart = now;
+        }
 
         int prepareCount = 0;
         ExceptionDispatchInfo? firstFault = null;
@@ -355,6 +391,7 @@ public sealed partial class PhysicsChainWorld
         // Collider snapshots may be shared by many chains. Prepare their
         // mutable world-space cache once on the world thread before component
         // hierarchy/input gathering fans out to workers.
+        int parallelPrepareCount = 0;
         for (int prepareIndex = 0; prepareIndex < prepareCount; ++prepareIndex)
         {
             if (!_prepareEligible[prepareIndex])
@@ -362,6 +399,7 @@ public sealed partial class PhysicsChainWorld
             try
             {
                 _prepareComponents[prepareIndex].PrepareWorldCollidersForParallelInputGather();
+                ++parallelPrepareCount;
             }
             catch (Exception ex)
             {
@@ -371,7 +409,10 @@ public sealed partial class PhysicsChainWorld
             }
         }
 
-        firstFault = ExecutePrepareParallel(prepareCount) is Exception prepareFault
+        Exception? prepareFault = parallelPrepareCount > 0
+            ? ExecutePrepareParallel(prepareCount)
+            : null;
+        firstFault = prepareFault is not null
             ? ExceptionDispatchInfo.Capture(prepareFault)
             : null;
         for (int prepareIndex = 0; prepareIndex < prepareCount; ++prepareIndex)
@@ -398,16 +439,46 @@ public sealed partial class PhysicsChainWorld
             _prepareFaults[prepareIndex] = null;
         }
 
+        if (observe)
+        {
+            long now = Stopwatch.GetTimestamp();
+            Interlocked.Add(ref _lateComponentPreparationTicks, now - stageStart);
+            stageStart = now;
+        }
+
         SynchronizeCpuSharedColliderSets();
         if (_parallelComponents.Count > 0)
         {
+            int pendingStage = 1;
             try
             {
                 ExecutePreparedCpuBatch(_parallelComponents);
+                if (observe)
+                {
+                    long now = Stopwatch.GetTimestamp();
+                    Interlocked.Add(ref _lateCpuBatchTicks, now - stageStart);
+                    stageStart = now;
+                }
+                pendingStage = 2;
                 ExecutePreparedParallel(_parallelComponents);
+                if (observe)
+                {
+                    long now = Stopwatch.GetTimestamp();
+                    Interlocked.Add(ref _lateParallelSolveTicks, now - stageStart);
+                    stageStart = now;
+                }
             }
             catch (Exception ex)
             {
+                if (observe)
+                {
+                    long now = Stopwatch.GetTimestamp();
+                    if (pendingStage == 1)
+                        Interlocked.Add(ref _lateCpuBatchTicks, now - stageStart);
+                    else
+                        Interlocked.Add(ref _lateParallelSolveTicks, now - stageStart);
+                    stageStart = now;
+                }
                 firstFault ??= ExceptionDispatchInfo.Capture(ex);
             }
 
@@ -424,10 +495,24 @@ public sealed partial class PhysicsChainWorld
                     firstFault ??= ExceptionDispatchInfo.Capture(ex);
                 }
             }
+            if (observe)
+            {
+                long now = Stopwatch.GetTimestamp();
+                Interlocked.Add(ref _latePublicationTicks, now - stageStart);
+                stageStart = now;
+            }
+        }
+        else if (observe)
+        {
+            long now = Stopwatch.GetTimestamp();
+            Interlocked.Add(ref _lateCpuBatchTicks, now - stageStart);
+            stageStart = now;
         }
 
         PublishActivityDiagnostics();
         ++_activeFrame;
+        if (observe)
+            Interlocked.Add(ref _lateDiagnosticsTicks, Stopwatch.GetTimestamp() - stageStart);
         firstFault?.Throw();
     }
 

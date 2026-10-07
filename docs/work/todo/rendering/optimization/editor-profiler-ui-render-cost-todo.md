@@ -229,3 +229,17 @@ Acceptance criteria:
 - [ ] Update this doc with final measurements, outcomes, and any follow-ups.
 - [ ] Merge `editor-profiler-ui-render-cost` back into `main` after completion
   and validation.
+
+## Open Code Items Moved From vulkan-headless-mcp-component-profiling-todo.md
+
+Guide: [Dedicated Vulkan RenderBench](../../../../developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench). Checks: [Vulkan core validation](../../../testing/rendering/vulkan-core-validation.md#from-vulkan-headless-mcp-component-profiling-todomd).
+
+- [ ] Stop selected-pass GPU profiling from dirtying unrelated primary or secondary command buffers. Vulkan selected-scope timestamp instrumentation, instrumented command-buffer variants. Done when: a profiled pass changes the record/reuse decision only for the command buffers that contain the selected scope, and a unit test covers the cache identity.
+- [ ] Add CI regression enforcement for the RenderBench Compare and Gate presets. `Tools/Benchmarks/Invoke-RenderProfileComparison.ps1`, CI workflow. Done when: CI runs the Gate preset on a controlled hardware runner and fails on a regression. Start only after the controlled runner shows acceptable variance.
+
+## Open Code Items Moved From advanced-pipeline-gpu-attribution-todo.md
+
+Investigation: [Cumulative publication validation](../../../investigations/rendering/2026-10-01-cumulative-publication-validation.md). Checks: [Vulkan core validation](../../../testing/rendering/vulkan-core-validation.md#from-advanced-pipeline-gpu-attribution-todomd).
+
+- [ ] Correlate executed passes and realized resources with GPU timings for `AdvancedRenderPipeline`. Repair the unavailable camera-state metadata in the GPU profile output. GPU render-pipeline profile dump, camera post-process state capture. Done when: a GPU profile row names the executed pass and its resources, and camera feature fields are present instead of reported as false when unavailable.
+- [ ] After attribution, make one bounded shader, resource, or quality-policy fix for the most expensive `AdvancedRenderPipeline` effect. Done when: the change targets the attributed effect and keeps a matched image and temporal-quality gate, including disocclusion.

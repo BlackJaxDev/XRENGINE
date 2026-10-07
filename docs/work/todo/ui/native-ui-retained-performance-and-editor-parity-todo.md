@@ -101,16 +101,16 @@ internal API improvements over preserving the current transitional behavior.
 
 ## Primary Implementation Surfaces
 
-- XRENGINE/Scene/Components/UI/Core/Transforms/UILayoutSystem.cs
-- XRENGINE/Scene/Components/UI/Core/Transforms/UICanvasTransform.cs
-- XRENGINE/Scene/Components/UI/Core/Transforms/UITransform.cs
-- XRENGINE/Scene/Components/UI/Core/Transforms/UIBoundableTransform.cs
-- XRENGINE/Scene/Components/UI/Core/Arrangements/UIListTransform.cs
-- XRENGINE/Scene/Components/Pawns/UICanvasComponent.cs
-- XRENGINE/Scene/Components/Pawns/UICanvasInputComponent.cs
-- XRENGINE/Scene/Components/UI/Core/UIRenderableComponent.cs
-- XRENGINE/Scene/Components/UI/Core/UIMaterialComponent.cs
-- XRENGINE/Scene/Components/UI/Text/UITextComponent.cs
+- XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UILayoutSystem.cs
+- XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UICanvasTransform.cs
+- XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UITransform.cs
+- XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UIBoundableTransform.cs
+- XREngine.Runtime.Rendering/Scene/Components/UI/Core/Arrangements/UIListTransform.cs
+- XREngine.Runtime.Rendering/Scene/Components/UI/UICanvasComponent.cs
+- XREngine.Runtime.InputIntegration/Scene/Components/Pawns/UICanvasInputComponent.cs
+- XREngine.Runtime.Rendering/Scene/Components/UI/Core/UIRenderableComponent.cs
+- XREngine.Runtime.Rendering/Scene/Components/UI/Core/UIMaterialComponent.cs
+- XREngine.Runtime.Rendering/Scene/Components/UI/Text/UITextComponent.cs
 - XREngine.Runtime.Rendering/Rendering/VisualScene2D.cs
 - XREngine.Runtime.Rendering/Rendering/UI/UIBatchCollector.cs
 - XREngine.Editor/UI/UIEditorComponent.cs

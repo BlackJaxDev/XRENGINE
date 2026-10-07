@@ -26,12 +26,12 @@ The normalized Poiyomi descriptor preserves:
 
 ## Main Contracts
 
-- `UnityMaterialDocument` and `UnityMaterialDocumentParser`
-- `UnityTextureImportDocument` and `UnityTextureImportDocumentParser`
-- `UnityAssetReference`, `UnityResolvedAsset`, and `UnityAssetResolver`
+- `SerializedMaterialDocument` and `SerializedMaterialDocumentParser`
+- `SerializedTextureImportDocument` and `SerializedTextureImportDocumentParser`
+- `SourceAssetReference`, `SourceResolvedAsset`, and `SourceAssetResolver`
 - `PoiyomiMaterialDescriptor`, `PoiyomiTextureDescriptor`, and
   `PoiyomiMaterialDescriptorFactory`
-- `UnityMaterialImportResult.SourceDocument`, `ShaderAsset`, and
+- `SerializedMaterialImportResult.SourceDocument`, `ShaderAsset`, and
   `PoiyomiDescriptor`
 
 `UnityMaterialImporter` still owns the existing descriptor-to-uber conversion

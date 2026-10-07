@@ -7,16 +7,13 @@ Source design: [Texture Runtime, Streaming, And Virtual Texturing Design](../../
 Backend guide: [Sparse Residency And Streaming Virtual Texturing Backend Guide](../../design/texturing/sparse-residency-and-svt-backend-guide.md)
 Compression/cache design: [Texture Compression And Cooked Texture Cache Design](../../design/texturing/texture-compression-and-cooked-cache-design.md)
 Compression/cache tracker: [Texture Compression And Cooked Texture Cache TODO](texture-compression-and-cooked-cache-todo.md)
-Validation ledger: [Texture Runtime Streaming Validation](../../testing/texture-runtime-streaming-validation.md)
+Validation ledger: [Texture Validation](../../testing/texturing/texture-validation.md)
+Architecture: [Texture Streaming](../../../architecture/rendering/texture-streaming.md)
 Vulkan upload/publication tail performance: [Vulkan render-tail code changes](../rendering/vulkan-core-hardening-and-device-loss-todo.md#7-bound-shadow-streaming-and-render-thread-tail-work)
 
-Ownership: this document owns residency policy, OpenGL sparse residency, Vulkan sparse residency, portable SVT/RVT architecture, texture metadata, compression integration, bindless texturing, and feature validation. Workstream 08 owns the bounded render-thread cost of Vulkan upload preparation/finalization, transfer and graphics queue synchronization, descriptor publication, retirement, and command-buffer invalidation. Historical Vulkan upload trackers are evidence, not parallel execution owners.
+Ownership: this document owns residency policy, OpenGL sparse residency, Vulkan sparse residency, portable SVT/RVT architecture, texture metadata, compression integration, bindless texturing, and feature validation. Workstream 08 owns the bounded render-thread cost of Vulkan upload preparation/finalization, transfer and graphics queue synchronization, descriptor publication, retirement, and command-buffer invalidation.
 
-Supersedes:
-
-- [Texture Streaming Consolidation TODO](../COMPLETED/texture-streaming-consolidation-todo.md)
-- [Texture Management Runtime TODO](../COMPLETED/texture-management-runtime-todo.md)
-- [Texture Streaming Cooked Cache TODO](../COMPLETED/texture-streaming-cooked-cache-todo.md)
+The texture management runtime, texture streaming consolidation, cooked cache, Vulkan imported texture streaming, and Vulkan async upload trackers are closed. Their finished design is in [Texture Streaming](../../../architecture/rendering/texture-streaming.md); git history keeps the trackers.
 
 ## Goal
 
@@ -567,3 +564,20 @@ Remaining closure work:
 - [ ] Stereo feedback is unioned rather than creating duplicate physical pages.
 - [ ] Both renderers retain explicit dense fallbacks for unsupported capabilities.
 - [ ] Every memory field is labeled exact or estimated according to backend observability.
+
+## Open Code Items Moved From vulkan-async-texture-streaming-upload-todo.md
+
+- [ ] Add a dedicated transfer-queue path for imported texture uploads with an explicit queue-family release and acquire semaphore chain. `VulkanTextureUploadService` (`VulkanTextureUploadTransfer.cs`, `VulkanTextureUploadQueuePolicy.cs`). Done when: `XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE` routes uploads to the transfer family on devices that have one, the graphics queue acquires ownership before publication, and the `[Vulkan Compat]` graphics-queue log appears only when no transfer family exists.
+
+## Open Code Items Moved From vulkan-imported-texture-streaming-todo.md
+
+- [ ] Route Vulkan per-mip progressive uploads through the synchronized upload service. `VkTexture2D.PushMipLevel`, `XRTexture2D.ShouldUseProgressiveRenderThreadUpload`, `VulkanTextureUploadService`. Done when: `XRE_VULKAN_PROGRESSIVE_TEXTURE_UPLOAD=1` no longer uses the render-thread `PushMipLevel` path for imported textures, and a source-contract test confirms service-owned per-mip requests.
+- [ ] Create the progressive destination image with full mip capacity and expose each mip only after its copy completes. `VulkanTextureUploadPreparation.cs`, `VulkanTextureUploadPublication.cs`. Done when: barriers per mip and an explicit published sampled-mip range replace texture-state mutation ahead of GPU completion.
+- [ ] Add telemetry for the visible base and max mip and the pending uploaded mips. `ImportedTextureStreamingTextureTelemetry`, texture streaming panel, `list_texture_streaming_textures`. Done when: the fields appear in the panel and the MCP rows.
+
+## Decisions Needed
+
+- [ ] Progressive Vulkan uploads: reuse one full-size image and expose lower mips one at a time, or keep one complete image per dense residency generation? Owner: Rendering.
+- [ ] How do bindless material texture table slots observe texture generation changes when CPU-direct and bindless Vulkan paths both use streamed textures? Owner: Rendering.
+- [ ] Does Vulkan dense imported streaming generate mipmaps, or does it rely only on cooked or imported mip data? Owner: Rendering.
+- [ ] Remove `XRE_VULKAN_ASYNC_TEXTURE_UPLOAD` and `XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER`, or keep them? Disabling them is now ignored for imported uploads and only logs a compatibility message. Owner: Rendering.

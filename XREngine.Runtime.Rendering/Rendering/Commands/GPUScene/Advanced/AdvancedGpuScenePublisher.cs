@@ -221,6 +221,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             RejectPublication("The canonical geometry compaction exceeds the bounded publication journal.");
             return;
         }
+        if (!TryStagePlannedGeometry(out string geometryCaptureFailure))
+        {
+            RejectPublication(geometryCaptureFailure);
+            return;
+        }
         AdvancedGlobalResourceCapture acceptedGlobalResources =
             globalResources.FrameId == frameId
                 ? globalResources
@@ -302,16 +307,16 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     int registrationIndex = plan.RegistrationIndex;
                     if (registrationIndex < 0)
                     {
-                        registrationIndex = TryAddRegistration(in plan, material);
+                        registrationIndex = TryAddRegistration(checked((int)commandIndex), in plan, material, out string? registrationFailure);
                         if (registrationIndex < 0)
                         {
                             throw new InvalidOperationException(
-                                "Canonical resident tables exhausted their preflighted frame-boundary capacity.");
+                                $"Canonical registration failed for command {commandIndex}, primitive {plan.PrimitiveIndex}: {registrationFailure ?? "unknown stage"}.");
                         }
                     }
                     else
                     {
-                        UpdateRegistration(registrationIndex, in plan, material);
+                        UpdateRegistration(checked((int)commandIndex), registrationIndex, in plan, material);
                     }
 
                     ref AdvancedResidentRegistration registration =
@@ -377,7 +382,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                         in transaction,
                         EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
                     throw new InvalidOperationException(
-                        "Canonical scene snapshot capture failed after a successful whole-frame preflight.");
+                        $"Canonical scene snapshot capture failed after a successful whole-frame preflight: {Database.LastPreparationFailure ?? "unknown stage"}.");
                 }
 
                 if (!_resourcePublisher.TryCapturePublication(
@@ -653,9 +658,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     }
 
     private int TryAddRegistration(
+        int commandIndex,
         in AdvancedGpuSceneCommandTransition plan,
-        AdvancedGpuHandle material)
+        AdvancedGpuHandle material,
+        out string? failureReason)
     {
+        failureReason = null;
         IRenderCommandMesh source = plan.Source ??
             throw new InvalidOperationException("A supported command plan lost its source.");
         int primitiveIndex = plan.PrimitiveIndex;
@@ -672,23 +680,44 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         AdvancedGpuHandle deformation = AdvancedGpuHandle.Invalid;
         AdvancedGpuHandle renderState = AdvancedGpuHandle.Invalid;
         AdvancedGpuHandle editorIdentity = AdvancedGpuHandle.Invalid;
-        if (!material.IsValid ||
-            !Database.Materials.Materials.IsCurrent(material) ||
-            !CanAddRegistration(tables))
+        if (!material.IsValid)
+        {
+            failureReason = $"Material handle {material.Index}:{material.Generation} is invalid";
             return -1;
+        }
+        if (!Database.Materials.Materials.IsCurrent(material))
+        {
+            failureReason = $"Material handle {material.Index}:{material.Generation} is stale; materials={Database.Materials.Materials.Count}/{Database.Materials.Materials.Capacity}";
+            return -1;
+        }
+        if (!CanAddRegistration(tables))
+        {
+            failureReason = DescribeRegistrationPreflightFailure(tables);
+            return -1;
+        }
 
+        string? mutationFailure = null;
         if (!TryRegisterCanonicalGeometry(
-                plan.Mesh,
+                commandIndex,
                 in bounds,
                 in command,
-                out AdvancedGpuHandle residentGeometry) ||
-            !tables.Transforms.TryAdd(CreateTransform(world, plan.Source as RenderCommand), out currentTransform) ||
-            !tables.Transforms.TryAdd(CreateTransform(previousWorld), out previousTransform) ||
-            !tables.Instances.TryAdd(CreateInstance(world, previousWorld, in bounds, in command), out instance) ||
-            !(geometry = residentGeometry).IsValid ||
-            !tables.Deformations.TryAdd(CreateDeformation(geometry, plan.MeshVertexCount), out deformation) ||
-            !tables.RenderStates.TryAdd(plan.RenderState, out renderState) ||
-            !tables.EditorIdentities.TryAdd(CreateEditorIdentity(source, in command), out editorIdentity))
+                out AdvancedGpuHandle residentGeometry))
+            mutationFailure = DescribeCanonicalGeometryRegistrationFailure(commandIndex, plan.MeshGeometryRevision);
+        else if (!tables.Transforms.TryAdd(CreateTransform(world, plan.Source as RenderCommand), out currentTransform))
+            mutationFailure = DescribeRegistrationTableFailure("current transform", tables.Transforms, 1);
+        else if (!tables.Transforms.TryAdd(CreateTransform(previousWorld), out previousTransform))
+            mutationFailure = DescribeRegistrationTableFailure("previous transform", tables.Transforms, 1);
+        else if (!tables.Instances.TryAdd(CreateInstance(world, previousWorld, in bounds, in command), out instance))
+            mutationFailure = DescribeRegistrationTableFailure("instance", tables.Instances, 1);
+        else if (!(geometry = residentGeometry).IsValid)
+            mutationFailure = "Geometry registration returned an invalid handle";
+        else if (!tables.Deformations.TryAdd(CreateDeformation(geometry, plan.MeshVertexCount), out deformation))
+            mutationFailure = DescribeRegistrationTableFailure("deformation", tables.Deformations, 1);
+        else if (!tables.RenderStates.TryAdd(plan.RenderState, out renderState))
+            mutationFailure = DescribeRegistrationTableFailure("render state", tables.RenderStates, 1);
+        else if (!tables.EditorIdentities.TryAdd(CreateEditorIdentity(source, in command), out editorIdentity))
+            mutationFailure = DescribeRegistrationTableFailure("editor identity", tables.EditorIdentities, 1);
+        if (mutationFailure is not null)
         {
             RollBackPartialRegistration(
                 currentTransform,
@@ -698,6 +727,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 deformation,
                 renderState,
                 editorIdentity);
+            failureReason = mutationFailure;
             return -1;
         }
 
@@ -724,6 +754,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 deformation,
                 renderState,
                 editorIdentity);
+            failureReason = DescribeRegistrationTableFailure("draw", tables.Draws, 1);
             return -1;
         }
 
@@ -768,6 +799,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             _registrations[index] = default;
             if (index == _registrationCount - 1)
                 --_registrationCount;
+            failureReason = $"Registration lookup rejected index {index}; registrations={_registrationCount}/{_registrations.Length}, slots={_registrationLookupIndices.Length}, generation={_registrationLookupGeneration}";
             return -1;
         }
         ++_topologyDeltaCount;
@@ -777,6 +809,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     }
 
     private void UpdateRegistration(
+        int commandIndex,
         int registrationIndex,
         in AdvancedGpuSceneCommandTransition plan,
         AdvancedGpuHandle material)
@@ -805,7 +838,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             }
 
             if (!TryRegisterCanonicalGeometry(
-                    plan.Mesh,
+                    commandIndex,
                     in bounds,
                     in command,
                     out AdvancedGpuHandle replacementGeometry) ||
@@ -961,15 +994,16 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         {
             Array.Resize(ref _registrationLookupIndices, checked((int)lookupCapacity));
             Array.Resize(ref _registrationLookupStamps, checked((int)lookupCapacity));
+            Array.Clear(_registrationLookupStamps);
             _registrationLookupGeneration = 0u;
         }
 
         AdvancedSharedGpuSceneCapacityProfile profile = CreateCapacityProfile(required);
-        if (required > Database.Scene.Draws.Capacity &&
+        // Independent scene or material growth can leave resource tables below
+        // this boundary profile. Grow all required database owners before their registries.
+        if (RequiresBoundaryGrowth(Database.Capacities, profile) &&
             !Database.TryGrowAtFrameBoundary(profile))
-        {
             return false;
-        }
 
         _resourcePublisher.GrowRegistryAtFrameBoundary(
             profile.TextureRecords,
@@ -977,6 +1011,43 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         _materialPublisher.GrowAtFrameBoundary(profile.MaterialRecords);
         EnsureMaterialTransitionCapacity(required);
         return true;
+    }
+
+    private static bool RequiresBoundaryGrowth(
+        in AdvancedSharedGpuSceneCapacityProfile current,
+        in AdvancedSharedGpuSceneCapacityProfile requested)
+    {
+        AdvancedGpuSceneCapacityProfile scene = current.Scene;
+        AdvancedGpuSceneCapacityProfile target = requested.Scene;
+        return target.DrawRecords > scene.DrawRecords ||
+            target.InstanceRecords > scene.InstanceRecords ||
+            target.TransformRecords > scene.TransformRecords ||
+            target.DeformationRecords > scene.DeformationRecords ||
+            target.RenderStateRecords > scene.RenderStateRecords ||
+            target.EditorIdentityRecords > scene.EditorIdentityRecords ||
+            target.GeometryRecords > scene.GeometryRecords ||
+            target.StaticVertexBytes > scene.StaticVertexBytes ||
+            target.IndexBytes > scene.IndexBytes ||
+            target.PreSkinnedCurrentBytes > scene.PreSkinnedCurrentBytes ||
+            target.PreSkinnedPreviousBytes > scene.PreSkinnedPreviousBytes ||
+            target.MeshletBytes > scene.MeshletBytes ||
+            target.MeshletDescriptorBytes > scene.MeshletDescriptorBytes ||
+            target.MeshletVertexIndexBytes > scene.MeshletVertexIndexBytes ||
+            target.MeshletTriangleWordBytes > scene.MeshletTriangleWordBytes ||
+            requested.MaterialRecords > current.MaterialRecords ||
+            requested.ShadingKernels > current.ShadingKernels ||
+            requested.MaterialLayouts > current.MaterialLayouts ||
+            requested.MaterialLayoutMembers > current.MaterialLayoutMembers ||
+            requested.MaterialConstantWords > current.MaterialConstantWords ||
+            requested.MaterialTextureBindings > current.MaterialTextureBindings ||
+            requested.TextureRecords > current.TextureRecords ||
+            requested.SamplerRecords > current.SamplerRecords ||
+            requested.LightRecords > current.LightRecords ||
+            requested.ShadowRecords > current.ShadowRecords ||
+            requested.ProbeRecords > current.ProbeRecords ||
+            requested.EnvironmentRecords > current.EnvironmentRecords ||
+            requested.DecalRecords > current.DecalRecords ||
+            requested.GiResourceRecords > current.GiResourceRecords;
     }
 
     private int FindRegistration(IRenderCommandMesh source, int primitiveIndex)
@@ -1107,6 +1178,34 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
            tables.RenderStates.CanApply(1, 0, 0) &&
            tables.EditorIdentities.CanApply(1, 0, 0) &&
            tables.Draws.CanApply(1, 0, 0);
+
+    private static string DescribeRegistrationPreflightFailure(AdvancedGpuSceneDatabase tables)
+    {
+        if (!tables.Transforms.CanApply(2, 0, 0))
+            return DescribeRegistrationTableFailure("transform preflight", tables.Transforms, 2);
+        if (!tables.Instances.CanApply(1, 0, 0))
+            return DescribeRegistrationTableFailure("instance preflight", tables.Instances, 1);
+        if (!tables.Geometry.Records.CanApply(1, 0, 0))
+            return DescribeRegistrationTableFailure("geometry preflight", tables.Geometry.Records, 1);
+        if (!tables.Deformations.CanApply(1, 0, 0))
+            return DescribeRegistrationTableFailure("deformation preflight", tables.Deformations, 1);
+        if (!tables.RenderStates.CanApply(1, 0, 0))
+            return DescribeRegistrationTableFailure("render state preflight", tables.RenderStates, 1);
+        if (!tables.EditorIdentities.CanApply(1, 0, 0))
+            return DescribeRegistrationTableFailure("editor identity preflight", tables.EditorIdentities, 1);
+        if (!tables.Draws.CanApply(1, 0, 0))
+            return DescribeRegistrationTableFailure("draw preflight", tables.Draws, 1);
+        return "Registration preflight changed after its first capacity check";
+    }
+
+    private static string DescribeRegistrationTableFailure<T>(
+        string stage,
+        AdvancedGpuRecordTable<T> table,
+        int requestedAdds)
+        where T : unmanaged
+        => $"{stage} rejected {requestedAdds} add(s); live={table.Count}, retired={table.RetiredCount}, " +
+           $"capacity={table.Capacity}, availableAdds={table.AvailableAdditions}, " +
+           $"availableDeltas={table.AvailablePublicationDeltas}, availableRemaps={table.AvailableRemaps}";
 
     private bool CanUpdateRegistrationStructure(
         in AdvancedResidentRegistration registration)

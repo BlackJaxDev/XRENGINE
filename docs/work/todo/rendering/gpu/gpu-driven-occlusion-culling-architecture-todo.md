@@ -28,7 +28,7 @@ Related local docs:
 - [Default Render Pipeline Notes](../../../../architecture/rendering/default-render-pipeline-notes.md)
 - [GPU Meshlet Zero-Readback Rendering Design](../../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [Render Submission Perf Debug Plan](../../../design/rendering/render-submission-perf-debug-plan.md)
-- [CPU Async Hardware Query Occlusion TODO](../../COMPLETED/cpu-async-hardware-query-occlusion-todo.md)
+- [CPU Query Async Occlusion guide](../../../../developer-guides/rendering/cpu-query-async-occlusion.md)
 - [Masked Software Occlusion Culling TODO](../masked-software-occlusion-culling-todo.md)
 - [Production Rendering Pipeline Roadmap](production-rendering-pipeline-roadmap.md)
 

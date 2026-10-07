@@ -281,7 +281,7 @@ repository policy.
 | Primary/secondary state, cache identity, and current-data reuse | [Vulkan Primary Command-Buffer Reuse](../../../architecture/rendering/vulkan-primary-command-buffer-reuse.md) |
 | Final render-loop ownership and CPU contract | [Vulkan Render Loop Target Architecture](../../design/rendering/vulkan-render-loop-target-architecture.md) |
 | Remaining prepared-data/producer optimization | [Vulkan Command Recording Architecture Optimization TODO](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership) |
-| Post-change correctness, performance, and soak validation | [Vulkan Core Hardening And Recording Testing TODO](../../testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md) |
+| Post-change correctness, performance, and soak validation | [Vulkan Core Hardening And Recording Testing TODO](../../testing/rendering/vulkan-core-validation.md) |
 | Directional cascades, atlas stability, and light-on acceptance | [Directional Light Vulkan Stability Investigation](directional-light-inspector-shadow-2026-08-03.md) |
 
 ### Historical evidence index

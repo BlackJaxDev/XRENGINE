@@ -11,7 +11,7 @@ Related docs:
 - [Implementation tracker](../../todo/assets/model-import-binary-cache-todo.md)
 - [Model import feature guide](../../../developer-guides/assets/model-import.md)
 - [Texture management runtime design](../texturing/texture-management-runtime-design.md)
-- [Texture streaming cooked cache TODO](../../todo/COMPLETED/texture-streaming-cooked-cache-todo.md)
+- [Texture Streaming architecture (cooked-cache authority)](../../../architecture/rendering/texture-streaming.md#cooked-cache-authority)
 - [GPU meshlet zero-readback rendering design](../rendering/gpu-meshlet-zero-readback-rendering-design.md)
 - [Production rendering pipeline roadmap](../../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
 

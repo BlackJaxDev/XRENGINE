@@ -5,8 +5,11 @@ Owner: XR / Rendering / Testing
 Status: Active
 
 Follow-up tracker for work intentionally left out of the local OpenXR Monado
-smoke implementation. The local runner and scene-only lane live in
-[openxr-monado-testing-pipeline-todo.md](openxr-monado-testing-pipeline-todo.md).
+smoke implementation. The local runner and scene-only lane are described in the
+[OpenXR runtime guide](../../../../developer-guides/vr/openxr-runtime.md), the
+[Unit Testing World guide](../../../../developer-guides/testing/unit-testing-world.md),
+and the [design](../../../design/VR/openxr-monado-testing-pipeline.md). Runtime
+checks are in [OpenXR Validation](../../../testing/xr/openxr-validation.md).
 
 ## CI Promotion
 
@@ -48,7 +51,23 @@ smoke implementation. The local runner and scene-only lane live in
 - [ ] Revisit an XREngine-owned mock runtime only if Monado plus API-layer
   automation cannot cover required cases.
 
-## Open Decisions
+## Open Code Items Moved From openxr-monado-testing-pipeline-todo.md
+
+- [ ] If the owner selects persistent smoke settings (see Decisions Needed), add
+  `OpenXrExpectedRuntimeName`, `OpenXrRequireMockRuntime`, and
+  `OpenXrSmokeFrameCount` beside the existing `VR.OpenXrRuntimeJson`.
+  `UnitTestingVrSettings`, `UnitTestingWorldSettingsStore`, the smoke runner
+  in `XREngine.Editor/Program.OpenXrSmokeRunController.cs`. Use `SetField(...)`
+  if the owner type derives from `XRBase`. Done when: the settings appear in the
+  regenerated schema, an existing `XR_RUNTIME_JSON` or `XRE_SMOKE_FRAMES`
+  process value still wins, and `OpenXrTimingPipelineContractTests` covers the
+  precedence.
+- [ ] Remove the formatted-logging allocation candidates from OpenXR hot paths.
+  `XREngine.Runtime.XR.OpenXR`. Done when:
+  `Tools/Reports/Find-NewAllocations.ps1 -FailOnOpenXrHotPathAllocations`
+  passes with no recorded baseline exceptions.
+
+## Decisions Needed
 
 - [ ] Which Monado Windows build/tag/commit is the first supported Lane 2
   baseline?
@@ -57,10 +76,20 @@ smoke implementation. The local runner and scene-only lane live in
   environment enough for v1?
 - [ ] Which CI ownership model is acceptable: local-only, self-hosted Windows,
   or pinned internal artifact?
+- [ ] Does the target SteamVR hardware expose `XR_EXT_hand_tracking`, or only
+  controller profile inputs that can be synthesized into finger curls?
+- [ ] Which Valve Index and Vive controller component paths are first-class
+  defaults for the gameplay action set?
+- [ ] Do OpenXR action binding overrides live in engine settings, in generated
+  files, or only in the runtime binding UI for v1?
+- [ ] Are tracker persistent paths stored in user calibration data, or does v1
+  use role paths only?
+- [ ] What is the minimum hardware matrix before OpenXR becomes the default
+  SteamVR path and OpenVR can retire?
 
 ## Related
 
 - [OpenXR Monado Testing Pipeline](../../../design/VR/openxr-monado-testing-pipeline.md)
-- [OpenXR Monado Testing Pipeline TODO](openxr-monado-testing-pipeline-todo.md)
+- [OpenXR Validation](../../../testing/xr/openxr-validation.md)
 - [OpenXR Timing And Pipeline Tests](../../tests/openxr-timing-tests-todo.md)
 - [OpenXR Future Work](openxr-future-work-todo.md)

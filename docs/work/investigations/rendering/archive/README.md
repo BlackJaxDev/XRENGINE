@@ -13,7 +13,7 @@ current owner below explicitly adopts it.
 | OpenXR/Monado rendering and performance | [OpenXR Monado Vulkan 120 Hz Progress](../../../progress/rendering/openxr-monado-vulkan-120hz-performance-2026-06-27.md) |
 | Vulkan core-hardening and lifecycle gates | [Vulkan Core Hardening And Device-Loss TODO](../../../todo/rendering/vulkan-core-hardening-and-device-loss-todo.md) |
 | GPU BVH external qualification | [GPU Scene BVH External-Hardware Qualification](../../../testing/rendering/gpu-scene-bvh-external-hardware-qualification.md) |
-| Render-query live and external validation | [Vulkan Render Query System Upgrade TODO](../../../todo/rendering/vulkan-render-query-system-upgrade-todo.md) |
+| Render-query live and external validation | [Render Queries And Occlusion Validation](../../../testing/rendering/render-queries-and-occlusion-validation.md) |
 | Advanced pipeline reference and promotion work | Current advanced-render-pipeline progress and testing ledgers under `docs/work/progress/rendering/` and `docs/work/testing/rendering/` |
 
 ## Editor, windowing, and presentation

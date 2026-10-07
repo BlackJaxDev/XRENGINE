@@ -11,7 +11,7 @@ a shader exists.
 | Selection | Registry status | Contracted output | Notes |
 |---|---|---|---|
 | Light Probes and IBL | Supported | Existing PBR probe/IBL bindings | No provider-owned screen field is needed. |
-| DDGI | Supported experimental path | Material-shaded, linear-HDR indirect diffuse for deferred opaque surfaces | Dynamic and baked Vulkan mono evidence is recorded in the modular-GI TODO. Forward, transparent, and world-space consumers are unsupported. |
+| DDGI | Supported experimental path | Material-shaded, linear-HDR indirect diffuse for deferred opaque surfaces | Runs in Default and Advanced. Evidence is in [Global Illumination Validation](../../work/testing/rendering/global-illumination-validation.md#ddgi). Forward, transparent, and world-space consumers are unsupported. |
 | Radiance Cascades | Unsupported | None at runtime | Its module-owned resolve layout exists, but injection, propagation, and update production are incomplete. Selecting it allocates no GI work. |
 | ReSTIR, voxel cone tracing, light volumes/LPV, Surfel GI | Unsupported | None at runtime | These have implementation TODOs and no verified modular provider. |
 
@@ -110,5 +110,5 @@ Every provider must validate both adapters before it is advertised as supported:
    reset/invalidation, resize/view-layout changes, debug presentation, and each
    advertised consumer. Keep unsupported consumers visibly unsupported.
 
-The complete phase plan, evidence ledger, and planned-method requirements are in
+The contract rules are in [Global Illumination Ownership And Selection](../../architecture/rendering/global-illumination-ownership.md). Open work is in
 [the modular GI architecture TODO](../../work/todo/rendering/global-illumination/modular-gi-architecture-todo.md).

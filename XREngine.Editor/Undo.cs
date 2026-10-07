@@ -53,6 +53,14 @@ public static class Undo
     /// </summary>
     private static readonly Dictionary<XRBase, TrackedObject> _trackedObjects = new(ReferenceEqualityComparer.Instance);
 
+    // Runtime changes need no argument object when recording is inactive. Keep
+    // transform replacement notifications active so tracking follows the node.
+    private static readonly XRPropertyChangedEventHandler TrackedObjectPropertyChangedHandler =
+        XRPropertyNotificationHandlers.FilterChangedWhen(
+            OnTrackedObjectPropertyChanged,
+            static (sender, propertyName) => RecordingAllowed ||
+                sender is SceneNode && string.Equals(propertyName, nameof(SceneNode.Transform), StringComparison.Ordinal));
+
     /// <summary>
     /// Stack of active change scopes. Changes are accumulated in the topmost scope
     /// until it is disposed, at which point they are committed to the undo stack.
@@ -538,8 +546,8 @@ public static class Undo
 
             // Create tracking context and subscribe to property changes
             var context = new TrackedObject(instance);
-            instance.PropertyChanged += OnTrackedObjectPropertyChanged;
-            context.AddDisposeAction(() => instance.PropertyChanged -= OnTrackedObjectPropertyChanged);
+            instance.PropertyChanged += TrackedObjectPropertyChangedHandler;
+            context.AddDisposeAction(() => instance.PropertyChanged -= TrackedObjectPropertyChangedHandler);
             _trackedObjects.Add(instance, context);
 
             // Configure type-specific tracking behavior

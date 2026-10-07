@@ -3,7 +3,7 @@
 Status: reference design
 Last Updated: 2026-06-17
 
-Implementation prerequisite: [Vulkan Fully Bindless Materials TODO](../../todo/rendering/vulkan-fully-bindless-materials-todo.md).
+Implementation prerequisite: [Vulkan Bindless Material Texture Table](../../../architecture/rendering/vulkan-renderer.md#bindless-material-texture-table).
 
 Related docs:
 

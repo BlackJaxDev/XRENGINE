@@ -10,7 +10,7 @@ Earlier failed run root: `Build/_AgentValidation/20260625-175629-openxr-vulkan-p
 
 Recovery TODO:
 
-- `docs/work/todo/COMPLETED/openxr-monado-vulkan-parallel-rendering-todo-2026-06-25.md`
+- Retired. Open work moved to `docs/work/todo/rendering/vr/openxr-vulkan-parallel-eye-recording-todo.md`; checks moved to `docs/work/testing/xr/openxr-validation.md`.
 
 Latest failed validation session before the recovery plan:
 

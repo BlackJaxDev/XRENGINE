@@ -1,7 +1,7 @@
 # Default Render Pipeline Regression Diagnosis - 2026-03-28
 
 Reference work docs:
-- [Default render pipeline V2 TODO](../todo/default-render-pipeline-v2-todo.md)
+- [Default render pipeline notes](../../../architecture/rendering/default-render-pipeline-notes.md)
 - [Ambient Occlusion](../../developer-guides/gi/ambient-occlusion.md)
 - [Ambient Occlusion Testing](../testing/ambient-occlusion.md)
 

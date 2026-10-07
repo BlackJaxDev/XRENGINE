@@ -302,4 +302,4 @@ backend internals, serialized asset restore, diagnostics, and unmigrated legacy
 paths. New runtime code should prefer scoped writers or direct dirty commits.
 
 Remaining hardware, barrier, and strategy validation is tracked in
-[XRDataBuffer RHI Write Model Validation](../../work/testing/xrdatabuffer-rhi-write-model-validation.md).
+[XRDataBuffer RHI Write Model Validation](../../work/testing/rendering/xrdatabuffer-rhi-write-model-validation.md).

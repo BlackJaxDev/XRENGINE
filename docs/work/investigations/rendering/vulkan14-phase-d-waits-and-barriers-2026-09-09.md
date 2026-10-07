@@ -7,7 +7,7 @@ remain deferred. No runtime speedup is claimed.
 ## Scope and acceptance
 
 This follows the [phase C measurements](vulkan14-phase-c-baselines-2026-09-09.md)
-and implements phase D of the [modernization plan](../../todo/rendering/vulkan-14-performance-and-shader-modernization-todo.md).
+and implements phase D of the modernization plan (deleted; open D4 decision in the [master TODO](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#decisions-needed)).
 Preserve generic barrier semantics, image layouts, queue ownership, slot lifetime,
 and desktop/XR scheduling. Retain a performance change only after correctness
 validation and three matched runs demonstrate a total-cost improvement of at

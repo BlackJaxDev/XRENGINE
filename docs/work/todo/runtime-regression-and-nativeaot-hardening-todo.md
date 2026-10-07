@@ -119,11 +119,12 @@ or NativeAOT acceptance.
 
 Predecessors and related work:
 
-- [Runtime Modularization Phase 6 - Complete](COMPLETED/runtime-modularization-phase6-todo.md)
+- [Runtime Project Organization](../../architecture/runtime/project-organization.md)
 - [Runtime Modularization Phase 6 Progress](../progress/runtime/runtime-modularization-phase6-progress-2026-08-25.md)
 - [Unit Test Project Reorganization TODO](tests/unit-test-project-reorganization-todo.md)
 - [Humanoid Body Root Compensation TODO](avatar/humanoid-body-root-compensation-todo.md)
-- [MonkeyBall VR Final-Build Runtime TODO](games/monkeyball-vr-final-build-runtime-todo.md)
+- [AOT Final Game Builds](../../developer-guides/runtime/aot-final-game-builds.md#game-runtime-smoke)
+  and the [MonkeyBall VR Release Matrix](../testing/xr/monkeyball-vr-release-matrix.md)
 - [Runtime Data Layout And Generated Contracts TODO](runtime/runtime-data-layout-and-generated-contracts-todo.md)
   provides the Roslyn generator, span-based cooked codecs, published-reader
   split, and `XRE_AOT_PARITY` diagnostics used by A0-A2. This tracker remains
@@ -589,7 +590,7 @@ Acceptance criteria:
       accurately external and is not claimed.
 - [ ] The progress ledger records exact commands, results, failure dispositions,
       evidence paths, intentional exclusions, and commit/merge status.
-- [ ] This tracker is moved to `docs/work/todo/COMPLETED/` only after every
+- [ ] Delete this tracker only after every
       software completion gate above passes.
 
 ## Recommended Execution Order

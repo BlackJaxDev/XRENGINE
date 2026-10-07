@@ -31,6 +31,12 @@ execution. The command runtime's retained wrapper lookup cannot create them.
 Deferred mesh publication and committed atlas bytes deliberately do not create
 backend wrappers; generating existing wrappers alone cannot satisfy first use.
 
+The compute-buffer readiness facade must also create a cold buffer wrapper
+before it uses the retained command lookup. A CPU commit publishes bytes to
+existing owners; it does not create a backend wrapper. GPU-only bounds output
+uses `GpuProduced` storage without a CPU mirror. Do not upload a CPU image over
+the result of that compute pass.
+
 ## Resource Generation Lifecycle
 
 The deferred light-combine descriptor declares the destination color, depth,
@@ -212,6 +218,16 @@ behavior. Material rows separate instance constants and texture references from
 shared shading-kernel identity, so warmed shading does not select descriptor
 sets per material.
 
+Early visibility clears each view's append counters before one dispatch for
+that view. The dispatch admits at most `payloadCapacity` candidates. Each
+candidate appends once to either the early-visible list or the deferred list,
+or appends to neither list. Each list has `payloadCapacity` entries per view.
+These bounds permit one `atomicAdd` reservation per append without a retry
+loop. The shader rejects padded invocations before they can reserve an entry
+and checks the reserved index before it writes. Repeated dispatches must reset
+the counters or use a separate view segment; they must not append to the same
+counter image twice.
+
 View, light, shadow, probe, environment, decal, GI, texture, and sampler records
 use the same packed CPU/GPU layout contract on OpenGL and Vulkan. Backend
 texture encodings may use arrays, OpenGL bindless handles, Vulkan descriptor
@@ -224,9 +240,36 @@ whole-device waits, and emits bounded copy ranges plus allocation telemetry.
 Live scene extraction and deformation/visibility preparation are introduced by
 the next refactor stage; this section defines the contract they must populate.
 
-Follow the ordered
-[Advanced Render Pipeline Architectural Refactor](../../work/todo/rendering/architectural-refactor/00-advanced-render-pipeline-refactor-todo.md)
-for the visibility-buffer architecture and promotion gates.
+See [Advanced Render Pipeline](advanced-render-pipeline.md) for the
+visibility-buffer frame flow, invariants, capability floor, and output ownership.
+
+### Advanced Pipeline Command Authoring
+
+`AdvancedRenderPipeline` source lives in focused partial files under
+`XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/`. Capability,
+selection, output-binding, and frame-contract types live in
+`Advanced/Contracts/` (`AdvancedRenderPipelineCapabilities`,
+`AdvancedRenderPipelineCapabilityResolver`,
+`AdvancedRenderPipelineSelectionResolver`,
+`AdvancedRenderPipelineFrameContract`). No `DefaultRenderPipeline2` type,
+alias, or `XRE_USE_PIPELINE_V2` selector exists.
+
+The command chain obeys these rules:
+
+- Do not use `VPRC_Manual`. Per-frame state, such as the active depth-peel
+  layer, is a pipeline variable that typed commands set and clear
+  (`ActiveDepthPeelLayer`). Accessors read it from the pipeline variables,
+  not from a pipeline field.
+- Bind storage buffers through `VPRC_BindBuffer` scopes around the pass that
+  reads them. The PPLL node and counter buffers follow this rule.
+- Framebuffer and material `SettingUniforms` handlers delegate to named
+  `Apply*ProgramBindings` methods that read the current camera and pipeline
+  state. Do not put resource creation or cache work in these handlers.
+- Light-probe position, parameter, tetrahedra, grid-cell, and grid-index
+  buffers plus the irradiance and prefilter arrays use the `LightProbe*`
+  resource names. A probe refresh builds the new resource cohort completely
+  before it retires the old one. `DefaultRenderPipeline` makes the probe
+  resources current with `VPRC_SyncLightProbeResources` before lighting.
 
 ---
 
@@ -540,6 +583,26 @@ Spot and point atlas pages are currently depth-only. A local light whose resolve
 When `UsePointShadowAtlas` is true and the resolved encoding is depth, dynamic point lights render independent `PointFace` requests directly into the point atlas as 2D face tiles. The request pass intersects each point face frustum against the active local shadow relevance camera set and forces `SkipReason.NotRelevant` for faces that cannot affect any consuming camera. Same-page dirty faces are grouped and published in `ShadowAtlasFrameData` when the selected point render mode and OpenGL capabilities support indexed viewport/scissor output: the atlas instanced path writes `gl_ViewportIndex` from the compact face slot, and the atlas GS path fans triangles to the selected face slots. Sequential direct-to-atlas rendering remains the compatibility fallback. Once the render scheduler starts refreshing one relevant face for a point light, adjacent dirty relevant faces for that same light are allowed to continue past the soft per-frame budget, matching directional cascade set behavior and preventing interactive light transforms from updating one cube face at a time. Forward and deferred receivers select the face by major axis, convert the receiver direction to face-local UV, and compare radial normalized depth against that face's tile metadata. Point atlas filtering is cubemap-seam aware: each PCF/PCSS/Vogel tap perturbs the receiver direction, re-selects the owning face, and samples that face's atlas metadata, so taps crossing a face edge do not clamp against the original tile. Missing, demoted, or non-relevant faces use their published fallback, usually a stale tile when a previous render exists or contact-only before first render, instead of sampling undefined atlas texels. The legacy point cubemap path remains available when point atlas mode is disabled or the point light resolves to a moment encoding.
 
 Local point and spot lights use SSBO-backed per-light metadata for the same tuning values. Forward+ local light records also carry the source light index plus the atlas shadow record index so atlas-enabled local lights do not depend on the fixed four-entry legacy sampler arrays. Keep `ForwardPointShadowData` / `ForwardSpotShadowData` in `ForwardLighting.glsl` and the matching `ForwardPointShadowGpu` / `ForwardSpotShadowGpu` upload structs in `Lights3DCollection.ForwardLighting.cs` in sync whenever a new shadow control is added. Do not move this metadata back to large uniform arrays; NVIDIA's OpenGL uniform constant path can exceed the 1024-register limit.
+
+### Forward lighting per-fragment caching contract
+
+`ForwardLighting.glsl` resolves per-fragment view state once. A forward shading entry point must call `XRENGINE_BeginForwardLightingFragment(fragPosWS)` before it evaluates lights. `XRENGINE_CalculateForwardLightingMaterial` and the Uber fragment shader do this. The call stores these values in file-scope globals and sets `XRENGINE_ForwardLightingContextInitialized`:
+
+- the view index (`XRENGINE_GetForwardViewIndex()` is evaluated once);
+- the view, inverse view, projection, inverse projection, and view-projection matrices for that view;
+- the camera position, read from the inverse-view translation column;
+- the fragment position and its view depth;
+- the layer counts of `DirectionalShadowAtlas`, `PointLightShadowAtlas`, and `SpotLightShadowAtlas` (`textureSize(...).z`);
+- copies of `ShadowPackedI0`, `ShadowPackedI1`, and `ShadowParams0` to `ShadowParams3`.
+
+Light and shadow helpers read these values through the `XRENGINE_GetForwardResolved*` and `XRENGINE_GetForwardShadow*` accessors. Each accessor falls back to the uncached computation when the context is not initialized. `XRENGINE_GetForwardResolvedViewDepth(fragPosWS)` returns the cached depth only when the position matches the cached fragment position. Shadow bias helpers skip `pow(...)` when the shadow exponent is within `1e-3` of 1.0.
+
+Rules:
+
+- New forward light or shadow code must use the resolved accessors. Do not call the per-view matrix getters or `textureSize(...)` on the shadow atlases inside a light loop.
+- A new forward entry point must call `XRENGINE_BeginForwardLightingFragment` once per fragment.
+- `XRENGINE_ResolveProbeWeights` with `XRENGINE_PROBE_DEBUG_FALLBACK` is a debug-only O(ProbeCount²) path. Do not enable it in shipping shaders.
+- GLSL compiles at runtime, not at C# build time. Validate shader changes in the editor.
 
 ---
 
@@ -1098,6 +1161,15 @@ bounded structural work when they expose a substantially different visible or
 shadow set.
 
 ## Vulkan desktop frame-data ownership and minimized windows (2026-09-14)
+
+GPU-produced bone palettes have no current CPU mirror. Aggregate deformation
+must copy their ranges on the GPU after CPU-authored palette uploads and before
+skinning. Accepted copies keep the output slot fenced, even if a later dispatch
+fails. Adjacent ranges can share one copy command.
+
+The GPU scene owns the command records used for removal. Mesh disposal can
+clear the producer's command list before queued scene removal runs. Removal
+must use the registration records under the scene lock.
 
 Desktop frame data is owned by the logical frame-in-flight slot, independently of the acquired swapchain image. Prepared primary recording inputs must explicitly carry both the frame-data slot and timing-query slot. Mapped/immutable arenas, descriptors, Advanced publications and data-dependent command reuse use the logical slot. Presentation, image artifacts and desktop timing queries retain acquired-image ownership. Reset, cancellation and accepted-submission publication must use the same slot. A rejected recording must release its unsubmitted retained publication uses.
 

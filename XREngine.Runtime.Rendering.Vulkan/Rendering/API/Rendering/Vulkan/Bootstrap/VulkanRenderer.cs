@@ -848,7 +848,14 @@ public sealed partial class VulkanRenderer :
     public bool TryDecompressMemoryIndirectCountNv(ulong commandsAddress, ulong countAddress, uint stride) => _commandRuntime.TryDecompressMemoryIndirectCountNv(commandsAddress, countAddress, stride);
     public bool SupportsOrderedComputeWork => _commandRuntime.SupportsOrderedComputeWork;
     public ERendererComputeEnqueueStatus TryDispatchComputeIndirect(XRRenderProgram program, XRDataBuffer arguments, nint byteOffset, string label) => _frameLoop.TryDispatchComputeIndirect(program, arguments, byteOffset, label);
-    public ERendererComputeEnqueueStatus TryEnqueueBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label) => _frameLoop.TryEnqueueBufferCopy(source, sourceOffset, destination, destinationOffset, byteCount, label);
+    public ERendererComputeEnqueueStatus TryEnqueueBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label)
+    {
+        if (GetOrCreateAPIRenderObject(source) is not VkDataBuffer
+            || GetOrCreateAPIRenderObject(destination) is not VkDataBuffer)
+            return ERendererComputeEnqueueStatus.InvalidResource;
+
+        return _frameLoop.TryEnqueueBufferCopy(source, sourceOffset, destination, destinationOffset, byteCount, label);
+    }
     public override ERendererComputeEnqueueStatus TryEnqueueGpuBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label) => _frameLoop.TryEnqueueGpuBufferCopy(source, sourceOffset, destination, destinationOffset, byteCount, label);
     public override bool TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, XRDataBuffer destination, nuint byteCount, string label)
         => _frameLoop.TryEnqueueGpuDiagnosticBufferSnapshot(source, destination, byteCount, label) == ERendererComputeEnqueueStatus.Enqueued;
@@ -867,7 +874,15 @@ public sealed partial class VulkanRenderer :
     public bool IsExpectedImageAllocationDeferral(Exception exception) => false;
     public EGpuBufferContentReuseStatus QueryBufferContentReuse(XRDataBuffer buffer)
         => _resourceRuntime.QueryBufferContentReuse(buffer);    public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
-    public bool TryEnsureComputeBufferReady(XRDataBuffer buffer) => _commandRuntime.TryEnsureComputeBufferReady(_resourceRuntime.WrapperLookup, buffer, _frameLoop.AllowSynchronousResourceUploads);
+    public bool TryEnsureComputeBufferReady(XRDataBuffer buffer)
+    {
+        // The retained command lookup cannot create a cold buffer wrapper.
+        if (GetOrCreateAPIRenderObject(buffer) is not VkDataBuffer)
+            return false;
+
+        return _commandRuntime.TryEnsureComputeBufferReady(
+            _resourceRuntime.WrapperLookup, buffer, _frameLoop.AllowSynchronousResourceUploads);
+    }
     public bool TryReadMappedBuffer(XRDataBuffer buffer, Span<byte> destination) => _commandRuntime.TryReadMappedBuffer(_resourceRuntime.WrapperLookup, buffer, destination);
     public override EMeshShaderDialect MeshShaderDialect => _deviceContext.SupportsMeshTaskIndirectCount ? EMeshShaderDialect.VulkanEXT : EMeshShaderDialect.None;
     public override bool SupportsDirectMeshTaskDispatch() => false;

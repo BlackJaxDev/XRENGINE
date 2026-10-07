@@ -79,7 +79,9 @@ public readonly ref struct PhysicsChainGpuDispatchSnapshot(
     ReadOnlySpan<PhysicsChainGpuBone> bones,
     float deltaTime, float objectScale, float weight, Vector3 force, Vector3 gravity, Vector3 objectMove,
     int freezeAxis, int loopCount, float timeVar, int executionGeneration, long submissionId,
-    int staticDataVersion, int particleStateVersion, int transformSignature, int colliderSignature)
+    int staticDataVersion, int treeDataVersion, int particleStateVersion,
+    int transformSignature, int colliderSignature,
+    int boneStructureSignature)
 {
     public ReadOnlySpan<PhysicsChainGpuParticle> Particles { get; } = particles;
     public ReadOnlySpan<PhysicsChainGpuParticleStatic> ParticleStatic { get; } = particleStatic;
@@ -99,9 +101,11 @@ public readonly ref struct PhysicsChainGpuDispatchSnapshot(
     public int ExecutionGeneration { get; } = executionGeneration;
     public long SubmissionId { get; } = submissionId;
     public int StaticDataVersion { get; } = staticDataVersion;
+    public int TreeDataVersion { get; } = treeDataVersion;
     public int ParticleStateVersion { get; } = particleStateVersion;
     public int TransformSignature { get; } = transformSignature;
     public int ColliderSignature { get; } = colliderSignature;
+    public int BoneStructureSignature { get; } = boneStructureSignature;
 }
 
 /// <summary>Graphics backend availability without importing rendering implementation types.</summary>

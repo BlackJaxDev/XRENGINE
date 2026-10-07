@@ -131,6 +131,20 @@ Longer-horizon ideas live in
 - The setting does not change shader or runtime behavior unless the mesh carries
   basis-compression payload metadata.
 
+## Change Rules
+
+- Change both evaluation paths together: the direct vertex path
+  (`DefaultVertexShaderGenerator.WriteBlendshapeCalc`, used when
+  `UseComputeBlendshapes` is false) and the compute path (used when
+  `CalculateBlendshapesInComputeShader` is true).
+- Encode each new layout or runtime branch in the shader cache key, and bump
+  the shader cache schema version when a shader contract changes.
+- Bump the cooked mesh payload schema for each incompatible payload layout.
+- Keep steady-state per-frame blendshape work free of heap allocations. Use
+  preallocated or pooled storage.
+- Use `SetField(...)` for new mutation paths on `XRMeshRenderer`, mesh
+  assets, and blendshape weight types.
+
 ## Profiler Counters
 
 Profiler packets include:

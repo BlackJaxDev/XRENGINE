@@ -1,6 +1,6 @@
 # Unified Desktop And Browser Runtime TODO
 
-[<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
+[<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration checks](../../testing/platform/platform-validation.md#from-native-subsystem-project-split-todomd) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
 Status: implementation paused at the owner's request on 2026-09-30, after the reference-harness and portable-host checks. **19 of 110 items are complete; 91 remain open.** The [portable host extraction](../../progress/platform/portable-engine-host-ownership.md) and shared registration generation pass the final desktop/browser build gate. OpenGL/Vulkan Editor play/restore retains the camera and editor UI; Server and VRClient run the unit world. Real browser-world startup and broader native integration acceptance remain open. Partial browser asset/native checks and the next steps are recorded below.
 
@@ -76,7 +76,7 @@ These block the listed items. Record each decision here with its date when it is
 | --- | --- | --- | --- |
 | D1 | Where the portable engine host lives. | UR17, UR01.06, UR02, UR10 | Approved 2026-09-30: `XREngine.Runtime.Host`, a portable `net10.0` project owning the facade, timer, tick lists, world host, settings and shared host services. Bootstrap retains desktop composition. |
 | D2 | The U3 parity target: port MonkeyBall to portable code, or choose another sample. | UR10.06–UR10.08, UR11.05 | MonkeyBall currently depends on PhysX, VR, OpenVR, and Bootstrap. |
-| D3 | Jolt as the primary desktop/browser physics backend, and the parity criteria. | UR07 | Tracked in the [prerequisite checklist](native-subsystem-project-split-todo.md#jolt-browser-proof-and-default-promotion-gates). |
+| D3 | Jolt as the primary desktop/browser physics backend, and the parity criteria. | UR07, Jolt default promotion | Pending. Also decide the parity criteria. Evidence comes from the [Jolt browser proof checks](../../testing/platform/platform-validation.md#jolt-browser-proof). |
 | D4 | Jolt native supply and toolchain plan. | UR07.01 | Approved 2026-09-30: browser-only static archives from the recorded `joltc`/Jolt commits, pinned Emscripten 3.1.56 and the single-threaded wrapper; qualify linkage, callbacks, stepping and teardown. Existing desktop NuGet supply is preserved. See the [native supply proposal](../../design/platform/jolt-browser-native-supply.md). |
 | D5 | Pin the .NET SDK and `wasm-tools` workload (`global.json` and recorded workload version). | UR00.02, UR15.01 | Approved 2026-09-30 and implemented: SDK 10.0.401, workload set 10.0.401.1. Emscripten 3.1.56 matches the separately approved browser Jolt supply. |
 | D6 | Static registration mechanism for the browser host: the existing script-based generator or the C# source generator the design names. | UR01.04, UR17.05 | Approved 2026-09-30: extend [Generate-AotFactoryRegistrations.ps1](../../../../Tools/Generate-AotFactoryRegistrations.ps1) for both hosts with separate portable/desktop input sets, retiring the browser Python generator. |
@@ -88,17 +88,18 @@ These block the listed items. Record each decision here with its date when it is
 | D12 | Retire the separate browser runtime entirely or keep a small standalone demo. | UR16 | Design open decision 7. |
 | D13 | Whether Server and VRClient may reference the model asset pipeline, and whether Bootstrap's registration generator may scan it. | UR00.12 | Approved 2026-09-30: retain the application-root references and Bootstrap model-pipeline scan; update the graph and documentation. Bootstrap's separate ModelingIntegration scan awaits an additional owner reply. |
 | D14 | Browser managed Jolt binding supply after the unchanged package fails static linking. | Browser native proof, UR01.06, UR07.01/UR07.02 | Pending. `JoltPhysicsSharp` 2.22.0 declares the same `JPH_ContactListener_SetProcs` symbol with both `void` and `IntPtr` returns; the pinned native function returns `void`. Choose a reviewed browser-only source build correcting that overload, or the proposal's narrow owned spike binding. Neither is implemented or approved; desktop supply is preserved. See the [native supply record](../../design/platform/jolt-browser-native-supply.md#managed-linkage-findings). |
+| D15 | Optional Box3D comparison: run matched browser and desktop scenes and record feature coverage, binding effort, and step cost, or record that the comparison is deferred. | None | Pending. The [Box3D integration map](../physics/box3d-backend-integration-todo.md) already targets a leaf project. |
 
 ## Remaining Work
 
-As of 2026-09-30, 19 of 110 items here are complete, and the [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. Browser reference, authored-project, desktop host and native callback smokes run; complete test execution and failure triage are recorded in the [harness investigation](../../investigations/rendering/desktop-browser-reference-harness.md). Broader native integration acceptance remains open.
+As of 2026-09-30, 19 of 110 items here are complete, and the [native subsystem integration checks](../../testing/platform/platform-validation.md#from-native-subsystem-project-split-todomd) are open. Browser reference, authored-project, desktop host and native callback smokes run; complete test execution and failure triage are recorded in the [harness investigation](../../investigations/rendering/desktop-browser-reference-harness.md). Broader native integration acceptance remains open.
 
 Sizes are rough planning estimates for one engineer: **S** is days, **M** is one to two weeks, **L** is several weeks, and **XL** is a month or more. Revise them once U1 is reached.
 
 | Stage | Workstreams | Open items | Size | Blocked by |
 | --- | --- | --- | --- | --- |
 | U0 reference checks | UR00 | 0 | Complete locally | Limits recorded; separate ModelingIntegration factory-input reply remains pending |
-| Prerequisite integration | [Native subsystem checklist](native-subsystem-project-split-todo.md) | 35 | L | Browser Jolt execution proof; D3 for default promotion |
+| Prerequisite integration | [Native subsystem checks](../../testing/platform/platform-validation.md#from-native-subsystem-project-split-todomd) and the [moved code item](#open-code-items-moved-from-native-subsystem-project-split-todomd) | 30 checks, 1 code item | L | Browser Jolt execution proof; D3 for default promotion |
 | U1: engine boots | UR17, UR01, UR02, UR03 | 18 | L each; UR01 M | Real browser-world startup; D1 and D6 approved |
 | U2: engine renders | UR04, UR05, UR06 | 22 | UR04 XL, UR05 XL, UR06 L | D7 |
 | U3: project plays | UR07, UR08, UR09, UR10, UR11 | 29 | UR07 L, UR08 M, UR09 L, UR10 M, UR11 M | D2, D3, D4 |
@@ -153,7 +154,7 @@ Remaining workstreams are UR01–UR16: real browser-world boot; shared frame ste
 - [x] **UR00.07** `impl` Stop shipping developer harness controls in editor-published output. Done 2026-09-30: staged player entrypoint requires a cooked startup world, hides the fixture overlay and contains no demo/diagnostic controls. Missing world fails by name; stale compressed entrypoint/descriptor variants are removed.
 - [x] **UR00.08** `owner` Normalize the Core project's directory casing (decision D8). Done 2026-09-30 after approval: all 759 index paths use `XREngine.Runtime.Core`; 244 case-only renames preserve modes and blobs. The focused production calibration closure builds on Linux with zero warnings/errors. Full Linux CI/browser qualification remains open under UR15.01.
 - [x] **UR00.09** `impl` Make the [build gate](#build-gate) pass: the shared closure, Editor, Server, VRClient, the unit-test project, the `browser-wasm` compile lane, and the browser publish. Fix failures that come from the extraction and retargeting; record unrelated failures separately. Done 2026-09-30, with the full solution also building; unit-test execution failures are recorded in the [build stabilization record](../../progress/platform/unified-runtime-build-stabilization.md).
-- [x] **UR00.10** `verify` Run the full unit-test suite and triage with the [prerequisite checklist](native-subsystem-project-split-todo.md#build-dependency-and-publish-boundaries). Done 2026-09-30: repeat run completes without host abort, with 4,804 passed, 669 failed and seven runner skips. The [investigation](../../investigations/rendering/desktop-browser-reference-harness.md) separates source contracts, fixtures, behavioral failures and the CUDA requirement, compares baseline names, and records the TRX skip-accounting discrepancy. Broader suite acceptance remains unqualified.
+- [x] **UR00.10** `verify` Run the full unit-test suite and triage with the [build and dependency checks](../../testing/platform/platform-validation.md#build-dependency-and-publish-boundaries). Done 2026-09-30: repeat run completes without host abort, with 4,804 passed, 669 failed and seven runner skips. The [investigation](../../investigations/rendering/desktop-browser-reference-harness.md) separates source contracts, fixtures, behavioral failures and the CUDA requirement, compares baseline names, and records the TRX skip-accounting discrepancy. Broader suite acceptance remains unqualified.
 - [x] **UR00.11** `verify` Exercise the relocated native callback entry points. Done 2026-09-30: live Vulkan ImGui creates/resizes/removes a detached viewport and completes native window quarantine; installed clipboard get/set callbacks pass null, sentinel and throwing-provider smokes without changing the OS clipboard. Native debug-utils marker and Streamline messages reach the relocated callbacks. A separate production RenderBench host process with entry points deliberately absent emits the named startup error. Implicit desktop composition and independent GPU-fixture scheduler limits are recorded in the [investigation](../../investigations/rendering/desktop-browser-reference-harness.md).
 - [x] **UR00.12** `owner` Decide D13. Approved 2026-09-30: retain Server/VRClient model-pipeline references and Bootstrap's model-pipeline generator scan. Application reference checks and organization docs are updated; the separate ModelingIntegration scan is still a pending decision.
 
@@ -187,7 +188,7 @@ Runs after UR00 and before UR01.06, UR02, and UR10. Blocked on decision D1.
 
 ## UR01 — Portable Engine Assemblies In The Browser Host
 
-Shared projects already target `net10.0` with whole-project checks. Depends on their [integration acceptance](native-subsystem-project-split-todo.md#build-dependency-and-publish-boundaries); source completion alone does not establish browser startup.
+Shared projects already target `net10.0` with whole-project checks. Depends on their [integration acceptance](../../testing/platform/platform-validation.md#build-dependency-and-publish-boundaries); source completion alone does not establish browser startup.
 
 - [ ] **UR01.01** `impl` Verify the browser host references the full portable assemblies and include the integration adapters needed for real-world boot. The host currently references Core, Rendering, the WebGPU module, and Animation only. Source-subset profiles and the old portable build property are already removed; qualify the evaluated closure and full API surface.
 - [ ] **UR01.02** `impl` Make `XREngine.Browser` a composition root that installs, explicitly and as they land:
@@ -303,7 +304,7 @@ Depends on UR17.
 
 ## UR07 — Jolt Physics In The Browser
 
-Depends on the [Jolt browser proof and default-promotion gates](native-subsystem-project-split-todo.md#jolt-browser-proof-and-default-promotion-gates) and decisions D3 and D4. The desktop Jolt module already exists.
+Depends on the [Jolt browser proof checks](../../testing/platform/platform-validation.md#jolt-browser-proof) and decisions D3 and D4. The desktop Jolt module already exists.
 
 - [ ] **UR07.01** `owner` Productize the `joltc` Emscripten archive build, pinned to the runtime pack's Emscripten version. Ship it as the Jolt leaf's `browser-wasm` native asset, with a `.props` file that adds the `NativeFileReference`.
 - [ ] **UR07.02** `impl` Install the Jolt module in the browser composition with single-threaded job execution and a truthful capability report.
@@ -409,6 +410,10 @@ After U3, subject to decision D12:
 - [ ] **UR16.05** `impl` Remove `BrowserWorldPublishExporter`, `Tools/BrowserContentCooker`'s browser-only recipe format (keeping the generalized packager), and the Python scripts (`Tools/Generate-BrowserRegistrations.py`, `Tools/Reports/audit_browser_dependencies.py`, `Tools/Shaders/cook_browser_shaders.py`).
 - [ ] **UR16.06** `impl` Keep the developer harness page only if it still exercises the unified runtime; otherwise remove it.
 - [ ] **UR16.07** `impl` Close or rewrite superseded mobile TODO rows and progress docs; move durable content into stable docs.
+
+## Open Code Items Moved From native-subsystem-project-split-todo.md
+
+- [ ] Promote Jolt to the default physics backend for new projects and the unit-testing world, and keep saved `EPhysicsLibrary` selections. Update the physics architecture and user docs, the editor labels, and the generated settings and schema with `Tools/Generate-UnitTestingWorldSettings.ps1`. Blocked by D3 and the [Jolt browser proof checks](../../testing/platform/platform-validation.md#jolt-browser-proof). Done when: new projects and the unit-testing world select Jolt, and saved PhysX projects still load with PhysX.
 
 ## Mobile TODO Carry-Over
 

@@ -121,8 +121,7 @@ All paths below are under
 
 | Final path | Responsibility |
 |---|---|
-| `Frame/Desktop/VulkanDesktopFrameCoordinator.cs` | Desktop attempt phase coordinator and outer finalization boundary |
-| `Frame/VulkanRenderer.FrameLoop.cs` | Short renderer-facade delegation to the desktop coordinator |
+| `Frame/VulkanRenderer.FrameLoop.cs` | Short renderer-facade delegation to the desktop frame loop |
 | `Frame/VulkanRenderer.FrameLoop.State.cs` | Desktop slot/counter/readiness state and atomic activity accessors |
 | `Frame/VulkanFrameAttempt.cs` and the focused frame outcome contracts | Stack-only attempt, timing, phase/disposition, and ownership state |
 | `Frame/VulkanRenderer.FrameLoop.FaultInjection.cs`, `VulkanDesktopFrameFaultInjectionState.cs`, `EVulkanDesktopFrameFaultPoint.cs` | Renderer-local deterministic phase fault injection without hot-path delegates |

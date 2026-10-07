@@ -10,9 +10,9 @@ Related docs:
 
 - [OpenXR VR Rendering](../../../../architecture/rendering/openxr-vr-rendering.md)
 - [OpenXR Future Work TODO](openxr-future-work-todo.md)
-- [OpenXR Monado Testing Pipeline TODO](../../COMPLETED/openxr-monado-testing-pipeline-todo.md)
-- [OpenXR SteamVR / OpenVR Parity TODO](openxr-steamvr-openvr-parity-todo.md)
-- [Runtime Modularization Phase 3 TODO](../../runtime-modularization-phase3-todo.md)
+- [OpenXR Validation](../../../testing/xr/openxr-validation.md)
+- [OpenXR Runtime Guide](../../../../developer-guides/vr/openxr-runtime.md)
+- [Runtime Project Organization](../../../../architecture/runtime/project-organization.md)
 
 ## Goal
 

@@ -9,7 +9,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
   information, contribution terms, and release guidance.
 - [Work Docs](work/README.md): active design docs, TODOs, audits, testing notes, and historical implementation plans.
 
-[Runtime Project Organization](architecture/runtime/project-organization.md) maps the shared `net10.0` libraries, native modules, application composition, and asset ownership. [Portable Project Rules](developer-guides/runtime/portable-projects.md) describes the package/source policies and browser compile lane. Outstanding integration acceptance is tracked in the [native subsystem debugging and validation TODO](work/todo/platform/native-subsystem-project-split-todo.md); completed local browser, desktop and native callback smokes, full test execution and qualification limits are recorded in the [reference harness investigation](work/investigations/rendering/desktop-browser-reference-harness.md).
+[Runtime Project Organization](architecture/runtime/project-organization.md) maps the shared `net10.0` libraries, native modules, application composition, and asset ownership. [Portable Project Rules](developer-guides/runtime/portable-projects.md) describes the package/source policies and browser compile lane. Outstanding integration acceptance is tracked in [Platform Validation](work/testing/platform/platform-validation.md); completed local browser, desktop and native callback smokes, full test execution and qualification limits are recorded in the [reference harness investigation](work/investigations/rendering/desktop-browser-reference-harness.md).
 
 ## Architecture
 
@@ -23,12 +23,16 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
 - [Vulkan Scene Preparation And Publication](architecture/rendering/vulkan-scene-preparation-and-publication.md)
 - [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)
+- [Texture Streaming](architecture/rendering/texture-streaming.md)
+- [Advanced Render Pipeline](architecture/rendering/advanced-render-pipeline.md)
+- [Shadow Atlas](architecture/rendering/shadow-atlas.md)
 - [Vulkan Pipeline Compilation, Readiness And Depth-Only Coverage](architecture/rendering/vulkan-pipeline-compilation.md)
 - [CPU Scene BVH](architecture/rendering/cpu-scene-bvh.md)
 - [GPU Scene BVH](architecture/rendering/gpu-scene-bvh.md)
 - [Scene Architecture](architecture/scene/overview.md)
 - [Transform Architecture](architecture/scene/transforms.md)
 - [Physics Architecture](architecture/physics/overview.md)
+- [Physics Debug Frame](architecture/physics/physics-debug-frame.md)
 - [Audio Architecture](architecture/audio/audio-architecture.md)
 - [Networking Overview](architecture/networking/overview.md)
 - [Control Plane Runtime Architecture](architecture/runtime/control-plane.md)
@@ -52,6 +56,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [OpenAL Streaming Audio](developer-guides/audio/openal-streaming-audio.md)
 - [Component API](developer-guides/components/component-api.md)
 - [Atmospheric Scattering Component](developer-guides/components/atmospheric-scattering.md)
+- [World and Procedural Skybox Ambient Lighting](developer-guides/components/procedural-skybox-ambient.md)
 - [Global Illumination](developer-guides/gi/global-illumination.md)
 - [Networking](developer-guides/networking/networking.md)
 - [Control Plane](developer-guides/networking/control-plane.md)
@@ -101,12 +106,11 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 ## Work Docs
 
 - [Work Docs Index](work/README.md)
-- [Shadow and Pipeline Validation — Completed](work/todo/rendering/shadow-and-pipeline-validation-failures-todo.md)
 - [Editor OpenXR Toggle, Rendering, And Import Responsiveness Todo](work/todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md)
 - [Six-Device VR Calibration Baseline](work/investigations/avatar/vr-calibration-baseline-2026-09-24.md)
 - [OpenXR Full-body Implementation Record](work/progress/avatar/openxr-full-body-calibration-spectator-implementation.md)
 - [OpenXR Calibration and Spectator Implementation](work/progress/avatar/openxr-calibration-spectator-implementation-2026-09-30.md)
-- [OpenXR Calibration and Spectator Acceptance](work/testing/avatar/openxr-calibration-spectator-validation.md)
+- [Avatar Validation: OpenXR Calibration and Spectator](work/testing/avatar/avatar-validation.md#openxr-body-calibration-and-spectator)
 - [Windows Calibration and Spectator Validation](work/investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md)
 - [Animation and IK Stability](work/investigations/avatar/animation-ik-stability-2026-09-30.md)
 - [Tracked Body Solver Validation](work/investigations/avatar/tracked-body-solver-2026-09-30.md)

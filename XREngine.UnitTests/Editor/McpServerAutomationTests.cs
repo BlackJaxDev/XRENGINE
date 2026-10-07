@@ -15,7 +15,6 @@ public sealed class McpServerAutomationTests
         string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/Generic/AbstractRenderer.cs");
         string vulkanReadback = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.cs")
             + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.Readback.cs");
-        string docs = ReadWorkspaceFile("docs/developer-guides/ai/mcp-server.md");
 
         viewportActions.ShouldContain("[XRMcp(Name = \"capture_viewport_screenshot\")]");
         viewportActions.ShouldContain("renderer.TryQueueScreenshotReadback(captureRegion");
@@ -27,7 +26,6 @@ public sealed class McpServerAutomationTests
         vulkanReadback.ShouldContain("internal bool ScreenshotRequiresVerticalFlip => false;");
         vulkanReadback.ShouldContain("if (!withTransparency)");
         vulkanReadback.ShouldContain("ForceOpaqueAlpha");
-        docs.ShouldContain("capture_viewport_screenshot");
     }
 
     [Test]
@@ -38,7 +36,6 @@ public sealed class McpServerAutomationTests
         string sessionCapture = ReadWorkspaceFile("XREngine.Editor/Mcp/Capture/ViewportSequenceCaptureSession.Capture.cs");
         string sessionFinalization = ReadWorkspaceFile("XREngine.Editor/Mcp/Capture/ViewportSequenceCaptureSession.Finalization.cs");
         string options = ReadWorkspaceFile("XREngine.Editor/Mcp/Capture/ViewportSequenceCaptureOptions.cs");
-        string docs = ReadWorkspaceFile("docs/developer-guides/ai/mcp-server.md");
 
         actions.ShouldContain("[XRMcp(Name = \"start_viewport_sequence_capture\"");
         actions.ShouldContain("[XRMcp(Name = \"get_viewport_sequence_capture\"");
@@ -51,9 +48,6 @@ public sealed class McpServerAutomationTests
         sessionFinalization.ShouldContain("ViewportSequenceCaptureContactSheetWriter.TryWrite");
         options.ShouldContain("MaximumTotalOutputPixels");
         options.ShouldContain("MaximumInFlightReadbackBytes");
-        docs.ShouldContain("start_viewport_sequence_capture");
-        docs.ShouldContain("manifest.json");
-        docs.ShouldContain("contact-sheet.png");
     }
 
     [Test]

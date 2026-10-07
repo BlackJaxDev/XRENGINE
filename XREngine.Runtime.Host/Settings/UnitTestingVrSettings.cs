@@ -9,7 +9,7 @@ public class UnitTestingVrSettings
     /// logged and the XR output is not rendered. It never falls back to per-eye
     /// rendering. Logs and profile captures report the effective implementation.
     /// </summary>
-    public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.SequentialViews;
+    public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.ParallelCommandBufferRecording;
     /// <summary>
     /// Requested VR eye pipeline family. Only this family renders the eyes. An
     /// unsupported pair with <see cref="ViewRenderMode"/> renders no XR output

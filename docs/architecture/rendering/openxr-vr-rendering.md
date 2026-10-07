@@ -18,6 +18,31 @@ For each eye the binding acquires an image, waits for that image, renders to the
 
 `SequentialViews` renders eyes separately. OpenXR Vulkan's `SinglePassStereo` request is strict: it uses the layered multiview path only when the required capabilities and resource generation are available. If it cannot honor that path, it reports the rejection and submits no projection layer; choose `SequentialViews` explicitly to request per-eye rendering. Desktop mirror composition remains renderer-owned.
 
+## View render modes and view-scoped state
+
+`EVrViewRenderMode` is the requested mode. `EVrViewRenderImplementationPath` is the path that the renderer actually uses (`SequentialViews`, `ParallelCommandBufferRecording`, `TrueSinglePassStereo`, or `Unsupported`). `EVrTemporalHistoryPolicy` records how temporal history is kept for that path. Logs, renderer stats, profile captures, and OpenXR smoke summaries report all three values. The temporal rules are in [Default Render Pipeline Notes](default-render-pipeline-notes.md#29-openxr-stereo-temporal-isolation).
+
+| Mode | Backends | Behavior |
+|---|---|---|
+| `SequentialViews` | OpenGL, Vulkan | Each eye is one view context. This is the reference path. |
+| `SinglePassStereo` | OpenGL, Vulkan | One stereo context renders both eyes into an engine-owned layered target (`OpenXrStereoRenderTarget`, `XRViewport.RenderStereo(...)`), then publishes each layer to its eye swapchain. Vulkan uses `GL_EXT_multiview`/`gl_ViewIndex`, never NV stereo semantics. |
+| `ParallelCommandBufferRecording` | Vulkan only | The default mode in all settings types. Same output as `SequentialViews`. `OpenXrEyeRecordWorkerScheduler` records the left and right primary command buffers on bounded workers after all eye inputs are prepared. OpenGL rejects this mode with a diagnostic, so OpenGL VR must select `SequentialViews`. |
+
+Mutable render state belongs to a view, not to the renderer. On Vulkan, each eye recording receives an immutable `OpenXrEyeRenderTargetContext` (eye index, acquired image index, image and view handles, format, extent, depth target, external region, command-chain key, and planner key). `VulkanOpenXrViewResourcePlannerContextKey` scopes resource-planner state, allocator-backed image views, framebuffers, and descriptor image info per view. Primary command-buffer cache keys include the eye, the swapchain image, the depth generation, the planner signature, and the secondary-buffer generations, so eyes and images cannot alias. Recorded texture uploads are published only after the submit that used them completes, and uploads that belong to a failed recording are cancelled. If one eye fails to record, the renderer submits neither eye and releases the acquired images in OpenXR order.
+
+`ViewRenderGroupContext` holds every output view in a frame and its visibility groups (`EVrVisibilityPolicy`):
+
+- `VR.AllowDesktopEditing=true`: the desktop editor view has its own camera, visible set, and history. VR eyes use a separate combined visibility pass.
+- `VR.AllowDesktopEditing=false`: one collect-visible pass covers the left eye, the right eye, and the smoothed cyclopean desktop view. `ViewRenderGroupContext.BuildCombinedRuntimeVisibilityFrustum(...)` builds the conservative frustum. Each view keeps its own matrices, targets, and command state.
+
+`ViewFoveationContext` carries the requested and effective `EVrFoveationMode` (`Off`, `Fixed`, `EyeTracked`, `RuntimePreferred`), the quality preset, the foveal center, and the fallback reason for each view. Foveation never shrinks the visibility frustum. An explicit request that the backend cannot honor reports a diagnostic.
+
+`OpenXrRenderPacingMode` selects the thread that owns `xrWaitFrame`, `xrBeginFrame`, and `xrLocateViews`: `InRenderCallback`, `PostRenderCallback`, `DedicatedThread` (default), or `CollectVisibleThread`. `xrEndFrame` and layer submission stay on the OpenXR render path in all modes.
+
+Per-eye swapchain size does not follow the desktop window. `OpenXrEyeResolutionPreset` (`EOpenXrEyeResolutionPreset`: `RuntimeRecommended`, `ValveIndex`, `QuestPro`, `BigscreenBeyond2`, `Custom`), `OpenXrEyeResolutionScale` (clamped from 0.1 to 2.0), and `OpenXrCustomEyeResolutionWidth`/`Height` select it. Swapchain creation clamps to the runtime's maximum image rectangle and logs the clamp. A live change recreates the OpenXR instance and session resources. Unit-testing worlds can set the same values through `XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_PRESET`, `_SCALE`, `_WIDTH`, and `_HEIGHT`; the Monado launch path passes the resolved profile to the simulated HMD through `XRE_OPENXR_EYE_RESOLUTION_*`.
+
+Desktop output while VR is active follows [VR output pacing and mirror policy](vr-output-pacing-and-mirror-policy.md).
+
 ## Swapchain and device lifetime
 
 The OpenXR host owns native swapchain handles and an authoritative acquired-image ledger. A successful `xrAcquireSwapchainImage` adds ownership; only a successful `xrReleaseSwapchainImage` removes it, except explicit terminal abandonment after device loss. Neither normal cleanup nor deferred retirement may destroy a swapchain with an acquired image.
@@ -25,6 +50,8 @@ The OpenXR host owns native swapchain handles and an authoritative acquired-imag
 Vulkan retirement reserves host custody before mutating child resources. Under queue admission and graphics-transition synchronization, it recaptures completion and resource receipts, rechecks acquired images, commits active handles to a retired generation, and publishes the renderer payload together. The host pins the parent instance and loader until both native handles and renderer resources are disposed. A failure after child mutation keeps recovery custody instead of retrying an unsafe detach. Device loss abandons active and retired resources without GPU waits or pretending that an image was released.
 
 OpenGL keeps its WGL context on its owner thread and destroys eye FBO resources before releasing valid runtime swapchains. Vulkan serializes OpenXR begin, acquire, wait, release, and end operations with its command admission; normal retirement waits for the relevant GPU receipts before native destruction.
+
+Vulkan eye submissions go through `OpenXrVulkanSubmissionTracker`. The tracker reserves admission before an ordinary, parallel, or mirror submission and honors a rejected admission. Each accepted receipt carries the exact timeline semaphore and value and the frozen XR frame and display identity. The receipt keeps command, arena, upload, prepared-input, frame-slot, and native-resource ownership until real completion, then settles each owner once. A cancelled submission releases its owners without a native receipt. Storage is fixed: three in-flight submissions (`DefaultMaxInFlightSubmissions`), three tracked command buffers and frame slots, 64 tracked uploads, and 64 tracked swapchain images. A payload above these limits is rejected.
 
 ## Input and scene resources
 

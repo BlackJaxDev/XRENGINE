@@ -317,14 +317,13 @@ namespace XREngine.Components.Scene.Mesh
                 }
             }
 
-            // Matrix changes are applied in the world's SwapBuffers phase after visible
-            // collection has already run. Publish the command snapshot here too; otherwise
-            // dirty-delta command swapping can leave the rendered matrix one frame behind.
-            _rc?.SwapBuffers();
-
             ProcessSkinnedBoundsRefresh();
-            if (hasSkinning && TryApplySkinnedBoneCullingBounds())
-                _rc?.SwapBuffers();
+            if (hasSkinning)
+                _ = TryApplySkinnedBoneCullingBounds();
+
+            // Visible collection has already finished. Publish the final matrix and bounds
+            // together so the command does not lag a frame or publish an intermediate state.
+            _rc?.SwapBuffers();
         }
 
         internal static void ProcessPendingRenderMatrixUpdates()

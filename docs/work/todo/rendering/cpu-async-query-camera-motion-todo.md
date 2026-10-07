@@ -214,3 +214,12 @@ dotnet .\Build\Editor\Debug\AnyCPU\Debug\net10.0-windows7.0\XREngine.Editor.dll 
 ## Design caveat
 
 A zero-sample hardware query is a Boolean observation from its issuing frame. The current implementation reprojects the proxy AABB to decide when that observation is no longer trustworthy; it does not reproject occluder depth. If stronger guarantees are required, the correct follow-up is a depth-history/Hi-Z path with previous/current view-projection matrices and explicit disocclusion handling, not increasingly optimistic reuse of a Boolean query.
+
+## Decisions Needed
+
+- [ ] Decide if CPU async hardware queries stay a recommended CPU-direct mode, or if CPU software occlusion becomes the preferred CPU culling path after validation. Owner: Rendering.
+- [ ] Decide if the CPU direct path adds a lightweight depth prepass for selected occluders, or uses only normal opaque depth plus deferred proxy queries. Owner: Rendering.
+- [ ] Decide how much same-frame recovery to build on OpenGL before GPU Hi-Z or CPU software occlusion replaces it. Owner: Rendering.
+- [ ] Select the CPU spatial structure that owns hierarchical query grouping. Owner: Rendering.
+- [ ] Decide if CPU hardware-query occlusion is off by default for single-pass stereo until a stereo-safe query primitive is validated. Owner: Rendering / XR.
+- [ ] Decide if OpenXR uses one stereo-pair query scope, or keeps per-eye states and combines them with OR for shared command buffers. Owner: Rendering / XR.

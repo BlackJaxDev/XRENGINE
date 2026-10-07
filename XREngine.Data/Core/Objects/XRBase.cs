@@ -239,7 +239,19 @@ namespace XREngine.Data.Core
         }
 
         protected virtual void OnPropertyChanged<T>(string? propName, T prev, T field)
-            => PropertyChanged?.Invoke(this, new XRPropertyChangedEventArgs<T>(propName, prev, field));
+        {
+            var handlers = PropertyChanged;
+            XRPropertyChangedEventArgs<T>? args = null;
+            // Keep the invocation snapshot and order. Allocate one shared argument
+            // only when a listener needs this property; listeners can retain it.
+            foreach (var handler in Delegate.EnumerateInvocationList(handlers))
+            {
+                if (!XRPropertyNotificationHandlers.Accepts(handler, this, propName))
+                    continue;
+                args ??= new XRPropertyChangedEventArgs<T>(propName, prev, field);
+                handler(this, args);
+            }
+        }
 
         protected virtual bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
@@ -247,9 +259,15 @@ namespace XREngine.Data.Core
             if (pc is null)
                 return true; // No subscribers, allow change by default.
 
-            var args = new XRPropertyChangingEventArgs<T>(propName, field, @new);
-            pc(this, args);
-            return args.AllowChange;
+            XRPropertyChangingEventArgs<T>? args = null;
+            foreach (var handler in Delegate.EnumerateInvocationList(pc))
+            {
+                if (!XRPropertyNotificationHandlers.Accepts(handler, this, propName))
+                    continue;
+                args ??= new XRPropertyChangingEventArgs<T>(propName, field, @new);
+                handler(this, args);
+            }
+            return args?.AllowChange ?? true;
         }
 
         protected static void CopyDeclaredCloneableProperties<T>(T source, T target)

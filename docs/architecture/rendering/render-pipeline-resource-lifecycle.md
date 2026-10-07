@@ -117,6 +117,27 @@ These identities prevent structurally equivalent resource keys from crossing an
 asset boundary and prevent delayed retirement from invoking callbacks on the
 successor asset.
 
+### Structural Identity And Retirement Rules
+
+- `ResourceGenerationKey` holds only structural inputs: `PipelineName`, display
+  and internal size, `OutputHDR`, `OutputColorFormat`, `OutputDepthFormat`,
+  `AntiAliasingMode`, `MsaaSampleCount`, `Stereo`, `FeatureMask`,
+  `ReservedViewCount`, `ReservedEyeIndex`, `ExternalTargetKind`,
+  `SettingsRevision`, `PipelineRevision`, and `ResourceVariant`. A change to HDR
+  output also changes `OutputColorFormat`.
+- A retired generation stays alive until its completion receipt signals. The
+  retired-generation count limit is soft. Unsignaled generations are kept, and
+  the instance drains them after they signal.
+- A backend commit publishes the logical and physical generations together.
+  During the backend callback, readers see the previous publication. The old
+  resources stay retired after the commit.
+- A resize while no camera is available keeps the AO feature mask. One frame
+  preparation then keeps one feature snapshot.
+- GI profiles declare only the working resources of the selected provider plan
+  (`ResourceVariant`). An unavailable provider declares no resources.
+- The retained UI pipeline renders into its caller-owned output. It allocates no
+  private managed textures.
+
 ## Pipeline Asset Transitions
 
 Camera pipeline changes use `XRCamera.ReplaceRenderPipelineAsset`. Assigning the
