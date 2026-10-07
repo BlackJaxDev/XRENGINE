@@ -500,9 +500,7 @@ namespace XREngine.Timers
                 long timestampTicks = TimeTicks();
                 long elapsedTicks = Math.Clamp(timestampTicks - _fixedUpdateClockTimestampTicks, 0L, Stopwatch.Frequency);
                 _fixedUpdateClockTimestampTicks = timestampTicks;
-                _fixedUpdateAccumulatorTicks = Math.Min(
-                    _fixedUpdateAccumulatorTicks + elapsedTicks,
-                    _fixedUpdateDeltaTicks * MaxFixedCatchUpSteps);
+                AccumulateFixedUpdateTicks(elapsedTicks);
 
                 if (_fixedUpdateAccumulatorTicks < _fixedUpdateDeltaTicks)
                 {

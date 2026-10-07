@@ -158,6 +158,12 @@ public partial class EngineTimer
         PresentFrameId = renderFrameId;
     }
 
+    /// <summary>Adds elapsed ticks and caps fixed-update debt at the catch-up limit.</summary>
+    private void AccumulateFixedUpdateTicks(long elapsedTicks) =>
+        _fixedUpdateAccumulatorTicks = Math.Min(
+            _fixedUpdateAccumulatorTicks + elapsedTicks,
+            _fixedUpdateDeltaTicks * MaxFixedCatchUpSteps);
+
     private void DispatchAccumulatedFixedUpdates()
     {
         int steps = 0;
