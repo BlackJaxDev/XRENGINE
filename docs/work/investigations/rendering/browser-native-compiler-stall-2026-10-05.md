@@ -244,3 +244,29 @@ and requires the disposable job to end. The request, activation, and dedicated
 workflow will be removed after the single attempt. The result may identify a
 busy binary or code region; stripped symbols can prevent compiler-pass names.
 This preparation is not a capture result, rendering pass, or speed claim.
+
+### Attempt result and retirement
+
+[Run 37553416403](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37553416403),
+job `112573986807`, used trigger commit
+`16ddfe0bff6bcac249240f477bdb2566c71dcbba` and activation commit
+`8591f7e3efd4ddc99d692311db4a897f55839117`. The exact activation, both archive
+hashes, and 362 published shader descriptors passed admission. Pinned browser
+setup and the unprivileged prerequisite inspection also passed.
+
+The diagnostic step ran from `2026-10-07T00:46:12Z` to `00:51:42Z` and exited
+with code 1. The sanitizer also exited with code 1 and withheld the summary.
+No result artifact was uploaded. The retained log gives no specific sanitizer
+failure category, collector start, collector end, or sampling result. It cannot
+establish whether collection started or verify internal raw-file deletion and
+collector exit. The forced-termination exit code 86 was not reported; that
+absence is not proof of collector cleanup.
+
+The owned preparation/report cleanup step passed. The runner log then records
+orphan-process cleanup and terminal job completion. No private report was
+retained. The result supplies no native compiler attribution, timing
+improvement, or rendered acceptance. The one attempt is consumed, including
+this incomplete result, and will not be repeated. Its request, activation, and
+dedicated workflow are removed. The helpers remain inactive without a newly
+reviewed request and activation; the retired automatic trace flag stays absent
+from the normal workflow.
