@@ -1,8 +1,8 @@
-# Peer-To-Peer Host Switching \u2014 Implementation Todo
+# Peer-To-Peer Host Switching — Implementation Todo
 
 Last Updated: 2026-04-24
 
-Companion to [peer-to-peer-host-switching.md](../design/peer-to-peer-host-switching.md). The design doc is the source of truth for *why* and *what*; this doc tracks *what to do* in shippable order.
+Companion to [peer-to-peer-host-switching.md](../../design/networking/peer-to-peer-host-switching.md). The design doc is the source of truth for *why* and *what*; this doc tracks *what to do* in shippable order.
 
 ## Scope
 
@@ -10,12 +10,12 @@ Add `ENetworkingType.Peer` with three trust tiers (`Local`, `Trusted`, `Public`)
 
 Two parallel tracks:
 
-- **Track A** \u2014 LAN/`Trusted` peer mode. No crypto, no BFT, no control-plane dependency beyond `LocalControlPlane`. Independently shippable.
-- **Track B** \u2014 `Public` lobbies. BFT election + commit, signed identities, encrypted transport, ICE-style multi-candidate endpoints, and the documented `IControlPlane` boundary for third-party hosting. Each Track-B phase requires its Track-A counterpart merged.
+- **Track A** — LAN/`Trusted` peer mode. No crypto, no BFT, no control-plane dependency beyond `LocalControlPlane`. Independently shippable.
+- **Track B** — `Public` lobbies. BFT election + commit, signed identities, encrypted transport, ICE-style multi-candidate endpoints, and the documented `IControlPlane` boundary for third-party hosting. Each Track-B phase requires its Track-A counterpart merged.
 
 ## Architectural Invariants (do not violate)
 
-- Reuse `BaseNetworkingManager` UDP primitives \u2014 do **not** rewrite the packet header, sequence comparison, ACK bitfield, resend, RTT, or token-bucket logic.
+- Reuse `BaseNetworkingManager` UDP primitives — do **not** rewrite the packet header, sequence comparison, ACK bitfield, resend, RTT, or token-bucket logic.
 - All control-plane integration lives in `XREngine.Networking.ControlPlane`. No HTTP/JSON/auth code in `XREngine` core, runtime modules, server, VR client, or editor.
 - Engine references the boundary assembly only through interfaces (`IControlPlane` and friends).
 - `SignedPeerMessage<T>` envelope is the **only** way signed payloads enter the realtime path.
@@ -28,16 +28,16 @@ Two parallel tracks:
 
 These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 
-- [ ] Adding cryptography dependencies (Ed25519 lib, Noise/DTLS lib, BLAKE3 lib) \u2014 run `Tools/Generate-Dependencies.ps1` and refresh `docs/DEPENDENCIES.md` + `docs/licenses/`.
+- [ ] Adding cryptography dependencies (Ed25519 lib, Noise/DTLS lib, BLAKE3 lib) — run `Tools/Generate-Dependencies.ps1` and refresh `docs/DEPENDENCIES.md` + `docs/licenses/`.
 - [ ] Wire-protocol additions to `EStateChangeType` and `NetworkingAotContractRegistry`.
 - [ ] Any change to `BaseNetworkingManager` packet layout (target: zero changes).
-- [ ] Encryption-layer choice (Noise_IK vs DTLS 1.3) \u2014 propose decision before Phase B0 starts.
+- [ ] Encryption-layer choice (Noise_IK vs DTLS 1.3) — propose decision before Phase B0 starts.
 
 ---
 
-## Track A \u2014 Trusted Peer Mode
+## Track A — Trusted Peer Mode
 
-### Phase A0 \u2014 Contracts And Startup
+### Phase A0 — Contracts And Startup
 
 - [ ] Define `ENetworkingType.Peer` and route it through `GameStartupSettings`.
 - [ ] Create `PeerNetworkingManager` skeleton with `Joining` / `Hosted` / `Participant` subroles and clean transitions between them.
@@ -47,11 +47,11 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 - [ ] Add MemoryPackable unsigned peer DTOs: `PeerJoinRequest`, `PeerAssignment`, `PeerRosterSnapshot`, `HostElectionProposal`, `HostElectionVote`, `HostMigrationPrepare`, `HostMigrationCommit`, `HostMigrationAbort`, `PeerHostHeartbeat`.
 - [ ] Register every DTO in `NetworkingAotContractRegistry` and add new `EStateChangeType` values; do **not** overload existing player assignment payloads.
 - [ ] Add round-trip serialization tests for every DTO under `XREngine.UnitTests`.
-- [ ] Unit-test `LocalControlPlane` end-to-end (resolve session \u2192 fetch roster \u2192 admit local peer).
+- [ ] Unit-test `LocalControlPlane` end-to-end (resolve session → fetch roster → admit local peer).
 
 **Acceptance:** A peer process starts in `Joining`, parses handoff/discovery data via `LocalControlPlane`, and serializes every peer control message with no reflection-only assumptions.
 
-### Phase A1 \u2014 Hosted Peer Baseline
+### Phase A1 — Hosted Peer Baseline
 
 - [ ] Extract reusable helpers from `ServerNetworkingManager` (admission, assignment, lease grants, heartbeat, transform stamping) into shared internal types consumed by both server and `Hosted` peer.
 - [ ] Extract reusable helpers from `ClientNetworkingManager` (join, prediction, correction, clock sync) for the `Participant` subrole.
@@ -62,11 +62,11 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 
 **Acceptance:** One peer hosts and another peer joins via `LocalControlPlane`; world/session validation matches client/server.
 
-### Phase A2 \u2014 Roster And Trusted Election
+### Phase A2 — Roster And Trusted Election
 
 - [ ] Maintain `PeerRosterSnapshot` (entries, last-heard, candidate priority, attestation expiry placeholder).
 - [ ] Track per-endpoint RTT, packet loss, upload budget, last-heard time.
-- [ ] Implement deterministic candidate priority: operator preference \u2192 control-plane hint \u2192 reachability \u2192 RTT \u2192 upload budget \u2192 `PeerId` tiebreaker.
+- [ ] Implement deterministic candidate priority: operator preference → control-plane hint → reachability → RTT → upload budget → `PeerId` tiebreaker.
 - [ ] Implement unsigned `HostElectionProposal` and `HostElectionVote` with majority-of-visible-peers commit.
 - [ ] Implement host-timeout detection driving failure election.
 - [ ] Reject messages with stale `HostEpoch` before any state mutation.
@@ -74,7 +74,7 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 
 **Acceptance:** Peers in `Trusted` tier converge on the same host for a fixed roster and reject stale election traffic.
 
-### Phase A3 \u2014 Graceful Host Migration (Trusted)
+### Phase A3 — Graceful Host Migration (Trusted)
 
 - [ ] Implement `HostMigrationPrepare` flow on the outgoing host.
 - [ ] Serialize migration baseline (roster, leases, latest committed `ServerTickId`, snapshot envelope); compute `BaselineStateRoot` (BLAKE3) even though it is unsigned in `Trusted`.
@@ -86,7 +86,7 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 
 **Acceptance:** A `Trusted` host hands off to another peer without disconnecting participants.
 
-### Phase A4 \u2014 Failure Host Migration (Trusted)
+### Phase A4 — Failure Host Migration (Trusted)
 
 - [ ] Detect missed `PeerHostHeartbeat` past `HostHeartbeatTimeout`.
 - [ ] Freeze admission and non-local authority changes during the grace window; keep local prediction running.
@@ -96,7 +96,7 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 
 **Acceptance:** After a host crash, remaining `Trusted` peers continue the session from the latest committed snapshot.
 
-### Phase A5 \u2014 Tooling And UX (Trusted)
+### Phase A5 — Tooling And UX (Trusted)
 
 - [ ] ImGui peer panel: subrole, local `PeerId`, host `PeerId`, `HostEpoch`, candidate priority, force-migration button, observability metrics (RTT, last-heard, election counters).
 - [ ] VS Code tasks: `Start-PeerHost-NoDebug`, `Start-PeerParticipant-NoDebug`, `Start-2Peers-NoDebug`, `Start-PeerHostMigration-NoDebug`.
@@ -107,9 +107,9 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 
 ---
 
-## Track B \u2014 Public Lobby / BFT
+## Track B — Public Lobby / BFT
 
-### Phase B0 \u2014 Crypto Primitives And Boundary Hardening
+### Phase B0 — Crypto Primitives And Boundary Hardening
 
 - [ ] Pin signing algorithm (Ed25519); add a vetted .NET implementation as a NuGet dependency.
 - [ ] Pin transport encryption (Noise_IK_25519_ChaChaPoly_BLAKE2s **or** DTLS 1.3); record the decision in the design doc.
@@ -119,12 +119,12 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 - [ ] Register `SignedPeerMessage<T>` for every peer DTO in `NetworkingAotContractRegistry`.
 - [ ] Implement `PeerIdentity` keypair generation, persistence (encrypted at rest under a process-key), and rotation policy.
 - [ ] Implement `PeerAttestation` issuance/verification against the control-plane trust anchor in `SessionDescriptor`.
-- [ ] Implement per-peer monotonic `PeerNonce` store with replay-window enforcement (`SignatureSkew` configurable, default \u00b130 s).
+- [ ] Implement per-peer monotonic `PeerNonce` store with replay-window enforcement (`SignatureSkew` configurable, default ±30 s).
 - [ ] Unit tests: signed round-trip per DTO, replay rejection, expired-attestation rejection, bad-signature rejection, nonce regression rejection.
 
 **Acceptance:** Signed/encrypted variants of all peer DTOs round-trip; verification rejects replays, expired attestations, and bad signatures with attributed metrics.
 
-### Phase B1 \u2014 Encrypted Transport And ICE
+### Phase B1 — Encrypted Transport And ICE
 
 - [ ] Wrap UDP payload bodies with the chosen encryption layer in `Public` tier; keep packet header / sequence numbers / ACK bitfield plaintext.
 - [ ] Bound encrypted-payload size so MTU and fragmentation logic in `BaseNetworkingManager` are unaffected.
@@ -138,9 +138,9 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 
 **Acceptance:** `Public`-tier sessions work across NAT/relay candidate pairs with bounded signature-verify CPU and survive endpoint failover.
 
-### Phase B2 \u2014 BFT Election
+### Phase B2 — BFT Election
 
-- [ ] Implement signed `HostElectionProposal` / `HostElectionVote` with `2f + 1` quorum where `n \u2265 3f + 1`; `f` taken from `SessionDescriptor`.
+- [ ] Implement signed `HostElectionProposal` / `HostElectionVote` with `2f + 1` quorum where `n ≥ 3f + 1`; `f` taken from `SessionDescriptor`.
 - [ ] Enforce candidacy whitelist from `IRosterProvider`; reject proposals from non-candidates.
 - [ ] Enforce `ProposedHostEpoch == last_committed_epoch + 1` and no-rollback rule on `LastSeenServerTick` / `LastSeenStateRoot`.
 - [ ] Rate-limit proposals (one per `ProposalCooldown`, default 2 s) and votes (one per `(SessionId, ProposedHostEpoch)`); drop excess without state mutation.
@@ -150,38 +150,38 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 - [ ] Unit tests: malicious-vote scenarios with `f` colluding voters, view-change progress under message loss, equivocation detection and evidence verification.
 - [ ] Integration test: `4`-peer `Public` session with `f = 1` Byzantine peer producing arbitrary signed traffic; honest peers commit the correct host.
 
-**Acceptance:** A `Public` session with `n \u2265 3f + 1` tolerates up to `f` Byzantine peers without committing a wrong host.
+**Acceptance:** A `Public` session with `n ≥ 3f + 1` tolerates up to `f` Byzantine peers without committing a wrong host.
 
-### Phase B3 \u2014 BFT Migration And State Roots
+### Phase B3 — BFT Migration And State Roots
 
 - [ ] Compute `StateRoot` per authoritative tick (BLAKE3 over canonical encoding of authoritative state).
 - [ ] Publish `StateRoot` in every signed `PeerHostHeartbeat`.
 - [ ] Sign `NetworkSnapshotEnvelope`, every `AuthorityLease` grant/revoke, and `PeerAssignment` in `Public`.
 - [ ] Implement `CommitCertificate` collection (`2f + 1` distinct signed votes over the same `(SessionId, HostEpoch, CandidatePeerId, BaselineRoot)`).
 - [ ] Verify `CommitCertificate` on receipt: distinct signers, all in attested roster, correct epoch, matching baseline.
-- [ ] Implement failure-migration baseline rule: chosen `BaselineStateRoot` must appear in `\u2265 f + 1` voters' histories.
-- [ ] Implement fork rejection: two valid commits at overlapping ticks \u2192 abort session, report evidence, return to lobby.
-- [ ] Tune host snapshot publish cadence to keep failure-migration loss `\u2264 500 ms`; expose as configurable.
+- [ ] Implement failure-migration baseline rule: chosen `BaselineStateRoot` must appear in `≥ f + 1` voters' histories.
+- [ ] Implement fork rejection: two valid commits at overlapping ticks → abort session, report evidence, return to lobby.
+- [ ] Tune host snapshot publish cadence to keep failure-migration loss `≤ 500 ms`; expose as configurable.
 - [ ] Integration tests: graceful and failure migration in `Public` always converge on a verifiable certificate.
 
 **Acceptance:** `Public` graceful and failure migrations always converge on a `CommitCertificate` that every honest peer verifies; forks abort cleanly.
 
-### Phase B4 \u2014 Determinism And Witnesses
+### Phase B4 — Determinism And Witnesses
 
 - [ ] Audit authoritative simulation paths for non-determinism. Replace ambient `Random.Shared` and wall-clock use with per-tick seeded sources.
 - [ ] Document which subsystems are excluded from `StateRoot` and why (GPU readbacks, third-party physics tolerances, audio analysis); quantize and snapshot their outputs where required.
 - [ ] Add a `Witness` opt-in subrole: recomputes authoritative state from inputs and compares against host-published `StateRoot`.
-- [ ] On divergence, witness packages and broadcasts evidence and forces no-confidence vote (`2f + 1` participants \u2192 immediate election).
+- [ ] On divergence, witness packages and broadcasts evidence and forces no-confidence vote (`2f + 1` participants → immediate election).
 - [ ] Unit tests: deterministic replay across two processes for a fixed input stream.
 - [ ] Integration test: malicious host publishes a `StateRoot` inconsistent with the input stream; witness detects and triggers migration.
 
 **Acceptance:** Determinism is enforced on authoritative paths; a witness reliably detects and reports a misbehaving host.
 
-### Phase B5 \u2014 Reference Control Plane And Ops
+### Phase B5 — Reference Control Plane And Ops
 
 - [ ] Ship a sample HTTP `IControlPlane` adapter in a separate sample project (not in core engine).
 - [ ] Document the boundary contract for third-party control planes: DTOs, error codes, capability flags, idempotency, retry/backoff expectations, offline fallback semantics.
-- [ ] Integration test: equivocation \u2192 `IAbuseReportSink` \u2192 sample control plane revokes attestation \u2192 peer kicked on next `RosterDelta`.
+- [ ] Integration test: equivocation → `IAbuseReportSink` → sample control plane revokes attestation → peer kicked on next `RosterDelta`.
 - [ ] ImGui `Public`-tier diagnostics panel: attestation expiry per peer, signature throughput, witness divergence count, commit-certificate verification metrics, abuse reports issued.
 - [ ] Update `docs/developer-guides/networking/networking.md` with `Public`-tier flows.
 - [ ] Add `docs/architecture/networking/peer-mode-bft.md` covering trust model, election/commit invariants, equivocation handling, and the boundary contract.
@@ -212,10 +212,10 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 - [ ] Host process killed during active replication (both tiers).
 - [ ] World identity / `ProtocolVersion` / `BuildVersion` mismatch rejection.
 - [ ] Stale migration commit ignored.
-- [ ] `4`-peer `Public` session with one Byzantine peer (proposal flooding, vote equivocation, fake snapshots) \u2014 honest peers converge.
+- [ ] `4`-peer `Public` session with one Byzantine peer (proposal flooding, vote equivocation, fake snapshots) — honest peers converge.
 - [ ] Candidate failover from direct to relayed endpoint.
 - [ ] Control-plane offline mid-session: existing session continues; no new joins admitted; existing peers keep playing.
-- [ ] Equivocation \u2192 abuse report \u2192 attestation revocation \u2192 roster eviction.
+- [ ] Equivocation → abuse report → attestation revocation → roster eviction.
 
 ### Manual smoke
 
@@ -226,18 +226,18 @@ These items in §9 of `AGENTS.md` apply and require owner approval before merge:
 
 ## Documentation Touchpoints
 
-- [ ] `docs/developer-guides/networking/networking.md` \u2014 add peer-mode section, trust tiers, control-plane boundary summary.
-- [ ] `docs/architecture/networking/peer-mode-bft.md` \u2014 new doc covering trust model, election, commit certificates, equivocation, witness, determinism rules.
-- [ ] `docs/DEPENDENCIES.md` and `docs/licenses/` \u2014 refreshed when crypto deps land (Phase B0).
-- [ ] `README.md` \u2014 mention peer mode in supported networking modes once Track A ships.
-- [ ] `.vscode/tasks.json` \u2014 add new peer tasks.
-- [ ] `Tools/Start-NetworkTest.bat` \u2014 add `peer` mode.
+- [ ] `docs/developer-guides/networking/networking.md` — add peer-mode section, trust tiers, control-plane boundary summary.
+- [ ] `docs/architecture/networking/peer-mode-bft.md` — new doc covering trust model, election, commit certificates, equivocation, witness, determinism rules.
+- [ ] `docs/DEPENDENCIES.md` and `docs/licenses/` — refreshed when crypto deps land (Phase B0).
+- [ ] `README.md` — mention peer mode in supported networking modes once Track A ships.
+- [ ] `.vscode/tasks.json` — add new peer tasks.
+- [ ] `Tools/Start-NetworkTest.bat` — add `peer` mode.
 
 ## Open Decisions Blocking Specific Phases
 
 - [ ] **Phase B0:** encryption library choice (Noise_IK via vetted .NET binding vs. DTLS 1.3 via `System.Net.Security`).
-- [ ] **Phase B0:** signing library choice (NSec, BouncyCastle, libsodium-net) \u2014 must be MIT/Apache/BSD/Zlib/Unlicense (see `AGENTS.md` §9).
-- [ ] **Phase B2:** `f` policy \u2014 fixed by control plane at session start, or live-recomputed on roster shrink? (Working assumption: fixed; roster shrink below `3f + 1` aborts.)
-- [ ] **Phase B2:** `Public` candidacy \u2014 always permissioned by control plane, or open with reputation filtering?
+- [ ] **Phase B0:** signing library choice (NSec, BouncyCastle, libsodium-net) — must be MIT/Apache/BSD/Zlib/Unlicense (see `AGENTS.md` §9).
+- [ ] **Phase B2:** `f` policy — fixed by control plane at session start, or live-recomputed on roster shrink? (Working assumption: fixed; roster shrink below `3f + 1` aborts.)
+- [ ] **Phase B2:** `Public` candidacy — always permissioned by control plane, or open with reputation filtering?
 - [ ] **Phase B4:** ship a built-in witness implementation, or leave to gameplay code?
 - [ ] **Phase B5:** retain `EquivocationEvidence` on disk for post-mortem, and where (engine cache vs. control-plane upload)?

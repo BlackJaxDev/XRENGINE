@@ -346,5 +346,5 @@ Evidence:
 The immediate Physics Testing World behavior is implemented and validated, pending user
 confirmation in the normal editor session. Backend-generated PhysX and Jolt visualization
 still uses per-primitive submission when explicitly enabled. The retained, publish-once bulk
-path, final lit-box benchmark, and acceptance gates are tracked in
-`docs/work/todo/rendering/physics-debug-visualization-performance-todo.md`.
+path is described in `docs/architecture/physics/physics-debug-frame.md`. The final lit-box
+benchmark and acceptance gates are in `docs/work/testing/physics/physics-validation.md`.

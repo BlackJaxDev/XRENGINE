@@ -6,7 +6,7 @@ Tracks the remaining test, allocation-audit, and hardware-validation work for th
 
 Sibling future-work tracker: [openxr-future-work-todo.md](../rendering/vr/openxr-future-work-todo.md).
 No-HMD runtime testing design: [OpenXR Monado Testing Pipeline](../../design/VR/openxr-monado-testing-pipeline.md).
-Dedicated Monado implementation tracker: [openxr-monado-testing-pipeline-todo.md](../rendering/vr/openxr-monado-testing-pipeline-todo.md).
+Monado lane guide: [OpenXR Runtime - No-HMD test lanes](../../../developer-guides/vr/openxr-runtime.md#no-hmd-test-lanes). Checks: [OpenXR Validation](../../testing/xr/openxr-validation.md).
 
 ## Contract Tests
 
@@ -48,8 +48,8 @@ Per-row checks:
 
 ## Monado Mock Runtime Lane
 
-The detailed execution tracker now lives in
-[openxr-monado-testing-pipeline-todo.md](../rendering/vr/openxr-monado-testing-pipeline-todo.md).
+The implemented lane is described in
+[OpenXR Runtime - No-HMD test lanes](../../../developer-guides/vr/openxr-runtime.md#no-hmd-test-lanes).
 CI, hardware, and deterministic fault-injection follow-ups live in
 [openxr-monado-ci-hardware-followups-todo.md](../rendering/vr/openxr-monado-ci-hardware-followups-todo.md).
 Keep this section as the timing-tests cross-link so OpenXR test work continues
@@ -68,6 +68,6 @@ to include the no-HMD runtime lane.
 
 - [OpenXR VR Rendering (architecture)](../../../architecture/rendering/openxr-vr-rendering.md)
 - [OpenXR Monado Testing Pipeline](../../design/VR/openxr-monado-testing-pipeline.md)
-- [OpenXR Monado Testing Pipeline TODO](../rendering/vr/openxr-monado-testing-pipeline-todo.md)
+- [OpenXR Validation](../../testing/xr/openxr-validation.md)
 - [OpenXR Monado CI And Hardware Follow-ups](../rendering/vr/openxr-monado-ci-hardware-followups-todo.md)
 - [OpenXR Future Work TODO](../rendering/vr/openxr-future-work-todo.md)

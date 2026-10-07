@@ -483,7 +483,7 @@ namespace XREngine.Rendering
             if (backend != RuntimeGraphicsApiKind.Vulkan)
                 return false;
 
-            // Experimental only: see docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md.
+            // Experimental only: see docs/architecture/rendering/texture-streaming.md.
             // This does not bypass the imported-texture preview freeze kill switch or make
             // full mip-chain residency safe without VulkanTextureUploadService publication.
             if (!RenderDiagnosticsFlags.VkProgressiveTextureUpload)

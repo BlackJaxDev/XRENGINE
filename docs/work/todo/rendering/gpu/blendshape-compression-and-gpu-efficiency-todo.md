@@ -1,188 +1,76 @@
 # Blendshape Compression And GPU Efficiency TODO
 
-Last Updated: 2026-06-12
-Status: Remaining validation, normal/tangent compression, `MaxBlendshapeAccumulation`
-parity, and PCA/SVD basis compression.
-Target Branch: none - user explicitly requested no branch for this pass
-Scope: unfinished runtime mesh blendshape storage, upload, dispatch, shader
-evaluation, and validation work.
+Last Updated: 2026-10-06
+Status: Active
+Architecture: [Blendshaping guide](../../../../developer-guides/rendering/blendshaping.md)  Design: [Blendshape Deferred GPU Efficiency Design](../../../design/rendering/gpu/blendshape-deferred-gpu-efficiency-design.md)
+Validation: [GPU Deformation Validation](../../../testing/rendering/gpu-deformation-validation.md#blendshapes)
 
-Implemented blendshaping behavior has moved to
-[Blendshaping](../../../../developer-guides/rendering/blendshaping.md).
-Longer-horizon ideas have moved to
-[Blendshape Deferred GPU Efficiency Design](../../../design/rendering/gpu/blendshape-deferred-gpu-efficiency-design.md).
+## Current State
 
-Related docs:
+Blendshapes evaluate on the direct vertex path (`DefaultVertexShaderGenerator.WriteBlendshapeCalc`) or the compute path (`SkinningPrepassDispatcher`) when `CalculateBlendshapesInComputeShader` is on. `XRMesh` builds sparse per-shape records and quantized delta buffers (`PopulateQuantizedBlendshapeBuffers`, `BlendshapeQuantizationMetadata`). Quantization uses one per-shape scale and bias for position, normal, and tangent deltas; there is no compact normal encoding. `XRMesh.MaxBlendshapeAccumulation` selects a `max()` accumulator on both paths. `BlendshapeShaderVariant.BasisCompression`, `XRMesh.HasBlendshapeBasisCompressionPayload`, and the `EnableBlendshapePcaBasisCompression` setting (default off) exist, but no code generates a basis payload. No per-shape update class exists. Change rules (both paths, shader cache key, cooked payload version, zero steady-state allocation, `SetField`) are in the [Blendshaping guide](../../../../developer-guides/rendering/blendshaping.md).
 
-- [Blendshaping](../../../../developer-guides/rendering/blendshaping.md)
-- [Blendshape Deferred GPU Efficiency Design](../../../design/rendering/gpu/blendshape-deferred-gpu-efficiency-design.md)
-- [GPU-Driven Animation Architecture](../../../design/rendering/gpu/gpu-driven-animation.md)
-- [Avatar Optimization And Virtualized Avatar Rendering Design](../../../design/rendering/avatar-optimization-and-virtualized-rendering-design.md)
-- [Avatar Skin, Skeleton, And Blendshape Optimization TODO](../../avatar/avatar-skin-skeleton-blendshape-optimization-todo.md)
-- [Blendshape Update Classes And Static Baking TODO](blendshape-update-classes-and-static-baking-todo.md)
-- [Skinning GPU Efficiency Follow-Ups TODO](skinning-gpu-efficiency-followups-todo.md)
-- [OpenGL Renderer](../../../../architecture/rendering/opengl-renderer.md)
-- [Vulkan Renderer](../../../../architecture/rendering/vulkan-renderer.md)
-- [Default Render Pipeline Notes](../../../../architecture/rendering/default-render-pipeline-notes.md)
-- [Mesh Submission Strategies](../../../../architecture/rendering/mesh-submission-strategies.md)
+## Open Code Items
 
-## Goal
+### Sparse Delta Parity
 
-Close the remaining correctness and validation gaps for the current blendshape
-runtime, then evaluate optional PCA/SVD basis compression.
+- [ ] Make sparse iteration give bitwise-identical per-vertex output to the dense path for the same weights, with `MaxBlendshapeAccumulation` on and off, on both paths. `DefaultVertexShaderGenerator.WriteBlendshapeCalc`, compute blendshape shader. Done when: the parity test in "Tests" passes.
 
-## Non-Goals
+### Normal And Tangent Quantization
 
-- Do not remove or rename protected blendshape controls by default.
-- Do not apply PCA to visemes, eyelids, tracking shapes, or script-referenced
-  shapes at LOD0 unless an asset profile explicitly opts in.
-- Do not require GPU-driven animation to land first.
-- Do not change importer semantics for blendshape names in this work item.
-- Do not solve topology-changing mesh optimization here; use avatar optimizer
-  and modeling remap work for that.
+- [ ] Add a compact normal and tangent delta encoding (`snorm8x3`, octahedral, or another measured format) with a shader variant bit and a cooked mesh payload schema bump. `XRMesh.Blendshapes.cs`, `DefaultVertexShaderGenerator`, compute blendshape shader. Done when: both paths decode the new format.
+- [ ] Define quantization thresholds per asset or profile tier for position error and post-skinning normal angle (the `normalize(NormalMatrix * FinalNormal)` output in `WriteMeshTransforms`). Done when: the bake rejects a shape that exceeds its tier threshold and keeps the uncompressed data.
 
-## Cross-Cutting Constraints
+### PCA Or Basis Compression
 
-### Direct Vertex Path vs Compute Blendshape Path
+- [ ] Group non-protected shapes by face, body, and clothing region. Exclude protected shapes (visemes, eyelids, tracking, script-referenced) at LOD0 unless a profile opts in. Done when: the grouping is deterministic for one input.
+- [ ] Choose a deterministic SVD or PCA implementation that meets the dependency license rule. Ask before you add a dependency. Done when: the choice and license are in `docs/DEPENDENCIES.md`.
+- [ ] Generate basis deltas and per-shape coefficients into the cooked payload and set `BlendshapeShaderVariant.BasisCompression`. Keep the original shapes for a group whose error exceeds the profile threshold. Report memory reduction, maximum and average error, and rejected groups. Done when: `HasBlendshapeBasisCompressionPayload` is true for an accepted mesh and output is bitwise-reproducible across runs.
+- [ ] Reconstruct effective deltas from active weights and basis coefficients on both paths. Done when: a basis-compressed mesh deforms with `EnableBlendshapePcaBasisCompression` on.
 
-Remaining shader-contract work must cover BOTH paths:
+### Update Classes
 
-- direct vertex shader generation in `DefaultVertexShaderGenerator.cs`
-  (`WriteBlendshapeCalc`, `WriteUniformBufferBlocks`) used when
-  `UseComputeBlendshapes == false`;
-- compute blendshape shader/binding validation used when
-  `RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader == true`.
+- [ ] Add `BlendshapeUpdateClass` (`Streamed`, `Dynamic`, `Static`) and store one class per shape in `XRMesh` imported and cooked metadata. Default imported shapes to `Dynamic`. Done when: an imported asset reports a class per shape and runtime behavior is unchanged.
+- [ ] Add protected-name and profile rules that force `Streamed` or `Dynamic` and block `Static` for script-controlled, tracking, viseme, eyelid, and protected shapes. Done when: a protected shape refuses `Static`.
+- [ ] Show each shape's update class in the editor mesh diagnostics. `ModelComponentEditor`. Done when: the inspector lists the class.
 
-Landing a change on only one path is a regression. Add explicit tests for both
-before closing relevant tasks.
+### Static Shape Baking
 
-### Shader Variant And Cache Budget
+- [ ] Bake static shape weights into base position, normal, and tangent data. Rebase the remaining deltas against the baked rest mesh. Done when: dynamic and streamed shapes do not double-apply static offsets.
+- [ ] Generate a deterministic cooked variant key from source mesh identity, static shape indices, static weights, and bake settings. Regenerate the variant when an editor changes a static weight. Done when: equal inputs give equal keys.
+- [ ] Remove baked static shapes from active lists, sparse records, quantized payloads, precombine eligibility, and shader permutation counts. Done when: a fully static mesh has no runtime blendshape buffers.
 
-Every new layout or runtime branch is a shader permutation. To keep cached
-shader hit rates from collapsing:
+### Streamed And Dynamic Upload Paths
 
-- Encode any new variant flag into the existing shader cache key.
-- Bump the on-disk shader cache schema version when a new shader contract lands.
-- Measure live blendshape shader permutation count for representative scenes.
+- [ ] Keep streamed shape indices in a contiguous renderer-owned list and upload streamed weights as a compact per-frame slice. Keep dynamic dirty-range uploads separate. `XRMeshRenderer`. Done when: a streamed-weight change does not upload the full authored range.
+- [ ] Do not rebuild the dynamic active list when only streamed weights change. Add optional per-shape dirty events for dynamic toggles. Done when: a streamed-only frame records no dynamic active-list rebuild.
+- [ ] Bias precombine heuristics toward streamed shapes only when the active streamed count and affected vertex count justify the extra dispatch. Done when: the heuristic reads both counts.
+- [ ] Add profiler counters for streamed and dynamic upload bytes, active counts, active-list rebuilds, and precombine dispatches. Done when: the counters appear in the profiler packet.
 
-### Cooked Mesh Payload Versioning
+### Tests (Owner Clearance Required)
 
-Any future basis-compressed, normal/tangent-compressed, or otherwise incompatible
-cooked payload layout must bump the cooked mesh payload schema and document
-migration of existing cached assets under `Cache/` and `Build/Cache/`.
+- [ ] Add a dense versus sparse bitwise parity test with `MaxBlendshapeAccumulation` on and off. Done when: the test covers both paths.
+- [ ] Add FP32 reference tests for quantized position, normal, and tangent output on both paths, including post-skinning normal angle. CPU sparse and quantized position decode already has coverage. Done when: normal and tangent cases exist.
+- [ ] Add static bake tests: position only, normal and tangent, rebased dynamic deltas, protected shapes that refuse baking, and deterministic variant keys. Done when: each case has a test.
+- [ ] Add importer round-trip and cooked payload compatibility tests for update classes and the new payload layouts. Done when: both tests exist.
 
-### Hot-Path Allocations
+## Decisions Needed
 
-Per AGENTS.md, per-frame heap allocations are bugs unless profiling proves
-otherwise. Remaining per-frame blendshape work must:
+- [ ] Choose the compact normal encoding after the error measurements. Owner: rendering lead.
 
-- allocate zero heap per frame in steady state,
-- be verified with the `Report-NewAllocations` VS Code task,
-- and store any new caches as preallocated pooled buffers, not LINQ/closures.
+## Out Of Scope
 
-### `XRBase` Mutation
+- Removing or renaming protected blendshape controls.
+- Changes to importer blendshape names or external animation bindings.
+- Topology-changing mesh optimization (avatar optimizer and modeling work).
+- A dependency on GPU-driven animation ([GPU-Driven Animation TODO](gpu-driven-animation-todo.md)).
+- Avatar-level blendshape policy ([Avatar Optimization Roadmap](../../avatar/avatar-optimization-roadmap.md#skin-skeleton-and-blendshapes)).
 
-Any new mutation path on `XRMeshRenderer`, mesh-asset, or blendshape weight
-types must use `SetField(...)` instead of direct backing-field assignment so
-change notification stays correct.
+## Recovered Items To Triage
 
-## Phase 0 - Corpus And Baseline Capture
+The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
 
-- [ ] Select a representative blendshape corpus:
-  - [ ] simple one-shape synthetic mesh,
-  - [ ] dense facial rig,
-  - [ ] viseme-heavy avatar,
-  - [ ] body or clothing corrective shapes,
-  - [ ] mesh with sparse per-vertex blendshape lists.
-- [ ] Use the unit-testing world plus the avatars above for capture; collect
-  profiler packets from
-  `Build/Logs/<configuration>_<tfm>/<platform>/<session>/profiler-*.log` and
-  `upload-stage-stats.log`.
-- [ ] Capture current bytes for:
-  - [ ] `BlendshapeCount`,
-  - [ ] `BlendshapeIndices`,
-  - [ ] `BlendshapeDeltas`,
-  - [ ] renderer `BlendshapeWeights`,
-  - [ ] global blendshape weight slices.
-- [ ] Capture current compute/direct blendshape timing.
-- [ ] Capture current active blendshape count per frame in representative
-  animation and lip-sync scenes.
-- [ ] Capture live blendshape shader permutation count as the variant-growth
-  baseline.
-- [ ] Capture per-frame heap allocations along the blendshape path with the
-  `Report-NewAllocations` task as the hot-path baseline.
+### From `todo/rendering/gpu/blendshape-compression-and-gpu-efficiency-todo.md`
 
-Acceptance criteria:
-
-- [ ] Blendshape memory, dispatch, allocation, and shader permutation
-  improvements can be measured per mesh and per renderer before additional
-  format changes land.
-
-## Phase 3 - Sparse Delta Parity
-
-- [ ] Define interaction with `MaxBlendshapeAccumulation`: the existing `max()`
-  accumulator in `WriteBlendshapeCalc` is order-independent, but sparse
-  iteration changes which vertices see which shapes. Document and test that
-  per-vertex outputs are bitwise-identical for the same input weights under
-  both `MaxBlendshapeAccumulation` true and false.
-
-Acceptance criteria:
-
-- [ ] `MaxBlendshapeAccumulation` output matches the dense path bitwise on
-  identical inputs.
-
-## Phase 4 - Normal/Tangent Quantization And Error Budgets
-
-- [ ] Support normal and tangent deltas as `snorm8x3`, octahedral encoding, or
-  another measured compact normal representation.
-- [ ] Define quantization thresholds by asset/profile tier.
-- [ ] Error budget tests MUST include post-skinning normal angle (the final
-  `normalize(NormalMatrix * FinalNormal)` output in `WriteMeshTransforms`),
-  not just delta L2. Weighted sum plus quantized normal deltas can drift even
-  when per-delta error is within budget.
-- [ ] Compare morphed position, normal, and tangent output against FP32
-  references on BOTH direct vertex and compute paths.
-  - CPU sparse/quantized position decode is covered against FP32 references;
-    normal/tangent and GPU-path visual validation remain pending.
-
-Acceptance criteria:
-
-- [ ] Quantized deltas reduce memory without exceeding profile error
-  thresholds for position AND post-skinning normal angle.
-
-## Phase 7 - PCA Or Basis Compression Evaluation
-
-- [ ] Group candidate non-protected shapes by face/body/clothing region.
-- [ ] Exclude protected shapes at LOD0 by default.
-- [ ] Choose a deterministic SVD/PCA implementation (vendored or referenced);
-  the dependency MUST satisfy the AGENTS.md dependency-license rule (permits
-  both open-source and commercial use). Record the choice and license in
-  `docs/DEPENDENCIES.md`.
-- [ ] Build deterministic basis data for candidate groups; results MUST be
-  bitwise-reproducible across runs on the same input.
-- [ ] Store basis deltas and per-shape coefficients.
-- [ ] Reconstruct effective deltas from active weights and basis coefficients.
-- [ ] Report memory reduction, max error, average error, and rejected groups.
-- [ ] Keep original shapes when basis error exceeds profile thresholds.
-
-Acceptance criteria:
-
-- [ ] Basis compression lands only for shape groups where measured error and
-  runtime cost are better than sparse/quantized direct storage.
-- [ ] Basis generation is deterministic and license-compatible.
-
-## Final Validation
-
-- [ ] Run importer round-trip tests for meshes with blendshapes.
-- [ ] Run `Build-Editor` then `Start-Editor-NoDebug` with the unit-testing
-  world and the Phase 0 avatar corpus; collect the same profiler packets
-  captured in Phase 0 from
-  `Build/Logs/<configuration>_<tfm>/<platform>/<session>/profiler-*.log` and
-  `upload-stage-stats.log`.
-- [ ] Run `Report-NewAllocations` and confirm no new per-frame allocations
-  appeared on any blendshape path.
+- [ ] body or clothing corrective shapes,
 - [ ] Capture visual diffs for expression sweeps, visemes, and corrective
   shapes.
-- [ ] Record before/after delta bytes, weight upload bytes, active-shape
-  counts, dispatch timing, shader permutation count, and per-frame allocations,
-  with explicit deltas against the Phase 0 baseline.

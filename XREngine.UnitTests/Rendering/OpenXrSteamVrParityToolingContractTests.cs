@@ -12,7 +12,6 @@ public sealed class OpenXrSteamVrParityToolingContractTests
         string runner = ReadWorkspaceFile("Tools/OpenXR/Run-OpenXrSteamVrSmoke.ps1");
         string tasks = ReadWorkspaceFile(".vscode/tasks.json");
         string launch = ReadWorkspaceFile(".vscode/launch.json");
-        string todo = ReadWorkspaceFile("docs/work/todo/rendering/vr/openxr-steamvr-openvr-parity-todo.md");
 
         runner.ShouldContain("SteamVR OpenXR smoke diagnostics");
         runner.ShouldContain("XRE_UNIT_TEST_VR_MODE");
@@ -29,7 +28,6 @@ public sealed class OpenXrSteamVrParityToolingContractTests
         tasks.ShouldContain("Start-Editor-UnitTesting-OpenXR-SteamVR-NoDebug");
         tasks.ShouldContain("Test-OpenXR-SteamVR-Smoke");
         launch.ShouldContain("Editor (Unit Testing OpenXR SteamVR)");
-        todo.ShouldNotContain("- [ ]");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

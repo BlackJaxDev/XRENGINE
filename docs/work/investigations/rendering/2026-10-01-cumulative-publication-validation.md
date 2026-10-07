@@ -303,7 +303,7 @@ transfer-before-binding, bounded progress and retirement; waiting longer is not
 proof of those properties.
 
 Unattributed Advanced GPU cost is tracked separately in
-[Advanced pipeline GPU attribution](../../todo/rendering/optimization/advanced-pipeline-gpu-attribution-todo.md).
+[Advanced pipeline GPU attribution](../../todo/rendering/optimization/editor-profiler-ui-render-cost-todo.md#open-code-items-moved-from-advanced-pipeline-gpu-attribution-todomd).
 The existing Default-pipeline measurements do not establish current Advanced costs.
 Dense executed-pass timing in a separately validated observer and one-effect-at-a-
 time comparisons are required before selecting a GPU fix. No effect is disabled

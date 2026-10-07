@@ -148,7 +148,7 @@ Native discovery callbacks update transport metadata only. Scene tracker reconci
 
 The smoke summary includes extension revision and per-identity connection, binding, activity, validity, sample/snapshot IDs, last valid sample, and restart requirement. For a hardware probe, record the runtime/version and implementation commit, start with every tracker connected, capture the summary with default and duplicate mappings, then test occlusion, reconnection, disabled devices, and late connections. A nonempty enumeration alone is not evidence of streaming. Current pose availability requires an active action, valid position and orientation, a matching predicted snapshot and sample time, and a running session with publication within 250 ms. Last-known pose is diagnostic only.
 
-On a SteamVR 2.17.10 hardware run, OpenXR reached a Focused session with HMD and controller poses but no HTCX tracker paths. Independent instance-level enumeration returned `XR_SUCCESS` and count zero twice while OpenVR found three connected Tundra Trackers. This isolates the empty list to that runtime's OpenXR exposure during the probe; it does not explain why the paths were omitted. See the [hardware validation record](../../work/testing/openxr-steamvr-hardware-validation.md) and [player calibration guide](../../user-guide/vr/full-body-calibration.md).
+On a SteamVR 2.17.10 hardware run, OpenXR reached a Focused session with HMD and controller poses but no HTCX tracker paths. Independent instance-level enumeration returned `XR_SUCCESS` and count zero twice while OpenVR found three connected Tundra Trackers. This isolates the empty list to that runtime's OpenXR exposure during the probe; it does not explain why the paths were omitted. See the [hardware validation record](../../work/testing/xr/openxr-steamvr-hardware-validation.md) and [player calibration guide](../../user-guide/vr/full-body-calibration.md).
 
 ### Calibration action bindings
 
@@ -204,6 +204,20 @@ The repo-local Monado test runtime lives at `Build/Submodules/monado` and is sou
 Use `Tools/OpenXR/Build-Monado.ps1` to initialize/update that submodule and build Monado in place. Use `Tools/OpenXR/Install-Monado.ps1` when you also want the runtime staged under `Build/Deps/Monado`, an environment helper written, and `openxr_loader.dll` copied into the editor output when available.
 
 The visible simulated-HMD preview is the `monado-service.exe` windowed compositor target, not `monado-gui.exe`. When an OpenXR session is active, the staged Windows build titles that window with the requested headset preset, internal per-eye resolution, current window size, and preview-eye scale. Leave `XRT_WINDOW_PEEK` unset for the default editor path; it enables Monado's separate experimental peek target.
+
+### No-HMD test lanes
+
+| Lane | Selection | Use |
+|---|---|---|
+| Contract tests | `OpenXrTimingPipelineContractTests` in `XREngine.UnitTests` | Timing and state-machine rules. No runtime. |
+| Scene-only VR | `VR.Mode=Emulated`; `Tools/OpenXR/Run-OpenXrSceneOnlyVrSmoke.ps1`; task `Test-OpenXR-SceneOnlyVR-Smoke` | VR pawn and editor paths. It does not call the OpenXR API. |
+| Monado OpenXR | `VR.Mode=MonadoOpenXR`; `Tools/OpenXR/Run-OpenXrMonadoSmoke.ps1`; task `Test-OpenXR-Monado-Smoke` | The real loader, instance, session, swapchains, and frame submission against Monado's simulated HMD. |
+
+`Tools/OpenXR/Find-MonadoRuntime.ps1` resolves the runtime manifest. `-RuntimeJson` wins; otherwise it searches the common Monado build and install paths. The scripts never write the Windows active-runtime registry key. `Run-OpenXrMonadoSmoke.ps1` sets `XR_RUNTIME_JSON` for the child process only, runs a loader preflight for the renderer's graphics binding extension, and starts `monado-service.exe` only when needed. It stops only a service that it started.
+
+`--smoke-frames N` or `XRE_SMOKE_FRAMES=N` makes the editor exit after N submitted OpenXR frames. The editor then drains the session, destroys swapchains, the session, and the instance, and writes a structured smoke summary with a `schemaVersion`. The runner fails if a required summary field is missing. The process exit code is zero only when the smoke criteria pass. The editor uses 21 for startup failure, 22 for frame timeout, 23 for summary failure, 24 for teardown failure, and 25 for an engine exception (`Program.OpenXrSmokeRunController.cs`). Runtime differences are gated by extension support or capability probes, not by runtime name, except in diagnostics.
+
+Monado lane baselines, CI promotion, and persistent smoke settings are open decisions in [OpenXR Monado CI And Hardware Follow-ups](../../work/todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md). Checks are in [OpenXR Validation](../../work/testing/xr/openxr-validation.md).
 
 ## Implementation References
 

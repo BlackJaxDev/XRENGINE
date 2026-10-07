@@ -73,6 +73,7 @@ Temporary references are allowed **only when the associated todo document is act
 - During feature-regression debugging or an integration awaiting feature validation, **do not add or modify tests**. First validate the feature through its live/runtime path; test work then requires explicit user clearance.
 - Avoid unnecessary tests during implementation or todo-only documentation work. This sequencing does not waive final validation or tests needed to reproduce/diagnose an active defect.
 - Run the most targeted applicable tests; if none exist, use a narrow build/run check. New tests belong in `XREngine.UnitTests/`, follow nearby naming, and must be deterministic.
+- Tests must not read or assert on Markdown docs (`docs/`, `README.md`, todo or guide files). Docs change freely; test behavior and code contracts instead.
 - Useful tasks: `Test-SurfelGi`, `Test-VulkanPhase3-Regression`.
 
 ## Repository And Commands
@@ -103,6 +104,19 @@ All AI-generated artifacts not intended for commit belong under `Build/_AgentVal
 - Engine logs may remain in `Build/Logs/`; copy relevant evidence to the run's `logs/` or record the exact session path in a durable work doc. Evidence remains disposable even when linked; copy required findings into tracked docs.
 
 Use `docs/work/<purpose>/<subsystem>/`: `investigations` for debugging, `progress` for active status/validation/closeout, `design` for proposals, `todo` for checklists/backlog, and `testing` for validation plans/reproduction/matrices. Do not create top-level subsystem buckets such as `docs/work/rendering/`. Update relevant `README.md`, `docs/README.md`, and feature docs when behavior/workflows change.
+
+### Todo And Validation Docs
+
+Keep code work and debugging/validation work in separate documents:
+
+- **Code todos** (`docs/work/todo/<subsystem>/`) list only open implementation items: code changes, refactors, and unit test code. Each item names the files or types and a done condition that a reviewer can confirm in the diff or a unit test. Keep one short "Current state" paragraph, open decisions, and links to the architecture, design, and validation docs.
+- **Validation docs** (`docs/work/testing/<subsystem>/`, one per area) own all manual, runtime, visual, hardware, profiler, benchmark, and soak checks, plus acceptance matrices. A failed check links to an investigation or creates a code item. It does not become a code checkbox in place.
+- **Investigations** own debug history, build-by-build logs, hypotheses, and ruled-out causes. Do not keep these logs in todos.
+- **Architecture docs and guides** own finished design: ownership, invariants, data layouts, flags, environment variables, and type/file maps. When a code item is done, remove it from the todo and move its lasting facts there. Do not keep checked boxes as history.
+- Before you check, remove, or report a todo item, confirm its state in code. Correct stale "current state" text when you touch a todo.
+- `docs/work/todo/COMPLETED/` must not contain open code items. Reopened work moves back to an active todo.
+- Do not copy standing rules, exit-criteria prose, or branch/merge steps into each todo. Link to one shared copy.
+- Use the templates in [todo doc cleanup](docs/work/todo/documentation/todo-doc-cleanup-todo.md#target-templates).
 
 ## Risk, Dependencies, And Licensing
 

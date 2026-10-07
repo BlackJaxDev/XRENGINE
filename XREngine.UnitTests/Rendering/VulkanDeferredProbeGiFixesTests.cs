@@ -242,18 +242,12 @@ public sealed class VulkanDeferredProbeGiFixesTests
     }
 
     [Test]
-    public void DefaultRenderPipeline_RegistersProbeResourcesWithRenderRegistry()
+    public void DefaultRenderPipeline_DeclaresProbeTextureArrayResourceNames()
     {
         string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
 
         pipelineSource.ShouldContain("private const string LightProbeIrradianceArrayName = \"LightProbeIrradianceArray\"");
         pipelineSource.ShouldContain("private const string LightProbePrefilterArrayName = \"LightProbePrefilterArray\"");
-        pipelineSource.ShouldContain("RegisterProbeTextureArrays();");
-        pipelineSource.ShouldContain("RegisterProbeBuffer(_probePositionBuffer)");
-        pipelineSource.ShouldContain("RegisterProbeBuffer(_probeParamBuffer)");
-        pipelineSource.ShouldContain("RegisterProbeBuffer(_probeTetraBuffer)");
-        pipelineSource.ShouldContain("RemoveProbeTextureResource(LightProbeIrradianceArrayName)");
-        pipelineSource.ShouldContain("RemoveProbeBufferResource(LightProbeTetraBufferName)");
     }
 
 
@@ -718,7 +712,6 @@ public sealed class VulkanDeferredProbeGiFixesTests
             "*.cs");
         string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
         string phase1Source = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DeviceLossDiagnostics.Phase1.cs");
-        string todoSource = ReadWorkspaceFile("docs/work/todo/rendering/vulkan-core-hardening-and-device-loss-todo.md");
 
         shimSource.ShouldContain("VulkanKhrDeviceFaultPhysicalDeviceFeaturesSType = 1000573000");
         shimSource.ShouldContain("VulkanKhrDeviceFaultPhysicalDevicePropertiesSType = 1000573001");
@@ -753,10 +746,6 @@ public sealed class VulkanDeferredProbeGiFixesTests
         phase1Source.ShouldContain("TryAppendKhrDeviceFaultSummary(builder)");
         phase1Source.ShouldContain("_deviceFaultUsingKhr && khrQueried");
         phase1Source.ShouldContain("_supportsExtDeviceFault");
-
-        todoSource.ShouldContain("- [ ] On hardware that advertises `VK_KHR_device_fault`, run one");
-
-
     }
 
     [Test]

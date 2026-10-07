@@ -67,3 +67,20 @@ buffers, and legacy shader snippets still need a binding-by-binding audit.
 Vulkan indirect draw commands use the Vulkan ABI rather than a shader record
 block. Pass-level validation of production shader permutations remains open
 in the runtime-data-layout TODO.
+
+## Advanced record source locations
+
+All paths are under `XREngine.Runtime.Rendering/`.
+
+| Area | Folder | Main types |
+|---|---|---|
+| Scene, draw, and geometry records | `Rendering/Commands/GPUScene/Advanced/` | `AdvancedDrawRecord`, `AdvancedInstanceRecord`, `AdvancedGeometryRecord`, `AdvancedTransformRecord`, `AdvancedDeformationRecord`, `AdvancedRenderStateRecord`, `AdvancedEditorIdentityRecord`, `AdvancedGpuHandle`, `AdvancedGpuHandleRemap`, `AdvancedSharedGpuSceneDatabase`, `AdvancedGeometryDatabase` |
+| Material, kernel, and global resource records | `Rendering/Materials/Advanced/` | `AdvancedMaterialRecord`, `AdvancedShadingKernelRecord`, `AdvancedViewRecord`, `AdvancedLightRecord`, `AdvancedShadowRecord`, `AdvancedProbeRecord`, `AdvancedTextureRecord`, `AdvancedSamplerRecord`, `AdvancedGlobalResourceBindings`, `AdvancedShaderCacheKey` |
+| Deformation preparation records | `Rendering/Preparation/Advanced/` | `AdvancedDeformationJobRecord`, `AdvancedBlendshapeSparseRecord` |
+| Frame-slot uploads | `Buffers/Advanced/` | `AdvancedFrameSlotUploadArena` |
+| Layout checks | `Rendering/Shaders/Advanced/` | `AdvancedShaderRecordLayout` |
+
+Each record type has its own file. A draw ID is enough to find the geometry,
+instance, material, transform, deformation, and editor-identity records from
+GPU tables alone. The [Shared GPU Scene And Material Contract](default-render-pipeline-notes.md#shared-gpu-scene-and-material-contract)
+describes handle generations, remaps, and frame-slot ownership.

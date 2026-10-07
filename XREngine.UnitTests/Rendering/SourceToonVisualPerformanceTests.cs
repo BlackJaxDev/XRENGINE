@@ -83,20 +83,6 @@ public sealed class SourceToonVisualPerformanceTests
     }
 
     [Test]
-    public void NativeEquivalentDifferencesAndRenderDocEscalationAreDocumented()
-    {
-        string architecture = File.ReadAllText(SourceToonParityCorpusTests.FindRepositoryFile(
-            "docs", "architecture", "rendering", "poiyomi-import-reporting.md"));
-        architecture.ShouldContain("native-equivalent");
-        string todo = File.ReadAllText(SourceToonParityCorpusTests.FindRepositoryFile(
-            "docs", "work", "todo", "COMPLETED", "poiyomi-toon-93-parity-checklist.md"));
-        todo.ShouldContain("Use RenderDoc for pass/resource discrepancies");
-        string fixturePolicy = File.ReadAllText(SourceToonParityCorpusTests.FindRepositoryFile(
-            "XREngine.UnitTests", "TestData", "Poiyomi", "README.md"));
-        fixturePolicy.ShouldContain("Build/_AgentValidation/");
-    }
-
-    [Test]
     public void ImportSchemaVariantAndInspectorBudgetsAreMeasuredAndMet()
     {
         JsonElement budgets = _corpus.RootElement.GetProperty("performanceBudgets");

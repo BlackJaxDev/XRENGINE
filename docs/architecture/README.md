@@ -56,6 +56,7 @@ Shared managed feature libraries, `Runtime.Core`, `Runtime.Rendering`, and the i
 - [Scene Architecture](scene/overview.md)
 - [Transform Architecture](scene/transforms.md)
 - [Physics Architecture](physics/overview.md)
+- [Physics Debug Frame](physics/physics-debug-frame.md)
 - [Rendering Runtime Overview](rendering/runtime-overview.md)
 - [Job System](../developer-guides/runtime/job-system.md)
 - [Networking Overview](networking/overview.md)

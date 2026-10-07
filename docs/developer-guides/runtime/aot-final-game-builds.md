@@ -68,6 +68,51 @@ A supported AOT final-game validation must prove:
 
 For an interactive world/render smoke, run the produced executable without `--aot-smoke` after the script completes.
 
+## Game Runtime Smoke
+
+A game bootstrap can also implement `IGameLaunchRuntimeSmokeBootstrap`. With
+`--aot-smoke`, the generated launcher then calls `ConfigureRuntimeSmoke()`
+before `ConfigureStartup`, loads the archives, runs `Engine.Run` with the real
+game state, and calls `CompleteRuntimeSmoke()` after the engine loop exits. On
+success, the launcher prints `AOT runtime smoke passed.`. A bootstrap without
+the interface returns after the archive smoke.
+
+MonkeyBall VR implements this gate in `MonkeyBallRuntimeValidation`. The gate
+observes the cooked runtime state and does not substitute simulation or
+rendering. It sets a nonzero exit code unless all of these become valid within
+at least 300 normal ticks:
+
+- component activation, begin play, pre-physics ticks, and normal ticks
+- local-player possession and keyboard, gamepad, and VR input registration
+- native ball and course rigid bodies in an advancing physics scene at the
+  authored fixed cadence, with ball interpolation set to `Interpolate`
+- a scripted tilt that changes the native course target and the ball state, with
+  the pivot at the ball position
+- camera follow, upright orientation, and yaw toward velocity, in both the
+  scene and the published render pose
+- a standalone (non-atlased, non-cascaded) directional shadow map that renders
+
+Opt-in diagnostics for an interactive packaged run:
+
+| Variable | Effect |
+|---|---|
+| `XRE_MONKEYBALL_DIAGNOSTICS_PATH` | Enables `MonkeyBallRuntimeDiagnostics` and writes lifecycle, input, physics, camera, and shadow counters to this file. |
+| `XRE_MONKEYBALL_DIAGNOSTICS_VALIDATE` | Runs the same acceptance gate without `--aot-smoke`. |
+
+MonkeyBall rules that the gate enforces:
+
+- `MonkeyBallWorld.asset` is the only world source. There is no hardcoded
+  runtime world.
+- A missing native course body is an error. There is no transform-only physics
+  fallback.
+- The sun is authored and cooked with `CastsShadows = true`,
+  `UseShadowAtlas = false`, and `EnableCascadedShadows = false`.
+- The desktop camera is not a child of the ball transform. Camera follow runs in
+  late update from the presented ball pose.
+
+Manual release sign-off uses the
+[MonkeyBall VR Release Matrix](../../work/testing/xr/monkeyball-vr-release-matrix.md).
+
 ## Build Settings
 
 `BuildSettings.PublishLauncherAsNativeAot` selects the NativeAOT launcher publish path.

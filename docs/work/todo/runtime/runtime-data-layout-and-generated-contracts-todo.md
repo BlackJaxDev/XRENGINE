@@ -977,8 +977,8 @@ Acceptance criteria:
       identifiers, or diagnostics.
 - [ ] The progress ledger records commands, results, dispositions, evidence
       paths, and exclusions.
-- [ ] The design document's status reflects the outcome. This tracker moves to
-      `docs/work/todo/COMPLETED/` only after every gate passes.
+- [ ] The design document's status reflects the outcome. Delete this tracker
+      only after every gate passes and its design is in an architecture doc.
 
 ## Recommended Execution Order
 

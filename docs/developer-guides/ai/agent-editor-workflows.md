@@ -98,6 +98,11 @@ Notes:
 
 ### RenderDoc GPU Captures
 
+If queued MCP calls stop completing, call `get_time_state`. This read-only
+diagnostic runs on the caller thread and can report `terminalFault` after the
+engine update loop stops. A responsive native window does not prove that the
+engine loop is running.
+
 For Vulkan or OpenGL rendering issues, use RenderDoc when MCP screenshots and logs do not identify the failing pass/resource. Prefer it for shadow maps, post-process inputs, motion vectors, G-buffer contents, descriptor binding mistakes, layout hazards, and "the frame looks wrong but logs are inconclusive" cases.
 
 1. Verify capture tooling first:
@@ -181,6 +186,13 @@ XREngine.Editor.exe --mcp --mcp-port 8080
 ```
 
 CLI flags persist to preferences. Default port is `5467`.
+
+Before using `invoke_method` to operate an editor control, set
+`McpDispatchMode` to `MainThread` with `set_editor_preference` and
+`session_only: true`. This matches the ImGui app-thread call path. The default
+`Direct` mode runs an unannotated tool on its request thread. Do not use that
+mode to spawn or destroy a benchmark scene. Explicit tool affinity takes
+precedence over this session setting.
 
 VS Code/Copilot workspace config:
 

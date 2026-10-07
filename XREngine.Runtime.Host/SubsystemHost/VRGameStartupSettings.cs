@@ -14,7 +14,7 @@ namespace XREngine
         private string _gameName = "XREngine Game";
         private EVRRuntime _vrRuntime = EVRRuntime.Auto;
         private bool _startVrOnLaunch = true;
-        private EVrViewRenderMode _vrViewRenderMode = EVrViewRenderMode.SequentialViews;
+        private EVrViewRenderMode _vrViewRenderMode = EVrViewRenderMode.ParallelCommandBufferRecording;
         private bool _enableOpenXrVulkanParallelRendering = true;
 
         /// <summary>

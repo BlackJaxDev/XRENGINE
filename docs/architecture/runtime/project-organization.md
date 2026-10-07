@@ -26,6 +26,16 @@ These projects target `net10.0` and compile their full source set for desktop an
 
 `XREngine.Runtime.Rendering.WebGPU` and `XREngine.Browser` also belong to the compile closure. They provide the browser renderer and host; their presence does not imply that the browser host can run every engine world or desktop feature. Browser gameplay integration is tracked separately from compilation.
 
+### Dependency direction
+
+- `XREngine.Runtime.Core` references only `XREngine.Data` and `XREngine.Extensions`. It has no rendering, feature-library, integration, Bootstrap, Editor, or application dependency.
+- `XREngine.Runtime.Rendering` references Core, Data, and Extensions, and stays backend-neutral. The OpenGL, Vulkan, and WebGPU renderer projects are one-way leaves of Rendering.
+- Feature libraries (Animation, Audio, Input, Modeling) stay below the `XREngine.Runtime.*Integration` projects. An integration project does not reference another integration project or an application.
+- `XREngine.Runtime.Bootstrap` holds composition only, not domain implementation.
+- Applications, samples, benchmarks, and tests reference the projects they use directly. No project or published output needs a former `XREngine.dll` facade.
+
+Dependency-boundary tests in `XREngine.UnitTests` enforce these rules. The [runtime modularization design](../../work/design/runtime-modularization-plan.md) records the migration history.
+
 ## Backend modules
 
 Modules own vendor API calls, native object lifetimes, and backend-specific components. Neutral contracts remain in the shared projects. Backend modules consume those contracts rather than referencing another backend module. An application or integration host connects cooperating modules through the lower contracts.
@@ -90,6 +100,7 @@ Image consumers exchange neutral buffers with dimensions, format, stride, origin
 | `XREngine.Profiler`, `XREngine.Profiler.UI` | Standalone profiler and shared profiler UI. |
 | `XREngine.RenderBench`, `XREngine.Benchmarks` | Editor-independent Vulkan component/presentationless profiling and managed benchmark hosts with their own composition. RenderBench uses runtime automation and the real Vulkan backend; selected CPU/GPU diagnostics stay within its bounded run evidence. |
 | `XREngine.UnitTests` | Backend-neutral fixtures, backend-specific suites, and dependency/source boundary checks. |
+| `XREngine.SourceGenerators` | Roslyn source generators (`netstandard2.0`, compiler-host only). `RuntimeContractGenerator` emits runtime type identities and member bindings from `RuntimeTypeContract`, `RuntimeMemberAccess`, `RuntimeClosedFormatter`, `RuntimeCookedAsset`, and `RuntimeAnimationBinding` attributes. `RuntimeFactoryGenerator` emits factory registrations. Projects consume it as an analyzer through `Build/Registration/RuntimeContracts.props` when `XREngineRuntimeContractMode` is set (Data, Animation, Host, Rendering, Bootstrap). It never ships at runtime and does not inherit the player's AOT or trimming publish settings. |
 
 Composition is explicit. Referencing a module does not necessarily activate its feature or supply optional vendor binaries. Bootstrap's renderer references are controlled by `XREngineRendererBackends` (`All`, `OpenGL`, `Vulkan`, or headless `None`). Jitter requires explicit installation. The editor installs collider authoring, model import, and ImGui services in addition to the desktop services.
 
@@ -105,4 +116,4 @@ The owning module declares native build/copy/publish items. This does not requir
 
 Public namespaces and type names generally remain stable when source moves between assemblies. Runtime-facing vendor signatures use neutral contracts, so this is not a binary compatibility guarantee for old callers. Serialized backend enum values remain stable; moved CLR names and persisted-name searches are recorded in the [type identity audit](../../work/progress/platform/native-subsystem-type-identities.md).
 
-Package versions, notices, and review status are recorded in [DEPENDENCIES.md](../../DEPENDENCIES.md), not inferred from this project map. Application build/publish layouts and feature behavior require integration acceptance in the [remaining debugging and validation checklist](../../work/todo/platform/native-subsystem-project-split-todo.md).
+Package versions, notices, and review status are recorded in [DEPENDENCIES.md](../../DEPENDENCIES.md), not inferred from this project map. Application build/publish layouts and feature behavior require integration acceptance in [Platform Validation](../../work/testing/platform/platform-validation.md).

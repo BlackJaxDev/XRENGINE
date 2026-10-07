@@ -290,14 +290,14 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
 
     private void SetBenchmarkRunToggle(bool enabled, bool includeDebugDisplays)
     {
-        _benchmarkRunToggle = enabled && !includeDebugDisplays;
-        _benchmarkRunWithDebugDisplaysToggle = enabled && includeDebugDisplays;
         if (enabled)
         {
             FlushPendingBenchmarkTeardown();
             TryStartBenchmark(includeDebugDisplays);
+            _benchmarkRunToggle = _benchmarkRunning && !_benchmarkIncludeDebugDisplays;
+            _benchmarkRunWithDebugDisplaysToggle = _benchmarkRunning && _benchmarkIncludeDebugDisplays;
         }
-        else if (_benchmarkRunning)
+        else if (_benchmarkRunning && includeDebugDisplays == _benchmarkIncludeDebugDisplays)
             StopBenchmark(destroyInstances: true, updateStatus: true, cancelled: true);
     }
 
@@ -524,6 +524,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         {
             StopBenchmarkRootMotion();
             _benchmarkRunToggle = false;
+            _benchmarkRunWithDebugDisplaysToggle = false;
             return;
         }
 
@@ -726,7 +727,16 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         MathIntersectionsWorldTestEntry? restoredEntry = null;
         if (_pendingBenchmarkRestoreEntry is { } entry && _pendingBenchmarkRestoreSourceWasActive)
         {
-            entry.RootNode.IsActiveSelf = true;
+            try
+            {
+                entry.RootNode.IsActiveSelf = true;
+            }
+            catch (Exception ex)
+            {
+                _benchmarkStatus = $"Failed to restore {entry.DisplayName}: {ex.GetType().Name}: {ex.Message}";
+                XREngine.Debug.LogException(ex, $"Failed to restore benchmark source rig '{entry.DisplayName}'.");
+                throw;
+            }
             restoredEntry = entry;
         }
 

@@ -42,7 +42,11 @@ public static partial class EditorUnitTests
             RegisterMathIntersectionsTest(testLayoutController, testRootNode, definition);
         }
 
-        return CreateTrackedWorld("Math Intersections World", scene);
+        XRWorld world = CreateTrackedWorld("Math Intersections World", scene);
+        // Keep unlit faces visible without an indirect lighting simulation.
+        world.Settings.AmbientLightColor = new ColorF3(0.15f, 0.15f, 0.15f);
+        world.Settings.AmbientLightIntensity = 1.0f;
+        return world;
     }
 
     private static void RegisterMathIntersectionsTest(
@@ -1240,6 +1244,7 @@ public static partial class EditorUnitTests
 
         XRMaterial? material = null;
         string? subMeshName = null;
+        List<XRMesh> oldMeshes = [];
         foreach (SubMesh existingSubMesh in existingModel.Meshes)
         {
             subMeshName ??= existingSubMesh.Name;
@@ -1247,7 +1252,7 @@ public static partial class EditorUnitTests
             {
                 material ??= lod.Material as XRMaterial;
                 if (lod.Mesh is XRMesh oldMesh)
-                    oldMesh.Destroy();
+                    oldMeshes.Add(oldMesh);
             }
         }
 
@@ -1281,6 +1286,8 @@ public static partial class EditorUnitTests
             Name = subMeshName ?? "SkinnedBoxVisual"
         };
         modelComponent.Model = new Model(rebuiltSubMesh);
+        foreach (XRMesh oldMesh in oldMeshes)
+            oldMesh.Destroy();
 
         // Reinitialize particles at the current (post-move) bone positions so the
         // simulation doesn't see a huge _objectMove delta on its first frame.

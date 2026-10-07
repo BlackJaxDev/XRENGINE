@@ -77,7 +77,7 @@ internal static unsafe class VulkanOrderedComputeProducer
             return ERendererComputeEnqueueStatus.InvalidResource;
         }
 
-        operation = new BufferCopyOp(
+        operation = BufferCopyOp.Rent(
             passIndex,
             sourceOwner,
             sourceBuffer,

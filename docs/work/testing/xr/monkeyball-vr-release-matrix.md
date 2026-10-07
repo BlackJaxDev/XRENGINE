@@ -44,3 +44,21 @@ keyboard/gamepad fallback until equivalent OpenXR action bindings are added.
   in the package.
 - [ ] Logs contain no unhandled exception, GPU validation error, or sustained
   frame-pacing regression.
+
+Architecture: [AOT Final Game Builds](../../../developer-guides/runtime/aot-final-game-builds.md#game-runtime-smoke).
+
+## Imported Checks
+
+### From monkeyball-vr-final-build-runtime-todo.md
+
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Direct user sign-off of the repackaged ZIP | Run `Publish-VRMonkeyBall-NativeAOT-Package`. Extract `Samples/MonkeyBallVR/Build/Packages/MonkeyBallVR-win-x64.zip`. Play the desktop game: hold W/A/S/D and the arrow keys, press R, and watch the sun shadows. | The ball rolls under physics. Each key pair gives the same tilt. The stage pivots on the ball. The camera stays upright and follows the ball. R resets the ball. Moving shadows are visible. | Pending | 2026-07-29 (automated gates passed; user sign-off open) |
+
+## Recovered Items To Triage
+
+The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
+
+### From `todo/games/monkeyball-vr-final-build-runtime-todo.md`
+
+- [ ] The repackaged ZIP receives direct user sign-off.

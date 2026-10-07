@@ -455,8 +455,7 @@ namespace XREngine.Rendering.Commands
         // frame and let every frustum/BVH-passing candidate through unchanged, while
         // still building the pyramid so the next frame can refine normally.
         //
-        // Phase 4 contract (docs/work/todo/rendering/occlusion-and-meshlet-execution-todo.md):
-        // the bypass branch now issues an explicit
+        // Contract: the bypass branch now issues an explicit
         // EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command before
         // returning, which serializes the upstream cull-pass writes against the
         // downstream MultiDrawElementsIndirectCount read. That was the missing
@@ -894,7 +893,7 @@ namespace XREngine.Rendering.Commands
             // anyway (so the *next* frame can cull normally) and skips refine for this
             // pass: every frustum/BVH candidate passes through unchanged.
             //
-            // Phase 4 (Build/.../occlusion-and-meshlet-execution-todo.md): default ON.
+            // Default ON.
             // The cull pass writes _culledSceneToRenderBuffer + _culledCountBuffer
             // directly. The refine pass would normally read those, write the refined
             // commands into _occlusionCulledBuffer, and SwapCulledBufferAfterOcclusion()

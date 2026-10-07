@@ -2,7 +2,7 @@
 
 Status: browser reference, editor-published player, minimal OpenGL/Vulkan visual and native callback smokes pass locally. Broader test/native integration acceptance remains unqualified.
 
-Updated: 2026-09-30. Tracks the active [unified runtime checklist](../../todo/platform/unified-desktop-browser-runtime-todo.md) and [native integration acceptance](../../todo/platform/native-subsystem-project-split-todo.md).
+Updated: 2026-09-30. Tracks the active [unified runtime checklist](../../todo/platform/unified-desktop-browser-runtime-todo.md) and [native integration acceptance](../../testing/platform/platform-validation.md).
 
 ## Findings
 

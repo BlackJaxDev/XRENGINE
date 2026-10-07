@@ -2,7 +2,7 @@
 
 Status: native extraction and whole-project portability are implemented in source. The owner deferred builds, tests, runtime validation, and debugging until the code work is complete. Physics default promotion remains gated by the owner decision and browser/parity acceptance.
 
-Tracks [the remaining debugging and validation checklist](../../todo/platform/native-subsystem-project-split-todo.md).
+Tracks [Platform Validation](../../testing/platform/platform-validation.md).
 
 ## Documentation and source records
 

@@ -394,8 +394,8 @@ Acceptance criteria:
   authoring tools.
 - [ ] Record final command-site count, resource-layout coverage, test results,
   editor validation, known limitations, and follow-ups.
-- [ ] Move this TODO back to `docs/work/todo/COMPLETED/` only after every
-  completion criterion is satisfied.
+- [ ] Delete this TODO only after every completion criterion is satisfied and
+  its design is in an architecture doc.
 - [ ] Prepare PR notes covering what changed, why, validation, risks, and any
   intentionally deferred non-resource-lifecycle work.
 - [ ] Merge branch `rendering/finalize-pipeline-resource-lifecycle` back into

@@ -16,7 +16,26 @@ public sealed partial class AdvancedGpuScenePublisher
     private AdvancedDeformedVertex[] _packedGeometryVertices = [];
     private uint[] _packedGeometryIndices = [];
     private AdvancedMeshletDescriptor[] _packedMeshletDescriptors = [];
+    private uint[] _packedMeshletVertexIndices = [];
     private uint[] _packedMeshletTriangleWords = [];
+    private StagedCanonicalGeometry[] _stagedGeometry = [];
+
+    private struct StagedCanonicalGeometry
+    {
+        public bool Captured;
+        public MeshletPayload? SizedPayload;
+        public bool SizedWithMeshlets;
+        public int VertexOffset;
+        public int VertexCount;
+        public int IndexOffset;
+        public int IndexCount;
+        public int DescriptorOffset;
+        public int DescriptorCount;
+        public int MeshletIndexOffset;
+        public int MeshletIndexCount;
+        public int TriangleWordOffset;
+        public int TriangleWordCount;
+    }
 
     /// <summary>
     /// Reuses triangle validation for the exact geometry revision already admitted
@@ -76,44 +95,19 @@ public sealed partial class AdvancedGpuScenePublisher
     }
 
     private bool TryRegisterCanonicalGeometry(
-        XRMesh? mesh,
+        int commandIndex,
         in BoundsGpu bounds,
         in DrawMetadata command,
         out AdvancedGpuHandle geometry)
     {
         geometry = AdvancedGpuHandle.Invalid;
-        if (!TryValidateCanonicalGeometry(mesh, out _))
+        ref readonly StagedCanonicalGeometry staged = ref _stagedGeometry[commandIndex];
+        if (!staged.Captured)
             return false;
-
-        // Validation establishes non-null mesh and readable attribute streams above.
-        int vertexCount = mesh!.VertexCount;
-        List<IndexTriangle> sourceTriangles = mesh.Triangles!;
-        if (!HasGeometryScratchCapacity(
-                vertexCount,
-                checked(sourceTriangles.Count * 3),
-                mesh.MeshletPayload))
-        {
-            return false;
-        }
-
-        for (uint vertexIndex = 0u; vertexIndex < (uint)vertexCount; ++vertexIndex)
-            _packedGeometryVertices[vertexIndex] = AdvancedPackedVertexCodec.Pack(
-                mesh,
-                vertexIndex,
-                vertexIndex);
-
-        int indexCursor = 0;
-        for (int triangleIndex = 0; triangleIndex < sourceTriangles.Count; ++triangleIndex)
-        {
-            IndexTriangle triangle = sourceTriangles[triangleIndex];
-            _packedGeometryIndices[indexCursor++] = checked((uint)triangle.Point0);
-            _packedGeometryIndices[indexCursor++] = checked((uint)triangle.Point1);
-            _packedGeometryIndices[indexCursor++] = checked((uint)triangle.Point2);
-        }
 
         AdvancedGeometryRegistration registration = AdvancedGeometryRegistration.Create(
-            checked((uint)vertexCount),
-            checked((uint)indexCursor),
+            checked((uint)staged.VertexCount),
+            checked((uint)staged.IndexCount),
             checked((uint)Unsafe.SizeOf<AdvancedDeformedVertex>()),
             EPrimitiveType.Triangles,
             AdvancedDeformedVertex.CanonicalLayoutId,
@@ -123,50 +117,220 @@ public sealed partial class AdvancedGpuScenePublisher
             command.SubmeshID,
             1u);
         ReadOnlySpan<byte> vertexBytes = MemoryMarshal.AsBytes(
-            _packedGeometryVertices.AsSpan(0, vertexCount));
-        ReadOnlySpan<uint> indices = _packedGeometryIndices.AsSpan(0, indexCursor);
+            _packedGeometryVertices.AsSpan(staged.VertexOffset, staged.VertexCount));
+        ReadOnlySpan<uint> indices = _packedGeometryIndices.AsSpan(staged.IndexOffset, staged.IndexCount);
 
-        MeshletPayload? payload = mesh.MeshletPayload;
-        if (payload is not { HasMeshlets: true } || !payload.IsValidatedFor(mesh))
+        if (staged.DescriptorCount == 0)
             return Database.Scene.Geometry.TryAddStatic(
                 vertexBytes,
                 indices,
                 registration,
                 out geometry);
 
-        int descriptorCount = payload.Meshlets.Length;
-        for (int descriptorIndex = 0; descriptorIndex < descriptorCount; ++descriptorIndex)
-        {
-            CpuMeshletDescriptor source = payload.Meshlets[descriptorIndex];
-            _packedMeshletDescriptors[descriptorIndex] = new AdvancedMeshletDescriptor
-            {
-                BoundsSphere = source.BoundsSphere,
-                VertexOffset = source.VertexOffset,
-                TriangleByteOffset = source.TriangleOffset,
-                VertexCount = source.VertexCount,
-                TriangleCount = source.TriangleCount,
-                Cone = source.Cone,
-                ConeApex = source.ConeApex,
-                PackedCone = source.PackedCone,
-            };
-        }
-        PackTriangleWords(
-            payload.TriangleIndices.AsSpan(),
-            _packedMeshletTriangleWords);
         registration = registration with
         {
-            MeshletCount = checked((uint)descriptorCount),
+            MeshletCount = checked((uint)staged.DescriptorCount),
         };
         return Database.Scene.Geometry.TryAddMeshletLocal(
             vertexBytes,
             indices,
-            _packedMeshletDescriptors.AsSpan(0, descriptorCount),
-            payload.VertexIndices.AsSpan(),
-            _packedMeshletTriangleWords.AsSpan(
-                0,
-                checked((payload.TriangleIndices.Length + 3) / 4)),
+            _packedMeshletDescriptors.AsSpan(staged.DescriptorOffset, staged.DescriptorCount),
+            _packedMeshletVertexIndices.AsSpan(staged.MeshletIndexOffset, staged.MeshletIndexCount),
+            _packedMeshletTriangleWords.AsSpan(staged.TriangleWordOffset, staged.TriangleWordCount),
             registration,
             out geometry);
+    }
+
+    private bool TryStagePlannedGeometry(out string failure)
+    {
+        failure = string.Empty;
+        int vertexCursor = 0;
+        int indexCursor = 0;
+        int descriptorCursor = 0;
+        int meshletIndexCursor = 0;
+        int triangleWordCursor = 0;
+
+        for (int commandIndex = 0; commandIndex < _plannedCommandCount; ++commandIndex)
+        {
+            ref readonly AdvancedGpuSceneCommandTransition plan = ref _plannedCommands[commandIndex];
+            if (!plan.Supported || !RequiresGeometryAppend(in plan))
+                continue;
+
+            XRMesh? mesh = plan.Mesh;
+            if (mesh is null)
+            {
+                failure = $"Command {commandIndex} lost its geometry source before capture.";
+                return false;
+            }
+
+            XRMesh.BufferCollection buffers = mesh.Buffers;
+            if (!buffers.TryAcquireGeometryReadScope(mesh, out XRMesh.BufferCollection.GeometryReadScope scope))
+            {
+                failure = $"Command {commandIndex} geometry source is changing or retiring.";
+                return false;
+            }
+
+            using (scope)
+            {
+                if (mesh.GeometryRevision != plan.MeshGeometryRevision ||
+                    mesh.VertexCount != plan.MeshVertexCount ||
+                    mesh.Type != plan.MeshPrimitiveTopology ||
+                    mesh.Triangles is not { } triangles ||
+                    (long)triangles.Count * 3L != plan.MeshIndexCount ||
+                    !TryValidateCanonicalGeometry(mesh, out _))
+                {
+                    failure = $"Command {commandIndex} geometry changed before capture; plannedRevision={plan.MeshGeometryRevision}, currentRevision={mesh.GeometryRevision}.";
+                    return false;
+                }
+
+                MeshletPayload? payload = mesh.MeshletPayload;
+                bool useMeshlets = payload is { HasMeshlets: true } && payload.IsValidatedFor(mesh);
+                int vertexCount = mesh.VertexCount;
+                int indexCount = checked(triangles.Count * 3);
+                int descriptorCount = useMeshlets ? payload!.Meshlets.Length : 0;
+                int meshletIndexCount = useMeshlets ? payload!.VertexIndices.Length : 0;
+                int triangleWordCount = useMeshlets
+                    ? checked((int)(((long)payload!.TriangleIndices.Length + 3L) / 4L))
+                    : 0;
+                ref StagedCanonicalGeometry sized = ref _stagedGeometry[commandIndex];
+                if (!ReferenceEquals(sized.SizedPayload, payload) ||
+                    sized.SizedWithMeshlets != useMeshlets ||
+                    sized.VertexCount != vertexCount || sized.IndexCount != indexCount ||
+                    sized.DescriptorCount != descriptorCount ||
+                    sized.MeshletIndexCount != meshletIndexCount ||
+                    sized.TriangleWordCount != triangleWordCount ||
+                    vertexCount > _packedGeometryVertices.Length - vertexCursor ||
+                    indexCount > _packedGeometryIndices.Length - indexCursor ||
+                    descriptorCount > _packedMeshletDescriptors.Length - descriptorCursor ||
+                    meshletIndexCount > _packedMeshletVertexIndices.Length - meshletIndexCursor ||
+                    triangleWordCount > _packedMeshletTriangleWords.Length - triangleWordCursor)
+                {
+                    failure = $"Command {commandIndex} geometry changed after boundary sizing; plannedRevision={plan.MeshGeometryRevision}, currentRevision={mesh.GeometryRevision}.";
+                    return false;
+                }
+
+                for (uint vertexIndex = 0; vertexIndex < (uint)vertexCount; ++vertexIndex)
+                    _packedGeometryVertices[vertexCursor + checked((int)vertexIndex)] = AdvancedPackedVertexCodec.Pack(
+                        mesh, vertexIndex, vertexIndex);
+
+                int destinationIndex = indexCursor;
+                for (int triangleIndex = 0; triangleIndex < triangles.Count; ++triangleIndex)
+                {
+                    IndexTriangle triangle = triangles[triangleIndex];
+                    _packedGeometryIndices[destinationIndex++] = checked((uint)triangle.Point0);
+                    _packedGeometryIndices[destinationIndex++] = checked((uint)triangle.Point1);
+                    _packedGeometryIndices[destinationIndex++] = checked((uint)triangle.Point2);
+                }
+
+                if (useMeshlets)
+                {
+                    for (int descriptorIndex = 0; descriptorIndex < descriptorCount; ++descriptorIndex)
+                    {
+                        CpuMeshletDescriptor source = payload!.Meshlets[descriptorIndex];
+                        _packedMeshletDescriptors[descriptorCursor + descriptorIndex] = new AdvancedMeshletDescriptor
+                        {
+                            BoundsSphere = source.BoundsSphere,
+                            VertexOffset = source.VertexOffset,
+                            TriangleByteOffset = source.TriangleOffset,
+                            VertexCount = source.VertexCount,
+                            TriangleCount = source.TriangleCount,
+                            Cone = source.Cone,
+                            ConeApex = source.ConeApex,
+                            PackedCone = source.PackedCone,
+                        };
+                    }
+                    payload!.VertexIndices.AsSpan().CopyTo(
+                        _packedMeshletVertexIndices.AsSpan(meshletIndexCursor, meshletIndexCount));
+                    PackTriangleWords(
+                        payload.TriangleIndices.AsSpan(),
+                        _packedMeshletTriangleWords.AsSpan(triangleWordCursor, triangleWordCount));
+                }
+
+                if (!ReferenceEquals(mesh.Buffers, buffers) ||
+                    !ReferenceEquals(mesh.MeshletPayload, payload) ||
+                    mesh.GeometryRevision != plan.MeshGeometryRevision ||
+                    mesh.VertexCount != vertexCount ||
+                    mesh.Type != plan.MeshPrimitiveTopology ||
+                    !ReferenceEquals(mesh.Triangles, triangles) ||
+                    triangles.Count * 3L != indexCount ||
+                    mesh.IsDestroyQueued || mesh.IsDestroyed)
+                {
+                    failure = $"Command {commandIndex} geometry changed during capture; plannedRevision={plan.MeshGeometryRevision}, currentRevision={mesh.GeometryRevision}.";
+                    return false;
+                }
+
+                _stagedGeometry[commandIndex] = new StagedCanonicalGeometry
+                {
+                    Captured = true,
+                    VertexOffset = vertexCursor,
+                    VertexCount = vertexCount,
+                    IndexOffset = indexCursor,
+                    IndexCount = indexCount,
+                    DescriptorOffset = descriptorCursor,
+                    DescriptorCount = descriptorCount,
+                    MeshletIndexOffset = meshletIndexCursor,
+                    MeshletIndexCount = meshletIndexCount,
+                    TriangleWordOffset = triangleWordCursor,
+                    TriangleWordCount = triangleWordCount,
+                };
+                vertexCursor += vertexCount;
+                indexCursor += indexCount;
+                descriptorCursor += descriptorCount;
+                meshletIndexCursor += meshletIndexCount;
+                triangleWordCursor += triangleWordCount;
+            }
+        }
+
+        return true;
+    }
+
+    private string DescribeCanonicalGeometryRegistrationFailure(int commandIndex, long plannedRevision)
+    {
+        AdvancedGeometryDatabase geometry = Database.Scene.Geometry;
+        ref readonly StagedCanonicalGeometry staged = ref _stagedGeometry[commandIndex];
+        string state = $"plannedRevision={plannedRevision}, captured={staged.Captured}, " +
+            $"vertices={staged.VertexCount}/{_packedGeometryVertices.Length}, indices={staged.IndexCount}/{_packedGeometryIndices.Length}, " +
+            $"meshletDescriptors={staged.DescriptorCount}/{_packedMeshletDescriptors.Length}, " +
+            $"meshletIndices={staged.MeshletIndexCount}/{_packedMeshletVertexIndices.Length}, " +
+            $"meshletTriangleWords={staged.TriangleWordCount}/{_packedMeshletTriangleWords.Length}, " +
+            $"geometryRows={geometry.Records.Count}+{geometry.Records.RetiredCount}/{geometry.Records.Capacity}, " +
+            $"vertexBytes={geometry.StaticVertexArena.CountBytes}/{geometry.StaticVertexArena.CapacityBytes}, " +
+            $"indexBytes={geometry.IndexArena.CountBytes}/{geometry.IndexArena.CapacityBytes}, " +
+            $"descriptorBytes={geometry.MeshletDescriptorArena.CountBytes}/{geometry.MeshletDescriptorArena.CapacityBytes}, " +
+            $"meshletIndexBytes={geometry.MeshletVertexIndexArena.CountBytes}/{geometry.MeshletVertexIndexArena.CapacityBytes}, " +
+            $"triangleWordBytes={geometry.MeshletTriangleWordArena.CountBytes}/{geometry.MeshletTriangleWordArena.CapacityBytes}";
+
+        if (!staged.Captured)
+            return $"Geometry capture was not present; {state}";
+        if (geometry.Records.AvailableAdditions < 1 || geometry.Records.AvailablePublicationDeltas < 1)
+            return $"Geometry record add has no capacity or publication delta; {state}";
+
+        ulong vertexBytes = (ulong)staged.VertexCount * (uint)Unsafe.SizeOf<AdvancedDeformedVertex>();
+        ulong indexBytes = (ulong)staged.IndexCount * sizeof(uint);
+        if (vertexBytes > uint.MaxValue ||
+            !geometry.StaticVertexArena.CanAppend((uint)vertexBytes, (uint)Unsafe.SizeOf<AdvancedDeformedVertex>()))
+            return $"Static vertex arena rejected the append of {vertexBytes} bytes; {state}";
+        if (indexBytes > uint.MaxValue ||
+            !geometry.IndexArena.CanAppend((uint)indexBytes, sizeof(uint)))
+            return $"Geometry index arena rejected the append of {indexBytes} bytes; {state}";
+
+        if (staged.DescriptorCount != 0)
+        {
+            ulong descriptorBytes = (ulong)staged.DescriptorCount * (uint)Unsafe.SizeOf<AdvancedMeshletDescriptor>();
+            ulong meshletIndexBytes = (ulong)staged.MeshletIndexCount * sizeof(uint);
+            ulong triangleBytes = (ulong)staged.TriangleWordCount * sizeof(uint);
+            if (descriptorBytes > uint.MaxValue ||
+                !geometry.MeshletDescriptorArena.CanAppend((uint)descriptorBytes, (uint)Unsafe.SizeOf<AdvancedMeshletDescriptor>()))
+                return $"Meshlet descriptor arena rejected the append of {descriptorBytes} bytes; {state}";
+            if (meshletIndexBytes > uint.MaxValue ||
+                !geometry.MeshletVertexIndexArena.CanAppend((uint)meshletIndexBytes, sizeof(uint)))
+                return $"Meshlet vertex-index arena rejected the append of {meshletIndexBytes} bytes; {state}";
+            if (triangleBytes > uint.MaxValue ||
+                !geometry.MeshletTriangleWordArena.CanAppend((uint)triangleBytes, sizeof(uint)))
+                return $"Meshlet triangle-word arena rejected the append of {triangleBytes} bytes; {state}";
+        }
+
+        return $"Geometry add failed after staged record and arena checks; {state}";
     }
 
     /// <summary>
@@ -183,13 +347,16 @@ public sealed partial class AdvancedGpuScenePublisher
         ulong meshletDescriptorEnd = geometry.MeshletDescriptorArena.CountBytes;
         ulong meshletVertexIndexEnd = geometry.MeshletVertexIndexArena.CountBytes;
         ulong meshletTriangleWordEnd = geometry.MeshletTriangleWordArena.CountBytes;
-        int maximumVertexCount = 0;
-        int maximumIndexCount = 0;
-        int maximumMeshletDescriptorCount = 0;
-        int maximumMeshletTriangleWordCount = 0;
+        int totalVertexCount = 0;
+        int totalIndexCount = 0;
+        int totalMeshletDescriptorCount = 0;
+        int totalMeshletVertexIndexCount = 0;
+        int totalMeshletTriangleWordCount = 0;
         uint vertexStride = checked((uint)Unsafe.SizeOf<AdvancedDeformedVertex>());
         uint meshletDescriptorStride =
             checked((uint)Unsafe.SizeOf<AdvancedMeshletDescriptor>());
+        EnsureCapacity(ref _stagedGeometry, _plannedCommandCount);
+        Array.Clear(_stagedGeometry, 0, _plannedCommandCount);
 
         for (int commandIndex = 0;
              commandIndex < _plannedCommandCount;
@@ -199,71 +366,89 @@ public sealed partial class AdvancedGpuScenePublisher
                 ref _plannedCommands[commandIndex];
             if (!plan.Supported || !RequiresGeometryAppend(in plan))
                 continue;
-            if (!TryValidateCanonicalGeometry(plan.Mesh, out _))
+            XRMesh? mesh = plan.Mesh;
+            if (mesh is null)
                 return false;
-
-            XRMesh mesh = plan.Mesh!;
-            int vertexCount = mesh.VertexCount;
-            int indexCount = checked(mesh.Triangles!.Count * 3);
-            maximumVertexCount = Math.Max(maximumVertexCount, vertexCount);
-            maximumIndexCount = Math.Max(maximumIndexCount, indexCount);
-
-            MeshletPayload? payload = mesh.MeshletPayload;
-            if (payload is { HasMeshlets: true })
-            {
-                maximumMeshletDescriptorCount = Math.Max(
-                    maximumMeshletDescriptorCount,
-                    payload.Meshlets.Length);
-                maximumMeshletTriangleWordCount = Math.Max(
-                    maximumMeshletTriangleWordCount,
-                    checked((int)(((long)payload.TriangleIndices.Length + 3L) / 4L)));
-            }
-
-            if (!TryAccumulateArenaAppend(
-                    ref staticVertexEnd,
-                    checked((ulong)vertexCount * vertexStride),
-                    vertexStride) ||
-                !TryAccumulateArenaAppend(
-                    ref indexEnd,
-                    checked((ulong)indexCount * sizeof(uint)),
-                    sizeof(uint)))
-            {
+            XRMesh.BufferCollection buffers = mesh.Buffers;
+            if (!buffers.TryAcquireGeometryReadScope(mesh, out XRMesh.BufferCollection.GeometryReadScope scope))
                 return false;
-            }
-
-            if (payload is not { HasMeshlets: true } ||
-                !payload.IsValidatedFor(mesh))
+            using (scope)
             {
-                continue;
-            }
+                if (mesh.GeometryRevision != plan.MeshGeometryRevision ||
+                    mesh.VertexCount != plan.MeshVertexCount ||
+                    mesh.Type != plan.MeshPrimitiveTopology ||
+                    mesh.Triangles is not { } triangles ||
+                    (long)triangles.Count * 3L != plan.MeshIndexCount ||
+                    !TryValidateCanonicalGeometry(mesh, out _))
+                    return false;
 
-            if (!TryAccumulateArenaAppend(
-                    ref meshletDescriptorEnd,
-                    checked((ulong)payload.Meshlets.Length * meshletDescriptorStride),
-                    meshletDescriptorStride) ||
-                !TryAccumulateArenaAppend(
-                    ref meshletVertexIndexEnd,
-                    checked((ulong)payload.VertexIndices.Length * sizeof(uint)),
-                    sizeof(uint)) ||
-                !TryAccumulateArenaAppend(
-                    ref meshletTriangleWordEnd,
-                    checked(
-                        ((ulong)payload.TriangleIndices.Length + 3UL) /
-                        4UL * sizeof(uint)),
-                    sizeof(uint)))
-            {
-                return false;
+                int vertexCount = mesh.VertexCount;
+                int indexCount = checked(triangles.Count * 3);
+                MeshletPayload? payload = mesh.MeshletPayload;
+                bool useMeshlets = payload is { HasMeshlets: true } && payload.IsValidatedFor(mesh);
+                int descriptorCount = useMeshlets ? payload!.Meshlets.Length : 0;
+                int meshletIndexCount = useMeshlets ? payload!.VertexIndices.Length : 0;
+                int triangleWordCount = useMeshlets
+                    ? checked((int)(((long)payload!.TriangleIndices.Length + 3L) / 4L))
+                    : 0;
+                _stagedGeometry[commandIndex] = new StagedCanonicalGeometry
+                {
+                    SizedPayload = payload,
+                    SizedWithMeshlets = useMeshlets,
+                    VertexCount = vertexCount,
+                    IndexCount = indexCount,
+                    DescriptorCount = descriptorCount,
+                    MeshletIndexCount = meshletIndexCount,
+                    TriangleWordCount = triangleWordCount,
+                };
+                totalVertexCount = checked(totalVertexCount + vertexCount);
+                totalIndexCount = checked(totalIndexCount + indexCount);
+                totalMeshletDescriptorCount = checked(totalMeshletDescriptorCount + descriptorCount);
+                totalMeshletVertexIndexCount = checked(totalMeshletVertexIndexCount + meshletIndexCount);
+                totalMeshletTriangleWordCount = checked(totalMeshletTriangleWordCount + triangleWordCount);
+
+                if (!TryAccumulateArenaAppend(
+                        ref staticVertexEnd,
+                        checked((ulong)vertexCount * vertexStride),
+                        vertexStride) ||
+                    !TryAccumulateArenaAppend(
+                        ref indexEnd,
+                        checked((ulong)indexCount * sizeof(uint)),
+                        sizeof(uint)))
+                    return false;
+
+                if (useMeshlets &&
+                    (!TryAccumulateArenaAppend(
+                        ref meshletDescriptorEnd,
+                        checked((ulong)descriptorCount * meshletDescriptorStride),
+                        meshletDescriptorStride) ||
+                     !TryAccumulateArenaAppend(
+                        ref meshletVertexIndexEnd,
+                        checked((ulong)meshletIndexCount * sizeof(uint)),
+                        sizeof(uint)) ||
+                     !TryAccumulateArenaAppend(
+                        ref meshletTriangleWordEnd,
+                        checked((ulong)triangleWordCount * sizeof(uint)),
+                        sizeof(uint))))
+                    return false;
+
+                if (mesh.GeometryRevision != plan.MeshGeometryRevision ||
+                    !ReferenceEquals(mesh.Buffers, buffers) ||
+                    !ReferenceEquals(mesh.MeshletPayload, payload) ||
+                    mesh.VertexCount != vertexCount ||
+                    mesh.Type != plan.MeshPrimitiveTopology ||
+                    !ReferenceEquals(mesh.Triangles, triangles) ||
+                    triangles.Count * 3L != indexCount ||
+                    mesh.IsDestroyQueued || mesh.IsDestroyed)
+                    return false;
             }
         }
 
-        EnsureCapacity(ref _packedGeometryVertices, maximumVertexCount);
-        EnsureCapacity(ref _packedGeometryIndices, maximumIndexCount);
-        EnsureCapacity(
-            ref _packedMeshletDescriptors,
-            maximumMeshletDescriptorCount);
-        EnsureCapacity(
-            ref _packedMeshletTriangleWords,
-            maximumMeshletTriangleWordCount);
+        EnsureCapacity(ref _packedGeometryVertices, totalVertexCount);
+        EnsureCapacity(ref _packedGeometryIndices, totalIndexCount);
+        EnsureCapacity(ref _packedMeshletDescriptors, totalMeshletDescriptorCount);
+        EnsureCapacity(ref _packedMeshletVertexIndices, totalMeshletVertexIndexCount);
+        EnsureCapacity(ref _packedMeshletTriangleWords, totalMeshletTriangleWordCount);
 
         uint requiredStaticVertexBytes = checked((uint)staticVertexEnd);
         uint requiredIndexBytes = checked((uint)indexEnd);
@@ -497,27 +682,6 @@ public sealed partial class AdvancedGpuScenePublisher
         return remainder == 0u
             ? value
             : checked(value + alignment - remainder);
-    }
-
-    private bool HasGeometryScratchCapacity(
-        int vertexCount,
-        int indexCount,
-        MeshletPayload? payload)
-    {
-        if (vertexCount <= 0 || indexCount <= 0)
-            return false;
-
-        if (_packedGeometryVertices.Length < vertexCount ||
-            _packedGeometryIndices.Length < indexCount)
-        {
-            return false;
-        }
-        if (payload is not { HasMeshlets: true })
-            return true;
-
-        return _packedMeshletDescriptors.Length >= payload.Meshlets.Length &&
-            _packedMeshletTriangleWords.Length >=
-                checked((int)(((long)payload.TriangleIndices.Length + 3L) / 4L));
     }
 
     private static void PackTriangleWords(

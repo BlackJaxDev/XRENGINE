@@ -597,6 +597,20 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
+        /// Captures renderer routes in one scene scan. The caller owns the reusable
+        /// snapshot and must consume it before the next scene command mutation.
+        /// </summary>
+        internal void CaptureRendererCommandIndices(GpuSceneRendererCommandIndexSnapshot snapshot)
+        {
+            ArgumentNullException.ThrowIfNull(snapshot);
+            snapshot.Clear();
+            using (_lock.EnterScope())
+                foreach (var entry in _commandIndicesPerMeshCommand)
+                    if (entry.Key.Mesh is { } renderer)
+                        snapshot.Append(renderer, entry.Value);
+        }
+
+        /// <summary>
         /// Fills <paramref name="output"/> with every active GPU command index that
         /// belongs to <paramref name="renderer"/>. Returns true if at least one was found.
         /// </summary>

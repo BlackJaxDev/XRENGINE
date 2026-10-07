@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace XREngine.Components;
 
 public sealed partial class PhysicsChainWorld
@@ -54,6 +56,8 @@ public sealed partial class PhysicsChainWorld
         int sleepingCount = 0;
         int enteredSleepCount = 0;
         ulong wakeCount = 0UL;
+        bool observe = RuntimeWorldTickTelemetry.Enabled;
+        long scanStart = observe ? Stopwatch.GetTimestamp() : 0L;
         for (int liveIndex = 0; liveIndex < _liveSlots.Count; ++liveIndex)
         {
             int slotIndex = _liveSlots[liveIndex];
@@ -63,21 +67,28 @@ public sealed partial class PhysicsChainWorld
                 continue;
 
             bool sleeping = component.IsRuntimeSleeping;
+            ulong observedWakeCount = component.WakeCount;
             if (sleeping)
                 ++sleepingCount;
             else if (component.IsActiveInHierarchy)
                 ++activeCount;
             if (sleeping && !slot.WasSleeping)
                 ++enteredSleepCount;
-            if (component.WakeCount >= slot.ObservedWakeCount)
-                wakeCount += component.WakeCount - slot.ObservedWakeCount;
-            slot.WasSleeping = sleeping;
-            slot.ObservedWakeCount = component.WakeCount;
-            _slots[slotIndex] = slot;
+            if (observedWakeCount >= slot.ObservedWakeCount)
+                wakeCount += observedWakeCount - slot.ObservedWakeCount;
+            if (slot.WasSleeping != sleeping || slot.ObservedWakeCount != observedWakeCount)
+            {
+                slot.WasSleeping = sleeping;
+                slot.ObservedWakeCount = observedWakeCount;
+                _slots[slotIndex] = slot;
+            }
         }
         _pendingActivityCounters = new PhysicsChainActivityCounters(
             _activeFrame, activeCount, sleepingCount, enteredSleepCount, wakeCount);
+        if (observe)
+            Interlocked.Add(ref _lateActivityScanTicks, Stopwatch.GetTimestamp() - scanStart);
 
+        long selectedStart = observe ? Stopwatch.GetTimestamp() : 0L;
         Span<PhysicsChainRuntimeHandle> selection = stackalloc PhysicsChainRuntimeHandle[MaximumSelectedActivityDiagnostics];
         int selectionCount;
         using (_activityDiagnosticSelectionLock.EnterScope())
@@ -112,5 +123,7 @@ public sealed partial class PhysicsChainWorld
                 component.WakeCount);
         }
         _pendingSelectedActivityDiagnosticCount = diagnosticCount;
+        if (observe)
+            Interlocked.Add(ref _lateSelectedActivityTicks, Stopwatch.GetTimestamp() - selectedStart);
     }
 }

@@ -93,53 +93,31 @@ bool candidateIncludesSelectedView(uvec2 viewMask)
 bool appendEarly(uint candidateIndex)
 {
     uint capacity = XR_ADV_VisibilityPush.payloadCapacity;
-    uint observed = atomicAdd(XR_ADV_VisibilityCounters.earlyDraws, 0u);
-    while (observed < capacity)
-    {
-        uint prior = atomicCompSwap(
-            XR_ADV_VisibilityCounters.earlyDraws,
-            observed,
-            observed + 1u);
-        if (prior == observed)
-        {
-            XR_ADV_VisibilityVisibleIndices.records[
-                XR_ADV_VisibilityPush.payloadBase + observed] = candidateIndex;
-            return true;
-        }
-        observed = prior;
-    }
-
-    if (observed >= capacity)
+    // Counters start at zero per view. Each admitted candidate appends at most
+    // once, so a single reservation cannot exceed the candidate capacity.
+    uint outputIndex = atomicAdd(XR_ADV_VisibilityCounters.earlyDraws, 1u);
+    if (outputIndex >= capacity)
     {
         atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+        return false;
     }
-    return false;
+    XR_ADV_VisibilityVisibleIndices.records[
+        XR_ADV_VisibilityPush.payloadBase + outputIndex] = candidateIndex;
+    return true;
 }
 
 bool appendDeferred(uint candidateIndex)
 {
     uint capacity = XR_ADV_VisibilityPush.payloadCapacity;
-    uint observed = atomicAdd(XR_ADV_VisibilityCounters.deferredCandidates, 0u);
-    while (observed < capacity)
-    {
-        uint prior = atomicCompSwap(
-            XR_ADV_VisibilityCounters.deferredCandidates,
-            observed,
-            observed + 1u);
-        if (prior == observed)
-        {
-            XR_ADV_VisibilityDeferredIndices.records[
-                XR_ADV_VisibilityPush.payloadBase + observed] = candidateIndex;
-            return true;
-        }
-        observed = prior;
-    }
-
-    if (observed >= capacity)
+    uint outputIndex = atomicAdd(XR_ADV_VisibilityCounters.deferredCandidates, 1u);
+    if (outputIndex >= capacity)
     {
         atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+        return false;
     }
-    return false;
+    XR_ADV_VisibilityDeferredIndices.records[
+        XR_ADV_VisibilityPush.payloadBase + outputIndex] = candidateIndex;
+    return true;
 }
 
 void main()
@@ -147,7 +125,8 @@ void main()
     uint candidateIndex = gl_GlobalInvocationID.x;
     uint candidateCount =
         uint(XR_ADV_VisibilityCandidates.records.length()) / 20u;
-    if (candidateIndex >= candidateCount)
+    if (candidateIndex >= candidateCount ||
+        candidateIndex >= XR_ADV_VisibilityPush.payloadCapacity)
         return;
 
     XRAdvancedVisibilityCandidate candidate;

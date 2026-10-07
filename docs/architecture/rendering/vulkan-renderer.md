@@ -46,17 +46,20 @@ for recipes, artifacts, comparison rules, and production evidence requirements.
   - [Swapchain Recreation](#swapchain-recreation)
 - [Synchronization Model](#synchronization-model)
 - [Render Object Factory](#render-object-factory)
+- [Backend Wrapper Parity Contract](#backend-wrapper-parity-contract)
 - [Resource Management](#resource-management)
   - [Staging Manager](#staging-manager)
   - [Pipeline Cache](#pipeline-cache)
   - [Descriptor Management](#descriptor-management)
   - [Bindless Material Texture Table](#bindless-material-texture-table)
   - [Resource Allocator](#resource-allocator)
+  - [Deferred And Probe Resource Rules](#deferred-and-probe-resource-rules)
 - [ImGui Integration](#imgui-integration)
 - [Advanced Features](#advanced-features)
   - [Ray Tracing](#ray-tracing)
   - [Auto-Exposure Compute](#auto-exposure-compute)
   - [Memory Decompression & Indirect Copy](#memory-decompression--indirect-copy)
+- [Device Loss And Fault Containment](#device-loss-and-fault-containment)
 
 ---
 
@@ -173,7 +176,6 @@ depend on the focused owner rather than ambient facade state.
 | Authority | Mutable responsibility |
 | --- | --- |
 | `VulkanDeviceContext` | Physical/logical device identity, queues, enabled capabilities, extension commands, and the per-device backend-object context. |
-| `VulkanDesktopFrameCoordinator` | Exactly-once desktop attempt lifecycle and phase ordering. |
 | `VulkanFrameOperationScheduler` / `VulkanCommandRecorder` | Frame-operation ordering and native command emission from explicit recording contexts; command-chain cache generations remain with `VulkanCommandChainState`. |
 | `VulkanRenderGraphRuntime` | Versioned immutable render-graph and barrier plans. |
 | `VulkanResourceLifetimeTracker` / `VulkanResourceRetirementQueue` | Resource-use publication and deferred destruction. |
@@ -457,9 +459,8 @@ Admit frame
   -> publish telemetry and retire completed generations
 ```
 
-Desktop WSI still delegates its attempt lifecycle to
-`VulkanDesktopFrameCoordinator`; that coordinator freezes the accepted
-swapchain acquire into the common lease before recording/submission. The target
+Desktop WSI freezes the accepted swapchain acquire into the common lease before
+recording/submission. The target
 driver retains resize, out-of-date, surface-loss, and presentation settlement.
 Presentationless execution has no acquire/present branch in its executed path.
 
@@ -813,6 +814,72 @@ These wrappers manage Vulkan-specific resources (descriptor sets, pipeline layou
 
 ---
 
+## Backend Wrapper Parity Contract
+
+Engine code requests the same generic `XR*` behavior from OpenGL and Vulkan. Each
+backend wrapper must give equivalent correctness, invalidation, diagnostics,
+resource lifetime, and shader/material binding. Vulkan can use a native mechanism
+instead of an OpenGL-shaped one; code comments must state the difference.
+
+| Generic type | Vulkan wrapper | OpenGL wrapper |
+|---|---|---|
+| `XRMeshRenderer.BaseVersion` | `VkMeshRenderer` | `GLMeshRenderer` |
+| `XRMesh` | No standalone wrapper; owned through mesh-renderer and data-buffer wrappers | Same |
+| `XRMaterial` | `VkMaterial` | `GLMaterial` |
+| `XRShader` | `VkShader` | `GLShader` |
+| `XRTexture` and concrete texture types | `VkImageBackedTexture`, `VkTexture*` | `GLTexture`, `GLTexture*` |
+| `XRDataBuffer` | `VkDataBuffer` | `GLDataBuffer` |
+
+`XRMesh` keeps no backend wrapper. The geometry layout signature is the shared
+input to Vulkan vertex input, descriptor requirements, GPU scene records,
+indirect and meshlet records, pipeline keys, and OpenGL VAO diagnostics. Add a
+mesh wrapper only if duplicated geometry lifetime across direct, indirect, and
+meshlet paths proves that it is cleaner.
+
+Wrapper diagnostics and tests use one readiness vocabulary on both backends:
+
+| State | Meaning |
+|---|---|
+| `Generated` | The backend API object or wrapper cache handle exists. It does not mean that data, descriptors, programs, pipelines, or draws are ready. |
+| `Uploaded` | CPU bytes or pixels reached backend storage, or a queued upload completion is observable. |
+| `Resident` | Enough GPU memory, pages, mips, or rows exist for the requested use. |
+| `DescriptorReady` | Descriptors, sampler/image views, buffer ranges, bindless handles, or equivalent binding records are valid for the active layout. |
+| `PipelineReady` | Shader, program, and pipeline objects are valid for the render state, material layout, vertex input, pass attachments, and feature profile. |
+| `PassReady` | Render-graph pass metadata, attachment formats, layouts, load/store decisions, queue ownership, and barriers are valid for recording. |
+| `Retired` | Replaced or destroyed resources are no longer referenced by in-flight GPU work and can be freed. |
+
+Rules:
+
+- Vulkan prefers descriptor readiness, layout fingerprints, and material binding
+  layouts over emulation of OpenGL current-binding state.
+- Vulkan prefers render-graph resource declarations, barrier planning, and
+  explicit load/store decisions over order-dependent framebuffer side effects.
+- Vulkan prefers pipeline keys, the prewarm manifest, and structured pipeline
+  miss diagnostics over late draw-time pipeline creation.
+- Wrapper resource replacement uses timeline or fence retirement, not a global
+  idle wait.
+- Descriptor indexing, buffer device address, mesh-task dispatch, sparse
+  residency, memory decompression, and indirect copy stay feature-gated and
+  diagnostic. A missing GPU path selects the resolver's visible downgrade; it
+  never becomes a silent CPU fallback.
+- A shader that indexes a descriptor array with per-draw, per-material, or
+  GPU-written values uses `nonuniformEXT` or a validated equivalent variant.
+- `GpuIndirectZeroReadback` and `GpuMeshletZeroReadback` read no count,
+  visibility, or indirect buffer on either backend. Only instrumented strategies
+  read back.
+- A local render-options override takes priority over the material render
+  options on both backends. Render options that change immutable Vulkan
+  pipeline state are part of the pipeline key.
+- Per-frame draw, descriptor, buffer, and upload paths do not allocate.
+
+Source-contract tests in `XREngine.UnitTests/Rendering/` hold these rules:
+`XRMeshAndMeshRendererVulkanParityContractTests`,
+`XRMaterialAndShaderVulkanParityContractTests`,
+`XRTextureVulkanParityContractTests`, and `VkDataBufferParityContractTests`.
+Open gaps are in the [Vulkan wrapper parity TODO](../../work/todo/rendering/vulkan-wrapper-parity-todo.md).
+
+---
+
 ## Resource Management
 
 ### Staging Manager
@@ -986,6 +1053,8 @@ Troubleshooting bindless material textures:
 
 > **Note:** The legacy per-object allocator is allocation-heavy and exists primarily as a fallback/debug path. The VMA backend is the intended default path; choose `Managed` when debugging the C# allocator or native wrapper deployment.
 
+See [Vulkan Memory Allocation](vulkan-memory-allocation.md) for allocator ownership, the native VMA bridge, mapping, failure policy, and statistics.
+
 Declared render-pipeline resources are synchronized through a staged planner
 swap. `VulkanRenderer.ResourcePlannerState` builds a pending `VulkanResourcePlanner` from the
 committed logical resource registry, validates render-pass metadata references
@@ -1012,6 +1081,18 @@ unconditionally fail-closed. The
 `Vulkan.TransientAttachments` startup record reports the mode, activation
 state, candidate counts, active groups, and the exact block reason. Positive A/B
 activation is conditional future work after the native proof contract exists.
+
+### Deferred And Probe Resource Rules
+
+These rules keep the deferred and light-probe paths correct on Vulkan, where OpenGL tolerates implicit state:
+
+- Graphics descriptor resolution consults buffers bound through `XRRenderProgram.BindBuffer(...)`. `VkMeshRenderer.TryResolveProgramBoundBuffer` reads them through `VkRenderProgram.TryGetBoundBuffer`. The probe buffers (`LightProbePositions`, `LightProbeTetrahedra`, `LightProbeParameters`, `LightProbeGridCells`, `LightProbeGridIndices`) and the forward and Forward+ light buffers resolve this way.
+- Program-bound buffers are part of the descriptor resource fingerprint (`AddProgramBoundBufferDescriptorResourceFingerprint`). A probe or light buffer replacement rebuilds the descriptor sets.
+- The deferred light-combine quad declares every resource that `DeferredLightCombine.fs` samples (GBuffer, AO, BRDF, depth view, probe arrays, and probe buffers) through `VPRC_RenderQuadToFBO` render-graph resource descriptors. The render graph orders and barriers the GBuffer, light-combine, and forward chain from these declarations.
+- Dynamic-rendering FBO begin and end transition every attachment. Stage and access masks come from the actual old and new layouts. A first-use attachment never enters rendering in the `Undefined` layout.
+- Probe face capture, IBL convolution, prefilter, and mip generation use the same dynamic-rendering transitions. Capture targets end in a sampled layout.
+- A compute dispatch is skipped and recorded as a descriptor-binding failure when its descriptors cannot be built. The backend never submits a dispatch with partly bound storage buffers or images. A buffer without storage usage cannot satisfy a `StorageBuffer` binding.
+- GPU BVH raycast picking is OpenGL-only. `BvhRaycastDispatcher` rejects GPU raycast requests on Vulkan because Vulkan fence and readback integration for that path does not exist.
 
 ---
 
@@ -1242,6 +1323,37 @@ If any requirement is unavailable, construction reports the missing capability
 and the requested `HeadlessWsi` mode remains unsupported. The renderer does not
 fall back silently. A caller may separately request `Presentationless`, which
 does not require surface or swapchain extensions.
+
+---
+
+## Device Loss And Fault Containment
+
+`VulkanDeviceStateMachine` owns one logical-device lifetime. Its states are
+`EVulkanDeviceState.Healthy`, `LossDetected`, `CollectingFaultData`,
+`Quiesced`, and `Disposed`. Transitions use compare-exchange, so the first
+observed loss wins and later failures cannot replace the first failing API and
+context. `IsDeviceOperational` is true only in `Healthy`.
+
+- Native results go through `VulkanDeviceContext.ObserveNativeResult`, which
+  starts loss collection on `ErrorDeviceLost`.
+- Queue submit and present go through the tracked submission path in
+  `VulkanCommandRuntime.TrackedSubmission.cs`. After loss, it rejects new
+  submit, present, and recreate work.
+- `VulkanDeviceFaultFacility` collects `VK_KHR_device_fault` address, vendor,
+  and vendor-binary records when the device supports them. Caps come from
+  `XRE_VULKAN_DEVICE_FAULT_ADDRESS_CAP`, `XRE_VULKAN_DEVICE_FAULT_VENDOR_CAP`,
+  `XRE_VULKAN_DEVICE_FAULT_REPORT_CAP`, and
+  `XRE_VULKAN_DEVICE_FAULT_VENDOR_BINARY_CAP`.
+- Lost-device teardown does not wait for completion that it cannot prove. It
+  uses forced retirement (see [Cleanup](#cleanup-and-partial-initialization)).
+
+Diagnostics use composable flags plus curated presets.
+`XRE_VULKAN_DIAGNOSTIC_PRESET` selects an `EVulkanDiagnosticPreset`: `Off`,
+`StandardValidation`, `SyncValidation`, `GpuAssisted`, `BestPractices`,
+`CrashDiagnostics`, or `RenderDocFriendly`. `XRE_VULKAN_DIAGNOSTIC_FLAGS` and
+per-feature variables such as `XRE_VULKAN_CRASH_BREADCRUMBS` and
+`XRE_VULKAN_DEVICE_FAULT` adjust the result. `VulkanDiagnosticOptions` resolves
+the effective set and logs each source.
 
 ---
 

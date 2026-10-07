@@ -10,9 +10,7 @@ Supersedes:
 - [Sparse Texture Streaming Plan](sparse-texture-streaming-plan.md)
 - [Bindless Deferred Texturing Plan](bindless-deferred-texturing-plan.md)
 - [Neural Texture Compression Implementation Plan](neural%20texture%20compression.md)
-- [Texture Management Runtime TODO](../../todo/texturing/texture-management-runtime-todo.md)
-- [Texture Streaming Cooked Cache TODO](../../todo/texturing/texture-streaming-cooked-cache-todo.md)
-- [Texture Streaming Consolidation TODO](../../todo/texturing/texture-streaming-consolidation-todo.md)
+- [Texture Streaming architecture](../../../architecture/rendering/texture-streaming.md)
 
 Execution tracker:
 

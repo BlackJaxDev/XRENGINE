@@ -1,5 +1,7 @@
 #version 450
 
+#include "Compute/PhysicsChain/PhysicsChainWorkgroups.glslinc"
+
 layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 const uint KernelBucketCount = 2u;
@@ -141,7 +143,7 @@ void finalizeArguments()
     // Short-linear work maps one lane to one tree. Long/branched work maps one
     // complete workgroup to one tree so dependency depths can synchronize.
     IndirectArguments[argumentBase] = bucket == 0u
-        ? (clampedCount + gl_WorkGroupSize.x - 1u) / gl_WorkGroupSize.x
+        ? (clampedCount + uint(PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE) - 1u) / uint(PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE)
         : clampedCount;
     IndirectArguments[argumentBase + 1u] = 1u;
     IndirectArguments[argumentBase + 2u] = 1u;

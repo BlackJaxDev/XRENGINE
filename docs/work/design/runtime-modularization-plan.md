@@ -1,6 +1,6 @@
 # Runtime Modularization And Bootstrap Architecture
 
-> Historical implementation record. Later native subsystem extraction and full-project portability extend these boundaries. Use [Runtime Project Organization](../../architecture/runtime/project-organization.md) for current ownership and [the integration checklist](../todo/platform/native-subsystem-project-split-todo.md) for remaining acceptance.
+> Historical implementation record. Later native subsystem extraction and full-project portability extend these boundaries. Use [Runtime Project Organization](../../architecture/runtime/project-organization.md) for current ownership and [Platform Validation](../testing/platform/platform-validation.md) for remaining acceptance.
 
 ## Overview
 
@@ -16,11 +16,8 @@ Historical sections retain the original migration rationale; status notes identi
 Implementation companions:
 
 - Phase 2 is complete and its implementation record has been retired from `docs/work`.
-- [Runtime Modularization Phase 3 TODO](../todo/COMPLETED/runtime-modularization-phase3-todo.md) (completed Runtime.Core carve-out and non-rendering prerequisites)
-- [Runtime Modularization Phase 4 TODO](../todo/COMPLETED/runtime-modularization-phase4-todo.md) (completed rendering move, backend split, and engineering validation)
-- [Runtime Modularization Phase 5 TODO](../todo/COMPLETED/runtime-modularization-phase5-todo.md) (completed subsystem adapter ownership, composition, compatibility, and dependency cleanup)
-- [Runtime Modularization Phase 6 TODO](../todo/COMPLETED/runtime-modularization-phase6-todo.md) (completed facade deletion, identity/cargo migration, application validation, and closeout)
-- [OpenGL And Vulkan Rendering Hot Reload TODO](../todo/COMPLETED/rendering-backend-hot-reload-todo.md) (completed backend DLL extraction, collectible editor loading, and renderer replacement)
+- Phases 3 to 6 are complete. Their trackers were retired after migration; git history keeps them. The stable result is in [Runtime Project Organization](../../architecture/runtime/project-organization.md). Progress ledgers remain under `progress/runtime/`.
+- [Renderer Backend Hot Reload architecture](../../architecture/rendering/renderer-backend-hot-reload.md) (completed backend DLL extraction, collectible editor loading, and renderer replacement)
 
 > Status note (2026-08-28): Phases 0 through 6 are complete. The stable
 > rendering kernel, concrete OpenGL/Vulkan leaves,
@@ -717,7 +714,7 @@ enforced together with the other adapter and public-API boundaries by the Phase
 
 ### Phase 6 - Delete XRENGINE
 
-Execution tracker: [Runtime Modularization Phase 6 - Remove The XRENGINE Facade](../todo/COMPLETED/runtime-modularization-phase6-todo.md)
+Result: [Runtime Project Organization](../../architecture/runtime/project-organization.md). Evidence: [Phase 6 progress ledger](../progress/runtime/runtime-modularization-phase6-progress-2026-08-25.md).
 
 Option A was selected and implemented in P6.7. Applications reference their
 module owners directly; the facade project and production directory no longer

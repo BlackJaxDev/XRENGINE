@@ -1298,7 +1298,7 @@ Next action: split OpenXR eye command recording away from renderer-wide mutable 
 ### 2026-06-28 Wrap-Up - Parallel Worker Descriptor Snapshot Gate
 
 - Current pause state:
-  - User asked to wrap up for now while implementing `docs/work/todo/rendering/vr/openxr-vulkan-true-parallel-eye-primary-recording-todo.md`.
+  - User asked to wrap up for now while implementing `docs/work/todo/rendering/vr/openxr-vulkan-parallel-eye-recording-todo.md`.
   - No additional TODO checkboxes were closed during this pause because the latest parallel-worker runtime run exposed an active correctness blocker.
 - Runtime evidence gathered this slice:
   - Current sequential Vulkan/Monado smoke passed:

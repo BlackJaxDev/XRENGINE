@@ -1,144 +1,75 @@
-# LPV GI Implementation Todo
+# LPV GI Implementation TODO
 
-Source design: `docs/work/design/global-illumination/lpv-global-illumination-design.md`
+Last Updated: 2026-10-06
+Status: Planned (no LPV code exists)
+Architecture: [Global Illumination Ownership And Selection](../../../../architecture/rendering/global-illumination-ownership.md)  Design: [LPV Global Illumination Design](../../../design/global-illumination/lpv-global-illumination-design.md)
+Validation: [Global Illumination Validation](../../../testing/rendering/global-illumination-validation.md#light-propagation-volumes)
 
-Goal: implement Light Propagation Volumes as an optional dynamic diffuse global illumination feature for XRENGINE, proving the OpenGL path first and leaving Vulkan integration as the final backend phase.
+## Current State
 
-## Modular-provider readiness gate
+`EGlobalIlluminationMode.LightVolumes` is an unavailable descriptor in `GlobalIlluminationProviderRegistry`. `LightVolumeComponent`, `VPRC_LightVolumesPass`, `LightVolumes.comp`, and `LightVolumeComposite.fs` sample authored light volumes. They do no RSM capture, injection, or propagation. No host allocates LPV resources or schedules LPV work. The first target is OpenGL 4.6 in the ImGui editor; Vulkan follows.
 
-`EGlobalIlluminationMode.LightVolumes` is currently an explicit unsupported
-selection in the modular GI registry. Existing light-volume source is not evidence
-of LPV injection, propagation, or runtime support, and neither host allocates LPV
-resources or schedules LPV work.
+## Open Code Items
 
-Do not register an LPV module factory or mark the selection supported until a
-provider owns its settings, RSM/LPV resources, passes, debug surfaces, invalidation,
-and release lifecycle; declares only neutral GI host inputs/outputs; and has live
-Default and Advanced validation for its claimed backend, mono/stereo layout, and
-consumer coverage. The OpenGL-first work below may remain unsupported until the
-Vulkan and two-host acceptance boundary is explicitly revised and documented.
+### Provider And Settings
 
-## Phase 0: Branch and planning setup
+- [ ] Add an LPV GI module with provider-owned settings (`Off`, `Low`, `Medium`, `High`, `DebugReference` presets), resources, passes, debug surfaces, invalidation, and release. Register it as unsupported until the validation checks pass. Done when: the module declares only neutral host inputs and outputs, and inactive LPV allocates nothing.
+- [ ] Add resource types for RSM outputs, LPV ping-pong volumes, fixed-point injection temporaries, optional geometry volume (GV), optional history, and debug counters. Reuse allocated arrays, constants, and query handles per frame. Done when: the per-frame path has no managed allocations.
+- [ ] Add cascade placement types (snapped bounds, shader constants) and shader program lookup for clear, inject, resolve, propagate, debug, and lighting passes. Done when: the types compile and are used by the module.
 
-- [ ] Create a dedicated branch for this todo list.
-- [ ] Confirm the first implementation target is the ImGui editor with the OpenGL 4.6 renderer.
-- [ ] Confirm LPV GI remains disabled by default until the feature has debug views and validation scenes.
-- [ ] Decide where renderer-facing LPV settings should live.
-- [ ] Decide whether the first RSM pass reuses the shadow-map path directly or starts as an LPV-specific light pass.
+### Directional RSM
 
-## Phase 1: Settings, scaffolding, and resource ownership
+- [ ] Add a directional-light reflective shadow map pass with position, world normal, and diffuse flux outputs, and an RSM resolution tied to the preset. Done when: the pass writes the three outputs.
+- [ ] Add RSM debug views (depth, normal, flux) and GPU timing for the pass. Done when: the views are selectable in the editor.
 
-- [ ] Add LPV GI settings with `Off`, `Low`, `Medium`, `High`, and `DebugReference` presets.
-- [ ] Add renderer feature scaffolding for LPV GI without changing default rendering behavior.
-- [ ] Add resource ownership types for RSM outputs, LPV ping-pong volumes, fixed-point injection temps, optional GV, optional history, and debug counters.
-- [ ] Add cascade placement data structures for snapped cascade bounds and shader constants.
-- [ ] Add shader-program lookup scaffolding for LPV clear, inject, resolve, propagate, debug, and lighting integration passes.
-- [ ] Ensure LPV per-frame paths reuse allocated arrays, lists, constants, and query handles.
-- [ ] Add focused unit tests for SH basis evaluation, cascade snapping, and world-to-cell transforms.
+### Injection And Propagation (OpenGL)
 
-## Phase 2: OpenGL directional RSM input
+- [ ] Inject RSM samples into fixed-point signed SH accumulators with a configurable normal bias, then resolve to FP16 LPV volumes. Add GPU clears and debug-build saturation counters. Done when: the inject and resolve passes run with counters.
+- [ ] Implement six-face gather propagation with ping-pong volumes, an iteration count from the preset, and named OpenGL barriers for clear, inject, resolve, propagate, and lighting. Done when: the propagation pass runs the configured iterations.
+- [ ] Sample LPV in scene lighting as diffuse indirect only, with an intensity setting. Keep direct diffuse, direct specular, emissive, and LPV diffuse separate in HDR. Done when: the lighting shader adds one LPV diffuse term.
+- [ ] Add debug views for injected and propagated slices and dominant SH direction, and GPU timing for resolve, propagation, and sampling. Done when: the views and timings exist.
 
-- [ ] Add a directional-light Reflective Shadow Map pass for LPV GI.
-- [ ] Output or reconstruct light-space/world-space position data needed for injection.
-- [ ] Output world-space normals in a format suitable for injection.
-- [ ] Output diffuse reflected flux from directly lit surfels.
-- [ ] Add an RSM resolution setting tied to LPV quality presets.
-- [ ] Add RSM debug views for depth, normal, and flux in the ImGui editor.
-- [ ] Add GPU timing instrumentation for the RSM pass.
+### Cascades
 
-## Phase 3: OpenGL LPV injection and resolve
+- [ ] Enable four 32x32x32 cascades for the medium preset, with one-cell origin snapping, preset-driven extents, finest-containing-cascade selection, boundary blending, and a bounds overlay. Done when: the shader selects and blends cascades.
 
-- [ ] Allocate fixed-point signed integer injection accumulators for RGB SH coefficients.
-- [ ] Add GPU clear for injection temp resources and initial LPV volumes.
-- [ ] Implement compute injection from RSM samples into fixed-point SH accumulators.
-- [ ] Apply configurable normal/injection bias to reduce self-lighting.
-- [ ] Add saturation or overflow counters for debug builds.
-- [ ] Resolve fixed-point injection accumulators into FP16 LPV source volumes.
-- [ ] Add debug visualization for raw injected LPV slices.
-- [ ] Add unit tests for fixed-point conversion, coefficient packing, and saturation behavior.
+### Leak Reduction
 
-## Phase 4: OpenGL propagation and scene lighting
+- [ ] Add an optional per-cascade geometry volume with half-cell offset blocker injection, propagation attenuation, and optional derivative or wall-thickness damping. Add GV slice and leak heatmap debug views. Done when: propagation reads the GV.
 
-- [ ] Implement 6-face gather propagation with LPV ping-pong volumes.
-- [ ] Add propagation iteration count from quality settings.
-- [ ] Add named OpenGL backend barriers for clear, inject, resolve, propagate, and lighting transitions.
-- [ ] Sample LPV during scene lighting as diffuse indirect only.
-- [ ] Add LPV intensity control in renderer/editor settings.
-- [ ] Add GPU timing for resolve, propagation, and scene-lighting LPV sampling.
-- [ ] Add debug visualization for propagated LPV slices and dominant SH direction.
-- [ ] Verify direct diffuse, direct specular, emissive, and LPV diffuse indirect remain separately composed in HDR.
+### Temporal And Editor
 
-## Phase 5: Cascades and quality baseline
+- [ ] Add optional history with blending after propagation and rejection on camera or cascade changes, plus a temporal delta debug view. Done when: history rejects on cascade snap.
+- [ ] Add ImGui controls for quality, cascades, cell count, iterations, intensity, injection bias, GV, history, and debug mode. Done when: the controls change the live provider settings.
+- [ ] Add Unit Testing World toggles and LPV validation scenes (Cornell-box bounce, large atrium, outdoor directional bounce, thin wall, moving hero spotlight). Run `Tools/Generate-UnitTestingWorldSettings.ps1` after settings type changes. Done when: each scene loads from a setting.
 
-- [ ] Enable four cascades with 32x32x32 cells as the default medium preset.
-- [ ] Add one-cell cascade origin snapping.
-- [ ] Add cascade scale controls or preset-driven world extents.
-- [ ] Add finest-containing-cascade selection during shading.
-- [ ] Add smooth blending near cascade boundaries.
-- [ ] Add cascade bounds debug overlay.
-- [ ] Add validation scenes for Cornell-box-style color bounce, large atrium coverage, and outdoor directional light bounce.
-- [ ] Add unit tests for cascade boundary blending and cascade selection.
+### Performance
 
-## Phase 6: Geometry volume and leak reduction
+- [ ] Add LPV memory-footprint reporting, per-stage GPU timing in the render diagnostics UI, and CPU instrumentation for cascade placement and dispatch setup. Done when: the values show in diagnostics.
 
-- [ ] Add optional geometry volume resources per cascade.
-- [ ] Inject coarse blocker data with the required half-cell offset from LPV cells.
-- [ ] Add GV sampling during propagation to attenuate transport through blockers.
+### Local Lights (Optional)
+
+- [ ] Add a top-N budget for LPV-injected local lights and spotlight RSM injection. Keep other local lights direct-only. Done when: a spotlight injects into LPV within the budget.
+
+### Vulkan
+
+- [ ] Mirror LPV resources in Vulkan: images, views, descriptors, layouts, allocation lifetimes, and debug names. Done when: every LPV resource has a Vulkan resource with a debug name.
+- [ ] Implement Vulkan compute clear, inject, resolve, propagate, GV, history, and debug passes with sync2 barriers that match the OpenGL transitions, and storage formats that match the shader declarations. Done when: the Vulkan passes record with no validation-layer errors in code review.
+
+### Tests (Owner Clearance Required)
+
+- [ ] Add unit tests for SH basis evaluation, cascade snapping, world-to-cell transforms, fixed-point conversion and packing, saturation, cascade selection and blending, propagation indexing, and GV half-cell alignment. Done when: each behavior has a deterministic test.
+
+## Decisions Needed
+
+- [ ] Decide whether the first RSM pass reuses the shadow-map path or is LPV-specific. Owner: rendering lead.
+- [ ] Decide whether LPV stays opt-in or joins a default dynamic GI preset after profiling. Owner: rendering lead.
+- [ ] Decide whether point-light injection (cubemap or multi-face) is affordable. Owner: rendering lead.
+
+## Recovered Items To Triage
+
+The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
+
+### From `todo/rendering/global-illumination/lpvgi-implementation-todo.md`
+
 - [ ] Add derivative or wall-thickness damping where it reduces leaks without over-darkening.
-- [ ] Add GV slice debug visualization.
-- [ ] Add leak heatmap debug visualization.
-- [ ] Add thin-wall validation scene coverage.
-- [ ] Add unit tests for GV half-cell alignment and propagation attenuation indexing.
-
-## Phase 7: Temporal stability and editor workflow
-
-- [ ] Add optional LPV history resources.
-- [ ] Add history blending after propagation.
-- [ ] Add basic history rejection for camera/cascade changes.
-- [ ] Add temporal delta debug visualization.
-- [ ] Add ImGui controls for LPV quality, cascades, cell count, propagation iterations, intensity, injection bias, GV, history, and debug mode.
-- [ ] Add Unit Testing World toggles for LPV GI validation scenes if needed.
-- [ ] Regenerate Unit Testing World settings and schema if new toggles are added.
-- [ ] Update docs for any new editor preferences, launch flags, environment variables, or validation workflows.
-
-## Phase 8: Performance hardening and production presets
-
-- [ ] Add quality preset values for `Low`, `Medium`, `High`, and `DebugReference`.
-- [ ] Add LPV memory-footprint reporting.
-- [ ] Add per-stage GPU timing display in the render diagnostics UI.
-- [ ] Add CPU-side instrumentation for cascade placement and LPV draw/dispatch setup.
-- [ ] Remove or pool any hot-path allocations discovered during implementation.
-- [ ] Profile representative scenes and tune default budgets.
-- [ ] Decide whether LPV GI remains opt-in or becomes part of a default dynamic GI preset.
-- [ ] Document known artifacts and recommended content usage.
-
-## Phase 9: Optional local-light support
-
-- [ ] Add a budget model for top-N LPV-injected local lights.
-- [ ] Add spotlight RSM injection if the directional-light path is stable.
-- [ ] Evaluate point-light cubemap or multi-face injection cost before implementation.
-- [ ] Add editor controls for local-light LPV participation.
-- [ ] Add validation scene for one moving hero spotlight.
-- [ ] Keep long-tail local lights direct-only unless profiling proves broader injection is affordable.
-
-## Phase 10: Vulkan integration
-
-- [ ] Mirror LPV resources with Vulkan images, image views, descriptors, and allocation lifetimes.
-- [ ] Add Vulkan descriptor layouts for RSM inputs, injection temps, LPV volumes, GV, history, and constants.
-- [ ] Implement Vulkan compute clear, inject, resolve, propagate, GV, history, and debug extraction passes.
-- [ ] Add sync2 barriers matching the logical OpenGL transitions.
-- [ ] Validate storage-image formats exactly match shader declarations.
-- [ ] Add Vulkan debug names for all LPV resources and passes.
-- [ ] Match OpenGL debug output behavior in Vulkan.
-- [ ] Run Vulkan validation layers through LPV scenes once the backend path is functional.
-- [ ] Update rendering docs with Vulkan LPV backend notes and any remaining backend differences.
-
-## Phase 11: Final validation and merge-back
-
-- [ ] Run targeted unit tests for LPV math, cascade placement, injection conversion, propagation indexing, and GV alignment.
-- [ ] Run targeted editor/render validation scenes for OpenGL LPV GI.
-- [ ] Run Vulkan LPV validation if Phase 10 is complete and Vulkan is enabled in the local environment.
-- [ ] Review docs for user-facing settings, debug views, and known limitations.
-- [ ] Capture remaining risks and follow-up issues.
-- [ ] Merge the completed LPV GI branch back into `main` after implementation and validation are complete.
-

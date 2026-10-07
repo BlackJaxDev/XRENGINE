@@ -170,6 +170,7 @@ internal sealed partial class VulkanFrameLoop
             request.IsMinimalVisibilityOutput,
             request.NativeViewIndex,
             request.RequiresMaterialSurfaceExports,
+            request.SuppressBaselineDiffuse,
             request.MsaaSampleCount,
             request.HasAuthoredBackground);
         if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster)

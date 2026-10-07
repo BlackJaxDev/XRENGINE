@@ -47,7 +47,7 @@ For Unity-specific conversion behavior, including `.anim` caveats and Poiyomi/li
 
 ## Model cache identity and legacy transition
 
-Imported model prefabs now have exclusive model-cache routing, deterministic cache identity, and a defensive v1 binary container. The container includes the fixed preamble, normalized string pool, versioned chunk table, dependency/manifest records, bounded reads, and hierarchical checksums. Cooked semantic sections and live prefab hydration are still pending, so current imports continue to parse the source and intentionally skip model-cache publication.
+Imported model prefabs now have exclusive model-cache routing, deterministic cache identity, and a defensive v1 binary container. The container includes the fixed preamble, normalized string pool, versioned chunk table, dependency/manifest records, bounded reads, and hierarchical checksums. An optional meshlet section (`ModelBinaryMeshletSectionCodec`, `ModelBinaryMeshletSectionService`) stores cooked meshlet payloads per model, submesh, and LOD key. Other cooked semantic sections and live prefab hydration are still pending, so current imports continue to parse the source and intentionally skip model-cache publication. See [Model Import Binary Cache](../../architecture/assets/model-import-binary-cache.md) for the architecture.
 
 The exclusive codec distinguishes the binary magic from legacy YAML, validates a binary manifest, and checks the entry source's length, timestamp, and configured content hash. A valid container currently reports `CodecUnavailable` after that gate so the normal cold-import path runs until hydration is implemented; malformed containers return a specific rejection reason.
 

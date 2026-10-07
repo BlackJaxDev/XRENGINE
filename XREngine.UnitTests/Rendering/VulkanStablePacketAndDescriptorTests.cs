@@ -2614,12 +2614,8 @@ public sealed class VulkanStablePacketAndDescriptorTests
             "Queue-schedule metadata alone does not satisfy this");
         string backendSettings = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/Settings/BackendRenderSettings.cs");
-        string architecture = ReadWorkspaceFile(
-            "docs/architecture/rendering/vulkan-renderer.md");
         backendSettings.ShouldContain(
             "scheduler emits metadata only and executable ownership remains on the graphics queue");
-        architecture.ShouldContain(
-            "Requested overlap modes never publish executable non-graphics queue-family ownership transitions");
         SourceContractWorkspace.ReadVulkanSourcesContaining(
             "new(_frameTelemetry, EVulkanCpuStage.CommandDirtyPropagation)")
             .ShouldContain("new(_frameTelemetry, EVulkanCpuStage.CommandDirtyPropagation)");

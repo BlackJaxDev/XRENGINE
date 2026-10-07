@@ -123,7 +123,7 @@ gates. The user has not yet reported whether these changes work in their session
 
 ## References
 
-- [Modernization TODO](../../todo/rendering/vulkan-14-performance-and-shader-modernization-todo.md)
+- [Vulkan Renderer](../../../architecture/rendering/vulkan-renderer.md) (the modernization TODO is deleted; its open D4 decision is in the [master TODO](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#decisions-needed))
 - [Native Slang implementation and pilot evidence](vulkan14-native-slang-2026-09-10.md)
 - [Barrier investigation and D4 admission gates](vulkan14-phase-d-waits-and-barriers-2026-09-09.md)
 - [MCP diagnostics and captures](../../../developer-guides/ai/mcp-server.md#shader-command-coverage-and-eye-captures)

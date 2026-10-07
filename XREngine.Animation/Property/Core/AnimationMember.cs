@@ -713,6 +713,16 @@ namespace XREngine.Animation
             if (parentObj is null || MemberNotFound)
                 return null;
 
+            if (AnimationMemberBindingRegistry.TryGetGetter(parentObj.GetType(), _memberName, out Func<object, object?>? getter))
+            {
+                if (Animation is not null)
+                    ConfigureTypedValueAppliers(parentObj);
+
+                object? typedValue = getter!(parentObj);
+                DefaultValue = typedValue;
+                return Cache(typedValue);
+            }
+
             _propertyCache ??= parentObj.GetImmediateType().GetProperty(_memberName);
 
             MemberNotFound = _propertyCache is null;

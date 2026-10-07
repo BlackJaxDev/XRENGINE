@@ -8,7 +8,7 @@ Final commit: not created; this note describes the shared dirty integration tree
 ## Outcome
 
 The implementation pass described by the
-[Vulkan Runtime Code Organization TODO](../../todo/rendering/vulkan-runtime-code-organization-todo.md)
+[Rendering Code Map](../../../architecture/rendering/code-map.md)
 is complete. Vulkan remains in the leaf
 `XREngine.Runtime.Rendering.Vulkan` assembly and now has explicit authorities
 for device state, backend-object identity, command scheduling/recording,

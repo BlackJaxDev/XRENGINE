@@ -7,7 +7,7 @@ Started: 2026-07-30
 Completed: 2026-08-13
 
 Execution plan:
-[Completed Vulkan Presentation-Independent Renderer Refactor](../../todo/COMPLETED/vulkan-presentation-independent-renderer-refactor-todo.md)
+[Vulkan Renderer: Presentation-Independent Hosts](../../../architecture/rendering/vulkan-renderer.md#presentation-independent-hosts)
 
 Remaining validation:
 [Vulkan Presentation-Independent Renderer Validation](../../testing/rendering/vulkan-presentation-independent-renderer-validation.md)

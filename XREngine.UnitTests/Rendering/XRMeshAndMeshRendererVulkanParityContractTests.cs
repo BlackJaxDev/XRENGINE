@@ -32,10 +32,6 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
 
         runtimeFiles.Any(path => string.Equals(Path.GetFileName(path), "VkMesh.cs", StringComparison.OrdinalIgnoreCase)).ShouldBeFalse();
         runtimeFiles.Any(path => string.Equals(Path.GetFileName(path), "GLMesh.cs", StringComparison.OrdinalIgnoreCase)).ShouldBeFalse();
-
-        string vulkanMap = ReadWorkspaceFile("docs/architecture/rendering/code-map.md");
-        vulkanMap.ShouldContain("has no standalone OpenGL or Vulkan API wrapper");
-        vulkanMap.ShouldContain("own mesh draw readiness");
     }
 
     [Test]

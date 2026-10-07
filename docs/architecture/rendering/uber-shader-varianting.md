@@ -1,8 +1,7 @@
 # Uber Shader Varianting
 
 This document is the implemented architecture for XRENGINE's Uber material
-variant system. It consolidates the completed
-[Uber Shader Variant Builder Optimizations](../../work/todo/uber-shader-variant-builder-todo.md)
+variant system. It consolidates the completed variant builder optimization
 work and the shader-source optimization boundary described in
 [Resolved Shader Source Optimization Remaining Todos](../../work/todo/rendering/resolved-shader-source-optimization-todo.md).
 

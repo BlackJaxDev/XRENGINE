@@ -4,7 +4,7 @@
 
 Execution trackers:
 
-- [Native subsystem integration debugging and validation](../../todo/platform/native-subsystem-project-split-todo.md): qualify the implemented native boundaries and portable projects, resolve integration defects, and complete the physics browser/default-promotion decisions.
+- [Platform Validation](../../testing/platform/platform-validation.md): qualify the implemented native boundaries and portable projects, resolve integration defects, and complete the physics browser/default-promotion decisions.
 - [Unified desktop and browser runtime TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md): run the same engine, worlds, and game code on desktop and in the browser.
 
 Status: unified browser gameplay architecture proposed. Native extraction and whole-project `net10.0` source changes are implemented; their integration qualification remains open. [Runtime Project Organization](../../../architecture/runtime/project-organization.md) describes the current layout.

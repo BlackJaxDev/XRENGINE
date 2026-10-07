@@ -3,8 +3,8 @@
 Last Updated: 2026-06-17
 Owner: Rendering
 Status: Proposed
-Implementation TODO: `docs/work/todo/rendering/vulkan-parallel-command-chain-refactor-todo.md`
-Related Testing Guide: `docs/work/todo/rendering/vulkan-frame-loop-performance-todo.md`
+Implemented behavior: [Vulkan Command Recording](../../../architecture/rendering/vulkan-command-recording.md)
+Related Testing Guide: [Vulkan core validation](../../testing/rendering/vulkan-core-validation.md)
 
 ## Problem
 

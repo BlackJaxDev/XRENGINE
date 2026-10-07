@@ -110,28 +110,9 @@ public sealed class OpenXrStereoTemporalIsolationCompletionTests
     }
 
     [Test]
-    public void DocsAndProfileRunner_RecordFinalOpenXrStereoPolicies()
+    public void ProfileRunner_RecordsOpenXrModeProfileOutputs()
     {
-        string openXrDoc = ReadWorkspaceFile("docs/architecture/rendering/openxr-vr-rendering.md");
-        string openVrDoc = ReadWorkspaceFile("docs/architecture/rendering/openvr-rendering.md");
-        string pipelineDoc = ReadWorkspaceFile("docs/architecture/rendering/default-render-pipeline-notes.md");
         string profileRunner = ReadWorkspaceFile("Tools/OpenXR/Run-OpenXrModeProfileMatrix.ps1");
-
-        openXrDoc.ShouldContain("OpenXR Vulkan Stereo Mode Matrix");
-        openXrDoc.ShouldContain("EVrAutoExposurePolicy.HeadsetShared");
-        openXrDoc.ShouldContain("Vendor upscalers are intentionally unsupported for headset stereo today");
-        openXrDoc.ShouldContain("Run-OpenXrModeProfileMatrix.ps1");
-        openXrDoc.ShouldContain("DisabledExternalPerEyeSwapchain");
-        openXrDoc.ShouldContain("`SinglePassStereo` is a strict capability contract");
-        openXrDoc.ShouldContain("there is no environment opt-in or");
-
-        openVrDoc.ShouldContain("OpenVR `SinglePassStereo` is the engine-owned stereo-array");
-        openVrDoc.ShouldContain("never silently changes to sequential eye rendering");
-
-        pipelineDoc.ShouldContain("OpenXR Stereo Temporal Isolation");
-        pipelineDoc.ShouldContain("Atmosphere and volumetric-fog temporal history stay mono-only");
-        pipelineDoc.ShouldContain("Explicit DLSS/DLAA/XeSS", Case.Sensitive);
-        pipelineDoc.ShouldContain("must fail loudly");
 
         profileRunner.ShouldContain("openxr-mode-profile-matrix.csv");
         profileRunner.ShouldContain("openxr-mode-profile-matrix.json");

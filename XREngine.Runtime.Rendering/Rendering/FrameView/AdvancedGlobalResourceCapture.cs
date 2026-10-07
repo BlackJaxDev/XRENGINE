@@ -25,13 +25,15 @@ public readonly record struct AdvancedGlobalResourceCapture(
     /// <summary>Texture-owning probe rows paired with the numeric probe capture.</summary>
     public ReadOnlyMemory<AdvancedProbeCaptureRow> ProbeRows { get; init; }
 
+    /// <summary>World ambient light captured without a resource array.</summary>
+    public AdvancedEnvironmentRecord? AmbientEnvironment { get; init; }
+
     public static AdvancedGlobalResourceCapture Empty(ulong frameId)
         => new(frameId, default, default, default, default, default, default, default, default);
 
     /// <summary>
-    /// Captures only world-owned light/probe numeric state. Environment, decal,
-    /// and GI collection owners are not exposed by <see cref="IRuntimeRenderWorld"/>
-    /// and intentionally remain valid-empty rather than inferred from pipelines.
+    /// Captures world-owned light, probe, and ambient numeric state. Decal and GI
+    /// collection owners are not exposed by <see cref="IRuntimeRenderWorld"/>.
     /// </summary>
     public static AdvancedGlobalResourceCapture Capture(
         ulong frameId,
@@ -120,9 +122,22 @@ public readonly record struct AdvancedGlobalResourceCapture(
         AdvancedProbeRecord[] probes = new AdvancedProbeRecord[probeRows.Count];
         for (int probeIndex = 0; probeIndex < probeRows.Count; ++probeIndex)
             probes[probeIndex] = probeRows[probeIndex].Record;
+        Vector3 ambient = world.GetEffectiveAmbientColor();
         return new(frameId, lightSources, lights, default, shadowRows.ToArray(), probes, default, default, default)
         {
             ProbeRows = probeRows.ToArray(),
+            AmbientEnvironment = new AdvancedEnvironmentRecord
+            {
+                Flags = 1u,
+                Environment = AdvancedTextureReference.Invalid(EAdvancedResourceFallback.Zero),
+                Irradiance = AdvancedTextureReference.Invalid(EAdvancedResourceFallback.Zero),
+                PrefilteredRadiance = AdvancedTextureReference.Invalid(EAdvancedResourceFallback.Zero),
+                BrdfLut = AdvancedTextureReference.Invalid(EAdvancedResourceFallback.Zero),
+                RotationAndExposure = new Vector4(0.0f, 0.0f, 0.0f, 1.0f),
+                AmbientColorAndIntensity = new Vector4(ambient, 1.0f),
+                ViewMaskLo = uint.MaxValue,
+                ViewMaskHi = uint.MaxValue,
+            },
         };
     }
 

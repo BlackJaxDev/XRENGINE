@@ -11,6 +11,19 @@ namespace XREngine.Scene
         private bool _parentChangeWasActiveInHierarchy;
         private bool _parentChangeHadBegunPlay;
 
+        private XRPropertyChangedEventHandler? _transformPropertyChangedHandler;
+        private XRPropertyChangingEventHandler? _transformPropertyChangingHandler;
+
+        // The node observes hierarchy changes only. Pose changes must not create
+        // property event arguments for these internal subscriptions.
+        private XRPropertyChangedEventHandler TransformPropertyChangedHandler
+            => _transformPropertyChangedHandler ??= XRPropertyNotificationHandlers.FilterChanged(
+                TransformPropertyChanged, nameof(TransformBase.Parent), nameof(TransformBase.World));
+
+        private XRPropertyChangingEventHandler TransformPropertyChangingHandler
+            => _transformPropertyChangingHandler ??= XRPropertyNotificationHandlers.FilterChanging(
+                TransformPropertyChanging, nameof(TransformBase.Parent));
+
         /// <summary>
         /// Disconnects the current transform from this scene node.
         /// </summary>
@@ -26,8 +39,8 @@ namespace XREngine.Scene
                 DeactivateTransform();
             if (HasBegunPlay)
                 EndPlayTransform();
-            _transform.PropertyChanged -= TransformPropertyChanged;
-            _transform.PropertyChanging -= TransformPropertyChanging;
+            _transform.PropertyChanged -= TransformPropertyChangedHandler;
+            _transform.PropertyChanging -= TransformPropertyChangingHandler;
             _transform.SceneNode = null;
             _transform.World = null;
             _transform.Parent = null;
@@ -46,8 +59,8 @@ namespace XREngine.Scene
 
             _transform.SceneNode = this;
             _transform.World = World;
-            _transform.PropertyChanged += TransformPropertyChanged;
-            _transform.PropertyChanging += TransformPropertyChanging;
+            _transform.PropertyChanged += TransformPropertyChangedHandler;
+            _transform.PropertyChanging += TransformPropertyChangingHandler;
             if (HasBegunPlay)
                 BeginPlayTransform();
             if (IsActiveInHierarchy)

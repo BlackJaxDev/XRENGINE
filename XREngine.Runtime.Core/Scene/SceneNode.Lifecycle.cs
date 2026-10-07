@@ -215,15 +215,15 @@ namespace XREngine.Scene
             if (_transform is null)
                 return;
 
-            _transform.PropertyChanged -= TransformPropertyChanged;
-            _transform.PropertyChanging -= TransformPropertyChanging;
+            _transform.PropertyChanged -= TransformPropertyChangedHandler;
+            _transform.PropertyChanging -= TransformPropertyChangingHandler;
 
             _transform.Name = Name;
             _transform.SceneNode = this;
             _transform.World = World;
 
-            _transform.PropertyChanged += TransformPropertyChanged;
-            _transform.PropertyChanging += TransformPropertyChanging;
+            _transform.PropertyChanged += TransformPropertyChangedHandler;
+            _transform.PropertyChanging += TransformPropertyChangingHandler;
 
             if (IsActiveInHierarchy)
                 ActivateTransform();

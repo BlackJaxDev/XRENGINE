@@ -1,6 +1,7 @@
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Scene.Transforms;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.Compute;
@@ -12,6 +13,7 @@ namespace XREngine.Rendering.Compute;
 public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRenderingBridge
 {
     private readonly Dictionary<PhysicsChainComponent, Source> _sources = [];
+    private static readonly ConditionalWeakTable<PhysicsChainWorld, PhysicsChainReadbackCoordinatorAdapter> ReadbackCoordinators = new();
     public static RuntimePhysicsChainRenderingBridge Instance { get; } = new();
 
     private RuntimePhysicsChainRenderingBridge() { }
@@ -20,19 +22,21 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
         => (PhysicsChainGpuBackendState)GPUPhysicsChainDispatcher.Instance.BackendStatus.State;
 
     /// <summary>Installs the renderer implementation after the rendering runtime has initialized.</summary>
-    public static void Install()
+    public static IDisposable Install()
         => RuntimePhysicsChainRendering.Install(Instance);
 
     public void Register(PhysicsChainComponent chain)
     {
         if (_sources.TryGetValue(chain, out Source? existing))
         {
+            existing.UpdateReadbackCoordinator();
             if (!GPUPhysicsChainDispatcher.Instance.IsRegistered(existing))
                 GPUPhysicsChainDispatcher.Instance.Register(existing);
             return;
         }
 
         Source source = new(chain);
+        source.UpdateReadbackCoordinator();
         _sources.Add(chain, source);
         GPUPhysicsChainDispatcher.Instance.Register(source);
     }
@@ -63,6 +67,8 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
             return;
 
         GPUPhysicsChainDispatcher.Instance.Unregister(source);
+        source.ReleaseReadbackCoordinator();
+        source.ReleasePaletteBindings();
     }
 
     public void Execute(PhysicsChainComponent chain, in PhysicsChainGpuDispatchSnapshot snapshot)
@@ -70,12 +76,14 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
         if (!_sources.TryGetValue(chain, out Source? source))
             return;
 
+        source.UpdateReadbackCoordinator();
         source.Copy(snapshot);
         GPUPhysicsChainDispatcher.Instance.SubmitData(source, source.Particles, source.ParticleStatic, source.Trees,
             source.Transforms, source.Colliders, snapshot.DeltaTime, snapshot.ObjectScale, snapshot.Weight,
             snapshot.Force, snapshot.Gravity, snapshot.ObjectMove, snapshot.FreezeAxis, snapshot.LoopCount,
             snapshot.TimeVar, snapshot.ExecutionGeneration, snapshot.SubmissionId, snapshot.StaticDataVersion,
-            snapshot.ParticleStateVersion, snapshot.TransformSignature, snapshot.ColliderSignature);
+            snapshot.ParticleStateVersion, snapshot.TransformSignature, snapshot.ColliderSignature,
+            snapshot.TreeDataVersion);
     }
 
     public void RenderDebug(PhysicsChainComponent chain)
@@ -109,22 +117,54 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
         private readonly Dictionary<Transform, int> _particleIndices = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         private readonly Dictionary<int, int> _firstChildren = [];
         private readonly List<PaletteState> _paletteStates = [];
-        private int _boneSignature = int.MinValue;
+        private bool _hasCopiedInput;
+        private int _copiedParticleStateVersion;
+        private int _copiedStaticDataVersion;
+        private int _copiedTreeDataVersion;
+        private int _copiedBoneStructureSignature;
+        private int _copiedTransformSignature;
+        private int _copiedColliderSignature;
+        private int _bindingGeneration;
+        private int _particleStateVersion;
         private PhysicsChainReadbackCoordinatorAdapter? _readbackCoordinator;
+        private IRuntimeWorldContext? _readbackRuntimeWorld;
 
         public Guid ID => _chain.ID;
         public IRuntimeWorldContext? World => _chain.World;
         public PhysicsChainRuntimeHandle RuntimeHandle => _chain.RuntimeHandle;
         public IPhysicsChainReadbackCoordinator? ReadbackCoordinator
+            => Volatile.Read(ref _readbackCoordinator);
+
+        public void UpdateReadbackCoordinator()
         {
-            get
+            IRuntimeWorldContext? runtimeWorld = _chain.World;
+            if (ReferenceEquals(runtimeWorld, _readbackRuntimeWorld))
+                return;
+
+            PhysicsChainReadbackCoordinatorAdapter? next = null;
+            if (runtimeWorld is not null &&
+                PhysicsChainWorld.TryGet(runtimeWorld, out PhysicsChainWorld? world) &&
+                world is not null)
+                next = ReadbackCoordinators.GetValue(world, static key => new(key));
+
+            if (runtimeWorld is not null && next is null)
+                return;
+
+            PhysicsChainReadbackCoordinatorAdapter? previous = _readbackCoordinator;
+            if (!ReferenceEquals(previous, next))
             {
-                if (_chain.World is null || !PhysicsChainWorld.TryGet(_chain.World, out PhysicsChainWorld? world) || world is null)
-                    return null;
-                if (_readbackCoordinator?.World != world)
-                    _readbackCoordinator = new PhysicsChainReadbackCoordinatorAdapter(world);
-                return _readbackCoordinator;
+                next?.AddSource();
+                Volatile.Write(ref _readbackCoordinator, next);
+                previous?.RemoveSource();
             }
+            _readbackRuntimeWorld = runtimeWorld;
+        }
+
+        public void ReleaseReadbackCoordinator()
+        {
+            PhysicsChainReadbackCoordinatorAdapter? previous = Interlocked.Exchange(ref _readbackCoordinator, null);
+            previous?.RemoveSource();
+            _readbackRuntimeWorld = null;
         }
         public int UpdateMode => (int)_chain.UpdateMode;
         public bool UseBatchedDispatcher => _chain.UseBatchedDispatcher;
@@ -146,7 +186,7 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
         public void AppendBatchedGpuDrivenBonePaletteBindings(int particleBaseOffset, List<GPUPhysicsChainDispatcher.GpuDrivenRendererPaletteBinding> bindings)
         {
             for (int i = 0; i < _paletteStates.Count; ++i)
-            { PaletteState state = _paletteStates[i]; bindings.Add(new(this, state.Renderer, state.Mappings, particleBaseOffset, state.BoneMatrixElementCount, state.Complete, _boneSignature, 0)); }
+            { PaletteState state = _paletteStates[i]; bindings.Add(new(this, state.Renderer, state.Mappings, particleBaseOffset, state.BoneMatrixElementCount, state.Complete, _bindingGeneration, _particleStateVersion)); }
         }
         public void ClearBatchedGpuDrivenBonePaletteSources()
         { for (int i = 0; i < _paletteStates.Count; ++i) _paletteStates[i].Renderer.ClearGpuDrivenSkinPaletteSource(this); }
@@ -154,12 +194,39 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
 
         public void Copy(in PhysicsChainGpuDispatchSnapshot snapshot)
         {
-            CopyParticles(snapshot.Particles);
-            CopyStatic(snapshot.ParticleStatic);
-            CopyTrees(snapshot.Trees);
-            CopyMatrices(snapshot.Transforms);
-            CopyColliders(snapshot.Colliders);
-            CopyBones(snapshot.Bones);
+            _particleStateVersion = snapshot.ParticleStateVersion;
+            if (!_hasCopiedInput ||
+                _copiedParticleStateVersion != snapshot.ParticleStateVersion ||
+                Particles.Count != snapshot.Particles.Length)
+                CopyParticles(snapshot.Particles);
+            if (!_hasCopiedInput ||
+                _copiedStaticDataVersion != snapshot.StaticDataVersion ||
+                ParticleStatic.Count != snapshot.ParticleStatic.Length)
+                CopyStatic(snapshot.ParticleStatic);
+            if (!_hasCopiedInput ||
+                _copiedTreeDataVersion != snapshot.TreeDataVersion ||
+                Trees.Count != snapshot.Trees.Length)
+                CopyTrees(snapshot.Trees);
+            if (!_hasCopiedInput ||
+                _copiedTransformSignature != snapshot.TransformSignature ||
+                Transforms.Count != snapshot.Transforms.Length)
+                CopyMatrices(snapshot.Transforms);
+            if (!_hasCopiedInput ||
+                _copiedColliderSignature != snapshot.ColliderSignature ||
+                Colliders.Count != snapshot.Colliders.Length)
+                CopyColliders(snapshot.Colliders);
+            if (!_hasCopiedInput ||
+                _copiedBoneStructureSignature != snapshot.BoneStructureSignature ||
+                _bones.Count != snapshot.Bones.Length)
+                CopyBones(snapshot.Bones);
+
+            _copiedParticleStateVersion = snapshot.ParticleStateVersion;
+            _copiedStaticDataVersion = snapshot.StaticDataVersion;
+            _copiedTreeDataVersion = snapshot.TreeDataVersion;
+            _copiedBoneStructureSignature = snapshot.BoneStructureSignature;
+            _copiedTransformSignature = snapshot.TransformSignature;
+            _copiedColliderSignature = snapshot.ColliderSignature;
+            _hasCopiedInput = true;
         }
 
         private void CopyParticles(ReadOnlySpan<PhysicsChainGpuParticle> values)
@@ -183,12 +250,6 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
 
         private void CopyBones(ReadOnlySpan<PhysicsChainGpuBone> values)
         {
-            var hash = new HashCode();
-            for (int i = 0; i < values.Length; ++i) { hash.Add(values[i].Transform); hash.Add(values[i].ParentIndex); }
-            int signature = hash.ToHashCode();
-            if (signature == _boneSignature)
-                return;
-            _boneSignature = signature;
             _bones.Clear();
             for (int i = 0; i < values.Length; ++i) _bones.Add(values[i]);
             RebuildPaletteBindings();
@@ -196,8 +257,9 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
 
         private void RebuildPaletteBindings()
         {
-            ClearBatchedGpuDrivenBonePaletteSources();
-            _paletteStates.Clear(); _particleIndices.Clear(); _firstChildren.Clear();
+            ReleasePaletteBindings();
+            unchecked { ++_bindingGeneration; }
+            _particleIndices.Clear(); _firstChildren.Clear();
             if (!_chain.UseGpuDrivenSkinning || _chain.SceneNode is null)
                 return;
             for (int i = 0; i < _bones.Count; ++i)
@@ -216,8 +278,18 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
 
         public void InvalidateGpuDrivenRenderers()
         {
-            _boneSignature = int.MinValue;
             RebuildPaletteBindings();
+        }
+
+        public void ReleasePaletteBindings()
+        {
+            for (int i = 0; i < _paletteStates.Count; ++i)
+            {
+                PaletteState state = _paletteStates[i];
+                state.Renderer.ClearGpuDrivenSkinPaletteSource(this);
+                state.Renderer.UnregisterGpuDrivenBoneIndices(state.Indices);
+            }
+            _paletteStates.Clear();
         }
 
         private void TryAddPaletteBinding(XRMeshRenderer renderer)
@@ -232,7 +304,7 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
                 var (transform, _) = mesh.UtilizedBones[boneIndex];
                 if (transform is not Transform bone || !_particleIndices.TryGetValue(bone, out int particleIndex)) continue;
                 int child = _firstChildren.GetValueOrDefault(particleIndex, -1);
-                mappings.Add(new() { ParticleIndex = particleIndex, ChildParticleIndex = child, BoneMatrixIndex = boneIndex + 1, Flags = child >= 0 ? 1 : 0, RestLocalDirection = child >= 0 ? _bones[particleIndex].RestLocalDirection : Vector3.Zero });
+                mappings.Add(new() { ParticleIndex = particleIndex, ChildParticleIndex = child, BoneMatrixIndex = boneIndex + 1, Flags = child >= 0 ? 1 : 0, RestLocalDirection = child >= 0 ? _bones[child].RestLocalDirection : Vector3.Zero });
                 indices.Add((uint)(boneIndex + 1));
             }
             if (mappings.Count == 0) return;
@@ -245,7 +317,13 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
 
     private sealed class PhysicsChainReadbackCoordinatorAdapter(PhysicsChainWorld world) : IPhysicsChainReadbackCoordinator
     {
+        private int _activeSourceCount;
         public PhysicsChainWorld World { get; } = world;
+        public bool HasActiveSources => Volatile.Read(ref _activeSourceCount) > 0;
+        public bool HasPendingTransfers => World.HasPendingReadbackTransfers();
+
+        public void AddSource() => Interlocked.Increment(ref _activeSourceCount);
+        public void RemoveSource() => Interlocked.Decrement(ref _activeSourceCount);
 
         public PhysicsChainReadbackTransferCounters GetReadbackTransferCounters()
             => World.GetReadbackTransferCounters();

@@ -9,7 +9,7 @@ Final commit: not created; validation describes the current dirty working tree
 ## Scope
 
 This note records P4.8b implementation of the
-[Vulkan Desktop Frame Loop Decomposition TODO](../../todo/rendering/vulkan-desktop-frame-loop-decomposition-todo.md)
+[Vulkan Renderer: The Render Loop](../../../architecture/rendering/vulkan-renderer.md#the-render-loop)
 inside `XREngine.Runtime.Rendering.Vulkan`. It does not claim P4.8c collectible
 module loading or unrelated renderer behavior.
 

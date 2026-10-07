@@ -10,7 +10,7 @@ General scene materials use the GPU material table:
 - Each material row stores base color/opacity, roughness/metallic/specular/emission constants, and texture handle or descriptor indices.
 - `MaterialTextureHandleTable` stores OpenGL bindless texture handles. Vulkan bindless rows store descriptor-array indices directly in the material row.
 
-The current material row is the standard opaque-deferred row. Its canonical contract is `MaterialBindingLayouts.OpaqueDeferred`; `GPUMaterialTable`, the generated material-table draw shader, and the shared GLSL material table header must agree on that layout hash and 48-byte row shape.
+The current material row is the standard opaque-deferred row. Its canonical contract is `MaterialBindingLayouts.OpaqueDeferred`; `GPUMaterialTable`, the generated material-table draw shader, and the shared GLSL material table header must agree on that layout hash and 144-byte (36-word) row shape.
 
 The broader upgrade for additional pass-declared layouts and shader annotation-driven conversion is tracked in [Dynamic Indirect Material Bindings](../../work/design/rendering/dynamic-indirect-material-bindings.md), with runtime ladder work tracked by the material-table TODOs.
 

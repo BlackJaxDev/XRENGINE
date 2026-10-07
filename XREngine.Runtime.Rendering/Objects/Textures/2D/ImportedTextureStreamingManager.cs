@@ -33,7 +33,6 @@ internal sealed partial class ImportedTextureStreamingManager
     private const float PageSelectionFullCoverageThreshold = 0.85f;
     private const double VulkanDenseNonPressureDemotionPreserveBudgetFillRatio = 0.75;
     private const long VulkanAllocatorStreamingReserveBytes = 768L * 1024L * 1024L;
-    private const string VulkanImportedTextureStreamingTodoPath = "docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md";
     private const string VulkanImportedTexturePreviewFreezeEnvVar = XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze;
     private const string VulkanPreviewFreezeReason = "explicit Vulkan imported-texture preview freeze requested";
 
@@ -1969,7 +1968,7 @@ internal sealed partial class ImportedTextureStreamingManager
         if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
             return desiredResidentSize;
 
-        // See docs/work/todo/rendering/vulkan-imported-texture-streaming-todo.md.
+        // See docs/architecture/rendering/texture-streaming.md.
         // The preview freeze remains available as an explicit emergency kill
         // switch for device-loss isolation.
         if (!ShouldFreezeVulkanImportedTextureResidency(snapshot))

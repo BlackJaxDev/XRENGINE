@@ -1,6 +1,7 @@
 using XREngine.Components.Physics;
 using XREngine.Components.Movement;
 using XREngine.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.VideoStreaming;
 using XREngine.Data;
 using XREngine.Scene.Physics;
@@ -45,6 +46,7 @@ public static class RuntimeRenderingBootstrap
         IRuntimeWindowApplicationServices previousWindowApplication = RuntimeWindowApplicationServices.Current;
         string? previousGameCachePath = RuntimeRenderingHostServices.GameCachePath;
         IDisposable? renderingHostLease = null;
+        IDisposable? physicsChainRenderingLease = null;
         IDisposable? adapterLease = null;
         IDisposable? vrLease = null;
         IDisposable? shaderLease = null;
@@ -55,6 +57,7 @@ public static class RuntimeRenderingBootstrap
             RuntimeRenderObjectServices.Current = new EngineRuntimeRenderObjectServices();
             shaderLease = EngineRuntimeShaderServices.Install();
             renderingHostLease = RuntimeRenderingHostServices.Install(renderingHost);
+            physicsChainRenderingLease = RuntimePhysicsChainRenderingBridge.Install();
             RuntimeRenderingHostServices.GameCachePath = ConvexHullDiskCache.ResolveCacheRoot();
             RuntimeCharacterMovementVisualizationServices.Current = new RenderingCharacterMovementVisualizationServices();
             installedWindowApplication = new EngineRuntimeWindowApplicationServices();
@@ -71,6 +74,7 @@ public static class RuntimeRenderingBootstrap
             return new InstallationLease(
                 renderingHost,
                 renderingHostLease,
+                physicsChainRenderingLease,
                 adapterLease,
                 vrLease,
                 previousRenderObjects,
@@ -94,6 +98,8 @@ public static class RuntimeRenderingBootstrap
                 AttemptCleanup(installedWindowApplication.Dispose, ref failures);
             AttemptCleanup(() => RuntimeWindowApplicationServices.Current = previousWindowApplication, ref failures);
             AttemptCleanup(() => RuntimeRenderingHostServices.GameCachePath = previousGameCachePath, ref failures);
+            if (physicsChainRenderingLease is not null)
+                AttemptCleanup(physicsChainRenderingLease.Dispose, ref failures);
             if (renderingHostLease is not null)
                 AttemptCleanup(renderingHostLease.Dispose, ref failures);
             if (shaderLease is not null)
@@ -160,6 +166,7 @@ public static class RuntimeRenderingBootstrap
     private sealed class InstallationLease(
         EngineRuntimeRenderingHostServices renderingHost,
         IDisposable renderingHostLease,
+        IDisposable physicsChainRenderingLease,
         IDisposable adapterLease,
         IDisposable vrLease,
         IRuntimeRenderObjectServices? previousRenderObjects,
@@ -190,6 +197,7 @@ public static class RuntimeRenderingBootstrap
                 RuntimeVideoStreamingServices.Current = previousVideo;
 
             RuntimeRenderingHostServices.GameCachePath = previousGameCachePath;
+            DisposeStep(physicsChainRenderingLease, ref failures);
             DisposeStep(renderingHostLease, ref failures);
 
             DisposeStep(shaderLease, ref failures);

@@ -115,10 +115,10 @@ These lanes do not override the numbered Vulkan order.
 | Compact zero-readback | Complete deferred validation plus the workstream-07 Hi-Z phases. See [Compact Zero-Readback Rendering](compact-zero-readback-rendering-todo.md). |
 | Material and texture binding | Generalize the bounded Vulkan rung into pass-declared layouts, cross-backend array/bindless/coarse behavior, sparse/virtual interfaces, dirty updates, and prewarm. See [Material Table And Texture Binding Ladder](material-table-and-texture-binding-ladder-todo.md). |
 | Default pipeline GPU cost | Execute the workstream-06-owned pass, quality-scaling, GTAO, lighting, and post-process measurements. See [Default Pipeline GPU Hotspots](default-pipeline-gpu-hotspots-todo.md). |
-| Future visibility renderer | Complete the ordered [Advanced Render Pipeline Architectural Refactor](../architectural-refactor/00-advanced-render-pipeline-refactor-todo.md); the old standalone visibility-buffer and Deferred+ TODOs are superseded. |
+| Future visibility renderer | Complete the [Advanced Render Pipeline](../../../../architecture/rendering/advanced-render-pipeline.md) work in the [Vulkan XR And Advanced Rendering TODO](../vulkan-xr-and-advanced-rendering-todo.md); the old standalone visibility-buffer and Deferred+ TODOs are superseded. |
 | XR | Complete the stereo-mode, per-eye temporal/motion, VRS/foveation, reprojection, and whole-frame budget contract. See [VR Rendering Performance Contract](vr-rendering-performance-contract-todo.md). |
 | Avatar and cooked assets | Publish representation and cooked-variant identity through material, streaming, prewarm, submission, and profiler paths. See the [Avatar Optimization Roadmap](../../avatar/avatar-optimization-roadmap.md). |
-| Profiling tools | Bound visible editor-profiler cost and finish presentation-independent component profiling. See [Editor Profiler And UI Render Cost](editor-profiler-ui-render-cost-todo.md) and [Vulkan Headless MCP Component Profiling](vulkan-headless-mcp-component-profiling-todo.md). |
+| Profiling tools | Bound visible editor-profiler cost and finish presentation-independent component profiling. See [Editor Profiler And UI Render Cost](editor-profiler-ui-render-cost-todo.md) and the [RenderBench guide](../../../../developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench). |
 
 ## Invariants
 

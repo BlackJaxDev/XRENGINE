@@ -12,6 +12,8 @@ This document describes how XREngine creates OS windows on startup, selects a gr
 - [XRWindow Constructor](#xrwindow-constructor)
 - [Deferred Renderer Initialization](#deferred-renderer-initialization)
 - [The Render Loop](#the-render-loop)
+- [Window Ownership And Render Thread](#window-ownership-and-render-thread)
+- [Interactive Resize](#interactive-resize)
 - [Per-Frame Render Callback](#per-frame-render-callback)
 - [Complete Call Chain](#complete-call-chain)
 - [Class Hierarchy](#class-hierarchy)
@@ -139,6 +141,26 @@ resolves the engine default from `Engine.Rendering.Settings.Vulkan.Startup.Fallb
 plus project/user overrides. `RequireRequested` fails visibly when Vulkan cannot
 initialize. `FallbackWithWarning` and `AutoPreferRequested` may retry with OpenGL
 after logging the requested backend, fallback policy, and exception summary.
+
+### Render Settings Ownership
+
+Render settings are grouped by owner. Backend policy stays in its backend group.
+
+| Owner | Holds |
+|---|---|
+| `UserSettings` | Personal preferences: preferred backend, display, audio, quality, and `UserRenderingOverrides`. |
+| `GameStartupSettings` | Project defaults and required overrides, grouped in `GameRenderingOverrides`. |
+| `Engine.Rendering.Settings` | Engine default runtime policy. `OpenGL` is an `OpenGLRenderSettings` with `Context`, `ShaderLinking`, `TextureUpload`, and `Diagnostics` groups. `Vulkan` is a `VulkanRenderSettings` with `Startup`, `TargetMode`, `GpuDriven`, `Descriptors`, `Synchronization`, `Memory`, `Robustness`, and `Diagnostics` groups. |
+| `EditorPreferences` | Editor workflow and diagnostics. `EditorViewportPreferences`, `EditorSelectionPreferences`, and `EditorDiagnosticsPreferences` (with `General`, `Visualization`, `RenderPipeline`, `Culling`, `Exceptions`, `OpenGL`, `Vulkan`, and `Profiler` groups). |
+
+Renderer code reads effective policy through `Engine.EffectiveSettings` or
+`RuntimeEngine.EffectiveSettings`, not by walking user, project, or editor
+settings. `Engine.EffectiveSettings.RenderSnapshot` returns an
+`EffectiveRenderSettingsSnapshot` with `Common`, `OpenGL`, and `Vulkan`
+parts. Flat properties remain as compatibility aliases for saved settings and
+older callers; new code uses the grouped properties. A diagnostic that changes
+startup behavior, such as the OpenGL debug context, must state that it needs a
+restart.
 
 ---
 
@@ -350,6 +372,68 @@ Timer fires RenderFrame event
 ```
 
 The window owner separately pumps native events through `_desktopBackend.PumpEvents()` and publishes surface, close/focus, and input snapshots. The render path consumes those snapshots; it does not call a raw Silk `IWindow`.
+
+---
+
+## Window Ownership And Render Thread
+
+The window thread and the render thread are separate roles, even when one OS thread holds both. New code must not treat "main thread" and "render thread" as the same term; `EnqueueMainThreadTask(...)`-style names are compatibility names for render-thread work.
+
+| Role | Owns |
+|---|---|
+| Window thread | Native window creation and destruction, event pumping, callbacks, title, size, focus, cursor, and raw input configuration. |
+| Render thread | Graphics context, renderer, swapchain, render-pipeline state, GPU resources, readback, and present. |
+
+`RuntimeRenderThreadHost` (`XREngine.Runtime.Rendering/Runtime/RuntimeRenderThreadHost.cs`) owns the render loop behind `Engine.BlockForRendering()` and stamps `RenderThreadId` from inside the render thread. It has two modes:
+
+- `CollapsedWindowRenderThread` (default): the process entry thread pumps native events and runs the render loop. GLFW window and event APIs stay on the process main thread. Vulkan-to-OpenGL fallback follows the normal fallback policy.
+- `SplitWindowPumpPrototype`: `RuntimeWindowPumpHost` (`XREngine.Runtime.Platform.Desktop`) pumps an SDL-backed window on its own thread, and the render loop runs on a dedicated render thread. `XRE_WINDOW_PUMP_HOST=sdl-prototype` (or `sdl`, `1`) requests it. It is Windows-only, Vulkan-only, and requires native-backend resize for every startup window (`EInteractiveWindowResizeStrategy.SdlBackend`). The split path does not fall back to OpenGL. `Engine.CreateWindows(...)` waits on a startup attachment barrier before `Engine.Initialize(...)` continues.
+
+Mailboxes connect the roles:
+
+- `IRuntimeRenderingHostServices.EnqueueWindowThreadTask` posts window work without blocking. `InvokeWindowThreadTask<T>` is the request/reply form for startup and shutdown ordering.
+- `EnqueueRenderThreadTask` and `InvokeRenderThreadTask<T>` route renderer, swapchain, preview, and readback work.
+- `WindowMailboxDiagnostics` reports queue depth, wait time, wrong-thread calls, blocked waits, flushes, flush timeouts, shutdown drains, and stopping state.
+
+App and editor code reads immutable snapshots from `RuntimeWindowOwnership.cs`: `WindowSurfaceSnapshot` (sequence, client extent, DPI scale, focus, minimized, interactive-resize state, timestamp), `WindowEventSnapshot`, and `WindowInputSnapshot` (key, mouse, and text transitions, pointer position and delta, scroll delta, capture state). The window thread publishes surface snapshots latest-only with increasing sequence numbers; the render frame consumes at most the newest one and reports dropped sequences. `WindowInputSnapshotAccumulator` resets per-publication deltas. Snapshot publication does not allocate in the resize path.
+
+Close and dispose are split for externally pumped windows: renderer teardown runs on the render thread, native input and window teardown run on the window thread, and engine window removal returns to the render thread. Shutdown flushes the window mailbox before it completes the pump queue.
+
+Keep the process entry thread STA-capable. ImGui file dialogs, clipboard, drag-and-drop, and native UI bootstrap still depend on it until each has a thread-affinity adapter.
+
+---
+
+## Interactive Resize
+
+`WindowResizeController` (render-thread owned) tracks four extents in `WindowResizeExtents`:
+
+| Extent | Meaning |
+|---|---|
+| `NativeClientExtent` | Latest native client size from the window thread. Updates camera and display aspect only. |
+| `PresentationExtent` | Swapchain or default-framebuffer extent. |
+| `PipelineOutputExtent` | Final output region. `XRViewport.SetPresentationOutputExtent(...)` changes it cheaply during a drag. |
+| `FullInternalExtent` | Render-pipeline internal resources. `XRViewport.SetFullInternalExtent(...)` changes it. |
+
+During a live drag, the render frame updates the presentation and output extents first. GBuffer, depth, velocity, lighting, AO, bloom, shadows, volumetrics, and temporal histories do not rebuild on each drag tick. The controller requests a full internal generation only on a threshold crossing, a pause, a maximum lag time, or the settled signal (`WM_EXITSIZEMOVE` or equivalent). It commits `FullInternalExtent` only after each viewport's active `XRRenderPipelineInstance` generation matches the target extent, and it rejects stale pending generations.
+
+The Win32 Vulkan swapchain is not a lag layer. Without present scaling, Vulkan recreates the swapchain at the current surface extent, or it skips or coalesces the present tick (minimized, zero extent, or recreation busy). `CanPresentMismatchedSwapchainExtent(...)` stays false until `VkSwapchainPresentScalingCreateInfoKHR` is queried and validated. Vulkan swapchain recreation does not pump native events. Dynamic-rendering areas and blit regions clamp to the live source and destination image extents. A frame whose scene pipeline skipped for resize catch-up does not acquire or present, so the last valid image stays visible.
+
+### Resize strategies
+
+`EInteractiveWindowResizeStrategy` selects how a window behaves during a native border drag. `XRWindow` owns one `IInteractiveResizeStrategy`, logs the resolved strategy and the actual windowing backend, and routes callback renders through one guarded `RenderInteractiveResizeFrame(...)` helper. `ProcessPendingFramebufferResize()` is the only code that changes viewport sizes and calls `Renderer.FrameBufferInvalidated()`.
+
+| Strategy | `XRE_INTERACTIVE_RESIZE_STRATEGY` | Behavior |
+|---|---|---|
+| `Default` | `default` | No callbacks, hooks, or backend change. Baseline. |
+| `GlfwRefreshCallback` | `glfw-refresh` | Renders from the GLFW window refresh callback. |
+| `GlfwResizeCallbackRender` | `glfw-resize` | Renders from Silk.NET resize callbacks when the backend delivers them during a drag. Rate-limited and size-coalesced. |
+| `SdlBackend` | `sdl` | Creates the window through the Silk.NET SDL backend. A change takes effect only after window recreation. Required for the split window pump. |
+| `Win32ModalLoopTimer` | `win32-timer` | Windows only. Subclasses the window procedure. `WM_SIZING`/`WM_SIZE` record the latest client size; a modal-loop timer and a low-priority `WM_PAINT` sequence keep frames moving while the cursor is held still. Full internal resize waits for `WM_EXITSIZEMOVE`. `XRE_WIN32_INTERACTIVE_RESIZE_TIMER_MS` (1 to 250) tunes the timer. |
+| `EngineBorderlessResize` | `borderless` | Engine-owned resize grips on the `UseNativeTitleBar=false` path. It does not yet give continuous live resize. |
+
+The parser also accepts the enum names and short aliases (`win32`, `sdlbackend`, `engineborderless`) and ignores case, hyphens, and underscores. Resolution order: environment variable, per-window `GameWindowStartupSettings.InteractiveResizeStrategy` (default `Default`), then `EditorPreferences.InteractiveResizeStrategy` (default `Win32ModalLoopTimer`). The editor Engine State window shows the strategy, the backend, the four extents, pending generations, snapshot sequences, mailbox diagnostics, and per-strategy counters (callbacks, interactive renders, suppressed renders, queued resizes, last reason).
+
+In the collapsed mode, the Win32 modal loop holds the thread that also renders. A strategy can either render synchronously from the modal loop, which slows the native drag, or defer, which shows the new size only after mouse-up. Smooth chrome with a live trailing framebuffer needs the split window pump or a real engine-owned resize pump.
 
 ---
 

@@ -9,7 +9,7 @@ Note on normativity: every rule in this doc is normative for Phase 1+ work. Word
 Related docs:
 
 - [GPU meshlet zero-readback rendering design](../rendering/gpu-meshlet-zero-readback-rendering-design.md)
-- [GPU meshlet zero-readback rendering TODO](../../todo/rendering/gpu/gpu-meshlet-zero-readback-rendering-todo.md)
+- [Mesh submission strategies](../../../architecture/rendering/mesh-submission-strategies.md)
 - [Mesh submission strategies](../../../architecture/rendering/mesh-submission-strategies.md)
 - [Model import binary cache design](../assets/model-import-binary-cache-design.md)
 - [MCP server](../../../developer-guides/ai/mcp-server.md)
