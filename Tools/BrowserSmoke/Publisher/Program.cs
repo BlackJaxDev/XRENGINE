@@ -5,6 +5,7 @@ using RollingBall;
 using XREngine;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Execution;
 using XREngine.Rendering;
 using XREngine.Runtime.Bootstrap;
 
@@ -21,6 +22,7 @@ CanonicalProjectSnapshot snapshot = CanonicalProjectSnapshot.Copy(canonicalProje
     Path.Combine(validationRoot, "project"));
 try
 {
+    ThreadedWorkerBackend.EnsureRegistered();
     using IDisposable services = RuntimeAssetBootstrap.InstallEngineAssetServices();
     AssetFileSystemServices.Current = new LocalAssetFileSystem();
     ShaderSourceFileBackendServices.Current = new LocalShaderSourceFileBackend();

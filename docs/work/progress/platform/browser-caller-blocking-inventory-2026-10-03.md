@@ -90,8 +90,57 @@ open. This does not change the requirement count.
 Core, Desktop platform, and Browser platform Release builds pass with zero
 warnings and errors. The existing three `PhysicsChainCpuWorkSchedulerTests`
 are selected by the normal Windows workflow without source or assertion edits.
-Their new exact-commit result is pending. No desktop/VR pacing or browser runtime
-acceptance is claimed for this extraction.
+At commit `d41ba319a8ba5a8634edaad0338cdee09456c79e`, all 41 selected tests passed
+in [run 37576818620](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37576818620).
+The three scheduler cases verify exactly-once work, deterministic range order,
+and zero steady-state managed allocation on the calling thread. Artifact
+`11464541092` is 7,382 bytes with SHA-256
+`47b756ccf69bf56788cb16ad93e3c599b755737f8a22c596b568a616992c9838`.
+The downloaded TRX contains all three passed cases. This does not test factory
+failure injection, desktop/VR pacing, or browser worker execution.
+
+## General and auxiliary worker placement (2026-10-07)
+
+`XREngine.Runtime.Execution.Threads` now owns the existing general and auxiliary
+worker implementations. It targets `net10.0`, references Core, and adds no
+external package. It is outside the browser compile closure. Core keeps job
+queues, priority and affinity policy, throttling, scheduler state, topology,
+metrics, and the new domain contracts. The moved loops retain their existing
+worker names, context setup, wake behavior, and dispatch algorithms. A small
+cleanup also disposes the unused semaphore when a zero-worker domain first
+shuts down; normal manager shutdown already disposed it on the later join call.
+
+Native hosts install the worker factory before requesting threaded jobs.
+Registration is atomic and does not overwrite a custom factory or start workers.
+Each manager or scheduler captures one factory for both domains. Caller-thread
+construction does not consult it. Native zero-general-worker scheduling still
+uses its two auxiliary lanes. Desktop, the shared RenderBench scope, NUnit
+setup, SoftwareVulkan, and the standalone smoke publisher now compose the
+provider explicitly. The publisher retains its `net10.0` target. Full Desktop
+bootstrap registers workers before asset-source replacement can invoke read
+cancellation callbacks. The [project map](../../../architecture/runtime/project-organization.md)
+records the standalone registration requirement.
+
+The manager owns every returned domain before starting either. Constructor
+rollback and ordinary shutdown attempt cancellation and both domain stop
+requests before joins. One cooperative budget covers the remaining joins and
+manager completion waits. Failed domains cannot cause early disposal of manager
+synchronization. Collected errors are reported after the other cleanup attempts;
+failed constructor cleanup preserves the startup error first in its aggregate.
+Existing internal startup cleanup bounds remain, so the total constructor
+failure path is not limited to a fixed two seconds.
+
+Independent source/lifetime and composition reviews pass. Release builds of
+Threads, Host, Desktop platform, Browser platform, the standalone publisher, and
+SoftwareVulkan pass with zero warnings and errors. The local Bootstrap build
+cannot complete because the tracked OpenVR.NET and OscCore-NET9 submodule sources
+are absent.
+The dependent local RenderBench build was not run. Full Windows CI remains the
+broader build and startup gate. Its filter selects the existing `JobManagerTests`
+and `EngineWorkSchedulerTests` without test-method or assertion edits; their
+new exact-commit result is pending. Render-lane, transform, timer, profiler,
+batch/pool, and other blocking-site placement remain open. No requirement state
+or desktop/VR scheduling policy changed.
 
 ## Historical lexical refresh
 

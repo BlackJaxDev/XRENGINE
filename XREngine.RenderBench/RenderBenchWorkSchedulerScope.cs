@@ -1,6 +1,7 @@
 using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Execution;
+using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.RenderBench;
 
@@ -20,6 +21,7 @@ internal sealed class RenderBenchWorkSchedulerScope : IDisposable
         if (Engine.WorkScheduler is not null)
             return new RenderBenchWorkSchedulerScope(ownsScheduler: false);
 
+        RuntimeApplicationBootstrap.PrepareWorkerServices();
         EngineExecutionTopology topology = EngineExecutionTopology.Resolve(new EngineExecutionTopologyRequest
         {
             EffectiveProcessorCount = Environment.ProcessorCount,

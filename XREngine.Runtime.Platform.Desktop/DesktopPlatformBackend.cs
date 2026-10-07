@@ -20,6 +20,7 @@ public static class DesktopPlatformBackend
 
     public static void Register()
     {
+        DesktopWorkerBackend.EnsureRegistered();
         PhysicsChainCpuWorkerGroupServices.Current = new DesktopPhysicsChainCpuWorkerGroupFactory();
         RuntimeWindowBackendRegistry.Install(new DesktopSilkWindowBackendFactory());
         InputPlatformServices.ReadCapsLockState = static () =>

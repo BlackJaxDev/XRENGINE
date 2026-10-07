@@ -7,7 +7,7 @@ namespace XREngine.Execution;
 /// These lanes may block independently without consuming a general or
 /// render-critical worker.
 /// </summary>
-internal sealed class EngineJobAuxiliaryWorkDomain
+internal sealed class EngineJobAuxiliaryWorkDomain : IEngineJobAuxiliaryWorkDomain
 {
     private static readonly TimeSpan WorkerJoinTimeout = TimeSpan.FromSeconds(2);
     private readonly JobManager _jobs;
@@ -41,16 +41,16 @@ internal sealed class EngineJobAuxiliaryWorkDomain
         };
     }
 
-    internal int WorkerCount => 2;
-    internal int RunningWorkerCount
+    public int WorkerCount => 2;
+    public int RunningWorkerCount
         => (_deferredEnqueueWorker.IsAlive ? 1 : 0) +
            (_remoteDispatchWorker.IsAlive ? 1 : 0);
-    internal long DeferredDispatchCount => Interlocked.Read(ref _deferredDispatchCount);
-    internal long DeferredWakeCount => Interlocked.Read(ref _deferredWakeCount);
-    internal long RemoteDispatchCount => Interlocked.Read(ref _remoteDispatchCount);
-    internal long RemoteWakeCount => Interlocked.Read(ref _remoteWakeCount);
+    public long DeferredDispatchCount => Interlocked.Read(ref _deferredDispatchCount);
+    public long DeferredWakeCount => Interlocked.Read(ref _deferredWakeCount);
+    public long RemoteDispatchCount => Interlocked.Read(ref _remoteDispatchCount);
+    public long RemoteWakeCount => Interlocked.Read(ref _remoteWakeCount);
 
-    internal void Start()
+    public void Start()
     {
         if (Interlocked.Exchange(ref _started, 1) != 0)
             throw new InvalidOperationException("The job auxiliary work domain was already started.");
@@ -73,13 +73,13 @@ internal sealed class EngineJobAuxiliaryWorkDomain
         }
     }
 
-    internal void NotifyDeferredWorkAvailable()
+    public void NotifyDeferredWorkAvailable()
         => NotifyWorkAvailable(_deferredReadySignal, ref _deferredSignalPending);
 
-    internal void NotifyRemoteWorkAvailable()
+    public void NotifyRemoteWorkAvailable()
         => NotifyWorkAvailable(_remoteReadySignal, ref _remoteSignalPending);
 
-    internal JobAuxiliaryWorkDomainMetrics GetMetrics()
+    public JobAuxiliaryWorkDomainMetrics GetMetrics()
         => new(
             WorkerCount,
             RunningWorkerCount,
@@ -88,10 +88,10 @@ internal sealed class EngineJobAuxiliaryWorkDomain
             RemoteDispatchCount,
             RemoteWakeCount);
 
-    internal bool Shutdown(bool waitForWorkers)
+    public bool Shutdown(bool waitForWorkers)
         => Shutdown(waitForWorkers, WorkerJoinTimeout);
 
-    internal bool Shutdown(bool waitForWorkers, TimeSpan timeout)
+    public bool Shutdown(bool waitForWorkers, TimeSpan timeout)
     {
         if (Interlocked.Exchange(ref _shutdownState, 1) == 0)
         {

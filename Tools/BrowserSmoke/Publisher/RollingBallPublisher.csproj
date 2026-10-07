@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../../Samples/RollingBall/RollingBall.csproj" />
+    <ProjectReference Include="../../../XREngine.Runtime.Execution.Threads/XREngine.Runtime.Execution.Threads.csproj" />
   </ItemGroup>
 </Project>
