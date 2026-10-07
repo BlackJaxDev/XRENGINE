@@ -173,6 +173,21 @@ check failed, and shadow ON exceeded its 45-second first-frame limit while
 `engine-advanced-shade-native-depth-no-decals` remained pending for 37.5 seconds.
 Neither failure supplies worker-placement or desktop/VR pacing acceptance.
 
+The separate `XREngine.Benchmarks` executable also needs native worker
+registration. Its `--gltf-phase0-report` path calls `ModelAssetImporter.Import`,
+which reads `RuntimeModelImportServices.Current` before it selects the import
+backend. The default service constructs a `JobManager` even when the report
+disables asynchronous mesh processing. Normal benchmark startup now registers
+the existing factory before CLI dispatch and references the worker leaf.
+The `VulkanPerformanceToolOnly` build keeps its separate entry point and no
+engine project references. Benchmark bodies and scheduler clocks do not change.
+Its local tool-only Release build passed with zero warnings and errors. The
+normal build stopped at offline restore because BenchmarkDotNet and
+AssimpNetter are absent from the local package cache. The Windows validation
+workflow now compiles both modes with separate output roots and retains the
+build logs. The normal build and runtime import remain unqualified until the
+corresponding checks run; no benchmark workload ran for this repair.
+
 The existing local Headless project also built with zero warnings and errors
 and passed **144/144** selected animation, VR, routing, and filesystem unit
 cases. The run used the clean published source and disabled internal tracing.
