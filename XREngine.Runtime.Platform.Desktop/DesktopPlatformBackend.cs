@@ -11,6 +11,8 @@ namespace XREngine.Runtime.Platform.Desktop;
 /// <summary>Installs desktop input and operating-system services during application composition.</summary>
 public static class DesktopPlatformBackend
 {
+    private static readonly DesktopBufferSpillStorage BufferSpillStorage = new();
+
     /// <summary>Returns the primary display extent used by borderless desktop windows.</summary>
     public static IVector2 GetPrimaryDisplaySize()
         => new(NativeMethods.GetSystemMetrics(0), NativeMethods.GetSystemMetrics(1));
@@ -22,6 +24,7 @@ public static class DesktopPlatformBackend
             NativeMethods.TryDetermineSystemCapsLockState(out bool enabled) ? enabled : null;
         RenderWorkerPlatformServices.HighPriorityInitializer = WindowsThreadQos.ApplyHighRenderPriority;
         XREngine.Data.FileMappingServices.Backend = new DesktopFileMappingBackend();
+        XRBufferSpillStorageServices.Current = BufferSpillStorage;
         XREngine.Data.HostAssetFileOutputServices.Current = new DesktopHostAssetFileOutput();
         XREngine.Data.RuntimePlatformPaths.Current = new DesktopPlatformPaths();
         XREngine.Data.RuntimeProcessServices.Current = new DesktopProcessRunner();
