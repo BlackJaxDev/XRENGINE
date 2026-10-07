@@ -25,11 +25,12 @@ The fixed-step movement contract, the Jolt update lifecycle, the separate Jolt s
 - [ ] Add end-to-end cadence tests: 30, 60, 120, and 144 Hz producer ticks against 60 Hz physics, with uneven and jittered deltas, for both input models, both `TickInputWithPhysics` modes, and both backends. Done when: equal input over equal elapsed time gives equivalent trajectories within a documented tolerance.
 - [ ] Add a runtime input-model toggle test with commands in flight through the controller. Done when: no command applies twice and no transition spike occurs in either direction.
 - [ ] Add walk-off and jump tests from translating, rotating, and accelerating platforms. Done when: inherited platform momentum is applied once.
-- [ ] Add wall and ceiling fixtures that assert support state separately from collision flags. Done when: walls and ceilings never report `Supported`.
+- [ ] Add walkable, too-steep, wall, and ceiling fixtures that assert support state separately from collision flags. Done when: only walkable floor reports `Supported`.
 - [ ] Add jump height and airtime tests for Y-up, Z-up, and non-axis-aligned up on both backends. Done when: results stay within a documented tolerance.
 - [ ] Add requested-versus-effective velocity assertions for free movement, wall sliding, corner collision, slopes, steps, and moving ground. Done when: each case asserts both values.
 - [ ] Add PhysX-versus-Jolt scenario traces compared against shared behavioral tolerances. Record input model, raw command, requested velocity, gravity and jump velocity, ground point velocity, effective velocity, position, foot position, support state, ground normal, collision flags, contact count, and supporting body. Done when: the traces run without a visible editor or GPU.
 - [ ] Add a fixed-step allocation assertion for idle and moving Jolt updates. Done when: the test asserts zero managed allocation after warmup.
+- [ ] Add an idle fixed-step contact refresh test. Done when: Jolt updates contacts, support, floor sticking, stairs, and moving-ground state on a zero-input fixed step.
 - [ ] Add teardown and reload tests for controller registries, contact listeners, inner bodies, and backend diagnostic counts. Done when: all counts return to zero.
 - [ ] Add character-versus-character, dynamic pushing, query visibility, and inner-body tests for each enabled capability. Done when: each capability asserts support or an explicit unsupported result.
 
@@ -46,14 +47,3 @@ The fixed-step movement contract, the Jolt update lifecycle, the separate Jolt s
 
 - Bit-identical trajectories between PhysX and Jolt.
 - PhysX-only features in Jolt: native materials, invisible walls, maximum jump height, scale coefficient, volume growth, and constrained climbing. These stay capability differences.
-
-## Recovered Items To Triage
-
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/physics/jolt-character-controller-correctness-todo.md`
-
-- [ ] Add walkable/too-steep/wall/ceiling contact fixtures that assert support
-  state separately from collision flags.
-- [ ] Jolt advances controller contacts, support, floor sticking, stairs, and
-  moving-ground behavior every fixed step, including idle steps.

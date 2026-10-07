@@ -1,73 +1,36 @@
-# OpenXR Timing And Pipeline — Tests And Diagnostics
+# OpenXR Timing Tests TODO
 
-Last updated: 2026-05-13
+Last Updated: 2026-10-06
+Status: Active
+Architecture: [OpenXR VR Rendering](../../../architecture/rendering/openxr-vr-rendering.md#frame-lifecycle-and-pose-timing), [OpenXR Runtime](../../../developer-guides/vr/openxr-runtime.md#no-hmd-test-lanes)
+Validation: [OpenXR Validation](../../testing/xr/openxr-validation.md)
 
-Tracks the remaining test, allocation-audit, and hardware-validation work for the OpenXR timing pipeline. The production-code todo (Phases 0-8) is complete and has been removed; this file is what is left.
+## Current State
 
-Sibling future-work tracker: [openxr-future-work-todo.md](../rendering/vr/openxr-future-work-todo.md).
-No-HMD runtime testing design: [OpenXR Monado Testing Pipeline](../../design/VR/openxr-monado-testing-pipeline.md).
-Monado lane guide: [OpenXR Runtime - No-HMD test lanes](../../../developer-guides/vr/openxr-runtime.md#no-hmd-test-lanes). Checks: [OpenXR Validation](../../testing/xr/openxr-validation.md).
+`XREngine.UnitTests/Rendering/OpenXrTimingPipelineContractTests.cs` exists and covers timing pipeline invariants, pacing-mode wiring, handoff, teardown, tracking-loss warning policy, and padded-frustum policy markers. Several checks still use source-text inspection. Runtime allocation and pacing-thread invariants need executable test coverage.
 
-## Contract Tests
+## Open Code Items
 
-Existing coverage lives in `XREngine.UnitTests/Rendering/OpenXrTimingPipelineContractTests.cs` (9 tests, all passing). It covers Phase 1-5 invariants plus the Phase 7 pacing-mode wiring, ping-pong hand-off, stop-on-teardown, streak-gated tracking-loss warning, and padded-frustum policy marker.
+### Runtime contract tests
 
-Still missing:
+- [ ] Add a runtime allocation-sentinel test for sustained tracking loss. Update `XREngine.UnitTests/Rendering/OpenXrTimingPipelineContractTests.cs` or a new focused test file. Done when: the test drives `HandleLocatedViewState` with `OpenXrDebugLifecycle` off and asserts zero managed allocations across warmed steady-state frames.
+- [ ] Add a runtime pacing-thread invariant test. Update OpenXR timing test fixtures with a fake `IOpenXrRuntime` or equivalent seam. Done when: the test asserts one outstanding `xrBeginFrame` per `xrEndFrame`, no `xrWaitFrame` call on the simulated render thread, and zero steady-state allocation in the preparation loop.
+- [ ] Replace source-text frustum-expansion coverage with behavior coverage. Update OpenXR timing tests. Done when: a policy other than `PaddedFrustum` resets `VrXrCollectFrustumExpansionDegrees` to `0` each frame in an executable test.
 
-- [ ] Runtime allocation-sentinel test (not source-level): drive `HandleLocatedViewState` under sustained tracking loss with `OpenXrDebugLifecycle` off and assert zero managed allocations across N frames after warmup. Needs a small GC-allocations harness; current contract tests only inspect source text.
-- [ ] Runtime pacing-thread invariant test: with `OpenXrRenderPacingMode == DedicatedThread` and a fake `IOpenXrApi`-style surface, assert (a) exactly one `xrBeginFrame` outstanding per `xrEndFrame`, (b) `xrWaitFrame` never executes on the simulated render thread, (c) steady-state prep iteration allocates nothing.
-- [ ] Frustum-expansion stat behavior test: with policy != `PaddedFrustum`, assert `VrXrCollectFrustumExpansionDegrees` is reset to 0 each frame (currently covered only by source-text inspection).
+### Test boundaries
 
-## Allocation Audits
+- [ ] Keep Monado-independent timing contract tests free of runtime process orchestration. Update test helpers if needed. Done when: timing regressions can fail before Monado, SteamVR, or editor smoke scripts start.
+- [ ] Audit input listeners on action edges for sensitivity to the `OpenXrActionSyncPolicy.PredictedOnly` default after runtime validation completes. Update tests for any binding that must use `PredictedAndLate`. Done when: each affected binding has an explicit policy and a deterministic regression test.
 
-- [ ] After landing any further OpenXR layer changes, re-run `Tools/Reports/Find-NewAllocations.ps1 -FailOnOpenXrHotPathAllocations` and clear any new flags or add a justification comment.
+### Allocation audit tooling
 
-## Manual Hardware Validation Matrix
+- [ ] Keep the OpenXR hot-path allocation audit current after OpenXR layer changes. Update `Tools/Reports/Find-NewAllocations.ps1` or its OpenXR patterns when code moves. Done when: the audit still covers render, collect-visible, pacing, swapchain, and submission hot paths after layout changes.
 
-Required before declaring `OpenXrRenderPacingMode == DedicatedThread` production-default.
+## Decisions Needed
 
-| Runtime | Backend | Mirror + ImGui | Headset off / session-stopping | Loss-pending recovery |
-|---------|---------|----------------|---------------------------------|------------------------|
-| SteamVR / OpenXR | OpenGL | [ ] | [ ] | [ ] |
-| SteamVR / OpenXR | Vulkan | [ ] | [ ] | [ ] |
-| Oculus / OpenXR | OpenGL | [ ] | [ ] | [ ] |
-| Oculus / OpenXR | Vulkan | [ ] | [ ] | [ ] |
+- [ ] What fake or adapter surface should timing tests use for runtime pacing without starting a real OpenXR runtime? Owner: Testing / XR.
 
-Per-row checks:
+## Out Of Scope
 
-- [ ] Editor with desktop mirror + headset active: desktop ImGui FPS exceeds HMD refresh after enabling `DedicatedThread`, within 10% of non-VR baseline.
-- [ ] `VrXrPacingHandoffStalls` does not grow unboundedly under steady-state load.
-- [ ] `VrXrPacingThreadIdleTimeMs` ≈ (frame interval - active prep time) in steady state (proves pacing thread waits, not spins).
-- [ ] Cover the HMD sensors for ~10 s: exactly one tracking-loss warning per streak, plus one `FreezeLastValid`→identity warning when no cached views exist.
-- [ ] Session-loss / runtime restart: pacing thread shuts down cleanly (no `XR Pacing` thread surviving in profiler after session end).
-
-## Baseline Diagnostics
-
-- [ ] Capture a baseline run with `OpenXrDebugLifecycle=true` on a reference scene; archive lifecycle logs under `Build/Logs/`.
-- [ ] Re-run baseline with `DedicatedThread` enabled and attach updated lifecycle logs + stats to the validation PR.
-
-## Monado Mock Runtime Lane
-
-The implemented lane is described in
-[OpenXR Runtime - No-HMD test lanes](../../../developer-guides/vr/openxr-runtime.md#no-hmd-test-lanes).
-CI, hardware, and deterministic fault-injection follow-ups live in
-[openxr-monado-ci-hardware-followups-todo.md](../rendering/vr/openxr-monado-ci-hardware-followups-todo.md).
-Keep this section as the timing-tests cross-link so OpenXR test work continues
-to include the no-HMD runtime lane.
-
-- [ ] Run the Lane 2 Monado smoke after OpenXR timing or frame-submission
-  changes once the dedicated tracker lands the local runner.
-- [ ] Keep Lane 0 contract tests independent of Monado so timing regressions can
-  fail before process/run orchestration starts.
-
-## Phase 4 Input Audit (deferred from main todo)
-
-- [ ] Audit input listeners on action edges for sensitivity to the `OpenXrActionSyncPolicy.PredictedOnly` default (Phase 4 changed behavior from two-sync to one-sync per frame). Regression sweep on existing bindings; flip to `PredictedAndLate` per-binding if any consumer regresses.
-
-## Related
-
-- [OpenXR VR Rendering (architecture)](../../../architecture/rendering/openxr-vr-rendering.md)
-- [OpenXR Monado Testing Pipeline](../../design/VR/openxr-monado-testing-pipeline.md)
-- [OpenXR Validation](../../testing/xr/openxr-validation.md)
-- [OpenXR Monado CI And Hardware Follow-ups](../rendering/vr/openxr-monado-ci-hardware-followups-todo.md)
-- [OpenXR Future Work TODO](../rendering/vr/openxr-future-work-todo.md)
+- Running hardware or editor smoke validation. Those checks live in [OpenXR Validation](../../testing/xr/openxr-validation.md).
+- Promoting Monado CI. That work lives in [OpenXR Monado CI And Hardware Follow-ups](../rendering/vr/openxr-monado-ci-hardware-followups-todo.md).

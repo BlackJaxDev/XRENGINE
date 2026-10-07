@@ -10,7 +10,7 @@ records, taking the storage gate hold from 3.13 ms to 1.56 ms while its wait
 stayed at nanoseconds; the full reload, TSR, restart and rapid-reload matrix
 passed with images unchanged. The competing-family (emulated stereo) case is
 recorded below. Gate record for
-[S13h](../../todo/rendering/vulkan-stall-remediation-todo.md#s13h-change-synchronization-only-for-a-measured-remaining-bottleneck)
+[S13h](../../progress/rendering/vulkan-stall-remediation-results.md)
 under the todo document's one-by-one protocol. Evidence root:
 `Build/_AgentValidation/20260926-194527-s13h-critical-section/` (ignored,
 disposable; findings are copied here). Fixture, camera and session type are

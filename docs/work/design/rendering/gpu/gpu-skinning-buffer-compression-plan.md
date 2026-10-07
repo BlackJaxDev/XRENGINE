@@ -7,10 +7,10 @@ Scope: renderer-level refactor of XRMesh and XRMeshRenderer skinning influence a
 Related docs:
 
 - [Production GPU-driven rendering roadmap](../../../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
-- [Zero-Readback GPU-Driven Rendering Plan](zero-readback-gpu-driven-rendering-plan.md)
-- [GPU Physics Chain Zero-Readback Skinned Mesh Plan](gpu-physics-chain-zero-readback-skinned-mesh-plan.md)
-- [OpenGL Renderer](../../architecture/rendering/opengl-renderer.md)
-- [Vulkan Renderer](../../architecture/rendering/vulkan-renderer.md)
+- [Zero-Readback GPU-Driven Rendering Plan](../zero-readback-gpu-driven-rendering-plan.md)
+- [GPU Physics Chain Zero-Readback Skinned Mesh Plan](../../transforms/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)
+- [OpenGL Renderer](../../../../architecture/rendering/opengl-renderer.md)
+- [Vulkan Renderer](../../../../architecture/rendering/vulkan-renderer.md)
 - [Rendering Code Map](../../../../architecture/rendering/code-map.md)
 
 ---

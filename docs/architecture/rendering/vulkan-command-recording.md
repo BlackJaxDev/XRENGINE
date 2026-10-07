@@ -47,7 +47,6 @@ Worker threads
 ```
 
 ## Terminology
-
 | Term | Meaning |
 | --- | --- |
 | `FrameOp` | A high-level operation collected for the current frame, such as a mesh draw, query, or transfer. |
@@ -73,7 +72,6 @@ lane cleanup does not release submitted GPU ownership.
 
 The renderer resolves the configured command-recording mode before building the
 frame:
-
 | Mode | Behavior |
 | --- | --- |
 | `Inline` | Record work directly into the primary command buffer. |
@@ -164,7 +162,6 @@ owner identity. A content-only change republishes bytes without changing the
 recorded binding location. A layout change selects a different reservation. An
 arena-generation change invalidates every prepared handle that retained the old
 storage. These generations must not be substituted for one another.
-
 | Domain | Stable owner | Content that advances it | Publication lifetime |
 | --- | --- | --- | --- |
 | Frame | renderer frame domain | render-frame generation and typed frame publishers | once for each in-flight slot used by that frame |
@@ -926,7 +923,6 @@ defined by the
 ## Source Map
 
 The implementation is split across focused partial-class files:
-
 | Responsibility | Primary implementation |
 | --- | --- |
 | Primary recording, reuse decision, and scheduled secondary execution | `VulkanRenderer.CommandBufferRecording.cs` |

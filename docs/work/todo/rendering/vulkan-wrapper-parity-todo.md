@@ -23,8 +23,15 @@ The Vulkan wrappers `VkMeshRenderer`, `VkMaterial`, `VkShader`, `VkImageBackedTe
 
 ### Textures
 
-- [ ] Check `FormatFeatureFlags` before Vulkan selects the upload, storage-image, color-attachment, depth/stencil-attachment, linear-filter sampler, linear-tiling, and texel-buffer paths. `VkImageBackedTexture` and `VkTexture*` types. Done when: each path queries format features before use and reports texture name, format, and the missing feature when a path is rejected.
+- [ ] Check `FormatFeatureFlags` before Vulkan selects the upload, sampled-image, storage-image, color-attachment, depth/stencil-attachment, linear-filter sampler, linear-tiling, and texel-buffer paths. `VkImageBackedTexture` and `VkTexture*` types. Done when: each path queries format features before use and reports texture name, format, and the missing feature when a path is rejected.
 - [ ] Add a unit test for the texture-view compatibility matrix. `VkTextureView`, `GLTextureView`, `XRTextureVulkanParityContractTests`. Done when: the test proves that both backends accept and reject the same view format, type, and aspect combinations.
+
+### Allocator Integration
+
+- [ ] Document and implement persisted settings handling after the allocator backend rename from `Suballocator` to `Managed`. Vulkan settings and migration code. Done when: old persisted values load into the intended backend or fail with a clear diagnostic.
+- [ ] Centralize allocation alignment calculation for allocation offset, non-coherent atom size, and buffer-image granularity. Vulkan allocator helpers. Done when: allocation paths use one helper and tests cover non-coherent and image-granularity cases.
+- [ ] Add guard rails for mapping image memory and other suspicious mapping usage. Vulkan allocators and mapped-memory APIs. Done when: invalid mapping attempts fail with a clear diagnostic before a driver call.
+- [ ] Define which Vulkan resources are movable, copyable, and rebindable. Vulkan allocator metadata and resource lifetime code. Done when: each allocation class has a policy and move/copy/rebind code refuses unsupported resources.
 
 ### OpenGL Backfill
 
@@ -37,13 +44,3 @@ None.
 ## Out Of Scope
 
 - Hardware and visual comparison between backends. The validation doc owns these checks.
-
-## Recovered Items To Triage
-
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/COMPLETED/vulkan-wrapper-parity.md`
-
-- [ ] Validate `VkFormatFeatureFlags` before choosing upload, blit, mipmap,
-  storage-image, attachment, depth/stencil, filtering, linear-tiling,
-  sampled-image, and texel-buffer paths.

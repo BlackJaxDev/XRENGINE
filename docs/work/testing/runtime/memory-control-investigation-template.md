@@ -1,10 +1,8 @@
 # Memory-Control Investigation Template
 
-[Back to testing docs](README.md)
+[Back to testing docs](../README.md)
 
-Use this template when investigating GC, allocation, or frame-time regressions
-in hot paths. Keep generated captures and logs under
-`Build/_AgentValidation/<run>/`; copy only durable findings into the work doc.
+Use this template when you investigate GC, allocation, or frame-time regressions in hot paths. Keep generated captures and logs in the task run root. Copy only durable findings into tracked docs.
 
 ## Investigation
 
@@ -23,7 +21,7 @@ in hot paths. Keep generated captures and logs under
 
 Record allocation tracking with profiler scopes enabled.
 
-| Source | Bytes/frame or bytes/tick | Frequency | Classification | Notes |
+| Source | Bytes per frame or tick | Frequency | Classification | Notes |
 |---|---:|---:|---|---|
 | Render thread | | | | |
 | Collect/swap thread | | | | |
@@ -34,8 +32,7 @@ Record allocation tracking with profiler scopes enabled.
 | ECS systems | | | | |
 | VR input/update | | | | |
 
-Classifications: hot-path blocker, warmup-only churn, editor/tooling-only
-churn, acceptable background allocation.
+Classifications: hot-path blocker, warmup-only churn, editor/tooling-only churn, acceptable background allocation.
 
 ## Reproduction Steps
 
@@ -73,4 +70,4 @@ churn, acceptable background allocation.
 
 ## Follow-Ups
 
-- 
+-

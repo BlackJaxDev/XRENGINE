@@ -1124,7 +1124,7 @@ recipe and effective configuration, workload identity, source executable and
 assembly hashes, hardware/driver identity, timing intervals, and gate status.
 The source and workload hashes prevent an unrelated build or workload change
 from silently entering a clean comparison. Current live evidence and validation
-are recorded in the [Vulkan component profiling progress report](../../work/progress/rendering/vulkan-component-profiling.md#previously-recorded-local-evidence).
+are recorded in the [Vulkan component profiling progress report](../../work/progress/rendering/vulkan-component-profiling.md#local-validation-evidence).
 
 External GPU captures made by RenderDoc, Nsight, RGP, or an existing capture
 bridge can be attached after the measured interval with `external_capture`:

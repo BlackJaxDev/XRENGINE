@@ -10,7 +10,7 @@ Execution plan:
 [Vulkan Renderer: Presentation-Independent Hosts](../../../architecture/rendering/vulkan-renderer.md#presentation-independent-hosts)
 
 Remaining validation:
-[Vulkan Presentation-Independent Renderer Validation](../../testing/rendering/vulkan-presentation-independent-renderer-validation.md)
+[Vulkan Presentation-Independent Renderer Validation](../../testing/rendering/vulkan-core-validation.md#presentation-independent-renderer)
 
 ## Objective
 
@@ -266,7 +266,7 @@ Implemented:
   item and linked its remaining acceptance work to the dedicated validation
   plan.
 - Moved the Phase 7 validation matrix to
-  [Vulkan Presentation-Independent Renderer Validation](../../testing/rendering/vulkan-presentation-independent-renderer-validation.md)
+  [Vulkan Presentation-Independent Renderer Validation](../../testing/rendering/vulkan-core-validation.md#presentation-independent-renderer)
   without claiming unrun gates as complete, then retired the implementation
   TODO to `docs/work/todo/COMPLETED/`.
 

@@ -73,11 +73,3 @@ Vulkan has only capability probing. `VulkanDeviceContext.LogicalDeviceBootstrap`
 
 - Removal of `RestirGI.Native`, `RestirGI.Native.cpp`, or the OpenGL `GL_NV_ray_tracing` bridge.
 - Blocking OpenGL ReSTIR experiments on Vulkan RT availability.
-
-## Recovered Items To Triage
-
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/rendering/vulkan-restir-radiance-cache-gi-todo.md`
-
-- [ ] Add RT pipeline creation through `vkCreateRayTracingPipelinesKHR`.

@@ -513,10 +513,15 @@ namespace XREngine.Components.Scene.Mesh
             if (!IsSkinned)
                 return;
 
+            long t = RenderableMeshStageTelemetry.Begin();
             if (!UpdateRelativeBoneMatrix(bone))
+            {
+                RenderableMeshStageTelemetry.End(11, t);
                 return;
+            }
 
             MarkSkinnedDataDirty();
+            RenderableMeshStageTelemetry.End(11, t);
         }
 
         private void MarkSkinnedDataDirty()

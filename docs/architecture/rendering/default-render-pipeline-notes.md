@@ -175,7 +175,7 @@ passes, temporal/post-processing, and final output. Vulkan dispatches
 evaluate material lighting, and write HDR scene color; the Advanced command
 chain consumes that output through post-processing and presentation.
 
-The September 4–8 [Advanced acceptance records](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md#static-surfaces-ao-and-gi)
+The September 4–8 [Advanced acceptance records](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md)
 include bounded shaded-output, AO/IBL, temporal, post-processing, and OpenGL
 stereo cohorts. These establish implemented and exercised paths, not universal
 backend/material/output-profile certification. Consult the individual runtime

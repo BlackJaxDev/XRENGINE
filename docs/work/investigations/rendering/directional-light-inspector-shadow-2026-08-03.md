@@ -14,7 +14,7 @@ Supersedes active ownership in:
 
 Related work that remains separate and is not part of this acceptance pass:
 
-- [Vulkan Optimization Workstreams 03-05 Validation](../../testing/rendering/03-05-optimization-validation-todo.md)
+- [Vulkan Optimization Workstreams 03-05 Validation](../../testing/rendering/gpu-driven-submission-validation.md#vulkan-03-05-gate)
 - [Vulkan Zero-Readback Production Scheduling](../../progress/rendering/vulkan-zero-readback-production-scheduling-2026-08-03.md)
 
 ## Current status

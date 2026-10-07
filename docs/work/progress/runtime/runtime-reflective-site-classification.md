@@ -2,7 +2,7 @@
 
 This inventory classifies the existing runtime reflection boundaries by owner.
 It accompanies the [implementation ledger](runtime-data-layout-and-generated-contracts-progress.md)
-and the [NativeAOT hardening work](../../todo/runtime-regression-and-nativeaot-hardening-todo.md).
+and the [NativeAOT hardening work](../../todo/runtime/runtime-regression-and-nativeaot-hardening-todo.md).
 It is a source audit, not a claim of zero runtime diagnostics or refreshed warning counts.
 
 Player work is entered through explicit published-reader, cooked-snapshot,

@@ -74,7 +74,6 @@ Large-file splits should stay behavior-neutral except for access or partial-clas
 adjustments required by the split.
 
 ### Backend old-to-new map
-
 | Old Path | New Path |
 |---|---|
 | `Vulkan/Init.cs` | `Vulkan/Bootstrap/VulkanRenderer.Initialization.cs` |
@@ -118,7 +117,6 @@ adjustments required by the split.
 
 All paths below are under
 `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/`.
-
 | Final path | Responsibility |
 |---|---|
 | `Frame/VulkanRenderer.FrameLoop.cs` | Short renderer-facade delegation to the desktop frame loop |
@@ -328,7 +326,6 @@ Primary ownership:
 ---
 
 ## Old-to-New Mapping Table (fill during migration)
-
 | Old Path | New Path | Batch | Status |
 |---|---|---|---|
 | `Build/CommonAssets/Shaders/Compute/LightVolumes.comp` | `Build/CommonAssets/Shaders/Compute/GI/LightVolumes/LightVolumes.comp` | 2 | Moved |

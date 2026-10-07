@@ -6,8 +6,8 @@ Status: active. No cumulative acceptance is established.
 
 The user requested completion of the remaining stall work and selected Monado
 for all OpenXR validation. Use the
-[remaining worklist](../../todo/rendering/vulkan-stall-remediation-todo.md) and
-[validation protocol](../../testing/rendering/vulkan-stall-validation.md).
+[remaining worklist](../../progress/rendering/vulkan-stall-remediation-results.md) and
+[validation protocol](../../testing/rendering/vulkan-core-validation.md).
 Keep one implementation change active at a time.
 
 The first control uses source `71ccb6a4f`, Release x64, and the named isolated

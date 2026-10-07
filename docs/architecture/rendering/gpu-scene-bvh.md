@@ -89,7 +89,6 @@ This avoids replacing a Vulkan buffer after descriptor capture and guarantees
 that every build stage can report overflow without a CPU reset upload.
 
 Nodes use one canonical 48-byte `std430` layout:
-
 | Offset | Field |
 |---:|---|
 | 0 | `vec3 minBounds` |

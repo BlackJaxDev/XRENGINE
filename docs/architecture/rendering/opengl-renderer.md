@@ -73,7 +73,6 @@ The OpenGL renderer lives under
 same backend taxonomy as Vulkan where the API concepts line up. Namespaces
 intentionally remain `XREngine.Rendering.OpenGL`; folder names define source
 ownership and navigation.
-
 | Folder | Purpose |
 | --- | --- |
 | `Bootstrap/` | Renderer class declaration, OpenGL initialization/debug setup, and shared-context worker ownership. |
@@ -294,7 +293,6 @@ global palette buffer is used.
 ### Indirect Drawing
 
 For GPU-driven rendering, the OpenGL renderer supports multiple indirect draw paths with automatic fallback:
-
 | Extension | Function | Description |
 |-----------|----------|-------------|
 | `NV_BindlessMultiDrawIndirectCount` | `NVBindlessMultiDrawIndirectCount` | Fastest path — bindless, count from buffer |
@@ -309,7 +307,6 @@ The renderer probes for these extensions at startup and selects the best availab
 ## Render Object Factory
 
 `CreateAPIRenderObject()` maps engine-generic render objects to OpenGL-specific wrappers:
-
 | Generic (Engine) | OpenGL Wrapper |
 |-------------------|----------------|
 | `XRMaterial` | `GLMaterial` |
@@ -369,7 +366,6 @@ were exercised by the [tessellated-water qualification](../../work/investigation
 ## State Management
 
 The renderer provides thin wrappers around OpenGL state calls:
-
 | Method | GL Call |
 |--------|---------|
 | `SetRenderArea(rect)` | `glViewport(x, y, w, h)` |

@@ -12,7 +12,6 @@ separate production policies.
 
 Image state is tracked per physical image generation, mip, array layer, aspect,
 and queue family.
-
 | Boundary | Owner | Rule |
 |---|---|---|
 | Before primary execution | submitted image-state map | The acquired swapchain image and every shared image must match the primary's recorded entry contract. State from another swapchain image is never substituted. |

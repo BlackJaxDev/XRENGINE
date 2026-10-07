@@ -33,3 +33,8 @@ Validation: [Global Illumination Validation](../../../testing/rendering/global-i
 ## Decisions Needed
 
 - [ ] Choose single-volume or multi-volume blending for v1. Owner: rendering lead.
+
+## Out Of Scope
+
+- ReSTIR radiance-cache reuse.
+- Specular radiance-cascade sampling before diffuse production is valid.

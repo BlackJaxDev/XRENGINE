@@ -117,4 +117,4 @@ Primary implementation:
 Related docs:
 
 - [Vulkan Renderer](../../architecture/rendering/vulkan-renderer.md)
-- [Vulkan Manual Validation Guide](../../work/todo/vulkan.md)
+- [Vulkan Core Validation](../../work/testing/rendering/vulkan-core-validation.md)

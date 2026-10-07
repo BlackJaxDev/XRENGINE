@@ -1,441 +1,221 @@
-# Retinal Visibility Cache Rendering Validation Plan
+# Retinal Visibility Cache Validation
 
-Last Updated: 2026-07-03
-Owner: Rendering / XR
-Status: Implementation Surfaces Ready, Validation Evidence Pending
-Target Branch: `rendering-rvc-quad-view-foundation`
+Scope: Validate Retinal Visibility Cache (RVC) rendering, RVC debug views, OpenXR quad-view plumbing, visibility masks, frame-graph resources, fallback reporting, quality gates, and performance gates.
 
-This document is now the validation plan for Retinal Visibility Cache (RVC).
-Implementation scope and design rationale live in the architecture document:
+Architecture links:
 
 - [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md)
+- [OpenXR VR Rendering](../../../architecture/rendering/openxr-vr-rendering.md)
+- [Default Render Pipeline Notes](../../../architecture/rendering/default-render-pipeline-notes.md)
 
-Use this plan to prove that the implemented RVC contracts, render-graph
-resources, renderer capability hooks, OpenXR quad-view plumbing, visibility-mask
-support, and diagnostic paths behave correctly on real desktop, OpenVR, OpenXR,
-quad-view, and Vulkan configurations.
+Code todo links:
 
-Do not check a validation item until the named evidence exists. Acceptable
-evidence includes source-test output, build logs, runtime logs, MCP screenshots,
-RenderDoc captures/exports, profiler traces, benchmark tables, and linked
-durable notes under `docs/work/`.
+- [RVC VR Debug Views TODO](../../todo/rendering/vr/retinal-visibility-cache-debug-views-todo.md)
 
-## Evidence Rules
+## Setup
 
-- Store disposable validation output under `Build/_AgentValidation/<run>/`.
-- Record the exact command, branch, commit/worktree state, runtime, GPU, driver,
-  render API, headset/runtime, scene, settings, and date for every run.
-- Compare RVC against the foveated Forward+ oracle where quad/foveated support
-  exists. Uniform Forward+ is useful as a secondary reference, not the target
-  baseline.
-- Treat a silent fallback as a failure. Missing support must appear in logs,
-  counters, frame profiles, or overlays with an actionable reason.
-- Keep GPU counter readback delayed. Any synchronous render-loop readback path
-  is a failure unless explicitly whitelisted for a one-off diagnostic run.
-- Preserve the raw capture or log and link its path from the relevant checklist
-  note before checking the item.
+Use Windows with the ImGui editor. Use OpenGL for correctness checks that the engine supports. Use Vulkan for production RVC checks. Use OpenXR for quad-view and foveated checks. Use OpenVR only for stereo regression checks.
 
-## Implemented Surface Under Test
+Tasks from `.vscode/tasks.json`:
 
-The current branch contains code surfaces for:
+- `Build-Editor`: build the ImGui editor.
+- `Build-Editor-Fast`: build the editor without analyzers for local iteration.
+- `Build-Editor-Release`: build the release editor for performance runs.
+- `Watch-Editor-RendererDevelopment`: run the editor with `--renderer-development`.
+- `Start-Editor-RendererDevelopment-NoDebug`: start the editor after `Build-Editor`.
+- `Measurement-Baseline-GpuIndirectZeroReadback`: start a profiling run with `XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback`.
+- `Measurement-GameLoopRenderPipeline-Release-All`: run release render-pipeline measurements.
 
-- `RenderFrameViewSet` view identity, quad wide/inset roles, foveation metadata,
-  previous state, mirror/debug views, and per-view diagnostics.
-- RVC settings, `RvcRenderPipeline` selection, capability resolution, visible
-  Forward+ fallback, and engine stats hooks.
-- OpenXR active view-configuration selection, stereo/quad view snapshots,
-  max-view swapchain storage, per-view frame-profile publication, and
-  `XR_KHR_visibility_mask` mesh fetch state.
-- RVC frame-graph resources for per-view depth, visibility, velocity, HZB,
-  reconstruction error, pixel-to-shadelet maps, transparency, final resolve,
-  mirror debug, and shared buffers.
-- `VPRC_RvcPass` graph stages for OpenXR mask stencil, visibility,
-  reconstruction, HZB, shadelets, foveated shading rate, shared lighting,
-  temporal cache, transparency, resolve, and diagnostics.
-- Renderer capability hooks for descriptor backend selection, material resource
-  table support, visibility source paths, OpenXR visibility-mask stencil, and
-  Vulkan production features.
-- Source contracts and tests for visibility payloads, shadelet keys, reuse,
-  reservoirs, temporal hashing, fallback decisions, and RVC wiring.
+Launch profiles from `.vscode/launch.json`:
 
-The graph stages intentionally warn while backend shader dispatch is not linked.
-That warning is acceptable for the foundation slice and becomes a failure for
-any validation run that claims a production RVC GPU stage is implemented.
+- `Editor (Default World)`: start the editor.
+- `Editor (Renderer Development)`: start the editor with `--renderer-development`.
+- `Editor (Unit Testing World)`: start the unit-testing world with `XRE_WORLD_MODE=UnitTesting`.
+- `Editor (Unit Testing OpenXR SteamVR)`: start the unit-testing world with OpenXR SteamVR settings.
+- `Editor (Unit Testing World, Validation Layers)`: start with `XRE_VULKAN_VALIDATION=1` and `XRE_GL_DEBUG=1`.
 
-## Preflight Evidence
+Settings and environment variables:
 
-- [x] RVC source-contract tests pass.
-  - Command: `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter RvcRenderingContractTests -v:minimal`
-  - Latest result: 20 passed, 0 failed.
-  - Known unrelated warnings: existing `Magick.NET-Q16-HDRI-AnyCPU` NuGet
-    vulnerability warnings.
-- [x] Runtime rendering project builds after RVC code-surface implementation.
-  - Command: `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore -v:minimal`
-  - Known unrelated warnings: existing `Magick.NET-Q16-HDRI-AnyCPU` NuGet
-    vulnerability warnings.
-- [ ] Capture the current branch/worktree summary before validation.
-  - Include `git branch --show-current`, `git status --short`, and a concise
-    list of changed RVC files.
-- [ ] Create a validation run root under `Build/_AgentValidation/`.
-  - Recommended shape:
-    `Build/_AgentValidation/<yyyyMMdd-HHmmss>-rvc-validation/`
-  - Include `logs/`, `mcp-captures/`, `mcp-output/`, `renderdoc/`,
-    `reports/`, and `scratch/`.
+- Use `VR.RenderPipeline=Rvc` only for explicit RVC eye validation.
+- Use `VR.ViewRenderMode=SequentialViews`, `SinglePassStereo`, or `ParallelCommandBufferRecording` for mode checks.
+- Use `VR.RvcPipelineMode=ForwardPlusOracle`, `VisibilityOnlyDebug`, or the requested RVC mode for the check.
+- Use `XRE_WORLD_MODE=UnitTesting` for deterministic unit-world runs.
+- Use `XRE_UNIT_TEST_VR_MODE=OpenXR` for OpenXR unit-world runs.
+- Use `XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1` when preview stereo views are required.
+- Use `XRE_VULKAN_VALIDATION=1` and `XRE_GL_DEBUG=1` for API validation runs.
+- Use `XRE_PROFILER_ENABLED=1` for profiling runs.
+- Use `XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback` for production performance runs.
 
-## Phase 1 - Runtime And Baseline Inventory
+Record the scene, render API, headset runtime, GPU, driver, settings, command or task, commit, and date for each evidence item. Do not record disposable evidence paths in this document.
 
-Goal: establish the runtime matrix and Forward+ oracle evidence that every RVC
-quality and performance claim compares against.
+## Checks
 
-- [ ] Inventory OpenXR runtime support.
-  - Record runtime name/version and enabled instance extensions.
-  - Probe `XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO`.
-  - Probe `XR_VARJO_foveated_rendering`.
-  - Probe `XR_KHR_visibility_mask`, depth layers, multiview, and Vulkan interop
-    support.
-  - Save the support matrix and link it from the RVC architecture doc or a
-    durable `docs/work/` note.
-- [ ] Inventory Vulkan production feature support.
-  - Record descriptor heap or descriptor buffer support, descriptor indexing,
-    fragment shading rate, fragment density map, synchronization2, dynamic
-    rendering, multiview, mesh shader, and timeline semaphore support.
-  - Verify missing support is diagnostic, not silently downgraded.
-- [ ] Stand up the quad-view emulation lane.
-  - Install/configure Quad-Views-Foveated OpenXR API layer or equivalent.
-  - Verify the engine sees four views on non-Varjo hardware.
-  - Exercise eye-tracked inset movement and runtime inset-boundary blending.
-  - Record setup notes and required environment variables.
-- [ ] Capture Forward+ desktop mono reference.
-  - Scene: `DesktopMono`.
-  - Evidence: screenshot, runtime logs, render stats, settings dump, scene hash.
-- [ ] Capture Forward+ stereo reference.
-  - Scene: `Stereo` in the stable VR path.
-  - Evidence: left/right captures, desktop mirror, runtime logs, render stats,
-    settings dump, scene hash.
-- [ ] Capture foveated or quad Forward+ reference where available.
-  - Capture foveation-on and foveation-off runs.
-  - Evidence: all submitted views, desktop mirror, profiler data, frame logs.
-- [ ] Define the numeric performance baseline.
-  - Record submitted pixels, unique fragment invocation counts, GPU pass timing,
-    CPU command build time, and missed-deadline counters for `OpaqueDense`,
-    `AvatarMaterialDiverse`, `TransparencyFallback`, and `QuadView`.
+### Source Contracts
 
-Exit evidence:
+Feature architecture: [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md).
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Run RVC source-contract tests. | Run `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --no-restore --filter RvcRenderingContractTests -v:minimal`. | RVC contract tests pass. Existing unrelated package warnings do not block the check. | Done in source document. | 2026-07-03 |
+| Build the runtime rendering project. | Run `dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj --no-restore -v:minimal`. | The project builds. Existing unrelated package warnings do not block the check. | Done in source document. | 2026-07-03 |
+| Capture the worktree summary. | Record `git branch --show-current`, `git status --short`, and the changed RVC files. | The evidence identifies the code that was validated. | Pending. | none |
+| Create one validation run record. | Record logs, captures, profiler data, and reports for the run. | Evidence for one run can be traced from command to result. | Pending. | none |
 
-- [ ] Runtime support matrix exists and is linked.
-- [ ] Vulkan feature matrix exists and is linked.
-- [ ] Forward+ desktop, stereo, and any available foveated/quad references exist.
-- [ ] RVC comparison baseline is foveated Forward+ with recorded counters.
+### Runtime Capability Inventory
 
-## Phase 2 - Mode And Fallback Regression
+Feature architecture: [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md).
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Inventory OpenXR runtime support. | Record runtime name, runtime version, enabled extensions, stereo view support, `XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO`, `XR_VARJO_foveated_rendering`, `XR_KHR_visibility_mask`, depth layers, multiview, and Vulkan interop. | The support matrix shows each available and missing feature. Missing support has a visible reason. | Pending. | none |
+| Inventory Vulkan production features. | Record descriptor heap or descriptor buffer, descriptor indexing, fragment shading rate, fragment density map, synchronization2, dynamic rendering, multiview, mesh shader, and timeline semaphore support. | Missing features are diagnostic. No feature silently downgrades. | Pending. | none |
+| Validate quad-view emulation setup. | Enable Quad-Views-Foveated or an equivalent OpenXR layer. Run an OpenXR unit-world check. | The engine sees four views on non-Varjo hardware when the layer supports them. Eye-tracked inset movement and inset-boundary blending work. | Pending. | none |
+| Capture desktop Forward+ reference. | Run `Editor (Unit Testing World)` with RVC off and capture `DesktopMono`. | Screenshot, logs, render stats, settings, and scene hash exist. | Pending. | none |
+| Capture stereo Forward+ reference. | Run the stable VR path and capture `Stereo`. | Left eye, right eye, mirror, logs, render stats, settings, and scene hash exist. | Pending. | none |
+| Capture foveated or quad Forward+ reference. | Run with foveation off and on where the runtime supports it. | All submitted views, mirror, profiler data, and frame logs exist. | Pending. | none |
+| Define the numeric baseline. | Measure `OpaqueDense`, `AvatarMaterialDiverse`, `TransparencyFallback`, and `QuadView`. | Submitted pixels, unique fragment invocations, GPU pass time, CPU command build time, and missed-deadline counters are recorded. | Pending. | none |
 
-Goal: prove that selecting RVC does not break existing paths and that unsupported
-paths fall back visibly.
+### Mode And Fallback Regression
 
-- [ ] Validate desktop mono while RVC is off.
-  - Confirm the desktop standard pipeline, image, frame logs, and render stats
-    are unaffected by the OpenXR-eye setting.
-- [ ] Validate OpenXR eyes with `RvcPipelineMode=ForwardPlusOracle` while the
-  desktop standard pipeline renders independently.
-  - Confirm the eyes use the Forward+ oracle intentionally, the desktop does
-    not switch to RVC, and no fallback error is reported.
-- [ ] Validate OpenXR eye cache modes requested on unsupported backends.
-  - Confirm a visible eye-pipeline fallback reason, no silent success, and no
-    desktop pipeline replacement.
-- [ ] Validate OpenVR stereo behavior.
-  - Confirm left/right rendering, desktop mirror, frame timing, and settings
-    remain stable.
-- [ ] Validate OpenXR stereo behavior.
-  - Confirm `xrBeginSession`, `xrLocateViews`, swapchain acquire/release, and
-    submission use the active stereo view configuration.
-- [ ] Validate editor preview and desktop mirror behavior.
-  - Confirm preview texture selection stays stable when quad-view storage exists.
-- [ ] Validate OpenGL correctness-slice behavior.
-  - Confirm visibility/debug slices can be selected where supported.
-  - Confirm full production RVC on OpenGL fails visibly with
-    `UnsupportedOpenGlProductionPath` or equivalent diagnostics.
+Feature architecture: [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md).
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Validate desktop mono with RVC off. | Run the desktop unit-testing world with RVC off. | The standard desktop pipeline, image, frame logs, and render stats are unchanged by OpenXR-eye settings. | Pending. | none |
+| Validate OpenXR eyes with the Forward+ oracle. | Set `VR.RvcPipelineMode=ForwardPlusOracle` for eyes while the desktop output uses the standard pipeline. | Eyes use the oracle by request. Desktop does not switch to RVC. No fallback error appears. | Pending. | none |
+| Validate unsupported eye cache modes. | Request an RVC eye cache mode on an unsupported backend. | The eye pipeline reports a visible fallback reason. Desktop output is not replaced. | Pending. | none |
+| Validate OpenVR stereo behavior. | Run the stable OpenVR path. | Left/right rendering, mirror output, frame timing, and settings remain stable. | Pending. | none |
+| Validate OpenXR stereo behavior. | Run `Editor (Unit Testing OpenXR SteamVR)`. | `xrBeginSession`, `xrLocateViews`, swapchain acquire/release, and submission use the active stereo view configuration. | Pending. | none |
+| Validate editor preview and mirror behavior. | Run with quad-view storage enabled and inspect preview texture selection. | Preview and mirror texture selection remain stable. | Pending. | none |
+| Validate OpenGL correctness-slice rejection. | Request full production RVC on OpenGL. | The engine reports `UnsupportedOpenGlProductionPath` or an equivalent diagnostic. | Pending. | none |
 
-Exit evidence:
+### OpenXR Quad-View And Visibility Masks
 
-- [ ] Mono, stereo, OpenVR, OpenXR stereo, editor preview, and mirror paths still
-  render.
-- [ ] Every unsupported RVC request reports a machine-readable fallback reason.
-- [ ] OpenGL is documented in logs as a correctness slice, not production parity.
+Feature architecture: [OpenXR VR Rendering](../../../architecture/rendering/openxr-vr-rendering.md).
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Validate active view-configuration selection. | Enable quad view and run on supported and unsupported runtimes. | Quad view is selected only when enabled and supported. Stereo fallback records the reason. | Pending. | none |
+| Validate four reported views. | Capture all submitted views and the desktop mirror. | Views 2 and 3 use runtime FOV, pose, and viewport size while sharing the eye-family scene rig. | Pending. | none |
+| Validate moving inset behavior. | Capture static-gaze and moving-gaze runs. | Wide views remain valid while inset regions move. | Pending. | none |
+| Validate swapchain image lifecycle. | Inspect logs or a graphics capture across success and render-failure paths. | Each acquired image is released. No per-view image-count or framebuffer array overrun occurs. | Pending. | none |
+| Validate visibility-mask function lookup. | Run with `XR_KHR_visibility_mask` support present and absent. | Logs show extension support, function lookup success, or `NativeFunctionMissing`. | Pending. | none |
+| Validate hidden and visible mask fetch. | Capture per-view mask data. | Vertex count, index count, revision, and missing-mesh status are recorded for each view. | Pending. | none |
+| Validate visibility-mask stencil stage. | Use RenderDoc or logs for a frame that reaches visibility rendering. | The mask stage runs before visibility, or it is skipped with a visible reason. | Pending. | none |
+| Validate mask invalidation. | Trigger or simulate `XrEventDataVisibilityMaskChangedKHR`. | The cached mask revision changes and mesh fetch refreshes. | Pending. | none |
 
-## Phase 3 - OpenXR Quad-View And Visibility Mask Validation
+### RVC Frame Graph And Resources
 
-Goal: prove runtime-reported view count, quad roles, foveated view dimensions,
-and visibility masks behave correctly.
+Feature architecture: [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md).
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Inspect RVC resource creation. | Inspect logs or RenderDoc resources for one RVC frame. | Per-view depth, visibility, velocity, HZB, reconstruction error, pixel-to-shadelet, transparency, final resolve, and mirror/debug resources exist. Shared buffers for source records, material rows, masks, indirect args, shadelets, light clusters, lighting, reservoirs, temporal cache, and counters exist. | Pending. | none |
+| Inspect framebuffers. | Inspect RVC framebuffer setup. | Visibility, transparency, resolve, and debug framebuffer attachments exist. | Pending. | none |
+| Inspect pass order. | Inspect graph labels or RenderDoc events. | The order is mask stencil, visibility, reconstruction, HZB, pixel-to-shadelet, material shadelets, foveated shading rate, head-space light clusters, shared lighting, reuse validation, temporal cache, transparency, resolve, and diagnostics. | Pending. | none |
+| Validate Vulkan synchronization2 barriers. | Inspect a Vulkan RenderDoc capture. | Image and buffer barriers match attachment, storage, sampled, transfer, and OpenXR swapchain transitions. | Pending. | none |
+| Validate OpenGL correctness barriers. | Inspect logs or a RenderDoc capture for the OpenGL slice. | Prototype ordering is coherent for the supported slice. | Pending. | none |
+| Validate active-stage diagnostics. | Run a foundation RVC stage and a claimed production stage. | Foundation runs may show `RVC.Pass.*.KernelPending`. Claimed production stages do not show kernel-pending warnings. | Pending. | none |
+| Validate RVC frame profiles. | Inspect engine stats or profile output. | Projection, viewport, previous view-projection, runtime view index, swapchain identity, pixel count, stereo mode, foveation mode, GPU timing, and fallback reason are populated. | Pending. | none |
 
-- [ ] Validate active OpenXR view configuration selection.
-  - Confirm quad view is selected only when enabled and runtime-supported.
-  - Confirm stereo fallback records why quad was not selected.
-- [ ] Validate four reported views render and submit.
-  - Capture all submitted views and desktop mirror.
-  - Confirm view indexes 2 and 3 use the runtime FOV/pose and viewport size
-    while sharing the existing eye-family scene rig.
-- [ ] Validate moving inset behavior.
-  - Capture static gaze and moving-gaze screenshots.
-  - Confirm wide views remain valid under moving inset regions.
-- [ ] Validate swapchain image lifecycle.
-  - Confirm every acquired image is released on success and render failure.
-  - Confirm no per-view image-count or framebuffer array overrun.
-- [ ] Validate `XR_KHR_visibility_mask` function lookup.
-  - Evidence: log entries for extension support, function lookup success or
-    visible `NativeFunctionMissing` status.
-- [ ] Validate hidden and visible mesh fetch.
-  - Evidence: per-view vertex/index counts, mask revision changes, and runtime
-    status for missing mesh data.
-- [ ] Validate visibility-mask stencil graph stage.
-  - Evidence: RenderDoc event/resource capture showing the mask stage before
-    visibility rendering, or a log proving the stage was skipped with a visible
-    reason.
-- [ ] Validate visibility-mask invalidation.
-  - Trigger or simulate `XrEventDataVisibilityMaskChangedKHR`.
-  - Confirm cached mask state revision changes and mesh fetch refreshes.
+### Visibility Source Paths
 
-Exit evidence:
+Feature architecture: [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md).
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Validate static mesh visibility sources. | Capture a static opaque scene. | Each accepted pixel has instance, draw or primitive, material row, transform, and editor-selection metadata. | Pending. | none |
+| Validate skinned mesh visibility sources. | Capture an animated skinned scene. | Deformation/version identity is present. Stale reuse is rejected after animation changes. | Pending. | none |
+| Validate zero-readback indirect visibility sources. | Run with GPU indirect sources. | Draw visibility does not read back to CPU in the render loop. | Pending. | none |
+| Validate meshlet or mesh-shader visibility sources. | Run on hardware with and without mesh shader support. | Mesh shader is selected when supported. Compute meshlet expansion is selected as a visible fallback otherwise. | Pending. | none |
+| Validate unsupported material fallback. | Use transparent, refractive, order-dependent, expensive alpha-test, and strongly view-dependent materials. | Fallback counters appear and Forward+ output is correct. | Pending. | none |
+| Validate rapid head motion and disocclusion. | Move the HMD rapidly in stereo scenes. | Captures show no stale-HZB one-eye holes. | Pending. | none |
 
-- [ ] Four submitted views are captured on hardware or simulator.
-- [ ] Quad/stereo fallback reason is visible and accurate.
-- [ ] Visibility-mask fetch and stencil behavior is proven or visibly skipped.
+### Shadelets, Lighting, Temporal Cache, And Resolve
 
-## Phase 4 - RVC Frame Graph And Resource Validation
+Feature architecture: [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md).
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Validate attribute reconstruction. | Capture reconstruction outputs. | Position, normal, tangent, UV, material row, previous position, velocity, and reconstruction-error visualizer are present. | Pending. | none |
+| Validate conservative HZB and post-validation. | Capture HZB and uncertainty masks. | Uncertain, newly visible, edge, and cross-view disagreement candidates are post-validated. | Pending. | none |
+| Validate shadelet map generation. | Capture shadelet debug outputs. | Pixel-to-shadelet map, tile-local dedup, global merge, material bins, density overlay, cache-miss overlay, and overflow counters exist. | Pending. | none |
+| Validate compute-side material shading. | Compare RVC foveal output with Forward+. | Material rows match descriptor heap and descriptor indexing backends. Foveal output matches the oracle within tolerance. | Pending. | none |
+| Validate fragment shading rate fast path. | Run a material class that is not ported to compute reconstruction. | `VK_KHR_fragment_shading_rate` path works, with near-UI and hand 1x1 overrides. | Pending. | none |
+| Validate shared head-space light clusters. | Compare against per-view Forward+ tile grids. | Cluster occupancy, exact-light counts, rejected lights, and comparison output are present. | Pending. | none |
+| Validate peripheral light aggregation and reservoirs. | Capture many-light scenes. | Aggregate contribution, reservoir weight, exact-vs-aggregate, and energy error overlays are present. | Pending. | none |
+| Validate reuse domains. | Run intra-view, inset/wide, stereo, and temporal reuse scenarios. | Accepted and rejected reuse counters and reasons are present. | Pending. | none |
+| Validate the A/B reuse harness. | Render the same frame with reuse enabled and disabled. | Side-by-side captures, per-region metrics, counters, and pass/fail report exist. | Pending. | none |
+| Validate temporal cache. | Run static and moving scenes. | Confidence, age, invalidation reason, temporal hit rate, stale rejection, and no visible ghosting are proven. | Pending. | none |
+| Validate foveated resolve. | Capture wide/inset and desktop mirror output. | Visibility-edge AA, foveated TAA fallback where used, wide/inset identity handling, mirror, and XR submitted images are correct. | Pending. | none |
+| Validate quality thresholds. | Compare to the Forward+ oracle with `RvcQualityToleranceSet.Default`. | Fovea, guard band, mid-field, and periphery stay inside the documented error, SSIM, and FLIP gates. | Pending. | none |
 
-Goal: prove declared RVC resources, graph stages, barriers, and diagnostics
-match the architecture.
+### RVC Debug Views
 
-- [ ] Inspect RVC resource creation.
-  - Verify per-view texture arrays for depth, visibility, velocity, HZB,
-    reconstruction error, pixel-to-shadelet, transparency, final resolve, and
-    mirror/debug output.
-  - Verify shared buffers for visibility source records, material resource rows,
-    mask vertices/indices, indirect args, shadelets, light clusters, lighting,
-    reservoirs, temporal cache, and counters.
-- [ ] Inspect framebuffers.
-  - Verify visibility, transparency, resolve, and debug framebuffer attachments.
-- [ ] Inspect RVC pass order.
-  - Expected order: mask stencil, visibility, reconstruction, HZB,
-    pixel-to-shadelet, material shadelets, foveated shading rate, head-space
-    light clusters, shared lighting, reuse validation, temporal cache,
-    transparency, resolve, diagnostics.
-- [ ] Validate Vulkan synchronization2 barriers.
-  - Evidence: RenderDoc event order and image layouts for attachment, storage,
-    sampled, transfer, and OpenXR swapchain transitions.
-- [ ] Validate OpenGL correctness barriers where the slice is supported.
-  - Evidence: logs or RenderDoc capture showing coherent prototype ordering.
-- [ ] Validate active-stage diagnostics.
-  - Foundation runs may show `RVC.Pass.*.KernelPending`.
-  - Production-stage validation must show no kernel-pending warning for a stage
-    claimed as implemented.
-- [ ] Validate RVC frame profiles.
-  - Confirm projection, viewport, previous view-projection, runtime view index,
-    swapchain identity, pixel count, stereo mode, foveation mode, GPU timing,
-    and fallback reason are populated.
+Feature architecture: [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md).
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Validate independent desktop output with sequential eye RVC debug output. | Run desktop plus OpenXR eyes with sequential views and a selected debug view. | Desktop output remains independent. Eye debug output uses the correct view identity. | Pending. | none |
+| Validate OpenXR and OpenVR stereo sequential debug output. | Run both VR paths with `SequentialViews`. | Left and right views show matching debug semantics. | Pending. | none |
+| Validate OpenXR Vulkan single-pass stereo debug output. | Run `SinglePassStereo` on Vulkan. | Debug output states whether the effective path is true stereo, layered/multiview, or compatibility per-eye rendering. | Pending. | none |
+| Validate quad-view or emulated quad-view sequential output. | Run quad-view or emulated quad-view with `SequentialViews`. | Left wide, right wide, left inset, and right inset views are selectable. | Pending. | none |
+| Validate quad-view or emulated quad-view Vulkan parallel output. | Run quad-view or emulated quad-view with `ParallelCommandBufferRecording`. | Debug semantics match the sequential lane for the same scene. | Pending. | none |
+| Validate OpenGL correctness slices and unsupported-mode diagnostics. | Request each unsupported debug lane on OpenGL. | Unsupported lanes fail visibly with actionable diagnostics. | Pending. | none |
+| Validate debug-off versus debug-on overhead. | Measure the same scene with debug disabled and with one selected debug view. | The overhead is recorded and stays within the approved budget. | Pending. | none |
+| Validate no disabled-debug allocation regression. | Profile a frame with debug views registered but disabled. | No render-loop allocation regression appears. | Pending. | none |
+| Validate delayed readback latency and overflow behavior. | Enable RVC counters and inspect readback age and overflow counters. | Counter readback is delayed. Overflow state is visible. | Pending. | none |
+| Capture representative debug before/after images. | Capture one visibility issue, one material reconstruction issue, one reuse issue, one lighting issue, and one resolve/composition issue. | Each capture identifies the source stage of the problem. | Pending. | none |
 
-Exit evidence:
+### Vulkan Production Hardening
 
-- [ ] RenderDoc capture or logs prove resources and pass order.
-- [ ] Barrier behavior is inspected on the targeted backend.
-- [ ] Frame profiles contain all required per-view fields.
+Feature architecture: [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md).
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Validate Vulkan multiview integration. | Run stereo and four-view paths. | True stereo paths remain isolated from four-view sequential paths. View masks, layered targets, and fallback diagnostics are correct. | Pending. | none |
+| Validate dynamic rendering. | Inspect RenderDoc event order and attachment state. | Dynamic rendering state is correct. | Pending. | none |
+| Validate explicit synchronization. | Inspect synchronization2 barriers. | Image and buffer barriers cover RVC resources. | Pending. | none |
+| Validate timeline semaphore handoff. | Inspect OpenXR swapchain handoff where applicable. | No missed or stale image usage occurs. | Pending. | none |
+| Validate descriptor heap backend. | Run on hardware with descriptor heap support. | Descriptor heap is selected. Resource rows are valid. No duplicate RVC-specific texture table exists. | Pending. | none |
+| Validate descriptor indexing fallback. | Run without descriptor heap support. | Descriptor indexing is selected and material/shadelet semantics match. | Pending. | none |
+| Validate missing descriptor backend failure. | Disable or use hardware without heap and indexing support. | The engine reports a visible fallback. | Pending. | none |
+| Validate fragment density map alternative. | Run on a runtime that supports or lacks fragment density map. | Selection or unsupported diagnostics are explicit. | Pending. | none |
+| Validate `VK_EXT_mesh_shader`. | Run with and without mesh shader support. | Mesh shader expansion or indirect/compute meshlet path is selected with a visible reason. | Pending. | none |
 
-## Phase 5 - Visibility Source Path Validation
+### Performance, Counters, And Timing
 
-Goal: prove every accepted opaque pixel maps to a valid source record and that
-unsupported content falls back visibly.
+Feature architecture: [Retinal Visibility Cache Rendering](../../../architecture/rendering/retinal-visibility-cache-rendering.md).
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Capture the Vulkan `GpuIndirectZeroReadback` promotion workload. | Run desktop and both RVC eye outputs with foveation disabled and enabled where supported. | Whole-frame render p95 is at most 8.33 ms. The result does not skip an output and does not use silent fallback. | Pending. | none |
+| Validate delayed GPU counter readback. | Inspect RVC counter readback. | No synchronous render-loop readback occurs. | Pending. | none |
+| Validate per-view GPU timing. | Inspect frame profiles. | `GpuMilliseconds` is populated from resolved GPU timing or reports an explicit unknown state. | Pending. | none |
+| Validate RVC counter categories. | Inspect counter output. | Visible, culled, uncertain, post-validated, page requests, raster lane, shadelets, material bins, cache hit/miss, reuse, temporal, and invalidation counters are present. | Pending. | none |
+| Capture warm-cache performance runs. | Measure `OpaqueDense`, `AvatarMaterialDiverse`, `TransparencyFallback`, and `QuadView`. | Profiler traces, frame stats, GPU timings, submitted pixels, unique shadelets, and missed-deadline counters exist. | Pending. | none |
+| Compare against the Forward+ oracle. | Build a table from Forward+ and RVC runs. | Timing and counter deltas are recorded against the foveated Forward+ baseline. | Pending. | none |
 
-- [ ] Validate static mesh visibility source path.
-  - Evidence: per-view depth/visibility outputs, valid instance/draw/primitive
-    identity, material row, transform, and editor selection metadata.
-- [ ] Validate skinned mesh visibility source path.
-  - Evidence: deformation/version identity is present and stale reuse is
-    rejected after animation changes.
-- [ ] Validate zero-readback indirect visibility source path.
-  - Evidence: GPU indirect sources are reused and draw visibility does not read
-    back to CPU in the render loop.
-- [ ] Validate meshlet or mesh-shader visibility source path.
-  - Evidence: mesh shader selected when supported, compute meshlet expansion
-    selected as visible fallback otherwise.
-- [ ] Validate unsupported material fallback.
-  - Materials: transparent, refractive, order-dependent, expensive alpha-test,
-    strongly view-dependent.
-  - Evidence: fallback counters and Forward+ output.
-- [ ] Validate rapid head motion and stereo disocclusion.
-  - Evidence: captures showing no stale-HZB one-eye holes.
-
-Exit evidence:
-
-- [ ] Every opaque pixel in a validation capture maps to a valid source record.
-- [ ] Unsupported materials fall back visibly and correctly.
-- [ ] Rapid head motion and disocclusion do not expose stale visibility.
-
-## Phase 6 - Shadelet, Lighting, Temporal, And Resolve Validation
-
-Goal: prove the cache path matches the Forward+ oracle within quality
-tolerances while shading fewer unique samples where expected.
-
-- [ ] Validate attribute reconstruction.
-  - Evidence: position, normal, tangent, UV, material row, previous position,
-    and velocity reconstruction outputs plus reconstruction-error visualizer.
-- [ ] Validate conservative HZB and post-validation.
-  - Evidence: uncertain, newly visible, edge, and cross-view disagreement
-    candidates are post-validated.
-- [ ] Validate shadelet map generation.
-  - Evidence: pixel-to-shadelet map, tile-local dedup, global merge, material
-    bins, density overlay, cache-miss overlay, and overflow counters.
-- [ ] Validate compute-side material shading.
-  - Evidence: material rows match descriptor heap and descriptor indexing
-    backends, and foveal output matches Forward+ within tolerance.
-- [ ] Validate fragment shading rate fast path.
-  - Evidence: `VK_KHR_fragment_shading_rate` path for material classes not yet
-    ported to compute reconstruction, including near-UI/hand 1x1 overrides.
-- [ ] Validate shared head-space light clusters.
-  - Evidence: cluster occupancy, exact-light counts, rejected lights, and
-    comparison against per-view Forward+ tile grid.
-- [ ] Validate peripheral light aggregation and reservoirs.
-  - Evidence: aggregate contribution, reservoir weight, exact-vs-aggregate, and
-    energy error overlays.
-- [ ] Validate reuse domains.
-  - Domains: intra-view, inset/wide, stereo, temporal.
-  - Evidence: accepted/rejected reuse counters and reasons.
-- [ ] Validate A/B reuse harness.
-  - Render identical frame with reuse enabled and disabled.
-  - Evidence: side-by-side captures, per-region metrics, counters, and pass/fail
-    report.
-- [ ] Validate temporal cache.
-  - Evidence: confidence, age, invalidation reason, temporal hit rate, stale
-    rejection, and no visible ghosting in static scenes.
-- [ ] Validate foveated resolve.
-  - Evidence: visibility-edge AA, foveated TAA fallback where used, wide/inset
-    identity handling, desktop mirror, and XR submitted images.
-
-Quality gates:
-
-- [ ] `OpaqueDense` desktop mono and stereo match Forward+ within tolerance.
-- [ ] Foveal regions remain visually equivalent to per-pixel resolve.
-- [ ] Mid-field and peripheral regions shade fewer unique samples than visible
-  pixels on opaque-heavy scenes.
-- [ ] Exact-light shared-cluster mode matches per-view Forward+ lighting within
-  tolerance.
-- [ ] Static scenes show temporal hit rate without visible ghosting.
-- [ ] Gaze movement does not expose stale low-quality shading in foveal regions.
-- [ ] Wide/inset resolve behaves correctly in desktop mirror and XR submission.
-
-## Phase 7 - Vulkan Production Hardening
-
-Goal: prove the Vulkan path is robust enough for real OpenXR benchmarking.
-
-- [ ] Validate Vulkan multiview integration.
-  - Confirm true stereo paths stay isolated from four-view sequential paths.
-  - Verify view masks, layered targets, and fallback diagnostics.
-- [ ] Validate dynamic rendering.
-  - Evidence: RenderDoc event order and attachment state.
-- [ ] Validate explicit synchronization.
-  - Evidence: synchronization2 barriers for images and buffers used by RVC.
-- [ ] Validate timeline semaphore handoff where applicable.
-  - Evidence: OpenXR swapchain handoff has no missed or stale image usage.
-- [ ] Validate descriptor heap backend.
-  - Evidence: selected when supported, resource rows valid, no duplicate
-    RVC-specific texture table.
-- [ ] Validate descriptor indexing fallback.
-  - Evidence: selected when heap is unavailable and material/shadelet logic is
-    semantically identical.
-- [ ] Validate missing descriptor backend failure.
-  - Evidence: visible fallback when neither heap nor indexing is available.
-- [ ] Validate fragment density map alternative.
-  - Evidence: explicit selection or visible unsupported diagnostic.
-- [ ] Validate `VK_EXT_mesh_shader`.
-  - Evidence: mesh shader expansion selected where supported, indirect/compute
-    meshlet path selected otherwise.
-
-Exit evidence:
-
-- [ ] Unsupported production Vulkan paths fail visibly with actionable
-  diagnostics.
-- [ ] Validated Vulkan path can be benchmarked against quad-view Forward+ with
-  comparable settings and warm-cache policy.
-
-## Phase 8 - Performance, Counters, And Timing
-
-Goal: prove RVC performance claims with delayed counters and profiler evidence.
-
-- [ ] Capture the Vulkan `GpuIndirectZeroReadback` promotion workload.
-  - Render at least the desktop output and both RVC eye outputs in every
-    measured frame.
-  - Run with foveation disabled and enabled wherever both are supported.
-  - Require whole-frame render p95 <= 8.33 ms; this is not a per-eye or
-    per-render budget.
-  - Additional quad/foveated views or renders do not relax the target.
-- [ ] Validate delayed GPU counter readback.
-  - Evidence: no synchronous render-loop readback for RVC counters.
-- [ ] Validate per-view GPU timing.
-  - Evidence: `GpuMilliseconds` populated in frame profiles from resolved GPU
-    timing, with fallback/unknown state documented when unavailable.
-- [ ] Validate RVC counter categories.
-  - Counters: visible, culled, uncertain, post-validated, page requests,
-    raster lane, shadelets, material bins, cache hits/misses, reuse accepts,
-    reuse rejects, temporal hits, temporal invalidations.
-- [ ] Capture warm-cache performance runs.
-  - Scenes: `OpaqueDense`, `AvatarMaterialDiverse`, `TransparencyFallback`,
-    `QuadView`.
-  - Evidence: profiler traces, frame stats, GPU timings, submitted pixels,
-    unique shadelets, and missed-deadline counters.
-- [ ] Compare against Forward+ oracle.
-  - Evidence: table showing Forward+ versus RVC timing/counter deltas.
-
-Exit evidence:
-
-- [ ] RVC reports complete timing and counter data.
-- [ ] The minimum-three-render Vulkan zero-readback workload sustains the
-  120 Hz whole-frame promotion budget in every supported foveation state.
-- [ ] Performance report compares RVC to foveated Forward+.
-- [ ] No performance result depends on synchronous GPU readback.
-
-## Phase 9 - Documentation And Owner Handoff
-
-Goal: collect durable evidence and prepare the branch for owner review without
-committing or merging unless requested.
-
-- [ ] Update the architecture doc with validated runtime support matrix links.
-- [ ] Update developer docs for launch flags, settings, diagnostics, runtime
-  requirements, and fallback behavior.
-- [ ] Link all baseline, RVC, RenderDoc, profiler, and MCP evidence.
-- [ ] Summarize risks and known limitations.
-- [ ] Confirm final docs are linked from `docs/architecture/rendering/README.md`.
-- [ ] Prepare handoff notes.
-  - Include changed files, validation evidence, residual risks, and follow-ups.
-  - Do not commit or merge unless explicitly requested.
-  - Merge branch `rendering-rvc-quad-view-foundation` back into `main` only
-    after owner approval, validation, and final docs are complete.
-
-Final exit evidence:
-
-- [ ] Runtime and Vulkan support matrices are documented.
-- [ ] All target validation scenes have baseline and RVC captures.
-- [ ] RenderDoc captures exist for visibility, shadelets, shared lighting, and
-  final resolve.
-- [ ] Profiler report compares Forward+ and RVC warm-cache runs.
-- [ ] Final architecture and developer docs are linked.
+## Hardware Matrix
+| Target | Required hardware or runtime | Checks |
+|---|---|---|
+| Desktop OpenGL correctness slice | Windows GPU with OpenGL 4.6 support | Mode fallback, OpenGL correctness barriers, desktop regression |
+| Vulkan production RVC | Windows GPU and driver with required Vulkan production features | Frame graph, barriers, descriptor backend, performance |
+| OpenXR stereo | OpenXR runtime with stereo views | Stereo submission, frame profiles, fallback diagnostics |
+| OpenXR quad or emulated quad | Varjo quad-view or Quad-Views-Foveated layer | Four views, moving inset, quad debug views |
+| Visibility masks | OpenXR runtime with `XR_KHR_visibility_mask` | Mask lookup, mesh fetch, stencil stage, invalidation |
+| OpenVR stereo | SteamVR/OpenVR runtime and HMD | OpenVR stereo regression only |
 
 ## Validation Scene Matrix
-
 | Scene | Purpose | Required Evidence |
-|-------|---------|-------------------|
+|---|---|---|
 | `DesktopMono` | Non-XR regression and baseline | Screenshot, logs, settings, frame stats |
 | `Stereo` | Stable VR oracle | Left/right captures, mirror, logs, profiler |
 | `OpaqueDense` | Visibility, shadelets, cache efficiency | Forward+ and RVC captures, counters, RenderDoc |
-| `AvatarMaterialDiverse` | Skinned/deformation/material diversity | Visibility records, reuse rejection, quality report |
+| `AvatarMaterialDiverse` | Skinned, deformation, and material diversity | Visibility records, reuse rejection, quality report |
 | `TransparencyFallback` | Forward+ companion path | Fallback counters, composite capture |
 | `QuadView` | Wide/inset runtime behavior | Four submitted views, moving gaze captures, frame profile |
 
 ## Quality Thresholds
 
-Use `RvcQualityToleranceSet.Default` unless a validation note records an
-approved override.
-
+Use `RvcQualityToleranceSet.Default` unless a validation note records an approved override.
 | Region | Max Error | Min SSIM | Max FLIP |
-|--------|-----------|----------|----------|
+|---|---|---|---|
 | Fovea | `1/255` | `0.995` | `0.010` |
 | Guard band | `2/255` | `0.990` | `0.015` |
 | Mid-field | `4/255` | `0.975` | `0.030` |
 | Periphery | `8/255` | `0.940` | `0.060` |
+
+## Failures
+| Check | Symptom | Investigation or code item |
+|---|---|---|

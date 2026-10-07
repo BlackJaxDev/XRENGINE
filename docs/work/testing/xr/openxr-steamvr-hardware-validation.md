@@ -1,64 +1,14 @@
 # OpenXR SteamVR Hardware Validation
 
-Last Updated: 2026-10-01
+Scope: Validate the SteamVR OpenXR hardware lane for headset presentation, controller actions, haptics, hand data, tracker exposure, runtime loss, allocation audits, and OpenVR parity boundaries.
 
-This report tracks the SteamVR OpenXR hardware matrix for the OpenVR parity work. It records the runnable validation lane added in this pass and the evidence that must be captured on a machine with SteamVR hardware attached.
+Architecture: [OpenXR Runtime](../../../developer-guides/vr/openxr-runtime.md#steamvr-openxr-hardware-lane), [OpenXR VR Rendering](../../../architecture/rendering/openxr-vr-rendering.md), [VR Output Pacing And Mirror Policy](../../../architecture/rendering/vr-output-pacing-and-mirror-policy.md). Code todos: [OpenXR Monado CI And Hardware Follow-ups](../../todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md), [OpenXR Future Work](../../todo/rendering/vr/openxr-future-work-todo.md), [Editor OpenXR Toggle](../../todo/rendering/vr/editor-openxr-toggle-and-rendering-todo.md).
 
-## Full-body calibration follow-up, September 26, 2026
+## Setup
 
-The current uncommitted implementation is based on `9fee4b983efda6f3f79ac107eba2137a5ab8c5fa`. The full-body calibration [validation record](../../progress/avatar/openxr-full-body-calibration-spectator-implementation.md) records its separate synthetic and physical results.
+Use `Build-Editor` before a hardware run. Use `Start-Editor-UnitTesting-OpenXR-SteamVR-NoDebug` for an editor lane with SteamVR selected. Use `Test-OpenXR-SteamVR-Smoke` for the scripted smoke lane. Use `Test-OpenXR-Monado-Smoke` after changes that also affect no-HMD runtime behavior.
 
-The machine reports an NVIDIA GeForce RTX 3090 with driver `32.0.16.1714`. The runtime in the successful September 26 probe was SteamVR/OpenXR 2.17.10 (Steam application build 25330290). Starting SteamVR and probing OpenXR then succeeded in creating an instance, reading runtime properties, and obtaining the head-mounted-display system. An early OpenVR inventory reported a Beyond headset, one Tundra tracker, four tracking references, and no controllers. The inventory changed while SteamVR remained active: a subsequent OpenVR Background probe found a Bigscreen Beyond HMD, Valve Knuckles left/right controllers, and three Tundra Labs Tundra Trackers, all connected with valid `Running_OK` poses. An intervening probe had found one tracker temporarily `Calibrating_OutOfRange`; validity is therefore time dependent. Earlier `Init_HmdNotFound` was transient during SteamVR startup. These inventories are historical observations, not the current device availability.
-
-The loader advertises `XR_HTCX_vive_tracker_interaction` revision 3, `XR_KHR_opengl_enable` revision 12, and `XR_KHR_vulkan_enable2` revision 4. The first loader enumeration attempt crashed its PowerShell process because the SteamVR smoke tool declared the native `XrVersion` field as 32 bits, under-allocating API-layer property elements. The declaration now uses 64 bits and validates the 544-byte Windows x64 layout; the repeated native preflight completed successfully. This fixes the probe without substituting a pose provider.
-
-The rebuilt OpenGL editor reached `SessionRunning` / `Focused` in lifecycle epoch 1 without teardown or frame-submit errors. At the `hardware-openxr-running.json` snapshot it had submitted 416 frames, acquired/published/released both 2688 × 2688 eye swapchains 416 times, cached predicted and late HMD views and controller grip/aim poses, and reported active joints for both hands. It missed 411 of 416 frame deadlines. This establishes headset/controller pose and frame submission, but not controller gestures, haptics, or performance acceptance. It reported no known tracker paths or tracker pose.
-
-An independent process loaded SteamVR's OpenXR loader, created an instance with `XR_HTCX_vive_tracker_interaction` revision 3, resolved `xrEnumerateViveTrackerPathsHTCX`, and called its instance-level count query twice. Both calls returned `XR_SUCCESS` with count zero; the instance and function lookup also succeeded. Its Windows x64 native structures were checked against the local OpenXR header (application info 272 bytes, instance create info 328 bytes, tracker paths 32 bytes). This reproduces the engine's empty tracker inventory outside the engine. The OpenVR inventories prove physically connected, currently tracked generic devices existed during the probe period, but do not prove SteamVR exposes them through HTCX OpenXR. Khronos specifies that enumeration includes connected VIVE trackers and that an unassigned role may be `XR_NULL_PATH`; no SteamVR role assignment was changed to force a result.
-
-Evidence is in `Build/_AgentValidation/20260926-190000-vr-fullbody/reports/`: `hardware-presence.json`, `hardware-inventory-ready.json`, `openxr-system-probe.txt`, `openxr-loader-preflight-resume.json`, `openxr-extension-revisions.json`, `hardware-openxr-running.json`, `hardware-running-view-state.json`, `htcx-native-tracker-enumeration.json`, `htcx-native-tracker-enumeration-repeat.json`, `openvr-tracker-inventory.json`, and `openvr-tracker-inventory-named.json`. Physical tracker streaming, controller gestures/haptics, late tracker connection, and a passing headset frame-timing run remain open.
-
-Short, single-validation-editor performance samples used the same OpenGL runtime and avatar scene. The first-person sample submitted 25 frames and missed all 25 deadlines; median render time was 40.0012 ms and p95 was 317.3575 ms. The spectator sample submitted 75 frames and missed all 75 deadlines; median render time was 56.0683 ms and p95 was 76.3531 ms. These windows include the multi-rig imported asset, editor diagnostics, and concurrent GPU activity. Whole-process managed allocation rates were 30.0 MB/s and 90.6 MB/s respectively across editor threads and MCP sampling; the OpenXR summary's constant-zero allocation field is not a measurement. The samples fail timing acceptance and do not isolate spectator-only cost. Raw data is in `performance-first-person-single-validation-session.json` and `performance-spectator-single-validation-session.json`.
-
-An explicitly selected alternative tracker transport is a possible future compatibility option, not an implemented fallback. It would need a visible per-session provider choice, stable physical identity matching, fresh pose validity and timestamps, and a defined way to combine its tracker samples with the OpenXR headset/controller calibration snapshot before capture could be enabled. The current OpenVR.NET pose facade does not expose a publication timestamp or frame identifier, so merely reading its matrices would not satisfy the capture-coherence requirement. The current mode remains OpenXR-only and reports undiscovered trackers honestly.
-
-## Later software validation
-
-Body calibration and spectator acceptance use the additional
-[integrated behavior procedure](../avatar/avatar-validation.md#openxr-body-calibration-and-spectator).
-The [October 1 Windows validation](../../investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md)
-records software/runtime checks and rendering blockers without connected XR
-devices; it does not change the pending hardware rows below.
-
-## Current Validation Status
-
-The original parity/tooling pass validated source integration, tooling syntax, VS Code orchestration JSON, and the targeted editor build. The hardware follow-up above supersedes its earlier no-device status while preserving the original command checks below.
-
-Validated in this pass:
-
-- `dotnet build .\XREngine.Editor\XREngine.Editor.csproj /property:GenerateFullPaths=true /consoleloggerparameters:NoSummary`
-- `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj -c Debug --filter "FullyQualifiedName=XREngine.UnitTests.Rendering.OpenXrSteamVrParityToolingContractTests.SteamVrSmokeTooling_UsesOpenXrModeAndRuntimeDiagnostics"`
-- PowerShell parser check for `Tools\OpenXR\Run-OpenXrSteamVrSmoke.ps1`
-- JSON parse check for `.vscode/tasks.json`
-- JSON parse check for `.vscode/launch.json`
-
-## Hardware Inventory
-
-Fill these fields on the first hardware run:
-
-| Field | Value |
-|---|---|
-| Headset model | Bigscreen Beyond, tracked in the September 26 Focused run; out of range at the latest retry |
-| Controller models | Valve Knuckles left/right, connected and pose-valid in the September 26 inventory; absent at the latest retry |
-| VIVE tracker count | Three Tundra Labs Tundra Trackers, connected and pose-valid in the September 26 OpenVR probe; HTCX OpenXR enumeration count zero |
-| VIVE tracker roles | Not established; independent OpenXR enumeration yielded no paths |
-| Expected hand/finger data | Both OpenXR hand-joint active flags observed; joint articulation and expected values not validated |
-| SteamVR version | 2.17.10, application build 25330290 |
-| OpenXR runtime manifest | Active SteamVR manifest; process-scoped path recorded in the disposable report |
-
-## Smoke Commands
-
-Primary Vulkan hardware lane:
+Primary Vulkan lane:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File Tools\OpenXR\Run-OpenXrSteamVrSmoke.ps1 -UseActiveRuntime -Renderer Vulkan
@@ -70,68 +20,98 @@ OpenGL diagnostic lane:
 powershell -ExecutionPolicy Bypass -File Tools\OpenXR\Run-OpenXrSteamVrSmoke.ps1 -UseActiveRuntime -Renderer OpenGL
 ```
 
-Explicit SteamVR manifest lane:
+Explicit runtime manifest lane:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File Tools\OpenXR\Run-OpenXrSteamVrSmoke.ps1 -RuntimeJson "<steamvr-runtime-manifest>" -Renderer Vulkan
 ```
 
-## Matrix
+Record the headset model, controller models, tracker count, tracker roles, expected hand/finger data, SteamVR version, OpenXR runtime manifest, Windows version, GPU, and driver. Do not record user profile paths. Keep raw disposable evidence outside tracked docs.
 
-| Scenario | Status | Evidence |
-|---|---|---|
-| SteamVR OpenXR, OpenGL, headset only | Session/frame submission observed | Focused epoch 1, 416 submitted frames, predicted/late HMD views; 411 deadlines missed. |
-| SteamVR OpenXR, OpenGL, headset plus controllers | Pose availability observed; gestures pending | Both grip and aim pose caches available; two controllers also tracked in OpenVR inventory. |
-| SteamVR OpenXR, OpenGL, headset plus controllers plus VIVE trackers | Blocked by runtime exposure | Engine and independent native HTCX queries both report zero paths while the latest OpenVR query finds three pose-valid Tundra Trackers. |
-| SteamVR OpenXR, OpenGL, hand/finger data where supported | Joint activity observed; behavior pending | Both hand-joint active flags set; finger articulation not visually or numerically validated. |
-| SteamVR OpenXR, Vulkan, headset only | Pending hardware run | Capture smoke summary and headset/mirror visual result. |
-| SteamVR OpenXR, Vulkan, headset plus controllers | Pending hardware run | Capture gameplay action and haptic result. |
-| SteamVR OpenXR, Vulkan, headset plus controllers plus VIVE trackers | Pending hardware run | Capture tracker reconnect/role reassignment behavior. |
-| SteamVR OpenXR, Vulkan, hand/finger data where supported | Pending hardware run | Capture real joints or controller-derived fallback diagnostics. |
-| Wrong or missing `XR_RUNTIME_JSON` | Tooling implemented | `Run-OpenXrSteamVrSmoke.ps1` validates selected manifests and warns on non-SteamVR runtime kind. |
-| SteamVR not running | Tooling implemented | Smoke runner records process state and attempts `vrstartup.exe` or Steam URI before launch. |
-| Headset removed, dashboard opened, runtime restarted, session lost | Pending hardware run | Capture session-state transitions in smoke summary and engine logs. |
-| No new OpenXR hot-path allocations | Tooling implemented | Smoke runner invokes `Find-NewAllocations.ps1 -FailOnOpenXrHotPathAllocations` unless skipped. |
-| Monado no-HMD smoke | Pending follow-up run | Run `Test-OpenXR-Monado-Smoke` after hardware lane changes. |
-| Existing OpenVR path | Inventory/pose query observed; gameplay baseline pending | Latest Background query found tracked HMD, two controllers, and three valid Tundra Tracker poses. |
+## Checks
 
-## Imported Checks
+### Runtime selection and smoke tooling
 
-### From openxr-steamvr-openvr-parity-todo.md
-
-Architecture: [OpenXR Runtime](../../../developer-guides/vr/openxr-runtime.md).
+Architecture: [OpenXR Runtime, SteamVR OpenXR Hardware Lane](../../../developer-guides/vr/openxr-runtime.md#steamvr-openxr-hardware-lane).
 
 | Check | Procedure | Expected | Status | Last evidence |
 |---|---|---|---|---|
+| Active SteamVR runtime | Run `Run-OpenXrSteamVrSmoke.ps1 -UseActiveRuntime -Renderer Vulkan`. | The startup diagnostics show SteamVR as the selected OpenXR runtime. A non-SteamVR runtime is reported before launch. | Open | 2026-09-26 SteamVR runtime 2.17.10 was selected successfully. |
+| Explicit SteamVR manifest | Run `Run-OpenXrSteamVrSmoke.ps1 -RuntimeJson "<steamvr-runtime-manifest>" -Renderer Vulkan`. | The child process uses the explicit manifest without writing the Windows active-runtime registry key. | Open | Last evidence: none. |
+| SteamVR not running | Run the smoke when SteamVR is not already running. | The runner records process state and attempts `vrstartup.exe` or the Steam URI before launch. | Open | Tooling implemented. |
+| Wrong or missing runtime manifest | Run the smoke with a missing or wrong `XR_RUNTIME_JSON`. | The runner validates the selected manifest and warns on non-SteamVR runtime kinds. | Open | Tooling implemented. |
+| No new OpenXR hot-path allocations | Run the smoke without `-SkipAllocationAudit`. | The runner invokes `Find-NewAllocations.ps1 -FailOnOpenXrHotPathAllocations` and reports any new allocation. | Open | Tooling implemented. |
+
+### Headset presentation and timing
+
+Architecture: [OpenXR VR Rendering, startup and graphics binding](../../../architecture/rendering/openxr-vr-rendering.md#startup-and-graphics-binding).
+
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| OpenGL headset frame submission | Run the OpenGL hardware lane with a connected headset. | The session reaches `SessionRunning` and `Focused`, submits frames, and reports predicted and late HMD views. | Open | 2026-09-26 OpenGL run submitted 416 frames but missed 411 deadlines. |
+| Vulkan headset frame submission | Run the Vulkan hardware lane with a connected headset. | The session reaches `SessionRunning` and `Focused`, submits frames, and shows the expected mirror/headset visuals. | Open | Last evidence: none. |
+| Frame timing acceptance | Run a headset frame-timing pass on OpenGL and Vulkan. | Missed deadline count is within the accepted runtime budget for the target refresh rate. | Open | 2026-09-26 OpenGL timing failed. Median render times were above budget in short samples. |
+| Session loss and runtime restart | Remove the headset, open the dashboard, restart SteamVR, and run the smoke again. | The smoke summary records session-state transitions and teardown without leaked runtime resources. | Open | 2026-09-27 later retry returned `ErrorFormFactorUnavailable`; final acceptance remains open. |
+| OpenGL final-eye preview on latest binary | Run the OpenGL lane after the latest runtime and renderer fixes. | Final-eye preview appears and no stale historical build result is used as acceptance. | Open | 2026-09-27 latest binary was not confirmed on physical hardware. |
+
+### Controllers, hands, haptics, and trackers
+
+Architecture: [OpenXR Runtime, runtime-neutral input](../../../developer-guides/vr/openxr-runtime.md#runtime-neutral-input).
+
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Controller pose availability | Run the hardware lane with Valve Index or Vive controllers. Inspect grip and aim pose availability. | Left and right controller grip and aim poses are available through OpenXR. | Open | 2026-09-26 grip and aim pose caches were available. |
 | Gameplay actions per controller profile | With `VR.Mode=OpenXR` on SteamVR, exercise locomote, turn, grab left and right, jump, quick menu, and mute on Valve Index and Vive controllers. | Each action fires through the OpenXR action set. Component paths are correct per profile. Any required manual SteamVR binding step is recorded. | Open | Grip and aim poses observed on OpenGL; gestures not exercised. |
-| Haptics | Trigger the haptic action on each hand on OpenGL and Vulkan. | `xrApplyHapticFeedback` and `xrStopHapticFeedback` give felt feedback on the correct hand. | Open | |
-| No OpenVR API usage | Run the OpenXR lanes with OpenVR inactive. | Headset, poses, input, haptics, and hand data work without OpenVR calls. | Open | |
+| Haptics | Trigger the haptic action on each hand on OpenGL and Vulkan. | `xrApplyHapticFeedback` and `xrStopHapticFeedback` give felt feedback on the correct hand. | Open | Last evidence: none. |
+| OpenXR hand data | Run with hardware and runtime support for hand data. | Hand-joint activity and finger articulation are validated visually or numerically. Controller-derived fallback diagnostics are clear when the extension is absent. | Open | 2026-09-26 hand-joint active flags were observed; articulation remained open. |
+| HTCX tracker enumeration | Run the OpenXR hardware lane with VIVE trackers connected and roles assigned. | `XR_HTCX_vive_tracker_interaction` reports persistent tracker paths when the runtime exposes them. | Open | 2026-09-26 engine and independent native HTCX queries returned zero paths while OpenVR saw tracked Tundra trackers. |
+| Late tracker connection and role reassignment | Connect or reassign trackers after startup, then explicitly restart VR when required. | Diagnostics distinguish not enumerated, discovered but requiring restart, unbound, inactive, stale, and tracking-lost states. | Open | Last evidence: none. |
+| No OpenVR API usage | Run OpenXR lanes with OpenVR inactive. | Headset, poses, input, haptics, and hand data work without OpenVR calls. | Open | Last evidence: none. |
+| Existing OpenVR path baseline | Run the existing OpenVR hardware path. | OpenVR remains available as the baseline until SteamVR OpenXR validation is green and owner-approved. | Open | 2026-09-26 OpenVR inventory saw HMD, controllers, and Tundra trackers. Gameplay baseline remained open. |
 
-## Expected Summary Fields
+### Editor runtime toggle on SteamVR
 
-The OpenXR smoke summary includes runtime/system name, renderer backend, view count, swapchain dimensions, submitted frame count, view validity, controller grip/aim pose availability, tracker pose availability, missed deadline count, and session-state transitions.
+Architecture: [OpenXR Runtime, startup behavior](../../../developer-guides/vr/openxr-runtime.md#startup-behavior).
 
-## Evidence To Attach Per Pass
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| SteamVR editor toggle | Start with `VR.Mode=Desktop`. Enable the editor OpenXR checkbox and choose SteamVR. | The editor selects SteamVR for the process, creates or reuses the correct VR rig, preserves the desktop pawn, and starts the session. | Open | Last evidence: none. |
+| Toggle-off and repeated toggle | Toggle SteamVR off, then repeat desktop to SteamVR to desktop. | The original desktop pawn is restored. Temporary rigs, callbacks, leases, and publication pins are cleaned up. | Open | Last evidence: none. |
+| Runtime unavailable and cancel | Use Cancel, missing SteamVR, and startup failure paths. | Cancel leaves desktop control unchanged. Missing runtimes and startup failure report visible errors and restore the previous configuration. | Open | Last evidence: none. |
 
-Record these paths after each run:
+### Hardware matrix
 
-- SteamVR smoke run root under `Build/_AgentValidation/<run>/`
-- `reports/steamvr-openxr-startup-diagnostics.json`
-- `reports/openxr-loader-preflight.json`
-- `reports/openxr-steamvr-smoke-summary.normalized.json`
-- relevant engine log session under `Build/Logs/...`
-- RenderDoc capture path only when logs and mirror/headset output do not explain a rendering failure
+Architecture: [OpenXR Runtime, SteamVR OpenXR Hardware Lane](../../../developer-guides/vr/openxr-runtime.md#steamvr-openxr-hardware-lane).
 
-### September 26 source checkpoint
+| Scenario | Status | Last evidence |
+|---|---|---|
+| SteamVR OpenXR, OpenGL, headset only | Open, frame submission observed; timing failed. | 2026-09-26 Focused epoch 1, 416 submitted frames, predicted/late HMD views, 411 missed deadlines. |
+| SteamVR OpenXR, OpenGL, headset plus controllers | Open, pose availability observed; gestures pending. | 2026-09-26 both grip and aim pose caches were available. |
+| SteamVR OpenXR, OpenGL, headset plus controllers plus VIVE trackers | Open, blocked by runtime exposure. | 2026-09-26 HTCX OpenXR enumeration count was zero while OpenVR saw three pose-valid Tundra trackers. |
+| SteamVR OpenXR, OpenGL, hand/finger data where supported | Open, joint activity observed; behavior pending. | 2026-09-26 both hand-joint active flags were set. |
+| SteamVR OpenXR, Vulkan, headset only | Open. | Last evidence: none. |
+| SteamVR OpenXR, Vulkan, headset plus controllers | Open. | Last evidence: none. |
+| SteamVR OpenXR, Vulkan, headset plus controllers plus VIVE trackers | Open. | Last evidence: none. |
+| SteamVR OpenXR, Vulkan, hand/finger data where supported | Open. | Last evidence: none. |
+| Monado no-HMD smoke after hardware-lane changes | Open. | Last evidence: none. |
 
-The final input/preview build succeeded without warnings or errors, but its hardware attempt stalled at Ready with zero submitted frames and eye capture timed out. Earlier Focused OpenGL results are not final-binary acceptance. Latest focused tests: 21 passed, one failed (cross-action callback removal ordering); earlier broad tests: 224 passed, 61 failed, not repeated after the final input edits. Vulkan was not run before the owner requested wrap-up. Both owned validation editor sessions were stopped. See the [investigation checkpoint](../../investigations/avatar/vr-full-body-calibration-2026-09-26.md#wrap-up-checkpoint).
+## Hardware Matrix
 
-### September 27 resume checkpoint
+| Field | Value |
+|---|---|
+| Headset model | Bigscreen Beyond observed on 2026-09-26; later retry reported out of range. |
+| Controller models | Valve Knuckles left and right observed on 2026-09-26; later retry did not see controllers. |
+| VIVE tracker count | Three Tundra Labs trackers observed through OpenVR on 2026-09-26; HTCX OpenXR enumeration returned zero. |
+| VIVE tracker roles | Not established through OpenXR. |
+| Expected hand/finger data | Hand-joint active flags observed; expected values and articulation not accepted. |
+| SteamVR version | 2.17.10, application build 25330290, in the 2026-09-26 probe. |
+| OpenXR runtime manifest | Active SteamVR manifest in the 2026-09-26 probe. |
 
-The Ready/zero-frame attempt logged a root-list collection-modification exception during editor pawn switching. CollectVisible marked the exception terminal and stopped frame generation. The root-list snapshot fix, callback dispatch fix, and avatar-instance cache fix built in the editor with zero warnings and errors. That initial resumed focused selection passed 24/24. Its broader selection passed 229/290; its 61 failure names exactly matched the preceding 224/285 selection. This comparison is not a clean baseline against repository HEAD.
+## Failures
 
-The next physical retry did not create a graphics session: `xrGetSystem` returned `ErrorFormFactorUnavailable`. The first OpenVR check reported the Beyond out of range and no controllers; a later check found the SteamVR server absent. The September 26 Focused eye submissions and device inventories remain historical evidence. The snapshot fix and OpenGL final-eye preview have not been confirmed on the latest binary; physical tracker, gesture, repeated-toggle, and frame-timing acceptance remain open.
+| Check | Symptom | Investigation or code item |
+|---|---|---|
+| HTCX tracker enumeration | OpenXR reports zero tracker paths while OpenVR reports connected and pose-valid Tundra trackers. | [OpenXR Monado CI And Hardware Follow-ups](../../todo/rendering/vr/openxr-monado-ci-hardware-followups-todo.md) |
+| OpenGL frame timing | The 2026-09-26 OpenGL run submitted frames but missed most deadlines. | [VR Rendering Performance Contract](../../todo/rendering/optimization/vr-rendering-performance-contract-todo.md) |
+| Later physical retry | `xrGetSystem` returned `ErrorFormFactorUnavailable` after the headset became unavailable. | [OpenXR SteamVR Hardware Validation](openxr-steamvr-hardware-validation.md) |
 
-A separate simulated Vulkan `RequireRequested` editor run built with zero warnings and errors, completed three-point calibration, and showed the avatar in a desktop screenshot. Its first offscreen attempt stopped on `A mesh command swap is already in progress` after capture version 17; `reports/resumed-vulkan-offscreen-fault.json` preserves that failure. Private spectator collection and swap now execute in the engine's canonical callbacks, with only GPU submission before present. A later isolated Vulkan run completed 119 offscreen captures through cuts, disable/re-enable, resize, and component reactivation without the mesh-swap fault. The final editor build had zero warnings and errors. Its focused tests passed 36/36; the broader run passed 229/290 with the same 61 failure names as before (`reports/final-focused.trx`, `reports/final-broad.trx`, `reports/final-failure-comparison.json`).
-
-The final Vulkan Default-pipeline texture was exported through an exact submitted offscreen planner receipt, selected by capture owner and texture ID. The viewed 1920 × 1080 image is upright, contains finite HDR color samples and the avatar, and excludes editor debug overlays (`reports/vulkan-staged-final-texture.json`). Complete avatar color and garment appearance remain unaccepted: the full scene shows straight bright garment arms and an overbright body. The broad flat gray lower region is consistent with the validation scene's gray physics floor and is not itself evidence of a fault. The avatar asset contains independently rigged garments, but a later held-IK image with only Body and Shirt active did not reproduce the straight arms; in three held samples, each mesh's buffered bone palette matched its own expected pose with maximum difference zero. RenderDoc found Shirt's indexed draw and a populated finite, nonidentity 19-matrix GPU palette, and Body's draws had populated finite palettes. Viewed after-draw images showed bent arms without obvious straight white arms (`reports/renderdoc-shirt-held-frame.md`). The remaining full-scene visual cause is unresolved; the held frame does not prove exact CPU/GPU palette-byte agreement. This simulated editor result is not physical Vulkan headset, eye-image, or full-body hardware acceptance. Physical tracker exposure, controller gestures, repeated editor toggles, final eye visuals, and passing frame-time measurements remain open.

@@ -7,7 +7,7 @@ Validation: [Vulkan Core Validation](../../testing/rendering/vulkan-core-validat
 
 ## Current State
 
-The desktop frame loop runs through `VulkanFrameLoop` with sealed submissions (`SealedSubmissionContract`), the `VulkanFrameTelemetry` schema, and a generation gate (`CollectVisibleGenerationGate` in `EngineTimer`) that lets visibility collection overlap rendering. `EditorUiRateHz` exists in `EditorPreferences` and `AbstractRenderer.ShouldSkipImGuiFrame`. `OpenXrVulkanSubmissionTracker` owns OpenXR eye completion. The legacy `VulkanPreparedMeshOperationCohort` and `VulkanPreparedMeshIngress` paths, the original `DefaultRenderPipeline`, and the `EVulkanCpuStage` taxonomy still exist. No `DefaultRenderPipeline2` or `XRE_USE_PIPELINE_V2` code remains. Completed implementation history is in the [Phases 0-5 completion record](../../progress/rendering/vulkan-phases-0-5-completed.md). Promotion evidence is not recorded.
+The desktop frame loop runs through `VulkanFrameLoop` with sealed submissions (`SealedSubmissionContract`), the `VulkanFrameTelemetry` schema, and a generation gate (`CollectVisibleGenerationGate` in `EngineTimer`) that lets visibility collection overlap rendering. `EditorUiRateHz` exists in `EditorPreferences` and `AbstractRenderer.ShouldSkipImGuiFrame`. `OpenXrVulkanSubmissionTracker` owns OpenXR eye completion. The legacy `VulkanPreparedMeshOperationCohort` and `VulkanPreparedMeshIngress` paths, the original `DefaultRenderPipeline`, and the `EVulkanCpuStage` taxonomy still exist. No `DefaultRenderPipeline2` or `XRE_USE_PIPELINE_V2` code remains. Completed implementation history is in the [Vulkan core completion record](../../progress/rendering/vulkan-phases-0-5-completed.md). Promotion evidence is not recorded.
 
 <a id="recovered-acceptance-contracts-and-specialized-child-ownership"></a>
 
@@ -17,10 +17,10 @@ Child trackers own their own code items:
 |---|---|
 | [Core hardening](vulkan-core-hardening-and-device-loss-todo.md) | Tail work, observability, occlusion modes, source audits, facade reduction |
 | [OpenXR and Advanced rendering](vulkan-xr-and-advanced-rendering-todo.md) | XR submission and lifecycle defects, Advanced resource and probe work |
-| [Dynamic rendering and modern backends](vulkan-dynamic-rendering-migration-todo.md) | Local read, descriptor heap, shader objects, foveation, transient memory, DGC, ray tracing |
-| [Stall remediation](vulkan-stall-remediation-todo.md), [separate findings](vulkan-stall-separate-findings-todo.md) | Stall regressions and side findings |
-| [Wrapper parity](vulkan-wrapper-parity-todo.md), [managed VMA concepts](optimization/vulkan-managed-vma-concepts-allocator-todo.md) | Backend parity and allocator work |
-| [Fossilize integration](vulkan-fossilize-integration-todo.md) | Pipeline capture and replay tooling |
+| Modern backends in this file | Dynamic rendering, local read, descriptor heap, shader objects, foveation, transient memory, DGC, ray tracing |
+| [Stall separate findings](vulkan-stall-separate-findings-todo.md) | Stall side findings and remaining issue backlog |
+| [Wrapper parity](vulkan-wrapper-parity-todo.md), [Vulkan memory allocation](../../../architecture/rendering/vulkan-memory-allocation.md) | Backend parity and allocator work |
+| [Fossilize integration design](../../design/rendering/vulkan-fossilize-integration-design.md) | Pipeline capture and replay tooling |
 | [Pipeline resource lifecycle](render-pipeline-resource-lifecycle-todo.md), [CPU direct](optimization/cpu-direct-fast-path-todo.md), [material ladder](optimization/material-table-and-texture-binding-ladder-todo.md), [compact submission](optimization/compact-zero-readback-rendering-todo.md), [GPU roadmap](gpu/production-rendering-pipeline-roadmap.md) | Backend-neutral resource and submission work |
 | [Editor observer cost](optimization/editor-profiler-ui-render-cost-todo.md), [VR performance](optimization/vr-rendering-performance-contract-todo.md) | Observer overhead and XR runtime contracts |
 
@@ -45,7 +45,7 @@ Child trackers own their own code items:
 
 ### Telemetry And Profiler
 
-- [ ] Show units on every profiler and HUD telemetry column and summary label (`Rate (Hz)`, `CPU (ms)`, `GPU (ms)`, bytes, µs). `XREngine.Editor` profiler panels, HUD overlays. Done when: no telemetry column header lacks a unit.
+- [ ] Show units on every profiler and HUD telemetry column and summary label (`Rate (Hz)`, `CPU (ms)`, `GPU (ms)`, bytes, Âµs). `XREngine.Editor` profiler panels, HUD overlays. Done when: no telemetry column header lacks a unit.
 - [ ] Add a CPU profiler dump mode that selects the worst retained frame, and an option to wait for a minimum number of snapshots. `ProfilerDiagnosticDumps.DumpCpuFrameTimingHistory`, MCP `dump_cpu_frame_profile`. Done when: the MCP tool accepts the mode and writes the slowest retained frame.
 - [ ] Make `XRE_VULKAN_MATERIAL_BINDING_DIAG` report the traditional CPU-direct deferred material path. `VkMeshRenderer.Descriptors.cs`, `VkMaterial`. Done when: the diagnostic logs `Texture0` descriptor resolution and `BaseColor` and opacity auto-uniform writes for a CPU-direct deferred draw.
 
@@ -58,13 +58,13 @@ Child trackers own their own code items:
 
 ### Collect Visible
 
-- [ ] Optimize collect-visible spatial tree traversal, command emission, per-camera filtering, and per-frame allocations. `EngineTimer.CollectVisibleThread`, `DispatchCollectVisible`. Start only after the clean collect-hot capture in the [render queries and occlusion validation doc](../../testing/rendering/render-queries-and-occlusion-validation.md#from-collect-visible-render-wait-decoupling-todomd) shows that collection, not `WaitForRender`, is the cost. Done when: the change targets the measured hot path and adds no per-frame allocations.
+- [ ] Optimize collect-visible spatial tree traversal, command emission, per-camera filtering, and per-frame allocations. `EngineTimer.CollectVisibleThread`, `DispatchCollectVisible`. Start only after the clean collect-hot capture in the [render queries and occlusion validation doc](../../testing/rendering/render-queries-and-occlusion-validation.md#collect-visible-wait-decoupling) shows that collection, not `WaitForRender`, is the cost. Done when: the change targets the measured hot path and adds no per-frame allocations.
 
 <a id="open-code-items-moved-from-dedicated-render-thread-window-ownership-todomd"></a>
 
 ### Window Ownership And Render Thread
 
-Architecture: [Window Ownership And Render Thread](../../../architecture/rendering/window-creation-and-renderer-init.md#window-ownership-and-render-thread). Checks: [window and render-thread validation](../../testing/rendering/window-and-render-thread-validation.md#from-dedicated-render-thread-window-ownership-todomd).
+Architecture: [Window Ownership And Render Thread](../../../architecture/rendering/window-creation-and-renderer-init.md#window-ownership-and-render-thread). Checks: [window and render-thread validation](../../testing/rendering/window-and-render-thread-validation.md#window-ownership-and-render-thread).
 
 - [ ] Audit editor camera controls, selection, gizmos, drag-and-drop, clipboard, and common dialogs for window-thread and render-thread affinity under `XRE_WINDOW_PUMP_HOST=sdl-prototype`. `XREngine.Editor`, `XRWindow` wrappers. Done when: each path reads window state only through snapshots or mailbox calls, and `WindowOwnershipContractTests` guards the result.
 - [ ] Add thread-affinity adapters for STA-sensitive editor services: file dialogs, clipboard, shell integration, drag-and-drop, and native UI bootstrap. Done when: each service runs through a documented adapter, and the process entry thread no longer needs STA for them.
@@ -80,7 +80,7 @@ Architecture: [Interactive Resize](../../../architecture/rendering/window-creati
 
 ### Deferred And Probe Debug Dumps
 
-Architecture: [Deferred And Probe Resource Rules](../../../architecture/rendering/vulkan-renderer.md#deferred-and-probe-resource-rules). Do these only if the [global illumination checks](../../testing/rendering/global-illumination-validation.md#from-vulkan-deferred-and-probe-gi-fixes-todomd) show that existing capture tools cannot isolate a failure.
+Architecture: [Deferred And Probe Resource Rules](../../../architecture/rendering/vulkan-renderer.md#deferred-and-probe-resource-rules). Do these only if the [global illumination checks](../../testing/rendering/global-illumination-validation.md#probe-gi-on-vulkan-deferred) show that existing capture tools cannot isolate a failure.
 
 - [ ] (Optional) Add a Vulkan debug dump for the GBuffer albedo and depth targets. `DefaultRenderPipeline`, `AdvancedRenderPipeline` debug views, or an MCP capture preset. Done when: one command writes both images for the active viewport.
 - [ ] (Optional) Add a Vulkan debug dump for light-probe irradiance and prefilter textures. `LightProbeComponent.IBL.cs`, MCP capture tools. Done when: one command writes the contents for a selected probe.
@@ -98,7 +98,10 @@ Architecture: [Deferred And Probe Resource Rules](../../../architecture/renderin
 Each item is capability-gated, uses the `XRE_VK_*` toggle convention, and fails visibly when explicitly requested and unsupported.
 
 - [ ] Add memory residency through `VK_EXT_memory_budget` plus `VK_EXT_pageable_device_local_memory`. Device bootstrap and allocators. Done when: the extension is enabled when available and residency priority is set per allocation class.
+- [ ] Use modern synchronization and frame-pacing extensions where available: synchronization2, timeline semaphores, `VK_KHR_present_wait`, `VK_KHR_present_id`, `VK_EXT_swapchain_maintenance1`, and calibrated timestamps. Device bootstrap, frame pacing, submission, and telemetry. Done when: each feature is queried, enabled when available, and reported in startup diagnostics and frame telemetry.
 - [ ] Add attachment modernization: `VK_EXT_multisampled_render_to_single_sampled` and attachment feedback-loop layouts. Render-target plans. Done when: an eligible MSAA target renders without a separate resolve image, and feedback-loop layouts are selected where a pass reads and writes the same attachment.
+- [ ] Add fragment shading rate attachment support to dynamic-rendering plans and command scopes. `RenderingFragmentShadingRateAttachmentInfoKHR`, render-target planning, command compatibility, and secondary execution contracts. Done when: attachment identity participates in compatibility and secondary-command validation.
+- [ ] Add fragment density map attachment support to dynamic-rendering plans where supported, and keep the required legacy render-pass path where dynamic density-map attachment is unavailable. `RenderingFragmentDensityMapAttachmentInfoEXT`, render-target planning, and fallback selection. Done when: supported devices use the dynamic path and unsupported dynamic attachment cases fail or route to the legacy path explicitly.
 - [ ] Add `VK_KHR_pipeline_binary` caching beside `VulkanPipelineCache`. Done when: pipeline binaries persist and reload with device and driver keying.
 - [ ] Add cooperative matrix or vector support for in-engine ML passes. Done when: the capability is queried and one denoiser or upscaler path can use it behind a toggle.
 
@@ -106,14 +109,15 @@ Each item is capability-gated, uses the `XRE_VK_*` toggle convention, and fails 
 
 Test code; each item needs owner clearance after its live validation. Existing policy tests are in `XREngine.UnitTests/Rendering/VulkanDesktopFrameLoopPolicyTests.cs`.
 
+- [ ] Update the factory-contract tests that still require `RvcRenderPipeline` for every OpenXR eye, rename `EAdvancedStereoMode.RvcTwoPass`, and replace `AdvancedProductionCutoverContract.ProductionOpenXrPipelineName`. `AdvancedProductionCutoverContractTests`, `AdvancedStereoAndEditorIntegrationContractTests`, and render-pipeline factory tests. Done when: tests express the current OpenXR eye policy without hard-coded legacy names.
 - [ ] Add policy tests for the OpenXR startup gates (accepted-attempt count, observed tick and completion timestamp, desktop activity, the 250 ms dirty quiet period and its two-second bypass, the pending-timeline bypass) and a concurrency test for the retirement exclusion between OpenXR retirement and a new desktop attempt. Done when: the tests fail if a gate or the exclusion is removed.
 - [ ] Extend `PreflightClassification_IsDeterministic` to stable size, live mismatch, active interactive resize, unsettled resize, zero surface, missing resource generation, compatible interactive display mismatch, and DLSS mode change. Done when: each case asserts its pre-acquire disposition.
 - [ ] Add tests for `VulkanDesktopAcquireAvailabilityTracker`: reset after acquire, interactive-resize preservation, and the recreate threshold. Done when: they pass without a Vulkan device.
-- [ ] Add recording-phase tests: no overlay, ImGui only, dynamic text only, both overlays, recording deferral, scene-record failure, each overlay failure, and dirty-after-record. Add the fresh-primary rule (stale dirty flag cleared; dirty cached primary or generation change aborts). Done when: each case asserts one typed recovery obligation.
+- [ ] Add recording-stage tests: no overlay, ImGui only, dynamic text only, both overlays, recording deferral, scene-record failure, each overlay failure, and dirty-after-record. Add the fresh-primary rule (stale dirty flag cleared; dirty cached primary or generation change aborts). Done when: each case asserts one typed recovery obligation.
 - [ ] Add fault tests: after an upload command buffer is recorded but before scene recording returns; at each recovery operation (abort begin and end, bridge submit, skipped present, swapchain recreate); the abort-layout matrix (`Undefined` to `PresentSrcKhr` for never-presented images); after device loss clears the timeline arrays; at `RenderSubmitStart`, `RenderSubmitEnd`, staging trim, `PresentStart`, and `PresentEnd`; and acquire device loss, unexpected acquire, image-preparation, post-submit, unexpected present, and post-present failures. Done when: each fault leaves every acquired resource with exactly one terminal transition and maps to its typed outcome.
 - [ ] Add submit and present tests for success and each Vulkan error through fault injection, including first-error device-loss preservation and healthy submit failure as acquired-but-unconsumed ownership. Done when: each result maps to its outcome.
 - [ ] Add tests for monotonic signal generation and the global, slot, and image publication sets of normal draw, abort-present, and consume-only bridge submits. Done when: each submit kind asserts its publication set.
-- [ ] Extend `PolicyResults_AreReferenceFreeAndClassifiersAllocateNothing` to every desktop frame-loop phase method. Done when: a closure, boxing, LINQ, or context copy in a phase method fails a test.
+- [ ] Extend `PolicyResults_AreReferenceFreeAndClassifiersAllocateNothing` to every desktop frame-loop stage method. Done when: a closure, boxing, LINQ, or context copy in a phase method fails a test.
 - [ ] Add OpenXR coexistence tests: activity and drain exclusion, pending-slot `continue`, completed-other-slot drain, distinct eye and desktop slot domains, and accepted-attempt and readiness semantics; and ordering of the exclusive runtime graphics transition and session start against desktop activity. Done when: the tests pass without a Vulkan device and fail if a desktop attempt can enter during the transition.
 - [ ] Keep a regression test that a batched OpenXR render failure after confirmed device loss does not fall through to sequential-eye rendering. Done when: the test fails without the guard.
 - [ ] Add deterministic primary-reuse coverage that cycles desktop swapchain images while camera and view data change. Done when: plan generation, render-frame ID, frame-data image index, and recorded order match, and stale thread-local scratch is rejected.
@@ -133,7 +137,7 @@ Test code; each item needs owner clearance after its live validation. Existing p
 
 ### Production Cutover And Legacy Deletion
 
-Start each item only after its gates in the validation doc pass.
+
 
 - [ ] Mark the desktop `AdvancedRenderPipeline` source production-ready, extend the default to applicable offscreen profiles, and promote the RVC-owned OpenXR eye path after its XR gates pass. Update settings, schemas, editor defaults, launch profiles, and unit-testing-world setup. Done when: the defaults change in code and regenerated settings.
 - [ ] Remove development pipeline selectors and temporary pipeline environment variables. Done when: one final pipeline-kind setting remains.
@@ -148,18 +152,13 @@ Start each item only after its gates in the validation doc pass.
 ## Decisions Needed
 
 - [ ] Decide whether the split window pump moves from the SDL prototype to a raw Win32 pump, and whether split mode becomes a default. The SDL prototype is Windows-only and Vulkan-only. Owner: Rendering.
-- [ ] Decide whether to resume barrier specialization. The tested early-visibility specialization improved frame and GPU medians only 2.95% and 1.27% (below the 5% gate) and raised frame p99 14.03%, so it was removed. Re-entry needs driver counter access, a measured overlap opportunity, full consumer coverage, and stable controls. Evidence: [phase D investigation](../../investigations/rendering/vulkan14-phase-d-waits-and-barriers-2026-09-09.md), [barrier research](../../investigations/rendering/vulkan14-barrier-performance-research-2026-09-09.md). Broad `AllCommandsBit` barrier narrowing waits on this decision. Owner: Rendering.
+- [ ] Decide whether to resume barrier specialization. The tested early-visibility specialization improved frame and GPU medians only 2.95% and 1.27% (below the 5% gate) and raised frame p99 14.03%, so it was removed. Re-entry needs driver counter access, a measured overlap opportunity, full consumer coverage, and stable controls. Evidence: [wait and barrier investigation](../../investigations/rendering/vulkan14-phase-d-waits-and-barriers-2026-09-09.md), [barrier research](../../investigations/rendering/vulkan14-barrier-performance-research-2026-09-09.md). Broad `AllCommandsBit` barrier narrowing waits on this decision. Owner: Rendering.
 - [ ] Decide if the editor allows backend fallback by default, or requires an explicit `AutoPreferRequested` or `FallbackWithWarning` setting. Owner: Rendering / Editor.
 - [ ] Decide if editor diagnostics write directly into `RenderDiagnosticsFlags`, or if one diagnostics service owns the environment seed, the preference seed, and live toggles. Owner: Rendering / Editor.
 - [ ] Decide if the old flat render-settings asset properties get compatibility shims, or are removed before v1. Owner: Rendering.
 - [ ] Decide if DX12 settings placeholders are added now as an interface shape, or delayed until DX12 work resumes. Owner: Rendering.
 
-## Recovered Items To Triage
+## Out Of Scope
 
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/COMPLETED/vulkan-frame-loop-performance-todo.md`
-
-- [ ] Consider enhancing `dump_cpu_frame_profile` to optionally wait for a
-  minimum number of profiler snapshots or dump the worst retained frame; the
-  first dump after self-enabling frame logging can be too shallow.
+- Manual runtime, visual, hardware, profiler, benchmark, and soak checks. The validation docs own those checks.
+- Backend wrapper parity details. The wrapper parity todo owns those code items.

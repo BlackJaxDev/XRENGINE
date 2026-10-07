@@ -772,3 +772,131 @@ continues to animate after cleanup. This is sampled visual evidence, not an
 exhaustive check of every chain. The owned editor session stopped after the
 third cleanup. Its retained logs had no matching exception, fatal, device-loss,
 or validation-error entry; Vulkan validation layers were disabled for timing.
+
+## Desktop continuation
+
+The next run uses a Ryzen 9 7950X3D and an RTX 3090. These results cannot be
+compared directly with the laptop results above. The named editor session is
+`chain-100hz`, with Release binaries, Vulkan, Advanced rendering, `CpuDirect`
+submission, FXAA, 1920 x 1080 output, VSync off, and an uncapped render loop.
+The update target is 90 Hz; the fixed target is 30 Hz. Each measured window
+keeps 2,000 registered GPU chains. Root motion stays active, bone readback stays
+off, and debug displays stay off.
+
+Evidence is under
+`Build/_AgentValidation/20261006-174854-physics-chain-100hz/`.
+The retained session build and logs are under
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20261006-174906-chain-100hz/`.
+The timing script divides completed Vulkan frame-count deltas by elapsed wall
+time. It checks the chain count before and after each window. An early window
+named `baseline` is invalid: the timed benchmark ended during that window and
+returned to one chain. Its 204 Hz result must not be used.
+
+| Window | Completed frames | Wall seconds | Completed Hz | New rejected / deferred / failed |
+| --- | ---: | ---: | ---: | --- |
+| `baseline-valid` | 374 | 30.898 | 12.104 | 0 / 0 / 0 |
+| `profiler-off` | 351 | 31.018 | 11.316 | 0 / 0 / 0 |
+| `lock-reduction` | 401 | 30.841 | 13.002 | 0 / 0 / 0 |
+| `subscriptions` | 403 | 30.862 | 13.058 | 0 / 0 / 0 |
+| `typed-locks` (removed) | 393 | 30.951 | 12.698 | 0 / 0 / 0 |
+| `observer-off` | 391 | 30.838 | 12.679 | 0 / 0 / 0 |
+| `full-grid` (farther camera) | 470 | 30.941 | 15.190 | 0 / 0 / 0 |
+
+The fine CPU profiler is off from `profiler-off` onward. The opt-in world tick
+observer stays on for these diagnostic comparisons. Disabling the CPU profiler
+did not improve the baseline. These short windows do not establish a precise
+speedup under controlled clocks. None meets 100 Hz.
+
+The `lock-reduction` build changes two paths. Existing GPUScene mesh and
+material IDs use read lookups and only insert a missing reverse entry. This
+removes repeated dictionary writes and captured ID-factory delegates. Exact
+ordinary `Transform` children with clean local matrices combine the dirty read
+and world composition under one store gate. Callbacks still run after that gate
+is released. The mean late-tick body fell from 22.214 ms in `baseline-valid` to
+19.365 ms. Mean hierarchy preparation fell from 8.276 ms to 7.029 ms. These are
+call means, not rendered-frame totals.
+
+The `subscriptions` build also gives `RenderCommandMesh3D` a published binding
+token. Same-renderer assignments skip the subscription gate only when all
+groups and overrides remain current. A mutation or failed refresh invalidates
+the token and keeps the existing repair path. Both builds passed with zero
+warnings and errors. No test files changed.
+
+Eight-second sampled .NET traces identify repeated Monitor entry paths in
+bone notifications, pending render-matrix updates, skinned bounds, and renderer
+subscriptions. The second trace no longer lists material-ID insertion among
+the large sampled paths. Thread-time samples include waiting and do not prove
+that every sampled Monitor entry is contended. Runtime counters in the
+`subscriptions` build report about 18.6 MB/s of allocation and 593 monitor
+contentions per second. One gen0/gen1 collection occurred during seven counter
+intervals; no gen2 collection occurred. GC pauses do not explain the sustained
+frame interval.
+
+The wide view and two near views from `lock-reduction` were captured and viewed.
+The near meshes change shape between captures. The wide camera cuts some near
+rows, so these views do not prove that all 2,000 chains pass visibility. Physics
+readback submission and dispatch-failure counters stayed zero. The HUD reported
+zero CPU fallback. Screenshot readbacks are separate diagnostic work and occur
+outside timed windows.
+
+Two proposed shortcuts were rejected. Moving component GPU input collection
+after the normal transform pass can change callback, rest-pose, and fixed-step
+ordering. Reading GPU bone ownership without its lock can observe a retired
+bone-buffer state and lose a CPU update. A later subscription-suppression change
+needs a bone-state generation, matching bridge registrations, and a guaranteed
+CPU reseed when the final GPU owner leaves. Neither shortcut is implemented.
+
+An isolated no-build run of the `subscriptions` binary set
+`XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback`. It failed the warm
+window gate. The viewed capture showed a blank purple scene instead of the
+chains. Vulkan reported `PresentNowReadinessRetry`, `AdmissionDeferred`, and
+`PipelineCompilation` for the `sealed-primary-recording` ticket. Its detail was:
+"An indirect draw required by an exact output could not bind its prepared
+material and mesh state." No performance result from this configuration is
+valid. Evidence: `reports/gpu-submission-failure.json` and
+`reports/gpu-submission-wide.json`. The next comparison restores explicit
+`CpuDirect` submission. This is a configuration experiment, not a runtime CPU
+fallback; chain simulation and skin palettes remain GPU-owned.
+
+The `typed-locks` experiment replaced four private Monitor gates with
+`System.Threading.Lock` without changing their critical sections. It showed no
+material gain and was removed. The final Release build retains only the ID,
+transform, and renderer-binding changes described above. It passed with zero
+warnings and errors. `observer-off` and `full-grid` use that build with
+`XRE_WORLD_TICK_TELEMETRY=0` and the fine CPU profiler off.
+
+The comparison camera is `(0, 260, 310)`, looking at the origin. The farther
+`full-grid` camera is `(0, 600, 700)`, also looking at the origin. Its viewed
+capture contains the grid inside the viewport. Both final timing windows keep
+2,000 chains, 2,000 palette slices, and 2,000 renderer bindings before and after
+timing. Physics readback submissions stay zero. No screenshot or sampled trace
+runs inside either timing window. The farther view is not a matched performance
+comparison with the baseline, and no per-draw visibility count proves that
+every chain passes all visibility tests.
+
+The startup log has `UseDebugOpaquePipeline=True`, which is the Math
+Intersections world default. The live selected viewport reports
+`AdvancedRenderPipeline`, with 1920 x 1080 internal and output sizes. Setting
+the debug preference to false in this isolated session leaves that pipeline
+instance and resource generation unchanged. This flag does not explain the
+measured viewport cost.
+
+One cold `GpuBoundsPublication.AtlasBufferReadiness` failure was already present
+before `baseline-valid`, `subscriptions`, `typed-locks`, and the final timing
+windows. Its count does not increase during those windows. The `lock-reduction`
+session recorded zero dispatch failures. Thus, these results prove no new
+steady-state dispatch failure in the sampled windows, not a failure-free
+startup. The cold bounds readiness failure remains unresolved.
+
+After the final full-grid window, the timed harness ended and restored the
+source chain. The first final near pair therefore shows the restored source,
+not 2,000 chains. Both images were viewed and show a changing source pose.
+The restored counters report one chain, one palette slice, one renderer binding,
+and zero physics readbacks. A new bounded run captured the final active near
+pair with 2,000 registered chains before and after capture. Both images were
+viewed and show different bent poses. Evidence uses the
+`final-active-near-{a,b}` and `final-visual-dispatcher-{before,after}` prefixes.
+Its cleanup again restored one chain, one palette slice, one renderer binding,
+and zero physics readbacks. The owned editor session then stopped. The final
+session logs have no matching unhandled exception, fatal error, device-loss,
+or validation-error entry. Vulkan validation was off during timing.

@@ -34,7 +34,7 @@ Relevant current code and docs:
 - `XREngine/Rendering/Pipelines/Types/DefaultRenderPipeline.Textures.cs`
 - `docs/developer-guides/gi/voxel-cone-tracing.md`
 - `docs/developer-guides/gi/ambient-occlusion.md`
-- `docs/work/testing/ambient-occlusion.md`
+- `docs/work/testing/rendering/ambient-occlusion.md`
 
 What exists today:
 

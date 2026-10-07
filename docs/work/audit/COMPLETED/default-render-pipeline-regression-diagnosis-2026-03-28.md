@@ -2,8 +2,8 @@
 
 Reference work docs:
 - [Default render pipeline notes](../../../architecture/rendering/default-render-pipeline-notes.md)
-- [Ambient Occlusion](../../developer-guides/gi/ambient-occlusion.md)
-- [Ambient Occlusion Testing](../testing/ambient-occlusion.md)
+- [Ambient Occlusion](../../../developer-guides/gi/ambient-occlusion.md)
+- [Ambient Occlusion Testing](../../testing/rendering/ambient-occlusion.md)
 
 ## Scope
 

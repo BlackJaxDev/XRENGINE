@@ -71,7 +71,6 @@ in the runtime-data-layout TODO.
 ## Advanced record source locations
 
 All paths are under `XREngine.Runtime.Rendering/`.
-
 | Area | Folder | Main types |
 |---|---|---|
 | Scene, draw, and geometry records | `Rendering/Commands/GPUScene/Advanced/` | `AdvancedDrawRecord`, `AdvancedInstanceRecord`, `AdvancedGeometryRecord`, `AdvancedTransformRecord`, `AdvancedDeformationRecord`, `AdvancedRenderStateRecord`, `AdvancedEditorIdentityRecord`, `AdvancedGpuHandle`, `AdvancedGpuHandleRemap`, `AdvancedSharedGpuSceneDatabase`, `AdvancedGeometryDatabase` |
@@ -84,3 +83,13 @@ Each record type has its own file. A draw ID is enough to find the geometry,
 instance, material, transform, deformation, and editor-identity records from
 GPU tables alone. The [Shared GPU Scene And Material Contract](default-render-pipeline-notes.md#shared-gpu-scene-and-material-contract)
 describes handle generations, remaps, and frame-slot ownership.
+
+## GPU scene database records
+
+`GPUScene` stores rendering data as separate stable streams. `DrawMetadata` carries draw identity, mesh data identity, material identity, state class, flags, pass masks, and view masks. `TransformGpu`, `BoundsGpu`, `MaterialStateGpu`, mesh data entries, LOD entries, meshlet ranges, meshlet descriptors, and meshlet task records live in separate buffers. Draw metadata no longer embeds world matrices.
+
+Stable IDs are the contract between CPU ownership and GPU records. Transform IDs, skin IDs, state-class IDs, logical mesh IDs, material IDs, and mesh-data IDs can be recycled only through the owning allocator. They must not shift silently when another object is removed.
+
+Zero-readback and meshlet paths consume these records through generated `std430, row_major` GLSL declarations. A draw ID must be sufficient for shaders to find its transform, bounds, material row, LOD or meshlet range, and view mask. Legacy compatibility command envelopes can remain only at command-builder boundaries.
+
+Vulkan device-address fetch is a capability-specific access form for the same records. It does not change record layout. It changes how shaders receive the base address for selected buffers.

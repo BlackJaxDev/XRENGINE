@@ -7,7 +7,7 @@ Scope: renderer-level transparency architecture for XRENGINE covering material c
 Related docs:
 
 - [Production GPU-driven rendering roadmap](../../todo/rendering/gpu/production-rendering-pipeline-roadmap.md)
-- [Transparency Implementation TODO](../todo/transparency-and-oit-todo.md)
+- [Transparency Implementation TODO](../../todo/rendering/transparency-and-oit-todo.md)
 
 ---
 

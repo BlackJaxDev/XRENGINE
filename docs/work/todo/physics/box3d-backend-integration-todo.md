@@ -14,7 +14,7 @@ No Box3D code exists. `EPhysicsLibrary` has no `Box3D` value. Backends register 
 ### Native build and interop
 
 - [ ] Add the pinned source under `Build/Submodules/box3d` after approval. Done when: the submodule points at the approved tag and commit.
-- [ ] Add `Tools/Dependencies/Build-Box3D.ps1` with a fixed source, configuration, architecture, and output check (`BUILD_SHARED_LIBS=ON`, samples, benchmarks, docs, and unit tests off, `BOX3D_DOUBLE_PRECISION=OFF`). Done when: the script builds a `win-x64` DLL into `XREngine.Runtime.Physics.Box3D/runtimes/win-x64/native/` and fails on a wrong architecture.
+- [ ] Add `Tools/Dependencies/Build-Box3D.ps1` with a fixed source, configuration, architecture, and output check (`BUILD_SHARED_LIBS=ON`, `BOX3D_SAMPLES=OFF`, `BOX3D_BENCHMARKS=OFF`, `BOX3D_DOCS=OFF`, `BOX3D_UNIT_TESTS=OFF`, `BOX3D_DOUBLE_PRECISION=OFF`). Done when: the script builds a `win-x64` DLL into `XREngine.Runtime.Physics.Box3D/runtimes/win-x64/native/` and fails on a wrong architecture.
 - [ ] Create `XREngine.Runtime.Physics.Box3D` with the file map from the design doc. Done when: the project builds and is in `XRENGINE.slnx`.
 - [ ] Bind the public `include/box3d` C API with `LibraryImport`, the C calling convention, one-byte `bool` marshalling, and blittable structs in `Box3DNative` and `Box3DInteropTypes`. Done when: the bindings compile with no runtime marshalling.
 - [ ] Represent `b3WorldId`, `b3BodyId`, `b3ShapeId`, and `b3JointId` as distinct managed value types. Done when: no API takes a raw integer ID.
@@ -29,7 +29,7 @@ No Box3D code exists. `EPhysicsLibrary` has no `Box3D` value. Backends register 
 - [ ] Implement `Box3DScene : AbstractPhysicsScene` with `Initialize`, `Destroy`, `Gravity`, `StepSimulation`, and `OnEnterPlayMode`. Map gravity, sleep, CCD, contact tuning, hit threshold, capacity, and worker count from explicit engine defaults. Done when: the scene creates a world with one worker through `b3DefaultWorldDef`.
 - [ ] Call `b3World_Step` with the engine fixed delta and an explicit substep setting. Block reads and writes during the step through the engine physics mutation queue. Done when: no wrapper API touches the world while a step runs.
 - [ ] Consume movement, contact, sensor, and joint events before the next step. Update only moved body owners, then call `NotifySimulationStepped()`. Done when: the step has no all-body scan.
-- [ ] Make a failed `Initialize` leave no registered world. Make `Destroy` idempotent and release controllers, joints, bodies, cooked geometry, callbacks, and the world in that order. Done when: unit tests for repeated create, step, and destroy and for failed initialize pass.
+- [ ] Make a failed `Initialize` leave no registered world. Make `Destroy` idempotent and release controllers, joints, bodies, cooked geometry, callbacks, and the world in that order. Done when: unit tests for empty and populated worlds, repeated create, step, destroy, and failed initialize pass with deterministic state and no leak.
 
 ### Bodies
 
@@ -71,7 +71,7 @@ No Box3D code exists. `EPhysicsLibrary` has no `Box3D` value. Backends register 
 
 ### Character mover
 
-- [ ] Implement `Box3DCharacterController` with `b3World_CastMover`, `b3World_CollideMover`, `b3SolvePlanes`, and `b3ClipVector`, with bounded plane storage. Keep `CharacterControllerCapabilities` at `None` until it is complete. Done when: a move causes no allocation.
+- [ ] Implement `Box3DCharacterController` with `b3World_CastMover`, `b3World_CollideMover`, `b3SolvePlanes`, and `b3ClipVector`, with bounded plane storage. Keep `CharacterControllerCapabilities` at `None` until it is complete. Done when: a move causes no allocation and the controller reports the approved dynamic-body pushing policy.
 - [ ] Map total capsule height and radius. Keep the neutral velocity and displacement timing contract. Derive support state from contact planes with documented slope tolerances. Use `b3Body_CollideMover` for moving platforms. Done when: the controller advertises only the capabilities its tests prove.
 - [ ] Add controller unit tests that reuse the timing, moving-ground, arbitrary-up, slope, step, teleport, resize, and interaction cases from `JoltControllerParityTests`. Done when: the tests exist and assert support or unsupported results.
 
@@ -101,22 +101,3 @@ No Box3D code exists. `EPhysicsLibrary` has no `Box3D` value. Backends register 
 ## Out Of Scope
 
 - See the non-goals in the design doc.
-
-## Recovered Items To Triage
-
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/physics/box3d-backend-integration-todo.md`
-
-- [ ] `BOX3D_UNIT_TESTS=OFF` for the shipping artifact;
-- [ ] An empty and populated Box3D world step deterministically without leaks.
-- [ ] Audit CCD/bullet behavior, damping, max velocities, density/mass/inertia,
-  solver iterations, and body flags.
-- [ ] Audit whether Box3D joint events expose break thresholds compatible with
-  `NotifyConstraintBroken`.
-- [ ] cast desired translation with `b3World_CastMover`;
-- [ ] gather planes with `b3World_CollideMover`;
-- [ ] solve penetration with `b3SolvePlanes`; and
-- [ ] Decide and test dynamic-body pushing; the geometric mover is not itself a
-  simulated body.
-- [ ] Box3D can be selected, inspected, and diagnosed without source knowledge.

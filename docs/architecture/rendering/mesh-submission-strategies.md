@@ -5,7 +5,6 @@
 Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by interpreting `GPURenderDispatch` directly. The strategy is resolved once from profile, settings, and renderer capability, then applied to mesh render commands in `DefaultRenderPipeline`, `AdvancedRenderPipeline`, capture helpers, and the debug opaque pipeline.
 
 ## Strategies
-
 | Strategy | Purpose | CPU readbacks | CPU mesh fallback | Hot-path diagnostics |
 |----------|---------|---------------|-------------------|----------------------|
 | `CpuDirect` | CPU traversal and direct mesh draw submission. | None in the steady-state render path. | Not applicable. | CPU renderer diagnostics only. |
@@ -42,6 +41,21 @@ The strategy also owns scene visibility acceleration. `CpuDirect` uses the CPU s
 
 The CPU hierarchy's snapshot publication, mutation, traversal, and diagnostics contracts are documented in [CPU Scene BVH](cpu-scene-bvh.md).
 
+## Renderer binding and scene IDs
+
+`RenderCommandMesh3D` keeps mutation subscriptions for its renderer, submeshes,
+materials, render options, and meshes. A successful bind publishes a renderer
+token. A repeated assignment of that renderer can skip the subscription gate
+while all groups and overrides remain current. Subscription changes invalidate
+the token before they start. A failed refresh leaves it invalid, so a later
+assignment retries the bind. Property notifications and cancellation still use
+`SetField`; the final bind uses the value that the command retained.
+
+GPUScene mesh and material ID maps keep entries for the scene lifetime.
+Existing IDs use read lookups. A missing reverse entry is still published when
+another caller has inserted only the forward entry. ID factories use cached
+static delegates, so repeated ID lookup creates no captured delegate.
+
 ## Resolver
 
 `Engine.Rendering.ResolveMeshSubmissionStrategy()` uses:
@@ -73,7 +87,6 @@ When either meshlet strategy is forced on unsupported hardware, the resolver cho
 ## Zero-Readback Material Draw Paths
 
 `GpuIndirectZeroReadback` has a second selector, `EZeroReadbackMaterialDrawPath`, available through `Engine.Rendering.Settings.ZeroReadbackMaterialDrawPath`, user/project overrides, editor debug preferences, and `XRE_ZERO_READBACK_MATERIAL_DRAW_PATH`.
-
 | Draw path | Purpose |
 |-----------|---------|
 | `FullBucketScan` | Strict no-readback path. The GPU scatters commands into state-class/tier buckets and the CPU loops over every bucket while using GPU-written counts. |
@@ -110,7 +123,6 @@ Dynamic material-table layouts for additional deferred, forward+, Uber, and anno
 Vulkan command chains do not choose the mesh submission strategy; they cache the backend recording work after a pass has already resolved to CPU direct, GPU indirect, or meshlet submission. The pass strategy still owns which draw commands are generated. Command-chain lowering only classifies the resulting Vulkan `FrameOp` stream for reuse.
 
 The command-chain volatility contract is:
-
 | Volatility | Meaning |
 |------------|---------|
 | `FrameDataOnly` | The chain structure is stable and only per-frame data such as view/projection matrices, model matrices, material constants, descriptor contents, or resource-plan generations may need refresh. |
@@ -247,4 +259,16 @@ VUIDs. See the
 Broad model/prefab binary-cache hydration remains a separately owned
 conditional dependency; it is not required to reinterpret or reopen this
 submission contract. The completed closeout releases the prerequisite hold on
-Vulkan resident draw-stream Phase 1.
+Vulkan resident draw-stream work.
+
+## GPU-Driven Production Topology
+
+Production GPU-driven submission records stable pass topology on the CPU and lets GPU-written buffers change per-frame draw contents. Visibility, material scatter, indirect command counts, meshlet task counts, and delayed diagnostics are data. They must not force primary command rerecording by themselves. A rerecord needs a topology, capacity, binding, pipeline, resource-generation, render-target, or view-mode change.
+
+`GpuIndirectZeroReadback` and `GpuMeshletZeroReadback` submit GPU-written counts directly. They must not map current-frame visibility, range, count, or diagnostic buffers for submission decisions. Instrumented strategies can read diagnostic data when counters name the readback site.
+
+Current-depth two-pass Hi-Z occlusion is implemented by `GPURenderPassCollection.TwoPassOcclusion.cs`. The first pass builds an early visible stream. The second pass consumes current depth and previous visibility state to update late visibility. The diagnostic descriptor names both phases and does not authorize host reads before the native submission completes.
+
+The Vulkan scene-database buffer-device-address prototype is an optional geometry-fetch mode. When the active profile enables it and the renderer reports `ISceneDatabaseDeviceAddressBackendCapability`, generated shader code can consume scene database buffer addresses instead of descriptor bindings for supported records. Unsupported backends must report a downgrade reason.
+
+OpenGL sparse mesh residency is not implemented. OpenGL uses arena allocation and explicit fallback diagnostics for this contract until a separate feature lands.

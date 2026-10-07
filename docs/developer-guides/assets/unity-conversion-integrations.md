@@ -36,7 +36,7 @@ no Unity-specific spawn path.
 
 ## Project And Dependency Resolution
 
-One `UnityProjectImportContext` is shared by the entry prefab, nested prefabs,
+One `SourceProjectImportContext` is shared by the entry prefab, nested prefabs,
 models, materials, textures, animation assets, and supported serialized
 `.asset` files. It provides a single GUID index, reached-file cache, parsed
 document cache, imported-object cache, diagnostics, and output ownership

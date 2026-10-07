@@ -134,7 +134,7 @@ Evidence: `reports/vk-perf-shadow-scope-qualification.json`,
 `reports/vk-shadow-scope-{disabled,verification}.json`,
 `reports/tests/vk-shadow-scope-existing.trx`, and `logs/vk-shadow-scope-*`.
 
-Owner item: [S15b](../../todo/rendering/vulkan-stall-remediation-todo.md#s15b-record-directional-cascade-casters-on-the-advanced-canonical-lane)
+Owner item: [S15b](../../progress/rendering/vulkan-stall-remediation-results.md)
 of the Vulkan stall remediation TODO. Target set by the user: above 100 Hz while
 the camera moves on Vulkan with the Advanced render pipeline and CpuDirect
 submission rendering Sponza with one directional light, without removing

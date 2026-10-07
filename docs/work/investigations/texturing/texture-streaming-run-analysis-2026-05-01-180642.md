@@ -2,7 +2,7 @@
 
 Status: historical analysis
 
-Follow-up validation: [Texture Validation](texture-validation.md#texture-runtime-streaming-validation)
+Follow-up validation: [Texture Validation](../../testing/texturing/texture-validation.md)
 
 This note analyzes the texture loading, streaming, and VRAM telemetry from the May 1 run where Sponza textures were still slow to become resident, some surfaces stayed visibly low resolution, and slower CPUs could leave surfaces black or placeholder-only for too long.
 

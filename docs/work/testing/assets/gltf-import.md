@@ -1,56 +1,39 @@
-# fastgltf glTF Import Testing
+# glTF Import Validation
 
-Last updated: 2026-04-28
+Architecture: [Model Import](../../../developer-guides/assets/model-import.md), [Native Dependencies](../../../developer-guides/runtime/native-dependencies.md)  Code todos: none
 
-The fastgltf-backed `.gltf` / `.glb` import path is implemented and documented in [Model Import](../../developer-guides/assets/model-import.md). This page preserves the delivered validation record and gives future regression runs one stable place to update expected coverage.
+Related validation: [Asset Import Validation](asset-import-validation.md).
 
-## Delivered Runtime Coverage
+## Setup
 
-- `.gltf` and `.glb` route through the native path by default.
-- Assimp remains an explicit compatibility fallback through `GltfBackend = AssimpLegacy` or `GltfBackend = Auto` rejection fallback.
-- Native bridge code lives in `Build/Native/FastGltfBridge` and stages `FastGltfBridge.Native.dll` under `XREngine.Gltf/runtimes/win-x64/native`.
-- `XREngine.Gltf` owns managed JSON parsing, GLB chunk validation, extras and unknown-extension retention, native-handle lifetime, and batched accessor/buffer-view copy helpers.
-- The committed corpus, manifest, and golden summaries live under `XREngine.UnitTests/TestData/Gltf/`.
+Use `Build-Editor` before editor import checks. Use `Generate-UnitTestingWorldSettings` when import-policy or unit-testing-world behavior changes.
 
-## Corpus
-
-- `external-static-scene`: external buffers, external images, multiple UV/color sets, deterministic remap keys, compatibility fallback.
-- `data-uri-unlit`: data URIs, `KHR_materials_unlit`, supported `KHR_texture_transform` texCoord override subset.
-- `skinned-morph-animated`: skinning, default-scene selection, translation and rotation animation coverage.
-- `morph-sparse-extras`: sparse accessors, morph targets, retained extras, unknown extension payload preservation.
-- `embedded-buffer-view-scene`: GLB parsing, embedded BIN payloads, buffer-view-backed image reads, baked matrix transforms.
-- `large-production-scene`: representative benchmark workload.
-- `malformed-truncated-glb`: deterministic malformed-container rejection.
-
-## Regression Commands
+Use these focused commands when glTF import behavior changes:
 
 ```powershell
 dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~Gltf"
 dotnet run --project .\XREngine.Benchmarks -- --gltf-phase0-report
 ```
 
-Use `Build-Editor` and `Generate-UnitTestingWorldSettings` when import-policy or unit-testing-world behavior changes.
+Do not run these commands from this document cleanup.
 
-## Completion Baseline
+## Checks
 
-Focused unit-test result at completion: 11 glTF tests passed, 0 failed.
+### fastgltf Native Import
 
-Benchmark snapshot at completion:
+Architecture link: [Model Import](../../../developer-guides/assets/model-import.md).
 
-- `large-production-scene`: native 1651.16 ms vs Assimp 1862.30 ms.
-- Native allocations: 301,527,712 B vs Assimp 350,272,824 B.
-- Native peak working set: 599,310,336 B vs Assimp 779,182,080 B.
+| Check | Procedure | Expected | Status | Last evidence |
+|---|---|---|---|---|
+| Native route default | Import `.gltf` and `.glb` assets with default options. | Assets route through the native fastgltf-backed path. | Passed | 2026-04-28. |
+| Assimp fallback | Import an asset with `GltfBackend = AssimpLegacy`, `GltfBackend = Assimp`, or an `Auto` rejection fallback. | Assimp remains an explicit compatibility path. | Passed | 2026-04-28. |
+| Corpus regression | Run the focused glTF unit tests over `external-static-scene`, `data-uri-unlit`, `skinned-morph-animated`, `morph-sparse-extras`, `embedded-buffer-view-scene`, `large-production-scene`, and `malformed-truncated-glb`. | 11 focused tests pass and malformed containers reject deterministically. | Passed | 2026-04-28: 11 passed, 0 failed. |
+| Benchmark snapshot | Run the glTF benchmark report. | The report compares native and Assimp wall time, allocations, and peak working set. | Passed | 2026-04-28: `large-production-scene` native 1651.16 ms, Assimp 1862.30 ms; native allocations 301,527,712 B, Assimp 350,272,824 B; native peak working set 599,310,336 B, Assimp 779,182,080 B. |
+| Extension growth | Add corpus assets when supported extension coverage expands. | New supported extensions have fixtures and golden summaries. | Open | Last evidence: none. |
+| Native ABI change | Run the native export or import smoke when the fastgltf C ABI changes. | Managed code and staged `FastGltfBridge.Native.dll` agree on the ABI. | Open | Last evidence: none. |
 
-Smaller synthetic fixtures remain regression coverage assets, not the optimization target for wall-time wins.
+## Failures
 
-## Future Test Additions
-
-- Add new corpus assets when supported extension coverage expands.
-- Add export-specific tests only when glTF export gets its own implementation plan.
-- Keep native export smoke tests current when the C ABI changes.
-
-## Related Documentation
-
-- [Model Import](../../developer-guides/assets/model-import.md)
-- [Unit Testing World](../../developer-guides/testing/unit-testing-world.md)
-- [Native Dependencies](../../developer-guides/runtime/native-dependencies.md)
+| Check | Symptom | Investigation or code item |
+|---|---|---|
+| None recorded | None recorded | None recorded |

@@ -4,7 +4,7 @@ Updated: 2026-10-01
 Status: Profiling infrastructure implemented; production acceptance remains open.
 
 The implementation checklist (now retired; open checks are in the
-[Vulkan core validation doc](../../testing/rendering/vulkan-core-validation.md#from-vulkan-headless-mcp-component-profiling-todomd))
+[Vulkan core validation doc](../../testing/rendering/vulkan-core-validation.md#component-profiling-and-renderbench))
 now has bounded CPU spans, selected GPU timestamps, clock correlation, intrusive
 counter replay, versioned artifacts, repeated comparison, promotion guards, and
 developer/MCP workflows. These facilities explain renderer cost; they do not
@@ -111,7 +111,7 @@ production optimization was promoted.
 The Deferred/Uber RenderBench fixtures are fullscreen pass proxies. They are
 useful for synchronization, query, and observer experiments; a complete
 `DefaultRenderPipeline` cohort uses the production presentation-independent
-host and its [cross-target validation plan](../../testing/rendering/vulkan-presentation-independent-renderer-validation.md).
+host and its [cross-target validation plan](../../testing/rendering/vulkan-core-validation.md#presentation-independent-renderer).
 The new production recipe exposes command-receipt submission and primary
 command-buffer counters, selected GPU pass timestamps, and calibrated
 timestamps in `GraphicsOnly` mode. Selected scopes require a dedicated uncached

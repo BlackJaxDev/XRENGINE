@@ -66,10 +66,7 @@ Validation: [Global Illumination Validation](../../../testing/rendering/global-i
 - [ ] Decide whether LPV stays opt-in or joins a default dynamic GI preset after profiling. Owner: rendering lead.
 - [ ] Decide whether point-light injection (cubemap or multi-face) is affordable. Owner: rendering lead.
 
-## Recovered Items To Triage
+## Out Of Scope
 
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/rendering/global-illumination/lpvgi-implementation-todo.md`
-
-- [ ] Add derivative or wall-thickness damping where it reduces leaks without over-darkening.
+- Default LPV enablement before OpenGL and Vulkan validation.
+- Specular GI through LPV.

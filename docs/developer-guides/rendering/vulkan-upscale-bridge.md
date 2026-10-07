@@ -261,6 +261,6 @@ Manual hardware validation is still required for final runtime confidence:
 ## Related Documentation
 
 - [Default Render Pipeline Notes](../../architecture/rendering/default-render-pipeline-notes.md)
-- [OpenVR VRClient GPU Handoff TODO](../../work/todo/rendering/gpu/openvr-vrclient-gpu-handoff-todo.md)
-- [Vulkan Backlog](../../work/todo/vulkan.md)
+- [OpenVR VRClient GPU Handoff](../../architecture/rendering/openvr-vrclient-gpu-handoff.md)
+- [Vulkan Core Frame Loop And Resident Rendering Master TODO](../../work/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md)
 - [ReSTIR GI](../gi/restir-gi.md)

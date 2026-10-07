@@ -12,7 +12,7 @@ Design sources:
 - [Fossilize CLI target list](https://github.com/ValveSoftware/Fossilize/blob/master/cli/CMakeLists.txt)
 - [Fossilize license](https://github.com/ValveSoftware/Fossilize/blob/master/LICENSE)
 - [Vulkan Command Recording](../../../architecture/rendering/vulkan-command-recording.md)
-- [Vulkan ReSTIR Radiance Cache GI TODO](vulkan-restir-radiance-cache-gi-todo.md)
+- [Vulkan ReSTIR Radiance Cache GI TODO](../../todo/rendering/vulkan-restir-radiance-cache-gi-todo.md)
 - [Vulkan Pipeline Cache](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCache.cs)
 - [Vulkan Pipeline Prewarm Database](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelinePrewarmDatabase.cs)
 - [Vulkan Shader Artifact Cache](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderArtifactCache.cs)

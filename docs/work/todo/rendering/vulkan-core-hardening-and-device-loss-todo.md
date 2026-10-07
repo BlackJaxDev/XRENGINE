@@ -54,16 +54,7 @@ Output scheduling, modal-resize stale presentation, persistent worker recording,
 
 None.
 
-## Recovered Items To Triage
+## Out Of Scope
 
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/rendering/vulkan-core-hardening-and-device-loss-todo.md`
-
-- [ ] Classify water, hair, particles, trails, beams, portals, mirrors, and
-  custom effects as native visibility, transparent, refractive, volumetric, or
-  unsupported.
-- [ ] Specialize the immutable section-2 `ViewSetPlan` with view count, layer
-  mapping, current/previous matrices, jitter, render region, foveation region,
-  and output target.
-- [ ] Remove `DefaultRenderPipeline2` completely.
+- Manual runtime, visual, hardware, profiler, benchmark, and soak checks. The validation docs own those checks.
+- Advanced pipeline resource cleanup. The OpenXR and Advanced rendering todo owns that work.

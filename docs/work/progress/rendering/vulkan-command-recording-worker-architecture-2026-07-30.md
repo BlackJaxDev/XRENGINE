@@ -7,11 +7,11 @@ acceptance is owned by the linked workstream 03-05 validation gate
 
 Owning work item:
 
-- [Workstream 05 validation](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation)
+- [Workstream 05 validation](../../testing/rendering/gpu-driven-submission-validation.md#vulkan-03-05-gate)
 
 Pre-06 validation:
 
-- [Vulkan Optimization Workstreams 03-05 Validation](../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation)
+- [Vulkan Optimization Workstreams 03-05 Validation](../../testing/rendering/gpu-driven-submission-validation.md#vulkan-03-05-gate)
 
 ## Implemented Architecture
 

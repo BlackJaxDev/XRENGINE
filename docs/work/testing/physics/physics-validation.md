@@ -14,7 +14,6 @@ Reference: [Physics-chain correctness contract](physics-chain-correctness-contra
 - Physics chain benchmarks: Math Intersections World benchmark harness presets in an isolated Release editor (`Tools/Manage-McpEditorSession.ps1`). The required matrix is `PhysicsChainBenchmarkRequiredMatrix`. The scenario generator is `PhysicsChainBenchmarkDeterministicScenario`.
 - Physics chain runtime metrics: `GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot()`. Allocation verification: the `Report-NewAllocations` task.
 - Character controller tests: `dotnet test .\XREngine.UnitTests\XREngine.UnitTests.csproj --filter "FullyQualifiedName~JoltControllerParityTests|FullyQualifiedName~CharacterMotion|FullyQualifiedName~CharacterMovement"`.
-- Keep captures, traces, and reports under the active `Build/_AgentValidation/<run>/` root.
 
 ### Physics chain benchmark run controls
 
@@ -50,13 +49,17 @@ Every accepted physics chain run records and uses:
 
 Procedure for this group: Math Intersections World, `Physics Chain GPU Dispatcher Skinned Mesh Test`, isolated Release editor. See the [performance guide](../../../developer-guides/rendering/physics-chain-performance.md) and the [investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md). Three functional start, run, and counter-cleanup cycles passed on one Release binary. They used an Intel Core Ultra 9 185H, RTX 4070 Laptop GPU, 1920 x 1080 output, and 1286 x 723 internal TSR resolution. This machine is separate from the primary hardware matrix below. Current evidence does not meet the 100 Hz target. The remaining checks need their stated evidence.
 
-- [ ] Frame rate at 2,000 chains. Expected: 2,000 visible chains at 100 or more completed render frames per second, with frame-interval p95 at most 10 ms. Record hardware, clocks, render resolution, scene settings, and observer flags. Last evidence: three clean cycles at 11.1266, 10.2098, and 10.8650 Hz; target failed.
+- [ ] Frame rate at 2,000 chains. Expected: 2,000 visible chains at 100 or more completed render frames per second, with frame-interval p95 at most 10 ms. Record hardware, clocks, render resolution, scene settings, and observer flags. Last evidence: the desktop continuation measured 12.679 Hz at the comparison camera and 15.190 Hz at a farther full-grid camera, with both timing observers off. Both windows retained 2,000 chains and bindings. Target failed; the investigation retains the separate laptop results.
 - [x] Native mesh readiness. Procedure: wait before each timing window. Expected: at least 30 completed frames with no new deferred, rejected, or failed outcomes. Registration counts alone do not prove readiness. Last evidence: three clean timed windows with 31 samples each, more than 30 new completed outcomes each, and unchanged deferred/rejected/failed counts.
 - [ ] Binding counts. Expected: 2,000 palette bindings, 2,000 admitted deformation jobs, 208,000 vertices, no CPU fallback, and zero physics readback before and after timing. Last evidence: 2,000 registered chains and palette bindings, no CPU fallback, and zero physics readback before and after all three clean windows; confirm job and vertex counts separately.
 - [x] Functional counter lifecycle. Expected: three runs keep 2,000 registered chains and palette bindings before and after timing, then restore one chain, one palette slice, and one binding with zero physics readback. Last evidence: all three clean-cycle before, after, and restored reports.
 - [ ] Start and stop cycles. Procedure: three cycles on the final binary. View moving and bent meshes from near and wide cameras. Expected: after each stop, one source chain, one palette slice, one renderer binding, and continuing source animation. Last evidence: three counter-cleanup cycles restored one chain and one palette binding with zero readbacks. Root viewed wide images from all three cycles, near deformation pairs from cycles 2 and 3, and restored-source animation pairs after cycles 1 and 3. A separate restored-source animation pair after cycle 2 and exhaustive per-chain visual validation remain open.
 - [ ] Solver group size. Procedure: compare 32-, 64-, and 128-thread short-linear solver groups on matched hardware. Expected: the shared indirect argument builder uses the same group size and every chain continues to update. Last evidence: trials are not a controlled comparison; no winner proven.
 - [ ] Final acceptance runs have diagnostic timing and frame-capture writers off. Last evidence: three clean no-build windows on the CPU6 binary with the timing observer off; frame-capture writer state is not confirmed, and frame rate remains below target.
+- [ ] Canonical bounds and shadow admission. Procedure: after the bounds route exists, move GPU-deformed chains across view and shadow-cascade boundaries with CPU bone synchronization off. Capture and view near and wide images. Include partial deformation coverage, disabled shadow casting, and layer exclusions. Expected: no rejection from stale CPU bounds, no policy bypass, and zero physics readback. Last evidence: the 2026-10-06 source audit confirms that only legacy command bounds receive the GPU output; the Advanced route remains missing.
+- [ ] Bounds route lifetime. Procedure: after the bounds route exists, repeat removal, command compaction, slot reuse, and arena growth with frames in flight. Expected: routes keep the correct draw generation and candidate index; no draw reads another chain's bounds or retired storage. Last evidence: none.
+- [ ] Shared preparation and GPU input gathering. Procedure: repeat matched 2,000-chain runs after each related code change. Compare preparation, hierarchy evaluation, collection, and swap counters in separate diagnostic windows. Then disable observers and measure completed render intervals. Expected: lower end-to-end cost with current animated roots, independent palettes, correct reset and teleport, and zero physics readback. Last evidence: the desktop continuation reduced repeated ID and hierarchy lock work. Late-tick body means were 22.214 ms before and 19.365 ms after; hierarchy means were 8.276 and 7.029 ms. Shared preparation and world-owned input gathering remain open.
+- [ ] Strict GPU-indirect submission. Procedure: use the same scene with `XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback`. Expected: visible animated meshes and a stable completed-frame window, without CPU fallback. Last evidence: the desktop experiment showed a blank scene and repeated indirect material/mesh binding readiness rejection. See the investigation before repeating this check.
 
 ### Physics chain scale
 
@@ -108,6 +111,7 @@ Checks:
 - [ ] Handle and slot safety under churn. Procedure: structural-churn records with add, remove, retemplate, and resize. Expected: no stale handle alias and no corruption of another chain's state or output. Last evidence: none.
 - [ ] Shared data memory. Expected: templates and collider sets use memory in proportion to unique content, not instance count. Shared sets reduce upload bytes, memory, and bandwidth in avatar crowds. Last evidence: none.
 - [ ] GPU kernel correctness across vendors. Procedure: repeated stress runs and the dependency-ordering tests on each target vendor. Expected: results within the contract tolerances, with no data race or NaN. Last evidence: none.
+- [ ] Existing GPU kernel families. Procedure: validate the short-linear and long/branched live paths, then run the existing `PhysicsChainGpuDependencyOrderingTests`, `PhysicsChainGpuBranchedDependencyOrderingTests`, `PhysicsChainGpuKernelFamilyTests`, and `PhysicsChainShaderContractTests`. Include mixed loop counts in one compatible batch. Expected: parent-before-child results, matching layouts, and correct substeps without grouping by loop count. Last evidence: source audit confirms both kernels, depth barriers, separate state/template buffers, and fused substeps; these tests were not run in this audit.
 - [ ] Retained GPU kernel regions. Expected: each retained kernel wins its chain-length, count, and feature region. Telemetry shows fallback use. Last evidence: none.
 - [ ] GPU barriers. Procedure: RenderDoc or backend validation. Expected: inter-pass state, indirect arguments, palettes, and bounds use correct, narrow visibility barriers. Last evidence: none.
 - [ ] Shader compiler output. Expected: no unused loads or stores in retained variants. Last evidence: none.
@@ -180,11 +184,3 @@ Still required: a cross-vendor GPU target and a lower-tier CPU and GPU target. N
 | Check | Symptom | Investigation or code item |
 |---|---|---|
 | GPU skinned chain scale: frame rate at 2,000 chains | Below the 100 Hz target | [Skinned GPU chain benchmark investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md) |
-
-## Recovered Items To Triage
-
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/rendering/physics-debug-visualization-performance-todo.md`
-
-- [ ] Contacts and normals enabled.

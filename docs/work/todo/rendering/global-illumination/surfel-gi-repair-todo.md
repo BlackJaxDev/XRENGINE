@@ -13,7 +13,7 @@ Validation: [Global Illumination Validation](../../../testing/rendering/global-i
 
 ### Forward Prepass Identity
 
-Shared work: [Forward depth-normal TransformId TODO](../../forward-depth-normal-transform-id-todo.md).
+Shared work: [Forward depth-normal TransformId TODO](../forward-depth-normal-transform-id-todo.md).
 
 - [ ] Write `TransformId` from the forward depth-normal prepass. Attach the main `TransformId` texture in the forward prepass merge FBO of both pipelines, keep prepass clears disabled, and write `TransformId = floatBitsToUint(FragTransformId)` in `DepthNormalPrePass.fs`, `ForwardDepthNormalVariantFactory` variants, and explicit `XRENGINE_DEPTH_NORMAL_PREPASS` branches. Emit `FragTransformId` from generated vertex programs when the prepass needs it. Done when: forward prepass pixels hold the same identity as deferred pixels.
 
@@ -67,27 +67,7 @@ Shared work: [Forward depth-normal TransformId TODO](../../forward-depth-normal-
 - [ ] Keep surfels object-space for moving objects, or use a hybrid static and dynamic storage policy. Owner: rendering lead.
 - [ ] Decide when Surfel GI becomes a registered module (after the identity and decode fixes, or after quality work). Owner: rendering lead.
 
-## Recovered Items To Triage
+## Out Of Scope
 
-The 2026-10-06 todo cleanup removed these items, and no match was found in other docs. Classify each item as code, check, decision, or done. Then move it to the correct doc or delete it.
-
-### From `todo/rendering/global-illumination/surfel-gi-repair-todo.md`
-
-- [ ] Audit what value `RenderCommandMesh3D` pushes through `PushTransformId`.
-- [ ] Replace the Surfel GI custom `DecodeNormal(vec3)` logic with octahedral decoding matching `NormalEncoding.glsl` (the Normal texture is `vec2` octahedral, populated via `XRENGINE_EncodeNormal`).
-- [ ] Fix the dispatch ordering bug: `Execute()` runs `BuildGrid` before `Spawn`, so newly allocated surfels are not present in this frame's grid and cannot be gathered until next frame. Either move grid build after spawn, or have spawn insert new (and moved-reused) surfels into the grid with duplicate protection.
-- [ ] Add a test that spawns a surfel and confirms it is gatherable in the same frame.
-- [ ] Use `glDrawArraysIndirect` / `glMultiDrawArraysIndirect` with `stackTop` (clamped to `MaxSurfels`) as the instance count, so dispatch matches GPU-resident state without a CPU sync.
-- [ ] Skip inactive surfels (`meta.y == 0`) by emitting a degenerate triangle, not by branching the draw call.
-- [ ] Add a uniform `radiusScale` (default 1.0) so users can shrink/inflate discs without re-spawning surfels.
-- [ ] `RadiusHeat` - gradient over `posRadius.w` so radius-heuristic problems stand out.
-- [ ] `CellOccupancy` - color by how full this surfel's grid cell is (`counts[cell] / maxPerCell`); useful for diagnosing grid saturation.
-- [ ] `MatrixResolved` - solid green when `TryLoadWorldMatrix` succeeded for this surfel, red when it failed (renders the failed cases as discs sitting in local space at the world origin so they are visually obvious).
-- [ ] `SurfelIndex` - hashed-color of `gl_InstanceID`, useful as a stable per-surfel identity unrelated to transform ID.
-- [ ] Keep the existing `GridHeatmap` mode but render it as 3D wireframe boxes per non-empty cell (instanced cubes sourcing `counts[cellIndex]`), not just a screen-space heat overlay.
-- [ ] Color each cell box by `counts[cell] / maxPerCell`, with a saturated "overflow" color when `counts[cell] >= maxPerCell` to flag clipped cells.
-- [ ] Render the active grid bounds (from `CurrentGridOrigin` + `CurrentCellSize * gridDim`) as a wireframe box so users can confirm the grid is camera-following correctly.
-- [ ] Expose `SurfelGITexture` as a selectable output before composite (raw GI), and as a side-by-side with composited result.
-- [ ] Add a "Surfel GI Debug" panel under the Global Editor Preferences / Render Debug section that toggles `SurfelDebugRenderPipeline`, picks `ESurfelDebugVisualization`, picks `ESurfelDebugColorMode`, and exposes the filter uniforms above.
-- [ ] Add MCP tool coverage for the same toggles so headless validation runs can capture screenshots in each mode (`SurfelGI.SetDebugMode`, `SurfelGI.SetColorMode`).
-- [ ] Reconcile the C# `SurfelGPU.Meta` field comment (currently `Vector4 Meta; // x=frameIndex, y=reserved, z=reserved, w=reserved`) with the GLSL `uvec4 meta` layout (`x=lastUsedFrame, y=active, z=transformId`) so the storage convention does not drift.
+- A default Surfel GI provider before identity, normal decode, and same-frame gather are correct.
+- CPU readback for debug draw instance counts.

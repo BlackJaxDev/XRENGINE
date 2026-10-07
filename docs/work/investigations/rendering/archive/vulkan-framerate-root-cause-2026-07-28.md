@@ -796,4 +796,4 @@ descriptor generation and no pending pipeline. Two CPU-stage reconciliation
 issues also remain. The exact diagnosis, correctness evidence, formal scaling,
 crossover, canonical desktop/RVC Gate, matched CPU-reference runs, and final
 closeout order are recorded in
-the [combined workstreams 03-05 validation gate](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-03-validation).
+the [combined workstreams 03-05 validation gate](../../../testing/rendering/gpu-driven-submission-validation.md#vulkan-03-05-gate).

@@ -79,3 +79,13 @@ The GPU-driven path batches by coarse material state, not by material identity. 
 - transparent
 
 Custom PSOs must be deliberate exceptions. Adding a texture-only material must not increase the graphics program or pipeline count.
+
+## Runtime binding ladder
+
+The renderer reports one active texture binding rung for GPU-driven material-table draws. The portable rung names are `TextureArray`, `Bindless`, `Sparse`, `CoarseBucket`, and `Unsupported`. Vulkan also reports `EVulkanBindlessMaterialMode` as `Auto`, `Disabled`, `Required`, or `Diagnostics`.
+
+A rung is selected by backend capability, user override, driver limits, validation result, and material layout. Invalid overrides fail loud. Unsupported required variants fail visibly. They must not become CPU direct or full-capacity fallback without a reported reason.
+
+Texture arrays are valid only for homogeneous resource classes. Bindless OpenGL stores resident 64-bit handles in `MaterialTextureHandleTable`. Vulkan descriptor indexing stores descriptor indices in the material row and reserves index `0` for null or fallback sampling. Sparse and virtual texture rows can exist only where the pass layout declares page-table references. Coarse buckets group compact active work by state class and texture-set identity.
+
+Material rows and texture references update independently. Dirty material constants must not force a texture-handle table rewrite. Texture-handle retirement must wait for the backend GPU-safe lifetime, including deferred passes that can still read the slot.

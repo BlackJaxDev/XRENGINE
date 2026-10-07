@@ -33,6 +33,18 @@ The constants for all variables are in `XREngine.Data/Environment/XREngineEnviro
 | `XRE_VK_CAPABILITY_TIER`, `XRE_VK_DESCRIPTOR_BACKEND`, `XRE_VK_PROGRAM_BINDING_BACKEND`, `XRE_VK_FOVEATION_BACKEND`, `XRE_VK_RAY_TRACING_BACKEND` | Request a capability tier or backend explicitly. An unsupported explicit request fails startup with a diagnostic. |
 | `XRE_VULKAN_BINDLESS_MATERIAL_MODE` | Selects the bindless material mode. |
 
+## Swapchain And Overlay Isolation Flags
+
+Use these flags when the final image is black, stale, or different from the scene target. They seed `EditorPreferences` and `RenderDiagnosticsFlags` at process start. Change the editor preference for live toggles after startup.
+
+| Variable | Code owner | Behavior | Use when |
+|---|---|---|---|
+| `XRE_FORCE_SWAPCHAIN_MAGENTA=1` | `RenderDiagnosticsFlags.ForceSwapchainMagenta`, `VulkanRenderer.CommandBufferRecording.Primary.Finalization` | Clears the Vulkan swapchain to magenta after main composition. The log records the forced clear. | Confirm that acquire, final layout, submit, and present reach the swapchain. |
+| `XRE_SKIP_IMGUI=1` | `RenderDiagnosticsFlags.SkipImGui`, `EditorPreferences.Vulkan.SkipImGui` | Skips Vulkan ImGui overlay recording. | Isolate overlay command recording from scene output faults. |
+| `XRE_SKIP_UI_PIPELINE=1` | `RenderDiagnosticsFlags.SkipUiPipeline`, `EditorPreferences.Vulkan.SkipUiPipeline` | Skips screen-space UI pipeline operations on the Vulkan command buffer. | Isolate UI pipeline commands from scene and ImGui commands. |
+
+Do not use these flags as a fallback for production rendering. Remove them before you compare performance or visual parity.
+
 ## Black-Frame Triage
 
 1. Set `XRE_FORCE_SWAPCHAIN_MAGENTA=1`.
@@ -94,8 +106,8 @@ Use a **stopped** named session that `Tools/Manage-McpEditorSession.ps1` created
 ```powershell
 python Tools/Collect-VulkanLifecycleEvidence.py `
   --session <stopped-isolated-session> `
-  --environment Build/_AgentValidation/<run>/scratch/session-environment.json `
-  --output Build/_AgentValidation/<run>/reports/lifecycle-evidence
+  --environment <run-output>/scratch/session-environment.json `
+  --output <run-output>/reports/lifecycle-evidence
 ```
 
 - The output directory must not exist.

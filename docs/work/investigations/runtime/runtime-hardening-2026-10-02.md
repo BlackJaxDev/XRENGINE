@@ -75,4 +75,4 @@ probe: direct asset-ID cache lookups are not conclusive for restored instances.
 
 The user requested stopping on 2026-10-03. The current incomplete status,
 unvalidated edits, remaining defects and exact external corpus block are recorded
-in the [runtime hardening handoff](../../todo/runtime-regression-and-nativeaot-hardening-todo.md#handoff-status--2026-10-03).
+in the [runtime hardening handoff](../../progress/runtime/runtime-regression-and-nativeaot-hardening-progress.md).

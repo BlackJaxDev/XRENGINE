@@ -4,7 +4,7 @@ Status: reference design
 
 Primary goal: make explicit dynamic rendering the default Vulkan graphics target path for every target, while retaining the legacy `VkRenderPass` / `VkFramebuffer` path behind a runtime toggle as a fallback and regression-bisection tool.
 
-Implementation todo: [Vulkan Dynamic Rendering Migration Todo](../../todo/rendering/vulkan-dynamic-rendering-migration-todo.md).
+Implementation todo: [Vulkan Dynamic Rendering Migration Todo](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#vulkan-extension-backlog).
 
 Follow-up design: [Vulkan Shader Object Pipeline Replacement](vulkan-shader-object-pipeline-replacement-design.md).
 

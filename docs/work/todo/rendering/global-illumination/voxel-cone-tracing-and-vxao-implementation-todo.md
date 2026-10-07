@@ -3,11 +3,11 @@
 Last Updated: 2026-10-06
 Status: Planned (VCT provider unavailable; VXAO is a stub)
 Architecture: [Voxel Cone Tracing guide](../../../../developer-guides/gi/voxel-cone-tracing.md), [Global Illumination Ownership And Selection](../../../../architecture/rendering/global-illumination-ownership.md)  Design: [VXAO Implementation Plan](../../../design/global-illumination/vxao-implementation-plan.md)
-Validation: [Global Illumination Validation](../../../testing/rendering/global-illumination-validation.md#voxel-cone-tracing-and-vxao), [Ambient Occlusion Validation](../../../testing/rendering/ambient-occlusion-validation.md)
+Validation: [Global Illumination Validation](../../../testing/rendering/global-illumination-validation.md#voxel-cone-tracing-and-vxao), [Ambient Occlusion Validation](../../../testing/rendering/ambient-occlusion.md)
 
 ## Current State
 
-`EGlobalIlluminationMode.VoxelConeTracing` is an unavailable descriptor with no module factory. No C# VCT pass exists; the old `VPRC_VoxelConeTracingPass` was removed with the host GI flags. Old shaders remain under `Build/CommonAssets/Shaders/Scene3D/VoxelConeTracing/` (`voxelization.vert/.geom/.frag`, `voxel_cone_tracing.vert/.frag`, `voxel_visualization.vert/.frag`). `AmbientOcclusionSettings.EType.VoxelAmbientOcclusion` and `VoxelAmbientOcclusionSettings` exist. `DefaultRenderPipeline.CreateVXAOPassCommands` adds a `VPRC_AODisabledPass` with a "not implemented" diagnostic. VXAO and VCT will share one voxel scene.
+`EGlobalIlluminationMode.VoxelConeTracing` is an unavailable descriptor with no module factory. No C# VCT pass or module exists. Old shaders remain under `Build/CommonAssets/Shaders/Scene3D/VoxelConeTracing/` (`voxelization.vert/.geom/.frag`, `voxel_cone_tracing.vert/.frag`, `voxel_visualization.vert/.frag`). `AmbientOcclusionSettings.EType.VoxelAmbientOcclusion` and `VoxelAmbientOcclusionSettings` exist. `DefaultRenderPipeline.CreateVXAOPassCommands` adds a `VPRC_AODisabledPass` with a "not implemented" diagnostic. VXAO and VCT will share one voxel scene.
 
 ## Open Code Items
 

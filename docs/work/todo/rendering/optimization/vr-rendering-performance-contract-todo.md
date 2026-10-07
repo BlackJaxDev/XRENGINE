@@ -1,220 +1,85 @@
 # VR Rendering Performance Contract TODO
 
-Last Updated: 2026-07-28
-Owner: Rendering / XR
+Last Updated: 2026-10-06
 Status: Active
-Target Branch: `rendering-vr-performance-contract`
+Architecture: [OpenXR VR Rendering](../../../../architecture/rendering/openxr-vr-rendering.md), [OpenVR Rendering](../../../../architecture/rendering/openvr-rendering.md), [VR Output Pacing And Mirror Policy](../../../../architecture/rendering/vr-output-pacing-and-mirror-policy.md)
+Design: [Engine Rendering Optimization Design](../../../design/rendering/engine-optimization-and-avatar-optimizer-design.md)
+Validation: [OpenXR Validation](../../../testing/xr/openxr-validation.md)
 
-Cross-cutting relationship:
+## Current State
 
-- This tracker is an independent acceptance overlay across every renderer
-  strategy. It is not a child phase of the Default pipeline, Deferred+, or any
-  one backend.
-- [Forward+ render-graph code changes](../vulkan-core-hardening-and-device-loss-todo.md#6-simplify-the-forward-render-graph)
-  owns current Default-pipeline prepass/copy/replay topology; this tracker owns
-  whether that resulting graph satisfies whole-frame XR budgets and per-eye
-  correctness.
-- [Deferred+ Render Path](../vulkan-xr-and-advanced-rendering-todo.md#phase-7) owns Deferred+
-  implementation; its stereo and headset claims must satisfy this contract.
+VR rendering reports output cadence and mirror policy through the frame-output manifest. OpenXR exposes view render modes and pacing modes. The cross-renderer contract still needs canonical stereo mode reporting, multiview coverage, per-eye resource checks, motion-vector correctness, foveation/VRS reporting, reprojection diagnostics, and comparable benchmark metadata.
 
-Design source:
+## Open Code Items
 
-- [Engine Rendering Optimization Design](../../../design/rendering/engine-optimization-and-avatar-optimizer-design.md)
-- [OpenXR VR Rendering](../../../../architecture/rendering/openxr-vr-rendering.md)
-- [OpenVR Rendering](../../../../architecture/rendering/openvr-rendering.md)
-- [OpenXR No-HMD Testing Pipeline](../../../design/VR/openxr-monado-testing-pipeline.md)
-- [OpenXR Future Work TODO](../vr/openxr-future-work-todo.md)
+### Profile metadata and stereo reporting
 
-## Goal
+- [ ] Add profile manifest fields for XR runtime, HMD, refresh rate, render resolution, stereo path, foveation/VRS state, reprojection state, render-path tracker, graph revision, validation state, and cache state. Update profiler packet and capture writers. Done when: a VR profile capture explains its target budget and active stereo implementation without external notes.
+- [ ] Add a canonical `StereoMode` stat with values such as `Mono`, `Multiview`, `ViewInstance`, `InstancedStereo`, and `TwoPass`. Update render stats, profiler packets, and pass telemetry. Done when: each frame and differing pass can report its stereo mode.
+- [ ] Mark two-pass stereo as a compatibility or debug fallback in diagnostics. Done when: a scene cannot silently double CPU submission by falling into two-pass stereo.
+- [ ] Distinguish mono draws, multiview or view-instanced draws, and two-pass CPU-submitted draws in draw counters. Done when: draw counters show how much work runs once, per view, or per eye.
+- [ ] Ensure view-independent compute producers run once per frame. Update compute pass scheduling or diagnostics where required. Done when: producers that do not depend on view state are not executed once per eye.
+- [ ] Require view-dependent passes to state why they run per eye. Done when: diagnostics or pass metadata identifies the view dependency.
 
-Make VR performance requirements explicit across every renderer strategy.
-Renderer paths should report the active stereo mode, benchmark against the
-whole submitted XR frame budget, produce correct depth and motion vectors, and
-avoid hidden two-pass stereo regressions.
+### Multiview and view instancing
 
-For the Vulkan RVC production lane with `GpuIndirectZeroReadback`, the minimum
-promotion target is 120 Hz, or 8.33 ms p95 for the complete frame. The measured
-workload must contain at least one desktop render plus both RVC eye renders.
-This is one whole-frame budget, not an allowance per eye or per render, and it
-applies whether foveation is disabled or enabled. The separate desktop-only
-promotion target is at least 200 Hz, or 5.00 ms p95.
+- [ ] Validate OpenGL `GL_OVR_multiview2` geometry passes that can support it. Done when: supported OpenGL geometry and depth passes use the correct view ID and output routing.
+- [ ] Validate Vulkan `VK_KHR_multiview` render pass or dynamic rendering setup where the Vulkan path supports it. Done when: compatible Vulkan geometry, depth, and visibility passes render single-pass stereo on supported combinations.
+- [ ] Document DX12 view-instancing requirements for future backend parity. Done when: the architecture doc states required resource layouts, view constants, and fallback behavior.
+- [ ] Add fallback to instanced stereo or explicit two-pass when single-pass backend support is missing. Done when: fallback is reported and never hidden.
+- [ ] Validate shadow maps render mono unless a pass explicitly requires per-eye shadowing. Done when: shadow passes report their view dependency and do not duplicate work without need.
+- [ ] Add source-contract checks for multiview shader defines and binding layout. Done when: shader and binding changes cannot silently disable multiview.
 
-## Scope
+### Per-eye resource correctness
 
-- Whole-frame XR frame budgets.
-- Single-pass stereo and fallback reporting.
-- Per-eye/per-view resource correctness.
-- Motion-vector and temporal upscaler contract.
-- VRS/foveation integration.
-- Reprojection-friendly depth and velocity.
-- VR benchmarking and diagnostics.
-- Cross-render-path acceptance for current Deferred/Forward+, Deferred+,
-  visibility-producing, CPU-direct, indirect, meshlet, and fallback paths.
+- [ ] Validate depth, normal, velocity, visibility, post-process, and mirror resources for mono, stereo array, and multiview layouts. Done when: both eyes see the same scene state with correct per-eye projection and no stale shared resource hazards.
+- [ ] Add stereo-safe Hi-Z source resolution. Use a per-eye chain, array sampler variant, or explicit conservative fallback. Done when: no eye samples stale or cross-eye Hi-Z data.
+- [ ] Ensure per-eye view/projection and previous view/projection state are double-buffered correctly. Done when: temporal effects read the matching current and previous matrices per eye.
+- [ ] Ensure editor overlays and UI write valid velocity or explicit zero. Done when: overlays never leave undefined velocity input.
+- [ ] Ensure mirror blit does not mutate eye textures or force synchronization in measured frames. Done when: mirror output owns its copies or sampled reads and reports any synchronization.
+- [ ] Add diagnostics for stale camera state shared across eyes. Done when: a shared-state hazard reports the affected view and resource.
 
-## Non-Goals
+### Motion vectors and upscaler contract
 
-- Do not require every development backend to support single-pass stereo on day
-  one.
-- Do not hide two-pass fallback. It is allowed only when reported.
-- Do not implement vendor upscalers in this TODO; define the data contract they
-  need.
+- [ ] Maintain previous-frame transform per instance. Done when: motion-vector generation can compare current and previous transforms for all visible instances.
+- [ ] Maintain previous-frame skinned position buffers for skinned meshes. Done when: animated vertices can generate velocity from previous skinned position.
+- [ ] Generate velocity from current clip position minus previous clip position. Done when: camera jitter convention is explicit for each upscaler integration.
+- [ ] Define velocity behavior for CPU direct, zero-readback indirect, meshlet, visibility-buffer, cluster avatar, splat, UI, and editor overlay paths. Done when: each path writes valid velocity or explicit zero.
+- [ ] Add a velocity validity coverage counter. Done when: profiler output shows missing, NaN, and out-of-range velocity coverage.
+- [ ] Add a debug view for missing, NaN, or out-of-range velocity. Done when: visual debugging identifies invalid velocity by source path.
 
-## Phase 0 - Branch, Baseline, And Runtime Matrix
+### VRS, foveation, and reprojection
 
-- [ ] Create dedicated branch `rendering-vr-performance-contract`.
-- [ ] Record the active render-path tracker and graph revision for every
-  capture, including workstream 06's accepted Default graph or the selected
-  Deferred+ mode.
-- [ ] Inventory active VR paths: OpenVR, OpenXR, no-HMD/Monado test lane, editor
-  stereo, and desktop mono mirror.
-- [ ] Record which backends support `GL_OVR_multiview2`, Vulkan multiview,
-  DX12 view instancing, or instanced stereo fallback.
-- [ ] Capture current frame budgets and measured timings for 72 Hz, 90 Hz, and
-  120 Hz target modes where hardware/runtime is available.
-- [ ] Include the Vulkan RVC zero-readback promotion workload with at least
-  three executed renders per frame: desktop, left eye, and right eye.
-- [ ] Add profile manifest fields for XR runtime, HMD, refresh rate, render
-  resolution, stereo path, foveation/VRS state, and reprojection state.
+- [ ] Add or validate VRS and foveation capability probes per backend. Done when: unsupported or disabled modes have explicit fallbacks.
+- [ ] Add fixed foveation rate image support for non-eye-tracked HMDs where supported. Done when: the active rate image and fallback reason are reported.
+- [ ] Add eye-tracked rate image support behind runtime capability checks where supported. Done when: eye-tracked foveation never runs without runtime support.
+- [ ] Report VRS shading-rate distribution per frame. Done when: performance claims include shading-rate coverage.
+- [ ] Account for effective shading rate in screen-space-error metrics where used. Done when: LOD and avatar systems do not overstate detail in low-rate regions.
+- [ ] Validate VRS does not break UI readability, selection, or debug overlays. Done when: UI and diagnostic passes remain readable or opt out.
+- [ ] Write valid depth for every visible pixel, including splats and impostors. Done when: reprojection does not read undefined depth.
+- [ ] Mark reprojection-incompatible post effects with explicit VR opt-out or fallback. Done when: incompatible effects do not silently degrade runtime reprojection.
+- [ ] Add runtime reprojection and motion-smoothing event counters where APIs expose them. Done when: profiler output shows when runtime reprojection masks app misses.
+- [ ] Add warnings when app frame time appears acceptable only because runtime reprojection is masking misses. Done when: missed XR budgets remain visible in reports.
 
-Acceptance criteria:
+### Benchmarks and regression coverage
 
-- [ ] A VR profile capture can explain its target budget and active stereo
-  implementation without external notes.
+- [ ] Standardize VR benchmark scenes and camera paths. Done when: reports compare the same workload across renderer strategies.
+- [ ] Report whole-frame budget in all benchmark notes. Done when: no report presents per-eye budget as whole-frame acceptance.
+- [ ] Require Vulkan RVC `GpuIndirectZeroReadback` p95 at or below 8.33 ms for the complete minimum-three-render frame in both supported foveation states. Done when: the promotion workload includes desktop, left eye, and right eye in one frame.
+- [ ] Include serial two-pass eye-slice estimates only as warnings for naive two-pass paths. Done when: estimates cannot be confused with accepted runtime behavior.
+- [ ] Disable validation layers, synchronous debug output, and debug callbacks during benchmark runs. Done when: benchmark metadata states the diagnostic state.
+- [ ] Capture p50, p90, p99, dropped frames, reprojection events, stereo mode, and cache policy. Done when: benchmark reports are comparable across strategies.
+- [ ] Add or update desktop mono regression coverage after stereo changes. Done when: stereo work cannot break mono rendering without a targeted test failure.
 
-## Phase 1 - Stereo Mode Contract
+## Decisions Needed
 
-- [ ] Add a canonical `StereoMode` stat with values such as `Mono`,
-  `Multiview`, `ViewInstance`, `InstancedStereo`, and `TwoPass`.
-- [ ] Report stereo mode per frame and per pass where a pass differs from the
-  frame default.
-- [ ] Mark two-pass stereo as compatibility/debug fallback in diagnostics.
-- [ ] Ensure draw-call counters distinguish mono draws, multiview/view-instanced
-  draws, and two-pass CPU-submitted draws.
-- [ ] Ensure compute producers that are view-independent run once per frame,
-  not once per eye.
-- [ ] Ensure view-dependent passes state why they run per eye.
+- [ ] Which VR scene is the canonical promotion workload for 120 Hz Vulkan RVC zero-readback? Owner: Rendering / XR.
+- [ ] Which foveation states are required for v1 promotion? Owner: Rendering / XR.
+- [ ] Which vendor reprojection counters are required before a runtime is accepted for performance claims? Owner: Rendering / XR.
 
-Acceptance criteria:
+## Out Of Scope
 
-- [ ] A scene cannot silently double CPU submission by falling into two-pass
-  stereo without profiler reporting it.
-
-## Phase 2 - Multiview / View-Instancing Integration
-
-- [ ] Validate OpenGL `GL_OVR_multiview2` geometry passes that can support it.
-- [ ] Add or validate `gl_ViewID_OVR` matrix selection and per-view output
-  routing.
-- [ ] Validate Vulkan `VK_KHR_multiview` render pass/subpass setup where Vulkan
-  path supports it.
-- [ ] Document DX12 view-instancing requirements for future backend parity.
-- [ ] Add fallback to instanced stereo or explicit two-pass when single-pass
-  backend support is missing.
-- [ ] Validate shadow maps render mono unless a pass explicitly requires
-  per-eye shadowing.
-- [ ] Add tests or source-contract checks for multiview shader defines and
-  binding layout.
-
-Acceptance criteria:
-
-- [ ] Compatible geometry/depth/visibility passes render single-pass stereo on
-  supported backend/HMD combinations.
-
-## Phase 3 - Per-Eye Resource Correctness
-
-- [ ] Validate depth, normal, velocity, visibility, post-process, and mirror
-  resources for mono, stereo array, and multiview layouts.
-- [ ] Add stereo-safe Hi-Z source resolution: per-eye chain, array sampler
-  variant, or explicit conservative fallback.
-- [ ] Ensure per-eye view/projection and previous view/projection state are
-  double-buffered correctly.
-- [ ] Ensure editor overlays and UI write valid velocity or explicit zero.
-- [ ] Ensure mirror blit does not mutate eye textures or force synchronization
-  in measured frames.
-- [ ] Add diagnostics for stale camera state shared across eyes.
-
-Acceptance criteria:
-
-- [ ] Both eyes see the same scene state with correct per-eye projection and no
-  stale shared resource hazards.
-
-## Phase 4 - Motion Vectors And Upscaler Contract
-
-- [ ] Maintain previous-frame transform per instance.
-- [ ] Maintain previous-frame skinned position buffers for skinned meshes.
-- [ ] Generate velocity from current clip position minus previous clip position,
-  using previous skinned position for animated vertices.
-- [ ] Define velocity behavior for CPU direct, zero-readback indirect, meshlet,
-  visibility-buffer, cluster avatar, splat, UI, and editor overlay paths.
-- [ ] Follow the active upscaler jitter convention exactly; document whether
-  motion vectors include or exclude camera jitter for each integration.
-- [ ] Add velocity validity coverage counter.
-- [ ] Add debug view for missing, NaN, or out-of-range velocity.
-
-Acceptance criteria:
-
-- [ ] Temporal AA/upscaler/reprojection inputs are dense and correct enough that
-  skinned avatar motion does not ghost due to previous-position approximation.
-
-## Phase 5 - VRS And Foveation
-
-- [ ] Add or validate VRS/foveation capability probes per backend.
-- [ ] Add fixed foveation rate image path for non-eye-tracked HMDs where
-  supported.
-- [ ] Add eye-tracked rate image path behind runtime capability checks where
-  supported.
-- [ ] Report VRS shading-rate distribution per frame.
-- [ ] Ensure screen-space-error metrics for LOD/avatar systems account for
-  effective shading rate where used.
-- [ ] Add fallback when VRS is unsupported or disabled.
-- [ ] Validate VRS does not break UI readability, selection, or debug overlays.
-
-Acceptance criteria:
-
-- [ ] VRS/foveation is a measurable, reported option, not a hidden assumption in
-  performance claims.
-
-## Phase 6 - Reprojection Friendliness
-
-- [ ] Write valid depth for every visible pixel, including splats and impostors.
-- [ ] Write valid zero velocity for static UI/editor overlays, not undefined
-  memory.
-- [ ] Mark reprojection-incompatible post effects with explicit VR opt-out or
-  fallback.
-- [ ] Add runtime reprojection/motion-smoothing event counters where APIs expose
-  them.
-- [ ] Add profile manifest fields for runtime reprojection state.
-- [ ] Add warnings when app frame time appears acceptable only because runtime
-  reprojection is masking misses.
-
-Acceptance criteria:
-
-- [ ] Missed XR budgets are visible in profiler output even when runtime
-  reprojection keeps the display moving.
-
-## Phase 7 - Benchmark Discipline
-
-- [ ] Standardize VR benchmark scenes and camera paths.
-- [ ] Report whole-frame budget, not per-eye budget, in all benchmark notes.
-- [ ] Require Vulkan RVC `GpuIndirectZeroReadback` p95 <= 8.33 ms for the
-  complete minimum-three-render frame in both supported foveation states.
-- [ ] Include serial two-pass eye-slice estimate only as a warning for naive
-  two-pass paths.
-- [ ] Disable validation layers, synchronous debug output, and debug callbacks
-  during benchmark runs.
-- [ ] Capture p50, p90, p99, dropped frames, reprojection events, and stereo
-  mode.
-- [ ] Keep shader and texture cache policy explicit: cold-start or warm-start.
-
-Acceptance criteria:
-
-- [ ] VR performance reports are comparable across renderer strategies because
-  budget, stereo path, cache state, and validation state are explicit.
-
-## Final Validation And Merge
-
-- [ ] Run OpenVR or OpenXR smoke where hardware/runtime is available.
-- [ ] Run no-HMD OpenXR/Monado timing smoke where configured.
-- [ ] Run desktop mono regression to ensure stereo changes do not break mono.
-- [ ] Update architecture docs if stereo or velocity contracts change.
-- [ ] Merge branch `rendering-vr-performance-contract` back into `main` after
-  implementation, validation, and documentation updates are complete.
+- Implementing vendor upscalers.
+- Requiring every development backend to support single-pass stereo immediately.
+- Hiding two-pass fallback.
+- Branch and merge workflow steps.

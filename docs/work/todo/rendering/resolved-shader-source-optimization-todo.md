@@ -1,204 +1,70 @@
-# Resolved Shader Source Optimization Remaining Todos
+# Resolved Shader Source Optimization TODO
 
-Last Updated: 2026-05-29
-Status: Partially implemented; remaining work is architecture cleanup,
-diagnostics, coverage, and validation.
+Last Updated: 2026-10-06
+Status: Active
+Architecture: [Uber Shader Varianting](../../../architecture/rendering/uber-shader-varianting.md)
+Validation: [Default And Advanced Pipeline Validation](../../testing/rendering/default-and-advanced-pipeline-validation.md)
 
-## Goal
+## Current State
 
-Finish moving shader source pruning into a backend-neutral resolved-source
-optimization stage that runs after includes, snippets, generated fragments, and
-known compile-time defines are resolved.
+`ResolvedShaderSource`, `ResolvedShaderSourceOptimizer`, `XRShader.TryGetOptimizedSource(...)`, optimizer identity in `XRRenderProgramDescriptor`, `RenderDiagnosticsFlags.ShaderSourceOptimizerEnabled`, and `XRE_SHADER_SOURCE_OPTIMIZER=0` exist. `ShaderUiManifest` parses mutability modes, and initial tests cover resolved-source optimization, static literal folding, keep annotations, pinned layout-bound resources, and shared snippet resolution.
 
-The optimized source must be the text used for program hashing, binary-cache
-identity, reflection, compile, and link for uber, deferred, forward, compute,
-post-process, UI, shadow, and future shader families.
+## Open Code Items
 
-## Implemented Baseline
+### Source Pipeline Ownership
 
-- `ResolvedShaderSource` exists as a renderer-neutral payload for original
-  path, original source, resolved source, dependency list, macro summary, and
-  source identity.
-- `ResolvedShaderSourceOptimizer` exists and is invoked through
-  `XRShader.TryGetOptimizedSource(...)`.
-- OpenGL shader compilation and source hashing consume optimized source before
-  `GLShaderSourceCompatibility` applies OpenGL-specific rewrites.
-- `XRRenderProgramDescriptor` includes optimizer identity and optimized shader
-  source in its stable shader identity.
-- `RenderDiagnosticsFlags.ShaderSourceOptimizerEnabled` and
-  `XRE_SHADER_SOURCE_OPTIMIZER=0` can disable the generic optimizer.
-- `ShaderUiManifest` parses property mutability values:
-  `runtime`, `material-static`, `pass-static`, `engine-static`, and
-  `debug-static`.
-- The material inspector exposes static-property update expectations for
-  explicitly annotated properties.
-- `ShaderSnippets` now delegates snippet registration, discovery, and
-  resolution to `ShaderSourceResolver`.
-- Initial unit coverage exists for resolved-source optimization, static literal
-  folding, keep annotations, pinned layout-bound resources, and shared snippet
-  resolution.
+- [ ] Audit every runtime path that can compile shader text. `XRShader`, `XRRenderProgramDescriptor`, `XRRenderProgram`, `GLShader`, `GLRenderProgram`, Vulkan shader tooling, editor tools, prewarm paths, inline shaders, generated shaders, compute shaders, and post-process shaders. Done when: each path is classified as raw, resolved, optimized, or backend-transformed.
+- [ ] Make all remaining compile paths pass through `ResolvedShaderSource` or an explicit documented exception. Done when: no shader family bypasses the optimizer by accident.
+- [ ] Keep `UberShaderVariantBuilder` responsible for material intent only. Done when: generic pruning no longer depends on uber-only helpers.
+- [ ] Move generally valid static uniform stripping, literal inlining, static-if pruning, and dead-code pruning into the generic optimizer. Done when: non-uber shaders can use the same cleanup.
 
-## Remaining Work
+### Static Properties And Scanner
 
-1. Audit the current landed implementation.
-   - Verify every runtime path that can compile shader text: `XRShader`,
-     `XRRenderProgramDescriptor`, `XRRenderProgram`, `GLShader`,
-     `GLRenderProgram`, the split Vulkan shader tooling under
-     `Vulkan/Shaders/`, shader editor tools, prewarm
-     paths, inline shaders, generated vertex shaders, generated uber variants,
-     compute shaders, and post-process shaders.
-   - Record where each path currently sees raw, resolved, optimized, or
-     backend-transformed source.
-   - Record which paths still bypass `ResolvedShaderSource` or
-     `ResolvedShaderSourceOptimizer`.
+- [ ] Build optimizer options from resolved shader manifests and program or pass descriptors. Done when: non-uber optimization can consume static property values.
+- [ ] Treat `material-static`, `pass-static`, `engine-static`, and `debug-static` values as source identity axes when they affect optimized text. Done when: descriptor identity changes with effective optimized source.
+- [ ] Preserve authored material parameters when optimized reflection no longer exposes folded uniforms. Done when: editor and serialized material data do not lose parameters.
+- [ ] Add diagnostics when a static property cannot be folded safely. Done when: users can see the property and reason.
+- [ ] Replace regex-only reachability with a conservative GLSL scanner. Done when: comments, strings, preprocessor lines, declarations, resources, structs, constants, globals, and functions are tokenized conservatively.
+- [ ] Preserve unknown preprocessor regions and keep/interface roots. Done when: ambiguous code fails open.
+- [ ] Preserve stage interfaces, layout-bound resources, transform feedback roots, engine reflection roots, overloads, and forward declarations when ambiguity exists. Done when: optimization does not break linkage or reflection.
 
-2. Finish separating uber intent from generic pruning.
-   - Keep `UberShaderVariantBuilder` responsible for material intent only:
-     feature axes, pass macros, static property values, generated identity, and
-     variant telemetry.
-   - Move generally valid source cleanup out of the uber builder:
-     static uniform stripping, static literal inlining, static-if pruning, and
-     whole-source dead-code pruning.
-   - Keep uber-specific conditional specialization in the builder only when it
-     is tied to uber feature or pass intent.
-   - Ensure generated uber variants no longer depend on private uber-only
-     helpers for generic pruning.
+### Pruning And Diagnostics
 
-3. Feed static property literals into non-uber optimization.
-   - Build optimizer options from resolved shader manifests and program/pass
-     descriptors, not only from uber variant state.
-   - Treat `material-static`, `pass-static`, `engine-static`, and
-     `debug-static` values as source identity axes when they affect optimized
-     text.
-   - Preserve authored material parameters even when optimized reflection no
-     longer exposes the folded uniforms.
-   - Add diagnostics when a static property cannot be folded safely.
+- [ ] Root pruning from `main` plus explicit extra roots. Done when: reachable helpers stay and unreachable helpers are removed only when safe.
+- [ ] Build a function call graph from reachable function bodies. Done when: overloaded and ambiguous calls preserve required dependencies.
+- [ ] Mark globals from live functions and live initializers. Done when: required constants, structs, macros, and helpers remain.
+- [ ] Remove unreferenced uniforms, samplers, images, SSBOs, and UBO members only when reflection and binding semantics remain correct. Done when: pinned or engine-required resources stay active.
+- [ ] Emit original, resolved, optimized, and backend-transformed byte and line counts. Done when: diagnostics show source-size changes for any program descriptor.
+- [ ] Include enabled passes, folded literal count, removed function/global/resource counts, roots, and fail-open reasons. Done when: optimizer decisions are explainable.
+- [ ] Add debug settings to dump original, resolved, optimized, and backend source for a program descriptor or failed source hash. Done when: failed-hash diagnostics name the optimized source size and dump location.
+- [ ] Add Shader Program Links details for optimizer identity, passes, sizes, static axes, and fail-open reasons. Done when: editor diagnostics show optimization context.
 
-4. Replace regex-only reachability with a conservative GLSL scanner.
-   - Tokenize comments, strings, preprocessor lines, declarations, layout
-     qualifiers, uniform blocks, samplers, images, SSBOs, UBOs, structs,
-     constants, globals, and function bodies.
-   - Preserve unknown preprocessor regions unless the resolve stage has made
-     them concrete.
-   - Recognize keep/interface roots from `//@keep`, `//@shader-interface`, and
-     `#pragma xre_keep`.
-   - Preserve stage interfaces, explicit layout-bound resources, transform
-     feedback roots, and engine-required reflection roots.
-   - Preserve overloads and forward declarations conservatively when ambiguity
-     exists.
+### Reflection And Backends
 
-5. Harden function, global, and resource pruning.
-   - Root from `main` plus explicit extra roots.
-   - Build a function call graph from reachable function bodies.
-   - Remove unreachable functions only when overload resolution is unambiguous.
-   - Mark globals referenced by live functions and live initializers.
-   - Keep transitive type dependencies, structs, constants, macros, and helper
-     globals required by live code.
-   - Remove unreferenced uniforms, samplers, images, SSBOs, and UBO members
-     only when reflection and binding semantics remain correct.
-   - Preserve explicitly bound or engine-required resources unless proven safe.
+- [ ] Reflect active optimized source so inactive samplers do not create fallback sampler noise. Done when: optimized reflection drives material binding diagnostics.
+- [ ] Keep material parameter preservation independent from active shader reflection. Done when: pruned parameters remain authored.
+- [ ] Distinguish pruned-static, pruned-unreachable, and unexpectedly-missing material diagnostics. Done when: each diagnostic has a specific cause.
+- [ ] Keep `GLShaderSourceCompatibility` downstream of the generic optimizer. Done when: OpenGL-specific rewrites do not leak into generic optimization.
+- [ ] Run Vulkan auto-uniform and descriptor rewrites after generic optimization. Done when: Vulkan shader tooling consumes resolved and optimized source.
+- [ ] Ensure `ShaderCrossCompiler` consumes resolved and optimized source when called from runtime shader paths. Done when: cross-compiled output uses the same source identity.
 
-6. Improve optimizer diagnostics and source dumps.
-   - Emit original, resolved, optimized, and backend-transformed byte/line
-     counts.
-   - Include enabled passes, folded literal count, removed function/global/
-     resource counts, roots, and fails-open reasons.
-   - Add debug settings to dump original, resolved, optimized, and backend
-     source for a program descriptor or failed source hash.
-   - Make failed-hash diagnostics report optimized source size and the dumped
-     optimized-source location.
-   - Add Shader Program Links details for optimizer identity, optimizer passes,
-     original/resolved/optimized sizes, static axes, and fails-open reasons.
+### Tests And Docs
 
-7. Integrate optimized reflection and material diagnostics.
-   - Reflect active optimized source so inactive samplers do not create fallback
-     sampler noise.
-   - Keep material parameter preservation independent from active shader
-     reflection.
-   - Add diagnostics for material parameters that exist but are pruned from the
-     active optimized shader.
-   - Distinguish "pruned because static", "pruned because unreachable", and
-     "missing unexpectedly" in shader/material diagnostics.
+- [ ] Expand unit tests for reachable helpers, unreachable helpers, unreferenced resources, static axes, runtime properties, keep annotations, unknown preprocessor constructs, overloads, structs, and generated uber variants. `XREngine.UnitTests/Rendering/`. Done when: each optimizer rule has deterministic coverage.
+- [ ] Update `docs/architecture/rendering/uber-shader-varianting.md` to separate uber material intent from generic source pruning. Done when: architecture docs match source ownership.
+- [ ] Update `docs/work/design/rendering/world-shader-prewarm-graph-design.md` with optimized-source identity in prewarm descriptors. Done when: prewarm design uses the current identity model.
+- [ ] Document shader source pipeline ownership and optimizer authoring limits. Done when: resolver, optimizer, backend transforms, compilers, variant factories, editor tools, keep annotations, mutability modes, and rebuild behavior are documented.
 
-8. Keep backend responsibilities explicit.
-   - Keep `GLShaderSourceCompatibility` OpenGL-specific and downstream of the
-     generic optimizer.
-   - Run Vulkan auto-uniform and descriptor rewrites after generic
-     optimization.
-   - Keep the split Vulkan shader tooling (`VulkanShaderAutoUniforms`,
-     `VulkanShaderCompiler`, `VulkanShaderReflection`,
-     `VulkanShaderSourceFixups`, and related `Vulkan/Shaders/` files)
-     organized around auto-uniform rewriting, shader compilation, reflection,
-     and SPIR-V parsing/helpers.
-   - Ensure `ShaderCrossCompiler` consumes already-resolved/optimized source
-     when called from runtime shader paths.
+## Decisions Needed
 
-9. Expand unit coverage.
-   - Reachable function calls keep required helpers.
-   - Unreachable helpers are removed after include/snippet expansion.
-   - Unreferenced samplers and uniforms are removed only when not pinned.
-   - Static property annotations become source identity axes and fold into
-     literals.
-   - Runtime property annotations stay uniforms and keep dependent branches
-     live.
-   - Keep annotations preserve functions, globals, and resources.
-   - Unknown preprocessor constructs fail open.
-   - Overloaded functions and structs preserve required dependencies.
-   - Generated uber variants no longer rely on uber-only pruning for generic
-     dead-code removal.
+- [ ] Decide whether keep annotations remain both comment-based and pragma-based. Owner: rendering lead.
+- [ ] Decide how much preprocessor evaluation belongs in the optimizer versus the resolver. Owner: rendering lead.
+- [ ] Decide which engine uniforms and bound resources are always pinned. Owner: rendering lead.
+- [ ] Decide where source dumps should be written. Owner: rendering lead.
+- [ ] Decide whether optimizer aggressiveness is global or backend-specific. Owner: rendering lead.
+- [ ] Decide whether `debug-static` properties rebuild during Play mode by default. Owner: editor lead.
 
-10. Add integration coverage.
-    - Compile optimized variants for representative deferred, forward, uber,
-      compute, UI, shadow, and post-process shaders.
-    - Validate OpenGL combined-program and shader-pipeline modes separately.
-    - Validate Vulkan source rewriting after generic optimization.
-    - Validate warm-cache and cold-cache behavior.
-    - Confirm optimized reflection does not break material texture binding.
+## Out Of Scope
 
-11. Validate the Sponza uber failure case.
-    - Clear failed shader hashes and stale binary cache entries.
-    - Load the same Sponza uber world that produced the May 27 timeout logs.
-    - Confirm large `Combined:*` sources shrink materially after optimization.
-    - Confirm failed entries no longer stick on the beige pending-uber fallback.
-    - Record compile/link timings for combined and pipeline modes.
-
-12. Update related docs.
-    - Update `docs/architecture/rendering/uber-shader-varianting.md` to clarify
-      that uber varianting specializes material intent while generic pruning
-      runs later.
-    - Update `docs/work/design/rendering/world-shader-prewarm-graph-design.md` with
-      optimized-source identity in prewarm descriptors.
-    - Document shader source pipeline ownership: resolver facade, canonical
-      resolver, generic optimizer, backend transforms, runtime compilers,
-      variant factories, and editor tools.
-    - Update shader authoring docs with keep annotations, mutability modes,
-      static-property rebuild behavior, and optimizer limits.
-
-## Acceptance Criteria
-
-- Resolved shader source optimization runs for all shader families through one
-  generic stage.
-- Uber variant generation no longer owns generic source pruning.
-- Optimized source is used for hashing, binary-cache identity, reflection,
-  compile, and link.
-- Static shader property mutability affects manifests, descriptor/source
-  identity, editor UI, and diagnostics.
-- Shader pipeline choice remains a user/backend setting.
-- Sponza uber variants no longer time out solely because unused resolved code
-  remains in the final compiler-facing source.
-- Diagnostics can show original, resolved, optimized, and backend-transformed
-  source sizes for any shader program.
-- Unit and integration tests cover combined-program and shader-pipeline modes.
-
-## Open Questions
-
-- Should keep annotations remain both comment-based and pragma-based?
-- How much preprocessor evaluation should the optimizer own versus the
-  resolver?
-- Which engine uniforms and bound resources must always be pinned?
-- Should source dumps live under the per-run log directory, shader-cache
-  directory, or both?
-- Should optimizer aggressiveness be selectable per renderer backend or only
-  globally?
-- Should `debug-static` properties rebuild during Play mode by default, or
-  only when an editor preference permits live variant churn?
+- Changing shader pipeline selection policy.
+- Removing authored material parameters only because optimized reflection prunes them.

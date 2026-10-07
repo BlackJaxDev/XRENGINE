@@ -1,369 +1,76 @@
-# GPU-Driven Occlusion Culling Architecture TODO
+# GPU-Driven Occlusion Culling TODO
 
-Last Updated: 2026-07-28
-Owner: Rendering
-Status: Active child architecture tracker for
-[Vulkan occlusion code changes](../vulkan-core-hardening-and-device-loss-todo.md#9-make-occlusion-modes-bounded-and-effective)
-Execution: Current worktree only; do not create or switch branches for this effort.
+Last Updated: 2026-10-06
+Status: Active
+Architecture: [GPU Hi-Z Occlusion Culling](../../../../architecture/rendering/gpu-hiz-occlusion-culling.md)  Design: [GPU Meshlet Zero-Readback Rendering Design](../../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)  
+Validation: [Render Queries And Occlusion Validation](../../../testing/rendering/render-queries-and-occlusion-validation.md), [Math Intersections Occlusion Validation](../../../testing/rendering/math-intersections-occlusion-tests.md)
 
-Ownership: this document owns persistent GPU visibility, two-phase Hi-Z,
-BVH/meshlet integration, and stereo architecture. Workstream 07 owns execution
-order, comparative performance evidence, production/diagnostic disposition,
-and any default-enable or promotion decision. Completing this architecture
-tracker does not waive the workstream 07 exit gate.
+## Current State
 
-Research sources:
+`GPURenderPassCollection.TwoPassOcclusion.cs`, `GPURenderOcclusionPhaseOne.comp`, and `GPURenderOcclusionHiZ.comp` implement a current-depth two-pass Hi-Z flow for `GpuHiZ` with `GpuIndirectZeroReadback`. The code has early and late visibility streams, two-phase telemetry, diagnostic buffer descriptors, and a command-wide visibility history buffer. The buffer is not per view, GPU-side remap for command compaction is not implemented, BVH traversal is still frustum-only, meshlet late recovery is incomplete, and `XRE_GPU_HIZ_DIRTY_BYPASS` still exists for the legacy single-pass path.
 
-- [GPU-Driven Rendering Pipelines (Haar & Aaltonen, SIGGRAPH 2015)](https://advances.realtimerendering.com/s2015/aaltonenhaar_siggraph2015_combined_final_footer_220dpi.pdf)
-- [Two-Pass Occlusion Culling](https://medium.com/@mil_kru/two-pass-occlusion-culling-4100edcad501)
-- [A Deep Dive into Nanite Virtualized Geometry (SIGGRAPH 2021)](https://advances.realtimerendering.com/s2021/Karis_Nanite_SIGGRAPH_Advances_2021_final.pdf)
-- [vkguide: GPU Driven Rendering & Compute Culling](https://vkguide.dev/docs/gpudriven/compute_culling/)
-- [Patch-Based Occlusion Culling / HZB generation notes (GPU Gems 2 ch. 6 background)](https://developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-6-hardware-occlusion-queries-made-useful)
+## Open Code Items
 
-Related local docs:
+### Visibility State
 
-- [Canonical Vulkan Core Hardening And Device-Loss TODO](../vulkan-core-hardening-and-device-loss-todo.md)
-- [Frame Lifecycle And Dispatch Paths](../../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
-- [Mesh Submission Strategies](../../../../architecture/rendering/mesh-submission-strategies.md)
-- [Default Render Pipeline Notes](../../../../architecture/rendering/default-render-pipeline-notes.md)
-- [GPU Meshlet Zero-Readback Rendering Design](../../../design/rendering/gpu-meshlet-zero-readback-rendering-design.md)
-- [Render Submission Perf Debug Plan](../../../design/rendering/render-submission-perf-debug-plan.md)
-- [CPU Query Async Occlusion guide](../../../../developer-guides/rendering/cpu-query-async-occlusion.md)
-- [Masked Software Occlusion Culling TODO](../masked-software-occlusion-culling-todo.md)
-- [Production Rendering Pipeline Roadmap](production-rendering-pipeline-roadmap.md)
+- [ ] Implement a persistent per-view visibility buffer. `GPURenderPassCollection`, `GPUScene`, and `GPURenderOcclusionPhaseOne.comp`. Done when each view or eye has independent visibility words and shared stereo ORs them before emit.
+- [ ] Add GPU-side visibility remap for command add, remove, and compaction. `GPUScene` mutation hooks and a remap compute shader. Done when scene mutation does not reset all visibility and does not need CPU mirrors.
+- [ ] Replace CPU `_temporalOcclusion` use on zero-readback GPU paths with GPU-written age or confidence state. `GPURenderPassCollection.Occlusion.cs` and Hi-Z shaders. Done when zero-readback modes have no CPU temporal visibility dictionary dependency.
+- [ ] Keep CPU temporal filters only for instrumented diagnostics that intentionally read back counts. `GPURenderPassCollection.Occlusion.cs`. Done when production zero-readback and diagnostic readback paths are clearly separated.
+- [ ] Add GPU-written visibility occupancy, visible, occluded, and aged-count stats. Stats buffers, telemetry, and editor profiler data. Done when the profiler receives delayed stats without frame-loop readback.
 
-## Goal
+### Two-Pass Hi-Z
 
-Define and implement a production-quality, fully zero-readback GPU-driven
-occlusion culling architecture for the Vulkan backend (OpenGL keeps parity
-where the shared GLSL allows), improving on the current "GPU BVH" option so
-that BVH traversal, Hi-Z occlusion, and indirect draw generation form one
-coherent GPU pipeline with persistent GPU-resident visibility — no CPU count
-readback, no full-passthrough "dirty" frames, and no CPU-side occlusion
-verdicts on the GPU dispatch path.
+- [ ] Remove or hard-gate `XRE_GPU_HIZ_DIRTY_BYPASS`. `RenderDiagnosticsFlags` and `GPURenderPassCollection.Occlusion.cs`. Done when camera jumps and scene mutations use the early visible seed and late recovery path instead of a dirty passthrough branch.
+- [ ] Remove the current-depth self-cull bypass where two-pass depth ownership makes it safe. `TryPrepareGpuHiZTwoPass`, `ShouldBypassCurrentDepthGpuHiZRefine`, and pass policy code. Done when forward depth-normal passes no longer need a full refine bypass or have an explicit documented exception.
+- [ ] Publish accurate late-phase draw counts through delayed diagnostics. Two-pass count readback and profiler transport. Done when phase-one and late counts are visible in diagnostics without production frame-loop readback.
+- [ ] Keep two-pass dispatch, barrier, and indirect calls reusable across frame slots. `GPURenderPassCollection` and backend command recording. Done when GPU-written visibility, commands, and counts do not invalidate warmed primary command buffers.
+- [ ] Complete OpenGL parity or hard-gate it to diagnostics. OpenGL compute path and mode routing. Done when OpenGL either runs the same supported flow or reports a clear unsupported reason.
 
-Non-goals:
+### BVH Occlusion Traversal
 
-- Replacing the CPU-direct occlusion paths (`CpuQueryAsync`, CPU SOC). Those
-  remain the CpuDirect story; this doc only bounds their scope.
-- Per-triangle visibility (virtual geometry). Meshlet-level integration is in
-  scope; triangle-level is not.
+- [ ] Add node-level Hi-Z tests to `bvh_frustum_cull.comp`. GPU BVH traversal shader and stats. Done when occluded interior nodes are rejected without visiting leaves.
+- [ ] Add a deferred-node list for late recovery. BVH traversal resources and late Hi-Z pass. Done when nodes rejected by previous depth are retested against current depth in the late pass.
+- [ ] Add per-node last-visible frame state. `GpuBvhTree` resources and remap rules. Done when node visibility follows rebuild, refit, and compaction safely.
+- [ ] Add deterministic BVH occlusion parity tests. Unit tests and test shaders. Done when BVH plus occlusion emits the same conservative visible set as flat cull plus command Hi-Z, apart from allowed late timing.
 
-## Current Baseline (what exists today)
+### Meshlet Integration
 
-Dispatch-path culling order (`GPURenderPassCollection`):
+- [ ] Feed the same per-view pyramid and visibility model into `MeshletCulling.task` and `MeshletCullingExt.task`. Meshlet culling shaders and pass setup. Done when meshlet culling uses the active per-eye depth source.
+- [ ] Add meshlet late recovery. Meshlet task dispatch or append path. Done when meshlets rejected in the early pass can reappear in the late pass without CPU readback.
+- [ ] Add phase-one and late meshlet stats. Stats buffers and profiler UI. Done when the profiler reports early and late meshlet counts.
 
-```text
-frustum OR BVH cull compute -> (optional) GpuHiZ occlusion refine -> indirect build -> MultiDraw*IndirectCount
-```
+### Stereo And VR
 
-- Frustum culling: `GPURenderCulling.comp` writes compact commands to
-  `_culledSceneToRenderBuffer` + counts to
-  `_culledCountBuffer`.
-- GPU BVH (`GpuBvhTree`, `bvh_frustum_cull.comp`): internal command-bounds BVH
-  with GPU build/refit and stable LBVH construction. Traversal is **frustum-only** — interior
-  nodes are never tested against any occlusion source. GPU submission strategies
-  select it automatically when supported; the flat GPU frustum path remains the
-  readiness fallback when the BVH shader or provider is unavailable.
+- [ ] Address visibility by `GPUViewDescriptor.ViewId`. Visibility buffer, shaders, and view-set setup. Done when left and right eyes never share a mono verdict incorrectly.
+- [ ] Build or bind one pyramid per eye, or use a layered pyramid. Hi-Z build and sampling code. Done when the right eye is never tested against the left eye depth.
+- [ ] Validate multiview offsets in early and late batches. `GPUViewSet` buffers and Vulkan multiview path. Done when multiview works without mono collapse.
 
-Current substrate (2026-07-18): the scene BVH now uses compact 48-byte nodes,
-stable radix construction for large inputs, revision-aware build/refit, and a
-bounded plane-masked root-down traversal. Node-level Hi-Z should extend that
-queue and node format rather than introducing a parallel traversal contract;
-see [GPU Scene BVH](../../../../architecture/rendering/gpu-scene-bvh.md).
-- GpuHiZ (`GPURenderOcclusionHiZ.comp` + `ApplyGpuHiZOcclusion`): single-phase
-  refine against a depth pyramid built from current or history depth.
-  Weaknesses:
-  - **Dirty bypass**: any scene mutation or camera jump skips refine for the
-    frame and passes every frustum/BVH survivor through
-    (`ShouldInvalidateGpuHiZTemporalState` + `XRE_GPU_HIZ_DIRTY_BYPASS`,
-    default ON). Sustained editing or motion collapses to zero occlusion.
-  - **Self-occlusion hazards**: current-depth pyramids already contain the
-    candidates being tested; the forward depth-normal prepass forces a full
-    refine bypass on `OpaqueForward`/`MaskedForward`
-    (`ShouldBypassCurrentDepthGpuHiZRefine`).
-  - Zero-readback refine dispatch sizes by full buffer element count because
-    the CPU count mirror is stale (Phase-7 audit fix) — correct but wasteful.
-  - Pyramid rebuild is per-pass unless `CacheGpuHiZOcclusionOncePerFrame`.
-- Occlusion mode routing: on Vulkan non-Diagnostics profiles `CpuQueryAsync`
-  is coerced to `GpuHiZ`; the GPU-dispatch `CpuQueryAsync` submit path is
-  OpenGL-only; GPU-dispatch CPU SOC requires instrumented count readback and
-  intentionally no-ops under zero-readback.
-- Visibility state is **not persistent on the GPU**: each pass re-culls from
-  scratch; temporal hysteresis lives in CPU-side dictionaries
-  (`_temporalOcclusion`) that require count readback to function.
+### Mode Routing And Settings
 
-## Design Principles
+- [ ] Make `GpuHiZ` mean the two-pass implementation on GPU dispatch paths. Mode routing, settings text, and editor UI. Done when no new enum value is required and the behavior is documented.
+- [ ] Remove GPU-dispatch `CpuQueryAsync` scaffolding or gate it to `GpuIndirectInstrumented` diagnostics. `GPURenderPassCollection.Occlusion.cs`. Done when zero-readback Vulkan cannot select a readback-dependent query path.
+- [ ] Keep CPU SOC scoped to CPU direct and instrumented diagnostics. Mode routing and warning text. Done when zero-readback SOC no-op remains explicit.
+- [ ] Add editor rows for phase-one count, late count, node rejection count, and visibility-buffer occupancy. `EditorImGuiUI.OcclusionPanel` and profiler data. Done when users can see why GPU Hi-Z did or did not cull.
+- [ ] Update related rendering architecture docs after implementation changes. `mesh-submission-strategies.md`, `default-render-pipeline-notes.md`, and related feature docs. Done when stable docs match code behavior.
 
-- Zero readback is the contract, not an optimization: production Vulkan modes
-  (`GpuIndirectZeroReadback`, `GpuMeshletZeroReadback`) must never read counts,
-  visibility, or overflow flags on the CPU in the frame loop. Diagnostics go
-  through GPU-written stats buffers polled at low frequency by the profiler
-  readback path.
-- Previous-frame visibility is data, not heuristics: a persistent GPU
-  visibility buffer replaces CPU temporal dictionaries and dirty-frame
-  passthrough.
-- Occlusion belongs inside the hierarchy: BVH interior nodes should be
-  rejected against the depth pyramid during traversal, not only per-command
-  after traversal.
-- Disocclusion must be recovered same-frame (two-phase), not next-frame
-  (single-phase + hysteresis) — no visible popping on camera cuts.
-- Conservative correctness: any uncertain state (new command, resized view,
-  missing pyramid) resolves to visible. False occlusion is a bug; false
-  visibility is a cost.
-- Every fallback is observable: telemetry distinguishes phase-1/phase-2 draw
-  counts, node rejections, and any conservative-visible passthrough with a
-  reason.
-- GPU-written visibility, compacted commands, indirect counts, and delayed stats
-  are frame data, not command topology. Production Vulkan records stable
-  pass-level dispatch, resource-specific barrier, and indirect-count packets and
-  rerecords only for an explicit topology, capacity, binding, pipeline, or
-  resource-generation change.
+### Unit Test Code
 
-## Target Architecture
+- [ ] Add visibility-buffer remap tests. `XREngine.UnitTests/Rendering`. Done when command compaction preserves visibility safely.
+- [ ] Add phase-ordering source-contract tests. `XREngine.UnitTests/Rendering`. Done when early, pyramid, late, and indirect order is covered.
+- [ ] Add mode-routing matrix tests for backend, profile, strategy, and mode. `XREngine.UnitTests/Rendering`. Done when unsupported combinations report explicit reasons.
+- [ ] Add stereo OR-combine tests for GPU visibility. `XREngine.UnitTests/Rendering`. Done when either-eye visibility keeps the command visible.
 
-Two-phase Hi-Z occlusion with persistent GPU visibility, BVH-integrated:
+## Decisions Needed
 
-```text
-Phase 1 (main visibility):
-  frustum/BVH cull (BVH nodes tested vs LAST frame's pyramid)
-    -> emit commands whose visibility bit was set last frame
-    -> indirect draw phase-1 set (writes depth + color)
-  build Hi-Z pyramid from phase-1 depth
+- [ ] Decide if late recovery retests deferred BVH nodes only or all early rejects flat. Owner: Rendering.
+- [ ] Decide if the visibility buffer is per view or per render pass with a pass mask. Owner: Rendering.
+- [ ] Decide if Hi-Z pyramid build and late cull should use async compute. Owner: Rendering.
+- [ ] Decide if a conservative screen-size floor is needed for near or large AABBs. Owner: Rendering.
+- [ ] Decide if OpenGL keeps full two-pass parity or stays single-phase plus diagnostics. Owner: Rendering.
 
-Phase 2 (disocclusion recovery):
-  re-test phase-1-rejected candidates vs CURRENT pyramid
-    -> emit newly visible commands, update visibility bits
-    -> indirect draw phase-2 set (depth + color)
-  visibility buffer now reflects this frame; no CPU involvement
-```
+## Out Of Scope
 
-Key structures:
-
-- **Visibility buffer**: one persistent SSBO per (scene, view) keyed by stable
-  source-command index: 1 visibility bit + small age/confidence counter packed
-  per command. Survives frames; compaction/mutation hooks update it when
-  `GPUScene` adds/removes commands (default new = visible).
-- **Per-view state**: `GPUViewSet` views get independent visibility words (or
-  a per-view bitplane) so stereo eyes never share a mono verdict incorrectly;
-  shared-stereo draws OR the two eyes' bits.
-- **BVH node visibility**: optional per-node last-visible frame id so fully
-  occluded subtrees are skipped in phase 1 and only re-tested in phase 2.
-
-## Phase 0 - Baseline
-
-- [ ] Execute and report this supporting work through the canonical Phase
-  5.2B/5.2C gates; do not create a separate branch or independent completion
-  status.
-- [ ] Capture baseline profiles in the Unit Testing World (Vulkan +
-  `GPURenderDispatch=true`, DevParity and ShippingFast profiles): FPS, cull
-  dispatch ms, HiZ stage stats (`HiZStageStats`), draw counts with `GpuHiZ`
-  on/off, plus BVH-ready and flat-fallback frame counts.
-- [ ] Capture one RenderDoc frame per configuration under
-  `Build/_AgentValidation/<run>/renderdoc/` documenting current pass order.
-- [ ] Record the count of dirty-bypass frames during 30s of editor camera
-  motion (this is the number two-phase should drive to ~0).
-
-## Phase 1 - Contracts And Audit
-
-- [ ] Document the buffer contract for cull -> occlusion -> indirect build in
-  `docs/architecture/rendering/` (who writes `_culledSceneToRenderBuffer`,
-  `_culledCountBuffer`, swap semantics of `SwapCulledBufferAfterOcclusion`,
-  barrier obligations per backend).
-- [ ] Define the visibility-buffer format (bit layout, per-view addressing,
-  stable-index remap rules on GPUScene compaction) and add it to the contract
-  doc.
-- [ ] Audit `GPUScene` stable command indices across add/remove/compaction to
-  guarantee visibility bits can be remapped GPU-side (compute copy on
-  compaction) without readback.
-- [ ] Decide pyramid ownership: one shared pyramid per (pipeline, view) per
-  frame (extend `CacheGpuHiZOcclusionOncePerFrame` to default ON) vs.
-  per-pass. Two-phase requires the shared model; justify any exception.
-- [ ] Vulkan sync audit: enumerate barriers between cull writes, pyramid
-  build (compute), phase-2 dispatch, and indirect count draws under
-  synchronization2; confirm OpenGL equivalents map to existing
-  `MemoryBarrier` masks.
-- [ ] Define the stable recorded packet topology for cull, compact, pyramid,
-  phase-2 recovery, and indirect draws. Identify the exact structural and
-  binding generations that invalidate it; exclude ordinary GPU-written contents
-  and counts from those invalidators.
-
-Acceptance criteria:
-
-- [ ] A written contract exists that a reviewer can validate a RenderDoc
-  capture against, for both backends.
-
-## Phase 2 - Persistent GPU Visibility State
-
-- [ ] Add per-(scene, view) visibility SSBO managed by
-  `GPURenderPassCollection`/`GPUScene`, sized to source command capacity,
-  default-visible on allocation and on command add.
-- [ ] GPU-side remap/compaction kernel invoked from existing GPUScene
-  mutation hooks (no CPU mirror).
-- [ ] Replace the CPU `_temporalOcclusion` dictionary and
-  `ShouldInvalidateGpuHiZTemporalState` heuristics on the zero-readback path
-  with visibility-buffer age/confidence updates written by the occlusion
-  shaders.
-- [ ] Keep the CPU temporal filter only for `GpuIndirectInstrumented`
-  diagnostics (it depends on readback by definition).
-- [ ] Telemetry: GPU stats slots for visible/occluded/aged counts written by
-  compute, surfaced through the existing async stats readback (not the frame
-  loop).
-
-Acceptance criteria:
-
-- [ ] Scene mutation (add/remove model in the editor) does not reset all
-  visibility to visible and does not require a passthrough frame.
-- [ ] No new per-frame CPU readbacks appear in
-  `Stats.GpuReadback` under zero-readback modes.
-
-## Phase 3 - Two-Phase Hi-Z (replaces dirty bypass)
-
-- [ ] Split the per-pass GPU flow into phase-1 emit (visibility bit test in
-  the cull shader — no Hi-Z sampling needed) and phase-2 re-test dispatch
-  (`GPURenderOcclusionHiZ.comp` derivative that tests only phase-1 rejects
-  against the freshly built pyramid, appends newly visible, and updates bits).
-- [ ] Build the pyramid once per view from phase-1 depth; drop the
-  history-vs-current depth selection and the forward-prepass self-cull bypass
-  (phase-1 depth cannot self-occlude phase-2 candidates that weren't drawn).
-- [ ] Emit two indirect batches per pass (phase-1, phase-2) or one combined
-  append buffer with a second count slot; both drawn via
-  `MultiDraw*IndirectCount` with no CPU count knowledge.
-- [ ] Keep those pass-level dispatch/barrier/indirect calls reusable across
-  frame slots. Changing visibility bits or generated command/count contents must
-  not mark the primary as a mutable GPU-driven frame operation.
-- [ ] Delete/param-gate `XRE_GPU_HIZ_DIRTY_BYPASS`: camera jumps and scene
-  mutations are handled naturally (phase 1 draws last-visible, phase 2
-  recovers the rest). Keep the explicit memory-barrier contract from the
-  bypass branch (see `gpu-hiz-dirty-bypass-phase4` notes) on both dispatch
-  points.
-- [ ] Preserve pass-awareness rules: shadow passes and depth-variant passes
-  remain occlusion-exempt.
-- [ ] OpenGL: same shader flow behind GL 4.6 compute; instrumented mode may
-  additionally read counts for diagnostics.
-
-Acceptance criteria:
-
-- [ ] Sustained editor camera motion produces zero passthrough frames and no
-  visible popping (validated by MCP screenshot iteration + telemetry).
-- [ ] Camera cut recovers full visibility in exactly one frame (phase 2),
-  not `TemporalOcclusionHysteresisFrames`.
-- [ ] Total draws for a static camera ≤ current single-phase GpuHiZ draws.
-
-## Phase 4 - BVH-Integrated Occlusion Traversal
-
-- [ ] Extend `bvh_frustum_cull.comp` traversal to optionally test interior
-  node AABBs against the previous-frame pyramid (phase 1) so occluded
-  subtrees are rejected without visiting leaves; occluded nodes push their
-  ranges to a phase-2 node list instead of descending.
-- [ ] Phase-2 node recovery: re-test the deferred node list against the
-  current pyramid, then run leaf-level tests for surviving nodes.
-- [ ] Add per-node last-visible frame id (small SSBO parallel to the node
-  buffer) with the same GPU-side remap rules as command visibility.
-- [ ] Validate BVH traversal parity vs. flat frustum cull (same visible set
-  ± phase-2 timing) with a deterministic test scene.
-- [x] Make GPU BVH selection strategy-driven for Vulkan instrumented,
-  zero-readback, and meshlet submission; remove the Vulkan environment gate.
-- [ ] Keep refit/rebuild policy as-is (dirty-marking via GPUScene hooks);
-  document that a stale-refit BVH only costs conservatism, not correctness,
-  because node tests use enlarged parent bounds.
-
-Acceptance criteria:
-
-- [ ] In a high-occlusion scene, BVH+occlusion traversal visits measurably
-  fewer nodes/commands than flat cull + per-command Hi-Z (GPU stats slots).
-- [x] GPU BVH is on by default for Vulkan zero-readback and no longer
-  labeled diagnostic.
-
-## Phase 5 - Meshlet Path Integration
-
-- [ ] Feed the same per-view pyramid and visibility model into
-  `MeshletCulling.task` / `MeshletCullingExt.task` (they already consume
-  `TryGetHiZDepthPyramidForMeshlets`): meshlet-level phase-2 recovery via a
-  second task dispatch or task-shader append path.
-- [ ] Ensure command-level phase 1 never rejects a command whose meshlets
-  could survive (defer to meshlet tests when the meshlet path owns the
-  command), matching the existing forward-prepass parity rule.
-- [ ] Meshlet stats: phase-1/phase-2 meshlet counts in the existing stats
-  buffer.
-
-## Phase 6 - Stereo / VR Correctness
-
-- [ ] Per-view visibility words in the visibility buffer addressed by
-  `GPUViewDescriptor.ViewId`; shared-stereo draws OR left/right bits before
-  emit.
-- [ ] One pyramid per eye (or a layered pyramid) — never test the right eye
-  against the left eye's depth.
-- [ ] Multiview (`VK_KHR_multiview`) path: confirm phase-1/phase-2 batches
-  work per-view with `GPUViewSet` offsets; no mono collapse.
-- [ ] Scene-only emulated VR smoke + OpenXR/Monado smoke with per-eye
-  draw-count telemetry.
-
-## Phase 7 - Mode Consolidation And Settings
-
-- [ ] `EOcclusionCullingMode.GpuHiZ` becomes the two-phase implementation on
-  GPU dispatch paths (no new enum value; behavior upgrade). Document it.
-- [ ] Remove the GPU-dispatch `CpuQueryAsync` scaffold (OpenGL-only,
-  readback-dependent) or hard-gate it to `GpuIndirectInstrumented` +
-  Diagnostics; the coerce-to-GpuHiZ warning on Vulkan stays.
-- [ ] CPU SOC stays CpuDirect-only. The zero-readback SOC no-op warning
-  (`CpuSocGpuReadbackDisabled`) is already explicit — keep it.
-- [ ] CpuDirect is unaffected: `CpuQueryAsync` (now valid on Vulkan via
-  hostQueryReset) and CPU SOC remain the CPU-path options; `GpuHiZ` on
-  CpuDirect remains an explicit no-op (documented).
-- [ ] Settings/ImGui: Occlusion panel gains phase-1/phase-2 rows, node
-  rejection counts, and visibility-buffer occupancy; deprecate the dirty
-  bypass toggle from `EditorPreferences` once removed.
-- [ ] Update `docs/architecture/rendering/mesh-submission-strategies.md`,
-  `default-render-pipeline-notes.md`, and the occlusion feature docs.
-
-## Phase 8 - Validation
-
-- [ ] Unit tests (`XREngine.UnitTests/Rendering`): visibility-buffer remap on
-  compaction, phase ordering source contracts, mode-routing matrix
-  (backend × profile × strategy × mode), stereo OR-combine semantics.
-- [ ] Editor smoke (Vulkan, GPU dispatch ON): still camera, slow orbit, fast
-  flight, camera cut, live model import — MCP screenshots from ≥2 camera
-  positions each; zero false-occlusion artifacts.
-- [ ] RenderDoc: capture one frame per phase milestone; export pyramid mips
-  and phase-2 append buffers; verify barrier placement matches the Phase-1
-  contract doc.
-- [ ] Publish implementation evidence vs. the Phase-0 high-occlusion baseline;
-  these child metrics do not replace workstream 07's end-to-end promotion gate:
-  - [ ] GPU cull+occlusion time meets the stage budget assigned by
-    workstream 07.
-  - [ ] Report the actual draw reduction in occluded viewpoints without using
-    a fixed reduction percentage as a substitute for net frame-time benefit.
-  - [ ] Zero CPU readback bytes per frame in zero-readback modes
-    (`Stats.GpuReadback`).
-- [ ] Canonical command-reuse counters show zero warmed primary rerecords caused
-  solely by GPU-written visibility/command/count changes; every miss names a
-  topology, capacity, binding, pipeline, or resource-generation change.
-- [ ] Matched low-, medium-, and high-count Phase 5.2A/5.2B scaling curves
-  separate CPU recording from GPU execution and demonstrate the approved
-  high-count/occlusion crossover or scaling advantage before performance
-  promotion.
-- [ ] OpenGL parity run (instrumented + zero-readback) on the same scene.
-
-## Open Questions
-
-- Phase-2 granularity for the BVH path: re-test deferred nodes only, or
-  re-test all phase-1 rejects flat? (Node-only is cheaper; flat is simpler
-  and bounds worst-case latency at one frame regardless.)
-- Should the visibility buffer live per render pass or per view with a pass
-  mask? Per-view is smaller; per-pass avoids cross-pass aliasing when pass
-  masks differ.
-- Async compute: pyramid build and phase-2 cull are natural async-queue work
-  on Vulkan (`QueueOverlap=GraphicsComputeTransfer` already exists) — worth
-  scheduling there in Phase 3, or defer to a later perf pass?
-- Do we need a conservative screen-size floor (skip occlusion tests for
-  near/huge AABBs) to avoid phase-2 churn on architectural shells, or does
-  node-level rejection make that moot?
-- OpenGL: is two-phase worth full parity, or should OpenGL keep single-phase
-  GpuHiZ + instrumented diagnostics only?
-
-## Final Task
-
-- [ ] Close this supporting tracker only when the canonical Phase 5.2B and each
-  applicable 5.2C gate record the same implementation, validation, and
-  documentation evidence.
+- CPU-direct hardware query correctness.
+- CPU masked software occlusion correctness.
+- Live screenshots, RenderDoc captures, profiler runs, hardware matrices, and promotion evidence. They are in the validation docs.
