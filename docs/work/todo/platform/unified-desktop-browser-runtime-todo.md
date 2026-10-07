@@ -2,9 +2,9 @@
 
 [<- Work docs index](../../README.md) · Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md) · Prerequisite: [Native subsystem integration debugging and validation](native-subsystem-project-split-todo.md) · Backend detail: [Browser renderer module design](../../design/rendering/browser-wasm-renderer-design.md) · Device and delivery validation: [Mobile WebGPU runtime TODO](../rendering/mobile-webgpu-runtime-todo.md)
 
-Status: **121 of 163 named items are checked; 42 remain open**. Completed source includes ordered native GPU-palette copies, shared offscreen canvas rendering/input, ordinary authored GPU-indirect submission, reviewed native authored decals, real authored instance publication, retained buffer/texture transfers, resident GPU transparent ordering, asynchronous scene capture with completed-result HLOD/impostor publication, and desktop-owned file backends for Core network transfers and shader hot-reload reads. The broader runtime file inventory remains open. Shared source implementation remains separate from browser acceptance. Physical Intel hardware renders the preceding `71684f00` static Advanced material sample through two startups and both resize checks. The `2b97bda4` software-Chromium meshlet run now passes one bounded static Default cohort; broader meshlet mode, material, deformation and unsupported-profile acceptance remains open. The `feca3bcc` visible-shadow fixture establishes bounded directional receiver darkening but exposed point sizing/caster defects; the `d660296f` corrections await their physical retest. The `6cbf90ba` software run now renders the static Advanced sample in two fresh sessions and both resizes through the proven modifier-free native family; full shadow/decal families and broader acceptance remain open. Coherent source groups use narrow compile/cook checks and complete browser/regression qualification at end-to-end milestones.
+Status: **122 of 163 named items are checked; 41 remain open**. Completed source includes ordered native GPU-palette copies, shared offscreen canvas rendering/input, ordinary authored GPU-indirect submission, reviewed native authored decals, real authored instance publication, retained buffer/texture transfers, resident GPU transparent ordering, asynchronous scene capture with completed-result HLOD/impostor publication, and desktop-owned file backends for Core network transfers and shader hot-reload reads. The broader runtime file inventory remains open. Shared source implementation remains separate from browser acceptance. Physical Intel hardware renders the preceding `71684f00` static Advanced material sample through two startups and both resize checks. The `2b97bda4` software-Chromium meshlet run now passes one bounded static Default cohort; broader meshlet mode, material, deformation and unsupported-profile acceptance remains open. The `feca3bcc` visible-shadow fixture establishes bounded directional receiver darkening but exposed point sizing/caster defects; the `d660296f` corrections await their physical retest. The `6cbf90ba` software run now renders the static Advanced sample in two fresh sessions and both resizes through the proven modifier-free native family; full shadow/decal families and broader acceptance remain open. Coherent source groups use narrow compile/cook checks and complete browser/regression qualification at end-to-end milestones.
 
-Created: 2026-09-29. Updated: 2026-10-06.
+Created: 2026-09-29. Updated: 2026-10-07.
 
 Owner: Runtime architecture / rendering / platform.
 
@@ -19,7 +19,7 @@ Run the same engine, worlds, and C# game code in the browser (WebGPU, .NET 10 We
 
 The editor stays a desktop application and gains an honest browser publish target on this path. The separate browser runtime on the `codex/webgpu-readiness-audit` branch is stabilized as a reference harness and retired once this path reaches parity.
 
-## Current State (2026-10-06)
+## Current State (2026-10-07)
 
 The local source now contains a bounded mono Advanced
 family: canonical scene residency, CPU-direct and GPU indirect/compute-meshlet
@@ -363,14 +363,16 @@ The reviewed diagnostic-output and file-mapping move separates UR03.02 into a no
 
 The bounded static Advanced acceptance in UR06.11b2a brought the ledger to **118/160 with 42 open**. The existing Default CPU/GPU x4 blended result and authored custom x4 color/blended result now have separate completed leaves, UR06.11f3a/b. The former open UR06.11f3 becomes a non-counted summary with those two completed leaves and one open remainder, UR06.11f3c. This gives **120/162 with 42 open**. The denominator increases by two to expose already recorded acceptance; this edit runs no new test and grants no new implementation credit. Custom depth/normal sidecars, unavailable-profile rejection, broader submission and zero-readback behavior, repeated-resize memory stability and physical-device acceptance remain with their named open rows.
 
-The Core network path transfers and shader source refresh now use separate desktop file backends. UR03.02b becomes a non-counted summary with the completed bounded placement leaf UR03.02b1 and the open full-inventory leaf UR03.02b2. This brings the current ledger to **121/163 with 42 open**. The denominator rises by one because the former broad row is split into two leaves. The published network change and the reviewed shader hot-reload change close only these source-placement requirements; no browser or live shader hot-reload acceptance is claimed.
+The Core network path transfers and shader source refresh now use separate desktop file backends. UR03.02b becomes a non-counted summary with the completed bounded placement leaf UR03.02b1 and the open full-inventory leaf UR03.02b2. This brought that source-placement milestone to **121/163 with 42 open**. The denominator rises by one because the former broad row is split into two leaves. The published network change and the reviewed shader hot-reload change close only these source-placement requirements; no browser or live shader hot-reload acceptance is claimed.
+
+The 2026-10-07 scheduling decision preserves desktop and VR behavior and defines UR02.01 as common engine phase operations with serial browser composition. Both schedules now share fixed-debt accumulation as well as the existing fixed, variable, collect, publication, and render-dispatch bodies. Exact source comparison, independent ownership review, and the fresh Release Host graph build with zero warnings/errors close this implementation row. The ledger is **122/163 with 41 open**; the denominator is unchanged. This credits the audited combined implementation, not a new frame system from the small accumulator extraction. UR02.06 desktop/VR timing and the separate world, allocation, and device acceptance rows remain open. See the [shared phase record](../../progress/platform/shared-frame-phase-contract-2026-10-07.md).
 
 | Kind | Checked | Open | Total |
 | --- | ---: | ---: | ---: |
-| `impl` | 102 | 16 | 118 |
+| `impl` | 103 | 15 | 118 |
 | `verify` | 13 | 25 | 38 |
 | `owner` | 6 | 1 | 7 |
-| **Total** | **121** | **42** | **163** |
+| **Total** | **122** | **41** | **163** |
 
 ## Build Gate
 
@@ -410,10 +412,11 @@ These block the listed items. Record each decision here with its date when it is
 | D13 | Whether Server and VRClient may reference the model asset pipeline, and whether Bootstrap's registration generator may scan it. | UR00.12 | Approved 2026-09-30: retain the application-root references and Bootstrap model-pipeline scan; update the graph and documentation. Approved 2026-10-01: also retain the existing desktop ModelingIntegration factory scan and correct the stale dependency-boundary assertion; this adds no native dependency. |
 | D14 | Browser managed Jolt binding supply after the unchanged package fails static linking. | Browser native proof, UR01.06, UR07.01/UR07.02 | Approved 2026-10-01: a reviewed browser-only source build correcting `JoltPhysicsSharp` 2.22.0's conflicting `JPH_ContactListener_SetProcs` overload (`void` is the pinned native signature). Keep desktop package supply unchanged. Source pin/license review and the exact native/managed spike publish passed on 2026-10-01. Browser execution proof remains required. The owner separately approved Python only as an internal Emscripten dependency; implementation and editing helpers remain C#/PowerShell/JavaScript. See the [native supply record](../../design/platform/jolt-browser-native-supply.md#managed-linkage-findings). |
 | D15 | Browser support for modular render-pipeline assets. | UR04, UR05, UR06, UR11 | Clarified 2026-10-02: support Default, Advanced and other authored pipeline assets through the shared modular contracts. Do not whitelist concrete pipeline types or substitute Default. Missing GPU operations retain precise capability diagnostics. Existing Default-based evidence and pipeline defaults remain unchanged; see the [implementation plan](../../design/platform/modular-browser-render-pipelines-2026-10-02.md). |
+| D16 | Shared frame phases and desktop scheduling. | UR02.01, UR02.06 | Clarified 2026-10-07: preserve desktop and VR scheduling. Share the phase operations; the browser composes them into one caller-thread frame. Desktop keeps its independent worker clocks, visibility publication fence, render overlap, pacing, and fault policy. This replaces the former literal all-phases-per-presentation interpretation, which would change desktop scheduling. See the [shared phase contract](../../progress/platform/shared-frame-phase-contract-2026-10-07.md). |
 
 ## Remaining Work
 
-The historical 2026-10-02 modular-contract gate checked 65 of 114 items. The current source checklist checks 121 of 163, with 42 open: 102 of 118 implementation items, 13 of 38 verification items and 6 of 7 owner decisions. These are source-document counts, not a claim that the same source has been published or qualified in a browser. The [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
+The historical 2026-10-02 modular-contract gate checked 65 of 114 items. The current source checklist checks 122 of 163, with 41 open: 103 of 118 implementation items, 13 of 38 verification items and 6 of 7 owner decisions. These are source-document counts, not a claim that the same source has been published or qualified in a browser. The [prerequisite checklist](native-subsystem-project-split-todo.md) has 35 of 36 items open. The reference/runtime-host checks, Editor/Server/VRClient builds and smokes, browser CI and bounded live qualification are recorded in their dated reports. New source implementation and partial profile evidence do not close an item without its own required build or acceptance evidence. The [unified browser checkpoint](../../progress/platform/unified-browser-checkpoint-2026-10-01.md) distinguishes what now runs from the remaining full production/game, physical-device, performance, recovery and networking qualification.
 
 Sizes are rough planning estimates for one engineer: **S** is days, **M** is one to two weeks, **L** is several weeks, and **XL** is a month or more. Revise them once U1 is reached.
 
@@ -421,7 +424,7 @@ Sizes are rough planning estimates for one engineer: **S** is days, **M** is one
 | --- | --- | --- | --- | --- |
 | U0 reference checks | UR00 | 0 | Complete locally | Historical evidence and limits recorded |
 | Prerequisite integration | [Native subsystem checklist](native-subsystem-project-split-todo.md) | 35 | L | Remaining native subsystem acceptance; broader physics parity before any default-promotion consideration |
-| U1: engine boots | UR17, UR01, UR02, UR03 | 7 | L each; UR01 M | Complete full U1 world/component, asset and frame acceptance beyond the passing lifecycle probes; D1 and D6 are approved |
+| U1: engine boots | UR17, UR01, UR02, UR03 | 6 | L each; UR01 M | Complete full U1 world/component, asset and frame acceptance beyond the passing lifecycle probes; D1 and D6 are approved |
 | U2: engine renders | UR04, UR05, UR06 | 13 | UR04 XL, UR05 XL, UR06 L | Complete renderer/material coverage, generic meshlet producers, native decals and vertex displacement; qualify supported worlds and preserve desktop rendering; D7 is approved |
 | U3: project plays | UR07, UR08, UR09, UR10, UR11 | 6 | UR07 L, UR08 M, UR09 L, UR10 M, UR11 M | Complete packaged-editor publication and browser physics/audio/UI and authored-project comparison evidence; D2, D3 and D4 are approved |
 | U4: production | UR13, UR14, UR15, UR16 | 15 | M each | Complete measurements, recovery, CI/hosting and device evidence; D9, D11 and D12 are approved |
@@ -530,7 +533,7 @@ Shared projects already target `net10.0` with whole-project checks. Depends on t
 
 Depends on UR17.
 
-- [ ] **UR02.01** `impl` Extract a single-frame engine step (fixed-step simulation with bounded catch-up, variable update, visibility, render recording, submission) that desktop and browser hosts both call. The loop lives in `EngineTimer`: `RunGameLoop`, `BlockForRendering`, the `DispatchUpdate`/`DispatchCollectVisible`/`DispatchSwapBuffers`/`DispatchRender` methods, and the fixed-update worker. `RuntimeRenderThreadHost` in Rendering only wraps the render-thread side. Start from `EngineTimer.BeginExplicitFrame`, which already runs one deterministic frame on the calling thread with the workers stopped, and extend it to real elapsed time.
+- [x] **UR02.01** `impl` Share `EngineTimer` phase operations for bounded fixed-step advancement, variable update, visibility collection, world/viewport publication, and synchronous render dispatch into the existing recording/submission callbacks. The browser composes them into one caller-thread `StepFrame`. Desktop calls the same operations from its existing independently paced owners, retaining worker clocks, pause and fault policies, visibility fences, bootstrap, and early collection release. Decision D16 preserves desktop/VR scheduling; a common wrapper over separate phase implementations does not satisfy this requirement. `BeginExplicitFrame` only initializes deterministic timing and returns a caller-driven lifecycle scope; the normal caller loop uses its clock primitive without allocating that scope. See the [shared phase contract](../../progress/platform/shared-frame-phase-contract-2026-10-07.md). Source sharing does not establish UR02.06 desktop/VR timing or the separate world, device, and allocation acceptance requirements.
 - [x] **UR02.02** `impl` Support rendering on the calling thread: update, swap, collect, and render run in sequence within one step. Verify the engine's double-buffered render state works without a dedicated render thread.
 **UR02.03 — Caller-thread execution and remaining blocking sites (non-counted summary).** The historical row combined the executor with the whole shared-closure inventory; its two responsibilities are now separate leaves.
 
@@ -562,7 +565,7 @@ Depends on UR17.
 - [x] **UR02.05** `impl` Handle page visibility, freeze/resume, and `pagehide`/`pageshow`; reset timing and invalidate temporal history after suspension or large gaps.
 - [ ] **UR02.06** `verify` Confirm desktop editor and VRClient frame pacing is unchanged.
 
-**Acceptance:** one engine frame step drives desktop and browser, and no browser-reachable code blocks.
+**Acceptance:** desktop and browser share the engine phase operations. The browser composes them into a serial caller-thread frame; desktop retains its independent schedules and publication fences. No browser-reachable code blocks.
 
 ## UR03 — Asset I/O And Per-Platform Cooking
 

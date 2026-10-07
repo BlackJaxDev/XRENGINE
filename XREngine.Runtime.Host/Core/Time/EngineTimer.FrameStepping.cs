@@ -85,9 +85,7 @@ public partial class EngineTimer
             if (dispatchSimulation && ShouldDispatchUpdate())
             {
                 phase = "FixedUpdate";
-                _fixedUpdateAccumulatorTicks = Math.Min(
-                    _fixedUpdateAccumulatorTicks + elapsedTicks,
-                    _fixedUpdateDeltaTicks * MaxFixedCatchUpSteps);
+                AccumulateFixedUpdateTicks(elapsedTicks);
                 DispatchAccumulatedFixedUpdates();
                 if (!IsCallerThreadLoop)
                     return false;
