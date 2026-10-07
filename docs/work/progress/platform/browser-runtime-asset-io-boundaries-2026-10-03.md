@@ -344,3 +344,15 @@ and OpenGL builds qualify the affected source closure; no trace was activated,
 no output probe was run, and no test was added or changed. Actual log output,
 flush behavior, and crash evidence remain untested for this move. The broader
 runtime-I/O inventory remains open.
+
+Exact commit `4422849bde5585b0ca30060134d4f06060af1b48` completed the normal
+[build and browser run 37596449857](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37596449857)
+with seven successful jobs and **80/80** existing regression cases passed.
+Artifact `11472726000` is 17,380 bytes with SHA-256
+`435168eaaa5728877ca423606c8524cbf4b724b0a7941be82ea380e3c93a73d0`.
+GitHub artifact metadata identifies the commit and run; the downloaded ZIP
+matches that digest. These cases do not exercise GL trace output.
+UI still failed its animation-frame check,
+and shadow ON exceeded 45 seconds with its native-depth-no-decals pipeline pending
+for 37.4 seconds and no recorded GPU resource failure. GL trace output and the
+two failing browser cases remain open, with no requirement-count change.
