@@ -32,7 +32,7 @@ public static class ShaderSourceFileBackendServices
     }
 
     /// <summary>Rejects work from a replaced backend, including a reinstalled instance.</summary>
-    internal static bool IsCurrent(IShaderSourceFileBackend backend, int generation)
+    internal static bool IsCurrent(IShaderSourceFileBackend? backend, int generation)
     {
         lock (Gate)
             return ReferenceEquals(_current, backend) && _generation == generation;

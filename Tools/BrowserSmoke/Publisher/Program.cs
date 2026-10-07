@@ -5,6 +5,7 @@ using RollingBall;
 using XREngine;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Rendering;
 using XREngine.Runtime.Bootstrap;
 
 if (args.Length != 3)
@@ -22,6 +23,7 @@ try
 {
     using IDisposable services = RuntimeAssetBootstrap.InstallEngineAssetServices();
     AssetFileSystemServices.Current = new LocalAssetFileSystem();
+    ShaderSourceFileBackendServices.Current = new LocalShaderSourceFileBackend();
     RuntimePlatformPaths.Current = new LocalPlatformPaths(validationRoot);
     RollingBallRuntimeRegistration.Register();
 

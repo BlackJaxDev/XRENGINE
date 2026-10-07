@@ -1,5 +1,36 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Shader source file providers (2026-10-07)
+
+The shared resolver and Uber source cache now use captured shader-file and asset
+discovery providers instead of direct physical file operations. The desktop
+shader adapter retains the existing file-existence, UTC metadata, UTF-8/BOM,
+and directory timestamp behavior. The standalone browser smoke publisher has a
+local adapter and one startup registration. Its inputs, dependencies, and test
+assertions are unchanged. External implementations of
+`IShaderSourceFileBackend` must add the new synchronous operations and rebuild.
+Standalone file-backed consumers must install both providers. The
+[project organization contract](../../../architecture/runtime/project-organization.md)
+describes this composition requirement.
+
+Provider identity and installation generations now own resolver, XRShader, and
+Uber cache entries, including empty and negative entries. Every XRShader cache
+keeps its own file and directory dependencies. Cache validation runs provider
+callbacks outside cache locks, then rechecks the captured entry and source key
+before returning it. The UI parser uses the path of the resolved payload.
+Empty source returns before search-root discovery. Existing browser, catalog,
+and caller-thread admission remains in force; registered in-memory snippets do
+not require a file provider.
+
+Independent source and callback-lifetime review passed. Release builds of
+Rendering, Host, Desktop platform, and the standalone publisher passed with zero
+warnings and errors. The normal Windows workflow now selects the existing
+resolver caching, dependency hot-reload, and Vulkan preprocess parity fixtures
+without changing their assertions. Their new exact-commit result is pending.
+No live shader reload, browser file access, or runtime performance result is
+claimed. The unchanged native frontend `FileInfo` read and broader physical-I/O
+inventory remain open. No requirement state changed.
+
 ## Buffer spill host storage (2026-10-07)
 
 Buffer spill file operations and memory-mapped view ownership now belong to the

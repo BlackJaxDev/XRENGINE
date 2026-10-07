@@ -28,6 +28,26 @@ These projects target `net10.0` and compile their full source set for desktop an
 
 `Engine.ProfileCapture` stays in the shared Host project. It selects speed profile paths, labels, output data, and retention count. The optional `IRuntimeProfileCaptureFileOutput` contract stays in Rendering. The desktop platform leaf implements it through the existing diagnostic capture file output service. That leaf creates directories, applies the retention policy, and writes profile text with `Encoding.UTF8`. The Host still checks host-file admission and obtains the log run directory before it requests profile output. A host without the service or this capability reports a capture-start directory error; later profile writes keep their catch-all behavior.
 
+`ShaderSourceResolver` and `UberShaderVariantBuilder` use captured host services
+for file reads, existence checks, timestamps, and directory discovery.
+`IShaderSourceFileBackend` owns file operations; `IAssetFileSystem` owns discovery.
+Desktop composition installs both. The standalone browser smoke publisher
+installs its local shader file adapter before project loading. External hosts
+that implement the shader file interface must implement its synchronous file
+and metadata operations, register both providers, and rebuild. The resolver
+does not fall back to physical files when these services are absent.
+
+Resolver and shader caches retain provider identity and installation generation,
+including entries with no file dependencies. Provider replacement, including
+reinstallation of the same instance, retires previous entries. Cache gates only
+compare retained values and installation identity; provider capability and
+metadata callbacks execute outside those gates. Each resolved, optimized, and
+UI entry retains the dependency snapshot and source key that produced it.
+Browser and catalog admission rules still reject host-file resolution before
+provider access. Plain text and registered in-memory snippets remain available.
+This boundary does not move the native frontend metadata read in
+`XRShader.Frontend.cs` or establish live browser shader reload support.
+
 ### Dependency direction
 
 - `XREngine.Runtime.Core` references only `XREngine.Data` and `XREngine.Extensions`. It has no rendering, feature-library, integration, Bootstrap, Editor, or application dependency.
