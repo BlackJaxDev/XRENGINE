@@ -26,7 +26,15 @@ Independent source and callback-lifetime review passed. Release builds of
 Rendering, Host, Desktop platform, and the standalone publisher passed with zero
 warnings and errors. The normal Windows workflow now selects the existing
 resolver caching, dependency hot-reload, and Vulkan preprocess parity fixtures
-without changing their assertions. Their new exact-commit result is pending.
+without changing their assertions. At commit
+`2b11b0c2fff378a7df0d1b2079ccab458ef226ee`, the Windows job in
+[run 37574310936](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37574310936)
+passed all 38 selected tests without failures or skips. These include ten
+resolver-cache tests, eleven dependency/hot-reload cases, and two Vulkan
+preprocess parity tests. Artifact `11462409168` is 6,790 bytes with SHA-256
+`78c5dad12e0857188576f318f007e92bb39c501a967d0e66ddaca8131ab52cab`;
+the downloaded TRX contains all 23 passed shader cases. This run precedes the
+native metadata extraction described next.
 No live shader reload, browser file access, or runtime performance result is
 claimed. No requirement state changed.
 
