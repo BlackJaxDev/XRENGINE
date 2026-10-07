@@ -1,5 +1,35 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Buffer spill host storage (2026-10-07)
+
+Buffer spill file operations and memory-mapped view ownership now belong to the
+desktop and browser platform leaves. Shared rendering retains eligibility,
+upload and write revision checks, the weak pending queue, settle and grace
+periods, the `DataSource` facade, and best-effort failure handling. It captures
+one installed provider per drain attempt. Provider replacement does not close
+an existing mapping. The existing `Map(FileStream, uint)` test entry point
+delegates to that provider; no test assertions or fixture setup changed.
+
+Desktop bootstrap and browser renderer composition register stable providers.
+Browser registration occurs once, so later canvas creation does not overwrite
+an installed replacement or explicit uninstallation. A provider still uses
+the temporary-directory fallback when the asset host is absent. Standalone
+Rendering-only consumers must now register a spill provider. Without one, the
+existing failure path records the missing capability and retains CPU storage.
+
+The browser provider attempts the same copy-on-write mapping operation. The
+[memory ownership contract](../../../architecture/rendering/cpu-memory-ownership.md)
+links exact upstream .NET and Emscripten sources and explains why a MEMFS spill
+can add JS and WASM copies. Source support does not establish installed-pack
+byte identity, actual browser spill success, or memory savings.
+
+Release builds of Host, WebGPU, Desktop platform, and Browser platform pass
+with zero warnings and errors. Independent source/lifetime review passes.
+The normal Windows validation filter now includes the six existing
+`XRBufferClientSpillTests`; their execution result must be recorded from the
+exact published commit. Shared timer placement and the broader physical-I/O
+inventory remain open. The extraction does not change any requirement state.
+
 The browser world loader already uses the asset manager's asynchronous catalog path for the startup world, settings, default font, essential roots and streamed scenes. The catalog loader resolves dependency closures before a bounded deserialize/publication batch and owns the resulting objects until its source is unbound. Synchronous `AssetManager.Load` wrappers can return only an already cached catalog asset; unloaded packaged paths require `LoadAsync` or `LoadFromRuntimeSourceAsync`. The prefab loader follows that asynchronous catalog route. These facts narrow, but do not close, the remaining shared-code I/O inventory.
 
 `WorldAssetIdentityProvider.Create` now returns a verified package identity before considering host files. A browser, non-synchronous asset source or runtime catalog cannot probe a world path through `File.Exists`, read its timestamp or hash it as a host file. A world with such a path but without a registered verified identity fails as `WorldAssetIdentity.UnverifiedPackagedWorld`. A genuinely in-memory world with no path keeps its existing generated local fingerprint. Desktop file-backed identities retain the same file hash, timestamp and source metadata behavior.
