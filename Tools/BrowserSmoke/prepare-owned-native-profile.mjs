@@ -5,15 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
 
 // This program only prepares an already published bundle. The browser process never receives GH_TOKEN.
-const REQUEST_PATH = '.github/diagnostic-requests/owned-native-profile-20261005.json';
-const ACTIVATION_PATH = '.github/diagnostic-activations/owned-native-profile-20261005.json';
-const REQUEST_SHA256 = '8ac2d5c4fa0ff42e575e8768758e6c21f5b45f6005d31e65df0acf5babb2311b';
+const REQUEST_PATH = '.github/diagnostic-requests/owned-native-shadow-profile-20261007.json';
+const ACTIVATION_PATH = '.github/diagnostic-activations/owned-native-shadow-profile-20261007.json';
+export const REQUEST_SHA256 = 'e5c0c38fa7c86fe6b2690fa7b7e1612146afd97c3fa8a6ae8c9c68326c3160b3';
 const REPOSITORY = 'BlackJaxDev/XRENGINE';
 const BRANCH = 'codex/webgpu-readiness-audit';
-const WORKFLOW = 'Owned native GPU profile once';
-const ZIP_SHA256 = '2ac0e2b94d9efb0ba812506f7e3085e924d8ce24c1d97ab85f4df8f35a88b296';
+const WORKFLOW = 'Owned native shadow profile once';
 const MAX_API_BYTES = 256 * 1024;
-const MAX_ZIP_BYTES = 55_830_404;
+const MAX_ZIP_BYTES = 56_878_765;
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 768 * 1024 * 1024;
 const MAX_FILES = 8192;
@@ -51,14 +50,27 @@ export function validateRequest(bytes) {
     const request = parseFlatJson(bytes, 'Diagnostic request');
     exactKeys(request, ['schema', 'requestId', 'repository', 'branch', 'workflow', 'profile',
         'sourceRunId', 'sourceCommit', 'sourceArtifactId', 'sourceArtifactName', 'sourceArchiveSha256',
-        'targetSamplingMilliseconds', 'maximumCollectorMilliseconds'], 'Diagnostic request');
-    requireField(request.schema === 1 && request.requestId === 'owned-native-profile-20261005-7f240de6'
+        'sourceArchiveBytes', 'baselineArtifactId', 'baselineArtifactName', 'baselineArchiveSha256',
+        'baselineArchiveBytes', 'selectedPass', 'descriptorSha256', 'wgslSha256', 'wgslBytes',
+        'entryPoint', 'minimumPendingMilliseconds', 'targetSamplingMilliseconds',
+        'maximumCollectorMilliseconds'], 'Diagnostic request');
+    requireField(request.schema === 1 && request.requestId === 'owned-native-shadow-profile-20261007-06b49ec1'
         && request.repository === REPOSITORY && request.branch === BRANCH && request.workflow === WORKFLOW
-        && request.profile === 'Native' && request.sourceRunId === 37258776047
-        && request.sourceCommit === '27c0c5b461d8df719e0de0f533106c1a2214c9e1'
-        && request.sourceArtifactId === 11324725115
-        && request.sourceArtifactName === 'windows-editor-advanced-rendering-parity-bundle'
-        && request.sourceArchiveSha256 === ZIP_SHA256
+        && request.profile === 'Native' && request.sourceRunId === 37546153259
+        && request.sourceCommit === '37db74ddb1524b31f4536b0d95556919d88fa689'
+        && request.sourceArtifactId === 11451741926
+        && request.sourceArtifactName === 'windows-editor-advanced-shadow-parity-bundle'
+        && request.sourceArchiveSha256 === '238a375e3c29f54ea53a510f29333f41ecde0ab1749deaae777e3813f5ffb69a'
+        && request.sourceArchiveBytes === 56_878_530
+        && request.baselineArtifactId === 11451337986
+        && request.baselineArtifactName === 'windows-editor-advanced-shadow-parity-off-bundle'
+        && request.baselineArchiveSha256 === '8871ac4bd9d226960892bc681596476a22757a53b3a0eb458340e802f48ac2a4'
+        && request.baselineArchiveBytes === MAX_ZIP_BYTES
+        && request.selectedPass === 'shade-native-depth-no-decals'
+        && request.descriptorSha256 === 'f81f44c6868773f0936efebaf72f03b146bc6d6c98aacf4e0f462d044eaf8a6c'
+        && request.wgslSha256 === '15c26ae39bfb45b1640e9091e381c357fd889429b84888fe61f49f05b66269df'
+        && request.wgslBytes === 344_708 && request.entryPoint === 'advancedShadeNative'
+        && request.minimumPendingMilliseconds === 20_000
         && request.targetSamplingMilliseconds === 8000 && request.maximumCollectorMilliseconds === 10000,
     'Diagnostic request values changed.');
     return request;
@@ -69,12 +81,13 @@ export function validateInvocation(env, event) {
     requireField(env.GITHUB_EVENT_NAME === 'push' && env.GITHUB_REPOSITORY === REPOSITORY
         && env.GITHUB_REF === `refs/heads/${BRANCH}` && env.GITHUB_REF_TYPE === 'branch'
         && env.GITHUB_WORKFLOW === WORKFLOW
-        && env.GITHUB_WORKFLOW_REF === `${REPOSITORY}/.github/workflows/browser-native-profile-once.yml@refs/heads/${BRANCH}`
+        && env.GITHUB_WORKFLOW_REF === `${REPOSITORY}/.github/workflows/browser-native-shadow-profile-once.yml@refs/heads/${BRANCH}`
         && env.GITHUB_RUN_ATTEMPT === '1' && /^[0-9a-f]{40}$/.test(sha ?? '')
         && /^[1-9][0-9]*$/.test(runId ?? ''), 'This is not the admitted first-attempt workflow run.');
     requireField(event?.ref === env.GITHUB_REF && event?.after === sha
         && event?.repository?.full_name === REPOSITORY
-        && event?.repository?.fork === false, 'Push event does not match the admitted repository and commit.');
+        && event?.repository?.fork === false && event?.forced === false
+        && event?.deleted === false, 'Push event does not match the admitted repository and commit.');
     requireField(/^[0-9a-f]{40}$/.test(event.before ?? '') && event.before !== '0'.repeat(40)
         && event.before !== sha, 'Push event has no verifiable predecessor.');
     return { sha, runId, before: event.before };
@@ -269,7 +282,8 @@ function artifactPath(url) {
     return path.join('content', url);
 }
 
-export async function validatePublishedBundle(root) {
+export async function validatePublishedBundle(root, request, state) {
+    requireField(state === 'on' || state === 'off', 'Shadow bundle role is invalid.');
     const readSmall = async relative => {
         const bytes = await fs.readFile(path.join(root, relative));
         requireField(bytes.length <= 1024 * 1024, 'Published metadata exceeds its limit.');
@@ -286,7 +300,8 @@ export async function validatePublishedBundle(root) {
     const shaders = new Map((manifest.shaderArtifacts ?? []).map(shader => [shader.identity, shader]));
     requireField(assets.size === manifest.assets?.length && shaders.size === manifest.shaderArtifacts?.length,
         'Published bundle catalogs contain duplicates.');
-    const advancedPasses = ['visibility-pull', 'depth-pyramid', 'gtao', 'shade-classify', 'shade-native', 'present'];
+    const advancedPasses = ['visibility-pull', 'depth-pyramid', 'gtao', 'shade-classify', 'shade-native',
+        'present', request.selectedPass];
     const advancedBindings = new Map();
     for (const pass of advancedPasses) {
         const matches = (manifest.pipelineArtifacts ?? []).filter(value => value.scope === 'advanced' && value.pass === pass);
@@ -319,6 +334,15 @@ export async function validatePublishedBundle(root) {
         requireField(metadata?.schemaVersion === 3 && metadata?.pass === pass
             && metadata?.target === 'WebGPUWgsl', 'Published Advanced descriptor does not match its binding.');
     }
+    const selectedIdentity = advancedBindings.get(request.selectedPass);
+    const selected = descriptors.get(selectedIdentity);
+    requireField(selectedIdentity === request.descriptorSha256
+        && selected.name === `engine-advanced-${request.selectedPass}`
+        && selected.source.sha256 === request.wgslSha256
+        && selected.source.byteLength === request.wgslBytes
+        && selected.entryPoints?.compute === request.entryPoint
+        && Object.keys(selected.entryPoints).length === 1,
+    'Published shadow compiler input differs from the immutable request.');
     return { shaderCount: shaders.size };
 }
 
@@ -346,30 +370,45 @@ async function main() {
         const sourceRun = await apiJson(env.GH_TOKEN, `actions/runs/${request.sourceRunId}`);
         requireField(sourceRun?.id === request.sourceRunId && sourceRun?.repository?.full_name === REPOSITORY
             && sourceRun?.head_repository?.full_name === REPOSITORY
+            && sourceRun?.repository?.id === 652511392 && sourceRun?.head_repository?.id === 652511392
             && sourceRun?.head_branch === BRANCH
-            && sourceRun?.head_sha === request.sourceCommit, 'Source run provenance differs.');
-        const artifact = await apiJson(env.GH_TOKEN, `actions/artifacts/${request.sourceArtifactId}`);
-        requireField(artifact?.id === request.sourceArtifactId && artifact?.name === request.sourceArtifactName
-            && artifact?.workflow_run?.id === request.sourceRunId
-            && artifact?.workflow_run?.head_branch === BRANCH
-            && artifact?.workflow_run?.head_sha === request.sourceCommit && !artifact?.expired,
-        'Source artifact provenance differs.');
-        requireField(artifact.digest === `sha256:${ZIP_SHA256}`,
-            'Source artifact service digest differs.');
-        const archive = await requestApi(env.GH_TOKEN,
-            `https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${request.sourceArtifactId}/zip`,
-            { binary: true, maxBytes: MAX_ZIP_BYTES });
-        requireField(archive?.length === MAX_ZIP_BYTES && hash(archive) === request.sourceArchiveSha256,
-            'Source ZIP SHA-256 differs from the immutable request.');
-        const published = path.join(privateRoot, 'published-game');
-        await fs.mkdir(published, { mode: 0o700 });
-        await extractVerifiedZip(archive, published);
-        const bundle = await validatePublishedBundle(published);
+            && sourceRun?.head_sha === request.sourceCommit && sourceRun?.status === 'completed'
+            && sourceRun?.event === 'push' && sourceRun?.run_attempt === 1
+            && sourceRun?.path === '.github/workflows/portable-browser-compile.yml',
+        'Source run provenance differs.');
+        const sources = [
+            { state: 'on', id: request.sourceArtifactId, name: request.sourceArtifactName,
+                sha256: request.sourceArchiveSha256, bytes: request.sourceArchiveBytes },
+            { state: 'off', id: request.baselineArtifactId, name: request.baselineArtifactName,
+                sha256: request.baselineArchiveSha256, bytes: request.baselineArchiveBytes },
+        ];
+        let shaderCount = 0;
+        for (const source of sources) {
+            const artifact = await apiJson(env.GH_TOKEN, `actions/artifacts/${source.id}`);
+            requireField(artifact?.id === source.id && artifact?.name === source.name
+                && artifact?.workflow_run?.id === request.sourceRunId
+                && artifact?.workflow_run?.repository_id === 652511392
+                && artifact?.workflow_run?.head_repository_id === 652511392
+                && artifact?.workflow_run?.head_branch === BRANCH
+                && artifact?.workflow_run?.head_sha === request.sourceCommit && artifact?.expired === false
+                && artifact?.size_in_bytes === source.bytes && artifact?.digest === `sha256:${source.sha256}`,
+            'Source artifact provenance, size, or service digest differs.');
+            const archive = await requestApi(env.GH_TOKEN,
+                `https://api.github.com/repos/${REPOSITORY}/actions/artifacts/${source.id}/zip`,
+                { binary: true, maxBytes: source.bytes });
+            requireField(archive?.length === source.bytes && hash(archive) === source.sha256,
+                'Source ZIP SHA-256 differs from the immutable request.');
+            source.published = path.join(privateRoot, `published-${source.state}`);
+            await fs.mkdir(source.published, { mode: 0o700 });
+            await extractVerifiedZip(archive, source.published);
+            const bundle = await validatePublishedBundle(source.published, request, source.state);
+            shaderCount += bundle.shaderCount;
+        }
         await fs.appendFile(env.GITHUB_OUTPUT,
-            `game_publish=${published}\nactivation_file=${activationFile}\nprivate_root=${privateRoot}\n`,
+            `game_publish=${sources[0].published}\nbaseline_publish=${sources[1].published}\nactivation_file=${activationFile}\nprivate_root=${privateRoot}\n`,
             { encoding: 'utf8' });
         ready = true;
-        console.log(`Verified one admitted activation and ${bundle.shaderCount} published shader descriptors.`);
+        console.log(`Verified one admitted activation, two exact shadow bundles, and ${shaderCount} shader descriptors.`);
     } finally {
         if (!ready) await fs.rm(privateRoot, { recursive: true, force: true });
     }

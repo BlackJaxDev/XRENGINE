@@ -184,7 +184,7 @@ export function uberNativeCompileContract() {
 }
 
 /** Runs on a blank loopback page in a fresh process; the optional comparison uses its own verified published ABI. */
-export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs, comparison = null }) {
+export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs, comparison = null, shadowTarget = null }) {
     const result = { status: 'preparing', stage: 'load-cooked-module', compileBudgetMs, timeOriginMs: performance.timeOrigin,
         stages: [], compile: null, compilationInfo: null, deviceLoss: null, uncapturedErrors: [],
         explicitDestroyRequested: false, cleanup: {} };
@@ -266,6 +266,11 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
                 || recipe.pipeline.label !== `engine-advanced-${selectedPass}`)
                 throw new Error('Native compile isolation captured an unsupported native program label.');
             let { shader, sourceEntry, descriptor } = await readArtifact(selectedPass);
+            if (shadowTarget && (selectedPass !== shadowTarget.pass ||
+                shader.identity !== shadowTarget.descriptorIdentity ||
+                sourceEntry.hash !== shadowTarget.wgslSha256 || sourceEntry.bytes !== shadowTarget.wgslBytes ||
+                descriptor.entryPoints?.compute !== shadowTarget.entryPoint))
+                throw new Error('Native compile isolation shadow artifact differs from the pinned target.');
             if (descriptor.name !== recipe.pipeline.label || descriptor.pass !== selectedPass || descriptor.target !== 'WebGPUWgsl'
                 || descriptor.entryPoints?.compute !== recipe.compute.entryPoint
                 || sourceEntry.hash !== recipe.module.sha256 || sourceEntry.bytes !== recipe.module.byteLength
@@ -443,7 +448,9 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
         });
         // No application frames, uploads, other pipelines, or GPU submissions accompany this one native compile.
         // Start an independent Node watchdog before entering the GPU API, including a wedged synchronous call.
-        await globalThis.nativeCompileStarting();
+        await globalThis.nativeCompileStarting({ descriptorIdentity: result.cookedArtifact.descriptorIdentity,
+            sha256: result.cookedArtifact.sha256, byteLength: result.cookedArtifact.byteLength,
+            entryPoint: result.cookedArtifact.entryPoint });
         result.stage = 'create-compute-pipeline';
         result.compile = { startedAtMs: performance.now(), callReturnedAtMs: null, elapsedMs: null, status: 'pending' };
         const compile = result.compile;
@@ -480,6 +487,41 @@ export async function replayNativeCompile({ recipe, manifestUrl, compileBudgetMs
 
 /** Diagnostic only: called after the failed application's entire browser process has closed. */
 export async function runNativeCompileIsolation(chromium, origin, report, config, instrumentedPage) {
+    if (config.nativeOwnedShadowProfileOnce) {
+        const target = { profile: 'small', state: 'on', iteration: 0,
+            pass: 'shade-native-depth-no-decals', descriptorIdentity: 'f81f44c6868773f0936efebaf72f03b146bc6d6c98aacf4e0f462d044eaf8a6c',
+            wgslSha256: '15c26ae39bfb45b1640e9091e381c357fd889429b84888fe61f49f05b66269df',
+            wgslBytes: 344708, entryPoint: 'advancedShadeNative' };
+        const failures = report.advancedShadowFailures?.filter(value => value.profile === target.profile &&
+            value.state === target.state && value.iteration === target.iteration) ?? [];
+        const capture = failures.length === 1 ? failures[0].nativeCompile : null;
+        const pending = capture?.records?.filter(value => value.status === 'pending') ?? [];
+        const record = pending.length === 1 ? pending[0] : null;
+        const result = report.nativeCompileIsolation = {
+            scope: 'One isolated native compile diagnostic for the failed shadow application.',
+            catalogKey: `advanced::${target.pass}`, shadowTarget: target, status: 'skipped', reason: null,
+            compileBudgetMs: 45000, freshBrowserProcess: true, applicationBrowserClosed: true,
+            cleanup: {} };
+        if (!record || !Array.isArray(capture.captureErrors) || capture.captureErrors.length ||
+            record.recipeStatus !== 'ready' ||
+            record.pass !== target.pass || record.recipe?.pipeline?.label !== `engine-advanced-${target.pass}` ||
+            record.recipe?.compute?.entryPoint !== target.entryPoint ||
+            record.recipe?.module?.sha256 !== target.wgslSha256 ||
+            record.recipe?.module?.byteLength !== target.wgslBytes) {
+            result.reason = 'The exact small ON first-iteration pending shadow recipe is unavailable.';
+            return;
+        }
+        const application = report.gpuProcessSnapshots?.find(value => value.stage === 'after-failed-shadow-application');
+        if (!application?.gpu?.devices?.length) {
+            result.reason = 'The failed application GPU backend is unavailable.';
+            return;
+        }
+        result.recipe = record.recipe;
+        result.recipeSha256 = createHash('sha256').update(JSON.stringify(record.recipe)).digest('hex');
+        await runNativeCompileArm(chromium, origin, report, config, instrumentedPage, result, record.recipe,
+            'advanced-shadow-native-compile-isolation', null, null, target);
+        return;
+    }
     const capture = report.advancedRenderingFailures?.find(value => value.nativeCompile)?.nativeCompile;
     if (!capture) return;
     const pending = capture.records.filter(value => value.status === 'pending');
@@ -530,7 +572,7 @@ export async function runNativeCompileIsolation(chromium, origin, report, config
 
 /** One owned browser/device lifecycle for both arms; no compilation overlaps another arm. */
 async function runNativeCompileArm(chromium, origin, report, config, instrumentedPage, result, recipe, logName,
-    comparison = null, controlResult = null) {
+    comparison = null, controlResult = null, shadowTarget = null) {
     result.launchOptions = browserLaunchOptions(config);
     let browser, context, page, timer, compileTimer, trace, ownedProfile;
     try {
@@ -538,20 +580,23 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
         result.browser = browser.version();
         if (result.browser !== report.browser) throw new Error('Isolation browser version differs from the application.');
         await captureGpuProcessState(browser, result, comparison ? 'before-isolated-uber-native-compile' : 'before-isolated-native-compile');
-        if (config.nativeCompileTrace && !comparison)
+        if ((config.nativeCompileTrace || config.nativeOwnedShadowProfileOnce) && !comparison)
             result.nativeProfileCapabilities = await captureNativeProfileCapabilities(result.gpuProcessSnapshots[0]?.processes);
         const backend = snapshot => {
-            if (!snapshot?.gpu) return null;
+            if (!Array.isArray(snapshot?.gpu?.devices) || snapshot.gpu.devices.length === 0) return null;
             const gpu = snapshot.gpu;
             return { devices: gpu.devices, attributes: Object.fromEntries(Object.entries(gpu.auxAttributes ?? {})
                 .filter(([key, value]) => /backend|renderer|vendor|version|displayType/i.test(key)
                     && ['string', 'number', 'boolean'].includes(typeof value)).sort(([a], [b]) => a.localeCompare(b))) };
         };
-        const application = backend(report.gpuProcessSnapshots?.find(value => value.stage === 'after-failed-advanced-application'));
+        const application = backend(report.gpuProcessSnapshots?.find(value => value.stage ===
+            (shadowTarget ? 'after-failed-shadow-application' : 'after-failed-advanced-application')));
         const isolated = backend(result.gpuProcessSnapshots[0]);
         result.backendComparison = { application, isolated,
             status: !application || !isolated ? 'unavailable' : JSON.stringify(application) === JSON.stringify(isolated) ? 'matched' : 'different' };
-        if (result.backendComparison.status === 'different') throw new Error('Isolation GPU backend differs from the application.');
+        if (result.backendComparison.status === 'different' ||
+            shadowTarget && result.backendComparison.status !== 'matched')
+            throw new Error('Isolation GPU backend is unavailable or differs from the application.');
         if (controlResult) {
             const control = backend(controlResult.gpuProcessSnapshots?.[0]);
             result.controlBackendComparison = { control, isolated,
@@ -571,11 +616,17 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
         if (!comparison) ownedProfile = createOwnedGpuProfile({ browser, page, config, result });
         let rejectCompileDeadline;
         const compileDeadline = new Promise((_, reject) => { rejectCompileDeadline = reject; });
-        await page.exposeFunction('nativeCompileStarting', () => {
+        await page.exposeFunction('nativeCompileStarting', artifact => {
+            if (shadowTarget && (artifact?.descriptorIdentity !== shadowTarget.descriptorIdentity ||
+                artifact?.sha256 !== shadowTarget.wgslSha256 || artifact?.byteLength !== shadowTarget.wgslBytes ||
+                artifact?.entryPoint !== shadowTarget.entryPoint))
+                throw new Error('Native compile isolation verified source differs from the pinned shadow target.');
+            if (shadowTarget) result.verifiedCookedArtifact = artifact;
             result.compileWatchdog = { startedUtc: new Date().toISOString(), startedAtNodeMonotonicMs: performance.now(),
                 budgetMs: result.compileBudgetMs };
             compileTimer = setTimeout(() => {
                 result.compileWatchdog.expired = true;
+                ownedProfile?.cancel();
                 trace?.mark('compile-deadline');
                 rejectCompileDeadline(new Error('Native compile isolation exceeded its 45000 ms external compile deadline.'));
             }, result.compileBudgetMs);
@@ -585,7 +636,8 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
         });
         // Also bound a wedged page/GPU IPC path, whose in-page timer might never run.
         const replay = page.evaluate(replayNativeCompile, { recipe,
-            manifestUrl: `${origin}/__game/content/manifest.json`, compileBudgetMs: result.compileBudgetMs, comparison });
+            manifestUrl: `${origin}/__game/content/manifest.json`, compileBudgetMs: result.compileBudgetMs,
+            comparison, shadowTarget });
         result.replay = await Promise.race([replay, compileDeadline,
             ...(ownedProfile ? [ownedProfile.fatal.then(() => {
                 throw new Error('Owned Native profiler cleanup requires immediate ephemeral job termination.');
@@ -593,14 +645,16 @@ async function runNativeCompileArm(chromium, origin, report, config, instrumente
             timer = setTimeout(() => reject(new Error('Native compile isolation page exceeded its 160000 ms total envelope.')), 160000);
         })]);
         result.status = result.replay.status;
+        ownedProfile?.cancel();
     } catch (error) {
+        ownedProfile?.cancel();
         result.status = result.ownedGpuProfile?.requiresJobTermination ? 'aborted-for-profile-cleanup'
             : result.compileWatchdog?.expired ? 'compile-watchdog-timeout' : 'diagnostic-failed';
         result.error = String(error).slice(0, 2048);
     } finally {
         clearTimeout(timer);
-        clearTimeout(compileTimer);
         await ownedProfile?.finish();
+        clearTimeout(compileTimer);
         const fatalProfileCleanup = result.ownedGpuProfile?.requiresJobTermination === true;
         if (fatalProfileCleanup) result.status = 'aborted-for-profile-cleanup';
         const fatalBoundedCleanup = async (operation, milliseconds) => {

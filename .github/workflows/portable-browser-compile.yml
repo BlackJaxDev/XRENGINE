@@ -1156,9 +1156,6 @@ jobs:
         run: |
           mkdir -p "$VALIDATION_ROOT/game-evidence"
           trace_args=()
-          if [[ "$GAME_KIND" == "advanced-rendering-parity" ]]; then
-            trace_args+=(--native-compile-trace)
-          fi
           if [[ "$GAME_KIND" == "static-meshlet-parity" || "$GAME_KIND" == "advanced-shadow-parity" ]]; then
             trace_args+=(--baseline-publish "$VALIDATION_ROOT/published-cpu-baseline")
           fi
