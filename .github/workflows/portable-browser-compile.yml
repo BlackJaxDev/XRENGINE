@@ -1017,12 +1017,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Compile both benchmark executable modes
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $project = 'XREngine.Benchmarks/XREngine.Benchmarks.csproj'
+          $root = Join-Path $env:GITHUB_WORKSPACE (Join-Path $env:VALIDATION_ROOT 'benchmark-build')
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          dotnet build $project --configuration Release -m:1 `
+            --artifacts-path "$root/vulkan-tool" -p:VulkanPerformanceToolOnly=true `
+            -p:BaseOutputPath="$root/vulkan-tool/bin/" 2>&1 | Tee-Object -FilePath "$root/vulkan-tool.log"
+          if ($LASTEXITCODE -ne 0) { throw 'The standalone Vulkan performance tool build failed.' }
+          dotnet build $project --configuration Release -m:1 `
+            --artifacts-path "$root/normal" 2>&1 | Tee-Object -FilePath "$root/normal.log"
+          if ($LASTEXITCODE -ne 0) { throw 'The normal benchmark executable build failed.' }
+
       - name: Preserve Windows Editor CLI evidence
         if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-editor-rollingball-qualification
           path: |
+            ${{ env.VALIDATION_ROOT }}/benchmark-build/vulkan-tool.log
+            ${{ env.VALIDATION_ROOT }}/benchmark-build/normal.log
             ${{ env.VALIDATION_ROOT }}/rollingball-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/rendering-parity-cli/editor-cli.log
             ${{ env.VALIDATION_ROOT }}/advanced-rendering-parity-cli/editor-cli.log

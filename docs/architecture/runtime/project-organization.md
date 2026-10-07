@@ -47,7 +47,10 @@ Native zero-general-worker scheduling still has two auxiliary lanes.
 Desktop composition registers the worker leaf. Bootstrap also exposes
 `RuntimeApplicationBootstrap.PrepareWorkerServices()` for callers that need only
 workers before full Desktop setup. The shared RenderBench scope and NUnit setup
-use that entry point. SoftwareVulkan and the standalone browser smoke publisher
+use that entry point. The normal `XREngine.Benchmarks` executable registers the
+worker leaf before CLI dispatch. Its `VulkanPerformanceToolOnly` build excludes
+that registration and the engine project references. SoftwareVulkan and the
+standalone browser smoke publisher
 reference and register the worker leaf directly. The publisher keeps its
 `net10.0` target and its local file adapters. Browser, Core, Host, and RollingBall
 have no project reference to this leaf; ShaderCooker has no worker dependency.
