@@ -21,6 +21,7 @@ These docs should stay practical: what the concept is, when to use it, which set
 - [VR Development](vr-development.md)
 - [Full-body VR Calibration](vr/full-body-calibration.md)
 - [Finalized Game Builds And Asset Cooking](finalized-game-builds.md)
+- [Browser Game Builds And Static Publishing](browser-game-builds.md)
 - [Shader Editor](editor/shader-editor.md)
 - [Prefab Workflow](prefab-workflow.md)
 - [Job System](job-system.md)
