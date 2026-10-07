@@ -70,6 +70,27 @@ false for incomplete work and reports collected errors after cleanup attempts.
 
 `Engine.ProfileCapture` stays in the shared Host project. It selects speed profile paths, labels, output data, and retention count. The optional `IRuntimeProfileCaptureFileOutput` contract stays in Rendering. The desktop platform leaf implements it through the existing diagnostic capture file output service. That leaf creates directories, applies the retention policy, and writes profile text with `Encoding.UTF8`. The Host still checks host-file admission and obtains the log run directory before it requests profile output. A host without the service or this capability reports a capture-start directory error; later profile writes keep their catch-all behavior.
 
+`GLSubmitTracer` keeps level selection and line formatting in shared Rendering.
+Its optional `IRuntimeGLSubmitTraceFileOutput` host capability opens the log and
+returns an exclusive `IRuntimeOwnedTextLog` lease. Desktop owns directory and
+file creation, the write-through stream, and the BOM-free UTF-8 writer. The
+factory closes partial resources if opening fails. The lease attempts both writer
+and stream disposal.
+Replacing the installed output provider does not replace an active log. The
+tracer releases that log when tracing closes.
+
+The tracer serializes provider calls and writer use under its state lock.
+Providers must not wait for another thread to enter the tracer. A callback's
+level request waits until the active transition or line finishes. The last
+request runs next. At most four transitions run per request; continued callback
+changes leave tracing off.
+Recursive trace writes are ignored. Hosts must install the optional capability
+before first use, or call `SetLevel` after installation. Missing capability and
+open failures leave tracing off; environment activation does not retry itself.
+The normal desktop entry points already register this service before preferences
+or renderer setup. This requirement affects custom and unregistered hosts that
+use this optional trace; it does not add a browser output implementation.
+
 Authored asset metadata uses the optional `IAssetMetadataFileBackend` capability
 on the installed `IAssetFileSystem`. Core retains metadata YAML, GUID and path
 rules, importer selection, and locks. The Desktop leaf owns physical file

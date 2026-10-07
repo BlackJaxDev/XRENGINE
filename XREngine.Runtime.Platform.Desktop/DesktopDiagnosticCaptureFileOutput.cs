@@ -7,8 +7,39 @@ using XREngine.Rendering;
 namespace XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Writes diagnostic captures to desktop host files.</summary>
-internal sealed class DesktopDiagnosticCaptureFileOutput : IRuntimeDiagnosticCaptureFileOutput, IRuntimeDiagnosticTextFileOutput, IRuntimeProfileCaptureFileOutput
+internal sealed class DesktopDiagnosticCaptureFileOutput : IRuntimeDiagnosticCaptureFileOutput, IRuntimeDiagnosticTextFileOutput, IRuntimeGLSubmitTraceFileOutput, IRuntimeProfileCaptureFileOutput
 {
+    public IRuntimeOwnedTextLog OpenGLSubmitTraceLog()
+    {
+        string logsRoot = Path.Combine(Directory.GetCurrentDirectory(), "Build", "Logs");
+        Directory.CreateDirectory(logsRoot);
+        string path = Path.Combine(logsRoot, "gl-submit-trace.log");
+
+        FileStream? stream = null;
+        StreamWriter? writer = null;
+        try
+        {
+            // Keep each flushed line available after a driver fastfail.
+            stream = new FileStream(
+                path,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.Read,
+                bufferSize: 4096,
+                options: FileOptions.WriteThrough);
+            writer = new StreamWriter(stream, new UTF8Encoding(false));
+            writer.AutoFlush = true;
+            writer.NewLine = "\n";
+            return new DesktopGLSubmitTraceLog(stream, writer);
+        }
+        catch
+        {
+            try { writer?.Dispose(); } catch { }
+            try { stream?.Dispose(); } catch { }
+            throw;
+        }
+    }
+
     public void EnsureProfileDirectory(string directoryPath)
     {
         Directory.CreateDirectory(directoryPath);
