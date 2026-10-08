@@ -10,6 +10,8 @@ public sealed partial class GPUPhysicsChainDispatcher
     private readonly object _cpuSpatialMaterialSync = new();
     private readonly ConditionalWeakTable<XRMeshRenderer, CpuSpatialMaterialRouteCache>
         _cpuSpatialMaterialRoutes = new();
+    // Written only while the render thread builds an output page.
+    private ulong _committedSpatialBoundsVersion;
 
     private sealed class CpuSpatialMaterialRouteCache
     {
@@ -18,7 +20,11 @@ public sealed partial class GPUPhysicsChainDispatcher
         public readonly List<PhysicsChainDrawMaterialSnapshot> Materials = [];
     }
 
-    /// <summary>Reads the CPU query bound of one exact committed renderer output.</summary>
+    /// <summary>
+    /// Reads the committed CPU bound of one renderer and its version. The bound is an enlarged
+    /// proxy of the exact output bound. The version changes only when this renderer's committed
+    /// bound changes, not on every physics output.
+    /// </summary>
     public bool TryGetCommittedSpatialBounds(XRMeshRenderer renderer, out AABB bounds, out ulong generation)
         => TryGetCommittedSpatialBounds(renderer, out bounds, out generation, out _);
 
@@ -136,7 +142,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                     {
                         status = EPhysicsChainSpatialBoundsStatus.Ready;
                         bounds = state.CpuSpatialBounds;
-                        generation = page.ProducerEpoch;
+                        generation = state.CpuSpatialBoundsVersion;
                     }
                 }
             }
@@ -316,9 +322,42 @@ public sealed partial class GPUPhysicsChainDispatcher
     private static AABB UnionSpatialBounds(in AABB first, in AABB second)
         => new(Vector3.Min(first.Min, second.Min), Vector3.Max(first.Max, second.Max));
 
-    private static void NotifyCommittedSpatialBoundsChanged(PhysicsChainOutputPage page, bool published)
+    /// <summary>
+    /// Keeps the prior committed proxy and its version while the exact bound stays inside it.
+    /// Otherwise fits a new proxy with a new version, so each version names one proxy bound.
+    /// </summary>
+    private void ResolveCommittedSpatialProxy(PhysicsChainOutputPage? priorPage, XRMeshRenderer renderer,
+        in PhysicsChainGpuBoundsSource source, in AABB exactBounds, out AABB proxy, out ulong version)
     {
-        foreach (XRMeshRenderer renderer in page.RendererStates.Keys)
-            renderer.NotifyCommittedWorldBoundsChanged(page.ProducerEpoch, published);
+        if (priorPage is not null
+            && priorPage.RendererStates.TryGetValue(renderer, out PhysicsChainGpuRendererOutputState prior)
+            && prior.CpuSpatialBoundsValid
+            && prior.BoundsSource == source
+            && PhysicsChainCommittedSpatialProxy.CanKeep(prior.CpuSpatialBounds, exactBounds))
+        {
+            proxy = prior.CpuSpatialBounds;
+            version = prior.CpuSpatialBoundsVersion;
+            return;
+        }
+        proxy = PhysicsChainCommittedSpatialProxy.Create(exactBounds);
+        version = ++_committedSpatialBoundsVersion;
+    }
+
+    /// <summary>
+    /// Reports a new or withdrawn output to each renderer on <paramref name="page"/>. A renderer's
+    /// committed bound changed only when its validity or version differs from
+    /// <paramref name="priorPage"/>, so a renderer with an unchanged bound keeps its CPU tree placement.
+    /// </summary>
+    private static void NotifyCommittedSpatialOutputChanged(PhysicsChainOutputPage page, bool published,
+        PhysicsChainOutputPage? priorPage)
+    {
+        foreach (KeyValuePair<XRMeshRenderer, PhysicsChainGpuRendererOutputState> entry in page.RendererStates)
+        {
+            bool boundsChanged = !published || priorPage is null
+                || !priorPage.RendererStates.TryGetValue(entry.Key, out PhysicsChainGpuRendererOutputState prior)
+                || prior.CpuSpatialBoundsValid != entry.Value.CpuSpatialBoundsValid
+                || prior.CpuSpatialBoundsVersion != entry.Value.CpuSpatialBoundsVersion;
+            entry.Key.NotifyCommittedOutputChanged(page.ProducerEpoch, published, boundsChanged);
+        }
     }
 }

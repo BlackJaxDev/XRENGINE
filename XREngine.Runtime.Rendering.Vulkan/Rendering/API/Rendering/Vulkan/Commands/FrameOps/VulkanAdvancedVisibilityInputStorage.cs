@@ -351,9 +351,12 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         {
             long copyTicks = Stopwatch.GetTimestamp() - copyStarted;
             if (copied && _copyTelemetry is not null)
+            {
                 _copyTelemetry.RecordCopy(ComputeCopyByteCount(
                     payloads.Length,
                     indirectRanges.Length, indexedInstanceGroups.Length), copyTicks);
+                _copyTelemetry.RecordCapturedShape(payloads.Length, indexedInstanceGroups.Length);
+            }
         }
 
         _familyRequest = request;

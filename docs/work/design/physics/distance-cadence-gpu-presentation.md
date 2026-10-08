@@ -3,7 +3,7 @@
 Date: 2026-10-07
 Status: Proposed. The user authorized distance-based lower physics rates with interpolated GPU poses.
 
-[Implementation status](../../progress/physics/physics-chain-scale-status-2026-10-07.md) ·
+[Steady-state CPU design](physics-chain-steady-state-cpu-design.md) ·
 [Investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md) ·
 [Code items](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md) ·
 [Validation](../../testing/physics/physics-validation.md#gpu-skinned-chain-scale)

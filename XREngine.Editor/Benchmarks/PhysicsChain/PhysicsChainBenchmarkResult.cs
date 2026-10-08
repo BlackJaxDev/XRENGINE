@@ -9,6 +9,8 @@ public sealed record PhysicsChainBenchmarkResult
     public required DateTimeOffset CompletedAt { get; init; }
     public required string ScenarioName { get; init; }
     public required int CopyCount { get; init; }
+    /// <summary>True when each copy had distinct mesh content, so no instanced draw merged copies.</summary>
+    public bool UniqueMeshes { get; init; }
     public required int DeterministicSeed { get; init; }
     public required bool DebugDisplaysEnabled { get; init; }
     public required int SettleFrameCount { get; init; }

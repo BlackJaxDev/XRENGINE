@@ -204,4 +204,5 @@ Known gaps to keep in mind:
 - [Physics API](../../developer-guides/physics/physics-api.md)
 - [Physics Chain Performance](../../developer-guides/rendering/physics-chain-performance.md)
 - [Physics Validation](../../work/testing/physics/physics-validation.md)
-- [GPU Physics Chain Zero-Readback Skinned Mesh Plan](../../work/design/transforms/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)
+- [Physics-chain output and readback](physics-chain-output-and-readback.md)
+- [Skinning](../../developer-guides/rendering/skinning.md)

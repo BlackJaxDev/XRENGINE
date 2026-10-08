@@ -13,7 +13,7 @@ Compact `Core4 + Spill` skinning runs on the direct vertex path (`DefaultVertexS
 
 ### Mixed-Precision Palettes
 
-Blocked by: the GPU physics-chain palette writer must support the chosen FP16 row format ([GPU Physics Chain Zero-Readback Skinned Mesh Plan](../../../design/transforms/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)).
+Blocked by: the GPU physics-chain palette writer must support the chosen FP16 row format ([palette pose reconstruction](../../../../architecture/physics/physics-chain-output-and-readback.md#palette-pose-reconstruction)).
 
 - [ ] Define the packed FP16 affine row format (24 bytes per bone) and its OpenGL and Vulkan alignment. Done when: one shared layout constant set exists for both backends.
 - [ ] Add opt-in FP16 palette storage selected by a renderer setting or avatar profile flag. Keep FP32 for large-world, high-precision, and validation modes. Add a shader variant key bit and bump the shader cache schema version. Done when: both precisions build on the direct vertex and compute paths.

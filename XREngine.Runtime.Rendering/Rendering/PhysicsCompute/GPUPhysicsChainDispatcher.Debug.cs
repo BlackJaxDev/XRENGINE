@@ -354,10 +354,10 @@ public sealed partial class GPUPhysicsChainDispatcher
             failure = "the native buffer reuse capability is unavailable";
             return false;
         }
-        if (!IsNativeReuseReady(reuse, batch.ItemBuffer) ||
-            !IsNativeReuseReady(reuse, batch.PointsBuffer) ||
-            !IsNativeReuseReady(reuse, batch.LinesBuffer) ||
-            !IsNativeReuseReady(reuse, batch.IndirectArguments))
+        if (!PhysicsChainBufferReuse.IsReady(reuse, batch.ItemBuffer) ||
+            !PhysicsChainBufferReuse.IsReady(reuse, batch.PointsBuffer) ||
+            !PhysicsChainBufferReuse.IsReady(reuse, batch.LinesBuffer) ||
+            !PhysicsChainBufferReuse.IsReady(reuse, batch.IndirectArguments))
         {
             failure = "native debug buffers are still in use";
             return false;

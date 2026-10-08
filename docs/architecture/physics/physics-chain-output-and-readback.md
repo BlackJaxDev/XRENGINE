@@ -28,6 +28,24 @@ Compute-skinning settings changes release or restore chain registrations at
 the next input-copy boundary. Disabling compute skinning restores CPU bone
 listeners. Enabling it registers the current bone set again.
 
+## Palette pose reconstruction
+
+`PhysicsChainBonePalette.comp` builds each mapped bone from two inputs: the
+solved particle position and the particle's rest world basis from the affine
+input record. When the mapping has a child particle (the `ROTATE_WITH_CHILD`
+flag), `composeChainBoneWorld` in `PhysicsChainBonePose.glslinc` applies the
+shortest-arc rotation that turns the bone's rest direction into the direction
+from the solved particle to its solved child. The rest direction is the child
+bone's `RestLocalDirection` in the rest basis.
+`RuntimePhysicsChainRenderingBridge` takes it from the child, not the parent.
+
+There is no authored twist reference. Rotation about the bone direction stays
+as it is in the rest basis. A bone without a child, or with a degenerate rest
+or current direction, keeps its rest basis and takes only the solved position.
+The palette row is the bone's inverse bind matrix composed with this world
+matrix, stored as the 48-byte affine `SkinPaletteMatrix` that compute and
+direct vertex skinning both read at `skinPaletteBase + boneIndex`.
+
 ## Canonical GPU bounds
 
 The dispatcher publishes the bounds atlas, slot metadata, and current and
@@ -35,6 +53,19 @@ previous palettes as one output page. Four pages separate production from
 retained consumers. `PhysicsChainGpuOutputPageToken` contains the page index,
 page generation, and producer epoch. Every identity field is nonzero. A page
 can be reused only after its CPU retains and native GPU use permit reuse.
+The published and history pages are never reused, so the ring depends on its
+two free pages. Production creates or resizes the bounds atlas and slot
+metadata lazily and is the only path that makes them ready. When a production
+attempt ends first, Vulkan reports `Unsupported` native reuse for that buffer,
+and waiting cannot clear it. `CanReuseOutputPage` releases such a buffer of a
+free page once every other reuse check passes, and production recreates it.
+`PhysicsChainBufferReuse.TryEvaluateFreeOutputPage` makes this buffer decision
+without a renderer. Palettes are never released, so a palette that is not ready
+blocks reuse.
+Disposal retires the native storage through deferred destruction.
+`PhysicsChainGpuOutputPageDiagnostics.UnpreparedBufferReleaseCount` counts the
+releases. `GPUPhysicsChainDispatcher.CaptureOutputPageStallDiagnostics()` keeps
+the page states of the first and latest sustained acquisition stall.
 Backend replacement retires the old ring. Old tokens remain releasable, but
 consumers cannot acquire retired storage. Native destruction requires a
 successful GPU-idle boundary in the producing renderer context.
@@ -86,6 +117,22 @@ layout, a parameter value, or the Uber authored state changes. Material
 animation therefore updates the contract on the next publication. A custom
 vertex shader that is not an engine Uber shader must declare its displacement
 in `_VertexConservativeBounds`.
+
+Each renderer on an output page has a committed CPU bound and a bound version.
+CPU consumers, such as the octree and the CPU BVH, use this bound. The
+committed bound is an enlarged proxy of the exact spatial bound
+(`PhysicsChainCommittedSpatialProxy`): each side extends the exact bound by a
+quarter of its largest extent. A new page keeps the prior proxy and its version
+while the proxy contains the exact bound and its largest extent is at most
+twice that of the exact bound. Otherwise the page fits a new proxy with a new
+version. The version therefore changes only when that renderer's committed
+bound changes, not on each physics output. At commit, the dispatcher reports
+each output to each renderer with a flag that is set only when the bound
+version or validity changed. `RenderableMesh` reconciles its CPU tree placement
+only for a changed bound. A covered shadow caster still advances the shadow
+output revision on each output, because the GPU pose changes. The proxy always
+contains the exact bound, so CPU culling stays conservative, but it is less
+precise than the exact bound.
 
 The dispatcher keeps a renderer material-route snapshot while the scene and
 renderer-command publication generation stay unchanged. A warm query still
