@@ -157,6 +157,13 @@ the capability for these direct reads; a missing capability fails with
 `AssetSource.HostFileReadUnavailable`. Codec-only loads and packaged assets do
 not need it. This capability does not change metadata, cache, or writer APIs.
 
+Archive stale-path checks capture this provider at the first source entry and
+use it for source existence checks and whole-file byte reads. Custom hosts that
+use these checks with nonempty archives need this read capability, even if they
+already provide file mapping. A missing source stays stale without a byte read.
+The archive check keeps its existing host-file admission rule. Provider capture
+does not give an atomic lease on source files.
+
 `ShaderSourceResolver` and `UberShaderVariantBuilder` use captured host services
 for file reads, existence checks, timestamps, and directory discovery.
 `IShaderSourceFileBackend` owns file operations; `IAssetFileSystem` owns discovery.

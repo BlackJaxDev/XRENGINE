@@ -16,6 +16,7 @@ internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFil
 
     public bool FileExists(string path) => File.Exists(path);
     public Stream OpenRead(string path, FileShare share) => new FileStream(path, FileMode.Open, FileAccess.Read, share);
+    public byte[] ReadAllBytes(string path) => File.ReadAllBytes(path);
     public IEnumerable<string> ReadLines(string path) => File.ReadLines(path);
     public bool DirectoryExists(string path) => Directory.Exists(path);
     public void CreateDirectory(string path) => Directory.CreateDirectory(path);
