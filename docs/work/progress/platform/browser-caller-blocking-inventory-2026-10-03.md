@@ -75,6 +75,17 @@ before a parallel pass needs workers. Sequential and browser world paths do not
 request a pool. The pinned counts above remain historical. They are not a new
 scan or runtime result.
 
+Exact [b3290a7d](https://github.com/BlackJaxDev/XRENGINE/commit/b3290a7d54b49a9ff31ffc6c0229c640bda2f7a4)
+[Actions run 37836109876](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37836109876)
+passed 99 of 100 selected tests. Repeated range execution and recovery after a
+callback exception passed. The new cleanup check read `Thread.IsBackground`
+after disposal had stopped the worker; Windows threw `ThreadStateException`
+before that check could finish. The check now captures background status inside
+each live worker callback and retains the distinct-worker and post-disposal
+`IsAlive` assertions. The corrected check awaits Actions validation. Test
+artifact `11578053490` is 23,402 bytes with SHA-256
+`acfdf74c8b5f311e59033b4d652592f12ec8f3a07d3c63c5f455dbc6d164a6a1`.
+
 A separate Core/Rendering/Host/Data scan finds 42 files and 203 lines with static
 `File`/`Directory` member tokens or explicit `new FileStream`, `new FileInfo`, and
 `new DirectoryInfo` constructors. Core has 16 files/71 lines, Rendering has
