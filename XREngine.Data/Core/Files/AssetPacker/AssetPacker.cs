@@ -423,20 +423,22 @@ namespace XREngine.Core.Files
                 var stringCompressor = new StringCompressor(reader);
 
                 reader.Position = footer.TocPosition;
+                IRuntimeHostFileReadBackend? hostFileReads = null;
                 for (int i = 0; i < fileCount; i++)
                 {
                     var entry = ReadSequentialTocEntry(reader);
                     string path = NormalizePath(stringCompressor.GetString(entry.StringOffset));
                     string fullPath = Path.Combine(sourceDir, path.Replace('/', Path.DirectorySeparatorChar));
 
-                    if (!File.Exists(fullPath))
+                    hostFileReads ??= RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+                    if (!hostFileReads.FileExists(fullPath))
                     {
                         stale.Add(path);
                         continue;
                     }
 
                     // Compare XXH64 content hash
-                    byte[] sourceData = File.ReadAllBytes(fullPath);
+                    byte[] sourceData = hostFileReads.ReadAllBytes(fullPath);
                     ulong sourceHash = XxHash64.HashToUInt64(sourceData);
                     if (sourceHash != entry.ContentHash)
                         stale.Add(path);
