@@ -1,8 +1,46 @@
 # Browser caller-thread blocking inventory
 
-Updated: 2026-10-08. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The committed-source scan below remains pinned to 2026-10-07. The later sections retain their dated call-path and validation evidence.
+Updated: 2026-10-08. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The latest committed-source scan below is pinned to 2026-10-08. Earlier sections retain their dated call-path and validation evidence.
 
-## Committed-source refresh (2026-10-07)
+## Committed-source refresh (2026-10-08)
+
+The scan is pinned to [commit 042bfdd5](https://github.com/BlackJaxDev/XRENGINE/commit/042bfdd523a3ef17233d83d8b40bd0aa05e1d79d). It uses the same 19 project roots from that commit's `Build/Portable/PortableProjects.tsv` and 5,251 tracked C# paths from `git ls-tree -r -z --name-only <commit>`. Each original expression is passed to `git grep -E <expression> <commit> -- <tracked .cs paths>`, so ignored-but-tracked `Assets` files are included. Counts below are matched files / matching lines; they do not establish runtime reachability.
+
+| Project | Wait/result/join | `new Thread` | Task/parallel/pool |
+| --- | ---: | ---: | ---: |
+| `XREngine.Extensions` | 2 / 3 | 0 / 0 | 4 / 8 |
+| `XREngine.Data` | 10 / 12 | 0 / 0 | 6 / 11 |
+| `XREngine.Audio` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Animation` | 1 / 2 | 0 / 0 | 0 / 0 |
+| `XREngine.Input` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Modeling` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.Core` | 23 / 42 | 1 / 1 | 6 / 17 |
+| `XREngine.Runtime.Rendering` | 42 / 87 | 2 / 2 | 9 / 14 |
+| `XREngine.Runtime.Host` | 17 / 36 | 2 / 2 | 3 / 9 |
+| `XREngine.Runtime.AudioIntegration` | 3 / 6 | 0 / 0 | 2 / 2 |
+| `XREngine.Runtime.AnimationIntegration` | 3 / 5 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.InputIntegration` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.ModelingIntegration` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.Rendering.WebGPU` | 6 / 6 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.Platform.Browser` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Browser` | 1 / 1 | 0 / 0 | 0 / 0 |
+| `XREngine.Audio.WebAudio` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.Net.WebSockets` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.Physics.Jolt` | 0 / 0 | 0 / 0 | 0 / 0 |
+| **Total** | **108 / 200** | **5 / 5** | **30 / 61** |
+
+Compared with the prior pinned [commit 4422849b](https://github.com/BlackJaxDev/XRENGINE/commit/4422849bde5585b0ca30060134d4f06060af1b48), the closure has eight more tracked C# paths: seven in Core and one in Data. The wait/result/join count changes from 109 files / 203 lines to 108 / 200; explicit `new Thread` changes from 6 / 6 to 5 / 5; task/parallel/pool changes from 31 / 64 to 30 / 61. The current thread expression finds five constructor locations. The `string.Join` lexical false positive remains 74 lines in 51 files.
+
+The original Core/Rendering/Host/Data direct-file expression matches 37 files / 142 lines in the current commit, compared with 42 / 203 in the prior commit. By root: Core 13 / 52 (prior 16 / 71), Rendering 9 / 31 (11 / 39), Host 2 / 5 (3 / 38), and Data 13 / 54 (12 / 55). This expression includes comments and misses target-typed constructors.
+
+The original expressions remain in the previous pinned section below. This scan
+excludes generated files and external source imports. The five explicit thread
+constructors remain in `RenderWorkDomain`, `RuntimeEngine.Rendering.SecondaryContext`,
+`RuntimeRenderThreadHost`, `EngineTimer`, and `Engine.CodeProfiler`. Their source
+placement remains open. These lexical counts do not establish browser execution,
+scheduling behavior, or completion of the whole blocking and file-I/O inventory.
+
+## Previous committed-source refresh (2026-10-07)
 
 The scan is pinned to [commit 4422849b](https://github.com/BlackJaxDev/XRENGINE/commit/4422849bde5585b0ca30060134d4f06060af1b48).
 It uses the 19 project roots in that commit's `Build/Portable/PortableProjects.tsv`
