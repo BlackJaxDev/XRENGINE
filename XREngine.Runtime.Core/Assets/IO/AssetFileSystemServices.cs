@@ -23,6 +23,17 @@ public static class AssetFileSystemServices
     public static IAssetFileSystem Required => Current ??
         throw new NotSupportedException("Asset file discovery is not installed. Install an asset file-system backend in the host.");
 
+    /// <summary>Captures one host file provider after host-file admission.</summary>
+    public static IAssetMetadataFileBackend CaptureMetadataFileBackend(string operation)
+    {
+        XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess(operation);
+        IAssetFileSystem fileSystem = Required;
+        if (fileSystem is not IAssetMetadataFileBackend files)
+            throw new NotSupportedException("AssetSource.MetadataFileUnavailable: the installed asset file system does not provide metadata file operations.");
+
+        return files;
+    }
+
     /// <summary>Captures one asset discovery installation.</summary>
     public static bool TryCapture(out IAssetFileSystem? fileSystem, out long generation)
     {

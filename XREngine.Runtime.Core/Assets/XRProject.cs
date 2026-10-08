@@ -262,7 +262,8 @@ namespace XREngine
         public static XRProject CreateNew(string projectDirectoryPath, string projectName)
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("Project creation");
-            EnsureProjectDirectory(projectDirectoryPath);
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project creation");
+            EnsureProjectDirectory(projectDirectoryPath, files);
 
             // Create the project file
             var project = new XRProject(projectName)
@@ -270,8 +271,8 @@ namespace XREngine
                 FilePath = Path.Combine(projectDirectoryPath, $"{projectName}.{ProjectExtension}")
             };
 
-            project.EnsureStructure();
-            project.Save();
+            project.EnsureStructure(files);
+            project.Save(files);
 
             return project;
         }
@@ -317,12 +318,13 @@ namespace XREngine
             if (!read.Exists(projectFilePath))
                 return null;
 
-            XRProject? project = AssetManager.Deserializer.Deserialize<XRProject>(File.ReadAllText(projectFilePath));
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Third-party project descriptor import");
+            XRProject? project = AssetManager.Deserializer.Deserialize<XRProject>(files.ReadAllText(projectFilePath));
             if (project is null)
                 return null;
 
             project.FilePath = projectFilePath;
-            project.EnsureStructure();
+            project.EnsureStructure(files);
             return project;
         }
 
@@ -343,7 +345,16 @@ namespace XREngine
             if (ProjectDirectory is null)
                 return;
 
-            EnsureProjectDirectory(ProjectDirectory);
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project directory creation");
+            EnsureStructure(files);
+        }
+
+        private void EnsureStructure(IAssetMetadataFileBackend files)
+        {
+            if (ProjectDirectory is null)
+                return;
+
+            EnsureProjectDirectory(ProjectDirectory, files);
         }
 
         private static bool SupportsDesktopProjectStructure()
@@ -351,14 +362,14 @@ namespace XREngine
                 && !RuntimeAssetReadServices.IsCallerThread
                 && RuntimeAssetReadServices.Source?.SupportsHostFileAccess != false;
 
-        private static void EnsureProjectDirectory(string projectDirectoryPath)
+        private static void EnsureProjectDirectory(string projectDirectoryPath, IAssetMetadataFileBackend files)
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("Project directory creation");
-            Directory.CreateDirectory(projectDirectoryPath);
+            files.CreateDirectory(projectDirectoryPath);
 
             foreach (string folder in RequiredDirectoryNames)
             {
-                Directory.CreateDirectory(Path.Combine(projectDirectoryPath, folder));
+                files.CreateDirectory(Path.Combine(projectDirectoryPath, folder));
             }
         }
 
@@ -403,9 +414,19 @@ namespace XREngine
                 return;
 
             RuntimeAssetReadServices.EnsureHostFileAccess("Project descriptor save");
-            Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project descriptor save");
+            Save(files);
+        }
+
+        private void Save(IAssetMetadataFileBackend files)
+        {
+            if (string.IsNullOrWhiteSpace(FilePath))
+                return;
+
+            RuntimeAssetReadServices.EnsureHostFileAccess("Project descriptor save");
+            files.CreateDirectory(Path.GetDirectoryName(FilePath)!);
             string yaml = AssetManager.Serializer.Serialize(this);
-            File.WriteAllText(FilePath, yaml);
+            files.WriteAllText(FilePath, yaml);
         }
     }
 }

@@ -1,5 +1,27 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Project and settings file placement (2026-10-08)
+
+Shared project and settings code now captures the installed
+`IAssetMetadataFileBackend` before file existence checks, directory creation,
+quarantine moves, and project descriptor text reads and writes. The desktop
+provider and the smoke publisher's local provider own those file operations.
+`XRProject` retains its raw-read lease and source check for third-party project
+loads. Each direct multi-step operation uses one captured provider. The
+existing path guards, settings serialization, save order, and catch boundaries
+remain in place.
+
+The desktop platform registration used by Editor, Bootstrap, and tests, and
+the smoke publisher's local registration, install this capability. Standalone
+or custom native hosts must install an `IAssetFileSystem` that also implements
+`IAssetMetadataFileBackend` before they use project or settings file operations.
+These methods no longer provide an
+implicit `System.IO` path for the moved operations. A missing installation or
+capability reports an explicit error. Browser and caller-thread host-file
+admission still fails before provider lookup. This source placement has no new
+runtime pass or browser file-access claim. Selected existing project and
+persistence checks await CI validation.
+
 ## Shader source file providers (2026-10-07)
 
 The shared resolver and Uber source cache now use captured shader-file and asset
