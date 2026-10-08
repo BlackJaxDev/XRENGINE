@@ -1,4 +1,5 @@
 using XREngine.Rendering;
+using XREngine.Rendering.Models;
 using XREngine.Scene.Prefabs;
 
 namespace XREngine.Scene.Importers;
@@ -19,7 +20,8 @@ public sealed class SourceProjectImportContext
         string? outputDestination = null,
         string? explicitProjectOrAssetsRoot = null,
         CancellationToken cancellationToken = default,
-        Action<float, string>? progress = null)
+        Action<float, string>? progress = null,
+        FbxImportBackend fbxBackend = FbxImportBackend.Assimp)
     {
         EntrySourcePath = Path.GetFullPath(entrySourcePath);
         OutputDestination = string.IsNullOrWhiteSpace(outputDestination)
@@ -27,6 +29,7 @@ public sealed class SourceProjectImportContext
             : Path.GetFullPath(outputDestination);
         ProjectLocation = SourceProjectLocator.Locate(EntrySourcePath, explicitProjectOrAssetsRoot);
         GuidIndex = SourceGuidIndex.GetOrCreate(ProjectLocation.ProjectRoot);
+        FbxBackend = fbxBackend;
         Resolver = new SourceAssetResolver(ProjectLocation.ProjectRoot, this);
         CancellationToken = cancellationToken;
         Progress = progress;
@@ -49,6 +52,8 @@ public sealed class SourceProjectImportContext
     public Dictionary<SourceAssetIdentity, object> ImportCache { get; } = [];
     public CancellationToken CancellationToken { get; }
     public Action<float, string>? Progress { get; }
+    /// <summary>Selects the backend for FBX model bases resolved during Unity prefab composition.</summary>
+    public FbxImportBackend FbxBackend { get; }
     public DateTime ImportStartedAtUtc { get; }
 
     public SourceDependencyGraph DiscoverDependencies()
