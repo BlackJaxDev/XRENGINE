@@ -18,9 +18,18 @@ or custom native hosts must install an `IAssetFileSystem` that also implements
 These methods no longer provide an
 implicit `System.IO` path for the moved operations. A missing installation or
 capability reports an explicit error. Browser and caller-thread host-file
-admission still fails before provider lookup. This source placement has no new
-runtime pass or browser file-access claim. Selected existing project and
-persistence checks await CI validation.
+admission still fails before provider lookup.
+
+The placement was checked at [b2a25ba19](https://github.com/BlackJaxDev/XRENGINE/commit/b2a25ba19b68d47a4f5776760ea45297b30077f5)
+in [run 37830083935](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37830083935).
+The native test artifact `11573209733` records 96 passed tests, with no failed or
+skipped tests. This includes project creation, game settings persistence, and
+engine defaults persistence. Its 21,361-byte ZIP has SHA-256
+`7d5461eb2f9770b6d584dc00e2c9cc6460b29e570b610971a243f689f8427911`.
+The portable build/browser qualification and Windows Editor publication jobs
+passed. The complete run had seven passed jobs and two failed jobs: the existing
+UI frame-progress failure and unsplit native-shadow compile-wait timeout. This evidence does not qualify
+browser host-file access or close the broader file-operation inventory.
 
 ## Shader source file providers (2026-10-07)
 

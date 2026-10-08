@@ -22,7 +22,7 @@ public sealed class TransformHierarchyStore : IDisposable
     private readonly Stack<int> _free = new();
     private readonly List<(int Start, int End)> _ranges = [];
     private readonly List<(TransformBase Owner, int Mask)> _changed = [];
-    private TransformPropagationWorkers? _workers;
+    private ITransformPropagationWorkerPool? _workers;
     private bool _processing;
     private int _used, _count, _sequence;
     private bool _orderDirty;
@@ -451,7 +451,8 @@ public sealed class TransformHierarchyStore : IDisposable
                         if (_worldOverride[_order[p]]) { independent = false; break; }
                 if (loopType != ELoopType.Sequential && independent && _ranges.Count > 1)
                 {
-                    _workers ??= new TransformPropagationWorkers(this, ProcessRange);
+                    _workers ??= TransformPropagationWorkerServices.GetRequiredFactory().Create(this, ProcessRange)
+                        ?? throw new InvalidOperationException("The transform propagation worker factory returned no pool.");
                     workerAllocated = _workers.Run(_ranges.Count);
                 }
                 else

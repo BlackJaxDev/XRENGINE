@@ -1,10 +1,11 @@
 using XREngine.Data.Runtime.AotParity;
+using XREngine.Scene.Transforms;
 using System.Runtime.ExceptionServices;
 
-namespace XREngine.Scene.Transforms;
+namespace XREngine.Execution;
 
 /// <summary>Persistent workers avoid per-pass task, delegate and scheduler allocations.</summary>
-internal sealed class TransformPropagationWorkers : IDisposable
+internal sealed class TransformPropagationWorkers : ITransformPropagationWorkerPool
 {
     private readonly TransformHierarchyStore _store;
     private readonly Thread[] _threads;
@@ -33,7 +34,7 @@ internal sealed class TransformPropagationWorkers : IDisposable
         }
     }
 
-    internal long Run(int count)
+    public long Run(int count)
     {
         _playerPath = AotParityDiagnostics.IsPlayerPath;
         _next = -1;
