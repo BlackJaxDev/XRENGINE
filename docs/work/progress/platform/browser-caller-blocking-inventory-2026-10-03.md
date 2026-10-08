@@ -1,6 +1,6 @@
 # Browser caller-thread blocking inventory
 
-Updated: 2026-10-07. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The new committed-source scan below updates the lexical inventory. The later sections retain their dated call-path and validation evidence.
+Updated: 2026-10-08. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The committed-source scan below remains pinned to 2026-10-07. The later sections retain their dated call-path and validation evidence.
 
 ## Committed-source refresh (2026-10-07)
 
@@ -63,6 +63,17 @@ Their placement remains open work. The wait expression finds 203 lines across
 include result properties and comments. The task/parallel/pool expression finds
 64 lines across 31 files. These numbers do not establish browser reachability
 or blocking.
+
+After the pinned scan, transform pool thread creation, wake and completion waits,
+and joins moved from Core to `XREngine.Runtime.Execution.Threads`.
+`TransformHierarchyStore` still selects disjoint ranges and owns its pool under
+the pass gate. A separate internal Core factory slot lets native startup install
+the physical pool without replacing a custom worker-domain factory or a transform
+factory already installed by a Core friend assembly. Standalone native hosts
+must reference the Threads leaf and call `ThreadedWorkerBackend.EnsureRegistered()`
+before a parallel pass needs workers. Sequential and browser world paths do not
+request a pool. The pinned counts above remain historical. They are not a new
+scan or runtime result.
 
 A separate Core/Rendering/Host/Data scan finds 42 files and 203 lines with static
 `File`/`Directory` member tokens or explicit `new FileStream`, `new FileInfo`, and

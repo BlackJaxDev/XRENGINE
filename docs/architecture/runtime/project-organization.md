@@ -27,21 +27,25 @@ These projects target `net10.0` and compile their full source set for desktop an
 `XREngine.Runtime.Rendering.WebGPU`, `XREngine.Runtime.Platform.Browser`, and `XREngine.Browser` also belong to the compile closure. They provide the browser renderer, canvas platform leaf, and application composition; their presence does not imply that the browser host can run every engine world or desktop feature. Browser gameplay integration is tracked separately from compilation.
 
 `XREngine.Runtime.Execution.Threads` is a separate `net10.0` implementation leaf.
-It owns the general and auxiliary worker loops, thread creation, wake signals,
-and joins. It references Core and uses BCL threading. It has no Host, Desktop,
-renderer, native-library, or external package dependency. It is excluded from
+It owns the general, auxiliary, and transform worker loops, thread creation,
+wake signals, and joins. It references Core and uses BCL threading. It has no
+Host, Desktop, renderer, native-library, or external package dependency. It is excluded from
 the browser compile closure. Core retains `JobManager`, scheduler state, queue
-policy, topology, metrics, and the domain factory contracts. One deliberate
-Core friend-assembly declaration lets the moved code use existing internal
-dispatch and worker-context methods. The physical render-lane implementation
-remains in Core and is separate open placement work.
+policy, topology, metrics, the public domain factory contract, and the internal
+transform factory seam. One Core friend-assembly declaration lets the moved
+code use existing internal dispatch, worker-context, and transform evaluation
+methods. The physical render-lane implementation remains in Core and is
+separate open placement work.
 
 Native hosts register `ThreadedWorkerBackend.EnsureRegistered()` before asking
-for threaded jobs. The registration installs the built-in factory only if the
-slot is empty; it creates no worker or scheduler. Constructors capture one
-factory for their general and auxiliary domains. An absent factory produces an
-explicit failure. Implicit `RuntimeWorkScheduler.Jobs` creation remains available
-after registration. Caller-thread construction does not consult this service.
+for threaded jobs or parallel transform propagation. The registration installs
+the built-in domain and transform factories only in empty slots; it creates no
+worker or scheduler. Constructors capture one factory for their general and
+auxiliary domains. Each `TransformHierarchyStore` owns its returned transform
+pool under its pass gate. A missing factory produces an explicit failure when
+parallel work needs it. Implicit `RuntimeWorkScheduler.Jobs` creation remains
+available after registration. Sequential and caller-thread transform work does
+not request a pool. Browser hosts keep their sequential transform policy.
 Native zero-general-worker scheduling still has two auxiliary lanes.
 
 Desktop composition registers the worker leaf. Bootstrap also exposes
@@ -54,8 +58,9 @@ standalone browser smoke publisher
 reference and register the worker leaf directly. The publisher keeps its
 `net10.0` target and its local file adapters. Browser, Core, Host, and RollingBall
 have no project reference to this leaf; ShaderCooker has no worker dependency.
-These registrations preserve custom providers and existing schedulers. They do
-not initialize windows, apply QoS, or change desktop/VR clocks.
+These registrations preserve custom domain providers and any transform factory
+already installed by a Core friend assembly. They do not initialize windows,
+apply QoS, or change desktop/VR clocks.
 Full Desktop bootstrap registers workers before other backend registration.
 Replacing an existing asset source can invoke cancellation callbacks during
 DirectStorage registration; those callbacks must already have worker support.
