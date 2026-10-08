@@ -1,5 +1,19 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Archive staleness source reads (2026-10-08)
+
+The source-file probes and byte reads in `AssetPacker.GetStalePaths` use one
+lazily captured host-read provider. Native adapters call `File.ReadAllBytes`
+directly. Archive validation, empty-archive behavior, content hashing, and the
+missing-source result keep their existing order. Custom native hosts need the
+read capability for nonempty source comparisons. Exact [042bfdd5](https://github.com/BlackJaxDev/XRENGINE/commit/042bfdd523a3ef17233d83d8b40bd0aa05e1d79d)
+[run 37844731874](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37844731874)
+passes all 103 selected tests, including the unchanged pack/repack/compact/stale
+round trip. Its test artifact `11583440050` is 23,375 bytes with SHA-256
+`cdac79c0b9838f60bf459bc22c255c98e8c2f0c13880594ea4ebb3ff92d00d52`.
+This qualifies the bounded native case, not every archive failure path or the
+remaining whole-file I/O inventory.
+
 ## Authored YAML stream placement (2026-10-08)
 
 The five direct YAML streams, two bounded header scans, and three prefab file
