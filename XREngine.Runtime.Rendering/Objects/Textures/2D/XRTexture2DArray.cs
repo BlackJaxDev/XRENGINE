@@ -27,7 +27,12 @@ namespace XREngine.Rendering
 
         public XRTexture2DArray(params XRTexture2D[] textures)
         {
-            Textures = textures;
+            try { Textures = textures; }
+            catch
+            {
+                AbortFailedConstruction();
+                throw;
+            }
         }
         public XRTexture2DArray(uint count, uint width, uint height, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData = false)
         {
@@ -286,20 +291,39 @@ namespace XREngine.Rendering
         public override bool Load3rdParty(string filePath)
         {
             RuntimeTextureSourceAccess.RequireHostFiles();
-            IReadOnlyList<RuntimeImage> frames = RuntimeImageCodecs.Require().DecodeFrames(File.ReadAllBytes(filePath));
-            Textures = new XRTexture2D[frames.Count];
+            using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+            read.EnsureHostFileAccess("Texture array import");
+            byte[] bytes = read.ReadAllBytes(filePath);
+            IReadOnlyList<RuntimeImage> frames = RuntimeImageCodecs.Require().DecodeFrames(bytes);
+            XRTexture2D[]? textures = null;
             try
             {
+                textures = new XRTexture2D[frames.Count];
                 for (int i = 0; i < frames.Count; i++)
-                    Textures[i] = new(frames[i]);
+                    textures[i] = new(frames[i]);
+                using IDisposable publication = read.BeginPublication();
+                read.EnsureCurrent();
+                AutoGenerateMipmaps = true;
+                Textures = textures;
+                return true;
+            }
+            catch
+            {
+                if (textures is not null)
+                {
+                    foreach (XRTexture2D? texture in textures)
+                    {
+                        if (texture is not null)
+                            texture.DiscardUnpublishedImportedImage();
+                    }
+                }
+                throw;
             }
             finally
             {
                 for (int i = 0; i < frames.Count; i++)
                     frames[i].Dispose();
             }
-            AutoGenerateMipmaps = true;
-            return true;
         }
 
         public delegate void DelAttachToFBO_OVRMultiView(XRFrameBuffer target, EFrameBufferAttachment attachment, int mipLevel, int offset, uint numViews);

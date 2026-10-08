@@ -1,4 +1,5 @@
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Execution;
 
 namespace XREngine.Rendering;
@@ -7,12 +8,20 @@ namespace XREngine.Rendering;
 internal static class RuntimeTextureSourceAccess
 {
     internal static bool CanAccessHostFiles
-        => !OperatingSystem.IsBrowser()
-        && !RuntimeWorkScheduler.IsCallerThread
-        && DirectStorageIO.Source is not IRuntimeAssetCatalog
-        && DirectStorageIO.Source is not { SupportsSynchronousReads: false }
-        && (!RuntimeRenderingHostServices.HasConcreteHost ||
-            RuntimeRenderingHostServices.Assets.SupportsSynchronousTextureSourceWork);
+    {
+        get
+        {
+            IRuntimeAssetReadSource? source = RuntimeAssetReadServices.Source;
+            return !OperatingSystem.IsBrowser()
+                && !RuntimeWorkScheduler.IsCallerThread
+                && source is not { SupportsHostFileAccess: false }
+                && source is not { SupportsSynchronousReads: false }
+                && DirectStorageIO.Source is not IRuntimeAssetCatalog
+                && DirectStorageIO.Source is not { SupportsSynchronousReads: false }
+                && (!RuntimeRenderingHostServices.HasConcreteHost ||
+                    RuntimeRenderingHostServices.Assets.SupportsSynchronousTextureSourceWork);
+        }
+    }
 
     internal static void RequireHostFiles()
     {
