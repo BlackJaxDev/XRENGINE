@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Reflection;
 using XREngine;
 using XREngine.Core.Files;
+using XREngine.Execution;
 using XREngine.Publishing;
 using XREngine.Rendering;
 using XREngine.Runtime.Bootstrap;
@@ -11,6 +12,7 @@ using XREngine.Runtime.Diagnostics.Native;
 using XREngine.Scene;
 
 NativeDebugBackendRegistration.EnsureRegistered();
+ThreadedWorkerBackend.EnsureRegistered();
 if (args.Length == 3 && args[0] == "--scan")
 {
     string binaryDirectory = Path.GetFullPath(args[1]);

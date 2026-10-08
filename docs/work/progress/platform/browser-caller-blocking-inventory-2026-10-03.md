@@ -40,6 +40,18 @@ constructors remain in `RenderWorkDomain`, `RuntimeEngine.Rendering.SecondaryCon
 placement remains open. These lexical counts do not establish browser execution,
 scheduling behavior, or completion of the whole blocking and file-I/O inventory.
 
+## Profiler statistics worker placement
+
+After the pinned scan, the profiler statistics thread, cancellation source,
+join, and idle sleep move to `XREngine.Runtime.Execution.Threads`. Host keeps
+the cycle order, buffers, snapshots, stall checks, and exception reporting.
+The [native worker composition contract](../../../architecture/runtime/project-organization.md)
+records early registration for native Debug hosts and the two repaired tool
+entrypoints. The browser guard and compiled published stub remain.
+This source change has not yet passed its new Debug/Release startup and worker
+checks in Actions. It does not change the pinned lexical counts or establish
+whole-inventory, desktop/VR timing, or browser acceptance.
+
 ## Previous committed-source refresh (2026-10-07)
 
 The scan is pinned to [commit 4422849b](https://github.com/BlackJaxDev/XRENGINE/commit/4422849bde5585b0ca30060134d4f06060af1b48).
@@ -120,8 +132,12 @@ callback exception passed. The new cleanup check read `Thread.IsBackground`
 after disposal had stopped the worker; Windows threw `ThreadStateException`
 before that check could finish. The check now captures background status inside
 each live worker callback and retains the distinct-worker and post-disposal
-`IsAlive` assertions. The corrected check awaits Actions validation. Test
-artifact `11578053490` is 23,402 bytes with SHA-256
+`IsAlive` assertions. Exact [0a58f739](https://github.com/BlackJaxDev/XRENGINE/commit/0a58f73950e48ad3b61c725ea06d87f568833445)
+[run 37844113118](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37844113118)
+then passed all 102 selected tests, including all three transform-worker cases.
+The passing test artifact `11579824339` is 22,736 bytes with SHA-256
+`d22ba0791a6b1c72aeeb323449dc2494bd37cce4f746a323b3c8470d36098c68`.
+The earlier failing test artifact `11578053490` is 23,402 bytes with SHA-256
 `acfdf74c8b5f311e59033b4d652592f12ec8f3a07d3c63c5f455dbc6d164a6a1`.
 
 A separate Core/Rendering/Host/Data scan finds 42 files and 203 lines with static

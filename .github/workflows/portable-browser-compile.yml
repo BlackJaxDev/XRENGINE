@@ -149,6 +149,13 @@ jobs:
           node Tools/BrowserSmoke/prepare-engine-effects-assets.mjs Tools/BrowserSmoke/Content/engine-assets.recipe.json "$VALIDATION_ROOT/depth-shaders" "$VALIDATION_ROOT/metadata-fixture" "$VALIDATION_ROOT/effects-recipe"
           dotnet run --project Tools/BrowserContentCooker --configuration Release -- "$VALIDATION_ROOT/effects-recipe/engine-effects-assets.recipe.json" "$VALIDATION_ROOT/browser/wwwroot/diagnostics/content"
 
+      - name: Verify fresh Debug metadata-cooker startup
+        timeout-minutes: 10
+        run: |
+          dotnet build Tools/BrowserRuntimeMetadataCooker/BrowserRuntimeMetadataCooker.csproj -c Debug -m:1 --artifacts-path "$VALIDATION_ROOT/metadata-debug-build"
+          dotnet "$VALIDATION_ROOT/metadata-debug-build/bin/BrowserRuntimeMetadataCooker/debug/BrowserRuntimeMetadataCooker.dll" Tools/BrowserSmoke/Content/EngineSmokeWorld.asset "$VALIDATION_ROOT/metadata-debug-fixture"
+          dotnet "$VALIDATION_ROOT/metadata-debug-build/bin/BrowserRuntimeMetadataCooker/debug/BrowserRuntimeMetadataCooker.dll" --verify "$VALIDATION_ROOT/metadata-debug-fixture"
+
       - name: Verify static browser bundle
         shell: pwsh
         run: |
@@ -773,7 +780,7 @@ jobs:
           dotnet build $project --configuration Release --no-restore
           if ($LASTEXITCODE -ne 0) { throw 'Render scope test build failed.' }
           dotnet test $project --configuration Release --no-build --no-restore `
-            --filter 'FullyQualifiedName~RenderScopeOwnershipTests|FullyQualifiedName~XRFrameBufferBindingStackTests|FullyQualifiedName~RenderStateThreadIsolationTests|FullyQualifiedName~XRBufferClientSpillTests|FullyQualifiedName~ShaderSourceResolverCachingTests|FullyQualifiedName~ShaderSourceDependencyHotReloadTests|FullyQualifiedName~VulkanShaderPreprocessParityTests|FullyQualifiedName~PhysicsChainCpuWorkSchedulerTests|FullyQualifiedName~JobManagerTests|FullyQualifiedName~EngineWorkSchedulerTests|FullyQualifiedName~PrefabModelSerializationTests.SyncMetadataWithAssets_|FullyQualifiedName~PrefabModelSerializationTests.LoadPrefabFromSiblingBuildAssetRoot_ResolvesExternalModelGraphByLocalMetadata|FullyQualifiedName~DesktopAssetFileSystemTests|FullyQualifiedName~NetworkingContractsTests.RealtimeJoinHandoff_ReadsLocalJsonPayloadFromEnvironment|FullyQualifiedName~LogFileNamingTests|FullyQualifiedName~DebugDiagnosticsTests|FullyQualifiedName~NativeSubsystemDependencyBoundaryTests|FullyQualifiedName~RuntimeModularizationPhase4DependencyBoundaryTests.RuntimeCore_ProjectReferencesOnlyApprovedLowerAssemblies|FullyQualifiedName~XRProjectTests|FullyQualifiedName~GameSettingsProjectPersistenceTests|FullyQualifiedName~EngineDefaultsProjectPersistenceTests|FullyQualifiedName~ImportedTextureStreamingPhaseTests.AssetTextureStreamingSource_WhenCacheAssetUnreadable_FallsBackToOriginalSource|FullyQualifiedName~TransformPropagationWorkerTests|FullyQualifiedName~PrefabModelSerializationTests.PreparePrefabPartialLoadAsync_BuildsHierarchyWithoutLoadingExternalModelOrRegisteringTempObjects|FullyQualifiedName~PrefabModelSerializationTests.LoadPrefabWithReferencesAsync_HydratesExternalModelBeforeBindingRoot|FullyQualifiedName~AssetPackerTests.Pack_Repack_Compact_StaleDetection_RoundTrips' `
+            --filter 'FullyQualifiedName~RenderScopeOwnershipTests|FullyQualifiedName~XRFrameBufferBindingStackTests|FullyQualifiedName~RenderStateThreadIsolationTests|FullyQualifiedName~XRBufferClientSpillTests|FullyQualifiedName~ShaderSourceResolverCachingTests|FullyQualifiedName~ShaderSourceDependencyHotReloadTests|FullyQualifiedName~VulkanShaderPreprocessParityTests|FullyQualifiedName~PhysicsChainCpuWorkSchedulerTests|FullyQualifiedName~JobManagerTests|FullyQualifiedName~EngineWorkSchedulerTests|FullyQualifiedName~PrefabModelSerializationTests.SyncMetadataWithAssets_|FullyQualifiedName~PrefabModelSerializationTests.LoadPrefabFromSiblingBuildAssetRoot_ResolvesExternalModelGraphByLocalMetadata|FullyQualifiedName~DesktopAssetFileSystemTests|FullyQualifiedName~NetworkingContractsTests.RealtimeJoinHandoff_ReadsLocalJsonPayloadFromEnvironment|FullyQualifiedName~LogFileNamingTests|FullyQualifiedName~DebugDiagnosticsTests|FullyQualifiedName~NativeSubsystemDependencyBoundaryTests|FullyQualifiedName~RuntimeModularizationPhase4DependencyBoundaryTests.RuntimeCore_ProjectReferencesOnlyApprovedLowerAssemblies|FullyQualifiedName~XRProjectTests|FullyQualifiedName~GameSettingsProjectPersistenceTests|FullyQualifiedName~EngineDefaultsProjectPersistenceTests|FullyQualifiedName~ImportedTextureStreamingPhaseTests.AssetTextureStreamingSource_WhenCacheAssetUnreadable_FallsBackToOriginalSource|FullyQualifiedName~TransformPropagationWorkerTests|FullyQualifiedName~PrefabModelSerializationTests.PreparePrefabPartialLoadAsync_BuildsHierarchyWithoutLoadingExternalModelOrRegisteringTempObjects|FullyQualifiedName~PrefabModelSerializationTests.LoadPrefabWithReferencesAsync_HydratesExternalModelBeforeBindingRoot|FullyQualifiedName~AssetPackerTests.Pack_Repack_Compact_StaleDetection_RoundTrips|FullyQualifiedName~ProfilerStatsWorkerTests|FullyQualifiedName~XREventLinkedProfilingTests|FullyQualifiedName~RuntimeApplicationProfileTests|FullyQualifiedName~PublishedLauncherGenerationTests' `
             --logger 'trx;LogFileName=render-scope-ownership.trx' `
             --results-directory "$env:VALIDATION_ROOT/render-scope-tests"
           if ($LASTEXITCODE -ne 0) { throw 'Runtime ownership, worker, logging, project settings, shader source, metadata, or native handoff loading checks failed.' }
@@ -784,6 +791,63 @@ jobs:
         with:
           name: render-scope-ownership-tests
           path: ${{ env.VALIDATION_ROOT }}/render-scope-tests
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Verify Debug profiler workers and runtime composition
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          ALSOFT_DRIVERS: 'null'
+        run: |
+          $project = 'XREngine.UnitTests/XREngine.UnitTests.csproj'
+          $root = Join-Path $env:GITHUB_WORKSPACE (Join-Path $env:VALIDATION_ROOT 'profiler-validation-build')
+          dotnet build $project --configuration Debug -m:1 --artifacts-path $root
+          if ($LASTEXITCODE -ne 0) { throw 'Debug profiler test build failed.' }
+          dotnet test $project --configuration Debug --artifacts-path $root --no-build --no-restore `
+            --filter 'FullyQualifiedName~ProfilerStatsWorkerTests|FullyQualifiedName~XREventLinkedProfilingTests|FullyQualifiedName~JobManagerTests|FullyQualifiedName~EngineWorkSchedulerTests|FullyQualifiedName~TransformPropagationWorkerTests|FullyQualifiedName~NativeSubsystemDependencyBoundaryTests|FullyQualifiedName~RuntimeApplicationProfileTests|FullyQualifiedName~PublishedLauncherGenerationTests' `
+            --logger 'trx;LogFileName=profiler-worker-debug.trx' `
+            --results-directory "$env:VALIDATION_ROOT/profiler-worker-tests"
+          if ($LASTEXITCODE -ne 0) { throw 'Debug profiler worker or composition checks failed.' }
+
+      - name: Build fresh-process profiler startup probes
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          $project = 'XREngine.UnitTests/ProfilerStartupProbe/XREngine.ProfilerStartupProbe.csproj'
+          $root = Join-Path $env:GITHUB_WORKSPACE (Join-Path $env:VALIDATION_ROOT 'profiler-validation-build')
+          foreach ($configuration in @('Debug', 'Release')) {
+            dotnet build $project --configuration $configuration -m:1 --artifacts-path $root
+            if ($LASTEXITCODE -ne 0) { throw "The $configuration profiler startup probe build failed." }
+          }
+
+      - name: Verify fresh-process profiler registration and RenderBench startup
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          ALSOFT_DRIVERS: 'null'
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE (Join-Path $env:VALIDATION_ROOT 'profiler-validation-build')
+          $evidence = Join-Path $env:VALIDATION_ROOT 'profiler-worker-tests'
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          foreach ($configuration in @('Debug', 'Release')) {
+            $dll = Join-Path $root "bin/XREngine.ProfilerStartupProbe/$($configuration.ToLowerInvariant())/XREngine.ProfilerStartupProbe.dll"
+            if (!(Test-Path -LiteralPath $dll)) { throw "The $configuration startup probe output was not found." }
+            foreach ($mode in @('registered-engine', 'missing-provider', 'renderbench-scope')) {
+              dotnet $dll $mode 2>&1 | Tee-Object -FilePath (Join-Path $evidence "$configuration-$mode.log")
+              if ($LASTEXITCODE -ne 0) { throw "The $configuration $mode startup check failed." }
+            }
+          }
+
+      - name: Preserve profiler worker and startup test evidence
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: profiler-worker-startup-tests
+          path: ${{ env.VALIDATION_ROOT }}/profiler-worker-tests
           if-no-files-found: warn
           retention-days: 14
 

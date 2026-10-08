@@ -27,26 +27,41 @@ These projects target `net10.0` and compile their full source set for desktop an
 `XREngine.Runtime.Rendering.WebGPU`, `XREngine.Runtime.Platform.Browser`, and `XREngine.Browser` also belong to the compile closure. They provide the browser renderer, canvas platform leaf, and application composition; their presence does not imply that the browser host can run every engine world or desktop feature. Browser gameplay integration is tracked separately from compilation.
 
 `XREngine.Runtime.Execution.Threads` is a separate `net10.0` implementation leaf.
-It owns the general, auxiliary, and transform worker loops, thread creation,
+It owns the general, auxiliary, transform, and profiler statistics worker loops, thread creation,
 wake signals, and joins. It references Core and uses BCL threading. It has no
 Host, Desktop, renderer, native-library, or external package dependency. It is excluded from
 the browser compile closure. Core retains `JobManager`, scheduler state, queue
 policy, topology, metrics, the public domain factory contract, and the internal
-transform factory seam. One Core friend-assembly declaration lets the moved
+transform and profiler factory seams. One Core friend-assembly declaration lets the moved
 code use existing internal dispatch, worker-context, and transform evaluation
 methods. The physical render-lane implementation remains in Core and is
 separate open placement work.
 
 Native hosts register `ThreadedWorkerBackend.EnsureRegistered()` before asking
-for threaded jobs or parallel transform propagation. The registration installs
-the built-in domain and transform factories only in empty slots; it creates no
+for threaded jobs or parallel transform propagation. A standalone native DEBUG
+host must register it before the first `Engine` access because the eager
+`Engine.Profiler` initializer starts the statistics worker. In Release, register
+before you enable frame logging. An absent profiler provider reports
+`Execution.ProfilerWorkerUnavailable` and can make the first `Engine` type
+initialization fail. Later registration cannot repair that failed initialization.
+The registration installs the built-in domain, transform, and profiler factories
+only in empty slots; it creates no
 worker or scheduler. Constructors capture one factory for their general and
 auxiliary domains. Each `TransformHierarchyStore` owns its returned transform
 pool under its pass gate. A missing factory produces an explicit failure when
 parallel work needs it. Implicit `RuntimeWorkScheduler.Jobs` creation remains
 available after registration. Sequential and caller-thread transform work does
-not request a pool. Browser hosts keep their sequential transform policy.
+not request a pool. Browser hosts keep their sequential transform policy and
+reject frame logging. The `XRE_PUBLISHED` profiler stub creates no worker.
 Native zero-general-worker scheduling still has two auxiliary lanes.
+
+`Engine.CodeProfiler` owns the cycle data and callbacks. Each cycle drains
+completed scopes, reads the timestamp, updates a due snapshot, checks the render
+stall, and returns an idle delay only when it processed no scope. The native
+worker owns the below-normal background thread, cancellation, sleep, join, and
+disposal. It checks cancellation at the loop boundary and sleeps without
+interruption. Its exception callback uses the host logger. A logger exception
+leaves the worker. Stopping with a join keeps the host cleanup order.
 
 Desktop composition registers the worker leaf. Bootstrap also exposes
 `RuntimeApplicationBootstrap.PrepareWorkerServices()` for callers that need only
@@ -54,11 +69,11 @@ workers before full Desktop setup. The shared RenderBench scope and NUnit setup
 use that entry point. The normal `XREngine.Benchmarks` executable registers the
 worker leaf before CLI dispatch. Its `VulkanPerformanceToolOnly` build excludes
 that registration and the engine project references. SoftwareVulkan and the
-standalone browser smoke publisher
+standalone browser smoke publisher and browser metadata cooker
 reference and register the worker leaf directly. The publisher keeps its
 `net10.0` target and its local file adapters. Browser, Core, Host, and RollingBall
 have no project reference to this leaf; ShaderCooker has no worker dependency.
-These registrations preserve custom domain providers and any transform factory
+These registrations preserve custom domain providers and any transform or profiler factory
 already installed by a Core friend assembly. They do not initialize windows,
 apply QoS, or change desktop/VR clocks.
 Full Desktop bootstrap registers workers before other backend registration.
