@@ -32,23 +32,33 @@ internal static partial class SerializedSceneImporter
         return [.. hierarchy.RootEntries.Select(static entry => entry.Node)];
     }
 
-    public static SceneNode ImportPrefab(string filePath)
-        => ImportPrefabWithManifest(filePath).RootNode
+    public static SceneNode ImportPrefab(
+        string filePath,
+        FbxImportBackend fbxBackend = FbxImportBackend.Assimp)
+        => ImportPrefabWithManifest(filePath, fbxBackend).RootNode
             ?? throw new InvalidDataException($"Unity prefab import produced no hierarchy for '{filePath}'.");
 
-    public static SerializedPrefabConversionResult ImportPrefabWithManifest(string filePath)
-        => ImportPrefabWithManifest(filePath, outputDestination: null, explicitProjectOrAssetsRoot: null);
+    public static SerializedPrefabConversionResult ImportPrefabWithManifest(
+        string filePath,
+        FbxImportBackend fbxBackend = FbxImportBackend.Assimp)
+        => ImportPrefabWithManifest(
+            filePath,
+            outputDestination: null,
+            explicitProjectOrAssetsRoot: null,
+            fbxBackend: fbxBackend);
 
     public static SerializedPrefabConversionResult ImportPrefabWithManifest(
         string filePath,
         string? outputDestination,
-        string? explicitProjectOrAssetsRoot)
+        string? explicitProjectOrAssetsRoot,
+        FbxImportBackend fbxBackend = FbxImportBackend.Assimp)
         => ImportPrefabWithManifest(
             filePath,
             outputDestination,
             explicitProjectOrAssetsRoot,
             cancellationToken: default,
-            progress: null);
+            progress: null,
+            fbxBackend: fbxBackend);
 
     /// <summary>
     /// Converts, composes, and cooks a Unity prefab as one publication unit.
@@ -60,7 +70,8 @@ internal static partial class SerializedSceneImporter
         string? outputDestination,
         string? explicitProjectOrAssetsRoot,
         ModelCookSettings cookSettings,
-        ModelCookOverrideSnapshot cookOverrides)
+        ModelCookOverrideSnapshot cookOverrides,
+        FbxImportBackend fbxBackend = FbxImportBackend.Assimp)
         => ImportPrefabWithManifest(
             filePath,
             outputDestination,
@@ -68,14 +79,16 @@ internal static partial class SerializedSceneImporter
             cancellationToken: default,
             progress: null,
             cookSettings,
-            cookOverrides);
+            cookOverrides,
+            fbxBackend);
 
     public static SerializedPrefabConversionResult ImportPrefabWithManifest(
         string filePath,
         string? outputDestination,
         string? explicitProjectOrAssetsRoot,
         CancellationToken cancellationToken,
-        Action<float, string>? progress)
+        Action<float, string>? progress,
+        FbxImportBackend fbxBackend = FbxImportBackend.Assimp)
         => ImportPrefabWithManifest(
             filePath,
             outputDestination,
@@ -83,7 +96,8 @@ internal static partial class SerializedSceneImporter
             cancellationToken,
             progress,
             new ModelCookSettings(),
-            ModelCookOverrideSnapshot.Empty);
+            ModelCookOverrideSnapshot.Empty,
+            fbxBackend);
 
     private static SerializedPrefabConversionResult ImportPrefabWithManifest(
         string filePath,
@@ -92,7 +106,8 @@ internal static partial class SerializedSceneImporter
         CancellationToken cancellationToken,
         Action<float, string>? progress,
         ModelCookSettings cookSettings,
-        ModelCookOverrideSnapshot cookOverrides)
+        ModelCookOverrideSnapshot cookOverrides,
+        FbxImportBackend fbxBackend)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         ArgumentNullException.ThrowIfNull(cookSettings);
@@ -104,7 +119,8 @@ internal static partial class SerializedSceneImporter
             outputDestination,
             explicitProjectOrAssetsRoot,
             cancellationToken,
-            progress);
+            progress,
+            fbxBackend);
         context.DiscoverDependencies();
         var state = new ImportState(context);
         ImportedHierarchy hierarchy = ImportHierarchy(normalizedPath, state);

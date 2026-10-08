@@ -88,6 +88,8 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Skinning](developer-guides/rendering/skinning.md)
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
 - [Poiyomi Toon Material Conversion](developer-guides/rendering/poiyomi-toon-material-conversion.md)
+- [Jax2031 Unity And Advanced Vulkan Parity](work/investigations/rendering/2026-10-08-jax2031-unity-advanced-parity.md)
+- [Unity Prefab Parity Import TODO](work/todo/assets/unity-prefab-parity-import-todo.md)
 - [Maintaining Poiyomi Toon Support](developer-guides/rendering/poiyomi-toon-maintenance.md)
 - [Vulkan OBS Hook Compatibility](developer-guides/rendering/vulkan-obs-hook-compatibility.md)
 - [Surface Detail And Forward Shadows](developer-guides/rendering/shadows/surface-detail-forward-shadows.md)

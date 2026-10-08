@@ -14,6 +14,7 @@ Validation docs hold manual, runtime, visual, hardware, profiler, benchmark, and
 - [Global Illumination Validation](rendering/global-illumination-validation.md)
 - [Shadow Validation](rendering/shadow-validation.md)
 - [Poiyomi Toon 9.3 Parity Validation](rendering/poiyomi-parity-validation.md)
+- [Jax2031 Advanced Parity Validation](rendering/jax2031-advanced-parity-validation.md)
 - [GPU-Driven Submission Validation](rendering/gpu-driven-submission-validation.md)
   - [Optimization 01-08 Acceptance Closeout Validation](rendering/01-08-optimization-acceptance-closeout.md)
   - [GPU Scene BVH External-Hardware Qualification](rendering/gpu-scene-bvh-external-hardware-qualification.md)

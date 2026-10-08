@@ -263,7 +263,7 @@
         "$ref": "#/definitions/ModelImportSettings"
       },
       "description": "Startup model imports processed when the Unit Testing World boots. Each array item is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend, Path, optional UnityProjectRoot, ImportFlags, Scale, ZUp, InstanceCount, GenerateMeshletLods, MeshletAdditionalLodCount, PostImportFlags, and optional YawPitchRoll/Translation objects. Unity prefab entries use the Unity converter; recognized Poiyomi materials are converted to the forward-plus Uber shader. Paths are relative to the process working directory unless absolute.",
-      "markdownDescription": "Startup model imports are an array of objects. Each item uses this shape:\n\n```json\n{\n  \"Enabled\": true,\n  \"Kind\": \"Static\",\n  \"MaterialMode\": \"Deferred\",\n  \"UseForwardForTransparent\": false,\n  \"ImporterBackend\": \"PreferNativeThenAssimp\",\n  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",\n  \"UnityProjectRoot\": null,\n  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",\n  \"Scale\": 1.0,\n  \"ZUp\": false,\n  \"PostImportFlags\": \"None\",\n  \"YawPitchRoll\": null,\n  \"Translation\": null\n}\n```\n\n`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; `ImporterBackend` is `PreferNativeThenAssimp` or `AssimpOnly`. A `.prefab` path uses the Unity project converter; use `Kind: Animated` for avatar setup. The Unity converter ignores the generic material factory and converts recognized Poiyomi materials to the native Uber shader. `UnityProjectRoot` optionally identifies the Unity project root or Assets directory when it cannot be inferred from the prefab path. `ImportFlags` is a comma-separated list of Assimp `PostProcessSteps` flag names. `PostImportFlags` is a comma-separated list of model post-import flag names. `YawPitchRoll` uses `{ \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }`; `Translation` uses `{ \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }`.",
+      "markdownDescription": "Startup model imports are an array of objects. Each item uses this shape:\n\n```json\n{\n  \"Enabled\": true,\n  \"Kind\": \"Static\",\n  \"MaterialMode\": \"Deferred\",\n  \"UseForwardForTransparent\": false,\n  \"ImporterBackend\": \"PreferNativeThenAssimp\",\n  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",\n  \"UnityProjectRoot\": null,\n  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",\n  \"Scale\": 1.0,\n  \"ZUp\": false,\n  \"PostImportFlags\": \"None\",\n  \"YawPitchRoll\": null,\n  \"Translation\": null\n}\n```\n\n`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; `ImporterBackend` is `PreferNativeThenAssimp`, `AssimpOnly`, or `NativeOnly`. `NativeOnly` does not fall back to Assimp. A `.prefab` path uses the Unity project converter; use `Kind: Animated` for avatar setup. The Unity converter ignores the generic material factory and converts recognized Poiyomi materials to the native Uber shader. `UnityProjectRoot` optionally identifies the Unity project root or Assets directory when it cannot be inferred from the prefab path. `ImportFlags` is a comma-separated list of Assimp `PostProcessSteps` flag names. `PostImportFlags` is a comma-separated list of model post-import flag names. `YawPitchRoll` uses `{ \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }`; `Translation` uses `{ \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }`.",
       "examples": [
         [
           {
@@ -1136,7 +1136,7 @@
         "ImporterBackend": {
           "$ref": "#/definitions/ModelImportBackendPreference",
           "description": "Selects how this model import chooses between native format-specific importers and Assimp fallback. PreferNativeThenAssimp uses a native importer when the format has one available and falls back to Assimp otherwise. Today the native path exists for FBX and glTF.",
-          "markdownDescription": "Supported values: `PreferNativeThenAssimp`, `AssimpOnly`."
+          "markdownDescription": "Supported values: `PreferNativeThenAssimp`, `AssimpOnly`, `NativeOnly`."
         },
         "Path": {
           "type": "string",
@@ -1250,9 +1250,10 @@
       "type": "string",
       "enum": [
         "PreferNativeThenAssimp",
-        "AssimpOnly"
+        "AssimpOnly",
+        "NativeOnly"
       ],
-      "markdownDescription": "Supported values: `PreferNativeThenAssimp`, `AssimpOnly`."
+      "markdownDescription": "Supported values: `PreferNativeThenAssimp`, `AssimpOnly`, `NativeOnly`."
     },
     "YawPitchRollDegrees": {
       "type": "object",

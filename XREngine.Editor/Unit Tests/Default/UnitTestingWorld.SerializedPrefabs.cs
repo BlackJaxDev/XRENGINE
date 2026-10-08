@@ -86,7 +86,8 @@ public static partial class EditorUnitTests
                     outputDestination: null,
                     explicitProjectOrAssetsRoot: projectRoot,
                     cancellationToken: default,
-                    progress: ReportProgress);
+                    progress: ReportProgress,
+                    fbxBackend: ResolveFbxBackend(settings));
 
                 SceneNode convertedRoot = conversion.RootNode
                     ?? throw new SourceVisualImportException(
