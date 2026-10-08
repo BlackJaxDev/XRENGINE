@@ -3319,3 +3319,315 @@ The current structural priority is stable scene registration and per-draw/group
 templates, with pose and bounds publication kept separate. No new structural
 optimization was implemented or measured by these ablations. The 100 Hz
 target remains unmet.
+
+### Retained registration lookup after the next pull
+
+Last checked: 2026-10-08 05:22 UTC. The resumed checkout starts at
+`8a30b32a6f32129749ed35378170b793be176e63`. The pulled source already contains
+active resource admission and operation-owned sealed compute snapshots. Do
+not repeat those repairs. This run used a Ryzen 9 7950X3D and RTX 3090 with
+driver 617.14. Earlier laptop results are not a matched control.
+
+The new change retains the publisher registration hash and ordered
+source/primitive/registration/draw identities. Exact source identity and draw
+generation checks guard reuse. Membership changes, lookup growth, rejection,
+and failed identity delivery invalidate it. Cache promotion follows successful
+commit and source identity delivery. Review found retained references beyond
+the live array after shrink; the final code clears that tail and clears the
+array on disposal. It also avoids a redundant full promotion when every row
+has matched. Existing material and transaction handle checks remain active.
+
+Final review found one more cleanup case. A growth promotion can write new
+rows, fail, and leave the old live count unchanged. A later shrink would then
+miss those new references. The final correction marks the cache invalid and
+records the full planned cleanup extent before writing rows. It preserves the
+warm early return. This correction followed the live windows below. The final
+Rendering Release build passed in 14.86 seconds with zero warnings and errors.
+Fault injection remains open.
+
+Current poses, bounds sources, command metadata, materials, geometry, temporal
+state, resources, and transaction capacity still pass through the existing
+capture and preflight. Source identity grouping and structural transaction
+planning remain uncached. No new frame lease is stored in the identity cache.
+
+Both isolated Release editor builds passed with zero warnings and errors.
+The first baseline timing attempt failed when native frame rejection counters
+changed. Its retained reason names pending directional-shadow compute pipeline
+compilation. Startup also recorded bounds-page mismatches and input marker
+failures. The warm repeats did not add those failures. Keep the first attempt
+excluded; it does not establish a steady-state regression.
+
+All accepted windows used 2,000 registered chains, Strict quality, Discrete
+presentation, Vulkan Advanced, and requested/resolved
+`GpuIndirectZeroReadback`. Directional-shadow admission was required. World
+telemetry, the four Debug profiler observers, and RenderDoc were off during
+timing. Captures followed timing.
+
+| Window | Completed frames | Elapsed seconds | Completed Hz | Interval p95 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline warm | 732 | 30.182714 | 24.252292 | 47.4651 |
+| Baseline repeat | 673 | 30.429021 | 22.117044 | 53.0824 |
+| Candidate | 630 | 30.191570 | 20.866752 | 58.9833 |
+| Candidate repeat after restart | 728 | 30.424309 | 23.928235 | 52.2009 |
+
+Each accepted window had zero new deferred, rejected, or failed frames, input
+buffer growth, input failures, and physics readback. Current physics output
+continued to advance. The candidate snapshots show 2,002 reused command
+identity rows, zero registration hash rebuilds, 2,000 supported resident draws,
+2,000 static draw-plan reuses, and zero material resolution attempts.
+
+The frame-rate results do not establish an improvement. CPU clocks were not
+controlled. The baseline continuous GPU clock file was empty. A later polling
+capture recorded candidate P0 operation at 1,935 MHz graphics and 9,751 MHz
+memory, but this does not repair the missing matched baseline. All six timing
+images were viewed. They show the chain grid and bent meshes. The last repeat
+overview clips front rows, so equal visible coverage is not proven. Native
+member counts were not recaptured in this run.
+
+Separate 12-second scope captures used an ignored runtime probe and enabled
+frame logging only during capture. It deduplicated completed scopes by session
+epoch and scope ID, then restored the prior logging value.
+
+| Scope sample | Captured snapshots | ScenePlan calls | Mean ms | Median ms | p95 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline | 338 | 270 | 7.247619 | 7.2065 | 8.0514 |
+| Candidate after restart | 337 | 287 | 6.970134 | 6.9424 | 7.5047 |
+
+Every snapshot reported incomplete scope publication. These are wall-time
+samples of completed scopes, not complete CPU attribution or unobserved frame
+timing. The observed mean decrease is 0.277485 ms. Keep the narrow cache because
+it removes confirmed repeated work and passes the live checks; do not claim an
+end-to-end speed gain. One candidate scope attempt lost the MCP connection
+across the interrupted turn and produced no usable result. The same built
+binary was restarted before the valid capture.
+
+The one-chain mutation check restored one chain, one palette slice, and one
+renderer binding after the scale run. Deactivation reduced all three counts
+to zero. Reactivation reused draw slot 1 with generation 3 instead of generation
+2. A command material override changed the canonical material from slot 1,
+generation 3 to slot 2001, generation 2. Removing it returned slot 1 with
+generation 4. The draw retained generation 3 through the material changes.
+Each active case returned to identity reuse with zero lookup rebuilds and no
+publication rejection. Four source images were viewed; the source remained
+visible and its bend changed. Final scale teardown again restored the three
+counts to one, with zero physics readback.
+
+The existing scene, shared-scene, geometry, and material contract test filter
+passed 24 of 26 tests. Both failures are direct
+`AdvancedMaterialDatabaseContractTests` dirty-range assertions. The fixed-slot
+implementation marks eight constant words per material. The tests expect
+12 words instead of 16 for two rows, and four instead of eight for replacement.
+The database and test files are unchanged by this patch. The tests do not call
+the publisher. Review also found texture range expectations that use payload
+length rather than the current two-entry slot. No tests were added or changed.
+Correct these contract expectations when test work is cleared; do not change
+production slot clearing to satisfy the old expectations.
+
+Evidence is under `Build/_AgentValidation/20261006-195917-chain-scale`:
+`reports/scene-plan-*-summary.json`, `reports/scene-plan-scope-*.json`,
+`reports/scene-cache-*.json`, and `reports/scene-plan-contracts.trx`.
+The next source change is retained source identity grouping and structural
+transaction planning. Exact primitive-count and removal delivery checks must
+remain. Failure injection, compaction, renderer replacement, multi-consumer
+checks, matched visibility, and controlled timing remain open.
+
+Both named editor sessions are stopped. The final session-log scan found no
+matches for unhandled exceptions, device loss, Vulkan error codes, terminal
+faults, `[Error]`, or `Exception`. This bounded scan does not prove that all
+warnings or other failures are absent.
+
+## Retained Source Groups And Identity Delivery
+
+Last checked: 2026-10-08 05:54 UTC. Same checkout and RTX 3090 host as the
+registration lookup comparison above.
+
+`AdvancedGpuScenePublisher.SourceGroups` now retains unique source groups and
+flat primitive draw-handle slices. Exact ordered source, primitive count,
+support state, membership generation, and complete draw handles control reuse.
+A mismatch rebuilds the whole grouping from the current captured plans and
+active registrations. Late boundary growth also forces a cold rebuild. Source
+capture, material and geometry checks, poses, bounds, output witnesses, and
+transaction capacity checks remain active. The architecture document owns the
+full contract.
+
+Failed committed identity delivery retains every recipient and its required
+clear length, including removed sources and recipients reached before a
+callback throws. Preflight reserves retry capacity. Retry recipients survive
+rejection. Successful full delivery clears the list. Membership-change and
+retry groups are not promoted. The next stable publication builds a reusable
+plan. No frame resource or output-page lease is cached.
+
+The bounded review found one further exception boundary: the profiler scope
+could throw on disposal after database commit but before the publisher recorded
+acceptance. The final source records the committed state and hides the current
+image inside that scope, immediately after successful commit. This correction
+followed the timing windows below. It does not change the normal delivery path.
+
+### Live source transitions
+
+The named Release session was `chain-identity-groups`. The first isolated
+Editor build passed with zero warnings and errors in 62.92 seconds. The next
+build included exact group counts and late-preflight invalidation. It passed
+with zero warnings and errors in 21.72 seconds.
+
+An ignored diagnostic assembly observed the actual fixture command. It changed
+the renderer from one primitive to two, then restored it. Two primitives had
+two resident draws and a two-entry identity set. Restore returned to one entry
+and one draw. Removal delivered an invalid handle. Reactivation reused draw
+slot 1 with generation 2 instead of generation 1. Settled snapshots had three
+source groups, zero group rebuilds, and zero pending recipients. Removed state
+had two groups and zero draws. Both update and render identity snapshots
+matched the expected state. The source PNGs were viewed; the mesh remained
+visible and changed bend.
+
+The first helper attempt forgot to activate the initially inactive fixture.
+It reported zero resident draws and no source identity. The helper now
+activates the source before checking it. This was a setup failure.
+
+### Callback exception limit
+
+A second ignored probe threw once from `PropertyChanged`, after the update
+identity changed during removed-source clear delivery. At 05:42:55 UTC,
+`get_time_state` reported `isRunning=false` and a terminal
+`CollectVisibleThread` / `DispatchSwapBuffers` fault with the exact injected
+exception. Main-thread MCP requests then timed out. The named session was
+stopped and rebuilt. The exception was not hidden and no CPU fallback was
+added.
+
+This check proves the callback reaches the existing terminal-fault path. It
+does not prove a later caller retry clears retained recipients, because the
+normal editor scheduler stops. Keep that runtime limit explicit. Direct
+publisher retry, repeated failures, and retry-capacity cases need contract
+tests after clearance. Do not change the timer error policy to make the probe
+pass.
+
+### Scale and scope evidence
+
+All timing windows used 2,000 chains, Vulkan Advanced rendering,
+`GpuIndirectZeroReadback`, directional shadows, and the four profiler observer
+preferences disabled. The source profile was Strict and Discrete.
+
+The first window was rejected after 530 completed frames and one rejected
+frame. Its latest native failure was `MeshMaterialization` with
+`visible-mesh-cold-admission`, 15 deferred requests, and no unavailable request.
+It is excluded from timing acceptance.
+
+| Window | Completed frames | Seconds | Completed Hz | Interval p95 ms |
+| --- | ---: | ---: | ---: | ---: |
+| `identity-groups-candidate-warm` | 715 | 30.2478504 | 23.6380 | 48.5035 |
+| `identity-groups-candidate-repeat` | 761 | 30.0932644 | 25.2881 | 46.0564 |
+
+Both accepted windows added zero deferred, rejected, or failed native frames.
+Physics readback, input failures, input buffer allocations, output failures,
+and solve failures stayed unchanged. Output epochs advanced by 764 and 823.
+Accepted shadow groups advanced with no new rejected, unconsumed, or generic
+shadow group. The repeat's before and after snapshots each had 2,000 resident
+draws, 2,002 reused source groups and registration rows, zero lookup or group
+rebuilds, zero pending recipients, and zero material resolutions. The first
+warm snapshot still contained 13 extra unsupported source rows; its final
+snapshot had 2,002 rows. These live counters are not atomic snapshots.
+
+The two wide PNGs show the grid inside the viewport. The two near PNGs show
+bent meshes. All four images were viewed. No new native visibility-member
+count was captured. CPU and GPU clocks were not controlled. The preceding
+registration-cache windows ranged from 20.867 to 23.928 Hz. These observations
+do not establish an end-to-end gain or meet the 100 Hz / 10 ms p95 targets.
+
+A separate 12-second scope probe collected 278 completed ScenePlan scopes
+from 338 profiler snapshots. All snapshots contained some incomplete scopes.
+ScenePlan mean/median/p95 was 6.8687 / 6.7206 / 8.1302 ms. IdentityDelivery mean
+was 0.5069 ms. The preceding registration-cache scope sample averaged
+6.9701 ms for ScenePlan and 0.4963 ms for IdentityDelivery. This single pair is
+diagnostic evidence, not a controlled CPU-cost result.
+
+Evidence is under `Build/_AgentValidation/20261006-195917-chain-scale/`:
+`reports/identity-groups-live-*.json`, `reports/identity-groups-fault-time-state.json`,
+`reports/identity-groups-candidate*-summary.json`, and
+`reports/identity-groups-scope.json`. The final existing scene record,
+shared-scene, geometry, and fault-injection test filter passed 25 of 25 tests.
+It does not cover source grouping. The two earlier fixed-slot material
+expectation failures remain open. No unit tests were added or changed.
+
+### Final source validation
+
+The exception-boundary correction passed the isolated Editor Release build
+with zero warnings and errors in 21.47 seconds. The normal primitive and
+removal checks passed again on these binaries. Material override and restore
+kept draw slot 1 at generation 3, while the material changed from slot 1 /
+generation 3 to slot 2 / generation 1 and then slot 1 / generation 4. Settled
+snapshots kept three reused groups, zero group rebuilds, and zero pending
+recipients. Four final source/override PNGs were viewed. The last timer snapshot
+reported `isRunning=true` and no terminal fault before the owned session was
+stopped.
+
+The scale and scope windows preceded this final exception-only correction.
+No timing gain is attributed to it. Evidence: `reports/identity-groups-override-*.json`,
+`reports/identity-groups-final-time-state.json`,
+`logs/identity-groups-commit-guard-live-checks.log`, and
+`logs/identity-groups-commit-guard-editor-start.log`. Focused new tests and the
+two stale material expectation fixes were requested under the repository's
+explicit clearance rule. No clearance was assumed.
+
+## Focused Identity And Material Contract Tests (2026-10-08 UTC)
+
+The user then cleared the focused tests. The change adds twenty publisher
+cases and fixes the two stale material test expectations. Production code is
+unchanged by this test work.
+
+The publisher fixture uses real `GPUScene`, `RenderCommandMesh3D`, triangle
+meshes, and direct `AdvancedGpuScenePublisher.Publish` calls. It swaps command
+state before sealing the scene and selects the supported `OpaqueForward`
+pass. The initial fixture omitted the command swap and used pass zero
+(`Background`). Those setup errors produced unsupported geometry and render
+pass results. Correcting the fixture produced valid canonical draws. No GPU
+or running editor is required.
+
+The new cases cover:
+
+- Stable registration and group reuse, with exact draw generations and a
+  fresh accepted publication after a content change.
+- Pinned unchanged-publication delivery, including a callback failure and
+  successful retry against the same accepted publication.
+- Primitive growth and shrink, removed sources, slot generation reuse,
+  command reorder, missing lookup entries, null sources, and unsupported
+  render passes. Each invalidation check starts with a warm cache.
+- Real lookup growth across 64 resident sources, with unique handles and
+  exact per-source mapping. Pinned old publications also force scene-journal
+  growth while preserving the logical draw and group reuse.
+- Preflight rejection, partial callback delivery, repeated failure before a
+  removed recipient receives its clear, and successful caller retry. Pending
+  recipients survive an intervening rejection.
+- Exceptions on disposal of the commit profiler scope, on entry to the
+  identity-delivery scope, and on disposal after callbacks. The accepted
+  image stays hidden, the database stays unfaulted, and all recipients remain
+  pending until retry succeeds.
+- Removed source references leaving the ordered and group caches after
+  stable recovery, and all cache references clearing on disposal with or
+  without pending recipients.
+
+The material tests require the dirty ranges to cover complete fixed slots.
+The new shrink case replaces eight constant words and two texture bindings
+with four words and one binding. It verifies the cleared tails and zero
+managed allocation during replacement. Production slot clearing is unchanged.
+
+The combined Release filter passed **52 of 52** tests in **491 ms**, with no
+compiler warnings or errors. It includes the twenty new publisher cases,
+seven material cases, and twenty-five existing scene record, shared-scene,
+geometry, and fault-injection cases. The command was:
+
+```powershell
+dotnet test XREngine.UnitTests/XREngine.UnitTests.csproj -c Release --no-restore --filter 'FullyQualifiedName~AdvancedGpuSceneIdentity|FullyQualifiedName~AdvancedMaterialDatabaseContractTests|FullyQualifiedName~AdvancedGpuSceneRecordContractTests|FullyQualifiedName~AdvancedSharedGpuSceneContractTests|FullyQualifiedName~AdvancedGeometryDatabaseContractTests|FullyQualifiedName~ValidationFaultInjectionTests'
+```
+
+The log and TRX are `logs/identity-material-regressions-final.log` and
+`reports/identity-material-regressions-final.trx` under the existing chain-scale
+evidence run. These tests close the three focused code items. They do not
+change the editor timer's terminal callback-exception policy or establish
+automatic editor recovery. No performance window was repeated for test-only
+changes. Structural transaction-plan reuse, the other test backlog, and the
+manual hardware matrix remain open.
+
+The final review added explicit hash-rebuild assertions to the stable and
+65-source growth cases. Both passed a targeted Release rerun in 273 ms, with
+no compiler warnings. Evidence: `logs/identity-lookup-final.log` and
+`reports/identity-lookup-final.trx` in the same run.

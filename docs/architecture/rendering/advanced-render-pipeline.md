@@ -40,6 +40,76 @@ FrameBegin
 - Native opaque shading reconstructs surface attributes from visibility identity, evaluates material lighting, and writes HDR scene color.
 - Late passes hold transparent, refractive, volumetric, particle, editor-overlay, gizmo, and other special work.
 
+### Scene registration identity reuse
+
+`AdvancedGpuScenePublisher` retains the registration lookup and an ordered
+array of source identities. Each row records the source reference, primitive
+index and count, support state, source group, registration slot, and complete
+draw handle. Reuse requires the same
+command count and registration membership generation. Each present row must
+still match an active registration and its draw generation. An absent source
+must match an absent cached row.
+
+Registration addition, slot reuse, removal, lookup growth, and publication
+failure invalidate this cache. A new ordered array becomes valid only after
+commit and successful source identity delivery. Successful publication reuse
+follows the same delivery rule. Shrink and disposal clear retained source
+references.
+
+The publisher also retains source groups and flat primitive-to-draw handle
+slices. Reuse requires exact ordered rows and primitive counts, unchanged
+registration membership, and no pending identity recipients. A mismatch
+rebuilds the whole grouping from active registrations and the current captured
+plans. It does not repeat source capture. Registration or lookup storage growth
+invalidates the relevant plan before commit. Scene-table journal growth alone
+can preserve these identities and groups. Current unsupported sources receive
+invalid handles.
+
+Cold delivery preserves registration order, then current command order.
+Removed sources receive cleared handles. Primitive shrink first clears the
+removed tail; the next stable group uses the smaller handle count. A failed committed delivery retains
+all recipients and their required clear lengths for a later caller retry.
+Preflight reserves this storage before commit. A rejection cannot discard it.
+Full successful delivery clears the pending list. Membership-change and retry
+groups cannot become the reusable plan; the next stable publication builds it.
+Callback exceptions still propagate to the caller. In the normal editor loop,
+they cause a terminal timer fault, so automatic retry is not guaranteed.
+
+These caches replace identity searches and grouping work. Each publication still captures
+current source state, command metadata, effective materials, poses, and GPU
+bounds sources. Existing geometry, material, temporal, resource, and transaction
+checks remain active. Structural transaction plans are rebuilt. Every identity
+callback still receives the current accepted publication. No frame resource
+or output-page lease is stored in these caches.
+
+The existing `get_render_state` response exposes
+`canonicalResidentScene.registrationIdentityReuseCount` and
+`registrationLookupRebuildCount`, plus `sourceGroupReuseCount`,
+`sourceGroupRebuildCount`, and `pendingIdentityRecipientCount`, for the latest
+publication attempt. These live
+counters can be read while the publisher is updating them. Use repeated samples
+for diagnostics; do not treat one response as an atomic publication snapshot.
+
+`AdvancedGpuSceneIdentityCacheTests` and
+`AdvancedGpuSceneIdentityCacheGrowthTests` check real scene publication without
+a graphics device. They cover exact source-to-handle mapping, warm-cache
+invalidation, capacity growth, missing and unsupported sources, failed delivery,
+and cache reference cleanup. `AdvancedGpuSceneIdentityDeliveryBoundaryTests`
+checks failures after commit and during reuse of a pinned publication. A
+successful caller retry must deliver the accepted publication and clear every
+pending recipient before the image becomes consumable.
+
+### Material payload slots
+
+`AdvancedMaterialDatabase` gives each material a fixed constant-word slot and
+a fixed texture-binding slot. Adding or replacing a payload writes its active
+entries and clears each unused tail. The dirty range covers the whole slot,
+including the cleared entries. Adjacent writes merge into one range.
+
+`AdvancedMaterialDatabaseContractTests` checks complete slots for addition,
+replacement, and payload shrink. Replacement uses no managed allocation when
+capacity is sufficient.
+
 ### Selected GPU chain debug
 
 `AppendAdvancedPhysicsDebugCommands` runs after late scene work and before

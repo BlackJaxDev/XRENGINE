@@ -175,6 +175,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         _legacyMappingCount = 0;
         _dirtyOwnerRangeCount = 0;
         _publicationRejected = false;
+        _lastRegistrationIdentityReuseCount = 0;
+        _lastRegistrationLookupRebuildCount = 0;
+        _validatedOrderedRegistrationRowCount = 0;
+        _lastSourceGroupReuseCount = 0;
+        _lastSourceGroupRebuildCount = 0;
+        _publicationStartMembershipGeneration = _registrationMembershipGeneration;
+        _useRetainedIdentityGroups = false;
 
         if (Database.PublicationFaulted)
         {
@@ -207,7 +214,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         string planFailure;
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.ScenePlan"))
         {
-            RebuildRegistrationLookup();
+            if (_registrationLookupNeedsRebuild)
+                RebuildRegistrationLookup();
             hasScenePlan = TryBuildAndPreflightWholeScenePlan(scene, frameId, out planFailure);
         }
         if (!hasScenePlan)
@@ -434,13 +442,14 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     throw new InvalidOperationException(
                         "Canonical scene commit failed after preparing a complete publication.");
                 }
+                // Record acceptance before a host profiler scope can throw on disposal.
+                publicationCommitted = true;
+                // Hide the accepted image until every command has received its
+                // corresponding identity. Notifications can call back into readers.
+                _identityDeliveryIncomplete = true;
+                _currentPublication = committed;
             }
 
-            publicationCommitted = true;
-            // Hide the accepted image until every command has received its
-            // corresponding identity. Notifications can call back into readers.
-            _identityDeliveryIncomplete = true;
-            _currentPublication = committed;
             // Command snapshots become consumable only after the exact scene
             // publication has been accepted by the database.
             using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.IdentityDelivery"))
@@ -454,6 +463,9 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             }
             CaptureCommittedMaterialPlans();
             _identityDeliveryIncomplete = false;
+            ClearPendingIdentityRecipients();
+            PromoteSourceGroups();
+            PromoteOrderedRegistrations();
             ClearPublicationFailure();
         }
         catch (Exception exception)
@@ -472,6 +484,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 // frame-package consumers until a later retry delivers every
                 // command identity; it cannot be aborted as an active transaction.
                 _identityDeliveryIncomplete = true;
+                RetainFailedIdentityRecipients();
             }
             RejectPublication(exception.Message);
             throw;
@@ -481,6 +494,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     private void RejectPublication(string reason)
     {
         _publicationRejected = true;
+        InvalidateRegistrationIdentityCache();
         if (string.Equals(_lastPublicationFailure, reason, StringComparison.Ordinal))
             return;
 
@@ -493,9 +507,6 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     private void ClearPublicationFailure()
         => _lastPublicationFailure = null;
 
-    private AdvancedGpuHandle[] _identityHandleScratch =
-        new AdvancedGpuHandle[InitialCapacity];
-
     /// <summary>
     /// Assigns renderer-facing identities only after the database sealed the
     /// publication. Primitive zero is the primary identity while the immutable
@@ -503,30 +514,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     /// </summary>
     private void PublishSourceDrawIdentities(
         in AdvancedGpuScenePublicationReference publication)
-    {
-        for (int sourceIndex = 0;
-             sourceIndex < _plannedIdentitySourceCount;
-             ++sourceIndex)
-        {
-            if (_plannedIdentitySources[sourceIndex] is not RenderCommandMesh3D command)
-                continue;
-
-            int primitiveCount = _plannedIdentityPrimitiveCounts[sourceIndex];
-            Array.Clear(_identityHandleScratch, 0, primitiveCount);
-            for (int primitiveIndex = 0; primitiveIndex < primitiveCount; ++primitiveIndex)
-            {
-                int candidateIndex = FindRegistration(command, primitiveIndex);
-                if (candidateIndex >= 0)
-                    _identityHandleScratch[primitiveIndex] =
-                        _registrations[candidateIndex].Draw;
-            }
-
-            command.PublishCanonicalDrawIdentities(
-                Database,
-                publication,
-                _identityHandleScratch.AsSpan(0, primitiveCount));
-        }
-    }
+        => PublishPreparedSourceDrawIdentities(in publication);
 
     private void CaptureAndClearDirtyOwnerRanges()
     {
@@ -822,9 +810,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             _registrations[index] = default;
             if (index == _registrationCount - 1)
                 --_registrationCount;
+            InvalidateRegistrationIdentityCache();
             failureReason = $"Registration lookup rejected index {index}; registrations={_registrationCount}/{_registrations.Length}, slots={_registrationLookupIndices.Length}, generation={_registrationLookupGeneration}";
             return -1;
         }
+        MarkRegistrationMembershipChanged();
         ++_topologyDeltaCount;
         AdvanceNonZero(ref _topologyGeneration);
         AdvanceNonZero(ref _contentGeneration);
@@ -973,6 +963,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
             registration.Active = false;
             registration.TombstoneSequence = _sequence;
+            MarkRegistrationMembershipChanged();
             ++_topologyDeltaCount;
             AdvanceNonZero(ref _topologyGeneration);
             AdvanceNonZero(ref _contentGeneration);
@@ -1010,7 +1001,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         {
             Array.Resize(ref _commandDrawHandles, checked((int)required));
             Array.Resize(ref _legacyMappings, checked((int)required));
-            Array.Resize(ref _identityHandleScratch, checked((int)required));
+            Array.Resize(ref _orderedRegistrationIdentities, checked((int)required));
         }
         if (required > (uint)_registrations.Length)
         {
@@ -1025,6 +1016,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             Array.Resize(ref _registrationLookupStamps, checked((int)lookupCapacity));
             Array.Clear(_registrationLookupStamps);
             _registrationLookupGeneration = 0u;
+            InvalidateRegistrationIdentityCache();
         }
 
         AdvancedSharedGpuSceneCapacityProfile profile = CreateCapacityProfile(required);
@@ -1101,6 +1093,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     private void RebuildRegistrationLookup()
     {
+        _registrationLookupNeedsRebuild = true;
         ++_registrationLookupGeneration;
         if (_registrationLookupGeneration == 0u)
         {
@@ -1111,6 +1104,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         for (int index = 0; index < _registrationCount; ++index)
             if (_registrations[index].Active && !TryInsertRegistrationLookup(index))
                 throw new InvalidOperationException("The fixed resident-registration lookup table is undersized.");
+        _registrationLookupNeedsRebuild = false;
+        ++_lastRegistrationLookupRebuildCount;
     }
 
     private bool TryInsertRegistrationLookup(int registrationIndex)

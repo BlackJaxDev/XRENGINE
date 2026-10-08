@@ -26,16 +26,11 @@ public sealed partial class AdvancedGpuScenePublisher
     private uint[] _plannedReleaseSlotStamps = [];
     private int[] _plannedExistingMaterialSlots = [];
     private uint[] _plannedExistingMaterialSlotStamps = [];
-    private IRenderCommandMesh?[] _plannedIdentitySources = [];
-    private int[] _plannedIdentityPrimitiveCounts = [];
-    private int[] _plannedIdentitySourceSlots = [];
-    private uint[] _plannedIdentitySourceSlotStamps = [];
     private int _plannedMaterialCount;
     private int _plannedCommandCount;
     private int _plannedMaterialReleaseCount;
     private int _resourceAcquireCount;
     private int _resourceReleaseCount;
-    private int _plannedIdentitySourceCount;
     private bool _committedMaterialPlanCacheValid;
     private AdvancedDrawSubmissionRecord[] _plannedSubmissionRecords = [];
     private AdvancedManagedDeformationSourceRow[] _plannedDeformationSources = [];
@@ -43,7 +38,6 @@ public sealed partial class AdvancedGpuScenePublisher
     private uint _plannedCommandSlotGeneration;
     private uint _plannedReleaseSlotGeneration;
     private uint _plannedExistingMaterialSlotGeneration;
-    private uint _plannedIdentitySourceSlotGeneration;
 
     /// <summary>
     /// Resolves the compatibility outcome retained for a source primitive in the
@@ -82,12 +76,7 @@ public sealed partial class AdvancedGpuScenePublisher
             Array.Resize(ref _plannedSubmissionRecords, required);
             Array.Resize(ref _plannedDeformationSources, required);
         }
-        int identityRequired = checked(required * 2);
-        if (_plannedIdentitySources.Length < identityRequired)
-        {
-            Array.Resize(ref _plannedIdentitySources, identityRequired);
-            Array.Resize(ref _plannedIdentityPrimitiveCounts, identityRequired);
-        }
+        EnsureSourceGroupCapacity(checked(required * 2));
         if (_plannedMaterials.Length < required)
         {
             Array.Resize(ref _plannedMaterials, required);
@@ -116,8 +105,10 @@ public sealed partial class AdvancedGpuScenePublisher
         GrowStampedSlots(ref _plannedCommandSlots, ref _plannedCommandSlotStamps, slotCapacity, ref _plannedCommandSlotGeneration);
         GrowStampedSlots(ref _plannedReleaseSlots, ref _plannedReleaseSlotStamps, slotCapacity, ref _plannedReleaseSlotGeneration);
         GrowStampedSlots(ref _plannedExistingMaterialSlots, ref _plannedExistingMaterialSlotStamps, slotCapacity, ref _plannedExistingMaterialSlotGeneration);
-        int identitySlotCapacity = checked((int)NextPowerOfTwo(checked(capacity * 4u)));
-        GrowStampedSlots(ref _plannedIdentitySourceSlots, ref _plannedIdentitySourceSlotStamps, identitySlotCapacity, ref _plannedIdentitySourceSlotGeneration);
+        uint sourceGroupSlots = checked(
+            (checked(capacity * 2u) + checked((uint)_pendingIdentitySourceCount)) * 2u);
+        EnsureSourceGroupLookupCapacity(
+            checked((int)NextPowerOfTwo(sourceGroupSlots)));
     }
 
     private static void GrowStampedSlots(
@@ -147,27 +138,11 @@ public sealed partial class AdvancedGpuScenePublisher
         _plannedMaterialReleaseCount = 0;
         _resourceAcquireCount = 0;
         _resourceReleaseCount = 0;
-        _plannedIdentitySourceCount = 0;
         BeginStampedPlan(ref _plannedVariantSlotGeneration, _plannedVariantSlotStamps);
         BeginStampedPlan(ref _plannedCommandSlotGeneration, _plannedCommandSlotStamps);
         BeginStampedPlan(ref _plannedReleaseSlotGeneration, _plannedReleaseSlotStamps);
         BeginStampedPlan(ref _plannedExistingMaterialSlotGeneration, _plannedExistingMaterialSlotStamps);
-        BeginStampedPlan(ref _plannedIdentitySourceSlotGeneration, _plannedIdentitySourceSlotStamps);
         BeginRegistrationPreflight();
-
-        for (int registrationIndex = 0; registrationIndex < _registrationCount; ++registrationIndex)
-        {
-            ref readonly AdvancedResidentRegistration registration =
-                ref _registrations[registrationIndex];
-            if (registration.Active && registration.Source is { } registeredSource &&
-                !TryAppendPlannedIdentitySource(
-                    registeredSource,
-                    checked(registration.PrimitiveIndex + 1)))
-            {
-                reason = "The planned canonical identity-source table is full.";
-                return false;
-            }
-        }
 
         for (uint commandIndex = 0u; commandIndex < scene.TotalCommandCount; ++commandIndex)
         {
@@ -184,6 +159,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 !scene.TryGetSourceCommand(commandIndex, out IRenderCommandMesh? source, out int primitiveIndex) ||
                 source is null)
             {
+                ValidateAbsentOrderedRegistration(checked((int)commandIndex));
                 continue;
             }
             if (!TryInsertPlannedCommand(source, primitiveIndex, checked((int)commandIndex)))
@@ -206,6 +182,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 out int sourcePrimitiveCount);
             plan.Source = source;
             plan.PrimitiveIndex = primitiveIndex;
+            plan.SourcePrimitiveCount = Math.Max(1, sourcePrimitiveCount);
             plan.Command = command;
             plan.World = world;
             plan.PreviousWorld = previousWorld;
@@ -230,13 +207,12 @@ public sealed partial class AdvancedGpuScenePublisher
             plan.MeshPrimitiveTopology = mesh?.Type ?? EPrimitiveType.Triangles;
             plan.MeshIsSkinned =
                 (command.Flags & (uint)GPUIndirectRenderFlags.Skinned) != 0u;
-            if (!TryAppendPlannedIdentitySource(source, sourcePrimitiveCount))
-            {
-                reason = "The planned canonical identity-source table is full.";
-                return false;
-            }
-
-            int registrationIndex = FindRegistration(source, primitiveIndex);
+            int registrationIndex = TryFindOrderedRegistration(
+                checked((int)commandIndex), source, primitiveIndex,
+                plan.SourcePrimitiveCount,
+                out int cachedRegistrationIndex)
+                ? cachedRegistrationIndex
+                : FindRegistration(source, primitiveIndex);
             bool geometryAlreadyValidated = registrationIndex >= 0 &&
                 HasValidatedCanonicalGeometry(in _registrations[registrationIndex], in plan);
             if (!geometryAlreadyValidated && !TryValidateCanonicalGeometry(
@@ -326,6 +302,9 @@ public sealed partial class AdvancedGpuScenePublisher
             }
         }
 
+        if (!TryPrepareSourceGroups(out reason))
+            return false;
+
         for (int registrationIndex = 0; registrationIndex < _registrationCount; ++registrationIndex)
         {
             ref readonly AdvancedResidentRegistration registration =
@@ -360,6 +339,10 @@ public sealed partial class AdvancedGpuScenePublisher
                 return false;
             }
         }
+
+        if (_useRetainedIdentityGroups && !_retainedIdentityGroupsValid &&
+            !TryPrepareSourceGroups(out reason))
+            return false;
 
         reason = string.Empty;
         return true;
@@ -463,7 +446,9 @@ public sealed partial class AdvancedGpuScenePublisher
             if (!plan.Supported || plan.Source is null)
                 continue;
 
-            int registrationIndex = FindRegistration(plan.Source, plan.PrimitiveIndex);
+            int registrationIndex = plan.RegistrationIndex >= 0
+                ? plan.RegistrationIndex
+                : FindRegistration(plan.Source, plan.PrimitiveIndex);
             if (registrationIndex < 0)
                 continue;
             ref AdvancedResidentRegistration registration =
@@ -589,12 +574,14 @@ public sealed partial class AdvancedGpuScenePublisher
         {
             Array.Resize(ref _registrations, checked((int)registrationCapacity));
             Array.Resize(ref _preflightSeenStamps, checked((int)registrationCapacity));
+            InvalidateRegistrationIdentityCache();
         }
         uint lookupCapacity = NextPowerOfTwo(checked(registrationCapacity * 2u));
         if (lookupCapacity > (uint)_registrationLookupIndices.Length)
         {
             Array.Resize(ref _registrationLookupIndices, checked((int)lookupCapacity));
             Array.Resize(ref _registrationLookupStamps, checked((int)lookupCapacity));
+            InvalidateRegistrationIdentityCache();
             RebuildRegistrationLookup();
         }
 
@@ -1031,58 +1018,6 @@ public sealed partial class AdvancedGpuScenePublisher
         InsertPlannedMaterial(materialPlanIndex);
         InsertPlannedExistingMaterial(materialPlanIndex);
         return true;
-    }
-
-    private bool TryAppendPlannedIdentitySource(
-        IRenderCommandMesh source,
-        int primitiveCount)
-    {
-        primitiveCount = Math.Max(1, primitiveCount);
-        if (_identityHandleScratch.Length < primitiveCount)
-        {
-            Array.Resize(
-                ref _identityHandleScratch,
-                checked((int)NextPowerOfTwo(checked((uint)primitiveCount))));
-        }
-        uint mask = checked((uint)_plannedIdentitySourceSlots.Length - 1u);
-        uint start = IdentitySourceHash(source) & mask;
-        for (uint probe = 0u;
-             probe < (uint)_plannedIdentitySourceSlots.Length;
-             ++probe)
-        {
-            int slot = checked((int)((start + probe) & mask));
-            if (_plannedIdentitySourceSlotStamps[slot] !=
-                _plannedIdentitySourceSlotGeneration)
-            {
-                if (_plannedIdentitySourceCount >= _plannedIdentitySources.Length)
-                    return false;
-                int index = _plannedIdentitySourceCount++;
-                _plannedIdentitySources[index] = source;
-                _plannedIdentityPrimitiveCounts[index] = primitiveCount;
-                _plannedIdentitySourceSlots[slot] = index;
-                _plannedIdentitySourceSlotStamps[slot] =
-                    _plannedIdentitySourceSlotGeneration;
-                return true;
-            }
-
-            int existingIndex = _plannedIdentitySourceSlots[slot];
-            if (!ReferenceEquals(_plannedIdentitySources[existingIndex], source))
-                continue;
-            _plannedIdentityPrimitiveCounts[existingIndex] = Math.Max(
-                _plannedIdentityPrimitiveCounts[existingIndex],
-                primitiveCount);
-            return true;
-        }
-
-        return false;
-    }
-
-    private static uint IdentitySourceHash(IRenderCommandMesh source)
-    {
-        uint hash = unchecked((uint)RuntimeHelpers.GetHashCode(source));
-        hash ^= hash >> 16;
-        hash *= 0x7FEB352Du;
-        return hash ^ (hash >> 15);
     }
 
     private bool TryAppendMaterialRelease(
@@ -1554,6 +1489,7 @@ public sealed partial class AdvancedGpuScenePublisher
         public ulong ContentSignature;
         public uint CommandIndex;
         public int PrimitiveIndex;
+        public int SourcePrimitiveCount;
         public int RegistrationIndex;
         public int MaterialPlanIndex;
         public int MeshVertexCount;
