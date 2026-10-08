@@ -74,11 +74,12 @@ public sealed class TransformPropagationWorkerTests
             int workerCount = Math.Clamp(Environment.ProcessorCount - 1, 1, 4);
             using var store = new TransformHierarchyStore();
             using var entered = new CountdownEvent(workerCount);
-            Thread?[] participants = new Thread?[workerCount];
+            (Thread? Thread, bool IsBackground)[] participants = new (Thread?, bool)[workerCount];
             ITransformPropagationWorkerPool pool = TransformPropagationWorkerServices
                 .GetRequiredFactory().Create(store, index =>
                 {
-                    participants[index] = Thread.CurrentThread;
+                    Thread participant = Thread.CurrentThread;
+                    participants[index] = (participant, participant.IsBackground);
                     entered.Signal();
                     if (!entered.Wait(WorkerBarrierTimeout))
                         throw new TimeoutException("Transform workers did not enter the batch.");
@@ -95,12 +96,12 @@ public sealed class TransformPropagationWorkerTests
 
             entered.CurrentCount.ShouldBe(0);
             var uniqueParticipants = new HashSet<Thread>();
-            foreach (Thread? captured in participants)
+            foreach (var captured in participants)
             {
-                Thread participant = captured ?? throw new AssertionException(
+                Thread participant = captured.Thread ?? throw new AssertionException(
                     "A transform worker did not enter the batch.");
                 uniqueParticipants.Add(participant);
-                participant.IsBackground.ShouldBeTrue();
+                captured.IsBackground.ShouldBeTrue();
                 participant.IsAlive.ShouldBeFalse();
             }
             uniqueParticipants.Count.ShouldBe(workerCount);
