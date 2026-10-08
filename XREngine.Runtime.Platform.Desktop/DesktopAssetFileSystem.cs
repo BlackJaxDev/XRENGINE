@@ -1,13 +1,14 @@
 using SimpleScene.Util.ssBVH;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 
 namespace XREngine.Runtime.Platform.Desktop;
 
-/// <summary>Provides host file discovery and metadata operations under ordinary filesystem permissions.</summary>
-public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IBvhDiskCacheBackend
+/// <summary>Provides host file discovery, metadata operations, and direct reads under ordinary filesystem permissions.</summary>
+public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IBvhDiskCacheBackend
 {
     public bool SupportsChangeNotifications => true;
     public IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption searchOption)
@@ -19,6 +20,8 @@ public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFil
     public IAssetChangeMonitor CreateChangeMonitor() => new DesktopAssetChangeMonitor();
 
     public bool FileExists(string path) => File.Exists(path);
+    public Stream OpenRead(string path, FileShare share) => new FileStream(path, FileMode.Open, FileAccess.Read, share);
+    public IEnumerable<string> ReadLines(string path) => File.ReadLines(path);
     public bool DirectoryExists(string path) => Directory.Exists(path);
     public void CreateDirectory(string path) => Directory.CreateDirectory(path);
     public void DeleteDirectory(string path) => Directory.Delete(path);

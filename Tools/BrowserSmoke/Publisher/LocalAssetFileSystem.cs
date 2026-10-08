@@ -1,7 +1,8 @@
 using XREngine.Core.Files;
+using XREngine.Data;
 
-/// <summary>Provides local authored-file discovery and metadata operations for the publisher.</summary>
-internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend
+/// <summary>Provides local authored-file discovery, metadata operations, and direct reads for the publisher.</summary>
+internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend
 {
     public bool SupportsChangeNotifications => false;
     public IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption option)
@@ -14,6 +15,8 @@ internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFil
         => throw new NotSupportedException("The publisher qualifier does not monitor source changes.");
 
     public bool FileExists(string path) => File.Exists(path);
+    public Stream OpenRead(string path, FileShare share) => new FileStream(path, FileMode.Open, FileAccess.Read, share);
+    public IEnumerable<string> ReadLines(string path) => File.ReadLines(path);
     public bool DirectoryExists(string path) => Directory.Exists(path);
     public void CreateDirectory(string path) => Directory.CreateDirectory(path);
     public void DeleteDirectory(string path) => Directory.Delete(path);

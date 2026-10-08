@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using XREngine.Core;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
 using YamlDotNet.Core;
@@ -793,10 +794,11 @@ namespace XREngine
                 return true;
             }
 
+            IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
             string? hint = null;
             try
             {
-                foreach (var line in File.ReadLines(assetPath).Take(128))
+                foreach (var line in files.ReadLines(assetPath).Take(128))
                 {
                     string trimmed = line.Trim();
                     if (!trimmed.StartsWith("__assetType:", StringComparison.Ordinal))

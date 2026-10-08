@@ -140,6 +140,23 @@ operations. Metadata ID lookup keeps its warning and false result when this
 fallback is unavailable. Browser, catalog, and caller-thread restrictions remain;
 this interface does not add synchronous metadata access to those modes.
 
+Direct authored YAML reads and the bounded asset-header scans use the optional
+`IRuntimeHostFileReadBackend` capability on the installed file discovery
+provider. Runtime.Core keeps YAML parsing, type resolution, and prefab load
+ordering. The Desktop leaf and smoke publisher provide file existence probes,
+read streams, and lazy line reads. YAML streams use `FileShare.ReadWrite`;
+native line reads retain `File.ReadLines`: UTF-8 by default, BOM detection,
+`FileShare.Read`, lazy enumeration, and disposal. Callers dispose streams from
+`OpenRead`. Each direct sequence captures one provider before it schedules work,
+and uses that provider for its related probes and reads. Provider replacement
+does not retarget queued I/O. Capture checks only capability; each caller keeps
+its operation owner's host-file admission rules. The converter retains its
+existing catalog branch and admission behavior. This capture is not an atomic
+lease against provider or asset-source replacement. Custom native hosts need
+the capability for these direct reads; a missing capability fails with
+`AssetSource.HostFileReadUnavailable`. Codec-only loads and packaged assets do
+not need it. This capability does not change metadata, cache, or writer APIs.
+
 `ShaderSourceResolver` and `UberShaderVariantBuilder` use captured host services
 for file reads, existence checks, timestamps, and directory discovery.
 `IShaderSourceFileBackend` owns file operations; `IAssetFileSystem` owns discovery.

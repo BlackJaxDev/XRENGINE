@@ -1,5 +1,17 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Authored YAML stream placement (2026-10-08)
+
+The five direct YAML streams, two bounded header scans, and three prefab file
+probes now use the optional host-file read provider described in
+[project organization](../../../architecture/runtime/project-organization.md).
+The shared code keeps parsing, admission, context scopes, and load ordering.
+Each direct sequence captures its provider before queued work. Nested references
+start separate operations; this does not add graph-wide ownership or source-epoch
+cancellation. Native and smoke-publisher adapters preserve sharing, encoding,
+lazy line enumeration, and stream disposal. Source review is complete; the
+selected unchanged prefab checks await Actions validation.
+
 ## Project and settings file placement (2026-10-08)
 
 Shared project and settings code now captures the installed
@@ -177,6 +189,17 @@ The direct encoded-image reads for preview, fallback art, explicit mip paths, ar
 `AssetManager.LoadAsync` already delegates catalog identities to `LoadFromRuntimeSourceAsync`, which reads and publishes the cooked texture through the captured asset owner. These frontend source import methods do not replace that route. This slice does not implement asynchronous host-file residency on a caller-thread host or migrate omitted raw-image metadata. Other asset-manager import/cache entry points and their broader ownership inventory remain open.
 
 Before this source-lease change, the focused Rendering and Host builds passed with zero warnings and errors. An ignored production-method probe passed 35 checks and verified named rejection before texture path/mipmap mutation or job scheduling, absence of source reads, preservation of loaded bytes, skipped automatic source restoration, in-memory decoding and filler generation, host capability rejection, unchanged desktop synchronous/asynchronous/grid/mipmap imports, synchronous catalog rejection and exact object/render-registry preservation after a denied path constructor. Those checks did not execute a browser texture streaming session and do not validate the new source-lease change.
+
+The source-lease change was checked at [131bc474](https://github.com/BlackJaxDev/XRENGINE/commit/131bc47470f757e1f66618a13cc77d7652e55075)
+in [run 37832524898](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37832524898).
+Test artifact `11576302041` records 97 passed tests, with no failed or skipped
+tests. This includes the existing unreadable-cache-to-original-texture fallback
+case. Its 21,525-byte ZIP has SHA-256
+`8d36da02ac8733749db22c862ea270b771d9181d1cb2fe54c245ed577b7c01aa`.
+Both build/publication jobs and five browser game jobs passed. The existing UI
+frame-progress check and unsplit native-shadow compile-wait check failed.
+This is bounded native fallback coverage, not a new source-retirement test or
+browser texture-streaming acceptance.
 
 Independent texture-boundary review found two inherited wrappers that scheduled a background job before source admission: `Import3rdPartyAsync` and `ReloadAsync(string)`. Both 2D and array textures now check the capability before delegating; the final 35-check probe covers those calls. The reviewed delayed source readers recheck at residency/preview entry. The final Rendering/probe build reports zero warnings and errors.
 
