@@ -1,6 +1,6 @@
 # Unified Runtime Requirement Ledger (2026-10-07)
 
-This dated record preserves the 163 named UR requirements and their exact status from the integration branch. It gives no new completion credit for the master merge. The [active code TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md) contains only open implementation work and the open owner decision. The [platform validation view](../../testing/platform/platform-validation.md#unified-runtime-ur-verification-view) owns open runtime, browser, hardware, and benchmark checks.
+This dated record is the authoritative 163-ID accounting source. It preserves each named UR requirement, kind, state, evidence, limits, and historical context from the integration branch. It gives no new completion credit for the master merge. The [completed-work view](unified-desktop-browser-runtime-completed-work-2026-10-08.md) contains the 122 Complete rows. The [active code TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md) contains only open implementation work and the open owner decision. The [platform validation view](../../testing/platform/platform-validation.md#unified-runtime-ur-verification-view) owns open runtime, browser, hardware, and benchmark checks.
 
 | Kind | Complete | Open | Total |
 |---|---:|---:|---:|

@@ -48,9 +48,13 @@ the cycle order, buffers, snapshots, stall checks, and exception reporting.
 The [native worker composition contract](../../../architecture/runtime/project-organization.md)
 records early registration for native Debug hosts and the two repaired tool
 entrypoints. The browser guard and compiled published stub remain.
-This source change has not yet passed its new Debug/Release startup and worker
-checks in Actions. It does not change the pinned lexical counts or establish
-whole-inventory, desktop/VR timing, or browser acceptance.
+Exact [7639e72b](https://github.com/BlackJaxDev/XRENGINE/commit/7639e72b2c0379452d5b6a292ece27865a2488af)
+[run 37850783937](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37850783937)
+passes 114 selected Release tests, 54 focused Debug tests, all six fresh-process
+startup modes, and Debug metadata cooking and verification. The [completed-work
+evidence](unified-desktop-browser-runtime-completed-work-2026-10-08.md#latest-bounded-implementation-batches)
+records exact artifact sizes and hashes. This does not change the pinned lexical
+counts or establish whole-inventory, desktop/VR timing, or browser acceptance.
 
 ## Previous committed-source refresh (2026-10-07)
 
