@@ -296,31 +296,40 @@ public partial class XRTexture2D
         Mipmap2D[] mipmaps = includeMipChain
             ? GetMipmapsFromImage(residentSource)
             : [new Mipmap2D(residentSource)];
-        double mipBuildMilliseconds = CompleteImportedTextureTiming(mipBuildStartTimestamp);
+        try
+        {
+            double mipBuildMilliseconds = CompleteImportedTextureTiming(mipBuildStartTimestamp);
 
-        cancellationToken.ThrowIfCancellationRequested();
-        uint residentMaxDimension = mipmaps.Length > 0
-            ? Math.Max(mipmaps[0].Width, mipmaps[0].Height)
-            : 0u;
+            cancellationToken.ThrowIfCancellationRequested();
+            uint residentMaxDimension = mipmaps.Length > 0
+                ? Math.Max(mipmaps[0].Width, mipmaps[0].Height)
+                : 0u;
 
-        LogImportedTextureTiming(
-            timingLabel,
-            sourceWidth,
-            sourceHeight,
-            maxResidentDimension,
-            residentMaxDimension,
-            includeMipChain,
-            mipmaps.Length,
-            decodeMilliseconds,
-            cloneMilliseconds,
-            resizeMilliseconds,
-            mipBuildMilliseconds);
+            LogImportedTextureTiming(
+                timingLabel,
+                sourceWidth,
+                sourceHeight,
+                maxResidentDimension,
+                residentMaxDimension,
+                includeMipChain,
+                mipmaps.Length,
+                decodeMilliseconds,
+                cloneMilliseconds,
+                resizeMilliseconds,
+                mipBuildMilliseconds);
 
-        return new TextureStreamingResidentData(
-            mipmaps,
-            sourceWidth,
-            sourceHeight,
-            residentMaxDimension);
+            return new TextureStreamingResidentData(
+                mipmaps,
+                sourceWidth,
+                sourceHeight,
+                residentMaxDimension);
+        }
+        catch
+        {
+            foreach (Mipmap2D mip in mipmaps)
+                mip.Data?.Dispose();
+            throw;
+        }
     }
 
     internal static void ApplyResidentData(
