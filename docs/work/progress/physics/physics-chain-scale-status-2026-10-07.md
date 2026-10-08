@@ -1,11 +1,94 @@
 # Physics Chain Scale Implementation Status
 
 Date: 2026-10-07
-Last checked: 2026-10-07 23:23 UTC
-State: Work resumed after the latest pull. Implementation and acceptance remain open.
+Last checked: 2026-10-08 06:34 UTC
+State: Registration and source-group reuse are implemented, live-checked, and contract-tested. Implementation and performance acceptance remain open.
 Code items: [Thousands-scale optimization](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md)
 Validation: [Physics validation](../../testing/physics/physics-validation.md#gpu-skinned-chain-scale)
 Investigation: [Skinned GPU chain benchmark](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
+
+## Latest Resume Result
+
+The user cleared the focused test work after live validation. Twenty new
+publisher cases now cover registration and source-group reuse, exact primitive
+handles, source changes, lookup and journal growth, preflight rejection,
+partial and repeated delivery failure, caller retry, and cache reference
+cleanup. They use real scene publication without a graphics device. Profiler
+faults test the boundary after commit, and a pinned-publication case tests
+failed delivery during reuse. No production change was needed for these tests.
+
+The two stale material expectations now require full fixed-slot dirty ranges.
+A new shrinking-payload case verifies that replacement clears unused constants
+and texture bindings while retaining zero managed allocation. The combined
+Release filter passed 52 of 52 tests in 491 ms with no compiler warnings.
+Two final hash-rebuild assertions then passed their targeted rerun.
+The three completed test items were removed from the code todo. Other test
+backlog items and the manual hardware matrix remain open.
+
+## Source Group Live Result
+
+The publisher now retains source groups and flat primitive draw-handle slices.
+Exact source, primitive count, support state, membership, and draw generation
+checks control reuse. Failed committed identity delivery retains removed and
+partly notified recipients. The next stable publication restores cache reuse
+after a successful delivery. The architecture document owns the contract.
+
+Live checks passed for one-to-two-to-one primitives, removal clear, and source
+reactivation. Reactivation changed draw slot 1 from generation 1 to 2. Settled
+source snapshots had three reused groups, zero group rebuilds, and no pending
+recipient. The two 2,000-chain windows passed at 23.638 and 25.288 completed Hz,
+with 48.504 and 46.056 ms interval p95. The repeat retained 2,002 groups with
+zero group or registration lookup rebuilds. Physics readback stayed zero.
+Full-grid and near PNGs were viewed. ScenePlan scopes averaged 6.869 ms in a
+separate diagnostic sample. These results do not prove an end-to-end gain.
+
+A deliberately thrown identity callback stopped the editor timer with a
+terminal `CollectVisibleThread` / `DispatchSwapBuffers` fault. No retry frame
+ran. Direct publisher tests now prove caller retry; the timer error policy
+is unchanged. The first scale window was excluded for a native mesh-admission
+retry. The final review also moved the committed-state record before profiler
+scope disposal, so a scope failure cannot be treated as a pre-commit failure.
+
+The earlier scene, geometry, and fault-injection filter passed 25 of 25 tests.
+The combined filter above now includes the source-group and material tests.
+Structural transaction-plan reuse is the next implementation item on this path.
+
+The final isolated Editor Release build passed with zero warnings and errors
+in 21.47 seconds. Primitive, removal, reactivation, and material override/restore
+checks passed again after the exception-boundary correction. The last live
+timer state had no terminal fault. The owned session is stopped.
+
+## Registration Lookup Result
+
+This is the earlier registration-only result. The source-group work and test
+results above supersede its open notes.
+
+The local change after `8a30b32a6` retains the registration lookup and ordered
+source/primitive/draw identities. Settled 2,000-chain snapshots show 2,002 reused
+command rows and zero registration hash rebuilds. Source removal, reactivation,
+draw generation reuse, and command material override/restoration passed live
+checks. Shrink and disposal clear removed source references. Source identity
+grouping and structural transaction plans still rebuild.
+
+The final review also corrected cleanup accounting after a failed growth
+promotion. This small correction followed the live runs and passed the
+Rendering Release build with zero warnings and errors. Fault injection is
+still open.
+
+The RTX 3090 candidate windows passed at 20.867 and 23.928 Hz, against baseline
+windows at 24.252 and 22.117 Hz. They added no bad native frame outcomes, input
+failures or growth, or physics readback. Separate scene-planning scope samples
+averaged 6.970 ms for the candidate and 7.248 ms for the baseline. This is a small
+observed scope decrease, with no proven end-to-end gain. Clocks and visible
+coverage were not matched; the last repeat overview clips front rows. The
+100 Hz and 10 ms p95 targets remain unmet.
+
+The final Release editor build has zero warnings and errors. Existing scene,
+shared-scene, geometry, and material tests passed 24 of 26 checks. Two material
+dirty-range expectations still assume packed payload lengths instead of full
+fixed slots. These tests and their database implementation are unchanged by
+this patch. No tests were added or changed. The investigation records exact
+failures, measurements, and limitations. Both owned editor sessions are stopped.
 
 ## Completed Code
 
@@ -15,6 +98,7 @@ Investigation: [Skinned GPU chain benchmark](../../investigations/physics/skinne
 | Bounds and materials | Palette-box bounds contain current and compatible previous poses. Draw-material snapshots include command overrides. Translation-class effects add padding; unsupported and non-finite effects reject the GPU route. | The full effect and backend matrix remains open. CpuDirect can still draw a command whose GPU bounds consumers reject it. |
 | Output history | Producer tokens and failure guards prevent unrelated or failed output from becoming valid previous deformation. | History and failure unit tests remain open. |
 | Covered rendering | Fully covered renderers use committed GPU output and retained static draw plans. Root motion does not require ordinary per-bone CPU bounds work. Indexed groups preserve each member's palette, deformation, and draw identity. | Partial coverage, source edits, multiple consumers, and OpenGL need their remaining checks. |
+| Registration identities and source groups | Stable ordered source/primitive rows reuse exact registration slots, draw generations, source groups, and primitive handle slices. Membership changes, count changes, registration storage growth, and failure invalidate the relevant cache. Pure journal growth preserves reuse. Failed committed delivery retains clear recipients. Promotion follows successful identity delivery. Twenty contract cases cover reuse, invalidation, retry, and reference cleanup. | Structural transaction plans still rebuild. Manual reorder, compaction, renderer replacement, and the remaining hardware checks stay open. |
 | Directional shadows | GPU culling and grouped native submission exist. Covered output publication dirties matching cached cascades; strict admission does not substitute generic CPU collection. | Native cascade slices, caster policy, and failure recovery are not fully validated. |
 | Visibility storage and counters | Group membership uses one atomic reservation with bounded writes and a clamped finalizer. Only the Vulkan visibility arena prefers mapped device-local memory. Actual memory flags control flushes; only device-memory exhaustion permits a type retry. | Matched timing and the full overflow/hardware matrix remain open. |
 | World runtime | The world owns clocks, rest-input ranges, and the bound particle graph. World/hierarchy transitions retire the old owner before propagation and block destination admission until propagation ends. | Component packing, quality, and other runtime state still need the ownership cleanup. Two-world concurrent transfer is not checked. |
@@ -29,7 +113,7 @@ source retires before Vulkan materialization, exact descriptor validation
 rejects the request. This is an explicit failure path, not a promise that
 queued debug work survives arena replacement.
 
-## Validation At This Boundary
+## Earlier Validation Evidence
 
 | Check | Result |
 | --- | --- |
@@ -375,7 +459,7 @@ This does not classify the failures as benign or establish the origin of older
 failures. The next source review will check repeated hierarchy walks; no further
 optimization is implemented from these samples.
 
-## Current Work
+## Earlier Ablation Work
 
 The phase-local collider dependency proof is deferred. Its attempted source is
 being removed. It was not built or validated and is not retained architecture.
@@ -544,20 +628,21 @@ device-loss, Vulkan-error, terminal-fault, error, or exception patterns. It
 does not prove the absence of all warnings or other failures. Final test-log
 warning review is separate from the recorded pass result.
 
-1. Resolve the persistent viewport `ResourceGenerationBlocked` failure from
-   the fifth full-grid window. Preserve its evidence. Repeat the extended
-   lifecycle check after the cause is corrected.
-2. Run the two controlled physics/rendering ablations, then capture CPU
-   scheduling and stacks to identify the critical thread. Preserve the full
-   scene as the control. Do not treat an ablated result as quality acceptance.
-   Keep collider-proof work deferred until critical-path evidence supports it.
+## Next Work
+
+1. Retain structural transaction plans. Keep exact primitive-count checks,
+   removal identity delivery, current poses/bounds, and transaction capacity
+   checks. Registration lookup and source grouping are now retained.
+2. Reproduce the earlier viewport `ResourceGenerationBlocked` failure and finish
+   extended lifecycle checks. Use controlled clocks and matched visible
+   coverage for performance comparisons. The ablations above are complete;
+   further CPU scheduling evidence must answer a specific remaining question.
 3. After live feature validation, obtain the requested unit-test clearance.
-   Update the stale layout/source expectations and add the listed history,
-   bounds, readback, ownership, and lease tests.
-4. Collect separate diagnostic GPU timing and CPU wall-time evidence. Then run
-   a matched observer-free 2,000-chain window on the corrected binary. Optimize
-   the measured critical path. Apply only the user-authorized distance-based
-   rate changes, with interpolated GPU poses and explicit quality controls.
+   Update stale layout/source and fixed-slot material dirty-range expectations.
+   Add the listed identity, history, bounds, readback, ownership, and lease tests.
+4. Separate immutable Advanced preparation templates from frame resources and
+   give the primary directional shadow tile an explicit GPU consumer contract.
+   Use the separate validation plan for timing and hardware acceptance.
 5. Continue the remaining world ownership, CPU, residency, kernel, collision,
    skinning, activity/sleep, and cleanup code items. They remain listed in the
    active todo. Do not close that document while these items or its acceptance

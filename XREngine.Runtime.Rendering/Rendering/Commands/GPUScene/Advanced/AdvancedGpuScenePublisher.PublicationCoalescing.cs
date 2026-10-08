@@ -86,11 +86,16 @@ public sealed partial class AdvancedGpuScenePublisher
         {
             PublishSourceDrawIdentities(in _currentPublication);
             _identityDeliveryIncomplete = false;
+            ClearPendingIdentityRecipients();
+            PromoteSourceGroups();
+            PromoteOrderedRegistrations();
         }
         catch (Exception exception)
         {
             _committedMaterialPlanCacheValid = false;
             _identityDeliveryIncomplete = true;
+            RetainFailedIdentityRecipients();
+            InvalidateRegistrationIdentityCache();
             RejectPublication(exception.Message);
             throw;
         }

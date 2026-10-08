@@ -24,7 +24,7 @@ public sealed class AdvancedMaterialDatabaseContractTests
     }
 
     [Test]
-    public void MaterialRows_ShareKernelIdentityAndAppendPackedPayloads()
+    public void MaterialRows_ShareKernelIdentityAndWriteFixedPayloadSlots()
     {
         AdvancedMaterialDatabase database = CreateDatabase();
         AdvancedGpuHandle layout = AddLayout(database);
@@ -63,10 +63,14 @@ public sealed class AdvancedMaterialDatabaseContractTests
         secondRow.ConstantWordOffset.ShouldBe(16u);
         firstRow.TextureReferenceOffset.ShouldBe(2u);
         secondRow.TextureReferenceOffset.ShouldBe(4u);
-        database.ConstantWords.Slice(checked((int)firstRow.ConstantWordOffset), 4).ToArray().ShouldBe(
-            new uint[] { 1u, 2u, 3u, 4u });
-        database.ConstantWords.Slice(checked((int)secondRow.ConstantWordOffset), 4).ToArray().ShouldBe(
-            new uint[] { 1u, 2u, 3u, 4u });
+        database.ConstantWords.Slice(checked((int)firstRow.ConstantWordOffset), 8).ToArray().ShouldBe(
+            new uint[] { 1u, 2u, 3u, 4u, 0u, 0u, 0u, 0u });
+        database.ConstantWords.Slice(checked((int)secondRow.ConstantWordOffset), 8).ToArray().ShouldBe(
+            new uint[] { 1u, 2u, 3u, 4u, 0u, 0u, 0u, 0u });
+        database.TextureBindings.Slice(checked((int)firstRow.TextureReferenceOffset), 2).ToArray().ShouldBe(
+            new AdvancedMaterialTextureBinding[] { textures[0], default });
+        database.TextureBindings.Slice(checked((int)secondRow.TextureReferenceOffset), 2).ToArray().ShouldBe(
+            new AdvancedMaterialTextureBinding[] { textures[0], default });
 
         database.TryConsumeMaterialDirtyRange(out AdvancedMaterialDirtyRange materialDirty)
             .ShouldBeTrue();
@@ -75,10 +79,10 @@ public sealed class AdvancedMaterialDatabaseContractTests
         materialDirty.Generation.ShouldBe(2ul);
         database.TryConsumeConstantDirtyRange(out AdvancedMaterialDirtyRange constantDirty)
             .ShouldBeTrue();
-        constantDirty.ShouldBe(new AdvancedMaterialDirtyRange(8u, 12u, 2ul));
+        constantDirty.ShouldBe(new AdvancedMaterialDirtyRange(8u, 16u, 2ul));
         database.TryConsumeTextureBindingDirtyRange(out AdvancedMaterialDirtyRange textureDirty)
             .ShouldBeTrue();
-        textureDirty.ShouldBe(new AdvancedMaterialDirtyRange(2u, 3u, 2ul));
+        textureDirty.ShouldBe(new AdvancedMaterialDirtyRange(2u, 4u, 2ul));
     }
 
     [Test]
@@ -153,24 +157,30 @@ public sealed class AdvancedMaterialDatabaseContractTests
         database.Materials.TryGet(replacement, out _).ShouldBeTrue();
     }
 
-    [Test]
-    public void MaterialReplacement_PublishesBoundedDirtyRangesWithoutAllocating()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void MaterialReplacement_PublishesBoundedDirtyRangesWithoutAllocating(bool shrinkPayload)
     {
         AdvancedMaterialDatabase database = CreateDatabase();
         AdvancedGpuHandle layout = AddLayout(database);
         AdvancedGpuHandle kernel = AddKernel(database, layout);
+        AdvancedGpuHandle initialLayout = shrinkPayload ? AddLayout(database, 8u, 2u) : layout;
+        AdvancedGpuHandle initialKernel = shrinkPayload ? AddKernel(database, initialLayout) : kernel;
         AdvancedMaterialValueDescriptor[] values = CreateValues();
-        uint[] initialConstants = [1u, 2u, 3u, 4u];
+        uint[] initialConstants = shrinkPayload
+            ? [1u, 2u, 3u, 4u, 9u, 10u, 11u, 12u]
+            : [1u, 2u, 3u, 4u];
         uint[] replacementConstants = [5u, 6u, 7u, 8u];
-        AdvancedMaterialTextureBinding[] initialTextures =
-            [CreateTextureBinding(21u, 4u)];
+        AdvancedMaterialTextureBinding[] initialTextures = shrinkPayload
+            ? [CreateTextureBinding(21u, 4u), CreateTextureBinding(23u, 6u)]
+            : [CreateTextureBinding(21u, 4u)];
         AdvancedMaterialTextureBinding[] replacementTextures =
             [CreateTextureBinding(22u, 5u)];
         AdvancedMaterialRecord source = CreateMaterialSource();
 
         database.TryAddMaterial(
-                layout,
-                kernel,
+                initialLayout,
+                initialKernel,
                 source,
                 values,
                 initialConstants,
@@ -201,15 +211,21 @@ public sealed class AdvancedMaterialDatabaseContractTests
         database.TryConsumeConstantDirtyRange(
                 out AdvancedMaterialDirtyRange constantDirty)
             .ShouldBeTrue();
-        constantDirty.ShouldBe(new AdvancedMaterialDirtyRange(8u, 4u, 2ul));
+        constantDirty.ShouldBe(new AdvancedMaterialDirtyRange(8u, 8u, 2ul));
         database.TryConsumeTextureBindingDirtyRange(
                 out AdvancedMaterialDirtyRange textureDirty)
             .ShouldBeTrue();
-        textureDirty.ShouldBe(new AdvancedMaterialDirtyRange(2u, 1u, 2ul));
+        textureDirty.ShouldBe(new AdvancedMaterialDirtyRange(2u, 2u, 2ul));
         database.Materials.TryGet(material, out AdvancedMaterialRecord row)
             .ShouldBeTrue();
         row.ConstantWordOffset.ShouldBe(8u);
         row.TextureReferenceOffset.ShouldBe(2u);
+        row.ConstantWordCount.ShouldBe(4u);
+        row.TextureReferenceCount.ShouldBe(1u);
+        database.ConstantWords.Slice(checked((int)row.ConstantWordOffset), 8).ToArray().ShouldBe(
+            new uint[] { 5u, 6u, 7u, 8u, 0u, 0u, 0u, 0u });
+        database.TextureBindings.Slice(checked((int)row.TextureReferenceOffset), 2).ToArray().ShouldBe(
+            new AdvancedMaterialTextureBinding[] { replacementTextures[0], default });
     }
 
     [Test]
@@ -256,13 +272,16 @@ public sealed class AdvancedMaterialDatabaseContractTests
             constantWordCapacity: 64u,
             textureBindingCapacity: 16u);
 
-    private static AdvancedGpuHandle AddLayout(AdvancedMaterialDatabase database)
+    private static AdvancedGpuHandle AddLayout(
+        AdvancedMaterialDatabase database,
+        uint constantWordCount = 4u,
+        uint textureReferenceCount = 1u)
     {
         AdvancedMaterialLayoutRecord record = new()
         {
-            LayoutHash = 0xACED1234ul,
-            ConstantWordCount = 4u,
-            TextureReferenceCount = 1u,
+            LayoutHash = 0xACED0000ul | ((ulong)constantWordCount << 8) | textureReferenceCount,
+            ConstantWordCount = constantWordCount,
+            TextureReferenceCount = textureReferenceCount,
             RequiredAttributeMask =
                 EAdvancedMaterialRequiredAttributeMask.Position |
                 EAdvancedMaterialRequiredAttributeMask.Normal,
