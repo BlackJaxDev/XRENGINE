@@ -35,7 +35,14 @@ namespace XREngine
         /// <returns>True if the project was loaded successfully.</returns>
         public static bool LoadProject(string projectFilePath)
         {
-            if (string.IsNullOrWhiteSpace(projectFilePath) || !File.Exists(projectFilePath))
+            if (string.IsNullOrWhiteSpace(projectFilePath))
+            {
+                Debug.LogWarning($"Project file not found: {projectFilePath}");
+                return false;
+            }
+
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project file lookup");
+            if (!files.FileExists(projectFilePath))
             {
                 Debug.LogWarning($"Project file not found: {projectFilePath}");
                 return false;
@@ -293,7 +300,8 @@ namespace XREngine
         {
             try
             {
-                if (!File.Exists(settingsPath))
+                IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Settings asset quarantine");
+                if (!files.FileExists(settingsPath))
                     return null;
 
                 string directory = Path.GetDirectoryName(settingsPath) ?? string.Empty;
@@ -303,7 +311,7 @@ namespace XREngine
                     directory,
                     $"{fileNameWithoutExtension}.invalid_{DateTimeOffset.Now:yyyyMMdd_HHmmssfff}{extension}");
 
-                File.Move(settingsPath, quarantinedPath, overwrite: false);
+                files.MoveFile(settingsPath, quarantinedPath, overwrite: false);
                 return quarantinedPath;
             }
             catch (Exception ex)
@@ -325,7 +333,8 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(settingsPath))
                 return;
 
-            if (File.Exists(settingsPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Global engine defaults load");
+            if (files.FileExists(settingsPath))
             {
                 var settings = LoadFreshSettingsAsset<EngineSettings>(settingsPath);
                 if (settings is not null)
@@ -362,7 +371,8 @@ namespace XREngine
 
             string settingsPath = CurrentProject.EngineDefaultsPath;
 
-            if (File.Exists(settingsPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project engine defaults load");
+            if (files.FileExists(settingsPath))
             {
                 var settings = LoadFreshSettingsAsset<EngineSettings>(settingsPath);
                 if (settings is not null)
@@ -382,7 +392,7 @@ namespace XREngine
 
             string? settingsDirectory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             Assets.EnsureTracked(created);
             RuntimeEngine.Rendering.ProjectDefaultSettings = created;
@@ -433,7 +443,8 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(settingsPath))
                 return;
 
-            if (File.Exists(settingsPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Global editor preferences load");
+            if (files.FileExists(settingsPath))
             {
                 var settings = LoadFreshSettingsAsset<EditorPreferences>(settingsPath);
                 if (settings is not null)
@@ -469,13 +480,14 @@ namespace XREngine
             }
 
             string settingsPath = CurrentProject.EditorPreferencesOverridesPath;
-            string loadPath = File.Exists(settingsPath)
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project editor preferences load");
+            string loadPath = files.FileExists(settingsPath)
                 ? settingsPath
-                : CurrentProject.LegacyEngineSettingsPath is string legacyPath && File.Exists(legacyPath)
+                : CurrentProject.LegacyEngineSettingsPath is string legacyPath && files.FileExists(legacyPath)
                     ? legacyPath
                     : settingsPath;
 
-            if (File.Exists(loadPath))
+            if (files.FileExists(loadPath))
             {
                 var settings = LoadFreshSettingsAsset<EditorPreferencesOverrides>(loadPath);
                 if (settings is not null)
@@ -503,13 +515,14 @@ namespace XREngine
                 return;
 
             string? legacySettingsPath = GetLegacySandboxEditorPreferencesOverridesPath();
-            string loadPath = File.Exists(settingsPath)
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Sandbox editor preferences load");
+            string loadPath = files.FileExists(settingsPath)
                 ? settingsPath
-                : !string.IsNullOrWhiteSpace(legacySettingsPath) && File.Exists(legacySettingsPath)
+                : !string.IsNullOrWhiteSpace(legacySettingsPath) && files.FileExists(legacySettingsPath)
                     ? legacySettingsPath
                     : settingsPath;
 
-            if (File.Exists(loadPath))
+            if (files.FileExists(loadPath))
             {
                 var settings = LoadFreshSettingsAsset<EditorPreferencesOverrides>(loadPath);
                 if (settings is not null)
@@ -546,7 +559,8 @@ namespace XREngine
 
             string settingsPath = CurrentProject.GameSettingsPath;
 
-            if (File.Exists(settingsPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project game settings load");
+            if (files.FileExists(settingsPath))
             {
                 var settings = LoadFreshSettingsAsset<GameStartupSettings>(settingsPath);
                 if (settings is not null)
@@ -566,7 +580,7 @@ namespace XREngine
 
             string? settingsDirectory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             Assets.EnsureTracked(created);
             GameSettings = created;
@@ -578,7 +592,8 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(settingsPath) || Assets is null)
                 return;
 
-            if (File.Exists(settingsPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Sandbox game settings load");
+            if (files.FileExists(settingsPath))
             {
                 var settings = LoadFreshSettingsAsset<GameStartupSettings>(settingsPath);
                 if (settings is not null)
@@ -598,7 +613,7 @@ namespace XREngine
 
             string? settingsDirectory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             Assets.EnsureTracked(created);
             GameSettings = created;
@@ -620,7 +635,8 @@ namespace XREngine
 
             string userSettingsPath = CurrentProject.UserSettingsPath;
 
-            if (File.Exists(userSettingsPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project user settings load");
+            if (files.FileExists(userSettingsPath))
             {
                 var loadedSettings = LoadFreshSettingsAsset<UserSettings>(userSettingsPath);
                 if (loadedSettings is not null)
@@ -638,7 +654,7 @@ namespace XREngine
 
             string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             Assets.EnsureTracked(UserSettings);
             UserSettings.MarkDirty();
@@ -650,7 +666,8 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(userSettingsPath) || Assets is null)
                 return;
 
-            if (File.Exists(userSettingsPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Sandbox user settings load");
+            if (files.FileExists(userSettingsPath))
             {
                 var loadedSettings = LoadFreshSettingsAsset<UserSettings>(userSettingsPath);
                 if (loadedSettings is not null)
@@ -668,7 +685,7 @@ namespace XREngine
 
             string? settingsDirectory = Path.GetDirectoryName(userSettingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             Assets.EnsureTracked(UserSettings);
             UserSettings.MarkDirty();
@@ -688,7 +705,8 @@ namespace XREngine
                 return;
             }
 
-            if (File.Exists(CurrentProject.BuildSettingsPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project build settings load");
+            if (files.FileExists(CurrentProject.BuildSettingsPath))
             {
                 var settings = LoadFreshSettingsAsset<BuildSettings>(CurrentProject.BuildSettingsPath);
                 if (settings is not null)
@@ -707,7 +725,8 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(buildSettingsPath) || Assets is null)
                 return;
 
-            if (File.Exists(buildSettingsPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Sandbox build settings load");
+            if (files.FileExists(buildSettingsPath))
             {
                 var settings = LoadFreshSettingsAsset<BuildSettings>(buildSettingsPath);
                 if (settings is not null)
@@ -748,9 +767,10 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(settingsPath))
                 return;
 
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Global editor preferences save");
             string? settingsDirectory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             settings.FilePath = settingsPath;
             settings.Name = "Global Editor Preferences";
@@ -774,9 +794,10 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(settingsPath))
                 return;
 
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Global engine defaults save");
             string? settingsDirectory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             settings.FilePath = settingsPath;
             settings.Name = "Global Engine Defaults";
@@ -803,9 +824,10 @@ namespace XREngine
                 return;
 
             string settingsPath = CurrentProject.EngineDefaultsPath;
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project engine defaults save");
             string? settingsDirectory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             var settings = RuntimeEngine.Rendering.ProjectDefaultSettings ?? CloneEngineSettings(RuntimeEngine.Rendering.GlobalDefaultSettings);
             settings.FilePath = settingsPath;
@@ -839,9 +861,10 @@ namespace XREngine
                 return;
 
             string settingsPath = CurrentProject.EditorPreferencesOverridesPath;
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project editor preferences save");
             string? settingsDirectory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             settings.FilePath = settingsPath;
             settings.Name = "Editor Preferences Overrides";
@@ -862,9 +885,10 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(settingsPath))
                 return;
 
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Sandbox editor preferences save");
             string? settingsDirectory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             settings.FilePath = settingsPath;
             settings.Name = "Editor Preferences Overrides";
@@ -943,9 +967,10 @@ namespace XREngine
                 return;
 
             string settingsPath = CurrentProject.GameSettingsPath;
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project game settings save");
             string? settingsDirectory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             _gameSettings.FilePath = settingsPath;
             _gameSettings.Name = "Game Settings";
@@ -964,9 +989,10 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(settingsPath))
                 return;
 
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Sandbox game settings save");
             string? settingsDirectory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(settingsDirectory))
-                Directory.CreateDirectory(settingsDirectory);
+                files.CreateDirectory(settingsDirectory);
 
             _gameSettings.FilePath = settingsPath;
             _gameSettings.Name = "Game Settings";
@@ -1006,9 +1032,10 @@ namespace XREngine
                 return;
 
             string settingsPath = CurrentProject.BuildSettingsPath;
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project build settings save");
             string? directory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(directory))
-                Directory.CreateDirectory(directory);
+                files.CreateDirectory(directory);
 
             var settings = BuildSettings ?? new BuildSettings();
             settings.FilePath = settingsPath;
@@ -1029,9 +1056,10 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(settingsPath))
                 return;
 
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Sandbox build settings save");
             string? directory = Path.GetDirectoryName(settingsPath);
             if (!string.IsNullOrWhiteSpace(directory))
-                Directory.CreateDirectory(directory);
+                files.CreateDirectory(directory);
 
             settings.FilePath = settingsPath;
             settings.Name = "Build Settings";
@@ -1090,12 +1118,14 @@ namespace XREngine
             if (Assets is null)
                 return;
 
-            static void EnsureDirectory(string? path)
+            IAssetMetadataFileBackend? files = null;
+            void EnsureDirectory(string? path)
             {
                 if (string.IsNullOrWhiteSpace(path))
                     return;
 
-                Directory.CreateDirectory(path);
+                files ??= AssetFileSystemServices.CaptureMetadataFileBackend("Project directory configuration");
+                files.CreateDirectory(path);
             }
 
             EnsureDirectory(project.AssetsDirectory);
