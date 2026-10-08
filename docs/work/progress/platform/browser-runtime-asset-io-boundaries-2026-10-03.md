@@ -9,8 +9,13 @@ The shared code keeps parsing, admission, context scopes, and load ordering.
 Each direct sequence captures its provider before queued work. Nested references
 start separate operations; this does not add graph-wide ownership or source-epoch
 cancellation. Native and smoke-publisher adapters preserve sharing, encoding,
-lazy line enumeration, and stream disposal. Source review is complete; the
-selected unchanged prefab checks await Actions validation.
+lazy line enumeration, and stream disposal. Exact [0a58f739](https://github.com/BlackJaxDev/XRENGINE/commit/0a58f73950e48ad3b61c725ea06d87f568833445)
+[run 37844113118](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37844113118)
+passed all 102 selected tests, including both unchanged partial-load and
+reference-hydration prefab cases. Test artifact `11579824339` is 22,736 bytes
+with SHA-256 `d22ba0791a6b1c72aeeb323449dc2494bd37cce4f746a323b3c8470d36098c68`.
+This is bounded native YAML-read evidence; it does not close the full I/O
+inventory or establish browser source-replacement acceptance.
 
 ## Project and settings file placement (2026-10-08)
 

@@ -18,10 +18,10 @@ internal sealed class RenderBenchWorkSchedulerScope : IDisposable
 
     public static RenderBenchWorkSchedulerScope EnsureInstalled()
     {
+        RuntimeApplicationBootstrap.PrepareWorkerServices();
         if (Engine.WorkScheduler is not null)
             return new RenderBenchWorkSchedulerScope(ownsScheduler: false);
 
-        RuntimeApplicationBootstrap.PrepareWorkerServices();
         EngineExecutionTopology topology = EngineExecutionTopology.Resolve(new EngineExecutionTopologyRequest
         {
             EffectiveProcessorCount = Environment.ProcessorCount,

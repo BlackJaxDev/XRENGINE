@@ -15,7 +15,7 @@ public static class RuntimeApplicationBootstrap
     /// <summary>Registers native logging before an application reads assets or starts workers.</summary>
     public static void PrepareLoggingServices() => DesktopLoggingBackend.EnsureRegistered();
 
-    /// <summary>Registers worker services before a host configures a threaded scheduler.</summary>
+    /// <summary>Registers native worker services before the first DEBUG Engine access or threaded scheduler setup.</summary>
     public static void PrepareWorkerServices() => DesktopWorkerBackend.EnsureRegistered();
 
     public static RuntimeApplicationProfile? CurrentProfile

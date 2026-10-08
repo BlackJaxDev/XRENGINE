@@ -6,6 +6,7 @@ using XREngine.Components;
 using XREngine.Core;
 using XREngine.Data.Core;
 using XREngine.Data.Profiling;
+using XREngine.Execution;
 using XREngine.Rendering;
 using XREngine.Timers;
 
@@ -193,8 +194,7 @@ namespace XREngine
             private readonly ConcurrentDictionary<Guid, AsyncPendingTimer> _pendingAsyncTimers = [];
             private readonly ConcurrentDictionary<long, int> _unresolvedLinkedChildrenByParentScopeId = [];
 
-            private Thread? _statsThread;
-            private CancellationTokenSource? _statsThreadCts;
+            private IProfilerStatsWorker? _statsWorker;
 
             private volatile ProfilerFrameSnapshot? _readySnapshot;
             private volatile Dictionary<int, float[]> _readyHistorySnapshot = [];
@@ -720,18 +720,13 @@ namespace XREngine
             {
                 lock (_statsThreadLock)
                 {
-                    if (_statsThread is { IsAlive: true })
+                    if (_statsWorker is { IsAlive: true })
                         return;
 
                     _lastSnapshotTicks = -1L;
-                    _statsThreadCts = new CancellationTokenSource();
-                    _statsThread = new Thread(StatsThreadMain)
-                    {
-                        IsBackground = true,
-                        Name = "XREngine.ProfilerStats",
-                        Priority = ThreadPriority.BelowNormal
-                    };
-                    _statsThread.Start(_statsThreadCts.Token);
+                    IProfilerStatsWorkerFactory factory = ProfilerStatsWorkerServices.GetRequiredFactory();
+                    _statsWorker = factory.Create(RunStatsCycle, static ex => Debug.LogException(ex));
+                    _statsWorker.Start();
                 }
             }
 
@@ -739,17 +734,17 @@ namespace XREngine
             {
                 lock (_statsThreadLock)
                 {
-                    if (_statsThread is null)
+                    if (_statsWorker is null)
                         return;
 
-                    _statsThreadCts?.Cancel();
+                    _statsWorker.RequestStop();
                     if (!waitForExit)
                         return;
 
-                    _statsThread.Join();
-                    _statsThread = null;
-                    _statsThreadCts?.Dispose();
-                    _statsThreadCts = null;
+                    IProfilerStatsWorker worker = _statsWorker;
+                    worker.WaitForExit();
+                    _statsWorker = null;
+                    worker.Dispose();
                 }
 
                 while (_overflowCompletedEvents.TryDequeue(out _)) { }
@@ -801,34 +796,20 @@ namespace XREngine
                 ResetRenderStallTracking();
             }
 
-            private void StatsThreadMain(object? state)
+            private int RunStatsCycle()
             {
-                if (state is not CancellationToken token)
-                    return;
+                int scopesProcessed = DrainCompletedScopes();
 
-                while (!token.IsCancellationRequested)
+                long nowTicks = Stopwatch.GetTimestamp();
+                if (_lastSnapshotTicks < 0L || nowTicks - _lastSnapshotTicks >= SnapshotIntervalTicks)
                 {
-                    try
-                    {
-                        int scopesProcessed = DrainCompletedScopes();
-
-                        long nowTicks = Stopwatch.GetTimestamp();
-                        if (_lastSnapshotTicks < 0L || nowTicks - _lastSnapshotTicks >= SnapshotIntervalTicks)
-                        {
-                            BuildFrameSnapshot(nowTicks);
-                            _lastSnapshotTicks = nowTicks;
-                        }
-
-                        CheckRenderThreadStall(nowTicks);
-
-                        if (scopesProcessed == 0)
-                            Thread.Sleep(StatsThreadIntervalMs);
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogException(ex);
-                    }
+                    BuildFrameSnapshot(nowTicks);
+                    _lastSnapshotTicks = nowTicks;
                 }
+
+                CheckRenderThreadStall(nowTicks);
+
+                return scopesProcessed == 0 ? StatsThreadIntervalMs : 0;
             }
 
             private int DrainCompletedScopes()
