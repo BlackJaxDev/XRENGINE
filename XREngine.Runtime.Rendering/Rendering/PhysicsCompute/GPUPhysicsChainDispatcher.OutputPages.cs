@@ -30,6 +30,31 @@ public sealed partial class GPUPhysicsChainDispatcher
     private long _outputPageBusyCount;
     private long _outputPageReuseCount;
     private long _outputPageFailureCount;
+    private long _outputPageUnpreparedBufferReleaseCount;
+
+    // A healthy ring is busy for at most a few attempts while the GPU drains. A long run
+    // of busy attempts means no page can become reusable, so retain the blocker states.
+    private const long OutputPageStallSnapshotThreshold = 60;
+    private const long OutputPageStallSnapshotRefreshInterval = 1000;
+    private long _consecutiveOutputPageBusyAttempts;
+    private long _outputPageStallEpisodeCount;
+    private PhysicsChainGpuOutputPageStallSnapshot? _firstOutputPageStall;
+    private PhysicsChainGpuOutputPageStallSnapshot? _latestOutputPageStall;
+
+    /// <summary>
+    /// Reports retained output page ring stall evidence. This is a method, not a property,
+    /// so object serializers with a property budget keep the existing diagnostics.
+    /// </summary>
+    public static PhysicsChainGpuOutputPageStallDiagnostics CaptureOutputPageStallDiagnostics()
+        => Instance.GetOutputPageStallDiagnostics();
+
+    /// <summary>Reports retained output page ring stall evidence for this dispatcher.</summary>
+    public PhysicsChainGpuOutputPageStallDiagnostics GetOutputPageStallDiagnostics()
+    {
+        lock (_outputPageSync)
+            return new(_outputPageStallEpisodeCount, _consecutiveOutputPageBusyAttempts,
+                _firstOutputPageStall, _latestOutputPageStall);
+    }
 
     /// <summary>Reports page reuse pressure without reading GPU memory.</summary>
     public PhysicsChainGpuOutputPageDiagnostics OutputPageDiagnostics
@@ -39,7 +64,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             lock (_outputPageSync)
                 return new(_outputPageBusyCount, _outputPageReuseCount,
                     _outputPageFailureCount, _publishedOutputPageIndex >= 0,
-                    _outputProducerEpoch);
+                    _outputProducerEpoch, _outputPageUnpreparedBufferReleaseCount);
         }
     }
 
@@ -86,10 +111,13 @@ public sealed partial class GPUPhysicsChainDispatcher
             page.ProducerFence?.SubmissionStatus,
             FenceIsSignaled: null,
             hasCapability,
-            GetReuseStatus(page.BoundsAtlas),
-            GetReuseStatus(page.SlotMetadata),
-            GetReuseStatus(page.CurrentPalette),
-            GetReuseStatus(page.PreviousPalette));
+            new PhysicsChainGpuOutputPageNativeReuse(
+                GetReuseStatus(page.BoundsAtlas),
+                GetReuseStatus(page.SlotMetadata),
+                GetReuseStatus(page.CurrentPalette),
+                GetReuseStatus(page.PreviousPalette)),
+            page.KnownProducerFailure,
+            page.FailureRecoveryRequested);
 
         EGpuBufferContentReuseStatus? GetReuseStatus(XRDataBuffer? buffer)
             => buffer is null || reuse is null ? null : reuse.QueryBufferContentReuse(buffer);
@@ -274,7 +302,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             _gpuDrivenSkinPaletteBuffer = null;
             _gpuDrivenPreviousSkinPaletteBuffer = null;
             if (prior is not null)
-                NotifyCommittedSpatialBoundsChanged(prior, published: false);
+                NotifyCommittedSpatialOutputChanged(prior, published: false, priorPage: null);
         }
     }
 
@@ -370,15 +398,35 @@ public sealed partial class GPUPhysicsChainDispatcher
                 page.ProducerRenderer = backend.Renderer;
                 _writingOutputPageIndex = index;
                 ++_outputPageReuseCount;
+                _consecutiveOutputPageBusyAttempts = 0;
                 return true;
             }
 
             ++_outputPageBusyCount;
+            RecordOutputPageBusyAttempt();
             return false;
         }
     }
 
-    private static bool CanReuseOutputPage(IPhysicsChainComputeBackend backend, PhysicsChainOutputPage page)
+    /// <summary>Retains page states at the start of a sustained stall and periodically during it.</summary>
+    private void RecordOutputPageBusyAttempt()
+    {
+        long attempts = ++_consecutiveOutputPageBusyAttempts;
+        if (attempts < OutputPageStallSnapshotThreshold
+            || (attempts - OutputPageStallSnapshotThreshold) % OutputPageStallSnapshotRefreshInterval != 0)
+            return;
+
+        if (attempts == OutputPageStallSnapshotThreshold)
+            ++_outputPageStallEpisodeCount;
+        // Allocates only on the stall path: once at the threshold, then once per refresh interval.
+        var snapshot = new PhysicsChainGpuOutputPageStallSnapshot(
+            _readbackFrameIndex, attempts, _outputProducerEpoch,
+            _publishedOutputPageIndex, _historyOutputPageIndex, GetOutputPageStatesSnapshot());
+        _firstOutputPageStall ??= snapshot;
+        _latestOutputPageStall = snapshot;
+    }
+
+    private bool CanReuseOutputPage(IPhysicsChainComputeBackend backend, PhysicsChainOutputPage page)
     {
         if (page.ProducerRenderer is not null
             && !ReferenceEquals(page.ProducerRenderer, backend.Renderer))
@@ -402,11 +450,14 @@ public sealed partial class GPUPhysicsChainDispatcher
             if (!host.TryGetBackendCapability<IGpuBufferContentReuseCapability>(out var capability)
                 || capability is null)
                 return false;
-            if (!IsNativeReuseReady(capability, page.BoundsAtlas)
-                || !IsNativeReuseReady(capability, page.SlotMetadata)
-                || !IsNativeReuseReady(capability, page.CurrentPalette)
-                || !IsNativeReuseReady(capability, page.PreviousPalette))
+            if (!PhysicsChainBufferReuse.TryEvaluateFreeOutputPage(capability,
+                page.BoundsAtlas, page.SlotMetadata, page.CurrentPalette, page.PreviousPalette,
+                out bool releaseBoundsAtlas, out bool releaseSlotMetadata))
                 return false;
+            if (releaseBoundsAtlas)
+                ReleaseUnpreparedBoundsBuffer(ref page.BoundsAtlas, ref _gpuBoundsAtlasBuffer);
+            if (releaseSlotMetadata)
+                ReleaseUnpreparedBoundsBuffer(ref page.SlotMetadata, ref _gpuBoundsSlotMetadataBuffer);
         }
         else if (uncertainProducer)
             return false;
@@ -417,16 +468,21 @@ public sealed partial class GPUPhysicsChainDispatcher
         return true;
     }
 
-    private static bool IsNativeReuseReady(IGpuBufferContentReuseCapability capability,
-        XRDataBuffer? buffer)
+    /// <summary>
+    /// Releases an unprepared bounds buffer of a free page and clears the dispatcher alias that
+    /// still names it. Disposal retires native storage through deferred destruction, so earlier
+    /// GPU work that referenced an older allocation stays safe.
+    /// </summary>
+    private void ReleaseUnpreparedBoundsBuffer(ref XRDataBuffer<uint>? pageBuffer,
+        ref XRDataBuffer<uint>? alias)
     {
-        if (buffer is null)
-            return true;
-        XRBufferStateSnapshot state = buffer.GetStateSnapshot();
-        // Client storage can have bytes before any native buffer exists.
-        if (!state.IsApiObjectGenerated && state.UploadedByteCount == 0u)
-            return true;
-        return capability.QueryBufferContentReuse(buffer) == EGpuBufferContentReuseStatus.Ready;
+        if (pageBuffer is null)
+            return;
+        if (ReferenceEquals(alias, pageBuffer))
+            alias = null;
+        pageBuffer.Dispose();
+        pageBuffer = null;
+        ++_outputPageUnpreparedBufferReleaseCount;
     }
 
     private void InvalidateFailedPublishedPages()
@@ -457,7 +513,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             _committedBoundsSources.Clear();
             _lastPublishedPaletteInputBoundsByRenderer.Clear();
             _paletteOutputRefreshPending = true;
-            NotifyCommittedSpatialBoundsChanged(failed, published: false);
+            NotifyCommittedSpatialOutputChanged(failed, published: false, priorPage: null);
         }
         if (_historyOutputPageIndex >= 0
             && !IsUsableOutputPage(_outputPages[_historyOutputPageIndex]))
@@ -522,7 +578,8 @@ public sealed partial class GPUPhysicsChainDispatcher
             _lastPublishedPaletteInputBoundsByRenderer.Clear();
             foreach (KeyValuePair<XRMeshRenderer, (AABB Bounds, long BoneGeneration)> entry in _pendingPaletteInputBoundsByRenderer)
                 _lastPublishedPaletteInputBoundsByRenderer.Add(entry.Key, entry.Value);
-            NotifyCommittedSpatialBoundsChanged(page, published: true);
+            NotifyCommittedSpatialOutputChanged(page, published: true,
+                _historyOutputPageIndex >= 0 ? _outputPages[_historyOutputPageIndex] : null);
             return true;
         }
     }
@@ -772,10 +829,10 @@ public sealed partial class GPUPhysicsChainDispatcher
             if (!host.TryGetBackendCapability<IGpuBufferContentReuseCapability>(out var capability)
                 || capability is null)
                 return false;
-            if (!IsNativeReuseReady(capability, page.BoundsAtlas)
-                || !IsNativeReuseReady(capability, page.SlotMetadata)
-                || !IsNativeReuseReady(capability, page.CurrentPalette)
-                || !IsNativeReuseReady(capability, page.PreviousPalette))
+            if (!PhysicsChainBufferReuse.IsReady(capability, page.BoundsAtlas)
+                || !PhysicsChainBufferReuse.IsReady(capability, page.SlotMetadata)
+                || !PhysicsChainBufferReuse.IsReady(capability, page.CurrentPalette)
+                || !PhysicsChainBufferReuse.IsReady(capability, page.PreviousPalette))
                 return false;
         }
         else if (uncertainProducer)

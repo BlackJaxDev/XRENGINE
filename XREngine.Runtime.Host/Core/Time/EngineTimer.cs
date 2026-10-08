@@ -432,6 +432,8 @@ namespace XREngine.Timers
                         return;
 
                     _renderDone.Reset();
+                    // The render thread normally waits for this serial section to publish.
+                    long swapPhaseStartTicks = Stopwatch.GetTimestamp();
 
 #if !XRE_PUBLISHED
                     using var collectSwapPublicationAllocationScope = trackAlloc
@@ -463,6 +465,7 @@ namespace XREngine.Timers
                     // this generation unavailable and terminates the loop through the outer catch.
                     Volatile.Write(ref _collectVisiblePhase, "GatePublish");
                     _visibilityGenerationGate.Publish(collectGeneration);
+                    RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordSwapPhase(Stopwatch.GetTimestamp() - swapPhaseStartTicks);
                 }
             }
             finally
@@ -875,6 +878,7 @@ namespace XREngine.Timers
 
                     ulong renderFrameId = RuntimeEngine.Rendering.BeginRenderFrame();
                     long renderFrameStartTicks = TimeTicks();
+                    long renderPhaseStartTicks = Stopwatch.GetTimestamp();
                     Engine.SetDispatchingRenderFrame(true);
                     try
                     {
@@ -886,6 +890,7 @@ namespace XREngine.Timers
                     {
                         Engine.SetDispatchingRenderFrame(false);
                     }
+                    RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderPhase(Stopwatch.GetTimestamp() - renderPhaseStartTicks);
 
 #if !XRE_PUBLISHED
                     if (trackAlloc)
@@ -932,6 +937,7 @@ namespace XREngine.Timers
                     ? Engine.Allocations.BeginScope("Visibility.Collect", AllocationScopeCategory.RenderSubmission)
                     : default;
 #endif
+                long collectPhaseStartTicks = Stopwatch.GetTimestamp();
 
                 long timestampTicks = TimeTicks();
                 long elapsedTicks = Math.Clamp(timestampTicks - Collect.LastTimestampTicks, 0L, Stopwatch.Frequency);
@@ -946,6 +952,7 @@ namespace XREngine.Timers
                 PostCollectVisible?.Invoke();
                 timestampTicks = TimeTicks();
                 Collect.ElapsedTicks = Math.Max(0L, timestampTicks - Collect.LastTimestampTicks);
+                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordCollectPhase(Stopwatch.GetTimestamp() - collectPhaseStartTicks);
                 return true;
             }
             catch (Exception e)
@@ -1031,6 +1038,7 @@ namespace XREngine.Timers
                 while (IsRunning && elapsedTicks > 0L && elapsedTicks + _updateTimeDiffTicks >= _targetUpdatePeriodTicks)
                 {
                     using var updateIterationSample = Engine.Profiler.Start("EngineTimer.DispatchUpdate.Iteration", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                    long updatePhaseStartTicks = Stopwatch.GetTimestamp();
 
 #if !XRE_PUBLISHED
                     long allocStart = 0;
@@ -1076,6 +1084,7 @@ namespace XREngine.Timers
                     {
                         PostUpdateFrame?.Invoke();
                     }
+                    RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordUpdatePhase(Stopwatch.GetTimestamp() - updatePhaseStartTicks);
 
 #if !XRE_PUBLISHED
                     if (trackAlloc)

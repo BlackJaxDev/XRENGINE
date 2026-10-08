@@ -38,7 +38,7 @@ namespace XREngine.Components.Scene.Mesh
         {
             _boneTrackingByRenderer.Add(renderer, true);
             renderer.GpuDrivenBoneCoverageChanged += RendererGpuBoneCoverageChanged;
-            renderer.CommittedWorldBoundsChanged += RendererCommittedWorldBoundsChanged;
+            renderer.CommittedOutputChanged += RendererCommittedOutputChanged;
         }
 
         private void UnregisterCommittedBoundsRenderers()
@@ -46,7 +46,7 @@ namespace XREngine.Components.Scene.Mesh
             foreach (XRMeshRenderer renderer in _boneTrackingByRenderer.Keys)
             {
                 renderer.GpuDrivenBoneCoverageChanged -= RendererGpuBoneCoverageChanged;
-                renderer.CommittedWorldBoundsChanged -= RendererCommittedWorldBoundsChanged;
+                renderer.CommittedOutputChanged -= RendererCommittedOutputChanged;
             }
             _boneTrackingByRenderer.Clear();
             Volatile.Write(ref _coveredShadowCasterLayerMask, 0);
@@ -58,9 +58,13 @@ namespace XREngine.Components.Scene.Mesh
         private void RendererGpuBoneCoverageChanged(XRMeshRenderer renderer, GpuDrivenBoneCoverageSnapshot coverage)
             => Volatile.Write(ref _committedBoundsStateDirty, 1);
 
-        private void RendererCommittedWorldBoundsChanged(XRMeshRenderer renderer, uint producerEpoch, bool published)
+        private void RendererCommittedOutputChanged(XRMeshRenderer renderer, uint producerEpoch, bool published,
+            bool boundsChanged)
         {
-            Volatile.Write(ref _committedBoundsStateDirty, 1);
+            // An unchanged committed bound keeps the CPU tree placement. Covered shadow casters
+            // still need every new output, because the GPU pose changed.
+            if (boundsChanged)
+                Volatile.Write(ref _committedBoundsStateDirty, 1);
             if (ReferenceEquals(renderer, CurrentLODRenderer) &&
                 Volatile.Read(ref _coveredShadowCasterLayerMask) != 0)
                 World?.VisualScene.NotifyCoveredShadowCasterOutputChanged(producerEpoch, published);

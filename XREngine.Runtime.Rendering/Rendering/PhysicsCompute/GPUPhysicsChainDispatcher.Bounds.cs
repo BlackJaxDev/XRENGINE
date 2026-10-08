@@ -229,6 +229,11 @@ public sealed partial class GPUPhysicsChainDispatcher
             bool spatialValid = TryBuildRendererSpatialBounds(outputPage, request, in binding,
                 in envelopeStamp, in materialContract, priorPage, out _, out var currentSpatial,
                 out var previousSpatial, out AABB spatialBounds);
+            AABB committedBounds = spatialBounds;
+            ulong committedBoundsVersion = 0UL;
+            if (spatialValid)
+                ResolveCommittedSpatialProxy(priorPage, binding.Renderer, in source, in spatialBounds,
+                    out committedBounds, out committedBoundsVersion);
             outputPage.RendererStates.Add(binding.Renderer, new(source, paletteBase,
                 paletteCount, envelopeStamp,
                 !outputPage.PaletteHistoryResetRenderers.Contains(binding.Renderer),
@@ -238,8 +243,9 @@ public sealed partial class GPUPhysicsChainDispatcher
                 CurrentSpatialState = currentSpatial,
                 PreviousSpatialState = previousSpatial,
                 PaletteSpatialStateValid = request.ResidentSpatialValid && request.ResidentSpatialInitialized,
-                CpuSpatialBounds = spatialBounds,
+                CpuSpatialBounds = committedBounds,
                 CpuSpatialBoundsValid = spatialValid,
+                CpuSpatialBoundsVersion = committedBoundsVersion,
                 MaterialPadding = materialContract.Padding,
                 MaterialBoundsSupported = materialContract.IsSupported,
                 MaterialRouteScene = binding.Component.World.GetRenderWorld()?.VisualScene.GPUCommands,

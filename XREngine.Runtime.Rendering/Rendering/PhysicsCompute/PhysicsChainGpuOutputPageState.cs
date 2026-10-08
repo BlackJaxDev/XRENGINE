@@ -18,7 +18,6 @@ public readonly record struct PhysicsChainGpuOutputPageState(
     EGpuFenceSubmissionStatus? FenceSubmissionStatus,
     bool? FenceIsSignaled,
     bool NativeReuseCapabilityAvailable,
-    EGpuBufferContentReuseStatus? BoundsAtlasReuse,
-    EGpuBufferContentReuseStatus? SlotMetadataReuse,
-    EGpuBufferContentReuseStatus? CurrentPaletteReuse,
-    EGpuBufferContentReuseStatus? PreviousPaletteReuse);
+    PhysicsChainGpuOutputPageNativeReuse NativeReuse,
+    bool KnownProducerFailure,
+    bool FailureRecoveryRequested);

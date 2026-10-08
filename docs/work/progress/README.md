@@ -9,4 +9,3 @@ Organize by subsystem under this directory, for example `progress/rendering/`.
 - [Native audio project split](audio/native-audio-project-split.md)
 - [Native subsystem integration checkpoints](platform/native-subsystem-project-split.md)
 - [Vulkan stall remediation results](rendering/vulkan-stall-remediation-results.md)
-- [Physics chain scale implementation status](physics/physics-chain-scale-status-2026-10-07.md)

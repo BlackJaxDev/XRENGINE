@@ -12,12 +12,24 @@ param(
     [string]$QualityTier = 'Authored',
     [ValidateSet('Authored', 'Discrete', 'Interpolate', 'Extrapolate')]
     [string]$InterpolationMode = 'Authored',
+    # Shared: every copy has identical mesh content and draws in one indexed instance group.
+    # Unique: every copy has distinct mesh content, so no instance group can merge copies.
+    [ValidateSet('Shared', 'Unique')]
+    [string]$MeshSharing = 'Shared',
     [string]$Label = 'physics-chain-scale',
     [string]$OutputFolder = '',
     [switch]$Telemetry,
     [switch]$CaptureEvidence,
     [switch]$RequireDirectionalShadows,
-    [switch]$UseExistingSession
+    [switch]$UseExistingSession,
+    # Measures every count in LadderChainCounts in one owned session and fits each phase.
+    [switch]$Ladder,
+    # Comma-separated counts. A string survives pwsh -File, which does not pass arrays.
+    [string]$LadderChainCounts = '1,250,500,1000,2000',
+    # Decimal or 0x-prefixed hexadecimal processor mask for the editor process.
+    [string]$CpuAffinityMask = '',
+    # Permits a window without nvidia-smi clock samples, for example on a non-NVIDIA GPU.
+    [switch]$AllowMissingGpuClocks
 )
 
 Set-StrictMode -Version Latest
@@ -28,6 +40,9 @@ $sessionTool = Join-Path $repoRoot 'Tools\Manage-McpEditorSession.ps1'
 $sessionStartedHere = $false
 $benchmarkStarted = $false
 $controllerId = $null
+$rootNodeId = $null
+$uniqueMeshesToRestore = $null
+$uniqueMeshesChanged = $false
 $summaryPath = $null
 $traceProcess = $null
 $traceCommand = $null
@@ -40,6 +55,11 @@ $sourceNodeId = $null
 $sourceChainId = $null
 $sourceProfileToRestore = $null
 $sourceProfileChanged = $false
+$editorProcess = $null
+$originalAffinity = $null
+$affinityChanged = $false
+$requestedAffinity = $null
+$nvidiaSmiPath = $null
 $summary = [ordered]@{
     label = $Label
     session = $Session
@@ -49,6 +69,7 @@ $summary = [ordered]@{
     cpuTraceSeconds = $CpuTraceSeconds
     requireDirectionalShadows = [bool]$RequireDirectionalShadows
     submissionStrategy = $SubmissionStrategy
+    meshSharing = $MeshSharing
     requestedSourceProfile = [ordered]@{ qualityTier = $QualityTier; interpolationMode = $InterpolationMode }
     accepted = $false
     reason = $null
@@ -127,6 +148,207 @@ function Get-OutcomeDelta($Before, $After) {
         rejected = $After.rejected - $Before.rejected
         failed = $After.failed - $Before.failed
     }
+}
+
+function Get-PhaseTimings($BeforeSnapshot, $AfterSnapshot, [long]$CompletedFrames) {
+    # Cumulative frame-loop phase totals from get_render_profiler_stats. They work with every
+    # observer off; the same snapshots bracket the completed-frame count.
+    $beforeTotals = $BeforeSnapshot.frame_lifecycle.phase_totals
+    $afterTotals = $AfterSnapshot.frame_lifecycle.phase_totals
+    if ($null -eq $beforeTotals -or $null -eq $afterTotals) {
+        Write-Warning 'Frame-loop phase totals are not available in this editor build.'
+        return $null
+    }
+    $timings = [ordered]@{}
+    foreach ($phase in @('update', 'collect', 'swap', 'render', 'collect_wait_for_render', 'render_wait_for_collect')) {
+        $calls = [long]$afterTotals.$phase.calls - [long]$beforeTotals.$phase.calls
+        $milliseconds = [double]$afterTotals.$phase.total_ms - [double]$beforeTotals.$phase.total_ms
+        $timings[$phase] = [ordered]@{
+            calls = $calls
+            milliseconds = $milliseconds
+            millisecondsPerCompletedFrame = $(if ($CompletedFrames -gt 0) { $milliseconds / $CompletedFrames } else { $null })
+            millisecondsPerCall = $(if ($calls -gt 0) { $milliseconds / $calls } else { $null })
+        }
+    }
+    return $timings
+}
+
+function ConvertTo-AffinityMask([string]$Text) {
+    $value = $Text.Trim()
+    try {
+        if ($value -match '^0[xX][0-9A-Fa-f]+$') { $mask = [Convert]::ToInt64($value.Substring(2), 16) }
+        else { $mask = [long]::Parse($value, [System.Globalization.CultureInfo]::InvariantCulture) }
+    } catch { throw "CpuAffinityMask '$Text' is not a decimal or 0x-prefixed hexadecimal number." }
+    $processorCount = [Environment]::ProcessorCount
+    $limit = if ($processorCount -ge 63) { [long]::MaxValue } else { ([long]1 -shl $processorCount) - 1 }
+    if ($mask -le 0 -or ($mask -band (-bnot $limit)) -ne 0) {
+        throw "CpuAffinityMask '$Text' selects no processor or a processor that does not exist."
+    }
+    return $mask
+}
+
+function ConvertTo-NullableDouble([string]$Text) {
+    $value = 0.0
+    if ([double]::TryParse($Text.Trim(), [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture, [ref]$value)) { return $value }
+    return $null
+}
+
+function Get-ActivePowerPlan {
+    $text = ''
+    try { $text = (& powercfg /getactivescheme 2>$null) -join ' ' } catch { }
+    if ($text -match '([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\s*\((.+?)\)') {
+        return [ordered]@{ guid = $matches[1]; name = $matches[2] }
+    }
+    return [ordered]@{ guid = $null; name = $null; raw = $text }
+}
+
+function Get-GpuInventory {
+    if ($null -ne $script:nvidiaSmiPath) {
+        $lines = @(& $script:nvidiaSmiPath --query-gpu=index,name,driver_version --format=csv,noheader 2>$null)
+        if ($LASTEXITCODE -eq 0) {
+            return @($lines | Where-Object { $_ } | ForEach-Object {
+                $fields = @(([string]$_) -split ',\s*')
+                [ordered]@{ index = [int]$fields[0]; name = $fields[1].Trim(); driver = $fields[2].Trim() }
+            })
+        }
+    }
+    return @(Get-CimInstance -ClassName Win32_VideoController | ForEach-Object {
+        [ordered]@{ index = $null; name = [string]$_.Name; driver = [string]$_.DriverVersion }
+    })
+}
+
+function Get-MachineState([System.Diagnostics.Process]$Process) {
+    $Process.Refresh()
+    $os = Get-CimInstance -ClassName Win32_OperatingSystem
+    return [ordered]@{
+        cpu = @(Get-CimInstance -ClassName Win32_Processor | ForEach-Object { ([string]$_.Name).Trim() })
+        logicalProcessorCount = [Environment]::ProcessorCount
+        os = "$($os.Caption) $($os.Version)"
+        gpus = Get-GpuInventory
+        powerPlan = Get-ActivePowerPlan
+        editorProcess = [ordered]@{
+            processId = $Process.Id
+            affinityMask = ('0x{0:X}' -f $Process.ProcessorAffinity.ToInt64())
+            requestedAffinityMask = $(if ($null -ne $script:requestedAffinity) { '0x{0:X}' -f $script:requestedAffinity } else { $null })
+            priorityClass = [string]$Process.PriorityClass
+        }
+        gpuClocks = $null
+    }
+}
+
+function Get-GpuClockSample([double]$ElapsedSeconds) {
+    $lines = @(& $script:nvidiaSmiPath --query-gpu=index,pstate,clocks.gr,clocks.mem,power.draw,temperature.gpu,utilization.gpu --format=csv,noheader,nounits 2>$null)
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $gpus = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($line in $lines) {
+        $fields = @(([string]$line) -split ',')
+        if ($fields.Count -lt 7) { continue }
+        $gpus.Add([ordered]@{
+            index = [int]$fields[0].Trim()
+            pstate = $fields[1].Trim()
+            graphicsMHz = ConvertTo-NullableDouble $fields[2]
+            memoryMHz = ConvertTo-NullableDouble $fields[3]
+            powerWatts = ConvertTo-NullableDouble $fields[4]
+            temperatureC = ConvertTo-NullableDouble $fields[5]
+            utilizationPercent = ConvertTo-NullableDouble $fields[6]
+        })
+    }
+    if ($gpus.Count -eq 0) { return $null }
+    return [ordered]@{ elapsedSeconds = $ElapsedSeconds; gpus = @($gpus.ToArray()) }
+}
+
+function Get-ValueRange($Values) {
+    $numbers = @($Values | Where-Object { $null -ne $_ })
+    if ($numbers.Count -eq 0) { return $null }
+    $measure = $numbers | Measure-Object -Minimum -Maximum -Average
+    return [ordered]@{ minimum = $measure.Minimum; mean = $measure.Average; maximum = $measure.Maximum }
+}
+
+function Get-GpuClockSummary($Samples) {
+    $byGpu = [ordered]@{}
+    foreach ($sample in $Samples) {
+        foreach ($gpu in $sample.gpus) {
+            $key = "gpu$($gpu.index)"
+            if (-not $byGpu.Contains($key)) { $byGpu[$key] = New-Object 'System.Collections.Generic.List[object]' }
+            $byGpu[$key].Add($gpu)
+        }
+    }
+    $result = [ordered]@{}
+    foreach ($key in $byGpu.Keys) {
+        $entries = @($byGpu[$key].ToArray())
+        $result[$key] = [ordered]@{
+            sampleCount = $entries.Count
+            pstates = @($entries | ForEach-Object { $_.pstate } | Sort-Object -Unique)
+            graphicsMHz = Get-ValueRange @($entries | ForEach-Object { $_.graphicsMHz })
+            memoryMHz = Get-ValueRange @($entries | ForEach-Object { $_.memoryMHz })
+            utilizationPercent = Get-ValueRange @($entries | ForEach-Object { $_.utilizationPercent })
+        }
+    }
+    return $result
+}
+
+function Get-LinearFit([double[]]$X, [double[]]$Y) {
+    # Ordinary least squares: fixed cost (intercept) and cost per chain (slope).
+    $n = $X.Count
+    if ($n -lt 2 -or $Y.Count -ne $n) { return $null }
+    $meanX = 0.0; $meanY = 0.0
+    for ($i = 0; $i -lt $n; $i++) { $meanX += $X[$i]; $meanY += $Y[$i] }
+    $meanX /= $n; $meanY /= $n
+    $sxx = 0.0; $sxy = 0.0; $syy = 0.0
+    for ($i = 0; $i -lt $n; $i++) {
+        $dx = $X[$i] - $meanX; $dy = $Y[$i] - $meanY
+        $sxx += $dx * $dx; $sxy += $dx * $dy; $syy += $dy * $dy
+    }
+    if ($sxx -le 0.0) { return $null }
+    $slope = $sxy / $sxx
+    return [ordered]@{
+        pointCount = $n
+        fixedMilliseconds = $meanY - $slope * $meanX
+        microsecondsPerChain = $slope * 1000.0
+        rSquared = $(if ($syy -gt 0.0) { ($sxy * $sxy) / ($sxx * $syy) } else { 1.0 })
+    }
+}
+
+function Get-PointFit($Points, [scriptblock]$Selector) {
+    $x = New-Object 'System.Collections.Generic.List[double]'
+    $y = New-Object 'System.Collections.Generic.List[double]'
+    foreach ($point in $Points) {
+        $value = & $Selector $point
+        if ($null -eq $value) { continue }
+        $x.Add([double]$point.chainCount)
+        $y.Add([double]$value)
+    }
+    return Get-LinearFit $x.ToArray() $y.ToArray()
+}
+
+function Get-LadderFits($Points) {
+    $accepted = @($Points | Where-Object { $_.accepted })
+    if ($accepted.Count -lt 2) { return $null }
+    $phases = [ordered]@{}
+    foreach ($phase in @('update', 'collect', 'swap', 'render', 'collect_wait_for_render', 'render_wait_for_collect')) {
+        $phases[$phase] = [ordered]@{
+            perCall = Get-PointFit $accepted { param($p) if ($null -eq $p.phaseTimings) { $null } else { $p.phaseTimings.$phase.millisecondsPerCall } }
+            perCompletedFrame = Get-PointFit $accepted { param($p) if ($null -eq $p.phaseTimings) { $null } else { $p.phaseTimings.$phase.millisecondsPerCompletedFrame } }
+        }
+    }
+    return [ordered]@{
+        acceptedPointCount = $accepted.Count
+        meanFrameIntervalMilliseconds = Get-PointFit $accepted { param($p) $p.meanFrameIntervalMilliseconds }
+        frameIntervalP95Milliseconds = Get-PointFit $accepted { param($p) $p.frameIntervalP95Milliseconds }
+        phases = $phases
+    }
+}
+
+function Wait-ForBenchmarkTeardown([int]$TimeoutSeconds) {
+    # Gradual teardown restores the single source chain before the next start.
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ((Get-Count) -le 1) { return $true }
+        Start-Sleep -Seconds 1
+    }
+    Write-Warning "Benchmark teardown did not finish within $TimeoutSeconds seconds."
+    return $false
 }
 
 function Assert-StableOutcomes($Before, $After) {
@@ -265,6 +487,116 @@ try {
     if ([string]::IsNullOrWhiteSpace($script:endpoint)) { throw 'Session has no MCP endpoint.' }
 
     Invoke-ScaleTool 'set_editor_preference' @{ property_name = 'McpDispatchMode'; value = 'MainThread'; session_only = $true } | Out-Null
+
+    $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+    if ($null -ne $nvidiaSmi) { $script:nvidiaSmiPath = $nvidiaSmi.Source }
+    elseif (-not $AllowMissingGpuClocks) {
+        throw 'nvidia-smi was not found. Add it to PATH, or pass -AllowMissingGpuClocks to measure without GPU clock samples.'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($CpuAffinityMask)) { $requestedAffinity = ConvertTo-AffinityMask $CpuAffinityMask }
+
+    if ($Ladder) {
+        # Each point runs this script in a child process against the same owned session,
+        # so the single-window path below stays the only measurement implementation.
+        $parsedCounts = New-Object 'System.Collections.Generic.List[int]'
+        foreach ($token in ($LadderChainCounts -split '[,\s]+')) {
+            if ([string]::IsNullOrWhiteSpace($token)) { continue }
+            $value = 0
+            if (-not [int]::TryParse($token, [ref]$value) -or $value -lt 1 -or $value -gt 10000) {
+                throw "LadderChainCounts contains '$token'; each count must be an integer from 1 to 10000."
+            }
+            $parsedCounts.Add($value)
+        }
+        $counts = @($parsedCounts.ToArray() | Sort-Object -Unique)
+        if ($counts.Count -lt 2) { throw 'A ladder needs at least two distinct chain counts.' }
+        $summary = [ordered]@{
+            label = $Label
+            session = $Session
+            ladder = $true
+            chainCounts = $counts
+            windowSeconds = $WindowSeconds
+            submissionStrategy = $SubmissionStrategy
+            meshSharing = $MeshSharing
+            requestedSourceProfile = [ordered]@{ qualityTier = $QualityTier; interpolationMode = $InterpolationMode }
+            cpuAffinityMask = $(if ($null -ne $requestedAffinity) { '0x{0:X}' -f $requestedAffinity } else { $null })
+            accepted = $false
+            reason = $null
+            points = $null
+            fits = $null
+        }
+        $summaryPath = Join-Path $outputPath "$safeLabel-ladder-summary.json"
+        $hostPath = (Get-Process -Id $PID).Path
+        $points = New-Object 'System.Collections.Generic.List[object]'
+        foreach ($count in $counts) {
+            $teardownFinished = Wait-ForBenchmarkTeardown 90
+            $pointLabel = "$Label-$count"
+            $pointSafeLabel = [regex]::Replace($pointLabel, '[^A-Za-z0-9._-]', '-')
+            $childArgs = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath,
+                '-Session', $Session, '-UseExistingSession', '-ChainCount', [string]$count,
+                '-WindowSeconds', [string]$WindowSeconds, '-SubmissionStrategy', $SubmissionStrategy,
+                '-QualityTier', $QualityTier, '-InterpolationMode', $InterpolationMode,
+                '-MeshSharing', $MeshSharing, '-Label', $pointLabel, '-OutputFolder', $outputPath)
+            if ($Telemetry) { $childArgs += '-Telemetry' }
+            if ($CaptureEvidence) { $childArgs += '-CaptureEvidence' }
+            if ($RequireDirectionalShadows) { $childArgs += '-RequireDirectionalShadows' }
+            if ($AllowMissingGpuClocks) { $childArgs += '-AllowMissingGpuClocks' }
+            if ($CpuTraceSeconds -gt 0) { $childArgs += @('-CpuTraceSeconds', [string]$CpuTraceSeconds) }
+            if ($null -ne $requestedAffinity) { $childArgs += @('-CpuAffinityMask', $CpuAffinityMask) }
+            # Windows PowerShell 5.1 turns redirected native stderr into terminating errors under Stop.
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { & $hostPath @childArgs > (Join-Path $outputPath "$pointSafeLabel-console.log") 2>&1 }
+            finally { $ErrorActionPreference = $previousPreference }
+            $exitCode = $LASTEXITCODE
+            $pointSummaryPath = Join-Path $outputPath "$pointSafeLabel-summary.json"
+            $point = [ordered]@{
+                chainCount = $count
+                summaryPath = $pointSummaryPath
+                exitCode = $exitCode
+                teardownFinishedBeforeStart = $teardownFinished
+                accepted = $false
+                reason = 'The point wrote no summary.'
+                completedHz = $null
+                meanFrameIntervalMilliseconds = $null
+                frameIntervalP95Milliseconds = $null
+                phaseTimings = $null
+                gpuClocks = $null
+            }
+            if (Test-Path -LiteralPath $pointSummaryPath) {
+                $pointSummary = Get-Content -LiteralPath $pointSummaryPath -Raw | ConvertFrom-Json
+                $point.accepted = [bool]$pointSummary.accepted
+                $point.reason = $pointSummary.reason
+                if ($null -ne $pointSummary.PSObject.Properties['completedHz'] -and [double]$pointSummary.completedHz -gt 0) {
+                    $point.completedHz = [double]$pointSummary.completedHz
+                    $point.meanFrameIntervalMilliseconds = 1000.0 / [double]$pointSummary.completedHz
+                }
+                if ($null -ne $pointSummary.PSObject.Properties['frameIntervalP95Milliseconds']) {
+                    $point.frameIntervalP95Milliseconds = $pointSummary.frameIntervalP95Milliseconds
+                }
+                if ($null -ne $pointSummary.PSObject.Properties['phaseTimings']) { $point.phaseTimings = $pointSummary.phaseTimings }
+                if ($null -ne $pointSummary.PSObject.Properties['machineState'] -and $null -ne $pointSummary.machineState) {
+                    $point.gpuClocks = $pointSummary.machineState.gpuClocks.summary
+                }
+            }
+            $points.Add($point)
+        }
+        Wait-ForBenchmarkTeardown 90 | Out-Null
+        $summary.points = @($points.ToArray())
+        $summary.fits = Get-LadderFits $summary.points
+        $summary.accepted = @($summary.points | Where-Object { -not $_.accepted }).Count -eq 0
+        if (-not $summary.accepted) {
+            $summary.reason = 'At least one ladder point was not accepted. The fits use accepted points only.'
+        }
+        return
+    }
+
+    $editorProcess = Get-Process -Id ([int]$sessionView.processId) -ErrorAction Stop
+    if ($null -ne $requestedAffinity) {
+        $originalAffinity = $editorProcess.ProcessorAffinity
+        $editorProcess.ProcessorAffinity = [IntPtr]$requestedAffinity
+        $affinityChanged = $true
+    }
+
     $submissionOverrideToRestore = (Invoke-ScaleTool 'invoke_method' @{
         type_name = 'XREnvironment'; method_name = 'GetState'
         arguments = @('XRE_FORCE_MESH_SUBMISSION_STRATEGY')
@@ -296,6 +628,14 @@ try {
     $controllers = @($rootInfo.components | Where-Object { $_.type -like '*MathIntersectionsWorldControllerComponent' })
     if ($controllers.Count -ne 1) { throw "Expected one Math Intersections controller; found $($controllers.Count)." }
     $controllerId = [string]$controllers[0].id
+    $rootNodeId = [string]$root.id
+    $uniqueMeshesToRestore = [bool](Invoke-ScaleTool 'get_component_property' @{
+        node_id = $rootNodeId; component_id = $controllerId; property_name = '_benchmarkUniqueMeshes'
+    }).value
+    $uniqueMeshesChanged = $true
+    Invoke-ScaleTool 'set_component_property' @{
+        node_id = $rootNodeId; component_id = $controllerId; property_name = '_benchmarkUniqueMeshes'; value = ($MeshSharing -eq 'Unique')
+    } | Out-Null
 
     $qualityNames = @('Strict', 'Hz30', 'Hz15', 'Hz7_5', 'Sleep', 'Automatic')
     $interpolationNames = @('Discrete', 'Interpolate', 'Extrapolate')
@@ -359,6 +699,30 @@ try {
         }
     } while (($readinessEnd.completed - $readinessStart.completed) -lt 30)
 
+    # Clean frame outcomes do not prove a warm frame. Physics output must advance, and a
+    # late directional shadow pipeline compile retries frames internally, which settles the
+    # physics markers of the dropped plan as PlanUnsubmitted inside the window. Wait for
+    # accepted shadow groups with no new rejections. A stalled physics ring fails at once.
+    while ($true) {
+        $healthStart = Get-DispatcherSnapshot
+        $shadowStart = (Invoke-ScaleTool 'get_render_state' @{ viewport_index = 0 }).directionalShadowLane
+        Start-Sleep -Seconds 1
+        $healthEnd = Get-DispatcherSnapshot
+        $shadowEnd = (Invoke-ScaleTool 'get_render_state' @{ viewport_index = 0 }).directionalShadowLane
+        if ([long]$healthEnd.DispatchDiagnostics.properties.FailureCount -ne [long]$healthStart.DispatchDiagnostics.properties.FailureCount -or
+            [long]$healthEnd.OutputPageDiagnostics.properties.ProducerEpoch -le [long]$healthStart.OutputPageDiagnostics.properties.ProducerEpoch) {
+            throw "Physics output is not advancing after readiness: $($healthEnd.DispatchDiagnostics.properties.LastFailureStage), producer epoch $($healthEnd.OutputPageDiagnostics.properties.ProducerEpoch)."
+        }
+        $shadowsWarm = $null -eq $shadowEnd -or -not $shadowEnd.enabled -or
+            ([long]$shadowEnd.acceptedGroups -gt [long]$shadowStart.acceptedGroups -and
+                [long]$shadowEnd.rejectedGroups -eq [long]$shadowStart.rejectedGroups)
+        if ($shadowsWarm) { break }
+        if ([DateTime]::UtcNow -ge $readyDeadline) {
+            throw "Directional shadow admission did not settle before the readiness limit: accepted $($shadowEnd.acceptedGroups), rejected $($shadowEnd.rejectedGroups), $($shadowEnd.lastDeclineReason)."
+        }
+    }
+    $summary.warmGate = [ordered]@{ shadowAcceptedGroups = $shadowEnd.acceptedGroups; shadowRejectedGroups = $shadowEnd.rejectedGroups }
+
     $beforeDispatcher = Get-DispatcherSnapshot
     $beforeDispatcher | ConvertTo-Json -Depth 40 |
         Set-Content -LiteralPath (Join-Path $outputPath "$safeLabel-dispatcher-before.json") -Encoding UTF8
@@ -388,8 +752,11 @@ try {
     }
     @{ startedUtc = [DateTime]::UtcNow.ToString('O'); chainCount = $ChainCount; windowSeconds = $WindowSeconds } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $outputPath "$safeLabel-window-start.json") -Encoding UTF8
+    $summary.machineState = Get-MachineState $editorProcess
+    $gpuClockSamples = New-Object 'System.Collections.Generic.List[object]'
     $beforeIntervals = Get-CompletedFrameIntervals
     $beforeOutcomes = Get-OutcomeCounts
+    $beforeProfilerSnapshot = $script:lastProfilerSnapshot
     $samples = New-Object 'System.Collections.Generic.List[object]'
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
     if ($CpuTraceSeconds -gt 0) {
@@ -412,17 +779,32 @@ try {
         $count = Get-Count
         if ($count -ne $ChainCount) { throw "Registered chain count changed to $count during the window." }
         $samples.Add([ordered]@{ elapsedSeconds = $timer.Elapsed.TotalSeconds; completed = $sample.completed; registeredChainCount = $count })
+        if ($null -ne $script:nvidiaSmiPath) {
+            $clockSample = Get-GpuClockSample $timer.Elapsed.TotalSeconds
+            if ($null -ne $clockSample) { $gpuClockSamples.Add($clockSample) }
+        }
         # Slow tool calls skip missed slots instead of extending the wall-clock window.
         $nextSampleSeconds = [Math]::Floor($timer.Elapsed.TotalSeconds) + 1.0
     }
     $afterOutcomes = Get-OutcomeCounts
     $timer.Stop()
+    $afterProfilerSnapshot = $script:lastProfilerSnapshot
     $delta = Get-OutcomeDelta $beforeOutcomes $afterOutcomes
     $summary.elapsedSeconds = $timer.Elapsed.TotalSeconds
     $summary.sampleCount = $samples.Count
     $summary.completedHz = $delta.completed / $timer.Elapsed.TotalSeconds
     $summary.outcomeChanges = $delta
+    $summary.phaseTimings = Get-PhaseTimings $beforeProfilerSnapshot $afterProfilerSnapshot $delta.completed
     $summary.samples = @($samples.ToArray())
+    $summary.machineState.gpuClocks = [ordered]@{
+        source = $(if ($null -ne $script:nvidiaSmiPath) { 'nvidia-smi' } else { 'unavailable' })
+        sampleCount = $gpuClockSamples.Count
+        summary = Get-GpuClockSummary @($gpuClockSamples.ToArray())
+        samples = @($gpuClockSamples.ToArray())
+    }
+    if ($null -ne $script:nvidiaSmiPath -and $gpuClockSamples.Count -eq 0) {
+        throw 'GPU clock sampling returned no samples inside the timed window.'
+    }
     if ($null -ne $traceProcess) {
         if (-not $traceProcess.WaitForExit(30000)) { throw 'The CPU trace did not stop after its bounded window.' }
         if ($traceProcess.ExitCode -ne 0) { throw "The CPU trace failed with exit code $($traceProcess.ExitCode)." }
@@ -496,6 +878,23 @@ try {
         $afterRenderState.canonicalFramePackage.submission.downgraded) {
         throw 'The frozen submission strategy changed during the window.'
     }
+    if ($SubmissionStrategy -eq 'GpuIndirectZeroReadback') {
+        # Indexed instance groups merge payloads with identical content. Each unique copy
+        # needs its own group; shared copies need fewer groups than copies.
+        $inputShape = (Invoke-ScaleTool 'get_advanced_profile_diagnostics' @{ viewport_index = 0 }).framePlanInputCopyDiagnostics
+        if ($null -eq $inputShape) { throw 'Advanced visibility input diagnostics are not available.' }
+        $summary.meshSharingEvidence = [ordered]@{
+            payloadCount = [int]$inputShape.LatestPayloadCount
+            indexedInstanceGroupCount = [int]$inputShape.LatestIndexedInstanceGroupCount
+        }
+        $groupCount = $summary.meshSharingEvidence.indexedInstanceGroupCount
+        if ($MeshSharing -eq 'Unique' -and $groupCount -lt $ChainCount) {
+            throw "Unique meshes formed $groupCount indexed instance groups for $ChainCount chains; content is shared."
+        }
+        if ($MeshSharing -eq 'Shared' -and $ChainCount -gt 1 -and $groupCount -ge $ChainCount) {
+            throw "Shared meshes formed $groupCount indexed instance groups for $ChainCount chains; instancing did not merge them."
+        }
+    }
     if ([long]$afterIntervals.ResetCount -ne [long]$beforeIntervals.ResetCount -or
         -not [bool]$afterIntervals.IsValid -or [long]$afterIntervals.DroppedSampleCount -ne 0 -or
         [long]$afterIntervals.SampleCount -lt $delta.completed) {
@@ -565,6 +964,10 @@ catch {
                 Set-Content -LiteralPath (Join-Path $outputPath "$safeLabel-failure-profiler.json") -Encoding UTF8
             Get-DispatcherSnapshot | ConvertTo-Json -Depth 40 |
                 Set-Content -LiteralPath (Join-Path $outputPath "$safeLabel-failure-dispatcher.json") -Encoding UTF8
+            [ordered]@{
+                pages = (Invoke-ScaleTool 'invoke_method' @{ type_name = 'GPUPhysicsChainDispatcher'; method_name = 'CaptureOutputPageStates'; arguments = @() }).result
+                stalls = (Invoke-ScaleTool 'invoke_method' @{ type_name = 'GPUPhysicsChainDispatcher'; method_name = 'CaptureOutputPageStallDiagnostics'; arguments = @() }).result
+            } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $outputPath "$safeLabel-failure-output-pages.json") -Encoding UTF8
             Invoke-ScaleTool 'get_render_state' @{ viewport_index = 0 } | ConvertTo-Json -Depth 40 |
                 Set-Content -LiteralPath (Join-Path $outputPath "$safeLabel-failure-render-state.json") -Encoding UTF8
         } catch { Write-Warning "Could not capture benchmark failure state: $($_.Exception.Message)" }
@@ -578,6 +981,13 @@ finally {
     if ($benchmarkStarted -and -not [string]::IsNullOrWhiteSpace($controllerId)) {
         try { Invoke-ScaleTool 'invoke_method' @{ object_id = $controllerId; method_name = 'SetBenchmarkRunToggle'; arguments = @($false, $false) } | Out-Null }
         catch { Write-Warning "Could not stop benchmark: $($_.Exception.Message)" }
+    }
+    if ($uniqueMeshesChanged) {
+        try {
+            Invoke-ScaleTool 'set_component_property' @{
+                node_id = $rootNodeId; component_id = $controllerId; property_name = '_benchmarkUniqueMeshes'; value = $uniqueMeshesToRestore
+            } | Out-Null
+        } catch { Write-Warning "Could not restore the benchmark mesh-sharing mode: $($_.Exception.Message)" }
     }
     if ($sourceProfileChanged -and $null -ne $sourceProfileToRestore) {
         $restoreFailures = @()
@@ -614,6 +1024,10 @@ finally {
                 } | Out-Null
             }
         } catch { Write-Warning "Could not restore submission strategy: $($_.Exception.Message)" }
+    }
+    if ($affinityChanged -and $null -ne $editorProcess) {
+        try { if (-not $editorProcess.HasExited) { $editorProcess.ProcessorAffinity = $originalAffinity } }
+        catch { Write-Warning "Could not restore the editor processor affinity: $($_.Exception.Message)" }
     }
     if ($sessionStartedHere) {
         try { & $sessionTool Stop -Name $Session -AsJson | Out-Null }
