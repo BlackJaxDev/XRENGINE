@@ -13,4 +13,9 @@ public static class RuntimeFileDiscoveryServices
 
     public static IRuntimeFileDiscovery Required => Current ?? throw new NotSupportedException(
         "File discovery is not installed. The host must provide its storage enumeration capability.");
+
+    /// <summary>Captures the installed host-file read capability. Callers keep their operation owner's host-file admission rules.</summary>
+    public static IRuntimeHostFileReadBackend CaptureHostFileReadBackend()
+        => Current as IRuntimeHostFileReadBackend ?? throw new NotSupportedException(
+            "AssetSource.HostFileReadUnavailable: the installed file system does not provide direct host-file reads.");
 }

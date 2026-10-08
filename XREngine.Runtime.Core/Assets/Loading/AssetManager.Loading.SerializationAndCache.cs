@@ -45,8 +45,9 @@ namespace XREngine
                 return (T)directAsset!;
 
             EnsureYamlAssetRuntimeSupported(filePath);
+            IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
             AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.OpeningFile, "Opening asset file...", 0.12f);
-            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var fs = files.OpenRead(filePath, FileShare.ReadWrite);
             using var reader = new StreamReader(fs);
             using var scope = AssetDeserializationContext.Push(filePath);
             ResetYamlReadContext();
@@ -67,16 +68,17 @@ namespace XREngine
                 return directAsset;
 
             EnsureYamlAssetRuntimeSupported(filePath);
+            IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
             if (type.IsAbstract || type.IsInterface)
             {
-                if (TryResolveConcreteAssetTypeFromHeader(filePath, type, out Type concreteType))
+                if (TryResolveConcreteAssetTypeFromHeader(filePath, type, files, out Type concreteType))
                     type = concreteType;
                 else
                     throw CreateMissingAssetTypeRegistrationException(filePath, type);
             }
 
             AssetLoadProgressContext.ReportStage(AssetLoadProgressStage.OpeningFile, "Opening asset file...", 0.12f);
-            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var fs = files.OpenRead(filePath, FileShare.ReadWrite);
             using var reader = new StreamReader(fs);
             using var scope = AssetDeserializationContext.Push(filePath);
             ResetYamlReadContext();
@@ -107,9 +109,10 @@ namespace XREngine
             }
 
             EnsureYamlAssetRuntimeSupported(filePath);
+            IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
             return await Task.Run(() =>
             {
-                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var fs = files.OpenRead(filePath, FileShare.ReadWrite);
                 using var reader = new StreamReader(fs);
                 using var scope = AssetDeserializationContext.Push(filePath);
                 ResetYamlReadContext();
@@ -140,17 +143,18 @@ namespace XREngine
             }
 
             EnsureYamlAssetRuntimeSupported(filePath);
+            IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
             return await Task.Run(() =>
             {
                 if (type.IsAbstract || type.IsInterface)
                 {
-                    if (TryResolveConcreteAssetTypeFromHeader(filePath, type, out Type concreteType))
+                    if (TryResolveConcreteAssetTypeFromHeader(filePath, type, files, out Type concreteType))
                         type = concreteType;
                     else
                         throw CreateMissingAssetTypeRegistrationException(filePath, type);
                 }
 
-                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var fs = files.OpenRead(filePath, FileShare.ReadWrite);
                 using var reader = new StreamReader(fs);
                 using var scope = AssetDeserializationContext.Push(filePath);
                 ResetYamlReadContext();
@@ -158,7 +162,8 @@ namespace XREngine
             }).ConfigureAwait(false);
         }
 
-        private static bool TryResolveConcreteAssetTypeFromHeader(string assetPath, Type expectedType, out Type type)
+        private static bool TryResolveConcreteAssetTypeFromHeader(
+            string assetPath, Type expectedType, IRuntimeHostFileReadBackend files, out Type type)
         {
             type = typeof(XRAsset);
             if (string.IsNullOrWhiteSpace(assetPath))
@@ -169,7 +174,7 @@ namespace XREngine
             try
             {
                 int scanned = 0;
-                foreach (string line in File.ReadLines(assetPath))
+                foreach (string line in files.ReadLines(assetPath))
                 {
                     if (++scanned > 128)
                         break;

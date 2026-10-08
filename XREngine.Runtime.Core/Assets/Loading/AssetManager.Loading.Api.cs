@@ -1,5 +1,6 @@
 using XREngine.Core.Engine;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Scene.Prefabs;
 
@@ -19,15 +20,16 @@ public static class AssetManagerPrefabLoadingExtensions
             throw new NotSupportedException("AssetSource.PartialYamlUnavailable: packaged prefabs are cooked graphs; use LoadPrefabWithReferencesAsync to load their catalog dependency closure.");
 
         assets.EnsureHostFileAssetAccess();
+        IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
 
-        if (!File.Exists(filePath))
+        if (!files.FileExists(filePath))
             _ = await assets.LoadAsync<XRPrefabSource>(filePath, priority, bypassJobThread).ConfigureAwait(false);
-        if (!File.Exists(filePath))
+        if (!files.FileExists(filePath))
             return null;
 
         return bypassJobThread
-            ? PreparePrefabPartialLoad(filePath)
-            : await Task.Run(() => PreparePrefabPartialLoad(filePath)).ConfigureAwait(false);
+            ? PreparePrefabPartialLoad(filePath, files)
+            : await Task.Run(() => PreparePrefabPartialLoad(filePath, files)).ConfigureAwait(false);
     }
 
     public static async Task<XRPrefabSource?> LoadPrefabWithReferencesAsync(
@@ -96,19 +98,19 @@ public static class AssetManagerPrefabLoadingExtensions
         return await assets.LoadAsync<XRPrefabSource>(filePath, priority, bypassJobThread).ConfigureAwait(false);
     }
 
-    private static PrefabPartialLoadPlan? PreparePrefabPartialLoad(string filePath)
+    private static PrefabPartialLoadPlan? PreparePrefabPartialLoad(string filePath, IRuntimeHostFileReadBackend files)
     {
         AssetManager.EnsureYamlAssetRuntimeSupported(filePath);
         filePath = Path.GetFullPath(filePath);
-        if (!File.Exists(filePath))
+        if (!files.FileExists(filePath))
             return null;
 
-        return DeserializePartialPrefab(filePath);
+        return DeserializePartialPrefab(filePath, files);
     }
 
-    private static PrefabPartialLoadPlan? DeserializePartialPrefab(string filePath)
+    private static PrefabPartialLoadPlan? DeserializePartialPrefab(string filePath, IRuntimeHostFileReadBackend files)
     {
-        using FileStream stream = new(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using Stream stream = files.OpenRead(filePath, FileShare.ReadWrite);
         using StreamReader reader = new(stream);
         using IDisposable pathScope = AssetDeserializationContext.Push(filePath);
         using IDisposable cacheSuppression = XRObjectBase.SuppressObjectCacheRegistration();
