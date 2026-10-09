@@ -1,0 +1,51 @@
+name: Dispatch deployment
+on:
+  push:
+    branches: [deploy]
+permissions: {}
+jobs:
+  dispatch:
+    if: github.repository == 'BlackJaxDev/XRENGINE' && github.event.deleted == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Notify deployment receiver
+        env:
+          TARGET_REPOSITORY: ${{ secrets.DEPLOY_TARGET_REPOSITORY }}
+          DISPATCH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          const target = process.env.TARGET_REPOSITORY;
+          const token = process.env.DISPATCH_TOKEN;
+          if (!target || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(target) || !token) {
+            console.error('::error::Configure DEPLOY_TARGET_REPOSITORY and DEPLOY_DISPATCH_TOKEN.');
+            process.exit(1);
+          }
+          try {
+            const response = await fetch('https://api.github.com/repos/' + target + '/dispatches', {
+              method: 'POST',
+              redirect: 'error',
+              signal: AbortSignal.timeout(30000),
+              headers: {
+                Authorization: 'Bearer ' + token,
+                Accept: 'application/vnd.github+json',
+                'Content-Type': 'application/json',
+                'X-GitHub-Api-Version': '2026-03-10'
+              },
+              body: JSON.stringify({
+                event_type: 'xrengine-deploy',
+                client_payload: {
+                  repository: process.env.GITHUB_REPOSITORY,
+                  ref: process.env.GITHUB_REF,
+                  sha: process.env.GITHUB_SHA
+                }
+              })
+            });
+            if (response.status !== 204) throw new Error('Dispatch failed');
+            console.log('Deployment receiver notified.');
+          } catch {
+            console.error('::error::Dispatch failed. Check the deployment receiver configuration and token permissions.');
+            process.exit(1);
+          }
+          JS
