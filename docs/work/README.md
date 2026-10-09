@@ -32,6 +32,7 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 
 | Area | Status | Canonical doc | Notes |
 |---|---|---|---|
+| Branch integration | Paused | [Branch integration TODO](todo/runtime/branch-integration-todo.md) | Physics merge retained on `branch-integration`; browser integration and desktop validation remain open. |
 | Editor memory reduction | Active | [todo/rendering/optimization/editor-memory-reduction-todo.md](todo/rendering/optimization/editor-memory-reduction-todo.md) | Ordered checklist to bring the OpenXR editor under 8 GB: capacity-sized renderer arrays, per-vertex mesh model to packed buffers, mesh and texture CPU copies, texture compression and budget, render-target audit, heap fragmentation. |
 | Shadow and pipeline validation failures | Closed | [../architecture/rendering/render-pipeline-resource-lifecycle.md](../architecture/rendering/render-pipeline-resource-lifecycle.md) | All 50 failed cases from the October 2 runs are resolved. The checklist is deleted; lasting rules are in the lifecycle architecture doc. |
 | Control plane managed server instances | Planned | [todo/networking/control-plane-managed-server-instances-todo.md](todo/networking/control-plane-managed-server-instances-todo.md), [testing/networking/networking-validation.md](testing/networking/networking-validation.md) | Service/host supervision, verified world startup, player admission/accounting, authoritative synchronization, client workflow, restart recovery, and public hosting. |
