@@ -88,7 +88,7 @@ jobs:
           retention-days: 7
 
       - name: Publish browser host
-        run: dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -m:1 --output "$VALIDATION_ROOT/browser" --artifacts-path "$VALIDATION_ROOT/browser-build" -p:WasmBuildNative=true -p:XREngineJoltBrowser=true -p:JoltBrowserManagedSourceDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/managed/staged" -p:JoltBrowserArchiveDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/native/archives"
+        run: dotnet publish XREngine.Browser.Standalone/XREngine.Browser.Standalone.csproj -c Release -m:1 --output "$VALIDATION_ROOT/browser" --artifacts-path "$VALIDATION_ROOT/browser-build" -p:WasmBuildNative=true -p:XREngineJoltBrowser=true -p:JoltBrowserManagedSourceDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/managed/staged" -p:JoltBrowserArchiveDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/native/archives"
 
       - name: Verify desktop archive dependency is absent from browser output
         shell: bash

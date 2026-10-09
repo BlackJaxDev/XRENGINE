@@ -6,6 +6,9 @@ using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text;
+using System.Text.Json;
+using System.Xml.Linq;
+using System.Security.Cryptography;
 
 internal partial class CodeManager
 {
@@ -53,7 +56,7 @@ internal partial class CodeManager
         string intermediateDirectory,
         CancellationToken cancellationToken = default)
     {
-        string project = ResolveBrowserProject();
+        string browserProject = ResolveBrowserProject();
         Directory.CreateDirectory(publishDirectory);
         string gameProject = GetManagedGameProjectPath();
         string gameAssembly = GetBrowserGameAssemblyPath(configuration);
@@ -63,23 +66,20 @@ internal partial class CodeManager
             ?? throw new InvalidOperationException("The browser game assembly is not loaded for bootstrap inspection.");
         ValidateLoadedBrowserGameAssembly(gameAssembly, activeGame);
         string? bootstrapTypeName = ProjectBuilder.ResolveGameLaunchBootstrapTypeName(activeGame);
-        string registrationSource = WriteBrowserGameRegistration(gameAssembly, publishDirectory, bootstrapTypeName);
+        string launcherDirectory = GetBrowserLauncherDirectory(intermediateDirectory);
+        Directory.CreateDirectory(launcherDirectory);
+        WriteBrowserGameRegistration(gameAssembly, launcherDirectory, bootstrapTypeName);
+        string project = WriteBrowserLauncherProject(browserProject, gameProject, gameAssembly, launcherDirectory);
+        string outputRecord = Path.Combine(launcherDirectory, "target-directory.txt");
+        File.Delete(outputRecord);
         Dictionary<string, string?> properties = new()
         {
             ["PublishDir"] = EnsureTrailingSlash(publishDirectory),
             ["RuntimeIdentifier"] = "browser-wasm",
             ["XREngineJoltBrowser"] = "true",
-            ["XREngineBrowserGameProject"] = gameProject,
-            ["XREngineBrowserGameRegistrationSource"] = registrationSource,
             ["PublishTrimmed"] = "false",
             ["RunAOTCompilation"] = "false"
         };
-        if (IsPackagedBrowserProject(project))
-        {
-            properties["UseArtifactsOutput"] = "true";
-            properties["ArtifactsPath"] = GetPackagedBrowserArtifactsPath(intermediateDirectory);
-            properties["XREngineBrowserPackagedToolchain"] = "true";
-        }
         // Restricted local task hosts can request a single MSBuild node without
         // changing the ordinary publisher's build scheduling.
         bool singleNode = UseSingleNodeBrowserPublish();
@@ -90,6 +90,18 @@ internal partial class CodeManager
             throw new InvalidOperationException($"Browser application publish failed. {log}");
         }
         if (!string.IsNullOrWhiteSpace(log)) Debug.Out(log);
+        string binaryDirectory = ResolveBrowserAssemblyDirectory(configuration, intermediateDirectory);
+        string publisherRoot = Path.GetDirectoryName(Path.GetDirectoryName(browserProject)!)!;
+        if (File.Exists(Path.Combine(publisherRoot, "browser-host.json")))
+        {
+            foreach (string library in Directory.EnumerateFiles(Path.Combine(publisherRoot, "lib"), "*.dll"))
+            {
+                string linked = Path.Combine(binaryDirectory, Path.GetFileName(library));
+                if (!File.Exists(linked) || !SHA256.HashData(File.ReadAllBytes(library)).AsSpan()
+                    .SequenceEqual(SHA256.HashData(File.ReadAllBytes(linked))))
+                    throw new InvalidDataException($"BrowserPublisher.EngineBinaryChanged: '{Path.GetFileName(library)}' differs from the verified engine package.");
+            }
+        }
         string site = Path.Combine(publishDirectory, "wwwroot");
         if (!File.Exists(Path.Combine(site, "index.html")))
             throw new FileNotFoundException("Browser publish did not produce wwwroot/index.html.", site);
@@ -121,16 +133,56 @@ internal partial class CodeManager
         // nested implementations have identical registration semantics in both hosts.
         if (bootstrapTypeName is not null)
             anchor = bootstrapTypeName.Replace('+', '.');
-        string invocation = anchor is null ? string.Empty
-            : $"        System.Runtime.CompilerServices.RuntimeHelpers.RunModuleConstructor(typeof(global::{string.Join(".", anchor.Split('.').Select(segment => "@" + segment))}).Module.ModuleHandle);\n";
-        if (bootstrapTypeName is not null)
-            invocation += $"        BootstrapFactory = static () => new global::{string.Join(".", bootstrapTypeName.Replace('+', '.').Split('.').Select(segment => "@" + segment))}();\n";
-        string source = "namespace XREngine.Browser;\ninternal static partial class BrowserGameComposition\n{\n"
-            + "    static partial void RegisterProvidedGame()\n    {\n"
-            + invocation
+        string registration = anchor is null ? "null"
+            : $"static () => System.Runtime.CompilerServices.RuntimeHelpers.RunModuleConstructor(typeof(global::{string.Join(".", anchor.Split('.').Select(segment => "@" + segment))}).Module.ModuleHandle)";
+        string factory = bootstrapTypeName is null ? "null"
+            : $"static () => new global::{string.Join(".", bootstrapTypeName.Replace('+', '.').Split('.').Select(segment => "@" + segment))}()";
+        string source = "internal static class Program\n{\n    private static void Main()\n    {\n"
+            + $"        XREngine.Browser.BrowserRuntime.Initialize(bootstrapFactory: {factory}, registerGameModule: {registration});\n"
             + "    }\n}\n";
-        string path = Path.Combine(directory, "BrowserGameComposition.g.cs");
+        string path = Path.Combine(directory, "Program.g.cs");
         File.WriteAllText(path, source, new UTF8Encoding(false));
+        return path;
+    }
+
+    private static string WriteBrowserLauncherProject(string browserProject, string gameProject,
+        string gameAssembly, string directory)
+    {
+        const string launcherName = "XREngine.BrowserSite";
+        if (string.Equals(AssemblyName.GetAssemblyName(gameAssembly).Name, launcherName, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("BrowserPublisher.AssemblyNameCollision: the game cannot use the browser launcher assembly name.");
+        string root = Path.GetDirectoryName(Path.GetDirectoryName(browserProject)!)!;
+        XElement references = new("ItemGroup");
+        if (File.Exists(Path.Combine(root, "browser-host.json")))
+        {
+            foreach (string library in Directory.EnumerateFiles(Path.Combine(root, "lib"), "*.dll").Order(StringComparer.Ordinal))
+                references.Add(new XElement("Reference", new XAttribute("Include", Path.GetFileNameWithoutExtension(library)),
+                    new XElement("HintPath", library), new XElement("Private", "true")));
+        }
+        else
+            references.Add(new XElement("ProjectReference", new XAttribute("Include", browserProject)));
+        references.Add(new XElement("ProjectReference", new XAttribute("Include", gameProject)));
+        XElement project = new("Project", new XAttribute("Sdk", "Microsoft.NET.Sdk.WebAssembly"),
+            new XElement("PropertyGroup",
+                new XElement("TargetFramework", "net10.0"),
+                new XElement("RuntimeIdentifier", "browser-wasm"),
+                new XElement("OutputType", "Exe"),
+                new XElement("AssemblyName", launcherName),
+                new XElement("ImplicitUsings", "enable"),
+                new XElement("Nullable", "enable"),
+                new XElement("AllowUnsafeBlocks", "true"),
+                new XElement("IsPackable", "false"),
+                new XElement("EnableDefaultCompileItems", "false"),
+                new XElement("XREngineBrowserLauncherSource", "$(MSBuildProjectDirectory)/Program.g.cs"),
+                new XElement("XREngineBrowserGameProject", gameProject)),
+            new XElement("ItemGroup", new XElement("Compile", new XAttribute("Include", "Program.g.cs"))),
+            references,
+            new XElement("Import", new XAttribute("Project", Path.Combine(root, "XREngine.Browser", "XREngine.Browser.Host.targets"))),
+            new XElement("Target", new XAttribute("Name", "RecordBrowserLauncherOutput"), new XAttribute("AfterTargets", "Build"),
+                new XElement("WriteLinesToFile", new XAttribute("File", "$(MSBuildProjectDirectory)/target-directory.txt"),
+                    new XAttribute("Lines", "$(TargetDir)"), new XAttribute("Overwrite", "true"))));
+        string path = Path.Combine(directory, launcherName + ".csproj");
+        File.WriteAllText(path, project.ToString(), new UTF8Encoding(false));
         return path;
     }
 
@@ -139,6 +191,21 @@ internal partial class CodeManager
         string packagedRoot = Path.Combine(AppContext.BaseDirectory, "BrowserPublishing");
         if (Directory.Exists(packagedRoot))
         {
+            BrowserPublisherPayloadManifest.Validate(packagedRoot);
+            string binaryDescriptor = Path.Combine(packagedRoot, "browser-host.json");
+            if (File.Exists(binaryDescriptor))
+            {
+                using JsonDocument descriptor = JsonDocument.Parse(File.ReadAllBytes(binaryDescriptor));
+                if (descriptor.RootElement.GetProperty("schema").GetInt32() != 1
+                    || descriptor.RootElement.GetProperty("kind").GetString() != "binary-library")
+                    throw new InvalidDataException("BrowserPublisher.HostContractInvalid: unsupported binary browser host contract.");
+                string host = Path.Combine(packagedRoot, "XREngine.Browser", "XREngine.Browser.Host.targets");
+                foreach (string required in new[] { host, Path.Combine(packagedRoot, "lib", "XREngine.Browser.dll"),
+                    Path.Combine(packagedRoot, "Build", "Portable", "PortableProjects.tsv") })
+                    if (!File.Exists(required))
+                        throw new FileNotFoundException("BrowserPublisher.PayloadIncomplete: a binary browser host input is missing.", required);
+                return host;
+            }
             string packagedProject = Path.Combine(packagedRoot, "XREngine.Browser", "XREngine.Browser.csproj");
             if (!File.Exists(packagedProject) ||
                 !File.Exists(Path.Combine(packagedRoot, "Directory.Build.props")) ||
@@ -149,7 +216,6 @@ internal partial class CodeManager
                 !File.Exists(Path.Combine(packagedRoot, "XREngine.SourceGenerators", "XREngine.SourceGenerators.csproj")) ||
                 !File.Exists(Path.Combine(packagedRoot, "XREngine.SourceGenerators", "AnalyzerReleases.Unshipped.md")))
                 throw new FileNotFoundException("BrowserPublisher.PayloadIncomplete: the packaged Editor browser publishing payload is incomplete.", packagedProject);
-            BrowserPublisherPayloadManifest.Validate(packagedRoot);
             return packagedProject;
         }
 
@@ -167,25 +233,22 @@ internal partial class CodeManager
 
     internal static string ResolveBrowserAssemblyDirectory(string configuration, string intermediateDirectory)
     {
-        string project = ResolveBrowserProject();
-        if (IsPackagedBrowserProject(project))
-            return Path.Combine(GetPackagedBrowserArtifactsPath(intermediateDirectory), "bin", "XREngine.Browser",
-                configuration.ToLowerInvariant());
-
-        return Path.Combine(Path.GetDirectoryName(project)!, "bin", Platform_AnyCPU, configuration, "net10.0");
+        string launcherDirectory = GetBrowserLauncherDirectory(intermediateDirectory);
+        string record = Path.Combine(launcherDirectory, "target-directory.txt");
+        if (!File.Exists(record))
+            throw new FileNotFoundException("BrowserPublisher.OutputRecordMissing: build the generated browser launcher before cooking metadata.", record);
+        string output = Path.GetFullPath(File.ReadAllText(record).Trim());
+        string prefix = EnsureTrailingSlash(launcherDirectory);
+        if (!output.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+            || !File.Exists(Path.Combine(output, "XREngine.BrowserSite.dll")))
+            throw new InvalidDataException("BrowserPublisher.OutputRecordInvalid: the launcher output must remain inside the project intermediate directory.");
+        return output;
     }
 
-    private static bool IsPackagedBrowserProject(string project)
-    {
-        string packagedProject = Path.Combine(AppContext.BaseDirectory, "BrowserPublishing", "XREngine.Browser", "XREngine.Browser.csproj");
-        return string.Equals(Path.GetFullPath(project), Path.GetFullPath(packagedProject),
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-    }
-
-    private static string GetPackagedBrowserArtifactsPath(string intermediateDirectory)
+    private static string GetBrowserLauncherDirectory(string intermediateDirectory)
     {
         if (string.IsNullOrWhiteSpace(intermediateDirectory))
             throw new InvalidOperationException("BrowserPublisher.ProjectIntermediateMissing: the active project needs a writable Intermediate directory.");
-        return Path.GetFullPath(Path.Combine(intermediateDirectory, "BrowserPublishing", "Artifacts"));
+        return Path.GetFullPath(Path.Combine(intermediateDirectory, "BrowserPublishing", "Launcher"));
     }
 }

@@ -1,4 +1,7 @@
 <Project>
+  <PropertyGroup>
+    <XREnginePortableRuntimeTargetsImported>true</XREnginePortableRuntimeTargetsImported>
+  </PropertyGroup>
   <UsingTask TaskName="XREngine.Build.PortableSourceApiGuard"
              TaskFactory="RoslynCodeTaskFactory"
              AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll"
@@ -18,7 +21,7 @@
           Condition="'$(XREnginePortableProject)' == 'true'">
     <Error Condition="'$(TargetPlatformIdentifier)' == 'Windows' or $([System.String]::Copy('$(TargetFramework)').Contains('-windows'))"
            Text="Portable project $(MSBuildProjectName) must target a platform-neutral framework: $(TargetFramework)." />
-    <Error Condition="'$(EnableDefaultCompileItems)' == 'false'"
+    <Error Condition="'$(EnableDefaultCompileItems)' == 'false' and '$(MSBuildProjectName)' != 'XREngine.BrowserSite'"
            Text="Portable project $(MSBuildProjectName) must compile its whole source project, not a filtered source profile." />
     <Error Condition="'$(RuntimeIdentifier)' == 'browser-wasm' and ('$(PublishTrimmed)' == 'true' or '$(PublishAot)' == 'true' or '$(RunAOTCompilation)' == 'true')"
            Text="The browser compile lane covers the untrimmed interpreter; trim and AOT need a separate metadata and serializer review." />
@@ -30,11 +33,12 @@
         ProjectName="$(MSBuildProjectName)"
         ProjectFile="$(MSBuildProjectFullPath)"
         ProjectReferences="@(ProjectReference)"
+        TransitiveProjectReferences="@(_TransitiveProjectReferences)"
         Packages="@(PackageReference)"
         GeneratedRenderCommandRegistrations="$(GeneratedRenderCommandRegistrations)"
         GeneratedAotFactoryRegistrations="$(GeneratedAotFactoryRegistrations)"
         GeneratedBrowserStaticRegistrations="$(GeneratedBrowserStaticRegistrations)"
-        GeneratedBrowserGameRegistrations="$(XREngineBrowserGameRegistrationSource)"
+        GeneratedBrowserLauncherSource="$(XREngineBrowserLauncherSource)"
         GeneratedOutputRoot="$(ArtifactsPath)"
         GeneratedIntermediateRoot="$(BaseIntermediateOutputPath)"
         GeneratedGlobalUsingsFile="$(GeneratedGlobalUsingsFile)"
@@ -72,7 +76,7 @@
       <_PortableResolvedCandidate Include="@(RuntimeTargetsCopyLocalItems)"
                                   Condition="'%(RuntimeTargetsCopyLocalItems.AssetType)' == 'native' or $([System.String]::Copy('%(RuntimeTargetsCopyLocalItems.Identity)').Replace('\', '/').Contains('/native/'))" />
       <_PortableResolvedNative Include="@(_PortableResolvedCandidate)"
-                               Condition="'$(MSBuildProjectName)' != 'XREngine.Browser' or '$(RuntimeIdentifier)' != 'browser-wasm' or '$(_PortableSdkPacksPath)' == '' or !$([System.String]::Copy('%(_PortableResolvedCandidate.Identity)').Replace('\', '/').StartsWith('$(_PortableSdkPacksPath)/Microsoft.NETCore.App.Runtime.Mono.browser-wasm/')) or !$([System.String]::Copy('%(_PortableResolvedCandidate.Identity)').Replace('\', '/').Contains('/runtimes/browser-wasm/native/'))" />
+                               Condition="('$(MSBuildProjectName)' != 'XREngine.Browser' and '$(MSBuildProjectName)' != 'XREngine.Browser.Standalone' and '$(MSBuildProjectName)' != 'XREngine.BrowserSite') or '$(RuntimeIdentifier)' != 'browser-wasm' or '$(_PortableSdkPacksPath)' == '' or !$([System.String]::Copy('%(_PortableResolvedCandidate.Identity)').Replace('\', '/').StartsWith('$(_PortableSdkPacksPath)/Microsoft.NETCore.App.Runtime.Mono.browser-wasm/')) or !$([System.String]::Copy('%(_PortableResolvedCandidate.Identity)').Replace('\', '/').Contains('/runtimes/browser-wasm/native/'))" />
     </ItemGroup>
     <Error Condition="'@(_PortableResolvedNative)' != ''"
            Text="Portable project $(MSBuildProjectName) resolved native runtime asset(s): @(_PortableResolvedNative, ', ')." />

@@ -11,7 +11,9 @@ export async function createEngineRuntime(renderers = new Map()) {
     runtime.setModuleImports('xrengine.assets', engineAssetImports);
     runtime.setModuleImports('xrengine.engineAudio', engineAudioImports);
     installWebGpuImports(runtime, renderers);
-    const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);
+    const exports = await runtime.getAssemblyExports('XREngine.Browser');
+    if (!exports?.XREngine?.Browser?.BrowserEngineExports)
+        throw new Error('BrowserRuntime.ExportsMissing: the browser library exports are not bound.');
     await runtime.runMain(runtime.getConfig().mainAssemblyName, []);
     const engine = exports.XREngine.Browser.BrowserEngineExports;
     installEngineNetworkLifecycle(engine);

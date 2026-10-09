@@ -14,7 +14,10 @@ export async function createBrowserRuntime() {
             renderers.get(id)?.audioService?.setListenerValues(x, y, z, fx, fy, fz, ux, uy, uz)
     });
     installWebGpuImports(runtime, renderers);
-    const exports = await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName);
+    const exports = await runtime.getAssemblyExports('XREngine.Browser');
+    if (!exports?.XREngine?.Browser?.BrowserSceneExports ||
+        !exports.XREngine.Browser.Diagnostics?.EngineMeshDiagnosticExports)
+        throw new Error('BrowserRuntime.ExportsMissing: the browser library exports are not bound.');
     await runtime.runMain(runtime.getConfig().mainAssemblyName, []);
     const createHost = (canvas, onState, shaderName) => new BrowserCanvasHost(
         exports.XREngine.Browser.BrowserSceneExports, renderers, canvas, onState, shaderName);

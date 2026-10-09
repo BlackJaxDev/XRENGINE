@@ -1,0 +1,32 @@
+<Project>
+  <!-- Import this file from browser executables. The library owns no web or native payload. -->
+  <PropertyGroup>
+    <XREngineBrowserHostRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..'))</XREngineBrowserHostRoot>
+    <XREnginePortableProject>true</XREnginePortableProject>
+    <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
+    <PublishTrimmed>false</PublishTrimmed>
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <JoltBrowserManagedSourceDirectory Condition="'$(JoltBrowserManagedSourceDirectory)' == ''">$(XREngineBrowserHostRoot)Build/Dependencies/JoltBrowser/managed/staged</JoltBrowserManagedSourceDirectory>
+    <JoltBrowserArchiveDirectory Condition="'$(JoltBrowserArchiveDirectory)' == ''">$(XREngineBrowserHostRoot)Build/Dependencies/JoltBrowser/native/archives</JoltBrowserArchiveDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>browser</_Parameter1>
+    </AssemblyAttribute>
+    <Content Include="$(MSBuildThisFileDirectory)wwwroot/**/*">
+      <Link>wwwroot/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+  <Target Name="ValidateBrowserHost" BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(MSBuildProjectName)' != 'XREngine.Browser.Standalone' and '$(MSBuildProjectName)' != 'XREngine.BrowserSite'" Text="BrowserBuild.HostProject: browser host targets require a reviewed browser launcher." />
+    <Error Condition="'$(RuntimeIdentifier)' != 'browser-wasm'" Text="BrowserBuild.HostRuntime: browser host targets require browser-wasm." />
+    <Error Condition="'$(XREngineJoltBrowser)' != 'true'" Text="BrowserBuild.SourceBindingRequired: pass -p:XREngineJoltBrowser=true for the reviewed browser physics binding." />
+  </Target>
+  <Import Project="$(XREngineBrowserHostRoot)XREngine.Runtime.Rendering.WebGPU/BrowserAssets.props" />
+  <Import Project="$(XREngineBrowserHostRoot)XREngine.Runtime.Platform.Browser/BrowserAssets.props" />
+  <Import Project="$(XREngineBrowserHostRoot)XREngine.Audio.WebAudio/BrowserAssets.props" />
+  <Import Project="$(XREngineBrowserHostRoot)Tools/Dependencies/JoltBrowser/JoltBrowserNative.targets" />
+  <Import Project="$(XREngineBrowserHostRoot)Build/Portable/PortableRuntime.targets" Condition="'$(XREnginePortableRuntimeTargetsImported)' != 'true'" />
+</Project>

@@ -1,11 +1,13 @@
-<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsPackable>false</IsPackable>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <!-- Qualify the interpreter first. Trimming and AOT require their own
          registration/serialization validation rather than inheriting desktop assumptions. -->
     <PublishTrimmed>false</PublishTrimmed>
@@ -30,22 +32,12 @@
     <ProjectReference Include="../XREngine.Runtime.Net.WebSockets/XREngine.Runtime.Net.WebSockets.csproj" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(XREngineBrowserGameProject)' != ''">
-    <ProjectReference Include="$(XREngineBrowserGameProject)">
-      <GlobalPropertiesToRemove Condition="'$(XREngineBrowserPackagedToolchain)' == 'true'">UseArtifactsOutput;ArtifactsPath</GlobalPropertiesToRemove>
-    </ProjectReference>
-    <Compile Include="$(XREngineBrowserGameRegistrationSource)" />
-  </ItemGroup>
   <Target Name="ValidateBrowserNativeSourceSelection" BeforeTargets="CollectPackageReferences;PrepareForBuild">
     <Error Condition="'$(XREngineJoltBrowser)' != 'true'" Text="BrowserBuild.SourceBindingRequired: pass -p:XREngineJoltBrowser=true to restore and publish the reviewed browser physics source instead of the desktop NuGet binding." />
   </Target>
-  <Target Name="ValidateBrowserGameComposition" BeforeTargets="CoreCompile" Condition="'$(XREngineBrowserGameProject)' != ''">
-    <Error Condition="!Exists('$(XREngineBrowserGameRegistrationSource)')" Text="Browser game publish requires generated static game registration source." />
+  <Target Name="ValidateBrowserLibraryBoundary" BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(XREngineBrowserGameProject)' != '' or '$(XREngineBrowserGameRegistrationSource)' != ''" Text="BrowserBuild.GameInEngineLibrary: game composition belongs in the browser launcher, not the engine library." />
   </Target>
 
-  <Import Project="../XREngine.Runtime.Rendering.WebGPU/BrowserAssets.props" />
-  <Import Project="../XREngine.Runtime.Platform.Browser/BrowserAssets.props" />
-  <Import Project="../XREngine.Audio.WebAudio/BrowserAssets.props" />
-  <Import Project="../Tools/Dependencies/JoltBrowser/JoltBrowserNative.targets" />
   <Import Project="../Build/Registration/FactoryRegistrations.targets" />
 </Project>

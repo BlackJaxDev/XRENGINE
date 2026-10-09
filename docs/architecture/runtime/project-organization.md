@@ -24,7 +24,23 @@ These projects target `net10.0` and compile their full source set for desktop an
 | `XREngine.Runtime.InputIntegration` | Player, pawn, and scene integration for input. |
 | `XREngine.Runtime.ModelingIntegration` | Runtime scene integration for modeling. |
 
-`XREngine.Runtime.Rendering.WebGPU`, `XREngine.Runtime.Platform.Browser`, and `XREngine.Browser` also belong to the compile closure. They provide the browser renderer, canvas platform leaf, and application composition; their presence does not imply that the browser host can run every engine world or desktop feature. Browser gameplay integration is tracked separately from compilation.
+`XREngine.Runtime.Rendering.WebGPU`, `XREngine.Runtime.Platform.Browser`, and `XREngine.Browser` also belong to the compile closure. They provide the browser renderer, canvas platform leaf, and reusable browser runtime. `XREngine.Browser.Standalone` is the diagnostic executable. Their presence does not imply that the browser host can run every engine world or desktop feature. Browser gameplay integration is tracked separately from compilation.
+
+### Browser library and launchers
+
+`XREngine.Browser` is a class library. It owns JavaScript exports and engine registration. It has no game reference or generated game source. The standalone executable and each generated `XREngine.BrowserSite` executable call `BrowserRuntime.Initialize` once from `Main`. JavaScript binds exports from `XREngine.Browser`, then runs the launcher entry point.
+
+Initialization installs engine services and stores the game callbacks. World startup calls game registration after engine asset services are ready. World stop retains these process-level callbacks. A duplicate call to `Initialize` fails. A failed initialization requires a page reload because registration is not transactional.
+
+Both executables import `XREngine.Browser/XREngine.Browser.Host.targets`. This file links the shared web files into `wwwroot`, supplies the reviewed Jolt archives, and applies the portable source and native asset guards. The generated launcher compiles only `Program.g.cs` and SDK-generated assembly files. Its game reference must match the exact authored project. Packaged publishing references prebuilt engine DLLs; the game and launcher remain the only application compilation inputs.
+
+Publish the standalone diagnostics with:
+
+```powershell
+dotnet publish XREngine.Browser.Standalone/XREngine.Browser.Standalone.csproj -c Release -p:XREngineJoltBrowser=true
+```
+
+Prepare the pinned Jolt managed source and native archives before this command. Set `JoltBrowserManagedSourceDirectory` and `JoltBrowserArchiveDirectory` when those inputs are outside their default locations.
 
 `XREngine.Runtime.Execution.Threads` is a separate `net10.0` implementation leaf.
 It owns the general, auxiliary, transform, and profiler statistics worker loops, thread creation,
