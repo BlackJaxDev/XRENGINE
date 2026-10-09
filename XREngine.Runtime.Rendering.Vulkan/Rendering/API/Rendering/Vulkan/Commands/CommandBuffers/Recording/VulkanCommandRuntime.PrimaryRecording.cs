@@ -69,7 +69,8 @@ internal sealed partial class VulkanCommandRuntime
             ref readonly SubmissionMarkerPayload marker =
                 ref operations.GetSubmissionMarker(operationIndex);
             if (marker.RequiredOperationCount > 0)
-                marker.Fence.Fail();
+                marker.Fence.Fail(EGpuFenceFailureSite.RequiredProducerMissing,
+                    EGpuFenceNativeSubmission.NotCalled);
         }
     }
 

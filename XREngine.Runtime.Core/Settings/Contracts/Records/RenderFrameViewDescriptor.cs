@@ -36,6 +36,9 @@ public readonly record struct RenderFrameViewDescriptor(
     /// </summary>
     public ulong SourceCameraIdentity { get; init; }
 
+    /// <summary>Gets the camera layer mask frozen with this view.</summary>
+    public uint CullingLayerMask { get; init; } = uint.MaxValue;
+
     public bool HasParent => ParentViewId != InvalidViewId;
     public bool IsStereoEye => Kind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye;
     public bool IsWideView => Kind is EVrOutputViewKind.LeftWide or EVrOutputViewKind.RightWide;

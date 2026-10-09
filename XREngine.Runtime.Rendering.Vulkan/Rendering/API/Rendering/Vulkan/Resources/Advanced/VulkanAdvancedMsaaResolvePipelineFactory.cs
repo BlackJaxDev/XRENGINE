@@ -40,7 +40,7 @@ internal static class VulkanAdvancedMsaaResolvePipelineFactory
             target.UsesDynamicRendering ? 0UL : target.RenderPass.Handle,
             target.DynamicRenderingFormats,
             program.ComputeGraphicsPipelineFingerprint(),
-            program.LinkGeneration,
+            program.InterfaceGeneration,
             0UL,
             program.DescriptorSchemaFingerprint,
             program.PipelineLayout.Handle,

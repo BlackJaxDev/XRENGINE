@@ -516,6 +516,7 @@ namespace XREngine.Rendering.Commands
         private BackendReadyFramePackageIdentity _updatingBackendReadyIdentity =
             BackendReadyFramePackageIdentity.Unspecified;
         private bool _updatingExcludeProjectiveMirrors;
+        private EMeshSubmissionStrategy _updatingMeshSubmissionStrategy;
         private long _updatingRevision;
         private long _backendReadyPackageGeneration;
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
@@ -611,10 +612,23 @@ namespace XREngine.Rendering.Commands
         internal bool IsOwnedByShadowPipeline
             => _ownerPipeline?.IsShadowPipeline == true;
 
+        /// <summary>Gets whether this viewport requests the canonical indexed GPU route.</summary>
+        internal bool UsesCanonicalGpuCollection(XRViewport? viewport)
+            => viewport is not null &&
+                _ownerPipeline is XRRenderPipelineInstance
+                {
+                    AssignedPipeline: AdvancedRenderPipeline,
+                    ActiveGeneration: not null,
+                } &&
+                (viewport.MeshSubmissionStrategyOverride ??
+                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy()) ==
+                EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
         private readonly Lock _lock = new();
         private readonly ReaderWriterLockSlim _renderingBufferLock = new(LockRecursionPolicy.SupportsRecursion);
 
-        internal RenderingBufferReadScope EnterRenderingBufferReadScope()
+        /// <summary>Holds the published command buffer while a reader copies its state.</summary>
+        public RenderingBufferReadScope EnterRenderingBufferReadScope()
         {
             _renderingBufferLock.EnterReadLock();
             return new RenderingBufferReadScope(_renderingBufferLock);
@@ -626,7 +640,7 @@ namespace XREngine.Rendering.Commands
             return new RenderingBufferWriteScope(_renderingBufferLock);
         }
 
-        internal readonly ref struct RenderingBufferReadScope(ReaderWriterLockSlim gate)
+        public readonly ref struct RenderingBufferReadScope(ReaderWriterLockSlim gate)
         {
             public void Dispose()
                 => gate.ExitReadLock();
@@ -685,7 +699,8 @@ namespace XREngine.Rendering.Commands
             XRCamera? camera,
             int viewportWidth,
             int viewportHeight,
-            bool excludeProjectiveMirrors)
+            bool excludeProjectiveMirrors,
+            EMeshSubmissionStrategy? submissionStrategy = null)
         {
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
 
@@ -693,6 +708,8 @@ namespace XREngine.Rendering.Commands
             {
                 _updatingBackendReadyIdentity = identity;
                 _updatingExcludeProjectiveMirrors = excludeProjectiveMirrors;
+                _updatingMeshSubmissionStrategy = submissionStrategy ??
+                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
                 PrepareBackendReadyFramePackageNoLock(
                     scene,
                     camera,
@@ -734,7 +751,8 @@ namespace XREngine.Rendering.Commands
                 camera,
                 viewportWidth,
                 viewportHeight,
-                _updatingExcludeProjectiveMirrors);
+                _updatingExcludeProjectiveMirrors,
+                _updatingMeshSubmissionStrategy);
         }
 
         /// <summary>
@@ -769,7 +787,8 @@ namespace XREngine.Rendering.Commands
                     camera,
                     viewportWidth,
                     viewportHeight,
-                    _updatingExcludeProjectiveMirrors);
+                    _updatingExcludeProjectiveMirrors,
+                    _updatingMeshSubmissionStrategy);
                 return _updatingBackendReadyPackage.TryGetCanonicalPublication(
                            out _, out _) &&
                        !_updatingBackendReadyPackage.CanonicalViews.IsEmpty;

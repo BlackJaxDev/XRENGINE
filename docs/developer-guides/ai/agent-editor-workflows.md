@@ -108,7 +108,7 @@ The loop:
    ```
 
 6. Review that session's logs under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/<timestamp>-<name>/logs/` — for rendering work this is primarily `log_vulkan.log`, `log_opengl.log`, and `log_rendering.log`. Distinguish steady-state messages from shutdown-only teardown noise (for example `VUID-vkDestroyDevice-device-05137` is teardown, not a render bug). Group/filter validation errors, warnings, and the render-pass (`BeginRendering FBO=...`) sequence.
-7. Form or refine a hypothesis, change exactly one variable (a setting, a toggle, or a targeted code fix), and repeat from step 1 until the issue is understood or resolved. Use `Start -NoBuild` only when the stopped session's existing binaries already contain the source change being tested.
+7. Form or refine a hypothesis, change exactly one variable (a setting, a toggle, or a targeted code fix), and repeat from step 1 until the issue is understood or resolved. Use `Start -NoBuild` only when the stopped session's existing binaries already contain the source change being tested. Routine `Tools/Limit-AgentValidation.ps1` removes the build output of stopped sessions, so run it after the last `-NoBuild` restart of a task. After a session name is rebuilt, `-NoBuild` with that name can resolve to an older folder of the same name; use a distinct session name for each binary.
 
 Notes:
 - Record durable findings (symptoms, ruled-out causes, render-pass order, next isolation step) so later iterations build on earlier ones instead of repeating them.
@@ -121,6 +121,17 @@ engine update loop stops. A responsive native window does not prove that the
 engine loop is running.
 
 For Vulkan or OpenGL rendering issues, use RenderDoc when MCP screenshots and logs do not identify the failing pass/resource. Prefer it for shadow maps, post-process inputs, motion vectors, G-buffer contents, descriptor binding mistakes, layout hazards, and "the frame looks wrong but logs are inconclusive" cases.
+
+For an editor frame with presentation, use
+`RenderDocCaptureBridge.TryTriggerCapture` through MCP. Pass a capture path
+template under the current run's `renderdoc/` folder. It captures the next
+presented frame. Direct `TryStartCapture` and `TryEndCapture` calls through
+`invoke_method` do not reserve a render-frame boundary. `MainThread` mode runs
+on the app/update thread, so those calls can change capture state during native
+command recording. Use explicit start/end only when the capture owner controls
+the recording boundary. A Vulkan chain-scale run reproduced a native
+`renderdoc.dll` fault with explicit start/end; presented-frame trigger captures
+passed. See the [capture faults](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#open-faults).
 
 1. Verify capture tooling first:
 

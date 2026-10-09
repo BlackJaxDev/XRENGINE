@@ -181,6 +181,11 @@ zero-readback GPU-BVH submission. Activating a rig also expands that test's
 controls and live diagnostics directly in the root UI; selecting the child test
 node exposes the same fields.
 
+The Math Intersections world starts its cameras with bloom disabled and fixed
+exposure at 1.0. Auto exposure is disabled because the background is black.
+These defaults apply only to this world. Test names, descriptions, and point
+labels face the current render camera, including after camera movement.
+
 The three root toggles are mutually exclusive and temporarily apply the mode's
 renderer settings. Turning the active test off restores the prior settings. See
 [Math Intersections Occlusion Validation](../../work/testing/rendering/math-intersections-occlusion-tests.md)

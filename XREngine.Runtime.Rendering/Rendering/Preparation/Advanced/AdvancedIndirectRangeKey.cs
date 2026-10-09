@@ -13,4 +13,5 @@ public readonly record struct AdvancedIndirectRangeKey(
     EAdvancedMaterialCoverageMode Coverage,
     uint CullMode,
     uint PrimitiveTopology,
-    EAdvancedGeometryProducer Producer);
+    EAdvancedGeometryProducer Producer,
+    bool UsesDeformedVertexSource);

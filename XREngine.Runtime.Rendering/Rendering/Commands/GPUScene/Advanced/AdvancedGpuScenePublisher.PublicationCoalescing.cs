@@ -86,10 +86,16 @@ public sealed partial class AdvancedGpuScenePublisher
         {
             PublishSourceDrawIdentities(in _currentPublication);
             _identityDeliveryIncomplete = false;
+            ClearPendingIdentityRecipients();
+            PromoteSourceGroups();
+            PromoteOrderedRegistrations();
         }
         catch (Exception exception)
         {
+            _committedMaterialPlanCacheValid = false;
             _identityDeliveryIncomplete = true;
+            RetainFailedIdentityRecipients();
+            InvalidateRegistrationIdentityCache();
             RejectPublication(exception.Message);
             throw;
         }
@@ -172,7 +178,8 @@ public sealed partial class AdvancedGpuScenePublisher
                 registration.LegacyCommandIndex != checked((uint)commandIndex) ||
                 retainedSourceIndex >= retainedSources.Length ||
                 !ReferenceEquals(retainedSources[retainedSourceIndex].Renderer, plan.Renderer) ||
-                !ReferenceEquals(retainedSources[retainedSourceIndex].Mesh, plan.Mesh))
+                !ReferenceEquals(retainedSources[retainedSourceIndex].Mesh, plan.Mesh) ||
+                retainedSources[retainedSourceIndex].GpuBoundsSource != plan.GpuBoundsSource)
             {
                 S13aPublicationTelemetry.PublicationCommandMutation();
                 S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationCommandMutation,

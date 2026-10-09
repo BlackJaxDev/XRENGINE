@@ -1,902 +1,325 @@
-# Skinned GPU chain benchmark validation
-
-## Objective
-
-Validate `Physics Chain GPU Dispatcher Skinned Mesh Test` in the Math
-Intersections world. Verify visible mesh deformation, GPU palette motion,
-zero simulation readback, and repeated benchmark start and stop. Measure
-scaling before choosing performance changes.
-
-## Configuration and evidence
-
-- Named isolated editor session: `skinned-chain`.
-- Build: Release. Initial saved rendering settings: Vulkan, Advanced pipeline.
-- Evidence root: `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20261006-110030-skinned-chain/`.
-- The retention script failed on an unreadable metadata folder in an older,
-  stopped session. Automatic approval review rejected manual task-folder
-  cleanup. Keep evidence inside the named session root. Do not add another
-  immediate task directory or repair the unrelated folder.
-- No test files changed. Live feature validation comes first.
-
-## Acceptance checks
-
-- Inspect the source rig at multiple times and camera positions.
-- Verify GPU simulation, batched dispatch, GPU skinning, and disabled CPU bone
-  synchronization from live state.
-- Inspect a small grid before and during three benchmark cycles. Check the
-  restored source rig after each cycle. Include automatic completion, manual
-  cancellation, and an immediate restart.
-- Compare settled runs at increasing chain counts. Keep visual captures
-  separate from accepted timing windows.
-- Inspect simulation readback counters, dispatch failures, palette allocation,
-  frame time, and teardown completion.
-
-## Initial code review
-
-A bounded broker review completed with requested and actual model
-`gpt-6-astra`. These are code-based candidates, not measured bottlenecks:
-
-1. Per-chain CPU input preparation, registry scans, and small buffer uploads.
-2. Per-renderer palette binding collection and publication. Check unexpected
-   mapping rebuilds and partial-palette copy counts.
-3. Active-work generation, solver dispatch, bounds, palette passes, and their
-   barriers. The batched solver dispatches per bucket, not per chain.
-
-Repeated-run checks must distinguish retained capacity from live allocations.
-The benchmark reports tick intervals, not GPU execution time. Its destroy
-duration measures teardown initiation, not the full deferred teardown. Its
-settle check does not establish shader compilation or palette readiness.
-
-## Live results and repairs
-
-The initial Release build passed with zero warnings and errors. The live
-chain reported an unavailable backend. The dispatcher had no registrations,
-no dispatches, and no transfer bytes. A first viewport capture was black.
-After warmup, a composited capture showed a straight mesh with excessive
-exposure. Fixed exposure improved inspection, but six later frames showed no
-deformation.
-
-The rendering bridge had no production installation call. A diagnostic live
-installation plus component reactivation registered one chain. Startup now
-installs the bridge before world activation and retains its restoration lease
-through component shutdown.
-
-The next Release build also passed with zero warnings and errors. Its live
-backend was Vulkan and ready. One simulation attempt failed at
-`GpuBoundsPublication`; no dispatch group committed. The failure count stayed
-at one while rendered frames and component submissions continued to advance.
-Shader readiness checks incorrectly treated `LinkReady` as an in-progress
-flag. It means that linking is allowed. After backend invalidation, the checks
-never retried linking. The dispatcher now uses its shared readiness helper.
-
-Review against the pre-split implementation found further input regressions:
-
-- Per-frame particle versions caused stale CPU state to replace GPU state.
-- Constant transform and collider signatures prevented moving input updates.
-- The GPU path ignored the resolved simulation step count and time scale.
-- Palette mappings used a parent's rest direction instead of its child's.
-- Palette registrations were not released during rebuild or removal.
-- Palette bindings omitted the particle reset version and a rebuild generation.
-
-These contracts passed the later repeated live check below. The benchmark's
-tick samples remain separate from render FPS and GPU timing.
-
-The next live run reached `GpuBoundsPublication.WorkItemBufferReadiness` on
-every frame. Buffer diagnostics showed no generated API object and zero
-uploaded bytes. The Vulkan retained lookup cannot create wrappers, but the
-compute readiness facade used it before the first bind. The facade now creates
-the wrapper before it checks readiness. The bounds atlas also uses GPU-only
-storage without a CPU mirror. The later live checks below confirmed nine-copy
-arena growth and dispatch.
-
-After the wrapper repair, dispatch groups committed with no reported failure.
-The palette contained one renderer and seven bone mappings. Physics readback
-bytes and readback submissions stayed at zero. The viewport still showed a
-thin, stationary strip. RenderDoc confirmed active-work reset, compaction,
-finalization, bounds, bounds-copy, and palette passes. The solver indirect
-dispatch was absent. Particle positions remained at the initial pose.
-
-The user requested fixed ambient light for inspection. The Math Intersections
-world now sets `AmbientLightColor` to `(0.15, 0.15, 0.15)` and intensity to `1.0`.
-No dynamic GI feature was added.
-
-The user later reported that the three faces outside direct light were still
-black. The setting alone did not reach Advanced native opaque lighting. The
-global capture did not include ambient, the publisher did not publish an
-environment row, and the native shader did not read ambient from that table.
-With directional intensity set to zero, a viewed baseline capture showed a
-black mesh despite ambient 0.15. This supersedes the earlier ambient visibility
-assumption. The repair connects world-swap capture, environment publication,
-and native diffuse shading. Ambient-only changes must prevent publication
-reuse. See [ambient validation](../../testing/rendering/advanced-world-ambient.md)
-for the check results and coverage limits.
-
-The ambient repair built with zero warnings and zero errors. A first live launch
-stopped in `AdvancedGpuScenePublisher.TryAddRegistration` after about 11 seconds.
-The message was `Canonical resident tables exhausted their preflighted
-frame-boundary capacity.` This message also covers invalid material, geometry,
-and registration lookup failures. It does not identify a capacity cause.
-Review found no direct coupling between the new environment row and these
-separate scene tables. The same binaries passed the ambient checks after a
-restart. The first fault remains unexplained; do not treat the restart as a
-repair. If it repeats, add failure-only diagnostics at the first failed check,
-with captured and current mesh revisions and counts, before changing capacity.
-The fault is in `reports/ambient-new-time.json`; the healthy retry and captures
-use the `ambient-retry-*` and `ambient-fixed-*` report names in the existing
-evidence run.
-
-The live ambient checks showed visible faces with direct light at zero, black
-faces with ambient intensity at zero, blue and green responses to color edits,
-and a darker response to intensity 0.1. Opposite camera views showed both sides
-of the deformed mesh. Neutral ambient and directional intensity were restored.
-
-The first capture used RenderDoc 1.44, but the installed replay module supports
-1.41. A session-only layer override selected the installed 1.41 capture module.
-The compatible capture opened and the exported output was inspected. The replay
-session was closed. Diagnostic capture time is excluded from benchmarks.
-
-The rendering adapter also has a pre-existing per-source palette publication
-stub. Mixed dispatch groups need separate review. The requested test uses one
-batched group; do not claim mixed-group validation from that test.
-
-The live frame trace placed direct physics dispatches in `Advanced.Deformation`
-(100002), but placed indirect dispatches and ordered barriers in graphics pass
-5. The ordered API passed free-form diagnostic labels to the fallback pass
-resolver. The resolver used the word `Compute` to select its stage. The ordered
-API now supplies fixed compute operation names. Explicit valid pass indices
-still take precedence. The scheduler preserves the authored order within the
-selected pass. Later capture evidence verified the indirect solver, bounds, palette, and ordered aggregate copy.
-
-A nine-copy run exposed the same cold-wrapper issue in arena growth copies.
-The Vulkan buffer-copy facade now creates both wrappers before its retained
-lookup. The next live run grew the arena and registered all nine palettes.
-
-The benchmark toggle cleared itself during startup cleanup. The controller now
-sets it from the final running state. Source restoration then exposed an
-animation binding failure for the read-only `AnimationClipComponent.SceneNode`
-navigation member. The controller now records the exception in its status.
-The later three-cycle validation verified repeated start, cancellation, automatic completion, and source restoration.
-
-Typed getters now bind the `SceneNode -> Transform` navigation path. A typed
-float setter binds `TranslationY`. After a nine-copy cancellation, the source
-returned to one registered chain, both pending teardown fields cleared, and
-the benchmark toggle stayed off. Later cycles verified visible GPU-skinned restoration.
-
-The next compatible GPU capture contains `vkCmdDispatchIndirect` before bounds
-and palette generation. All seven particle positions are finite and coherent.
-Palette entries map bind centers to particle positions with an error below
-`3.4e-7`. This verifies the solver and palette producer in that captured frame.
-
-The bounds shader used an 80-byte particle stride because it declared a `vec3`
-padding field after `IsColliding`. The CPU, solver, and palette use 64 bytes.
-The wrong stride explains the extreme bounds in the capture. Three scalar
-padding fields now preserve the 64-byte layout.
-
-The Advanced deformation consumer copied external palettes from their CPU
-mirror, then uploaded that stale seed into its aggregate palette. It now keeps
-external ranges for ordered GPU copies after CPU uploads and before deformation.
-Adjacent source and destination ranges share one copy. Accepted partial work
-keeps the frame slot fenced; rejected work cannot publish a valid output. The
-OpenGL renderer also implements the generic GPU-copy operation used by this
-path. The later live GPU-copy capture below verified this path.
-
-One cold Vulkan launch exhausted descriptor preparation recovery before the
-viewport submitted a frame. A later launch recovered and rendered. Compute
-preparation now retains its specific failure reason. This startup path remains
-separate from the accepted steady-state checks below.
-
-## Accepted live validation
-
-The primary coordinator visually checked the nine-copy scene before, during,
-and after three benchmark cycles. The skinned mesh moved and deformed on the
-GPU. Each cycle returned the source scene to one chain, one palette binding,
-and seven bone mappings. Physics simulation readbacks remained at zero.
-
-- Cycle 1 completed automatically after 30 seconds with 1,801 samples.
-- Cycle 2 stopped by manual cancellation with 472 samples.
-- Cycle 3 completed automatically after 20 seconds with 1,200 samples.
-
-The capture `renderdoc/gpu-palette-copy_frame1834.rdc` verified solver, bounds, palette, and aggregate passes at events 52, 61, 79, and 100. It showed finite 64-byte particle records and non-identity palette matrices. This confirms the ordered GPU copy and visible skinned motion for this single-group scenario. It does not validate mixed dispatch groups.
-
-Clean Release Vulkan Advanced runs produced these historical render measurements. The old MCP `invoke_method` used `Direct` worker-thread dispatch; clone concurrency may have changed test setup. Treat these values as setup-uncertain, not as a controlled baseline.
-
-| Scene | Render FPS | Mean sampled GPU time |
-|---|---:|---:|
-| Source | 182.23 | 3.877 ms |
-| 100 copies | 152.42 | 5.403 ms |
-| 1,000 copies | 11.96 | 83.893 ms |
-
-These values come from the render summary reports, not benchmark UI tick
-samples. The 2,000-copy restart associated with these earlier measurements
-produced zero rendered frames. Its timer report identified a terminal
-collection fault: `InvalidOperationException: Collection was modified` in
-`GPUScene.Remove` while processing pending renderable operations.
-
-## Lifecycle repairs and further validation
-
-The collection fault came from disposing the producer list while
-`GPUScene.Remove` enumerated it. Registration now uses owned maps. The timer
-also records `FirstTerminalFault` and stops the engine after a terminal loop
-fault, instead of leaving a stale frame state that looked like a GPU hang.
-
-A separate direct-publication failure at 1,000 copies came from a reclaim race
-between active publication and lease acknowledgement. A guard and leaf-level
-diagnostic now cover that race. The source change passed its final live validation in the 1,000-copy run. A duplicate-key exception in the profiling dictionary during the
-2,000-copy clone path was fixed with an atomic lazy `ConcurrentDictionary`.
-The final build and 2,000-copy clone run verified this repair.
-
-In a PID 33696 run with the repaired removal path, the 100-to-1,000-copy ramp
-completed. These direct-dispatch measurements are historical only. The old
-MCP `invoke_method` path used `Direct` dispatch from its worker thread. Clone
-concurrency may have corrupted scene setup. Do not use those results as a
-controlled performance baseline.
-
-The 1,000-copy render summaries reported:
-
-| View | Render FPS | Mean sampled GPU time |
-|---|---:|---:|
-| Visible | 26.346 | 26.771 ms |
-| Offscreen | 28.684 | 9.478 ms |
-
-The 2,000-copy lifecycle completed automatically after 120.04 seconds with
-2,770 update samples. It restored the source to one chain, and the timer was
-running with no terminal fault. The visible render summary reported 3.367 FPS
-and 297.908 ms mean sampled GPU time. This is a valid observation, but it is
-not a controlled speedup comparison with earlier runs. Run variation remains
-unresolved.
-
-Profiling used the CPU profiler and coarse GPU timing. RenderDoc, validation,
-and dense profiling were off during measurements. Dense diagnostics were
-collected separately over three Advanced scopes and averaged 3.222 ms. They
-miss global physics, copies, and shadows, so they are not full GPU time. The
-active device was an NVIDIA GeForce RTX 4070 Laptop GPU with an Intel Core
-Ultra 9 185H CPU. The render was 1920x1080 with a 1286x723 internal viewport.
-
-## Optimization investigation
-
-The captured frame identifies the early visibility append as the first
-optimization target. The next candidates are solver memory access, CPU chain
-collection and input updates, and visibility-based deformation budgets.
-Keep simulation and bone palettes on the GPU. Do not add a CPU readback to
-decide which chains can run.
-
-The active device and CPU identify the test machine only. They do not explain
-results on other hardware. Repeat the complete-population measurements after
-each performance change.
-
-## Main-thread measurements
-
-The current benchmark harness sets `sessionMcpDispatchMode` to `MainThread`
-before scene mutations that use ImGui. Treat the earlier direct-dispatch runs
-as setup-uncertain. The accepted main-thread measurements below use complete
-job populations, except where marked invalid.
-
-| Run | Population and view | Render FPS | Mean sampled GPU time | Status |
-|---|---|---:|---:|---|
-| 1,000, full | 104,000 vertices, visible | 11.721 | 88.078 ms | Accepted |
-| 1,000, no shadows | Visible | 11.509 | 86.620 ms | Accepted |
-| 2,000, full | 208,000 vertices, 14,000 bone mappings, visible | 3.706 | 267.911 ms | Accepted |
-| 2,000, full | Offscreen, all jobs still admitted | 10.681 | 18.354 ms | Accepted |
-| 2,000, partial | 1,027 jobs, no CPU profiler | 9.72 | 103 ms | Invalid |
-
-The no-shadow run had zero light casters; cascade far was 200 and camera far
-was 650. Its small change from the full 1,000-copy run makes shadows unlikely
-to be the primary cost in this view. The 1,000-copy offscreen run stopped when
-the population changed, so it has no accepted measurement.
-
-These complete-population MainThread values are the pre-patch baseline.
-
-The 2,000-copy frame-operations capture combined GPU copies into one operation
-with 18 barriers. Main-thread admission and scene evidence is in
-`reports/main2000-repeat-scene.json`. Physics simulation readbacks stayed at
-zero; this does not describe screenshots or profiling readback.
-This rules out one copy per chain for that capture. A separate main-thread
-stop/start test created 2,000 copies. `GPUScene.AdvancedPublicationRejected`
-was true. The failure came from a full material-variant registry. The exact
-old-plus-incoming material acquire-before-release fix passed the final
-repeat checks below.
-
-The final 2,000-copy run without the CPU profiler reported 9.72 FPS and 103 ms
-GPU time, but published only 1,027 of 2,000 jobs. Do not use it as a speedup
-result. New `Advanced.Visibility.RasterEarly` and
-`Advanced.Visibility.RasterLate` GPU timers cover missing raster timing.
-Their diagnostic means were 0.682 ms and 0.005 ms. These timer readings do
-not include the early visibility append measured in the RenderDoc capture.
-Mesh raster work is not the main cost in this view.
-
-## Captured GPU bottleneck
-
-The full 2,000-chain capture `renderdoc/scale2000_frame1148.rdc` identifies
-event 149, `Advanced.Visibility.Early`, as the main GPU cost at 266.570 ms.
-Event 55, `PhysicsChain.IndirectDispatch`, took 11.672 ms. These are RenderDoc
-replay timings, not clean live frame-rate measurements.
-
-The early visibility shader used a global compare-and-swap retry loop for
-each visible candidate. Visible candidates contended on one counter.
-Offscreen candidates did not append. This explains the visibility-dependent
-cost and provides a specific cause to validate.
-
-The replacement uses one atomic reservation per append. Each view resets its
-counters. Candidate admission is bounded by `payloadCapacity`, and each
-candidate appends at most once. Output bounds checks remain. The final live
-measurements confirm a large reduction in GPU time.
-
-The material registry reserve cleared the first restart rejection. The next
-2,000-chain restart exposed the same acquire-before-release peak in canonical
-scene tables. The scene reserve now counts planned adds, updates, and
-tombstones, including retired rows. A later 1,000-to-2,000 transition exposed
-a draw-only growth check that skipped texture and sampler storage after
-selective scene growth. Boundary growth now checks all 29 profile fields
-before it grows the matching registries. Independent review found no blocker
-in these capacity and visibility changes.
-
-## Final live results
-
-Release Vulkan Advanced, the same wide camera view, CPU profiling off,
-RenderDoc off, validation off, dense timing off, and coarse GPU timing on:
-
-| Active chains | Before FPS | After FPS | Before GPU time | After GPU time |
-|---|---:|---:|---:|---:|
-| 1,000 | 11.721 | 23.689 | 88.078 ms | 10.556 ms |
-| 2,000, first final run | 3.706 | 11.650 | 267.911 ms | 24.251 ms |
-| 2,000, third final run | 3.706 | 12.795 | 267.911 ms | 21.419 ms |
-
-The 1,000-chain settled window rendered 272 frames in 11.482 seconds. The
-2,000-chain windows rendered 206 frames in 17.683 seconds and 231 frames in
-18.054 seconds. Each measurement used the full admitted population: 104,000
-or 208,000 vertices. These are observed results on this laptop, not a
-guaranteed frame rate or a 60 FPS result. Screenshot work was outside the
-accepted timing windows.
-
-A later source-only window measured 32.333 FPS and 5.009 ms GPU time after
-teardown. A fresh launch of the same build and camera measured 22.477 FPS
-and 9.959 ms. Thus the late idle-rate comparison does not prove a retained
-benchmark-resource regression. The one-chain primary recording time varied
-from 4.00 to 75.08 ms. The inspected recording and preparation loops use
-current operation counts. Keep this run variation separate from the measured
-visibility bottleneck and do not promise the table's frame rates on later runs.
-
-Three final 2,000-chain starts passed in the same editor process. Each run
-had 2,000 admitted jobs, 2,000 live palette bindings, 14,000 bone mappings,
-and no publication rejection. Publication sequences advanced from 155 to
-158 to 209. The third topology generation was 10,006, which confirms that
-replacement work was published. Physics readback enqueue attempts and
-submissions remained zero. The timer remained running without a terminal
-fault. After the third stop, deferred teardown completed and the source
-returned to one chain and one palette binding.
-
-The final nine-chain visual checks cover automatic completion, manual stop,
-and a third start from another camera position. Captures show all nine meshes
-deforming. Earlier RenderDoc evidence verifies actual GPU particle and bone
-palette writes, rather than only CPU root motion. Sequence screenshots use
-diagnostic readback; that is separate from the zero-readback physics path.
-
-The first final nine-chain cycle completed with 1,000 update samples in
-16.83 seconds. The second was cancelled with 3,505 samples. The third
-completed with 1,000 samples in 16.67 seconds. All toggles and deferred
-teardown fields cleared. The final source had one chain, one palette binding,
-seven mappings, and no timer fault. The benchmark's update samples do not
-measure rendered FPS.
-
-Two later screenshot sequences stopped at the bounded capture queue. Each
-saved five valid frames, which were viewed. A separate final screenshot
-confirmed the restored source. These are partial sequence captures, not
-successful full-sequence API checks. They do not indicate physics readback
-or a stopped simulation.
-
-The final build completed with zero warnings and zero errors. No unit-test
-files were added or changed. The new OpenGL buffer-copy implementation was
-built but was not validated in a live OpenGL session. Mixed physics dispatch
-groups remain outside this scenario's coverage.
-
-Two intermediate cold launches lost their engine loop threads. Their mini
-dump proved that the loops had exited, but did not retain the initial fault.
-A later scale transition produced the resource-capacity exception described
-above. Do not assume that it explains the earlier launches. The existing
-`get_time_state` tool now runs on the caller thread so that it can report a
-terminal fault when the app/update queue no longer runs.
-
-## Next measured optimizations
-
-1. Measure CPU preparation stages separately. The GPU path still builds six
-   lists and hashes matrices, then the rendering bridge converts and copies
-   them before the dispatcher applies version checks. Cache static particles,
-   tree topology, and bone mappings at their existing version boundaries.
-   Skip CPU job snapshots on a GPU-only path. Do not parallelize mutable
-   dispatcher work without a separate publication step.
-2. Check the solver arena's actual Vulkan memory type. `DynamicDraw` requests
-   host-visible/coherent memory in the current backend. Compare a device-local
-   arena with ordered seed and growth copies. Requested flags alone do not
-   prove the selected physical memory type. Do not discard initial particle
-   data by marking the arena GPU-produced without an upload path.
-3. Test smaller solver workgroups and cache the prior parent for short linear
-   chains. The current 128-thread group creates only 16 groups for 2,000 trees.
-   Matching particles in adjacent seven-particle chains are typically 512
-   bytes apart. Compare a layout that puts matching fields close together.
-   Preserve serial parent-before-child constraints within each chain.
-4. Add GPU-owned simulation and deformation budgets for distant or offscreen
-   chains. The offscreen experiment still admitted every deformation job.
-   Preserve conservative bounds and temporal history when work resumes.
-
-Accept each change only after repeat-run correctness, full-population checks,
-GPU pass timings, render frame intervals, and warm allocation measurements.
-
-## User feedback
-
-The user set a new minimum of 100 Hz with 2,000 active visible chains. The next
-work compares versioned CPU input copies, particle arena memory placement, and
-short-chain solver workgroup sizes. Render frame intervals, GPU time, full job
-counts, animation, and repeated start/stop behavior are required evidence.
-Update sample counts do not establish this target.
-
-The first new 2,000-chain start stopped during canonical reverse-dependency
-capture (`reports/opt-baseline2000-time.json`). It is not a valid performance
-baseline. The manifest does not read environment records, so an ambient edge
-count was ruled out. Failure-only leaf diagnostics now distinguish stale
-handles, invalid bindings, and insufficient edge storage before a repair.
-
-The first input-cache build ran all 2,000 chains with 2,000 palette bindings,
-2,000 deformation jobs, 208,000 vertices, and zero physics readback. A viewed
-wide camera capture showed the population. A 34.83-second runtime profile
-recorded 103 samples and 2.93 completed frames per second. Mean frame work was
-298.41 ms; mean collect work was 67.56 ms. This result fails the 100 Hz target.
-The static upload counter reached 406,789,320 bytes during the run. Tree rest
-gravity incorrectly shared the particle-template content version. The repair
-gives tree data a separate version through Core, bridge, and dispatcher.
-Changing rest gravity updates dynamic headers without uploading templates.
-Child local offsets remain valid because `Prepare` uses `InitLocalPosition`;
-the setup operation that changes it also changes `_particlesVersion`.
-
-The next Release build passed with zero warnings and zero errors. Its first
-2,000-chain start failed before a measurement window. The new diagnostic was
-`Draw 8:1 at physical row 7 has a stale material handle 8:1`, sequence 81.
-The material and geometry edge arrays each had capacity 2,048 and only seven
-written edges. This rules out edge capacity for this failure. Evidence:
-`reports/opt-treecache-fault-check.json` under the session evidence root.
-
-Code inspection also found a bounds routing cost of O(chains * scene commands):
-each palette binding called a helper that scanned all command registrations.
-At this population that is about four million entries per frame. A separate
-repair captures renderer-to-command routing once per scene into reusable
-storage. These repairs require new runtime measurements before acceptance.
-
-The readback bridge now shares one adapter per physics world. The previous
-adapter identity was per chain, which serviced the same world once per chain
-and retained old adapters across benchmark restarts. A tracked world now
-retires after its last source leaves and pending requests and staging slots
-finish. This does not enable physics readback.
-
-The publisher also preserved old slot stamps when growing storage and
-resetting the generation. The next plan could treat an old material request
-as current, omit its retain, and then retire a material used by a live draw.
-Growth now clears the plan, registration, light, and probe stamps before
-resetting their generations. A later cold launch failed in registration with
-the old generic capacity message. Registration diagnostics now identify its
-first failed guard or mutation; do not assume this second fault has the same
-cause. A no-build retry ran successfully.
-
-With the CPU changes and host-visible particle storage, an exploratory window
-gave 10.30 Hz and 15.91 ms mean GPU time. Its last samples had CPU profiling
-enabled, so it is not an accepted matched performance window.
-
-The first device-local, 128-thread run kept 2,000 chains before and after
-the capture. The backend reported a 1 MiB particle arena with resolved route
-`DeviceLocal`. Over 34.97 seconds, 413 samples gave 11.78 completed frames per
-second. Frame interval p50/p95/p99 was 84.03/97.51/103.09 ms. Mean GPU time was
-7.44 ms; mean collect time was 53.03 ms; mean primary recording time was
-28.89 ms. Every frame interval exceeded 10 ms. No CPU profiler logging was
-enabled in this window. Completion lag stayed at one frame. This result fails
-the requested 100 Hz target. Evidence uses the `opt-local128` report prefix.
-This is development diagnostic timing. The capture metadata marks the editor
-UI, command labels, and verbose logging as intrusive and declares the window
-unsuitable for the engine's strict clean-comparison policy. Runtime capture
-also allocates and writes telemetry. A separate low-frequency sample must
-check throughput without that capture observer.
-
-The particle arena uses `StaticCopy`, while its CPU seed/reset storage and
-ordered GPU growth copies remain active. Dynamic transform and header arenas
-retain their upload policy. The short-linear solver and GPU indirect argument
-builder now share one shader group-size constant, so size experiments cannot
-leave a partial population undispatched.
-
-The 64-thread development window (`opt-local64-retry`) kept 2,000 chains and
-gave 11.55 Hz, 18.05 ms mean GPU time, and 120.94 ms p95 frame interval. A later
-hardware sample during the same active run reported P5, 435 MHz core, 810 MHz
-memory, 57 C, and 19 percent GPU use. This CPU-limited workload permits a low
-GPU clock. The earlier window did not record clocks. These single windows do
-not establish a winning workgroup size.
-
-The precise cold-start failure showed `InvalidGeometrySource` with planned
-revision 317 and current revision 320. `RebuildPhysicsChainSkinnedBoxVisual`
-destroyed the attached old mesh before assigning its replacement. Destroying
-attribute buffers changed the geometry while canonical publication packed it.
-The repair assigns the replacement first and stages required geometry append
-data before `TryBeginPublication`. Nonblocking buffer read scopes and matching
-revision, payload, and count checks protect each copy. Registration consumes
-the retained numeric staging after all source locks are released. Stable
-geometry is not recopied. The read-only review passed; live cold-start and
-repeat-run validation are still required.
-
-Another source audit found O(headers squared) range ownership in
-`VulkanPreparedStableBinStream.TrySealSubmissionPlans`. A retained owner array
-indexed by the resolved indirect range removes about two million comparisons
-per frame at 2,000 unique ranges. CPU-direct headers still seal independently;
-only later GPU headers for an already owned range skip duplicate plans.
-
-The user requested fixed ambient light and repeated GPU-skinned validation.
-The world uses its existing ambient color and intensity settings, without
-dynamic GI. The accepted runtime results above are agent-observed. The user
-has not yet reported whether the final appearance meets their preference.
-
-## CPU preparation and repeated-run follow-up
-
-The 32-thread build also contains geometry lifetime protection and linear
-Vulkan range ownership. Its first cold launch and 2,000-chain start completed.
-The low-frequency observer recorded 445 rendered frames in 34.327 seconds:
-12.964 Hz. Sampled GPU time averaged 17.77 ms. All 2,000 deformation jobs and
-208,000 vertices remained admitted; physics readback counters stayed zero.
-This does not meet 100 Hz. Evidence prefix: `opt-local32-ranges`.
-
-Three starts and stops restored one source chain, one palette slice, and one
-renderer binding. A transient teardown query preceded render-thread cleanup;
-a later query confirmed cleanup. Close views in the second run showed changing
-mesh curvature. The third run included one rejected render sample and 7.65 Hz;
-do not use it as a clean comparison. The second window changed camera during
-sampling and is functional evidence only. Its measured throughput was 11.71 Hz.
-
-Cumulative timings in the first window identified `PhysicsChainWorld.LateTick`
-at 22.15 ms per call, `FixedTick` at 7.87 ms, mesh-command updates at 8.97 ms per
-rendered family, and advanced plan preparation at 6.96 ms per family. Tick times
-include lock waits and must not be summed as CPU use. Bin sealing contributes
-3.82 ms inside plan preparation. Raster program lookup and pipeline factory
-work already run once per family and together cost only 0.04 ms.
-
-The next build removes empty parallel CPU preparation from an all-GPU world.
-Opt-in late-tick counters separate gate wait, preparation, GPU input packing,
-bridge dispatch, and publication. It also publishes a skinned render command
-once after matrix and bounds changes, instead of publishing an intermediate
-snapshot first. GPU bounds alone cannot replace the CPU proxy bounds: canonical
-frustum candidates and shadow intersection still consume those proxies.
-
-Root-motion callbacks allocated exactly 240,000 bytes per call for 2,000
-transforms. SceneNode subscribed to all property changes but used only Parent
-and World. Filtered internal subscriptions now allow XRBase to skip argument
-allocation for ignored properties. Public listeners retain their order,
-cancellation, and fresh notification argument lifetime. Live validation must
-confirm that the root-motion allocation disappears.
-
-The next Release build (`opt-cpu2`, process 50160) passed with zero warnings and
-zero errors. It kept 2,000 chains during 75.433 seconds and completed 921 render
-frames (12.210 Hz). No sampled terminal outcome was rejected. Source cleanup
-again returned to one chain and one palette binding. This still fails 100 Hz.
-
-The single-swap change reduced mesh updates per family from 6,743 to 3,924.
-Unchanged updates fell from 3,384 to 0.13. Mesh-update time changed from 8.97 to
-7.96 ms, while update/render cadence changed. No whole-frame improvement is
-established. Late-tick gate wait was only 0.0195 ms; body time was 24.048 ms.
-Component preparation used 18.023 ms, including 12.472 ms in GPU Prepare,
-1.036 ms input packing, and 1.399 ms bridge dispatch. Boundary and diagnostics
-used 2.888 and 3.134 ms respectively.
-
-The first property filter reduced root-motion allocation from 240 KB to
-112 KB per callback. Undo's unfiltered changed listener accounts for the
-remaining 56 bytes per transform. The next build filters that listener while
-retaining SceneNode.Transform tracking outside recording. It also reuses
-successfully bound renderer subscriptions on unchanged assignments. Mutation
-events and failed-refresh retries remain active. Source review passed for
-both changes. More detailed late-tick counters will split the preparation,
-quality-budget, and activity-scan costs before further changes.
-
-The next build passed with zero warnings and zero errors in 2 minutes 21 seconds.
-Process 37944 exited after initial editor startup and before benchmark setup.
-The MCP connection closed. Available logs and the Application event log did
-not provide a cause; do not attribute this exit to a code change. A no-build
-retry uses the same binary as `opt-cpu3-retry` (process 32720). The additional
-world collection-stage counters in source are not in that binary.
-
-`opt-cpu3-retry` confirmed zero root-motion allocation across 1,468 callbacks.
-Its 61.942-second render window completed 595 frames (9.606 Hz) but sampled
-five rejected frames. The retained readiness diagnostic identifies
-`MeshMaterialization` / `visible-mesh-cold-admission`: native preparation yielded
-before publishing a partial scene. These are startup readiness retries, not
-proof of a steady solver failure. The timing helper now waits for 30 completed
-frames with unchanged deferred/rejected/failed counters before measurement.
-The automatic benchmark stop restored the single source chain and binding.
-
-Detailed late-tick timing was 25.438 ms body, 0.023 ms gate wait, 20.921 ms
-component preparation, 3.174 ms quality budgeting, and 1.332 ms activity scan.
-Inside GPU preparation, hierarchy recalculation used 10.185 ms, rest-pose
-setters 1.283 ms, and particle transform reads 0.335 ms. Unchanged rest-pose
-setters already return before invalidation; bypassing them is not justified.
-Animated roots require current child matrices before dispatch. A read-only
-architecture review is examining batching without stale poses or callbacks
-under a global hierarchy lock.
-
-The next build avoids fixed-tier work estimates and unchanged quality-state
-writes. It adds opt-in world collection/swap stage counters to distinguish
-matrix publication, mesh updates, and scene work. This diagnostic build still
-requires a warm runtime window and cannot establish the 100 Hz acceptance.
-
-The `opt-cpu4-warm` window completed 377 rendered frames in 41.668 seconds,
-or 9.0477 Hz. This remains below the 100 Hz target. The sampled GPU mean was
-27.409 ms and the sampled whole-frame mean was 42.333 ms. All 31 render samples
-kept rejected outcomes at 116, deferred outcomes at 84, and failed outcomes at
-zero. Completed outcomes increased from 102 to 480. Thus, no new rejection was
-sampled in this warm window. The samples do not erase the earlier cold-start
-readiness rejections.
-
-The opt-in late-tick counters advanced by 880 calls. Delta time per call was
-25.635 ms in the body and 0.022 ms at the tick gate. Component preparation used
-23.049 ms, including 16.412 ms in GPU preparation, 1.397 ms in input packing,
-and 1.578 ms in bridge dispatch. Inside GPU preparation, hierarchy evaluation
-used 11.419 ms, rest-pose work used 1.327 ms, and particle transform reads used
-0.537 ms. Boundary work used 1.211 ms, including 1.210 ms in quality budgeting.
-Diagnostics used 1.364 ms, including 1.362 ms in the activity scan. These are
-nested counters; do not sum them as independent costs.
-
-The collection counters advanced by 401 calls. Per collect call, matrix work
-used 13.233 ms, mesh work used 13.056 ms, and scene work used 6.584 ms. The
-swap counters advanced by 400 calls. Per swap call, matrix work used 11.015 ms,
-mesh work used 16.797 ms, and scene work used 17.773 ms. These call counts
-differ from the 377 rendered frames, so the stage means are not frame totals.
-Evidence: `reports/opt-cpu4-warm-render-summary.json`,
-`reports/opt-cpu4-warm-render-samples.json`, and the matching
-`opt-cpu4-warm-{late,collection}-{before,after}.json` counter snapshots.
-
-The `opt-cpu5-warm` window kept 2,000 chains and completed 386 rendered frames
-in 38.033 seconds, or 10.149 Hz. It still misses 100 Hz. Sampled GPU and
-whole-frame means were 11.022 and 38.008 ms. All 31 render samples kept
-rejected outcomes at 152, deferred outcomes at 82, and failed outcomes at zero.
-Completed outcomes increased from 263 to 650. No new rejection was sampled
-inside this window. The wide view was inspected. An initial tool call paused
-for about 14 minutes before warmup; that pause was outside the timed window,
-and its cause is unknown.
-
-Late-tick counters advanced by 888 calls. Delta time per call was 25.116 ms in
-the body, 0.054 ms at the tick gate, and 21.837 ms in component preparation.
-GPU preparation used 14.590 ms, including 9.154 ms in hierarchy evaluation,
-1.359 ms in rest-pose work, and 0.351 ms in particle transform reads. Input
-packing used 1.442 ms and bridge dispatch used 1.898 ms. Boundary work used
-1.554 ms, including 1.552 ms in quality budgeting. Diagnostics used 1.716 ms,
-including 1.714 ms in the activity scan. These counters overlap.
-
-Collection advanced by 409 calls: matrix work used 9.068 ms, mesh work
-13.668 ms, and scene work 7.176 ms per collect call. Swap advanced by 410
-calls: matrix work used 10.454 ms, mesh work 14.452 ms, and scene work
-14.199 ms per swap call. These are call means, not rendered-frame totals.
-The GPU clock evidence changed from 1905/8101 MHz to 1605/7001 MHz, so CPU4
-and CPU5 are not a controlled performance comparison. Evidence prefix:
-`reports/opt-cpu5-warm-` (render summary, render samples, late and collection
-counter snapshots, and clock capture).
-
-The `opt-cpu6-warm` window kept 2,000 chains and completed 442 rendered frames
-in 36.345 seconds, or 12.1612 Hz. It still misses 100 Hz. Sampled GPU and
-whole-frame means were 7.658 and 31.226 ms. All 31 render samples kept
-rejected outcomes at 119, deferred outcomes at 81, and failed outcomes at zero.
-Completed outcomes increased from 207 to 650. No new rejection was sampled
-inside this warm window.
-
-Late-tick counters advanced by 924 calls. Delta time per call was 24.675 ms in
-the body, 0.043 ms at the tick gate, and 21.477 ms in component preparation.
-GPU preparation used 14.351 ms, including 8.892 ms in hierarchy evaluation,
-1.408 ms in rest-pose work, and 0.392 ms in particle transform reads. Input
-packing used 1.342 ms and bridge dispatch used 1.852 ms. Boundary work used
-1.519 ms, including 1.517 ms in quality budgeting. Diagnostics used 1.676 ms,
-including 1.674 ms in the activity scan. These counters overlap.
-
-Collection and swap each advanced by 461 calls. Per collect call, matrix work
-used 9.463 ms, mesh work 13.676 ms, and scene work 6.450 ms. Per swap call,
-matrix work used 9.058 ms, mesh work 13.735 ms, and scene work 13.025 ms.
-These are call means, not rendered-frame totals.
-
-The new sequence-read counters recorded 17,792 contended local reads and
-14.159 ms of cumulative local retry time. World reads had 538 contended reads
-and 668.890 ms; render reads had 1,041,463 contended reads and 803.921 ms.
-Render retry time is about 1.82 ms per rendered frame when divided by 442;
-the counter adds time across reading threads and does not measure one frame's
-critical path. This does not explain the 82.23 ms mean render interval, so the
-evidence does not justify a per-space concurrency change as the primary fix.
-Evidence prefix: `reports/opt-cpu6-warm-` (render summary and samples, late,
-collection, and matrix-read before/after snapshots).
-
-Two clean-cycle measurements kept 2,000 active chains. Cycle 1 completed 414
-frames in 37.208 seconds (11.1266 Hz); its cleanup restored one source chain.
-Cycle 2 completed 365 frames in 35.750 seconds (10.2098 Hz); its repeated
-cleanup restored one source chain. Neither cycle meets the fixed user
-acceptance target of 100 Hz with 2,000 active, animated, visible chains.
-Evidence prefixes: `reports/opt-clean-cycle1-` and
-`reports/opt-clean-cycle2-`.
-
-Cycle 3 completed 385 frames in 35.435 seconds (10.8650 Hz). Its restoration
-report also confirms one source chain and one palette binding. Each cycle had
-2,000 registered chains and 2,000 renderer palette bindings both before and
-after timing, with zero submitted physics readbacks and no CPU fallback.
-The restored reports show one chain, one palette slice, one palette binding,
-and zero readbacks after each stop. All three functional start, run, and
-cleanup cycles passed these counter checks. The 100 Hz frame-rate check failed
-in each cycle.
-These runs used an Intel Core Ultra 9 185H and an RTX 4070 Laptop GPU at
-1920 x 1080 output with 1286 x 723 internal TSR rendering. Sampled views
-show deformation; they do not prove that every chain is visually correct.
-Across 31 samples per cycle, failed outcomes stayed zero. Rejected outcomes
-stayed at 193, 426, and 426, and deferred outcomes stayed at 85 in each cycle.
-Completed outcomes rose by 414, 365, and 385 respectively, so no new sampled
-rejection or defer occurred in any timed window. Evidence prefix for cycle 3:
-`reports/opt-clean-cycle3-`.
-
-The final Release build had zero warnings and zero errors. These clean cycles
-used the same CPU6 source binary in a no-build editor session with the timing
-observer off (process 21360); they did not use new tests. The 32-, 64-, and
-128-thread GPU solver trials do not prove a winning workgroup size under
-matched clocks and conditions.
-
-The rewritten scale todo lists several GPU features that source review shows
-are already present. `PhysicsChain.comp` runs one invocation per short linear
-tree and advances parent-first particles. `PhysicsChainBranched.comp` assigns
-one workgroup per long or branched tree and synchronizes each depth. Both
-shaders run the tree's substeps inside one dispatch. The dispatcher chooses
-these kernels through GPU-authored indirect commands; dispatch grouping does
-not split by loop count. Separate particle-state and static-template buffers,
-source versions, and resident arena uploads already avoid steady template
-uploads. Global bone-palette generation and aggregate compute skinning also
-exist. A persistently mapped ring for dynamic headers remains open; current
-header storage uses `StreamDraw`.
-
-The next 100 Hz work should address measured CPU cost and required visibility
-ownership. CPU6 used 24.675 ms per late-tick body call and 9.463 ms for matrix
-work plus 13.676 ms for mesh work per collect call. Missing canonical bounds
-ownership and CPU candidate rejection are under review. Mesh instancing must
-also remove per-renderer preparation to reduce these costs; fewer draw calls
-alone will not do that. World-owned GPU inputs that do not require per-chain
-CPU hierarchy evaluation are a possible larger change and need a correctness
-design for animated roots. A new GPU kernel family is not the first fix for
-these measured CPU costs.
-
-Canonical GPU bounds ownership needs an end-to-end route.
-`AdvancedPreparationExtractor.ExtractCommand` currently copies canonical geometry
-bounds into each `AdvancedVisibilityCandidate`. Physics bounds must reach
-frame-slot candidates before early and late visibility. Routing must map a
-published draw handle and generation to the current candidate index because
-legacy indices can compact, and it must retain route and buffer storage until
-GPU work completes. `ClassifyCandidatesForViews` must keep eligible view
-bits for GPU-owned bounds. CPU shadow tests in `VisualScene3D` and
-`VulkanDirectionalShadowLaneCulling.ComputeRecordMasks` need conservative
-admission while keeping layer, material, and `CastShadow` rules. Only full GPU
-deformation coverage can bypass CPU bounds. An invalid numeric GPU bound is a
-rejection, not an unbounded sentinel. This route is not implemented yet.
-
-Root viewed the wide screenshots from all three clean cycles, the near
-deformation pairs from cycles 2 and 3, and the restored source pairs after
-cycles 1 and 3. The meshes change shape in the sampled pairs. The source
-continues to animate after cleanup. This is sampled visual evidence, not an
-exhaustive check of every chain. The owned editor session stopped after the
-third cleanup. Its retained logs had no matching exception, fatal, device-loss,
-or validation-error entry; Vulkan validation layers were disabled for timing.
-
-## Desktop continuation
-
-The next run uses a Ryzen 9 7950X3D and an RTX 3090. These results cannot be
-compared directly with the laptop results above. The named editor session is
-`chain-100hz`, with Release binaries, Vulkan, Advanced rendering, `CpuDirect`
-submission, FXAA, 1920 x 1080 output, VSync off, and an uncapped render loop.
-The update target is 90 Hz; the fixed target is 30 Hz. Each measured window
-keeps 2,000 registered GPU chains. Root motion stays active, bone readback stays
-off, and debug displays stay off.
-
-Evidence is under
-`Build/_AgentValidation/20261006-174854-physics-chain-100hz/`.
-The retained session build and logs are under
-`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20261006-174906-chain-100hz/`.
-The timing script divides completed Vulkan frame-count deltas by elapsed wall
-time. It checks the chain count before and after each window. An early window
-named `baseline` is invalid: the timed benchmark ended during that window and
-returned to one chain. Its 204 Hz result must not be used.
-
-| Window | Completed frames | Wall seconds | Completed Hz | New rejected / deferred / failed |
-| --- | ---: | ---: | ---: | --- |
-| `baseline-valid` | 374 | 30.898 | 12.104 | 0 / 0 / 0 |
-| `profiler-off` | 351 | 31.018 | 11.316 | 0 / 0 / 0 |
-| `lock-reduction` | 401 | 30.841 | 13.002 | 0 / 0 / 0 |
-| `subscriptions` | 403 | 30.862 | 13.058 | 0 / 0 / 0 |
-| `typed-locks` (removed) | 393 | 30.951 | 12.698 | 0 / 0 / 0 |
-| `observer-off` | 391 | 30.838 | 12.679 | 0 / 0 / 0 |
-| `full-grid` (farther camera) | 470 | 30.941 | 15.190 | 0 / 0 / 0 |
-
-The fine CPU profiler is off from `profiler-off` onward. The opt-in world tick
-observer stays on for these diagnostic comparisons. Disabling the CPU profiler
-did not improve the baseline. These short windows do not establish a precise
-speedup under controlled clocks. None meets 100 Hz.
-
-The `lock-reduction` build changes two paths. Existing GPUScene mesh and
-material IDs use read lookups and only insert a missing reverse entry. This
-removes repeated dictionary writes and captured ID-factory delegates. Exact
-ordinary `Transform` children with clean local matrices combine the dirty read
-and world composition under one store gate. Callbacks still run after that gate
-is released. The mean late-tick body fell from 22.214 ms in `baseline-valid` to
-19.365 ms. Mean hierarchy preparation fell from 8.276 ms to 7.029 ms. These are
-call means, not rendered-frame totals.
-
-The `subscriptions` build also gives `RenderCommandMesh3D` a published binding
-token. Same-renderer assignments skip the subscription gate only when all
-groups and overrides remain current. A mutation or failed refresh invalidates
-the token and keeps the existing repair path. Both builds passed with zero
-warnings and errors. No test files changed.
-
-Eight-second sampled .NET traces identify repeated Monitor entry paths in
-bone notifications, pending render-matrix updates, skinned bounds, and renderer
-subscriptions. The second trace no longer lists material-ID insertion among
-the large sampled paths. Thread-time samples include waiting and do not prove
-that every sampled Monitor entry is contended. Runtime counters in the
-`subscriptions` build report about 18.6 MB/s of allocation and 593 monitor
-contentions per second. One gen0/gen1 collection occurred during seven counter
-intervals; no gen2 collection occurred. GC pauses do not explain the sustained
-frame interval.
-
-The wide view and two near views from `lock-reduction` were captured and viewed.
-The near meshes change shape between captures. The wide camera cuts some near
-rows, so these views do not prove that all 2,000 chains pass visibility. Physics
-readback submission and dispatch-failure counters stayed zero. The HUD reported
-zero CPU fallback. Screenshot readbacks are separate diagnostic work and occur
-outside timed windows.
-
-Two proposed shortcuts were rejected. Moving component GPU input collection
-after the normal transform pass can change callback, rest-pose, and fixed-step
-ordering. Reading GPU bone ownership without its lock can observe a retired
-bone-buffer state and lose a CPU update. A later subscription-suppression change
-needs a bone-state generation, matching bridge registrations, and a guaranteed
-CPU reseed when the final GPU owner leaves. Neither shortcut is implemented.
-
-An isolated no-build run of the `subscriptions` binary set
-`XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback`. It failed the warm
-window gate. The viewed capture showed a blank purple scene instead of the
-chains. Vulkan reported `PresentNowReadinessRetry`, `AdmissionDeferred`, and
-`PipelineCompilation` for the `sealed-primary-recording` ticket. Its detail was:
-"An indirect draw required by an exact output could not bind its prepared
-material and mesh state." No performance result from this configuration is
-valid. Evidence: `reports/gpu-submission-failure.json` and
-`reports/gpu-submission-wide.json`. The next comparison restores explicit
-`CpuDirect` submission. This is a configuration experiment, not a runtime CPU
-fallback; chain simulation and skin palettes remain GPU-owned.
-
-The `typed-locks` experiment replaced four private Monitor gates with
-`System.Threading.Lock` without changing their critical sections. It showed no
-material gain and was removed. The final Release build retains only the ID,
-transform, and renderer-binding changes described above. It passed with zero
-warnings and errors. `observer-off` and `full-grid` use that build with
-`XRE_WORLD_TICK_TELEMETRY=0` and the fine CPU profiler off.
-
-The comparison camera is `(0, 260, 310)`, looking at the origin. The farther
-`full-grid` camera is `(0, 600, 700)`, also looking at the origin. Its viewed
-capture contains the grid inside the viewport. Both final timing windows keep
-2,000 chains, 2,000 palette slices, and 2,000 renderer bindings before and after
-timing. Physics readback submissions stay zero. No screenshot or sampled trace
-runs inside either timing window. The farther view is not a matched performance
-comparison with the baseline, and no per-draw visibility count proves that
-every chain passes all visibility tests.
-
-The startup log has `UseDebugOpaquePipeline=True`, which is the Math
-Intersections world default. The live selected viewport reports
-`AdvancedRenderPipeline`, with 1920 x 1080 internal and output sizes. Setting
-the debug preference to false in this isolated session leaves that pipeline
-instance and resource generation unchanged. This flag does not explain the
-measured viewport cost.
-
-One cold `GpuBoundsPublication.AtlasBufferReadiness` failure was already present
-before `baseline-valid`, `subscriptions`, `typed-locks`, and the final timing
-windows. Its count does not increase during those windows. The `lock-reduction`
-session recorded zero dispatch failures. Thus, these results prove no new
-steady-state dispatch failure in the sampled windows, not a failure-free
-startup. The cold bounds readiness failure remains unresolved.
-
-After the final full-grid window, the timed harness ended and restored the
-source chain. The first final near pair therefore shows the restored source,
-not 2,000 chains. Both images were viewed and show a changing source pose.
-The restored counters report one chain, one palette slice, one renderer binding,
-and zero physics readbacks. A new bounded run captured the final active near
-pair with 2,000 registered chains before and after capture. Both images were
-viewed and show different bent poses. Evidence uses the
-`final-active-near-{a,b}` and `final-visual-dispatcher-{before,after}` prefixes.
-Its cleanup again restored one chain, one palette slice, one renderer binding,
-and zero physics readbacks. The owned editor session then stopped. The final
-session logs have no matching unhandled exception, fatal error, device-loss,
-or validation-error entry. Vulkan validation was off during timing.
+# Skinned GPU Chain Benchmark Investigation
+
+Status: Open. The 100 Hz target is not met.
+Last updated: 2026-10-08
+
+[Design](../../design/physics/physics-chain-steady-state-cpu-design.md) ·
+[Code items](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md) ·
+[Validation](../../testing/physics/physics-validation.md#gpu-skinned-chain-scale) ·
+[Performance guide](../../../developer-guides/rendering/physics-chain-performance.md)
+
+This document records the evidence: measurements, root causes, fixed defects, rejected experiments, and open faults. The design doc owns the response. The todo owns the code items. The validation doc owns the checks that remain.
+
+## Problem
+
+The `Physics Chain GPU Dispatcher Skinned Mesh Test` in the Math Intersections world must render 2,000 visible animated chains at 100 or more completed frames per second, with a frame-interval p95 of at most 10 ms. Simulation, bone palettes, deformation, and bounds stay on the GPU with zero physics readback. The target applies to a shared-mesh scenario and a unique-mesh scenario. Current results are 16–25 Hz.
+
+## Setup
+
+- Scenario: each copy has 7 particles (a root and 6 bones), a sphere and a plane collider of its own, a moving root, and one skinned box mesh with 104 vertices. 2,000 copies give 14,000 bone mappings and 208,000 vertices. By default all copies share one mesh, so the Advanced pipeline draws them as one indexed instance group. `-MeshSharing Unique` gives each copy distinct vertex content, so each copy draws in its own group.
+- Runtime: Release editor in a named isolated session, Vulkan, Advanced pipeline, strict `GpuIndirectZeroReadback` submission (earlier runs used `CpuDirect`), animated directional shadows, VSync off.
+- Laptop: Intel Core Ultra 9 185H, RTX 4070 Laptop GPU, 1920 × 1080 output, 1286 × 723 internal.
+- Desktop: Ryzen 9 7950X3D, RTX 3090 (driver 617.14), 1920 × 1080.
+- Harness: `Tools/Benchmarks/Measure-PhysicsChainScale.ps1`. See the [performance guide](../../../developer-guides/rendering/physics-chain-performance.md#gpu-skinned-scale-measurement) for its gates and options. Results from the two machines are not a matched comparison.
+
+## Conclusion
+
+The frame is CPU-bound. Each steady-state frame does CPU work for every chain on four threads, at about 20 µs per chain, against a budget of about 2.5 µs. No loop skips an unchanged chain, and most of the work is in the object pattern. The physics simulation itself is not the limit: freezing the physics callbacks gave no stable gain, while hiding the whole chain rendering path tripled the rate. After the committed bound version and proxy change, collect is below render, and the render callback plus the serial swap (about 42 ms at 2,000 chains) is the critical path. Instancing does not change the CPU-bound frame. Small caches inside full per-chain walks saved 1 ms or less each, which is inside the 15–25% window noise. The response is in the [design](../../design/physics/physics-chain-steady-state-cpu-design.md).
+
+## Results
+
+### Scaling
+
+| Chains | Machine | Completed Hz | Interval p95 | Notes |
+| ---: | --- | ---: | ---: | --- |
+| 1 | Laptop | 182 | — | Early source-only window. The setup is uncertain. |
+| 1 | Desktop | 204 | — | A window that ended at one chain. It is not a valid scale window. |
+| 64 | Laptop | 130.0–234.4 | 5.6–9.4 ms | Three windows on later builds. |
+| 1,000 | Laptop | 23.7 | — | After the visibility append repair, with `CpuDirect`. |
+| 2,000 | Laptop | 16–22 | 52–75 ms | Latest builds. |
+| 2,000 | Desktop | 20.9–25.3 | 46–59 ms | Latest builds. |
+
+Between 64 and 2,000 chains, the frame interval grows by about 22 µs per chain. A matched one-chain baseline and a chain-count ladder are open checks.
+
+### 2,000-chain history
+
+Machines, cameras, observers, and code changed between rows. The table shows the trend, not matched gains.
+
+| Date | Machine | Change | Completed Hz | p95 ms |
+| --- | --- | --- | ---: | ---: |
+| 10-06 | Laptop | First measurement. RenderDoc showed 266.6 ms in `Advanced.Visibility.Early`. | 3.7 | — |
+| 10-06 | Laptop | One atomic reservation for each visibility append. | 11.7–12.8 | — |
+| 10-06 | Laptop | CPU preparation, subscription, and allocation work. | 9.0–12.2 | — |
+| 10-06 | Desktop | Lock reduction and renderer subscription reuse. | 12.1–15.2 | — |
+| 10-07 | Laptop | Canonical bounds, committed spatial bounds, world gather, instance groups. | 10.7–16.6 | 70–90 |
+| 10-07 | Laptop | Atomic reservation for group counters; device-local visibility memory. | 18.9–21.8 | 52–65 |
+| 10-07 | Laptop | Input-bank provisioning, full-grid camera, repeat windows. | 15.0–22.2 | 52–85 |
+| 10-07 | Laptop | Rigid rest-input cache off/on comparison. | 18.5–21.3 | 54–66 |
+| 10-08 | Desktop | Registration lookup cache (baseline and candidate). | 20.9–24.3 | 47–59 |
+| 10-08 | Desktop | Retained source groups. | 23.6–25.3 | 46–49 |
+| 10-08 | Laptop | Frame-loop phase counters added; no optimization. | 19.42 | 70.9 |
+| 10-08 | Laptop | Baseline for the A/B below, shared and unique meshes. | 21.8–23.3 | 49–56 |
+| 10-08 | Laptop | Committed bound version and proxy, shared and unique meshes. | 21.0–24.8 | 46–62 |
+
+### Ablations
+
+Three cycles on the laptop, each with 2,000 registered chains, zero new bad outcomes, and zero physics readback. Cycles 1 and 2 used a client timer; cycle 3 used engine-side timestamps.
+
+| Cycle | Full scene Hz | Chain rendering hidden Hz | Physics callbacks frozen Hz |
+| --- | ---: | ---: | ---: |
+| 1 | 19.18 | 58.92 | 25.04 |
+| 2 | 16.57 | 51.97 | 13.03 |
+| 3 | 16.33 | 57.34 | 21.61 |
+
+Hiding chain rendering removes collection, publication, deformation, and drawing. It is not a raster-only test. Freezing physics keeps root motion and CPU hierarchy work. Even with chain rendering hidden, the rate stays near 55 Hz, so the physics-side CPU work also needs reduction.
+
+### Critical-path timeline
+
+A 12-second scope timeline at 2,000 chains (laptop, 252 render scopes) supports this cycle: the longer of render and collection, followed by a serial swap.
+
+| Measure | Full, mean ms | Physics frozen, mean ms |
+| --- | ---: | ---: |
+| Render start spacing | 47.32 | 43.44 |
+| `EngineTimer.DispatchRender` | 30.24 | 30.19 |
+| `DispatchCollectVisible` | 25.32 | 21.92 |
+| Collection wait for render | 5.08 | — |
+| `DispatchSwapBuffers` (serial) | 16.91 | 13.32 |
+| `XRWindow.GlobalPreRender` residual | 10.54 | 0.35 |
+| `Advanced.VisibilityPreparation` residual | 6.18 | 19.47 |
+| Command recording residual | 6.73 | 5.37 |
+
+`GlobalPreRender` runs `GPUPhysicsChainDispatcher.ProcessDispatches` on the render thread. When physics is frozen, that time moves into visibility preparation instead of leaving the frame; a wait is the likely cause, and the preparation lock-wait counters are an open check. Other large residual scopes in the full run: `GpuIndirect.AdvancedPublication.ScenePlan` 6.96 ms, `RuntimeWorldRenderer.GlobalPreCollectVisible` 8.95 ms, `VisualScene3D.CollectRenderedItemsGpu` 6.17 ms (two calls per cycle), `RuntimeWorldRenderer.GlobalSwapBuffers` 4.59 ms, and `CpuBvhRenderTree.Swap` 1.63 ms (two calls per cycle). These are wall times; they can include waits.
+
+### Frame-loop phase totals
+
+The always-on phase counters (`frame_lifecycle.phase_totals`, reported by the harness as `phaseTimings`) were first measured on 2026-10-08 on the laptop, with telemetry and the Debug observers off. Clocks were not controlled. Values are milliseconds per call; the update thread runs at its own rate.
+
+| Phase | 64 chains | 2,000 chains | Two-point slope (µs per chain) |
+| --- | ---: | ---: | ---: |
+| Completed Hz / interval p95 | 179.8 Hz / 7.7 ms | 19.4 Hz / 70.9 ms | — |
+| Mean frame interval | 5.56 | 51.5 | 23.7 |
+| Update iteration | 0.91 | 34.39 | 17.3 |
+| Collect | 0.55 | 27.21 | 13.8 |
+| Serial swap | 0.36 | 17.15 | 8.7 |
+| Render callback | 5.25 | 34.04 | 14.9 |
+| Collect wait for render | 4.66 | 7.14 | — |
+| Render wait for collect, per completed frame | 0.27 | 17.38 | — |
+
+At 2,000 chains each thread accounts for the whole interval. Collect thread: collect 27.2 + wait 7.1 + swap 17.2 = 51.5 ms. Render thread: render 34.0 + wait 17.4 = 51.4 ms. The critical path is the render callback followed by the serial swap, about 23.5 µs per chain together. The render callback includes present and fence waits; an idle check measured 21 ms per callback with the collect thread waiting 20.6 ms for it. Two points are not a fit; the chain-count ladder remains open.
+
+### Chain-count ladder
+
+First complete ladder on 2026-10-08 (laptop, Turbo power plan, no affinity mask, clocks not locked, 20-second windows, all five points accepted). Fits are ordinary least squares over 1, 250, 500, 1,000, and 2,000 chains; phase values are per call.
+
+| Fit | Fixed ms | µs per chain | R² |
+| --- | ---: | ---: | ---: |
+| Mean frame interval | 2.27 | 19.95 | 0.985 |
+| Interval p95 | 3.06 | 24.38 | 0.983 |
+| Render callback | 3.35 | 11.89 | 0.989 |
+| Serial swap | −0.95 | 7.82 | 0.980 |
+| Collect | −1.40 | 12.47 | 0.983 |
+| Update iteration | −0.65 | 15.24 | 0.996 |
+| Render wait for collect | 0.04 | 4.72 | 0.980 |
+
+| Chains | Completed Hz | p95 ms | Render | Swap | Collect | Update | Mean GPU MHz |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 222.5 | 5.7 | 4.39 | 0.14 | 0.15 | 0.38 | 2,595 |
+| 250 | 140.1 | 8.9 | 6.28 | 0.90 | 1.62 | 2.94 | 2,595 |
+| 500 | 89.4 | 14.4 | 8.93 | 2.32 | 3.92 | 6.36 | 2,595 |
+| 1,000 | 51.0 | 23.8 | 13.78 | 5.86 | 9.53 | 13.87 | 1,422 |
+| 2,000 | 22.9 | 53.9 | 27.95 | 15.38 | 24.54 | 30.37 | 1,177 |
+
+- The critical path (render callback plus serial swap) grows by about 19.7 µs per chain. The 100 Hz target allows about 2.5 µs.
+- Cost per chain rises with count: the swap costs about 3.6 µs per chain at 250 chains and about 7.7 µs at 2,000. The negative intercepts show the same curvature. This agrees with the larger per-row cost of the object pattern at 14,000 rows in the microbenchmark.
+- The GPU dropped toward P5 at 1,000 and 2,000 chains because the CPU limits the frame. At 64 chains in a later session, every phase ran about 2.5 times slower than in the first session, including CPU-only phases. The harness does not yet record CPU clocks; compare windows only under controlled conditions.
+
+### GPU and update-thread measurements
+
+- An Nsight API-only trace (laptop) found a mean GPU span of 8.80 ms (p95 12.83 ms) against a mean submit spacing of 48.08 ms: 18% observed workload coverage. GPU clocks varied between P0 and P5 during windows.
+- World callbacks: `PhysicsChainWorld.LateTick` 23.79 ms per call and `FixedTick` 10.32 ms per call (fixed tick includes the tick-gate wait). Nested late-tick stages: quality plus dependency preparation 5.59 ms, rest-input gathering 7.16 ms, component preparation 3.11 ms, packing 1.91 ms, bridge submission 1.42 ms, activity scan 1.42 ms. The stages are nested; do not add them.
+- Sampled rest-input stages, per chain: opaque dependency check 1.88 µs, owner check 0.79 µs, collider check 1.77 µs, root preparation 0.85 µs, cached input expansion 0.32 µs, publication 0.21 µs.
+- Process-wide managed allocation was about 1.3–1.4 MB per completed frame. It is not attributed to a subsystem.
+
+## Root-cause evidence
+
+### Per-chain work inventory
+
+Source review on 2026-10-08 at commit `52f011649`. Read-only review agents counted the operations; the items marked "confirmed" were checked by hand. Counts are operations per chain per frame.
+
+| Thread and phase | Per-chain work | Skips unchanged chains? | Main causes |
+| --- | --- | --- | --- |
+| Update: world late tick | About 13 `IsActiveInHierarchy` walks, 12 parent walks, 25–30 lookups in dictionaries with 14,000 entries, 7 fenced store reads, 8 `Interlocked` reads, 1 monitor lock, 10 interface calls, 15 matrix multiplications, 9 `RuntimeSlot` struct copies. | No. | Dependency checks run every tick although they depend only on topology, ownership, and the collider list. Any collider disables the fast pack path (confirmed). `IsActiveInHierarchy` recurses to the scene root (confirmed). |
+| Render: GPU dispatcher | About 8 lock acquisitions, 15 interface calls, and bounds and palette publication rebuilt each frame: about 25 hash operations and one `CommittedWorldBoundsChanged` event for each renderer. | No. Version checks skip copies but still visit each row 2–4 times. Output page tables are cleared each frame (confirmed). | Each mapped input page receives all colliders and the full transform catalog (confirmed). Several passes run twice. |
+| Render: Advanced preparation | `ExtractCommand` does about 150–250 operations, 2 locks, and 8 hash operations for each draw. | No. `commandChanged` is a constant `false` (confirmed). | Reuse applies only inside one frame ID. |
+| Render: Vulkan recording | One `CmdDrawIndexedIndirectCount` for each bin. Record validation runs for each view, bin, and phase. | No. | Validation of unchanged sealed records. |
+| Collect | About 9–12 `TryGetCommittedWorldBounds` calls, each with about 5 locks and 6 hash lookups. Every covered mesh moves in the octree and CPU BVH, and the BVH refits. | No. | The bounds generation is the global `ProducerEpoch` (confirmed), so the reconcile early exit never applies. Shadow passes cannot use canonical GPU collection (confirmed), so the primary shadow view runs `BeforeAdd` and `AddCPU` for each covered mesh: this is the second collection call per cycle. |
+| Serial swap | The whole-scene plan visits every command under `GPUScene._lock`: about 150 operations and 2 locks each. `PublishRenderMatrices` and `DispatchNotifications` visit every transform row during collection and again at the swap. | No. The reuse check runs after the full plan (confirmed). | No dirty-row journal. |
+
+Cross-cutting: about 50 or more lock acquisitions and 1,000–1,500 operations per chain per frame, which agrees with about 20 µs per chain. `TransformHierarchyStore` uses one seqlock sequence for the whole store (confirmed): each write takes `_gate` and increases `_sequence` twice, and each read uses a full memory barrier. One earlier diagnostic window recorded 1,041,463 contended render reads and 803.9 ms of cumulative retry time.
+
+### Row-pattern microbenchmark
+
+Laptop, 2026-10-08, .NET 10.0.12 RyuJIT, BenchmarkDotNet 0.15.8, not pinned to a core type. No pattern allocated. The object pattern is an interface call on a chain object, then a property on a transform object that takes a lock to copy the matrix, with objects scattered on the heap.
+
+| Pattern | ns per row, 2,000 rows | ns per row, 14,000 rows | Ratio to dense |
+| --- | ---: | ---: | ---: |
+| Dense 48-byte affine write | 2.0 | 1.8 | 1 |
+| Store-style seqlock read and write, no writer | 9.0 | 5.0 | 2.7–4.4 |
+| Object pattern | 21.4 | 47.2 | 10.6–25.7 |
+| Object pattern with a dictionary lookup and an event | 33.5 | 83.2 | 16.5–45.3 |
+| Object poll for changes, nothing changed | 1.9 | 7.7 | 0.9–4.2 |
+| Dense dirty-flag scan, nothing changed | 0.44 | 0.28 | 0.15–0.22 |
+| Page versions, nothing changed (whole store) | 6.6 ns total | 54.9 ns total | 0.002 |
+| Page versions, 1% scattered changes | 2.45 µs total | 16.7 µs total | 0.61–0.65 |
+
+The 14,000-row object results varied widely (object pattern: standard deviation 257 µs, median 730 µs). Conclusions: the object layer, not code generation, is the cost; page versions make "nothing changed" almost free; scattered changes in 64-row pages cost about 60% of a full rewrite. A desktop rerun is an open check.
+
+### Defects found by the inventory
+
+Each open defect has a code item in the [todo](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md).
+
+- The committed-bounds generation was the global `ProducerEpoch` (`GPUPhysicsChainDispatcher.SpatialBounds`), so every covered mesh reconciled and moved in the spatial structures in every frame. Fixed; see [committed bound version and proxy](#committed-bound-version-and-proxy).
+- `TransformHierarchyStore` has one sequence and one write gate for the whole store.
+- `VisualScene3D.CanCollectCoveredSourcesOnGpu` excludes shadow passes.
+- Any collider disables the fast GPU pack path in `PhysicsChainComponent.GPU`.
+- `UploadInputPageColliders` and `UploadInputPageTransforms` write all colliders and the full transform catalog into each mapped page.
+- `AdvancedPreparationExtractor.ExtractCommand` has no per-row change detection.
+- `AdvancedGpuScenePublisher` runs its reuse check after the full scene plan.
+- Rest dependency checks and `IsActiveInHierarchy` walks run every tick for every chain.
+
+## Fixed defects
+
+These defects were found and fixed during the investigation. The architecture docs own the resulting contracts.
+
+| Area | Defect and fix |
+| --- | --- |
+| GPU visibility | `Advanced.Visibility.Early` used a global compare-and-swap retry loop for each visible candidate (266.6 ms in RenderDoc). Early, late, and directional shadow group appends now use one atomic reservation, with capacity checks and a clamping finalizer. |
+| Startup | The rendering bridge had no production installation. Shader readiness treated `LinkReady` as in progress. Vulkan buffer and copy facades used retained lookups before creating wrappers. Ordered compute operations were placed by free-form labels. |
+| Input contracts | Per-frame particle versions replaced GPU state with stale CPU state. Constant signatures blocked moving inputs. The GPU path ignored the step count and time scale. Palette mappings used the parent's rest direction. Palette registrations leaked on rebuild. Bindings omitted reset and rebuild versions. |
+| Bounds | The bounds shader used an 80-byte particle stride instead of 64. Previous palette storage was not initialized. OpenGL restored all slot bindings after the patch. First use required previously published coverage. The legacy bounds copy captured updating command indices. A covered draw without a committed route threw in `DispatchSwapBuffers`; it now rejects the publication. A restart race could publish a removed component's palette. A particle envelope did not contain the previous rendered pose; palette-box bounds replaced it. Every renderer query copied the full scene route table. |
+| Materials | Translation-class vertex effects now pad the bound; scale, rotation, look-at, and barrel effects reject the GPU route. |
+| History | Failed aggregate output could become valid previous history. Producer markers and consumed page tokens now guard it. |
+| Lifecycle | `GPUScene.Remove` enumerated a list that was being disposed. A reclaim race between publication and lease acknowledgement. A duplicate key in the profiling dictionary. Material and scene tables needed old-plus-incoming capacity. Boundary growth checked only draw fields. Input pages reused storage after a failed marker without a native reuse proof. Input banks grew during timing; capacity planning now provisions all eight banks. The debug batch destroyed a shared cached shader. Debug and readback paths accessed storage before admission. |
+| Frame package | Mutable strategy state could produce two submission lanes in one package (`RangeExecutionLaneMismatch`). `EditorRenderInfo3D` was excluded from canonical collection. |
+| Shadows | A new covered palette did not dirty the cached cascade. A coalesced covered-caster output revision now does. |
+| Selective readback | Affine gather omitted translation and read the authored pose. Worlds shared physical slots. Ranges and template changes had no witness. |
+| CPU | Root-motion callbacks allocated 240,000 bytes per call; now zero. GPU-owned bones no longer keep CPU palette listeners. The root bone no longer recomputes skinned bounds on `WorldMatrixChanged`. Skinned commands publish once after matrix and bounds changes. |
+| Shader | `BuildDepthPyramid.comp` kept an unused layout qualifier that the compiler treats as an error. |
+
+The Math world ambient light repair is recorded in the [ambient validation](../../testing/rendering/advanced-world-ambient.md).
+
+## Rejected and unproven experiments
+
+| Experiment | Result | Decision |
+| --- | --- | --- |
+| `System.Threading.Lock` in place of four monitor gates | No measurable gain. | Removed. |
+| Ancestry cache for rest-input dependencies | Late-tick body time rose from 23.79 to 31.86 ms. | Removed. |
+| Early no-solve admission for reduced tiers | No end-to-end gain; component preparation rose from about 3.3 to 4.3–4.7 ms. | Removed. |
+| Phase-local collider dependency proof | Not built or validated. | Removed; superseded by versioned dependency sets. |
+| 64- and 128-thread solver workgroups | Both windows failed with `InputPageFenceFailed`; GPU clocks differed. | Invalid; 32 threads kept. |
+| Primary directional shadow collection bypass | Unsafe: the general shadow pipeline still consumes CPU-owned commands. | Replaced by an explicit GPU consumer item. |
+| Collecting GPU input after the normal transform pass | Can change callback, rest-pose, and fixed-step ordering. | Rejected. |
+| Reading GPU bone ownership without its lock | Can observe a retired bone-buffer state. | Rejected. |
+| Existing 15 Hz tier with `Interpolate` | 22.31 Hz against 21.91 Hz at full rate; rest gathering still about 7.3 ms. | No gain; the GPU palette has no interpolation path. |
+| Rigid rest-input cache | Gathering fell from 7.2–9.2 ms to 5.9–6.2 ms per late tick. | Kept; no proven end-to-end gain. |
+| Registration lookup cache | ScenePlan scope fell from 7.25 to 6.97 ms. | Kept; no proven end-to-end gain. |
+| Retained source groups | ScenePlan scope 6.87 ms. | Kept; no proven end-to-end gain. |
+| Lock reduction for IDs and transforms | Late-tick body fell from 22.21 to 19.37 ms. | Kept; no proven end-to-end gain. |
+| Device-local visibility memory | Placement confirmed; no matched gain. | Kept. |
+| CPU palette listener detach | Within run-to-run noise. | Kept. |
+
+## Open faults
+
+| Fault | State | Next step |
+| --- | --- | --- |
+| Intermittent `ResourceGenerationBlocked` at frame pacing after repeated runs. Rendering stopped, then recovered without a restart. | Unresolved. A retained first/latest blocker diagnostic exists. | Reproduce with the diagnostic active. |
+| A benchmark start request timed out after 180 seconds although the editor started the benchmark. | Unresolved. The harness now marks a pending start. `SetBenchmarkRunToggle` returns `void` and does not wait. | Use the opt-in MCP request trace. |
+| Input and output page marker failures (`UnsubmittedMarker`, `PlanUnsubmitted`, `RequiredProducerMissing`, all with no native submission). | The origin of the older failures is unknown. Retained fence diagnostics exist. | Correlate creation, bind, failure, and observation identities. |
+| Physics output stalls for a whole session after an early unsubmitted plan. On 2026-10-08 (laptop, `-NoBuild` restart of an unchanged binary), an input-page fence failed at authored frame 237 with site `PlanUnsubmitted` and `NativeSubmission=NotCalled`. Four input-page and four output-page failures followed. The producer epoch then stayed at 11, and `OutputPageBusyCount` grew by one each frame: no page passed the retain and reuse checks in `TryBeginOutputPage`. Every later window failed with `OutputPageBusyOrUnsafe`. A second fresh session repeated it (fence failure at frame 167, producer epoch stuck at 5). Both stalled sessions began with a 1-chain benchmark start; both healthy sessions began with 64 chains, and a 1-chain start after a healthy start passed. Two samples each; this is a lead, not a cause. | Fixed and live-validated: free pages now release unprepared bounds buffers. See [output page stall](#output-page-stall). | `PhysicsChainBufferReuseTests` cover the reclaim rule. Why the atlas's deferred upload never completes is still open. |
+| Explicit RenderDoc start/end causes an access violation in `renderdoc.dll` from `VulkanCommandRuntime.PushConstantsTracked` during directional shadow recording. | Isolated to the capture-layer path. | Use `RenderDocCaptureBridge.TryTriggerCapture`. Investigate explicit start/end separately. |
+| MCP viewport readback returns black images that do not match native targets. | Unresolved. | Use presented-frame trigger captures for image evidence. |
+| One launch stopped with "Canonical resident tables exhausted their preflighted frame-boundary capacity". | Did not repeat. The message also covers invalid material, geometry, and lookup failures. | If it repeats, add failure-only diagnostics at the first failed check. |
+| One benchmark start threw `NullReferenceException` and left 70 copies alive. | Did not repeat. Failed-start cleanup now removes partial copies. | None until it repeats. |
+| Cold start: `visible-mesh-cold-admission` retries, one exhausted descriptor-preparation recovery, one cold `GpuBoundsPublication.AtlasBufferReadiness` failure. Readiness can take more than 45 seconds at 2,000 chains. On 2026-10-08, one of about eight session starts latched at frame 83: "Compute descriptor resources for 'UnnamedProgram' could not be prepared before recording ... The frame plan has no resource-planner generation for the compute operation context." PresentNow recovery used its budget of three attempts. After that, the renderer rejected every frame (0 completed, 11,181 rejected) and discarded the queued scene work. Each physics output page was committed, its fence failed with `QueueDiscard`, and a simulation receipt then withdrew the page as a known producer failure. This was silent: `OutputPageDiagnostics.FailureCount` did not change. A restart without a rebuild was healthy. | Excluded from timing windows by the readiness gate, which needs completed frames. The silent page failures are a code item in the todo. | Find why the compute operation context has no resource-planner generation at cold start. Track separately from steady-state work. |
+| Two cold launches lost their engine loop threads, and one process exited after startup with no log. | Causes unknown. | Capture a dump on the next occurrence. |
+| A terminating `IndexOutOfRangeException` in `PhysicsChainComponent.BuildRuntimeTemplate`, on the fixed-update thread (`PhysicsChainWorld.DrainStructuralCommands` → `AddComponent` → `GetOrCreateRuntimeTemplate`). It happened once in about 40 benchmark stops on 2026-10-08, in the same second that a 1-chain window ended and the controller restored the source rig. The window had already been accepted. | Cause unconfirmed. The method counts particles in one pass and fills arrays in a second pass, so a concurrent particle-tree rebuild during source restoration could overrun them. | Code item in the todo. |
+| A callback exception during identity delivery stops the editor timer. | Existing terminal-fault policy; direct publisher tests prove caller retry. | No change planned. |
+
+## Output page stall
+
+Status: fixed, live-validated, and covered by `PhysicsChainBufferReuseTests`. The deferred-upload question remains open. Laptop, 2026-10-08.
+
+**Fix.** `CanReuseOutputPage` now releases a free page's bounds atlas or slot metadata when that buffer reports `Unsupported` native reuse and every other reuse check passes. Production recreates the buffer. `PhysicsChainBufferReuse.TryEvaluateFreeOutputPage` makes the buffer decision. `PhysicsChainGpuOutputPageDiagnostics.UnpreparedBufferReleaseCount` counts the releases. The [output and readback architecture](../../../architecture/physics/physics-chain-output-and-readback.md#canonical-gpu-bounds) states the rule.
+
+**Validation.** 20 fresh sessions with a 1-chain start: none stalled, the busy count stayed at 0, and every session released one or two unprepared buffers during startup. The unprepared buffer therefore forms on every cold start; before the fix, one blocked free page silently reduced the ring to three pages, and two blocked pages stalled it. Three of the first 12 windows were rejected for in-window input-page `PlanUnsubmitted` failures. All three showed a late directional-shadow compute pipeline compile (`VulkanPresentNowReadinessRetry`, `RetryFrame`) at frames 334–336, with zero accepted and 158–197 rejected shadow groups at window start; no buffer release happened inside those windows. The harness now waits for accepted shadow groups with no new rejections before a window. With that gate, 8 of 8 windows were accepted, and a 2,000-chain window was accepted at 22.17 Hz with p95 55.65 ms.
+
+**Reproduction.** Start a fresh editor session and start the benchmark with 1 chain. About 1 in 4 to 7 fresh sessions stall (3 stalls in about 20 sessions). Each stall begins in the first 200 rendered frames, while cold startup defers frames and settles their submission markers as `PlanUnsubmitted`. A 1-chain start after a healthy start has not stalled. Injected desktop frame failures at `SceneRecording` and `Submission` did not reproduce it: the physics markers were not in those plans, so deferred startup frames are the likely real trigger.
+
+**Evidence.** Two instrumented stalls recorded identical page states:
+
+| Page | Generation | Producer epoch | Role | Retain | Fence | Native reuse (atlas / metadata / current / previous palette) |
+| ---: | ---: | ---: | --- | ---: | --- | --- |
+| 0 | 3 | 2 | free | 0 | Submitted | Unsupported / Ready / Ready / Ready |
+| 1 | 2 | 3 | free | 0 | Submitted | Unsupported / Ready / Ready / Ready |
+| 2 | 1 | 4 | history | 0 | Submitted | Ready / Ready / Ready / Ready |
+| 3 | 1 | 5 | published | 4 | Submitted | PendingCompletion ×3 / Ready |
+
+Neither free page has a known producer failure. Pages 0 and 1 were acquired three and two times but published only once, so later production attempts on them were abandoned.
+
+**Mechanism.** `TryBeginOutputPage` skips the published and history pages and requires every buffer of a free page to report native reuse `Ready`. For the bounds atlas, `VulkanResourceRuntime.QueryBufferContentReuse` returns `Unsupported` when `TryCaptureComputeBufferSnapshot(allowSynchronousUpload: false)` fails, that is, while the buffer is not ready for rendering. The atlas is created or resized lazily inside production (`GPUPhysicsChainDispatcher.Bounds`), and only that production path calls `EnsureGpuBufferReady` on it. When production is abandoned after the atlas changed, the page keeps an atlas that is not ready. The page must be reusable before anything makes its atlas ready, so both free pages stay blocked, and the ring never produces again. The investigation earlier recorded a cold `GpuBoundsPublication.AtlasBufferReadiness` failure at startup, which fits this path.
+
+**Open question.** `VkDataBuffer.TryEnsureReadyForRendering` queues a deferred upload when a synchronous upload is not allowed, and the drain calls `PushData`. That upload should eventually make the atlas ready, but it never did in a stalled session. A lost queued drain or a `PushData` early exit would explain it. The upload-stage trace (`XRE_UPLOAD_STAGE_LOGGING`) uses the Vulkan log category, which is not written to the session log files, so the trace did not show it.
+
+**Diagnostics added.** `GPUPhysicsChainDispatcher.CaptureOutputPageStallDiagnostics()` keeps the first and latest page snapshots of a stall: after 60 consecutive busy attempts, then every 1,000 attempts. `CaptureOutputPageStates()` now reports `KnownProducerFailure`, `FailureRecoveryRequested`, and a nested `NativeReuse` record. The harness saves both on failure. The `arm_vulkan_desktop_frame_fault` MCP tool fails one upcoming desktop frame at a chosen phase boundary.
+
+## Committed bound version and proxy
+
+Status: implemented and live-validated. Unit tests are an open test item. Laptop, 2026-10-08.
+
+**Defect.** The committed CPU bound of each covered renderer used the global `ProducerEpoch` as its generation, and each page commit notified every renderer. Every covered mesh therefore took the `RenderableMesh` reconcile slow path in every frame, and its CPU BVH entry moved. A baseline probe counted 4,000 tree moves per stats interval with 2,006 tree items.
+
+**Change.** The committed bound is now an enlarged proxy of the exact bound (`PhysicsChainCommittedSpatialProxy`) with a per-renderer version. A new page keeps the prior proxy and version while the proxy contains the exact bound. A commit notification carries a changed-bound flag, and `RenderableMesh` reconciles only a changed bound. Covered shadow casters still advance the shadow output revision on each output. A version alone would not help this benchmark, because every root moves on every tick and the exact bound changes on almost every page.
+
+**Validation.** Temporary counters in a healthy session, over about 43 seconds of measurement: every renderer kept its proxy and version on every page (about 1.44 million keeps). There was no changed-bound notification, no reconcile slow path, and no CPU tree move; the octree move count was 0. The counters are removed. `ReconcileCommittedWorldBounds` still runs about four times per mesh per frame, and each call queries the bound; this is the "resolve once per frame" todo item.
+
+A/B windows at 2,000 chains, 20 seconds each. The baseline binary restored the old behavior with a temporary edit. Values are means in milliseconds per call.
+
+| Build | Windows | Hz | p95 ms | Update | Collect | Swap | Render |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Baseline | 4 | 22.6 | 51.9 | 28.9 | 25.2 | 15.0 | 28.8 |
+| Version and proxy | 6 | 23.5 | 51.1 | 30.5 | 23.3 | 13.3 | 29.5 |
+
+Two windows of the new build also had a slower update phase, which this change does not affect, so the machine was slower in those windows. Relative to the update phase, collect fell by about 12% and swap by about 16%. Render did not change. Render plus swap (about 42 ms) is still the critical path, so the frame rate rose only about 4–8%.
+
+**Mesh sharing.** `-MeshSharing Unique` formed 2,000 indexed instance groups for 2,000 payloads, and `Shared` formed one. The two modes measured the same in both builds, so instancing does not change this CPU-bound frame.
+
+## Measurement notes
+
+- Window-to-window variation is 15–25%. Do not claim a gain smaller than this from frame rate alone.
+- Nested stage timers are not additive, and wall times can include waits.
+- `XRE_WORLD_TICK_TELEMETRY` is read at startup. A runtime override has no effect.
+- Set MCP dispatch to `MainThread` after every restart. Direct dispatch can corrupt scene setup.
+- Use the full-grid camera at (0, 400, 450). The older (0, 260, 310) camera clipped front rows.
+- The benchmark controller stops each run after 120 seconds. Wait for gradual teardown before checking restoration.
+- Use focused getters on `RenderableMesh`. Broad `get_object_properties` calls can time out.
+- Run `rdc close` before each `rdc open`. The RenderDoc layer and replay module must match; a process-only `VK_IMPLICIT_LAYER_PATH` override selected the installed 1.41 layer.
+- WPR needs an elevated shell (error `0xc5585011` otherwise). Nsight API-only traces work without elevation.
+- GPU clock samples were sometimes empty, and clocks moved between P0 and P5.
+- `invoke_method` serializes at most 20 public properties of a struct or object. It now lists the rest in `omittedProperties`. A 21st dispatcher property once hid `OutputPageDiagnostics` from the harness, so expose new diagnostics through methods.
+- Pass `-LadderChainCounts` as one comma-separated string. `pwsh -File` does not pass arrays to a script.
+- To compare two binaries, build each into its own named session and alternate windows between them. For a baseline, build from a temporary edit and remove the edit right after the build. Compare phase times relative to the update phase when a change does not touch it: the update phase shows machine slowdowns, for example thermal ones.
+- Routine `Tools/Limit-AgentValidation.ps1` removes the build output of every stopped session, so a later `Start -NoBuild` fails with "The isolated build did not create ...". Run it only after the last `-NoBuild` restart of the task.
+- After a session name is rebuilt, `Start -NoBuild` with that name can resolve to an older session folder with the same name. Use a new session name for each binary.
+- A session can latch into rejecting every frame at startup (see the open faults). Check completed frame outcomes before reading any counter, because a latched session shows failure behavior, not the steady state. The harness readiness gate does this for timed windows.
+- MCP tool calls during a 2,000-chain benchmark can take several seconds and slow the frame. Keep probes out of timed windows.
+
+The evidence files were disposable runs under `Build/_AgentValidation/`, and most have been pruned. This document is the durable record.
+
+## Next steps
+
+Follow the [todo priority order](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#priority-order): ceiling prototypes, the shared versioning contract, the physics steady state, and the change-driven renderer path with the serial swap. Measure each change in both mesh modes. The evidence from 2026-10-08 points to these items first:
+
+- The render callback (about 29 ms) and the serial swap (about 13 ms) are the critical path at 2,000 chains.
+- `ReconcileCommittedWorldBounds` runs about four times per mesh per frame and queries the bound each time. This is the "resolve committed bounds once" item.
+- Count the silent output-page producer failures, and find why the startup compute operation context can have no resource-planner generation.
+- Run the controlled desktop ladder in both mesh modes when the desktop is available.

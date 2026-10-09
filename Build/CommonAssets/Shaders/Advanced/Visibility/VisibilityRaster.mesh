@@ -21,6 +21,7 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
 } XR_ADV_VisibilityRasterPush;
 
 #define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityRasterPush.viewIndex
+#define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
 #include "VisibilityInterface.glslinc"
 
 layout(location = 0) flat out uint VisibilityDrawIndex[];
@@ -81,14 +82,20 @@ void main()
     }
 #endif
     uint drawArgumentIndex = XR_ADV_VisibilityRasterPush.meshArgumentBase + uint(gl_DrawID);
+    bool late = (XR_ADV_VisibilityRasterPush.producerAndOrigin & 8u) != 0u;
+    uint payloadTableLength = late
+        ? uint(XR_ADV_VisibilityLateMeshPayloads.records.length())
+        : uint(XR_ADV_VisibilityMeshPayloads.records.length());
     if (drawArgumentIndex < XR_ADV_VisibilityRasterPush.meshArgumentBase ||
-        drawArgumentIndex >= uint(XR_ADV_VisibilityMeshPayloads.records.length()))
+        drawArgumentIndex >= payloadTableLength)
     {
         SetMeshOutputsEXT(0u, 0u);
         return;
     }
 
-    uint payloadIndex = XR_ADV_VisibilityMeshPayloads.records[drawArgumentIndex];
+    uint payloadIndex = late
+        ? XR_ADV_VisibilityLateMeshPayloads.records[drawArgumentIndex]
+        : XR_ADV_VisibilityMeshPayloads.records[drawArgumentIndex];
     if (payloadIndex >= uint(XR_ADV_VisibilityPayloads.records.length()))
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);

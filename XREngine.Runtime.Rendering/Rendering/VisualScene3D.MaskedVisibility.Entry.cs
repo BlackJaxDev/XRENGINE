@@ -18,6 +18,8 @@ public partial class VisualScene3D
         IRuntimeCullingCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
         IVolume? collectionVolume = collectionVolumeOverride
             ?? (cullWithFrustum ? cullingCamera?.WorldFrustum() : null);
+        bool allowGpuCollection = cullingCameraOverride is null && collectionVolumeOverride is null &&
+            cullWithFrustum && CanCollectCoveredSourcesOnGpu(commands, visibilityState);
         int commandsBefore = commands.GetUpdatingCommandCount();
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
         if (!TryCollectMaskedMainFamily(
@@ -26,9 +28,10 @@ public partial class VisualScene3D
                 camera,
                 collectMirrors,
                 visibilityState,
+                allowGpuCollection,
                 out int visibleRenderables))
         {
-            CollectRenderedItems(commands, collectionVolume, camera, collectMirrors);
+            CollectRenderedItems(commands, collectionVolume, camera, collectMirrors, allowGpuCollection);
             return;
         }
 

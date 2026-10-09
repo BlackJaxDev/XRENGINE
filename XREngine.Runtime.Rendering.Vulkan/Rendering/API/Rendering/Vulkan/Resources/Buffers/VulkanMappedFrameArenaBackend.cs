@@ -38,7 +38,8 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
         out DeviceMemory memory,
         out void* mappedPtr,
         out bool isHostCoherent,
-        out ulong allocationLength)
+        out ulong allocationLength,
+        bool preferDeviceLocal = false)
     {
         buffer = default;
         memory = default;
@@ -85,42 +86,18 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
         try
         {
             MemoryRequirements requirements = _api.GetBufferMemoryRequirements(_device, buffer);
-            if (!TryResolveMemoryType(
-                    requirements.MemoryTypeBits,
-                    MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            if (!TryAllocateChunkMemory(
+                    requirements,
+                    enableDeviceAddress,
+                    preferDeviceLocal,
+                    ownerLabel,
+                    out memory,
                     out uint memoryTypeIndex,
-                    out MemoryPropertyFlags properties) &&
-                !TryResolveMemoryType(
-                    requirements.MemoryTypeBits,
-                    MemoryPropertyFlags.HostVisibleBit,
-                    out memoryTypeIndex,
-                    out properties))
+                    out MemoryPropertyFlags properties,
+                    out bool allocationRetried))
             {
                 return false;
             }
-
-            MemoryAllocateFlagsInfo addressFlags = new()
-            {
-                SType = StructureType.MemoryAllocateFlagsInfo,
-                Flags = MemoryAllocateFlags.DeviceAddressBit,
-            };
-            MemoryAllocateInfo allocateInfo = new()
-            {
-                SType = StructureType.MemoryAllocateInfo,
-                PNext = enableDeviceAddress ? &addressFlags : null,
-                AllocationSize = requirements.Size,
-                MemoryTypeIndex = memoryTypeIndex,
-            };
-            if (!_deviceContext.IsOperational)
-                return false;
-            Result allocateResult = _api.AllocateMemory(
-                _device,
-                ref allocateInfo,
-                null,
-                out memory);
-            ObserveResult($"vkAllocateMemory.{ownerLabel}", allocateResult);
-            if (allocateResult != Result.Success)
-                return false;
 
             if (!_deviceContext.IsOperational)
                 return false;
@@ -140,7 +117,7 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
                     _device,
                     memory,
                     0,
-                    allocateInfo.AllocationSize,
+                    requirements.Size,
                     0,
                     &localMappedPtr);
             ObserveResult($"vkMapMemory.{ownerLabel}", mapResult);
@@ -149,7 +126,7 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
 
             mappedPtr = localMappedPtr;
             isHostCoherent = (properties & MemoryPropertyFlags.HostCoherentBit) != 0;
-            allocationLength = allocateInfo.AllocationSize;
+            allocationLength = requirements.Size;
             _resourceManager.RegisterMappedFrameArenaChunk(
                 buffer,
                 new VulkanMemoryAllocation(
@@ -174,6 +151,8 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
                 throw;
             }
             registered = true;
+            if (preferDeviceLocal)
+                Debug.Vulkan($"[Vulkan] Mapped chunk owner={ownerLabel} buffer=0x{buffer.Handle:X} memory=0x{memory.Handle:X} bytes={allocationLength} memoryTypeIndex={memoryTypeIndex} propertyFlags=0x{(uint)properties:X} properties={properties} allocationRetried={allocationRetried}");
             return true;
         }
         finally
@@ -303,6 +282,76 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
 
     private void ObserveResult(string operation, Result result)
         => _deviceContext.ObserveNativeResult(operation, result);
+
+    /// <summary>
+    /// Prefers mapped device-local storage only when requested by the lane.
+    /// An allocation capacity failure can try another type; native faults cannot.
+    /// </summary>
+    private bool TryAllocateChunkMemory(
+        in MemoryRequirements requirements,
+        bool enableDeviceAddress,
+        bool preferDeviceLocal,
+        string ownerLabel,
+        out DeviceMemory memory,
+        out uint memoryTypeIndex,
+        out MemoryPropertyFlags properties,
+        out bool allocationRetried)
+    {
+        memory = default;
+        memoryTypeIndex = 0;
+        properties = default;
+        allocationRetried = false;
+        ReadOnlySpan<MemoryPropertyFlags> preferences = stackalloc MemoryPropertyFlags[]
+        {
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.DeviceLocalBit | MemoryPropertyFlags.HostCoherentBit,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.DeviceLocalBit,
+            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+            MemoryPropertyFlags.HostVisibleBit,
+        };
+        uint attemptedTypes = 0;
+        MemoryAllocateFlagsInfo addressFlags = new()
+        {
+            SType = StructureType.MemoryAllocateFlagsInfo,
+            Flags = MemoryAllocateFlags.DeviceAddressBit,
+        };
+        for (int preference = preferDeviceLocal ? 0 : 2; preference < preferences.Length; ++preference)
+        {
+            while (TryResolveMemoryType(
+                requirements.MemoryTypeBits & ~attemptedTypes,
+                preferences[preference],
+                out memoryTypeIndex,
+                out properties))
+            {
+                attemptedTypes |= 1u << (int)memoryTypeIndex;
+                MemoryAllocateInfo allocateInfo = new()
+                {
+                    SType = StructureType.MemoryAllocateInfo,
+                    PNext = enableDeviceAddress ? &addressFlags : null,
+                    AllocationSize = requirements.Size,
+                    MemoryTypeIndex = memoryTypeIndex,
+                };
+                if (!_deviceContext.IsOperational)
+                    return false;
+                Result result = _api.AllocateMemory(_device, ref allocateInfo, null, out DeviceMemory candidate);
+                if (result == Result.Success)
+                    memory = candidate;
+                ObserveResult($"vkAllocateMemory.{ownerLabel}", result);
+                if (result == Result.Success)
+                {
+                    if (allocationRetried)
+                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanOomFallback();
+                    return true;
+                }
+
+                // A limited device-local heap can fill while host-visible memory
+                // remains available. Do not retry device loss or unrelated errors.
+                if (!preferDeviceLocal || result != Result.ErrorOutOfDeviceMemory || !_deviceContext.IsOperational)
+                    return false;
+                allocationRetried = true;
+            }
+        }
+        return false;
+    }
 
     private bool TryResolveMemoryType(
         uint typeBits,

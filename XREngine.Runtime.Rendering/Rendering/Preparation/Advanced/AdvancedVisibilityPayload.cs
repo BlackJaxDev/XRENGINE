@@ -24,6 +24,9 @@ public readonly record struct AdvancedVisibilityPayload(
     uint PrimitiveTopology,
     EAdvancedVisibilityPayloadFlags Flags)
 {
+    /// <summary>One-based indexed instance group. Zero keeps direct payload selection.</summary>
+    public uint InstanceGroupIndexPlusOne { get; init; }
+
     public AdvancedVisibilityPayload(
         AdvancedGpuHandle Draw,
         AdvancedGpuHandle Geometry,

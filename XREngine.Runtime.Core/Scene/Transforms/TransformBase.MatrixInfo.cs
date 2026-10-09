@@ -68,9 +68,6 @@ namespace XREngine.Scene.Transforms
         [Browsable(false)]
         public Plane LocalUpPlane => XRMath.CreatePlaneFromPointAndNormal(LocalTranslation, LocalUp);
 
-
-
-
         public byte[] EncodeToBytes()
         {
             IRuntimeTransformServices? transformServices = RuntimeTransformServices.Current;

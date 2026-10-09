@@ -16,6 +16,8 @@ public sealed class PhysicsChainDeferredLifetimeArena<T>
         => _arena = new PhysicsChainSlotArena<T>(initialCapacity, maximumCapacity);
 
     public int Capacity => _arena.Capacity;
+    public int MaximumCapacity => _arena.MaximumCapacity;
+    public long CapacityFailureCount => _arena.CapacityFailureCount;
     public int LiveCount => _arena.LiveCount;
     public int PendingRetirementCount => _pendingRetirements.Count;
     public long CompletedEpoch => _completedEpoch;

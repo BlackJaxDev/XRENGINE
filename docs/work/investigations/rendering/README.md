@@ -7,6 +7,10 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Current focus
 
+- [Jax2031 Unity and Advanced Vulkan parity](2026-10-08-jax2031-unity-advanced-parity.md)
+  records the repaired Assimp root import, remaining visible deformation,
+  native FBX normalization guard, Pro 9.3.66 material evidence, native Uber
+  contract gaps, and separate Release shader readiness failure.
 - [OpenXR stereo flicker and render-target duplication](2026-10-04-openxr-stereo-flicker-and-target-duplication.md)
   records the stale descriptor sets behind the alternating HUD, the stereo
   pipeline target set held three times by the resource planner, the

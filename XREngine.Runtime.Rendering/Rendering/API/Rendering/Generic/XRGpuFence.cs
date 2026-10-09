@@ -20,6 +20,12 @@ public abstract class XRGpuFence : IDisposable
 
     public bool IsDisposed => _disposed;
 
+    /// <summary>Gets the identity of this rental, when the backend provides one.</summary>
+    public virtual long DiagnosticRentalId => 0;
+
+    /// <summary>Copies the first failure of this rental, when one exists.</summary>
+    public virtual GpuFenceFailureDiagnostic? FirstFailureDiagnostic => null;
+
     /// <summary>
     /// Reports whether the command stream containing this fence reached backend submission.
     /// Immediate command-stream backends accept a fence when it is created; deferred backends

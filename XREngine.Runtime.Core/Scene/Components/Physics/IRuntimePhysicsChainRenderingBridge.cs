@@ -12,12 +12,15 @@ public interface IRuntimePhysicsChainRenderingBridge
 {
     PhysicsChainGpuBackendState BackendState { get; }
 
+    PhysicsChainRenderingDiagnostics GetDiagnostics(PhysicsChainComponent chain) => default;
+
     void Register(PhysicsChainComponent chain);
     void Unregister(PhysicsChainComponent chain);
     void Execute(PhysicsChainComponent chain, in PhysicsChainGpuDispatchSnapshot snapshot);
     void NotifyReadbackUnavailable(PhysicsChainComponent chain, string reason);
     void InvalidateGpuDrivenRenderers(PhysicsChainComponent chain);
     void RenderDebug(PhysicsChainComponent chain);
+    void SetDebugDrawChains(PhysicsChainComponent chain, bool selected) { }
     void RecordHierarchyRecalculationTicks(long ticks);
 }
 
@@ -27,12 +30,14 @@ public static class RuntimePhysicsChainRendering
     private sealed class UnavailableBridge : IRuntimePhysicsChainRenderingBridge
     {
         public PhysicsChainGpuBackendState BackendState => PhysicsChainGpuBackendState.Unavailable;
+        public PhysicsChainRenderingDiagnostics GetDiagnostics(PhysicsChainComponent chain) => default;
         public void Register(PhysicsChainComponent chain) { }
         public void Unregister(PhysicsChainComponent chain) { }
         public void Execute(PhysicsChainComponent chain, in PhysicsChainGpuDispatchSnapshot snapshot) { }
         public void NotifyReadbackUnavailable(PhysicsChainComponent chain, string reason) { }
         public void InvalidateGpuDrivenRenderers(PhysicsChainComponent chain) { }
         public void RenderDebug(PhysicsChainComponent chain) { }
+        public void SetDebugDrawChains(PhysicsChainComponent chain, bool selected) { }
         public void RecordHierarchyRecalculationTicks(long ticks) { }
     }
 
@@ -106,6 +111,8 @@ public readonly ref struct PhysicsChainGpuDispatchSnapshot(
     public int TransformSignature { get; } = transformSignature;
     public int ColliderSignature { get; } = colliderSignature;
     public int BoneStructureSignature { get; } = boneStructureSignature;
+    public PhysicsChainGpuSpatialInput SpatialInput { get; init; }
+    public long ReadbackSourceGeneration { get; init; }
 }
 
 /// <summary>Graphics backend availability without importing rendering implementation types.</summary>

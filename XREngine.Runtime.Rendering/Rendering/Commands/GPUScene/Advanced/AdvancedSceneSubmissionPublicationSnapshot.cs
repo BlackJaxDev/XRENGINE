@@ -1,6 +1,7 @@
 namespace XREngine.Rendering.Commands;
 
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Compute;
 
 /// <summary>Ring-owned submission sidecar captured alongside the canonical table images.</summary>
 public sealed class AdvancedSceneSubmissionPublicationSnapshot
@@ -47,4 +48,6 @@ public readonly record struct AdvancedManagedDeformationSourceRow(
     XRMesh? Mesh,
     uint MeshVertexCount,
     ulong SourceVersion,
-    ulong MeshVersion);
+    ulong MeshVersion,
+    PhysicsChainGpuBoundsSource? GpuBoundsSource = null,
+    PhysicsChainDrawMaterialSnapshot MaterialSnapshot = default);

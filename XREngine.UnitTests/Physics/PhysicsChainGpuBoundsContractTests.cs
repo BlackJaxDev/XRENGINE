@@ -13,6 +13,7 @@ public sealed class PhysicsChainGpuBoundsContractTests
     {
         Marshal.SizeOf<GPUPhysicsChainDispatcher.PhysicsChainGpuBoundsWorkItem>().ShouldBe(16);
         Marshal.SizeOf<GPUPhysicsChainDispatcher.PhysicsChainGpuBoundsCopyItem>().ShouldBe(8);
+        Marshal.SizeOf<XREngine.Rendering.AdvancedGpuBoundsPatchRoute>().ShouldBe(32);
     }
 
     [Test]
@@ -38,13 +39,15 @@ public sealed class PhysicsChainGpuBoundsContractTests
             "Build/CommonAssets/Shaders/Compute/PhysicsChain/PhysicsChainBoundsToScene.comp");
 
         source.ShouldContain("_gpuBoundsSlotAllocator.Acquire(key, 1u)");
-        source.ShouldContain("scene.TryGetCommandIndicesForRenderer");
-        source.ShouldContain("scene.SetRendererOwnsGpuAabb(binding.Renderer, true)");
+        source.ShouldContain("scene.CaptureRendererCommandIndices(_gpuBoundsCommandRoutes)");
+        source.ShouldContain("scene.SetRendererOwnsGpuCopiedAabb(binding.Renderer, true)");
         source.ShouldContain("scene.CommandAabbBuffer");
         source.ShouldContain("UsesCpuReadback: false");
         source.ShouldNotContain("WaitForGpu");
-        copyShader.ShouldContain("SceneBoundsBits[target] = ChainBoundsBits[source]");
-        copyShader.ShouldContain("SceneBoundsBits[target + 1u] = ChainBoundsBits[source + 1u]");
+        copyShader.ShouldContain("ChainBoundsBits[source].xyz");
+        copyShader.ShouldContain("ChainBoundsBits[source + 1u].xyz");
+        copyShader.ShouldContain("isnan");
+        copyShader.ShouldContain("isinf");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

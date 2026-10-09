@@ -9,10 +9,12 @@ public partial class PhysicsChainComponent
     public PhysicsChainRuntimeDiagnostics GetRuntimeDiagnostics()
     {
         PhysicsChainBackendStatus runtimeStatus = PhysicsChainBackendStatus.Uninitialized;
+        PhysicsChainInstance instance = default;
+        PhysicsChainOutput output = default;
         if (World is not null
             && PhysicsChainWorld.TryGet(World, out PhysicsChainWorld? scheduler)
             && scheduler is not null
-            && scheduler.TryGetRegistration(_runtimeHandle, out _, out PhysicsChainOutput output))
+            && scheduler.TryGetRegistration(_runtimeHandle, out instance, out output))
             runtimeStatus = output.BackendStatus;
 
         PhysicsChainCpuInstance cpuInstance = default;
@@ -49,7 +51,18 @@ public partial class PhysicsChainComponent
             _qualityTier,
             _effectiveQualityTier,
             EffectiveQualityPolicy,
-            compatibility);
+            compatibility)
+        {
+            TemplateId = instance.TemplateId,
+            StateSlice = instance.StateSlice,
+            PaletteSlice = output.CurrentPalette,
+            PreviousPaletteSlice = output.PreviousPalette,
+            BoundsSlot = output.BoundsSlot,
+            OutputGeneration = output.OutputGeneration,
+            OutputSimulationFrame = output.SimulationFrame,
+            IsSleeping = IsRuntimeSleeping,
+            Rendering = RuntimePhysicsChainRendering.Current.GetDiagnostics(this),
+        };
     }
 
     private PhysicsChainGpuKernelMask ResolveGpuKernelFamilies()

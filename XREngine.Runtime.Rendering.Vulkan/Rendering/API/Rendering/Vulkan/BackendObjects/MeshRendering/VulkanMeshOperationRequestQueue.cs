@@ -57,7 +57,15 @@ internal sealed class VulkanMeshOperationRequestQueue
     /// through them this generation, reachable.
     /// </summary>
     internal void ReleaseThreadCaptures()
-        => _threadCapture.Dispose();
+    {
+        foreach (ThreadCaptureState capture in _threadCapture.Values)
+        {
+            capture.ReleaseOwnedRequests();
+            capture.Nested?.ReleaseOwnedRequests();
+        }
+        DiscardPending();
+        _threadCapture.Dispose();
+    }
 
     internal EMeshRequestScheduleResult TryEnqueue(in VulkanMeshRenderRequest request)
     {
@@ -94,6 +102,7 @@ internal sealed class VulkanMeshOperationRequestQueue
                 };
             }
 
+            acceptedRequest.IndexedIndirect?.AuthoringLease?.RetainAuthoringUse();
             destination[capture.Count++] = acceptedRequest;
             return EMeshRequestScheduleResult.Scheduled;
         }
@@ -126,6 +135,7 @@ internal sealed class VulkanMeshOperationRequestQueue
             int tail = _head + _count;
             if (tail >= Capacity)
                 tail -= Capacity;
+            acceptedRequest.IndexedIndirect?.AuthoringLease?.RetainAuthoringUse();
             _entries[tail] = acceptedRequest;
             _lanes[tail] = lane;
             _count++;
@@ -389,6 +399,13 @@ internal sealed class VulkanMeshOperationRequestQueue
             if (discardedCount == 0)
                 return 0;
 
+            for (int index = 0; index < _count; ++index)
+            {
+                int slot = _head + index;
+                if (slot >= Capacity)
+                    slot -= Capacity;
+                VulkanMeshRenderRequest.ReleaseAuthoringLease(ref _entries[slot]);
+            }
             Array.Clear(_entries);
             Array.Clear(_lanes);
             _head = 0;
@@ -645,9 +662,24 @@ internal sealed class VulkanMeshOperationRequestQueue
                 CapacityFailure = default;
                 if (clearCapturedRequests && destination is not null && count > 0)
                 {
-                    destination.AsSpan(0, count).Clear();
+                    VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                        destination.AsSpan(0, count));
                     PublicationPins.ReleaseAll();
                 }
+            }
+        }
+
+        internal void ReleaseOwnedRequests()
+        {
+            lock (_leaseGate)
+            {
+                if (Destination is { } destination && Count > 0)
+                    VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                        destination.AsSpan(0, Count));
+                Destination = null;
+                Count = 0;
+                PublicationPins.ReleaseAll();
+                PreviousPublicationPins.ReleaseAll();
             }
         }
 

@@ -25,6 +25,7 @@ internal sealed partial class VulkanResourceRuntime
         BackendObjects = new VulkanBackendObjectRegistry();
         Descriptors = new VulkanDescriptorManager();
         Descriptors.ConfigureRetirementMeter(RetirementMeter);
+        ProgramInterfaces = new VulkanProgramInterfaceCache(this);
         Allocations = new VulkanAllocationAuthority(
             new VulkanBufferResourceManager(),
             new VulkanImageAllocationTracker(),

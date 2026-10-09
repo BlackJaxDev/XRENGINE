@@ -42,6 +42,8 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
     public uint PinCount { get; set; }
     public AdvancedGpuDeformationStaticBuffers Buffers = null!;
     public Dictionary<XRMesh, AdvancedGpuDeformationMeshSlice> MeshSlices = null!;
+    public Dictionary<ulong, int> PayloadHashHeads = null!;
+    public List<AdvancedGpuDeformationMeshPayloadEntry> PayloadEntries = null!;
     public AdvancedDeformedVertex[] SourceVertices = null!;
     public AdvancedSkinInfluence[] SkinInfluences = null!;
     public AdvancedSpillInfluence[] SpillInfluences = null!;
@@ -88,6 +90,8 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         DatabaseEpoch = databaseEpoch;
         TopologyGeneration = topologyGeneration;
         MeshSlices.Clear();
+        PayloadHashHeads.Clear();
+        PayloadEntries.Clear();
         SourceVertexCount = 0u;
         SkinInfluenceCount = 0u;
         SpillInfluenceCount = 0u;
@@ -122,6 +126,11 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         BlendshapeRanges = source.BlendshapeRanges;
         BlendshapeRecords = source.BlendshapeRecords;
         BlendshapeDeltas = source.BlendshapeDeltas;
+        PayloadHashHeads.Clear();
+        foreach ((ulong hash, int head) in source.PayloadHashHeads)
+            PayloadHashHeads.Add(hash, head);
+        PayloadEntries.Clear();
+        PayloadEntries.AddRange(source.PayloadEntries);
         HasCpuMirror = true;
         source.ReleaseCpuMirror();
     }
@@ -217,6 +226,8 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         MeshSlices = new Dictionary<XRMesh, AdvancedGpuDeformationMeshSlice>(
             _maximumJobs,
             ReferenceEqualityComparer.Instance);
+        PayloadHashHeads = new Dictionary<ulong, int>(_maximumJobs);
+        PayloadEntries = new List<AdvancedGpuDeformationMeshPayloadEntry>(_maximumJobs);
         BlendshapeDeltaCount = 1u;
     }
 
@@ -235,6 +246,8 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         Buffers?.Destroy();
         Buffers = null!;
         MeshSlices = null!;
+        PayloadHashHeads = null!;
+        PayloadEntries = null!;
         ReleaseCpuMirror();
         Scene = null;
         DatabaseEpoch = 0UL;
@@ -257,6 +270,8 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
     {
         if (MeshSlices is not null)
             MeshSlices.Clear();
+        PayloadHashHeads?.Clear();
+        PayloadEntries?.Clear();
     }
 
     public void Destroy()

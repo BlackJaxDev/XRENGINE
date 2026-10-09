@@ -18,6 +18,8 @@ public static partial class RuntimeEngine
     }
 
     private static readonly EventList<XRWindow> ActiveWindows = [];
+    private static readonly object ActiveWindowsSync = new();
+    private static XRWindow[] _registeredWindowSnapshot = [];
     private static int _renderThreadId;
     private static int _windowThreadId;
 
@@ -60,17 +62,50 @@ public static partial class RuntimeEngine
     /// </summary>
     public static IEventListReadOnly<XRWindow> Windows => ActiveWindows;
 
+    /// <summary>Reads stable window membership without allocating during a render frame.</summary>
+    internal static ReadOnlySpan<XRWindow> RegisteredWindowSnapshot
+        => Volatile.Read(ref _registeredWindowSnapshot);
+
     public static void RegisterWindow(XRWindow window)
     {
         ArgumentNullException.ThrowIfNull(window);
-        if (!ActiveWindows.Contains(window))
-            ActiveWindows.Add(window);
+        lock (ActiveWindowsSync)
+        {
+            if (ActiveWindows.Contains(window))
+                return;
+            try
+            {
+                ActiveWindows.Add(window);
+            }
+            finally
+            {
+                PublishRegisteredWindowSnapshot();
+            }
+        }
     }
 
     public static bool UnregisterWindow(XRWindow window)
     {
         ArgumentNullException.ThrowIfNull(window);
-        return ActiveWindows.Remove(window);
+        lock (ActiveWindowsSync)
+        {
+            try
+            {
+                return ActiveWindows.Remove(window);
+            }
+            finally
+            {
+                PublishRegisteredWindowSnapshot();
+            }
+        }
+    }
+
+    private static void PublishRegisteredWindowSnapshot()
+    {
+        XRWindow[] snapshot = new XRWindow[ActiveWindows.Count];
+        for (int index = 0; index < snapshot.Length; ++index)
+            snapshot[index] = ActiveWindows[index];
+        Volatile.Write(ref _registeredWindowSnapshot, snapshot);
     }
 
     /// <summary>
