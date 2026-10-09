@@ -12,4 +12,5 @@ public enum PhysicsChainReadbackRejection : byte
     ByteCountMismatch,
     ElementBudgetExceeded,
     ByteBudgetExceeded,
+    SourceBusy,
 }

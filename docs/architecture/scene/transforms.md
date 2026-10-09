@@ -52,6 +52,14 @@ subtree ranges and walks those ranges once. Ordinary world composition reads
 `local * parentWorld` from the arrays. Custom world owners retain their explicit
 virtual evaluator.
 
+`TransformBase.BeginHierarchyMutationBatch` returns a stack-only, allocation-free
+`TransformHierarchyMutationBatch`. Inside the batch, each changed transform still
+raises its property notifications and sets its local and world dirty flags, but
+it does not register its own world recalculation. Disposing the batch enqueues
+the batch root once when any mutation was applied. Callers mutate only
+descendants of that root. The CPU physics-chain transform mirror uses one batch
+for each particle tree.
+
 For immediate recalculation of an attached transform, the store reads both
 dirty flags in one operation. It commits a changed local matrix and clears its
 local dirty flag in one write. For an ordinary child with a valid cached parent

@@ -9,7 +9,10 @@ namespace XREngine.Rendering.OpenGL;
 public partial class OpenGLRenderer
 {
     private XRRenderProgram? _advancedEarlyVisibilityProgram;
+    private XRRenderProgram? _advancedPhysicsChainBoundsProgram;
     private XRRenderProgram? _advancedBuildIndirectProgram;
+    private XRRenderProgram? _advancedFinalizeEarlyGroupsProgram;
+    private XRRenderProgram? _advancedFinalizeLateGroupsProgram;
     private XRRenderProgram? _advancedDepthPyramidProgram;
     private XRRenderProgram? _advancedLateVisibilityProgram;
     private XRRenderProgram? _advancedVisibilityRasterProgram;
@@ -59,7 +62,10 @@ public partial class OpenGLRenderer
             if (_advancedNativeSampler != 0u)
                 RawGL.DeleteSampler(_advancedNativeSampler);
             DestroyAdvancedProgram(_advancedEarlyVisibilityProgram);
+            DestroyAdvancedProgram(_advancedPhysicsChainBoundsProgram);
             DestroyAdvancedProgram(_advancedBuildIndirectProgram);
+            DestroyAdvancedProgram(_advancedFinalizeEarlyGroupsProgram);
+            DestroyAdvancedProgram(_advancedFinalizeLateGroupsProgram);
             DestroyAdvancedProgram(_advancedDepthPyramidProgram);
             DestroyAdvancedProgram(_advancedLateVisibilityProgram);
             DestroyAdvancedProgram(_advancedVisibilityRasterProgram);
@@ -76,6 +82,7 @@ public partial class OpenGLRenderer
             if (_advancedMsaaResolveVao != 0u)
                 RawGL.DeleteVertexArray(_advancedMsaaResolveVao);
             DestroyAdvancedProgram(_advancedStereoIndirectProgram);
+            DestroyAdvancedProgram(_advancedStereoFinalizeGroupsProgram);
             DestroyAdvancedProgram(_advancedStereoRasterProgram);
             DestroyAdvancedProgram(_advancedStereoMaskedRasterProgram);
         }
@@ -87,7 +94,10 @@ public partial class OpenGLRenderer
         _advancedRasterFramebuffer = 0u;
         _advancedNativeSampler = 0u;
         _advancedEarlyVisibilityProgram = null;
+        _advancedPhysicsChainBoundsProgram = null;
         _advancedBuildIndirectProgram = null;
+        _advancedFinalizeEarlyGroupsProgram = null;
+        _advancedFinalizeLateGroupsProgram = null;
         _advancedDepthPyramidProgram = null;
         _advancedLateVisibilityProgram = null;
         _advancedVisibilityRasterProgram = null;
@@ -105,6 +115,7 @@ public partial class OpenGLRenderer
         _advancedStageProgramFailure = null;
         _advancedStageProgramStateReason = null;
         _advancedStereoIndirectProgram = null;
+        _advancedStereoFinalizeGroupsProgram = null;
         _advancedStereoRasterProgram = null;
         _advancedStereoMaskedRasterProgram = null;
         _advancedStereoProgramFailure = null;
@@ -186,12 +197,14 @@ public partial class OpenGLRenderer
             return false;
         }
         slot.Upload(this, 57u, inputStorage.Counters);
+        slot.Upload(this, 78u, inputStorage.IndexedInstanceGroups);
 
         uint payloadCount = checked((uint)inputStorage.Payloads.Length);
         uint rangeCount = checked((uint)inputStorage.RangeOffsets.Length);
         uint viewCount = inputStorage.ViewCount;
         uint totalPayloadCount = checked(payloadCount * viewCount);
         uint totalRangeCount = checked(rangeCount * viewCount);
+        uint totalGroupCount = checked((uint)inputStorage.IndexedInstanceGroups.Length * viewCount);
         slot.EnsureStorage(this, 50u, checked(totalPayloadCount * sizeof(uint)), clear: true);
         slot.EnsureStorage(this, 51u, checked(totalPayloadCount * sizeof(uint)), clear: true);
         slot.EnsureStorage(this, 56u, checked(totalRangeCount * sizeof(uint)), clear: true);
@@ -206,6 +219,11 @@ public partial class OpenGLRenderer
         slot.EnsureStorage(this, 70u, checked(totalPayloadCount * 20u), clear: true);
         slot.EnsureStorage(this, 73u, checked(totalPayloadCount * 12u), clear: true);
         slot.EnsureStorage(this, 74u, checked(totalPayloadCount * sizeof(uint)), clear: true);
+        // Native shading uses bindings 79 to 81 after both visibility rasters.
+        // The slot binds its group buffers again at the next preparation.
+        slot.EnsureStorage(this, 79u, checked(totalGroupCount * sizeof(uint)), clear: true);
+        slot.EnsureStorage(this, 80u, checked(totalGroupCount * sizeof(uint)), clear: true);
+        slot.EnsureStorage(this, 81u, checked((uint)inputStorage.IndexedInstanceGroups.Length * sizeof(uint)), clear: true);
         slot.Bind(this);
         if (!_advancedOutputRegistry.TryBindPersistentState(
                 in reservation,
@@ -232,6 +250,9 @@ public partial class OpenGLRenderer
             reason = "OpenGL Advanced preparation programs are not linked.";
             return false;
         }
+
+        if (!TryPatchAdvancedPhysicsChainBounds(inputStorage, slot, out reason))
+            return false;
 
         uint earlyGroups = Math.Max(1u, (payloadCount + 255u) / 256u);
         Span<uint> push = stackalloc uint[4];
@@ -263,6 +284,46 @@ public partial class OpenGLRenderer
                 return false;
             }
             RawGL.DispatchCompute(earlyGroups, 1u, 1u);
+        }
+        RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit | MemoryBarrierMask.CommandBarrierBit);
+        if (!TryFinalizeAdvancedIndexedGroups(slot, late: false, out reason))
+            return false;
+        reason = "Ready";
+        return true;
+    }
+
+    /// <summary>Converts each populated instance group into one indexed argument.</summary>
+    private bool TryFinalizeAdvancedIndexedGroups(OpenGLAdvancedVisibilitySlot slot, bool late, out string reason)
+    {
+        if (_advancedInputStorage is null)
+        {
+            reason = "The OpenGL Advanced instance groups have no captured input.";
+            return false;
+        }
+        uint groupCount = checked((uint)_advancedInputStorage.IndexedInstanceGroups.Length);
+        if (groupCount == 0u)
+        {
+            reason = "Ready";
+            return true;
+        }
+        GLRenderProgram? program = GenericToAPI<GLRenderProgram>(
+            late ? _advancedFinalizeLateGroupsProgram : _advancedFinalizeEarlyGroupsProgram);
+        if (program is null || !program.Use())
+        {
+            reason = "The OpenGL Advanced indexed instance finalizer is unavailable.";
+            return false;
+        }
+        uint payloadCount = checked((uint)_advancedInputStorage.Payloads.Length);
+        uint rangeCount = checked((uint)_advancedInputStorage.IndirectRanges.Length);
+        Span<uint> push = stackalloc uint[4];
+        for (uint view = 0u; view < _advancedInputStorage.ViewCount; ++view)
+        {
+            push[0] = view;
+            push[1] = checked(view * payloadCount);
+            push[2] = payloadCount;
+            push[3] = checked(view * rangeCount);
+            slot.UploadUniform(this, 0u, push);
+            RawGL.DispatchCompute((groupCount + 255u) / 256u, 1u, 1u);
         }
         RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit | MemoryBarrierMask.CommandBarrierBit);
         reason = "Ready";
@@ -312,8 +373,17 @@ public partial class OpenGLRenderer
         {
             _advancedEarlyVisibilityProgram ??= CreateAdvancedComputeProgram(
                 "Advanced.Preparation.EarlyVisibility", "Advanced/Preparation/EarlyVisibility.comp", textureMode);
+            _advancedPhysicsChainBoundsProgram ??= CreateAdvancedComputeProgram(
+                "Advanced.Preparation.PatchPhysicsChainBounds", "Advanced/Preparation/PatchPhysicsChainBounds.comp", textureMode);
             _advancedBuildIndirectProgram ??= CreateAdvancedComputeProgram(
                 "Advanced.Preparation.BuildVisibilityIndirect", "Advanced/Preparation/BuildVisibilityIndirect.comp", textureMode);
+            _advancedFinalizeEarlyGroupsProgram ??= CreateAdvancedComputeProgram(
+                "Advanced.Preparation.FinalizeEarlyIndexedInstanceGroups",
+                "Advanced/Preparation/FinalizeIndexedInstanceGroups.comp", textureMode);
+            _advancedFinalizeLateGroupsProgram ??= CreateAdvancedComputeProgram(
+                "Advanced.Preparation.FinalizeLateIndexedInstanceGroups",
+                "Advanced/Preparation/FinalizeIndexedInstanceGroups.comp", textureMode,
+                "#define XR_ADV_LATE_GROUPS 1\n");
             _advancedDepthPyramidProgram ??= CreateAdvancedComputeProgram(
                 "Advanced.Preparation.BuildDepthPyramid", "Advanced/Preparation/BuildDepthPyramid.comp", textureMode);
             _advancedLateVisibilityProgram ??= CreateAdvancedComputeProgram(
@@ -396,7 +466,10 @@ public partial class OpenGLRenderer
         ReadOnlySpan<XRRenderProgram?> programs =
         [
             _advancedEarlyVisibilityProgram,
+            _advancedPhysicsChainBoundsProgram,
             _advancedBuildIndirectProgram,
+            _advancedFinalizeEarlyGroupsProgram,
+            _advancedFinalizeLateGroupsProgram,
             _advancedDepthPyramidProgram,
             _advancedLateVisibilityProgram,
             _advancedVisibilityRasterProgram,

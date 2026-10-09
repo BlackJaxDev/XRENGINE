@@ -88,7 +88,7 @@ internal static class VulkanMeshTaskDrawProducer
         VulkanGraphicsPipelineKey key = new(
             PrimitiveTopology.TriangleList, useDynamicRendering,
             useDynamicRendering ? 0UL : renderPass.Handle, dynamicFormats,
-            program.ComputeGraphicsPipelineFingerprint(), program.LinkGeneration,
+            program.ComputeGraphicsPipelineFingerprint(), program.InterfaceGeneration,
             VertexLayoutHash: 0UL, program.DescriptorSchemaFingerprint,
             program.PipelineLayout.Handle,
             program.MeshTaskBackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,

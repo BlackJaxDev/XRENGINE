@@ -1,4 +1,6 @@
 using System;
+using System.Buffers;
+using System.Diagnostics;
 using System.Threading;
 using XREngine.Rendering.Vulkan;
 
@@ -18,6 +20,12 @@ public static partial class RuntimeEngine
                 private static long _latestVulkanFramePublicationSequence;
                 private static long _latestVulkanFrameAuthorityId;
                 private static int _vulkanFrameTelemetryWriterGate;
+                private const int CompletedFrameTimestampCapacity = 65536;
+                private static readonly long[] _completedFrameTimestamps = new long[CompletedFrameTimestampCapacity];
+                private static long _completedFrameTimestampSequence;
+                private static long _completedFrameFirstSequence = 1;
+                private static long _completedFrameResetCount;
+                private static long _completedFramePreviousTimestamp;
                 // Cumulative per-outcome counts of published frame roots and of their
                 // command-record stage. A frame whose recording is deferred can still
                 // present (replaying the last complete scene), so presented-frame
@@ -61,8 +69,24 @@ public static partial class RuntimeEngine
                         if ((writingVersion & 1) == 0)
                             writingVersion++;
 
+                        long completedTimestamp = 0;
+                        if (!sameAuthority && currentSequence != 0)
+                            ResetCompletedFrameIntervals();
+                        if (publication.Outcome == EVulkanFrameOutcome.Completed)
+                        {
+                            completedTimestamp = Stopwatch.GetTimestamp();
+                            long sequence = checked(_completedFrameTimestampSequence + 1);
+                            _completedFrameTimestampSequence = sequence;
+                            _completedFrameTimestamps[(int)((sequence - 1) % CompletedFrameTimestampCapacity)] = completedTimestamp;
+                            if (_completedFramePreviousTimestamp == 0)
+                                _completedFrameFirstSequence = sequence;
+                            _completedFramePreviousTimestamp = completedTimestamp;
+                        }
+                        else if (_completedFramePreviousTimestamp != 0)
+                            ResetCompletedFrameIntervals();
+
                         Volatile.Write(ref _latestVulkanFrameTelemetryVersion, writingVersion);
-                        _latestVulkanFrameTelemetry = publication;
+                        _latestVulkanFrameTelemetry = publication with { CompletedTimestamp = completedTimestamp };
                         Volatile.Write(ref _latestVulkanFrameAuthorityId, publication.AuthorityId);
                         Volatile.Write(ref _latestVulkanFrameStartTimestamp, publication.Identity.StartTimestamp);
                         Volatile.Write(ref _latestVulkanFramePublicationSequence, publication.PublicationSequence);
@@ -98,6 +122,75 @@ public static partial class RuntimeEngine
                     int index = (int)outcome;
                     if ((uint)index < (uint)counts.Length)
                         Interlocked.Increment(ref counts[index]);
+                }
+
+                private static void ResetCompletedFrameIntervals()
+                {
+                    _completedFramePreviousTimestamp = 0;
+                    _completedFrameFirstSequence = _completedFrameTimestampSequence + 1;
+                    _completedFrameResetCount = checked(_completedFrameResetCount + 1);
+                }
+
+                /// <summary>Gets a cursor or the p95 interval after a prior cursor.</summary>
+                public static VulkanCompletedFrameIntervalTelemetry GetVulkanCompletedFrameIntervalTelemetry(
+                    long afterSequence = -1)
+                {
+                    long[]? rented = afterSequence >= 0
+                        ? ArrayPool<long>.Shared.Rent(CompletedFrameTimestampCapacity)
+                        : null;
+                    int count = 0;
+                    long sequence = 0;
+                    long resetCount = 0;
+                    long dropped = 0;
+                    bool valid = true;
+                    SpinWait spinner = default;
+                    while (Interlocked.CompareExchange(ref _vulkanFrameTelemetryWriterGate, 1, 0) != 0)
+                        spinner.SpinOnce();
+                    try
+                    {
+                        sequence = _completedFrameTimestampSequence;
+                        resetCount = _completedFrameResetCount;
+                        if (afterSequence >= 0)
+                        {
+                            long earliest = Math.Max(_completedFrameFirstSequence,
+                                sequence - CompletedFrameTimestampCapacity + 1);
+                            long firstInterval = Math.Max(afterSequence + 1, earliest + 1);
+                            dropped = Math.Max(0, firstInterval - (afterSequence + 1));
+                            if (afterSequence > sequence || dropped != 0)
+                                valid = false;
+                            for (long sampleSequence = firstInterval; sampleSequence <= sequence; ++sampleSequence)
+                            {
+                                long current = _completedFrameTimestamps[(int)((sampleSequence - 1) % CompletedFrameTimestampCapacity)];
+                                long previous = _completedFrameTimestamps[(int)((sampleSequence - 2) % CompletedFrameTimestampCapacity)];
+                                long interval = current - previous;
+                                if (interval <= 0)
+                                {
+                                    valid = false;
+                                    continue;
+                                }
+                                rented![count++] = interval;
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        Volatile.Write(ref _vulkanFrameTelemetryWriterGate, 0);
+                    }
+
+                    try
+                    {
+                        if (count == 0)
+                            return new(sequence, resetCount, 0, dropped, 0.0, false);
+                        Array.Sort(rented!, 0, count);
+                        int percentileIndex = (int)Math.Ceiling(count * 0.95) - 1;
+                        double p95Milliseconds = rented![percentileIndex] * 1000.0 / Stopwatch.Frequency;
+                        return new(sequence, resetCount, count, dropped, p95Milliseconds, valid);
+                    }
+                    finally
+                    {
+                        if (rented is not null)
+                            ArrayPool<long>.Shared.Return(rented);
+                    }
                 }
 
                 /// <summary>Cumulative count of published frame roots with the given outcome.</summary>

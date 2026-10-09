@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Data.Core;
@@ -1568,7 +1569,9 @@ namespace XREngine.Rendering
                 Camera,
                 dimensions.InternalWidth,
                 dimensions.InternalHeight,
-                excludeProjectiveMirrors);
+                excludeProjectiveMirrors,
+                MeshSubmissionStrategyOverride ??
+                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy());
         }
 
         /// <summary>
@@ -2026,6 +2029,112 @@ namespace XREngine.Rendering
                 package.PackageGeneration,
                 package.Identity.CollectGeneration);
             return true;
+        }
+
+        /// <summary>Captures the effective desktop command package for shadow scheduling.</summary>
+        internal bool TryCaptureAdvancedDirectionalShadowConsumerAuthority(
+            ulong renderFrameId,
+            out Shadows.AdvancedDirectionalShadowConsumerAuthority authority)
+        {
+            RenderCommandCollection commands =
+                MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            using var renderingBufferScope = commands.EnterRenderingBufferReadScope();
+            BackendReadyFramePackage package = commands.RenderingBackendReadyPackage;
+            if (package.State != EBackendReadyFramePackageState.Published ||
+                package.PackageGeneration <= 0L ||
+                package.Identity.CollectGeneration < 0L)
+            {
+                authority = default;
+                return false;
+            }
+
+            authority = new(this, _renderPipeline, commands, renderFrameId,
+                package.PackageGeneration, package.Identity,
+                package.SubmissionResolution.Resolved);
+            return true;
+        }
+
+        /// <summary>Publishes this viewport's shadow consumer before world pre-render work.</summary>
+        public void GlobalPreRenderWithShadowConsumerAuthority(IRuntimeRenderWorld world)
+        {
+            XRViewport consumer = this;
+            GlobalPreRenderWithShadowConsumerAuthority(
+                world, MemoryMarshal.CreateReadOnlySpan(ref consumer, 1));
+        }
+
+        /// <summary>Publishes a complete manual desktop consumer set before world pre-render work.</summary>
+        public void GlobalPreRenderWithShadowConsumerAuthority(
+            IRuntimeRenderWorld world,
+            ReadOnlySpan<XRViewport> desktopConsumers)
+        {
+            ArgumentNullException.ThrowIfNull(world);
+            if (!ReferenceEquals(World, world))
+                throw new ArgumentException("The viewport must use the world passed for pre-render work.", nameof(world));
+
+            bool includesCaller = false;
+            for (int index = 0; index < desktopConsumers.Length; ++index)
+            {
+                XRViewport consumer = desktopConsumers[index];
+                if (consumer is null || !ReferenceEquals(consumer.World, world))
+                    throw new ArgumentException("Every desktop consumer must use the pre-render world.", nameof(desktopConsumers));
+                includesCaller |= ReferenceEquals(consumer, this);
+                for (int prior = 0; prior < index; ++prior)
+                    if (ReferenceEquals(desktopConsumers[prior], consumer))
+                        throw new ArgumentException("The desktop consumer set contains a duplicate viewport.", nameof(desktopConsumers));
+            }
+            if (!includesCaller)
+                throw new ArgumentException("The desktop consumer set must include this viewport.", nameof(desktopConsumers));
+
+            ReadOnlySpan<XRWindow> windows = RuntimeEngine.RegisteredWindowSnapshot;
+            for (int windowIndex = 0; windowIndex < windows.Length; ++windowIndex)
+            {
+                XRWindow window = windows[windowIndex];
+                for (int viewportIndex = 0; viewportIndex < window.Viewports.Count; ++viewportIndex)
+                {
+                    XRViewport registered = window.Viewports[viewportIndex];
+                    if (!ReferenceEquals(registered.World, world) ||
+                        registered.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost)
+                        continue;
+
+                    bool listed = false;
+                    for (int index = 0; index < desktopConsumers.Length; ++index)
+                        listed |= ReferenceEquals(desktopConsumers[index], registered);
+                    if (!listed)
+                        throw new InvalidOperationException(
+                            "The manual desktop consumer set omits a registered Advanced viewport for this world.");
+                }
+            }
+
+            ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            Shadows.AdvancedDirectionalShadowConsumerAuthority authority = default;
+            int ownerCount = 0;
+            bool genericFallbackAllowed = true;
+            for (int index = 0; index < desktopConsumers.Length; ++index)
+            {
+                XRViewport consumer = desktopConsumers[index];
+                if (consumer.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost)
+                    continue;
+
+                ++ownerCount;
+                bool captured = consumer.TryCaptureAdvancedDirectionalShadowConsumerAuthority(
+                    renderFrameId, out Shadows.AdvancedDirectionalShadowConsumerAuthority candidate);
+                genericFallbackAllowed &= captured &&
+                    candidate.Strategy == EMeshSubmissionStrategy.CpuDirect;
+                authority = ownerCount == 1 ? candidate : default;
+            }
+
+            string? reason = ownerCount > 1
+                ? "Multiple manual Advanced viewports own different shadow consumers."
+                : ownerCount == 1 && !authority.IsValid
+                    ? "The known Advanced viewport has no published command package."
+                    : null;
+            world.Lights.ShadowAtlas.PublishAdvancedDirectionalShadowConsumerAuthority(
+                renderFrameId,
+                authority,
+                ownerCount != 0,
+                genericFallbackAllowed,
+                reason);
+            world.GlobalPreRender();
         }
 
         /// <summary>

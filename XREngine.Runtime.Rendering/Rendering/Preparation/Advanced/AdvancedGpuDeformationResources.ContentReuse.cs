@@ -14,6 +14,41 @@ public sealed partial class AdvancedGpuDeformationResources
     /// <summary>Identifies the completion authority responsible for the last reuse decision.</summary>
     public string LastOutputReuseAuthority { get; private set; } = "None";
 
+    /// <summary>
+    /// Accepts ordered submitted output as history without waiting for its GPU
+    /// completion. Failed, unsubmitted, and untracked output cannot be history.
+    /// </summary>
+    private bool HasUsableOutputHistory(uint slot)
+    {
+        if (!_slotOutputValid[slot])
+            return false;
+
+        XRGpuFence? fence = _slotProducerFences[slot];
+        if (_slotReusePoisoned[slot] || fence is null || fence.IsDisposed ||
+            AbstractRenderer.Current is IRuntimeRendererHost { IsDeviceLost: true })
+        {
+            _slotOutputValid[slot] = false;
+            return false;
+        }
+
+        switch (fence.SubmissionStatus)
+        {
+            case EGpuFenceSubmissionStatus.AwaitingSubmission:
+                return false;
+            case EGpuFenceSubmissionStatus.Failed:
+                _slotOutputValid[slot] = false;
+                return false;
+            case EGpuFenceSubmissionStatus.Submitted:
+                if (fence.Poll() != EGpuFenceStatus.Failed)
+                    return true;
+                _slotOutputValid[slot] = false;
+                return false;
+            default:
+                _slotOutputValid[slot] = false;
+                return false;
+        }
+    }
+
     private bool TryAcquireAllOutputSlots()
     {
         for (uint slot = 0u; slot < (uint)_frameSlotCount; slot++)
@@ -79,6 +114,7 @@ public sealed partial class AdvancedGpuDeformationResources
                 case EGpuFenceStatus.Failed:
                     // Poll failures do not prove that no commands reached the
                     // queue, so retain the fence and fail closed.
+                    _slotOutputValid[slot] = false;
                     LastOutputReuseStatus = ResolveFenceFailureStatus();
                     return false;
             }

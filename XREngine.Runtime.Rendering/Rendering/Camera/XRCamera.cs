@@ -518,6 +518,9 @@ namespace XREngine.Rendering
         public bool RendersLayer(int layer)
             => _cullingMask.Contains(layer);
 
+        /// <summary>Gets the layer mask captured for GPU visibility.</summary>
+        public uint CullingLayerMask => unchecked((uint)_cullingMask.Value);
+
         #endregion
 
         #region Post-processing state

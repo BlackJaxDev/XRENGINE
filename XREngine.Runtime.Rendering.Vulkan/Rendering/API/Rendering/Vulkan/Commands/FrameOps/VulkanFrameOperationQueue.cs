@@ -301,7 +301,10 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     {
         using (SyncRoot.EnterScope())
         {
+            // Each shadow operation owns its cascade copy until physical lowering.
+            // Other stages can share a family lease because they have no lane data.
             for (int index = 0;
+                 !request.IsDirectionalShadowStage &&
                  index < _advancedVisibilityInputLeases.Length;
                  ++index)
             {
@@ -409,7 +412,8 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         {
             capture.Buffer[index].ReleaseAuthoringSnapshot();
             if (capture.Buffer[index] is SubmissionMarkerOp marker)
-                marker.Fence.Fail();
+                marker.Fence.Fail(EGpuFenceFailureSite.QueueRollback,
+                    EGpuFenceNativeSubmission.NotCalled);
             if (capture.Buffer[index] is AdvancedVisibilityOp visibility)
                 visibility.ReleaseInputLease();
         }
@@ -1008,7 +1012,8 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     {
         for (int index = 0; index < operations.Length; index++)
             if (operations[index] is SubmissionMarkerOp marker)
-                marker.Fence.Fail();
+                marker.Fence.Fail(EGpuFenceFailureSite.QueueDiscard,
+                    EGpuFenceNativeSubmission.NotCalled);
     }
 
     private bool TryGetFrameViewHistoryEntry(in RenderFrameViewHistoryBackendReservation reservation, out int index)
@@ -1075,7 +1080,8 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     private static void FailOutputCompletionFence(XRGpuFence? fence)
     {
         if (fence is VulkanTimelineGpuFence timelineFence)
-            timelineFence.Fail();
+            timelineFence.Fail(EGpuFenceFailureSite.OutputCompletionAbandoned,
+                EGpuFenceNativeSubmission.Unknown);
         else
             fence?.Dispose();
     }

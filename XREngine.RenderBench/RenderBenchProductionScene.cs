@@ -592,7 +592,7 @@ public sealed class RenderBenchProductionScene : IDisposable
         bool recorded = false;
         try
         {
-            WorldHost.RenderWorld.GlobalPreRender();
+            viewport.GlobalPreRenderWithShadowConsumerAuthority(WorldHost.RenderWorld);
             recorded = viewport.TryRender(null);
         }
         catch (Exception exception)

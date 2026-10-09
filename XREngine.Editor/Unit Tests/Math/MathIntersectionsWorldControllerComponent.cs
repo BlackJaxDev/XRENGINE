@@ -57,6 +57,10 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     private bool _benchmarkIncludeDebugDisplays;
     private float _benchmarkCopyCount = 1000.0f;
     private float _benchmarkDurationSeconds = 10.0f;
+    // Unique meshes give every copy distinct vertex content, so no indexed instance group can merge copies.
+    private bool _benchmarkUniqueMeshes;
+    private bool _benchmarkActiveUniqueMeshes;
+    private int _benchmarkMeshVariant;
     private string _benchmarkStatus = "Select one active test, then run a benchmark.";
     private int _benchmarkFrameCount;
     private double _benchmarkSpawnMilliseconds;
@@ -76,6 +80,12 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     public RenderInfo RenderInfo => _renderInfo;
     public RenderInfo[] RenderedObjects { get; }
     internal bool IsSpawningBenchmarkInstances => _spawningBenchmarkInstances;
+
+    /// <summary>
+    /// Mesh variant of the benchmark copy that a test factory is building. Zero selects the shared
+    /// shape. In unique-mesh runs, each copy gets its own nonzero variant.
+    /// </summary>
+    internal int BenchmarkMeshVariant => _spawningBenchmarkInstances ? _benchmarkMeshVariant : 0;
 
     public MathIntersectionsWorldControllerComponent()
     {
@@ -180,6 +190,11 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
             0.5f,
             "%.1f",
             "Wall-clock duration to keep the benchmark copies alive before teardown.");
+        _customUi.AddBoolField(
+            "Benchmark Unique Meshes",
+            () => _benchmarkUniqueMeshes,
+            value => _benchmarkUniqueMeshes = value,
+            "Give each copy mesh content that differs from every other copy, so copies cannot share an instanced draw. Applies to the next run.");
         _customUi.AddBoolField(
             "Run Benchmark",
             () => _benchmarkRunToggle,
@@ -340,6 +355,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         _benchmarkFrameTimesMs.Clear();
 
         int copyCount = GetBenchmarkCopyCount();
+        bool uniqueMeshes = _benchmarkUniqueMeshes;
         float durationSeconds = Math.Clamp(_benchmarkDurationSeconds, 0.5f, MaxBenchmarkDurationSeconds);
         var benchmarkConfiguration = new PhysicsChainBenchmarkConfiguration
         {
@@ -347,26 +363,77 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         };
         _benchmarkRunController = new PhysicsChainBenchmarkRunController(benchmarkConfiguration);
 
-        var benchmarkRoot = SceneNode.NewChild($"{_benchmarkEntry.DisplayName} Benchmark Instances");
-        benchmarkRoot.SetTransform<Transform>();
+        SceneNode? benchmarkRoot = null;
+        bool sourceWasActive = _benchmarkEntry.RootNode.IsActiveSelf;
+        try
+        {
+            benchmarkRoot = SceneNode.NewChild($"{_benchmarkEntry.DisplayName} Benchmark Instances");
+            benchmarkRoot.SetTransform<Transform>();
 
-        Stopwatch spawnStopwatch = Stopwatch.StartNew();
-        SpawnBenchmarkInstances(benchmarkRoot, _benchmarkEntry, copyCount, includeDebugDisplays);
-        spawnStopwatch.Stop();
+            Stopwatch spawnStopwatch = Stopwatch.StartNew();
+            SpawnBenchmarkInstances(benchmarkRoot, _benchmarkEntry, copyCount, includeDebugDisplays, uniqueMeshes);
+            spawnStopwatch.Stop();
 
-        _benchmarkSourceWasActive = _benchmarkEntry.RootNode.IsActiveSelf;
-        _benchmarkEntry.RootNode.IsActiveSelf = false;
-        Relayout();
+            _benchmarkEntry.RootNode.IsActiveSelf = false;
+            Relayout();
 
-        _benchmarkRoot = benchmarkRoot;
-        _benchmarkIncludeDebugDisplays = includeDebugDisplays;
-        _benchmarkSpawnMilliseconds = spawnStopwatch.Elapsed.TotalMilliseconds;
-        _benchmarkActiveCopyCount = copyCount;
-        _benchmarkActiveDurationSeconds = durationSeconds;
-        _benchmarkStopwatch = null;
-        _benchmarkLastTimestamp = 0;
-        _benchmarkRunning = true;
-        _benchmarkStatus = $"Settling {_benchmarkEntry.DisplayName}: {copyCount} copies; timing begins after resources remain stable.";
+            _benchmarkRoot = benchmarkRoot;
+            _benchmarkSourceWasActive = sourceWasActive;
+            _benchmarkIncludeDebugDisplays = includeDebugDisplays;
+            _benchmarkSpawnMilliseconds = spawnStopwatch.Elapsed.TotalMilliseconds;
+            _benchmarkActiveCopyCount = copyCount;
+            _benchmarkActiveDurationSeconds = durationSeconds;
+            _benchmarkActiveUniqueMeshes = uniqueMeshes;
+            _benchmarkStopwatch = null;
+            _benchmarkLastTimestamp = 0;
+            _benchmarkRunning = true;
+            _benchmarkStatus = $"Settling {_benchmarkEntry.DisplayName}: {copyCount} copies, {DescribeMeshSharing(uniqueMeshes)} meshes; timing begins after resources remain stable.";
+        }
+        catch (Exception ex)
+        {
+            XREngine.Debug.LogException(ex, "Failed to start physics-chain benchmark.");
+            try
+            {
+                StopBenchmarkRootMotion();
+            }
+            catch (Exception cleanupException)
+            {
+                XREngine.Debug.LogException(cleanupException, "Failed to stop partial physics-chain benchmark motion.");
+            }
+            try
+            {
+                benchmarkRoot?.Destroy(true);
+            }
+            catch (Exception cleanupException)
+            {
+                XREngine.Debug.LogException(cleanupException, "Failed to destroy partial physics-chain benchmark.");
+            }
+
+            try
+            {
+                _benchmarkEntry.RootNode.IsActiveSelf = sourceWasActive;
+                Relayout();
+            }
+            catch (Exception restoreException)
+            {
+                XREngine.Debug.LogException(restoreException, "Failed to restore physics-chain benchmark source.");
+            }
+
+            _benchmarkRoot = null;
+            _benchmarkEntry = null;
+            _benchmarkStopwatch = null;
+            _benchmarkRunController = null;
+            _benchmarkRunning = false;
+            _benchmarkRunToggle = false;
+            _benchmarkRunWithDebugDisplaysToggle = false;
+            _benchmarkIncludeDebugDisplays = false;
+            _benchmarkSourceWasActive = false;
+            _benchmarkLastTimestamp = 0;
+            _benchmarkActiveCopyCount = 0;
+            _benchmarkActiveDurationSeconds = 0.0f;
+            _benchmarkActiveUniqueMeshes = false;
+            _benchmarkStatus = $"Benchmark start failed: {ex.GetType().Name}: {ex.Message}";
+        }
     }
 
     private void UpdateBenchmark()
@@ -463,7 +530,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         }
     }
 
-    private void SpawnBenchmarkInstances(SceneNode benchmarkRoot, MathIntersectionsWorldTestEntry entry, int copyCount, bool includeDebugDisplays)
+    private void SpawnBenchmarkInstances(SceneNode benchmarkRoot, MathIntersectionsWorldTestEntry entry, int copyCount, bool includeDebugDisplays, bool uniqueMeshes)
     {
         Vector3 size = entry.Bounds.Size;
         float cellWidth = MathF.Max(size.X, 1.0f) + 2.0f;
@@ -496,6 +563,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
                 Transform slotTransform = instanceSlot.SetTransform<Transform>();
                 CenterWithinCell(slotTransform, entry.Bounds, desiredCenter);
 
+                _benchmarkMeshVariant = uniqueMeshes ? index + 1 : 0;
                 SceneNode instanceRoot = entry.Factory(instanceSlot, this);
                 instanceRoot.IsActiveSelf = true;
                 instanceRoot.Name = $"{entry.DisplayName} Benchmark Rig";
@@ -506,6 +574,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         finally
         {
             _spawningBenchmarkInstances = false;
+            _benchmarkMeshVariant = 0;
             EndBenchmarkRootMotionBatch();
         }
 
@@ -533,6 +602,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         Stopwatch? stopwatch = _benchmarkStopwatch;
         MathIntersectionsWorldTestEntry? entry = _benchmarkEntry;
         int copyCount = _benchmarkActiveCopyCount;
+        bool uniqueMeshes = _benchmarkActiveUniqueMeshes;
         int settleFrameCount = _benchmarkRunController?.SettleFrameCount ?? 0;
         double elapsedSeconds = stopwatch?.Elapsed.TotalSeconds ?? 0.0;
         bool includeDebugDisplays = _benchmarkIncludeDebugDisplays;
@@ -558,6 +628,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         _benchmarkLastTimestamp = 0;
         _benchmarkActiveCopyCount = 0;
         _benchmarkActiveDurationSeconds = 0.0f;
+        _benchmarkActiveUniqueMeshes = false;
 
         _benchmarkSourceWasActive = false;
 
@@ -602,7 +673,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         double hierarchyRecalcMs = bandwidthDelta.HierarchyRecalcMilliseconds;
         string name = entry?.DisplayName ?? "Benchmark";
         _benchmarkStatus =
-            $"{name}: {copyCount} copies, {elapsedSeconds:0.00}s, spawn {_benchmarkSpawnMilliseconds:0.00}ms, destroy {destroyMilliseconds:0.00}ms, " +
+            $"{name}: {copyCount} copies, {DescribeMeshSharing(uniqueMeshes)} meshes, {elapsedSeconds:0.00}s, spawn {_benchmarkSpawnMilliseconds:0.00}ms, destroy {destroyMilliseconds:0.00}ms, " +
             $"settle {settleFrameCount} frames, samples {frameStatistics.SampleCount}, avg {frameStatistics.MeanMilliseconds:0.###}ms, " +
             $"p50 {frameStatistics.P50Milliseconds:0.###}ms, p95 {frameStatistics.P95Milliseconds:0.###}ms, " +
             $"p99 {frameStatistics.P99Milliseconds:0.###}ms, min {frameStatistics.MinimumMilliseconds:0.###}ms, max {frameStatistics.MaximumMilliseconds:0.###}ms, " +
@@ -614,13 +685,14 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
         string logDirectory = XREngine.Debug.EnsureLogRunDirectory();
         XREngine.Debug.WriteAuxiliaryLog(
             "math-intersections-benchmarks.log",
-            $"[{DateTimeOffset.Now:O}] Benchmark='{name}' Copies={copyCount} DurationSeconds={elapsedSeconds:0.000} SpawnMs={_benchmarkSpawnMilliseconds:0.###} DestroyMs={destroyMilliseconds:0.###} SettleFrames={settleFrameCount} Samples={frameStatistics.SampleCount} AvgFrameMs={frameStatistics.MeanMilliseconds:0.###} P50FrameMs={frameStatistics.P50Milliseconds:0.###} P95FrameMs={frameStatistics.P95Milliseconds:0.###} P99FrameMs={frameStatistics.P99Milliseconds:0.###} MinFrameMs={frameStatistics.MinimumMilliseconds:0.###} MaxFrameMs={frameStatistics.MaximumMilliseconds:0.###} DebugDisplays={includeDebugDisplays} SourceRigDisabled={sourceRigWasActive} BvhSummary='{bvhSummary.Trim()}' CpuUploadBytes={bandwidthDelta.CpuUploadBytes} GpuCopyBytes={bandwidthDelta.GpuCopyBytes} CpuReadbackBytes={bandwidthDelta.CpuReadbackBytes} StandaloneCpuUploadBytes={bandwidthDelta.StandaloneCpuUploadBytes} StandaloneCpuReadbackBytes={bandwidthDelta.StandaloneCpuReadbackBytes} BatchedCpuUploadBytes={bandwidthDelta.BatchedCpuUploadBytes} BatchedGpuCopyBytes={bandwidthDelta.BatchedGpuCopyBytes} BatchedCpuReadbackBytes={bandwidthDelta.BatchedCpuReadbackBytes} HierarchyRecalcMs={hierarchyRecalcMs:0.###} TotalTransferBytes={bandwidthDelta.TotalTransferBytes} DispatchGroups={bandwidthDelta.DispatchGroupCount} DispatchIterations={bandwidthDelta.DispatchIterationCount} ResidentParticleBytes={bandwidthCurrent.ResidentParticleBytes} LogDirectory='{logDirectory}'");
+            $"[{DateTimeOffset.Now:O}] Benchmark='{name}' Copies={copyCount} MeshSharing={DescribeMeshSharing(uniqueMeshes)} DurationSeconds={elapsedSeconds:0.000} SpawnMs={_benchmarkSpawnMilliseconds:0.###} DestroyMs={destroyMilliseconds:0.###} SettleFrames={settleFrameCount} Samples={frameStatistics.SampleCount} AvgFrameMs={frameStatistics.MeanMilliseconds:0.###} P50FrameMs={frameStatistics.P50Milliseconds:0.###} P95FrameMs={frameStatistics.P95Milliseconds:0.###} P99FrameMs={frameStatistics.P99Milliseconds:0.###} MinFrameMs={frameStatistics.MinimumMilliseconds:0.###} MaxFrameMs={frameStatistics.MaximumMilliseconds:0.###} DebugDisplays={includeDebugDisplays} SourceRigDisabled={sourceRigWasActive} BvhSummary='{bvhSummary.Trim()}' CpuUploadBytes={bandwidthDelta.CpuUploadBytes} GpuCopyBytes={bandwidthDelta.GpuCopyBytes} CpuReadbackBytes={bandwidthDelta.CpuReadbackBytes} StandaloneCpuUploadBytes={bandwidthDelta.StandaloneCpuUploadBytes} StandaloneCpuReadbackBytes={bandwidthDelta.StandaloneCpuReadbackBytes} BatchedCpuUploadBytes={bandwidthDelta.BatchedCpuUploadBytes} BatchedGpuCopyBytes={bandwidthDelta.BatchedGpuCopyBytes} BatchedCpuReadbackBytes={bandwidthDelta.BatchedCpuReadbackBytes} HierarchyRecalcMs={hierarchyRecalcMs:0.###} TotalTransferBytes={bandwidthDelta.TotalTransferBytes} DispatchGroups={bandwidthDelta.DispatchGroupCount} DispatchIterations={bandwidthDelta.DispatchIterationCount} ResidentParticleBytes={bandwidthCurrent.ResidentParticleBytes} LogDirectory='{logDirectory}'");
 
         var result = new PhysicsChainBenchmarkResult
         {
             CompletedAt = DateTimeOffset.Now,
             ScenarioName = name,
             CopyCount = copyCount,
+            UniqueMeshes = uniqueMeshes,
             DeterministicSeed = PhysicsChainBenchmarkConfiguration.DefaultDeterministicSeed,
             DebugDisplaysEnabled = includeDebugDisplays,
             SettleFrameCount = settleFrameCount,
@@ -679,6 +751,9 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
             $"BVH ready {readyCount}/{components.Count}, validation {validationPassCount}/{components.Count}, " +
             $"builds {builds}, updates {updates}, queries {queries}, nodes {nodes}, primitives {primitives}, last hits {lastHits}; ";
     }
+
+    private static string DescribeMeshSharing(bool uniqueMeshes)
+        => uniqueMeshes ? "unique" : "shared";
 
     private int GetBenchmarkCopyCount()
         => Math.Clamp((int)MathF.Round(_benchmarkCopyCount), 1, MaxBenchmarkCopies);
@@ -915,6 +990,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
             target.SleepVelocityThreshold = source.SleepVelocityThreshold;
             target.SleepQuietFrameCount = source.SleepQuietFrameCount;
             target.GpuSyncToBones = source.GpuSyncToBones;
+            target.EnableRigidGpuRestInputCache = source.EnableRigidGpuRestInputCache;
             target.Multithread = source.Multithread;
             target.UseGPU = source.UseGPU;
             target.UseBatchedDispatcher = source.UseBatchedDispatcher;
@@ -1278,6 +1354,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     {
         public void Render()
         {
+            Text.InvalidateTextMatrix();
             Text.Render();
         }
 
@@ -1292,7 +1369,9 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
     {
         public void Render()
         {
+            Title.InvalidateTextMatrix();
             Title.Render();
+            Description.InvalidateTextMatrix();
             Description.Render();
         }
 

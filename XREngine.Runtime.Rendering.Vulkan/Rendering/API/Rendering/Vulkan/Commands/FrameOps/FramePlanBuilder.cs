@@ -146,6 +146,36 @@ internal sealed class FramePlanBuilder
         => _advancedVisibilityInputCopyTelemetry.Capture();
 
     /// <summary>
+    /// Releases physical plan payloads after all plan consumers have retired.
+    /// A pinned plan keeps its native dependencies until its owner releases it.
+    /// </summary>
+    internal void ReleasePhysicalStreamsForShutdown()
+    {
+        lock (_provisioningGate)
+        {
+            for (int index = 0; index < _provisionedSlotCount; index++)
+                if (_slots[index].Plan.IsPinned)
+                    throw new InvalidOperationException("A pinned active frame plan prevents physical stream shutdown.");
+            for (int index = 0; index < _retiredSlotCount; index++)
+                if (_retiredSlots[index].Plan.IsPinned)
+                    throw new InvalidOperationException("A pinned retired frame plan prevents physical stream shutdown.");
+
+            for (int index = 0; index < _provisionedSlotCount; index++)
+                ReleasePhysicalSlot(_slots[index]);
+            for (int index = 0; index < _retiredSlotCount; index++)
+                ReleasePhysicalSlot(_retiredSlots[index]);
+        }
+    }
+
+    private static void ReleasePhysicalSlot(Slot slot)
+    {
+        slot.Plan.Reset();
+        slot.Operations.Reset();
+        slot.DynamicOverlayOperations.Reset();
+        slot.TextureUploadOperations.Reset();
+    }
+
+    /// <summary>
     /// Allocates newly activated target slots before their first frame can be
     /// accepted. Existing plans and all four retirement workspaces stay intact;
     /// this never reallocates a published slot or grows storage during lowering.

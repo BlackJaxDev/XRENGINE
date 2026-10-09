@@ -120,6 +120,13 @@ namespace XREngine.Rendering.Commands
             _skinnedCommandCount = 0;
             _registeredMeshCommandsByRenderInfo.Clear();
             _registeredRenderInfoByMeshCommand.Clear();
+            using (_lock.EnterScope())
+            {
+                _publishedRendererCommandIndices.Clear();
+                _gpuAabbRenderers.Clear();
+                _gpuCopiedAabbRenderers.Clear();
+                _staleGpuAabbRenderers.Clear();
+            }
         }
 
         private volatile bool _destroyed;
@@ -291,6 +298,13 @@ namespace XREngine.Rendering.Commands
             _bounds = new AABB();
             _meshlets.Clear();
             _commandIndicesPerMeshCommand.Clear();
+            using (_lock.EnterScope())
+            {
+                _publishedRendererCommandIndices.Clear();
+                _gpuAabbRenderers.Clear();
+                _gpuCopiedAabbRenderers.Clear();
+                _staleGpuAabbRenderers.Clear();
+            }
             _commandIndexLookup.Clear();
             _registeredMeshCommandsByRenderInfo.Clear();
             _registeredRenderInfoByMeshCommand.Clear();

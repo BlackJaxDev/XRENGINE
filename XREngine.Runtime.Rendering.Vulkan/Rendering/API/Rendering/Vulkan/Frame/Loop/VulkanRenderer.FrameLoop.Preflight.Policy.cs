@@ -1,11 +1,23 @@
 using System;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan
 {
     internal sealed partial class VulkanFrameLoop
     {
+        private VulkanResourceCatchUpEpisodeSnapshot _lastResourceCatchUpEpisode;
+        private readonly object _resourceCatchUpEpisodeGate = new();
+        private bool _resourceCatchUpEpisodeActive;
+
+        private VulkanResourceCatchUpEpisodeSnapshot CaptureResourceCatchUpEpisode()
+        {
+            lock (_resourceCatchUpEpisodeGate)
+                return _lastResourceCatchUpEpisode;
+        }
+
         private void DrainSkippedResizeFrameOps(
             string reason,
             bool preserveTextureUploads = false)
@@ -143,6 +155,21 @@ namespace XREngine.Rendering.Vulkan
                 return true;
             }
 
+            if (Volatile.Read(ref _resourceCatchUpEpisodeActive))
+            {
+                lock (_resourceCatchUpEpisodeGate)
+                {
+                    if (_resourceCatchUpEpisodeActive)
+                    {
+                        _lastResourceCatchUpEpisode = _lastResourceCatchUpEpisode with
+                        {
+                            IsActive = false,
+                            RecoveryFrameId = RuntimeEngine.Rendering.State.RenderFrameId,
+                        };
+                        Volatile.Write(ref _resourceCatchUpEpisodeActive, false);
+                    }
+                }
+            }
             ResetResourceCatchUpProgress();
             return false;
         }
@@ -153,6 +180,48 @@ namespace XREngine.Rendering.Vulkan
             RenderResourceGeneration? pendingGeneration,
             string reason)
         {
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
+            XRWindow window = DesktopWsiOutput.Window;
+            VulkanResourceCatchUpBlockerSnapshot blocker = new(
+                frameId,
+                viewport.Index,
+                RuntimeHelpers.GetHashCode(viewport),
+                instance.InstanceId,
+                (uint)Math.Max(1, viewport.Width),
+                (uint)Math.Max(1, viewport.Height),
+                (uint)Math.Max(1, viewport.InternalWidth),
+                (uint)Math.Max(1, viewport.InternalHeight),
+                activeGeneration?.Key,
+                activeGeneration?.Status,
+                pendingGeneration?.Key,
+                pendingGeneration?.Status,
+                instance.SkippedResizeCatchUpThisFrame,
+                window.LatestWindowEventSnapshot.IsMinimized,
+                window.LatestWindowSurfaceSnapshot.IsMinimized,
+                window.IsInteractiveResizeInProgress,
+                reason,
+                instance.LastRenderDeclineReason,
+                instance.LastResourceGenerationFailure);
+            lock (_resourceCatchUpEpisodeGate)
+            {
+                if (!_resourceCatchUpEpisodeActive)
+                {
+                    _lastResourceCatchUpEpisode = new(true, true, frameId, frameId, 1, 0,
+                        blocker, blocker);
+                    Volatile.Write(ref _resourceCatchUpEpisodeActive, true);
+                }
+                else
+                {
+                    _lastResourceCatchUpEpisode = _lastResourceCatchUpEpisode with
+                    {
+                        LastBlockedFrameId = frameId,
+                        BlockerCount = _lastResourceCatchUpEpisode.BlockerCount + 1,
+                        LatestBlocker = blocker,
+                    };
+                }
+            }
+
             long now = Stopwatch.GetTimestamp();
             (ulong blockedFrames, TimeSpan elapsed) =
                 RecordResourceCatchUpProgress(now);

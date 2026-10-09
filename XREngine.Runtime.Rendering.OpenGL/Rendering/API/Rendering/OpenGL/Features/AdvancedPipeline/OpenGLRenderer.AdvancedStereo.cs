@@ -5,6 +5,7 @@ namespace XREngine.Rendering.OpenGL;
 public partial class OpenGLRenderer
 {
     private XRRenderProgram? _advancedStereoIndirectProgram;
+    private XRRenderProgram? _advancedStereoFinalizeGroupsProgram;
     private XRRenderProgram? _advancedStereoRasterProgram;
     private XRRenderProgram? _advancedStereoMaskedRasterProgram;
     private bool? _advancedMultiviewSupported;
@@ -28,9 +29,9 @@ public partial class OpenGLRenderer
             reason = _advancedStereoProgramFailure;
             return false;
         }
-        if (RawGL.GetInteger(GLEnum.MaxVertexShaderStorageBlocks) < 9)
+        if (RawGL.GetInteger(GLEnum.MaxVertexShaderStorageBlocks) < 11)
         {
-            reason = "OpenGL Advanced stereo requires nine vertex-stage storage blocks.";
+            reason = "OpenGL Advanced stereo requires eleven vertex-stage storage blocks.";
             return false;
         }
         try
@@ -38,6 +39,9 @@ public partial class OpenGLRenderer
             const EAdvancedTextureIndirectionMode mode = EAdvancedTextureIndirectionMode.OpenGlBindlessHandles;
             _advancedStereoIndirectProgram ??= CreateAdvancedComputeProgram(
                 "Advanced.Preparation.StereoIndirect", "Advanced/Preparation/BuildOpenGlStereoIndirect.comp", mode);
+            _advancedStereoFinalizeGroupsProgram ??= CreateAdvancedComputeProgram(
+                "Advanced.Preparation.FinalizeStereoIndexedInstanceGroups",
+                "Advanced/Preparation/FinalizeOpenGlStereoInstanceGroups.comp", mode);
             _advancedStereoRasterProgram ??= CreateAdvancedRasterProgram(mode, stereo: true);
             _advancedStereoMaskedRasterProgram ??= CreateAdvancedRasterProgram(mode, masked: true, stereo: true);
         }
@@ -47,7 +51,8 @@ public partial class OpenGLRenderer
             return false;
         }
         // Non-short-circuit: each poll advances only its own program's build.
-        if (!(IsLinked(_advancedStereoIndirectProgram) & IsLinked(_advancedStereoRasterProgram) & IsLinked(_advancedStereoMaskedRasterProgram)))
+        if (!(IsLinked(_advancedStereoIndirectProgram) & IsLinked(_advancedStereoFinalizeGroupsProgram) &
+              IsLinked(_advancedStereoRasterProgram) & IsLinked(_advancedStereoMaskedRasterProgram)))
         {
             reason = "OpenGL Advanced single-pass stereo programs are compiling or linking.";
             return false;
@@ -64,10 +69,12 @@ public partial class OpenGLRenderer
         if (!TryEnsureAdvancedStereoPrograms(out reason)) return false;
         uint payloads = checked((uint)_advancedInputStorage!.Payloads.Length);
         uint ranges = checked((uint)_advancedInputStorage.IndirectRanges.Length);
+        uint groups = checked((uint)_advancedInputStorage.IndexedInstanceGroups.Length);
         slot.EnsureStorage(this, 75u, checked(payloads * 20u), clear: false);
         slot.EnsureStorage(this, 76u, checked(ranges * sizeof(uint)), clear: true);
         slot.EnsureStorage(this, 77u, checked(payloads * sizeof(uint)), clear: false);
-        for (uint binding = 75u; binding <= 77u; binding++)
+        slot.EnsureStorage(this, 81u, checked(groups * sizeof(uint)), clear: true);
+        for (uint binding = 75u; binding <= 81u; binding++)
             RawGL.BindBufferBase(GLEnum.ShaderStorageBuffer, binding, slot.Buffer(binding));
         Span<uint> push = stackalloc uint[4] { 2u, payloads, late ? 1u : 0u, 0u };
         slot.UploadUniform(this, 0u, push);
@@ -77,6 +84,22 @@ public partial class OpenGLRenderer
             return false;
         }
         RawGL.DispatchCompute(Math.Max(1u, (payloads + 255u) / 256u), 1u, 1u);
+        RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
+        if (groups != 0u)
+        {
+            push[0] = payloads;
+            push[1] = ranges;
+            push[2] = late ? 1u : 0u;
+            push[3] = 0u;
+            slot.UploadUniform(this, 0u, push);
+            if (GenericToAPI<GLRenderProgram>(_advancedStereoFinalizeGroupsProgram) is not { } finalizer ||
+                !finalizer.Use())
+            {
+                reason = "OpenGL Advanced stereo instance group finalization is unavailable.";
+                return false;
+            }
+            RawGL.DispatchCompute((groups + 255u) / 256u, 1u, 1u);
+        }
         RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit | MemoryBarrierMask.CommandBarrierBit);
         reason = "Ready";
         return true;

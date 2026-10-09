@@ -1,6 +1,7 @@
 using System.Numerics;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Components.Scene.Mesh;
 
 namespace XREngine.Rendering.Commands;
 
@@ -19,14 +20,27 @@ internal readonly record struct GpuSceneMeshCommandSnapshot(
     bool ForceCpuRendering,
     uint EditorHighlightBits,
     uint StableQueryKey,
-    GpuSceneOwnerSnapshot Owner)
+    GpuSceneOwnerSnapshot Owner,
+    bool BasePassEnabled = true,
+    bool ShadowPassEnabled = true)
 {
     internal static GpuSceneMeshCommandSnapshot CaptureLive(RenderInfo renderInfo,
         IRenderCommandMesh command)
         => new(command.Mesh, command.WorldMatrix, command.WorldMatrixIsModelMatrix,
             command.MaterialOverride, command.Instances, command.RenderPass,
             command.ForceCpuRendering, command.EditorHighlightBits, command.StableQueryKey,
-            GpuSceneOwnerSnapshot.CaptureLive(renderInfo));
+            GpuSceneOwnerSnapshot.CaptureLive(renderInfo),
+            CapturePassEnabled(renderInfo, command, isShadowPass: false),
+            CapturePassEnabled(renderInfo, command, isShadowPass: true));
+
+    private static bool CapturePassEnabled(RenderInfo renderInfo,
+        IRenderCommandMesh command, bool isShadowPass)
+        => renderInfo.ShouldRender &&
+            (command is not RenderCommand renderCommand || renderCommand.Enabled) &&
+            (renderInfo is not RenderInfo3D { OwnerRenderableMesh: { } mesh } ||
+                command is not RenderCommand primary || !mesh.IsPrimaryCommand(primary) ||
+                RenderableMesh.IsPrimaryMaterialPassEnabled(
+                    command.MaterialOverride ?? command.Mesh?.Material, isShadowPass));
 
     internal Matrix4x4 ModelMatrix => WorldMatrixIsModelMatrix ? WorldMatrix : Matrix4x4.Identity;
 }

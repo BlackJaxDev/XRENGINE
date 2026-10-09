@@ -427,6 +427,8 @@ namespace XREngine.Editor.Mcp
         {
             var prefs = Engine.EditorPreferences;
             long requestId = Interlocked.Increment(ref _requestCounter);
+            long requestStartedAt = McpRequestMilestoneTrace.Enabled
+                ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             string clientKey = ResolveClientKey(context.Request);
             var response = context.Response;
 
@@ -604,6 +606,10 @@ namespace XREngine.Editor.Mcp
                 return;
             }
 
+            McpRequestMilestoneTrace? trace = McpRequestMilestoneTrace.TryCreate(
+                requestId, requestStartedAt, document.RootElement);
+            trace?.Record("Parsed");
+
             bool containsInitialize = ContainsInitializeRequest(document.RootElement);
             string? sessionIdHeaderForPost = context.Request.Headers[McpSessionHeader];
             if (!string.IsNullOrWhiteSpace(sessionIdHeaderForPost) && !HasSession(sessionIdHeaderForPost!))
@@ -624,14 +630,22 @@ namespace XREngine.Editor.Mcp
             object? result;
             try
             {
-                result = await HandleRpcMessageAsync(document.RootElement, requestToken, prefs);
+                trace?.Record("RpcBegin");
+                result = await HandleRpcMessageAsync(document.RootElement, requestToken, prefs, trace);
+                trace?.Record("RpcAwaitResumed");
             }
             catch (OperationCanceledException)
             {
+                trace?.Record("RpcTimeout");
                 response.StatusCode = (int)HttpStatusCode.RequestTimeout;
                 LogRequest(requestId, "Timeout", context.Request, response.StatusCode, "rpc_timeout");
                 response.Close();
                 return;
+            }
+            catch (Exception exception)
+            {
+                trace?.Record("RpcError", exception.GetType().Name);
+                throw;
             }
 
             if (result is null)
@@ -642,10 +656,21 @@ namespace XREngine.Editor.Mcp
                 return;
             }
 
+            trace?.Record("EnvelopeReady");
             string payload = JsonSerializer.Serialize(result, _serializerOptions);
             byte[] bytes = Encoding.UTF8.GetBytes(payload);
             response.ContentLength64 = bytes.Length;
-            await response.OutputStream.WriteAsync(bytes, 0, bytes.Length, requestToken);
+            trace?.Record("HttpWriteBegin", $"bytes={bytes.Length}");
+            try
+            {
+                await response.OutputStream.WriteAsync(bytes, 0, bytes.Length, requestToken);
+                trace?.Record("HttpWriteEnd");
+            }
+            catch (Exception exception)
+            {
+                trace?.Record("HttpWriteError", exception.GetType().Name);
+                throw;
+            }
             LogRequest(requestId, "Ok", context.Request, (int)HttpStatusCode.OK, responseSessionId is null ? $"bytes={bytes.Length}" : $"bytes={bytes.Length} session={responseSessionId}");
             response.Close();
         }
@@ -831,12 +856,13 @@ namespace XREngine.Editor.Mcp
             }
         }
 
-        private async Task<object?> HandleRpcMessageAsync(JsonElement root, CancellationToken token, EditorPreferences prefs)
+        private async Task<object?> HandleRpcMessageAsync(JsonElement root, CancellationToken token, EditorPreferences prefs,
+            McpRequestMilestoneTrace? trace)
         {
             return root.ValueKind switch
             {
-                JsonValueKind.Object => await HandleRpcAsync(root, token, prefs),
-                JsonValueKind.Array => await HandleRpcBatchAsync(root, token, prefs),
+                JsonValueKind.Object => await HandleRpcAsync(root, token, prefs, trace),
+                JsonValueKind.Array => await HandleRpcBatchAsync(root, token, prefs, trace),
                 _ => new
                 {
                     jsonrpc = "2.0",
@@ -850,7 +876,8 @@ namespace XREngine.Editor.Mcp
             };
         }
 
-        private async Task<object?> HandleRpcBatchAsync(JsonElement batchRoot, CancellationToken token, EditorPreferences prefs)
+        private async Task<object?> HandleRpcBatchAsync(JsonElement batchRoot, CancellationToken token, EditorPreferences prefs,
+            McpRequestMilestoneTrace? trace)
         {
             if (batchRoot.GetArrayLength() == 0)
             {
@@ -887,7 +914,7 @@ namespace XREngine.Editor.Mcp
                     continue;
                 }
 
-                object? response = await HandleRpcAsync(item, token, prefs);
+                object? response = await HandleRpcAsync(item, token, prefs, trace);
                 if (response is not null)
                     responses.Add(response);
             }
@@ -895,7 +922,8 @@ namespace XREngine.Editor.Mcp
             return responses.Count == 0 ? null : responses;
         }
 
-        private async Task<object?> HandleRpcAsync(JsonElement root, CancellationToken token, EditorPreferences prefs)
+        private async Task<object?> HandleRpcAsync(JsonElement root, CancellationToken token, EditorPreferences prefs,
+            McpRequestMilestoneTrace? trace)
         {
             if (root.ValueKind != JsonValueKind.Object)
                 return CreateErrorResponse(root, -32600, "Invalid JSON-RPC request object.");
@@ -919,7 +947,7 @@ namespace XREngine.Editor.Mcp
             {
                 "initialize" => BuildInitializeResult(),
                 "tools/list" => BuildToolsListResult(prefs),
-                "tools/call" => await HandleToolCallAsync(root, token),
+                "tools/call" => await HandleToolCallAsync(root, token, trace),
                 "resources/list" => BuildResourcesListResult(),
                 "resources/read" => await HandleResourcesReadAsync(root, token),
                 "prompts/list" => BuildPromptsListResult(),
@@ -1224,7 +1252,8 @@ namespace XREngine.Editor.Mcp
             return result ?? new McpError(-32602, $"Unknown prompt '{name}'.");
         }
 
-        private async Task<object> HandleToolCallAsync(JsonElement root, CancellationToken token)
+        private async Task<object> HandleToolCallAsync(JsonElement root, CancellationToken token,
+            McpRequestMilestoneTrace? trace)
         {
             if (!TryGetParamsObject(root, out var paramsElement, out var paramsError))
                 return new McpError(-32602, paramsError ?? "Missing params.");
@@ -1275,7 +1304,8 @@ namespace XREngine.Editor.Mcp
             // Resolve effective thread affinity: explicit attribute overrides global dispatch mode.
             var dispatchMode = Engine.EditorPreferences.McpDispatchMode;
             McpThreadAffinity affinity = tool!.ThreadAffinity ?? ResolveDefaultAffinity(dispatchMode);
-            var response = await DispatchToolAsync(tool, context, argsElement, affinity, token);
+            trace?.Record("DispatchChosen", affinity.ToString());
+            var response = await DispatchToolAsync(tool, context, argsElement, affinity, token, trace);
 
             // Build the content array. Spec-compliant MCP clients (e.g. VS Code / Copilot)
             // only surface the `content` text blocks to the model and ignore non-standard
@@ -1305,6 +1335,7 @@ namespace XREngine.Editor.Mcp
             if (!string.IsNullOrWhiteSpace(idempotencyKey) && !response.IsError)
                 StoreIdempotentResponse(idempotencyKey!, toolResponse);
 
+            trace?.Record("ToolEnvelopeReady");
             return toolResponse;
         }
 
@@ -1327,18 +1358,27 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             JsonElement args,
             McpThreadAffinity affinity,
-            CancellationToken token)
+            CancellationToken token,
+            McpRequestMilestoneTrace? trace)
         {
             // Caller affinity: invoke directly on the current (HTTP listener) thread.
             if (affinity == McpThreadAffinity.Caller)
-                return await tool.Handler(context, args, token);
+            {
+                trace?.Record("HandlerBegin");
+                McpToolResponse callerResponse = await tool.Handler(context, args, token);
+                trace?.Record("HandlerComplete");
+                return callerResponse;
+            }
 
             // JobWorker affinity: schedule on a CLR threadpool thread.
             if (affinity == McpThreadAffinity.JobWorker)
             {
                 return await Task.Run(async () =>
                 {
-                    return await tool.Handler(context, args, token);
+                    trace?.Record("HandlerBegin");
+                    McpToolResponse workerResponse = await tool.Handler(context, args, token);
+                    trace?.Record("HandlerComplete");
+                    return workerResponse;
                 }, token);
             }
 
@@ -1349,21 +1389,28 @@ namespace XREngine.Editor.Mcp
 
                 Action dispatch = async () =>
                 {
+                    trace?.Record("CallbackBegin");
                     try
                     {
+                        trace?.Record("HandlerBegin");
                         var result = await tool.Handler(context, args, token);
-                        tcs.TrySetResult(result);
+                        trace?.Record("HandlerComplete");
+                        bool accepted = tcs.TrySetResult(result);
+                        trace?.Record("TcsSetResult", accepted ? "accepted" : "ignored");
                     }
                     catch (OperationCanceledException)
                     {
-                        tcs.TrySetCanceled(token);
+                        bool accepted = tcs.TrySetCanceled(token);
+                        trace?.Record("TcsSetCanceled", accepted ? "accepted" : "ignored");
                     }
                     catch (Exception ex)
                     {
-                        tcs.TrySetException(ex);
+                        bool accepted = tcs.TrySetException(ex);
+                        trace?.Record("TcsSetException", $"{ex.GetType().Name}:{(accepted ? "accepted" : "ignored")}");
                     }
                 };
 
+                trace?.Record("EnqueueBegin", affinity.ToString());
                 switch (affinity)
                 {
                     case McpThreadAffinity.Main:
@@ -1379,9 +1426,24 @@ namespace XREngine.Editor.Mcp
                         return await tool.Handler(context, args, token);
                 }
 
-                return await tcs.Task;
+                trace?.Record("Enqueued");
+                try
+                {
+                    McpToolResponse queuedResponse = await tcs.Task;
+                    trace?.Record("AwaitResumed");
+                    return queuedResponse;
+                }
+                catch (Exception exception)
+                {
+                    trace?.Record("AwaitFailed", exception.GetType().Name);
+                    throw;
+                }
             }
         }
+
+        /// <summary>Returns the retained MCP request milestones in time order.</summary>
+        public static McpRequestMilestoneRecord[] GetRequestTraceSnapshot()
+            => McpRequestMilestoneTrace.Snapshot();
 
         private static bool TryGetParamsObject(JsonElement root, out JsonElement paramsElement, out string? error)
         {

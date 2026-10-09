@@ -48,6 +48,11 @@ internal static class VulkanDirectionalShadowLaneCulling
             }
 
             ref readonly AdvancedVisibilityCandidate candidate = ref candidates[payloadIndex];
+            if ((candidate.Flags & EAdvancedVisibilityPreparationFlags.GpuOwnedBounds) != 0u)
+            {
+                masks[recordIndex] = allCascades;
+                continue;
+            }
             AABB bounds = new(
                 new Vector3(candidate.BoundsMin.X, candidate.BoundsMin.Y, candidate.BoundsMin.Z),
                 new Vector3(candidate.BoundsMax.X, candidate.BoundsMax.Y, candidate.BoundsMax.Z));

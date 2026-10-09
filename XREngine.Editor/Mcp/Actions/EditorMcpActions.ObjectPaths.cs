@@ -26,6 +26,19 @@ public sealed partial class EditorMcpActions
     /// <summary>Resolves an explicitly selected owned instance without revisiting global ID caches.</summary>
     internal static bool TryResolveOwnedObject(XRBase root, string? path, out XRBase? target, out string? error)
     {
+        target = null;
+        if (!TryResolveOwnedReference(root, path, out object? reference, out error))
+            return false;
+        target = reference as XRBase;
+        if (target is not null)
+            return true;
+        error = $"object_path '{path}' must end at a live XRBase instance.";
+        return false;
+    }
+
+    /// <summary>Reads an existing reference through a live engine object's member path.</summary>
+    private static bool TryResolveOwnedReference(XRBase root, string? path, out object? target, out string? error)
+    {
         target = root;
         error = null;
         if (string.IsNullOrWhiteSpace(path))
@@ -92,11 +105,11 @@ public sealed partial class EditorMcpActions
             }
         }
 
-        target = current as XRBase;
-        if (target is null || target is XRObjectBase { IsDestroyed: true })
+        target = current;
+        if (target is null || target.GetType().IsValueType || target is XRObjectBase { IsDestroyed: true })
         {
             target = null;
-            error = $"object_path '{path}' must end at a live XRBase instance.";
+            error = $"object_path '{path}' must end at a live reference instance.";
             return false;
         }
         return true;

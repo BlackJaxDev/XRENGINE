@@ -19,6 +19,8 @@ public sealed partial class PhysicsChainWorld
         long RetirementFrame);
 
     private readonly ConcurrentQueue<DynamicCommand> _dynamicCommands = [];
+    private readonly Dictionary<PhysicsChainComponent, List<CommandKind>> _deferredStructuralMutations =
+        new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     private readonly ConcurrentDictionary<DynamicCommandKey, long> _latestDynamicCommandVersion = [];
     private readonly PhysicsChainSlotArena<PhysicsChainInstance> _instanceArena = new();
     private readonly PhysicsChainSlotArena<PhysicsChainState> _stateArena = new();
@@ -88,6 +90,9 @@ public sealed partial class PhysicsChainWorld
             throw new ArgumentOutOfRangeException(nameof(kind), "Use Register or Unregister for add/remove intents.");
         if (component.World is not IRuntimeWorldContext world || !TryGet(world, out PhysicsChainWorld? scheduler) || scheduler is null)
             return;
+        PhysicsChainWorld? owner = component.CaptureRuntimeOwner();
+        if (owner is not null && !ReferenceEquals(owner, scheduler))
+            Register(component);
         scheduler.EnqueueStructuralCommand((CommandKind)kind, component);
     }
 
@@ -201,12 +206,34 @@ public sealed partial class PhysicsChainWorld
 
     private void ApplyStructuralMutation(CommandKind kind, PhysicsChainComponent component)
     {
+        if (component.IsWorldMutationPending)
+        {
+            RetainDeferredStructuralMutation(component, kind);
+            return;
+        }
+        if (component.IsDestroyed
+            || !component.IsActiveInHierarchy
+            || !ReferenceEquals(component.World, _world))
+        {
+            if (_slotByComponent.ContainsKey(component))
+                RemoveComponent(component);
+            _deferredStructuralMutations.Remove(component);
+            return;
+        }
         if (!_slotByComponent.TryGetValue(component, out int slotIndex))
         {
             AddComponent(component);
-            slotIndex = _slotByComponent[component];
+            if (!_slotByComponent.TryGetValue(component, out slotIndex))
+            {
+                if (!component.IsDestroyed
+                    && component.IsActiveInHierarchy
+                    && ReferenceEquals(component.World, _world))
+                    RetainDeferredStructuralMutation(component, kind);
+                return;
+            }
         }
         RuntimeSlot slot = _slots[slotIndex];
+        component.InvalidateReadbackSource();
         component.ApplyWorldStructuralCommand((PhysicsChainWorldCommandKind)kind, this, _cpuBackend);
         PhysicsChainTemplate template = component.GetOrCreateRuntimeTemplate(this);
         int particleCount = Math.Max(component.RuntimeParticleCount, 1);
@@ -241,5 +268,20 @@ public sealed partial class PhysicsChainWorld
             output.OutputGeneration = NextGeneration(output.OutputGeneration);
             _outputArena.TrySet(slot.OutputArenaHandle, output);
         }
+    }
+
+    private void RetainDeferredStructuralMutation(PhysicsChainComponent component, CommandKind kind)
+    {
+        if (!_deferredStructuralMutations.TryGetValue(component, out List<CommandKind>? commands))
+            _deferredStructuralMutations.Add(component, commands = []);
+        commands.Add(kind);
+    }
+
+    private void ReplayDeferredStructuralMutations(PhysicsChainComponent component)
+    {
+        if (!_deferredStructuralMutations.Remove(component, out List<CommandKind>? commands))
+            return;
+        for (int index = 0; index < commands.Count; ++index)
+            ApplyStructuralMutation(commands[index], component);
     }
 }

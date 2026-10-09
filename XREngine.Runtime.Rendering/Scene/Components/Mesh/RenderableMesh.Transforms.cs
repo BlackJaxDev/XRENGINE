@@ -153,16 +153,19 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void RootBone_WorldMatrixChanged(TransformBase rootBone, Matrix4x4 renderMatrix)
         {
+            if (UsesCommittedWorldBounds)
+                return;
+
             long t = RenderableMeshStageTelemetry.Begin();
             if (RuntimeEngine.IsRenderThread)
             {
                 ApplyImmediateRenderMatrixUpdate(componentMatrix: null, rootMatrix: renderMatrix);
-                RenderableMeshStageTelemetry.End(12, t);
+                RenderableMeshStageTelemetry.End(RenderableMeshStage.RootBoneRenderMatrixChanged, t);
                 return;
             }
 
             MarkPendingRootBoneRenderMatrix(renderMatrix);
-            RenderableMeshStageTelemetry.End(12, t);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.RootBoneRenderMatrixChanged, t);
         }
 
         /// <summary>
@@ -182,7 +185,8 @@ namespace XREngine.Components.Scene.Mesh
             // path instead of stamping the basis as an offset (which would pair the existing world-space
             // volume with the root matrix and double-transform the box -> culling "tower" flicker).
             SetSkinnedRootRenderMatrix(basis);
-            TryApplySkinnedBoneCullingBounds();
+            if (!UsesCommittedWorldBounds)
+                TryApplySkinnedBoneCullingBounds();
         }
 
         /// <summary>
@@ -190,6 +194,9 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void Component_WorldMatrixChanged(TransformBase component, Matrix4x4 renderMatrix)
         {
+            if (UsesCommittedWorldBounds)
+                return;
+
             if (RuntimeEngine.IsRenderThread)
             {
                 ApplyImmediateRenderMatrixUpdate(componentMatrix: renderMatrix, rootMatrix: null);
@@ -201,6 +208,9 @@ namespace XREngine.Components.Scene.Mesh
 
         private void Component_WorldMatrixPreviewChanged(TransformBase component, Matrix4x4 worldMatrix)
         {
+            if (UsesCommittedWorldBounds)
+                return;
+
             bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
@@ -217,6 +227,9 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ApplyImmediateRenderMatrixUpdate(Matrix4x4? componentMatrix, Matrix4x4? rootMatrix)
         {
+            if (UsesCommittedWorldBounds)
+                return;
+
             bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning;
             if (hasSkinning)
             {
@@ -238,6 +251,9 @@ namespace XREngine.Components.Scene.Mesh
 
         internal void QueueCurrentRenderMatrixUpdate()
         {
+            if (UsesCommittedWorldBounds)
+                return;
+
             if (RuntimeEngine.IsRenderThread)
             {
                 ApplyImmediateRenderMatrixUpdate(
@@ -282,6 +298,12 @@ namespace XREngine.Components.Scene.Mesh
 
         private void ApplyPendingRenderMatrixUpdates()
         {
+            if (UsesCommittedWorldBounds)
+            {
+                Interlocked.Exchange(ref _pendingRenderMatrixQueued, 0);
+                return;
+            }
+
             long tTotal = RenderableMeshStageTelemetry.Begin();
             long tHead = tTotal;
             int componentVersion;
@@ -327,21 +349,21 @@ namespace XREngine.Components.Scene.Mesh
                 }
             }
 
-            RenderableMeshStageTelemetry.End(1, tHead);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.ApplyPendingMatrixState, tHead);
             long tBounds = RenderableMeshStageTelemetry.Begin();
             ProcessSkinnedBoundsRefresh();
-            RenderableMeshStageTelemetry.End(2, tBounds);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.ProcessPendingSkinnedBounds, tBounds);
             long tApply = RenderableMeshStageTelemetry.Begin();
             if (hasSkinning)
                 _ = TryApplySkinnedBoneCullingBounds();
-            RenderableMeshStageTelemetry.End(3, tApply);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.ApplyPendingBoneBounds, tApply);
 
             // Visible collection has already finished. Publish the final matrix and bounds
             // together so the command does not lag a frame or publish an intermediate state.
             long tSwap = RenderableMeshStageTelemetry.Begin();
             _rc?.SwapBuffers();
-            RenderableMeshStageTelemetry.End(4, tSwap);
-            RenderableMeshStageTelemetry.End(0, tTotal);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.SwapPendingRenderCommand, tSwap);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.ApplyPendingRenderMatrixUpdates, tTotal);
         }
 
         internal static void ProcessPendingRenderMatrixUpdates()

@@ -50,7 +50,11 @@ internal sealed partial class VulkanFrameDataArena
                     VulkanFrameDataChunk?[] chunks = _chunks[lane][group];
                     for (int slot = previousCount; slot < requiredSlots; slot++)
                     {
-                        VulkanFrameDataChunk chunk = CreateChunk(chunks[0]!.Capacity, _usages[lane], _labels[lane]);
+                        VulkanFrameDataChunk chunk = CreateChunk(
+                            chunks[0]!.Capacity,
+                            _usages[lane],
+                            _labels[lane],
+                            preferDeviceLocal: lane == (int)EVulkanFrameDataLane.AdvancedVisibilityStorage);
                         chunks[slot] = chunk;
                         if (chunk.AllocationLength > MaximumMappedBytes ||
                             allocatedBytes > MaximumMappedBytes - chunk.AllocationLength ||

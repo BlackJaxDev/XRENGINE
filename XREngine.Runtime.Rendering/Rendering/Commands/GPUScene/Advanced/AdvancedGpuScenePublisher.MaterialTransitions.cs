@@ -26,23 +26,18 @@ public sealed partial class AdvancedGpuScenePublisher
     private uint[] _plannedReleaseSlotStamps = [];
     private int[] _plannedExistingMaterialSlots = [];
     private uint[] _plannedExistingMaterialSlotStamps = [];
-    private IRenderCommandMesh?[] _plannedIdentitySources = [];
-    private int[] _plannedIdentityPrimitiveCounts = [];
-    private int[] _plannedIdentitySourceSlots = [];
-    private uint[] _plannedIdentitySourceSlotStamps = [];
     private int _plannedMaterialCount;
     private int _plannedCommandCount;
     private int _plannedMaterialReleaseCount;
     private int _resourceAcquireCount;
     private int _resourceReleaseCount;
-    private int _plannedIdentitySourceCount;
+    private bool _committedMaterialPlanCacheValid;
     private AdvancedDrawSubmissionRecord[] _plannedSubmissionRecords = [];
     private AdvancedManagedDeformationSourceRow[] _plannedDeformationSources = [];
     private uint _plannedVariantSlotGeneration;
     private uint _plannedCommandSlotGeneration;
     private uint _plannedReleaseSlotGeneration;
     private uint _plannedExistingMaterialSlotGeneration;
-    private uint _plannedIdentitySourceSlotGeneration;
 
     /// <summary>
     /// Resolves the compatibility outcome retained for a source primitive in the
@@ -81,12 +76,7 @@ public sealed partial class AdvancedGpuScenePublisher
             Array.Resize(ref _plannedSubmissionRecords, required);
             Array.Resize(ref _plannedDeformationSources, required);
         }
-        int identityRequired = checked(required * 2);
-        if (_plannedIdentitySources.Length < identityRequired)
-        {
-            Array.Resize(ref _plannedIdentitySources, identityRequired);
-            Array.Resize(ref _plannedIdentityPrimitiveCounts, identityRequired);
-        }
+        EnsureSourceGroupCapacity(checked(required * 2));
         if (_plannedMaterials.Length < required)
         {
             Array.Resize(ref _plannedMaterials, required);
@@ -115,8 +105,10 @@ public sealed partial class AdvancedGpuScenePublisher
         GrowStampedSlots(ref _plannedCommandSlots, ref _plannedCommandSlotStamps, slotCapacity, ref _plannedCommandSlotGeneration);
         GrowStampedSlots(ref _plannedReleaseSlots, ref _plannedReleaseSlotStamps, slotCapacity, ref _plannedReleaseSlotGeneration);
         GrowStampedSlots(ref _plannedExistingMaterialSlots, ref _plannedExistingMaterialSlotStamps, slotCapacity, ref _plannedExistingMaterialSlotGeneration);
-        int identitySlotCapacity = checked((int)NextPowerOfTwo(checked(capacity * 4u)));
-        GrowStampedSlots(ref _plannedIdentitySourceSlots, ref _plannedIdentitySourceSlotStamps, identitySlotCapacity, ref _plannedIdentitySourceSlotGeneration);
+        uint sourceGroupSlots = checked(
+            (checked(capacity * 2u) + checked((uint)_pendingIdentitySourceCount)) * 2u);
+        EnsureSourceGroupLookupCapacity(
+            checked((int)NextPowerOfTwo(sourceGroupSlots)));
     }
 
     private static void GrowStampedSlots(
@@ -140,31 +132,17 @@ public sealed partial class AdvancedGpuScenePublisher
         out string reason)
     {
         _plannedMaterialCount = 0;
+        _reusedStaticDrawPlanCount = 0;
+        _materialResolveAttemptCount = 0;
         _plannedCommandCount = checked((int)scene.TotalCommandCount);
         _plannedMaterialReleaseCount = 0;
         _resourceAcquireCount = 0;
         _resourceReleaseCount = 0;
-        _plannedIdentitySourceCount = 0;
         BeginStampedPlan(ref _plannedVariantSlotGeneration, _plannedVariantSlotStamps);
         BeginStampedPlan(ref _plannedCommandSlotGeneration, _plannedCommandSlotStamps);
         BeginStampedPlan(ref _plannedReleaseSlotGeneration, _plannedReleaseSlotStamps);
         BeginStampedPlan(ref _plannedExistingMaterialSlotGeneration, _plannedExistingMaterialSlotStamps);
-        BeginStampedPlan(ref _plannedIdentitySourceSlotGeneration, _plannedIdentitySourceSlotStamps);
         BeginRegistrationPreflight();
-
-        for (int registrationIndex = 0; registrationIndex < _registrationCount; ++registrationIndex)
-        {
-            ref readonly AdvancedResidentRegistration registration =
-                ref _registrations[registrationIndex];
-            if (registration.Active && registration.Source is { } registeredSource &&
-                !TryAppendPlannedIdentitySource(
-                    registeredSource,
-                    checked(registration.PrimitiveIndex + 1)))
-            {
-                reason = "The planned canonical identity-source table is full.";
-                return false;
-            }
-        }
 
         for (uint commandIndex = 0u; commandIndex < scene.TotalCommandCount; ++commandIndex)
         {
@@ -181,6 +159,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 !scene.TryGetSourceCommand(commandIndex, out IRenderCommandMesh? source, out int primitiveIndex) ||
                 source is null)
             {
+                ValidateAbsentOrderedRegistration(checked((int)commandIndex));
                 continue;
             }
             if (!TryInsertPlannedCommand(source, primitiveIndex, checked((int)commandIndex)))
@@ -203,13 +182,24 @@ public sealed partial class AdvancedGpuScenePublisher
                 out int sourcePrimitiveCount);
             plan.Source = source;
             plan.PrimitiveIndex = primitiveIndex;
+            plan.SourcePrimitiveCount = Math.Max(1, sourcePrimitiveCount);
             plan.Command = command;
             plan.World = world;
             plan.PreviousWorld = previousWorld;
             plan.Bounds = bounds;
             plan.Renderer = renderer;
             plan.Mesh = mesh;
-            plan.Geometry = CreateGeometry(scene, mesh, in bounds, in command);
+            plan.MaterialSource = material;
+            plan.MaterialBindingLayoutVersion = material?.BindingLayoutVersion ?? 0u;
+            plan.MaterialBindingValueVersion = material?.BindingValueVersion ?? 0u;
+            plan.MaterialBindingResourceVersion = material?.BindingResourceVersion ?? 0u;
+            plan.MaterialShaderStateRevision = material?.ShaderStateRevision ?? 0L;
+            plan.MaterialUberStateRevision = material?.UberStateRevision ?? 0L;
+            if (!TryCaptureGpuBoundsSource(renderer, out plan.GpuBoundsSource))
+            {
+                reason = "A covered draw is waiting for a committed physics-chain bounds route.";
+                return false;
+            }
             plan.RenderState = CreateRenderState(mesh, in command);
             plan.MeshVertexCount = Math.Max(0, mesh?.VertexCount ?? 0);
             plan.MeshIndexCount = Math.Max(0, mesh?.IndexCount ?? 0);
@@ -217,17 +207,12 @@ public sealed partial class AdvancedGpuScenePublisher
             plan.MeshPrimitiveTopology = mesh?.Type ?? EPrimitiveType.Triangles;
             plan.MeshIsSkinned =
                 (command.Flags & (uint)GPUIndirectRenderFlags.Skinned) != 0u;
-            plan.StructuralSignature =
-                ComputeStructuralSignature(in command, mesh, material, primitiveIndex);
-            plan.ContentSignature =
-                ComputeContentSignature(in command, in bounds, in world, in previousWorld, material);
-            if (!TryAppendPlannedIdentitySource(source, sourcePrimitiveCount))
-            {
-                reason = "The planned canonical identity-source table is full.";
-                return false;
-            }
-
-            int registrationIndex = FindRegistration(source, primitiveIndex);
+            int registrationIndex = TryFindOrderedRegistration(
+                checked((int)commandIndex), source, primitiveIndex,
+                plan.SourcePrimitiveCount,
+                out int cachedRegistrationIndex)
+                ? cachedRegistrationIndex
+                : FindRegistration(source, primitiveIndex);
             bool geometryAlreadyValidated = registrationIndex >= 0 &&
                 HasValidatedCanonicalGeometry(in _registrations[registrationIndex], in plan);
             if (!geometryAlreadyValidated && !TryValidateCanonicalGeometry(
@@ -238,10 +223,38 @@ public sealed partial class AdvancedGpuScenePublisher
                 continue;
             }
 
-            if (!TryResolvePlannedMaterial(
+            bool reusedMaterial = TryReuseCommittedUntexturedDrawMaterial(
+                in plan, registrationIndex, out int materialPlanIndex);
+            bool reusedStaticPlan = reusedMaterial && registrationIndex >= 0 &&
+                plan.GpuBoundsSource is not null &&
+                world == Matrix4x4.Identity && previousWorld == Matrix4x4.Identity &&
+                _registrations[registrationIndex].CommittedMaterialPlan.GpuOwnedBounds &&
+                _registrations[registrationIndex].CommittedMaterialPlan.IdentityWorld;
+            if (reusedStaticPlan)
+            {
+                ref readonly AdvancedCommittedMaterialPlan cache = ref
+                    _registrations[registrationIndex].CommittedMaterialPlan;
+                plan.Geometry = cache.Geometry;
+                plan.StructuralSignature = cache.StructuralSignature;
+                plan.ContentSignature = cache.ContentSignature;
+                ++_reusedStaticDrawPlanCount;
+            }
+            else
+            {
+                plan.Geometry = CreateGeometry(scene, mesh, in bounds, in command);
+                plan.StructuralSignature = ComputeStructuralSignature(
+                    in command, mesh, material, primitiveIndex);
+                plan.ContentSignature = ComputeContentSignature(
+                    in command, in bounds, in world, in previousWorld,
+                    material, plan.GpuBoundsSource is not null);
+            }
+
+            if (!reusedMaterial &&
+                !TryResolvePlannedMaterialCounting(
                     material,
                     in command,
-                    out int materialPlanIndex,
+                    registrationIndex,
+                    out materialPlanIndex,
                     out EAdvancedCanonicalCompatibilityReason compatibilityReason,
                     out bool fatal,
                     out reason))
@@ -289,6 +302,9 @@ public sealed partial class AdvancedGpuScenePublisher
             }
         }
 
+        if (!TryPrepareSourceGroups(out reason))
+            return false;
+
         for (int registrationIndex = 0; registrationIndex < _registrationCount; ++registrationIndex)
         {
             ref readonly AdvancedResidentRegistration registration =
@@ -324,8 +340,153 @@ public sealed partial class AdvancedGpuScenePublisher
             }
         }
 
+        if (_useRetainedIdentityGroups && !_retainedIdentityGroupsValid &&
+            !TryPrepareSourceGroups(out reason))
+            return false;
+
         reason = string.Empty;
         return true;
+    }
+
+    private bool TryResolvePlannedMaterialCounting(
+        XRMaterial? material,
+        in DrawMetadata command,
+        int registrationIndex,
+        out int materialPlanIndex,
+        out EAdvancedCanonicalCompatibilityReason compatibilityReason,
+        out bool fatal,
+        out string reason)
+    {
+        ++_materialResolveAttemptCount;
+        return TryResolvePlannedMaterial(material, in command, registrationIndex,
+            out materialPlanIndex, out compatibilityReason, out fatal, out reason);
+    }
+
+    /// <summary>Reuses a committed draw plan only while its exact source inputs remain current.</summary>
+    private bool TryReuseCommittedUntexturedDrawMaterial(
+        in AdvancedGpuSceneCommandTransition plan,
+        int registrationIndex,
+        out int materialPlanIndex)
+    {
+        materialPlanIndex = -1;
+        if (!_committedMaterialPlanCacheValid || registrationIndex < 0 ||
+            plan.MaterialSource is AdvancedProjectiveMirrorMaterial ||
+            plan.MaterialSource is { } material &&
+                (material.SurfaceTextureBindings.Length != 0 || material.Textures.Count != 0))
+            return false;
+
+        ref readonly AdvancedResidentRegistration registration =
+            ref _registrations[registrationIndex];
+        ref readonly AdvancedCommittedMaterialPlan cache =
+            ref registration.CommittedMaterialPlan;
+        if (!registration.Active || !cache.Valid || cache.Layout is not { } layout ||
+            !ReferenceEquals(registration.Source, plan.Source) ||
+            registration.PrimitiveIndex != plan.PrimitiveIndex ||
+            cache.Draw != registration.Draw ||
+            cache.MaterialHandle != registration.Material ||
+            !ReferenceEquals(cache.Source, plan.Source) ||
+            !ReferenceEquals(cache.Renderer, plan.Renderer) ||
+            !ReferenceEquals(cache.Mesh, plan.Mesh) ||
+            !ReferenceEquals(cache.Material, plan.MaterialSource) ||
+            !cache.Command.Equals(plan.Command) ||
+            !SameRenderState(in cache.RenderState, in plan.RenderState) ||
+            cache.MeshGeometryRevision != plan.MeshGeometryRevision ||
+            cache.MeshVertexCount != plan.MeshVertexCount ||
+            cache.MeshIndexCount != plan.MeshIndexCount ||
+            cache.MeshPrimitiveTopology != plan.MeshPrimitiveTopology ||
+            cache.MaterialBindingLayoutVersion != plan.MaterialBindingLayoutVersion ||
+            cache.MaterialBindingValueVersion != plan.MaterialBindingValueVersion ||
+            cache.MaterialBindingResourceVersion != plan.MaterialBindingResourceVersion ||
+            cache.MaterialShaderStateRevision != plan.MaterialShaderStateRevision ||
+            cache.MaterialUberStateRevision != plan.MaterialUberStateRevision ||
+            !IsRegistrationCurrent(in registration))
+            return false;
+
+        int planned = FindPlannedMaterial(plan.MaterialSource, layout,
+            cache.Coverage, cache.State);
+        if (planned >= 0)
+        {
+            ref readonly AdvancedGpuSceneMaterialTransition transition =
+                ref _plannedMaterials[planned];
+            ref readonly AdvancedGpuMaterialTransitionRequest request =
+                ref _plannedMaterialRequests[planned];
+            if (transition.ExistingHandle == cache.MaterialHandle &&
+                !transition.ResourcesChanged && !request.RequiresPayloadUpdate)
+            {
+                materialPlanIndex = planned;
+                return true;
+            }
+            return false;
+        }
+
+        return TryReuseUnboundMaterialPlan(plan.MaterialSource, layout,
+            cache.Coverage, cache.State, registrationIndex,
+            out materialPlanIndex);
+    }
+
+    private static bool SameRenderState(
+        in AdvancedRenderStateRecord left,
+        in AdvancedRenderStateRecord right)
+        => left.StateClass == right.StateClass &&
+           left.PrimitiveTopology == right.PrimitiveTopology &&
+           left.CoverageMode == right.CoverageMode &&
+           left.CullMode == right.CullMode &&
+           left.DepthMode == right.DepthMode &&
+           left.BlendMode == right.BlendMode &&
+           left.ColorWriteMask == right.ColorWriteMask &&
+           left.Flags == right.Flags;
+
+    /// <summary>Stores source identity only after the canonical publication succeeds.</summary>
+    private void CaptureCommittedMaterialPlans()
+    {
+        for (int commandIndex = 0; commandIndex < _plannedCommandCount; ++commandIndex)
+        {
+            ref readonly AdvancedGpuSceneCommandTransition plan =
+                ref _plannedCommands[commandIndex];
+            if (!plan.Supported || plan.Source is null)
+                continue;
+
+            int registrationIndex = plan.RegistrationIndex >= 0
+                ? plan.RegistrationIndex
+                : FindRegistration(plan.Source, plan.PrimitiveIndex);
+            if (registrationIndex < 0)
+                continue;
+            ref AdvancedResidentRegistration registration =
+                ref _registrations[registrationIndex];
+            ref readonly AdvancedGpuMaterialTransitionRequest request =
+                ref _plannedMaterialRequests[plan.MaterialPlanIndex];
+            registration.CommittedMaterialPlan = new AdvancedCommittedMaterialPlan
+            {
+                Source = plan.Source,
+                Renderer = plan.Renderer,
+                Mesh = plan.Mesh,
+                Material = plan.MaterialSource,
+                Command = plan.Command,
+                RenderState = plan.RenderState,
+                Geometry = plan.Geometry,
+                StructuralSignature = plan.StructuralSignature,
+                ContentSignature = plan.ContentSignature,
+                GpuOwnedBounds = plan.GpuBoundsSource is not null,
+                IdentityWorld = plan.World == Matrix4x4.Identity &&
+                    plan.PreviousWorld == Matrix4x4.Identity,
+                Draw = registration.Draw,
+                MaterialHandle = request.MaterialHandle,
+                Layout = request.Layout,
+                Coverage = request.Coverage,
+                State = request.State,
+                MeshGeometryRevision = plan.MeshGeometryRevision,
+                MeshVertexCount = plan.MeshVertexCount,
+                MeshIndexCount = plan.MeshIndexCount,
+                MeshPrimitiveTopology = plan.MeshPrimitiveTopology,
+                MaterialBindingLayoutVersion = plan.MaterialBindingLayoutVersion,
+                MaterialBindingValueVersion = plan.MaterialBindingValueVersion,
+                MaterialBindingResourceVersion = plan.MaterialBindingResourceVersion,
+                MaterialShaderStateRevision = plan.MaterialShaderStateRevision,
+                MaterialUberStateRevision = plan.MaterialUberStateRevision,
+                Valid = true,
+            };
+        }
+        _committedMaterialPlanCacheValid = true;
     }
 
     private bool TryGrowPlannedSceneBoundaryCapacity(out string reason)
@@ -413,12 +574,14 @@ public sealed partial class AdvancedGpuScenePublisher
         {
             Array.Resize(ref _registrations, checked((int)registrationCapacity));
             Array.Resize(ref _preflightSeenStamps, checked((int)registrationCapacity));
+            InvalidateRegistrationIdentityCache();
         }
         uint lookupCapacity = NextPowerOfTwo(checked(registrationCapacity * 2u));
         if (lookupCapacity > (uint)_registrationLookupIndices.Length)
         {
             Array.Resize(ref _registrationLookupIndices, checked((int)lookupCapacity));
             Array.Resize(ref _registrationLookupStamps, checked((int)lookupCapacity));
+            InvalidateRegistrationIdentityCache();
             RebuildRegistrationLookup();
         }
 
@@ -509,6 +672,7 @@ public sealed partial class AdvancedGpuScenePublisher
     private bool TryResolvePlannedMaterial(
         XRMaterial? material,
         in DrawMetadata command,
+        int registrationIndex,
         out int materialPlanIndex,
         out EAdvancedCanonicalCompatibilityReason compatibilityReason,
         out bool fatal,
@@ -589,6 +753,11 @@ public sealed partial class AdvancedGpuScenePublisher
             translation.RequiredCoverage,
             state);
         if (materialPlanIndex >= 0)
+            return true;
+
+        if (TryReuseUnboundMaterialPlan(material, layout,
+                translation.RequiredCoverage, state, registrationIndex,
+                out materialPlanIndex))
             return true;
 
         materialPlanIndex = _plannedMaterialCount;
@@ -786,56 +955,69 @@ public sealed partial class AdvancedGpuScenePublisher
         return true;
     }
 
-    private bool TryAppendPlannedIdentitySource(
-        IRenderCommandMesh source,
-        int primitiveCount)
+    /// <summary>Reuses a current material row when its unbound inputs did not change.</summary>
+    private bool TryReuseUnboundMaterialPlan(
+        XRMaterial? material,
+        MaterialBindingLayout layout,
+        EAdvancedMaterialCoverageMode coverage,
+        EAdvancedMaterialRenderStateClass state,
+        int registrationIndex,
+        out int materialPlanIndex)
     {
-        primitiveCount = Math.Max(1, primitiveCount);
-        if (_identityHandleScratch.Length < primitiveCount)
+        materialPlanIndex = -1;
+        if (registrationIndex < 0 || material is AdvancedProjectiveMirrorMaterial ||
+            material is not null && (material.SurfaceTextureBindings.Length != 0 || material.Textures.Count != 0))
+            return false;
+
+        ref readonly AdvancedResidentRegistration registration =
+            ref _registrations[registrationIndex];
+        if (!registration.Active || !ReferenceEquals(registration.MaterialSource, material) ||
+            registration.MaterialBindingLayoutVersion != (material?.BindingLayoutVersion ?? 0u) ||
+            registration.MaterialBindingValueVersion != (material?.BindingValueVersion ?? 0u) ||
+            registration.MaterialBindingResourceVersion != (material?.BindingResourceVersion ?? 0u) ||
+            registration.MaterialShaderStateRevision != (material?.ShaderStateRevision ?? 0L) ||
+            registration.MaterialUberStateRevision != (material?.UberStateRevision ?? 0L) ||
+            !Database.Materials.Materials.TryGet(registration.Material,
+                out AdvancedMaterialRecord current) ||
+            !_materialPublisher.TryFindVariant(material, layout, coverage, state,
+                out AdvancedGpuHandle variant) ||
+            variant != registration.Material ||
+            !Database.Materials.TryGetConstantWords(current, out _) ||
+            !Database.Materials.TryGetTextureBindings(current,
+                out ReadOnlySpan<AdvancedMaterialTextureBinding> bindings) ||
+            bindings.Length != layout.Textures.Count)
+            return false;
+
+        for (int bindingIndex = 0; bindingIndex < bindings.Length; ++bindingIndex)
         {
-            Array.Resize(
-                ref _identityHandleScratch,
-                checked((int)NextPowerOfTwo(checked((uint)primitiveCount))));
+            if (bindings[bindingIndex].Texture.Handle.IsValid ||
+                bindings[bindingIndex].Sampler.Handle.IsValid)
+                return false;
         }
-        uint mask = checked((uint)_plannedIdentitySourceSlots.Length - 1u);
-        uint start = IdentitySourceHash(source) & mask;
-        for (uint probe = 0u;
-             probe < (uint)_plannedIdentitySourceSlots.Length;
-             ++probe)
+        if (!_materialPublisher.HeaderMatches(registration.Material, material,
+                layout, coverage, state, bindings))
+            return false;
+
+        materialPlanIndex = _plannedMaterialCount;
+        int bindingOffset = GetMaterialBindingOffset(materialPlanIndex);
+        bindings.CopyTo(_plannedResolvedBindings.AsSpan(bindingOffset, bindings.Length));
+        _plannedMaterials[materialPlanIndex] = new AdvancedGpuSceneMaterialTransition
         {
-            int slot = checked((int)((start + probe) & mask));
-            if (_plannedIdentitySourceSlotStamps[slot] !=
-                _plannedIdentitySourceSlotGeneration)
-            {
-                if (_plannedIdentitySourceCount >= _plannedIdentitySources.Length)
-                    return false;
-                int index = _plannedIdentitySourceCount++;
-                _plannedIdentitySources[index] = source;
-                _plannedIdentityPrimitiveCounts[index] = primitiveCount;
-                _plannedIdentitySourceSlots[slot] = index;
-                _plannedIdentitySourceSlotStamps[slot] =
-                    _plannedIdentitySourceSlotGeneration;
-                return true;
-            }
-
-            int existingIndex = _plannedIdentitySourceSlots[slot];
-            if (!ReferenceEquals(_plannedIdentitySources[existingIndex], source))
-                continue;
-            _plannedIdentityPrimitiveCounts[existingIndex] = Math.Max(
-                _plannedIdentityPrimitiveCounts[existingIndex],
-                primitiveCount);
-            return true;
-        }
-
-        return false;
-    }
-
-    private static uint IdentitySourceHash(IRenderCommandMesh source)
-    {
-        uint hash = unchecked((uint)RuntimeHelpers.GetHashCode(source));
-        hash ^= hash >> 16;
-        hash *= 0x7FEB352Du;
-        return hash ^ (hash >> 15);
+            ExistingHandle = registration.Material,
+            ConstantOffset = GetMaterialConstantOffset(materialPlanIndex),
+            BindingOffset = bindingOffset,
+            ResourceAcquireOffset = -1,
+            ResourceCount = bindings.Length,
+            ResourcesChanged = false,
+        };
+        _plannedMaterialRequests[materialPlanIndex] =
+            new AdvancedGpuMaterialTransitionRequest(material, layout, coverage,
+                state, layout.RowWordCount, checked((uint)bindings.Length), 0u,
+                false);
+        ++_plannedMaterialCount;
+        InsertPlannedMaterial(materialPlanIndex);
+        InsertPlannedExistingMaterial(materialPlanIndex);
+        return true;
     }
 
     private bool TryAppendMaterialRelease(
@@ -1294,12 +1476,20 @@ public sealed partial class AdvancedGpuScenePublisher
         public BoundsGpu Bounds;
         public XRMeshRenderer? Renderer;
         public XRMesh? Mesh;
+        public XRMaterial? MaterialSource;
+        public ulong MaterialBindingLayoutVersion;
+        public ulong MaterialBindingValueVersion;
+        public ulong MaterialBindingResourceVersion;
+        public long MaterialShaderStateRevision;
+        public long MaterialUberStateRevision;
+        public XREngine.Rendering.Compute.PhysicsChainGpuBoundsSource? GpuBoundsSource;
         public AdvancedGeometryRecord Geometry;
         public AdvancedRenderStateRecord RenderState;
         public ulong StructuralSignature;
         public ulong ContentSignature;
         public uint CommandIndex;
         public int PrimitiveIndex;
+        public int SourcePrimitiveCount;
         public int RegistrationIndex;
         public int MaterialPlanIndex;
         public int MeshVertexCount;
@@ -1321,5 +1511,35 @@ public sealed partial class AdvancedGpuScenePublisher
         public int ResourceCount;
         public bool ResourcesChanged;
         public bool PreviousBindingsQueued;
+    }
+
+    private struct AdvancedCommittedMaterialPlan
+    {
+        public IRenderCommandMesh? Source;
+        public XRMeshRenderer? Renderer;
+        public XRMesh? Mesh;
+        public XRMaterial? Material;
+        public DrawMetadata Command;
+        public AdvancedRenderStateRecord RenderState;
+        public AdvancedGeometryRecord Geometry;
+        public ulong StructuralSignature;
+        public ulong ContentSignature;
+        public bool GpuOwnedBounds;
+        public bool IdentityWorld;
+        public AdvancedGpuHandle Draw;
+        public AdvancedGpuHandle MaterialHandle;
+        public MaterialBindingLayout? Layout;
+        public EAdvancedMaterialCoverageMode Coverage;
+        public EAdvancedMaterialRenderStateClass State;
+        public long MeshGeometryRevision;
+        public int MeshVertexCount;
+        public int MeshIndexCount;
+        public EPrimitiveType MeshPrimitiveTopology;
+        public ulong MaterialBindingLayoutVersion;
+        public ulong MaterialBindingValueVersion;
+        public ulong MaterialBindingResourceVersion;
+        public long MaterialShaderStateRevision;
+        public long MaterialUberStateRevision;
+        public bool Valid;
     }
 }
