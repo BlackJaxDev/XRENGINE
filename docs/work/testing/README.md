@@ -36,6 +36,7 @@ Validation docs hold manual, runtime, visual, hardware, profiler, benchmark, and
 
 ### Other Subsystems
 
+- [Branch Integration Validation](runtime/branch-integration-validation.md)
 - [Local Agent Broker Validation](ai/local-agent-broker.md)
 - [Animation Validation](animation/animation-validation.md)
 - [Asset Import Validation](assets/asset-import-validation.md)
