@@ -15,6 +15,7 @@ XREngine.Runtime.ModelingIntegration
 XREngine.Runtime.Rendering.WebGPU
 XREngine.Runtime.Platform.Browser
 XREngine.Browser
+XREngine.Browser.Standalone
 XREngine.Audio.WebAudio
 XREngine.Runtime.Net.WebSockets
 XREngine.Runtime.Physics.Jolt

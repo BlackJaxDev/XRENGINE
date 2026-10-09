@@ -66,6 +66,8 @@ public static partial class BrowserEngineExports
             if (_session is not null || _source is not null)
                 throw new InvalidOperationException("Stop the active browser engine world before starting another.");
 
+            if (!BrowserRuntime.IsReady)
+                throw new InvalidOperationException("BrowserRuntime.NotInitialized: the launcher entry point must call BrowserRuntime.Initialize before world startup.");
             if (!PhysicsBackends.TryGet(EPhysicsLibrary.Jolt, out _))
                 throw new NotSupportedException(
                     "Browser Jolt physics is not installed. A real XRWorld cannot begin play without its selected physics backend.");

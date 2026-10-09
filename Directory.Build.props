@@ -3,7 +3,7 @@
     <JoltBrowserManagedSourceDirectory Condition="'$(JoltBrowserManagedSourceDirectory)' == ''">$(MSBuildThisFileDirectory)Build/Dependencies/JoltBrowser/managed/staged</JoltBrowserManagedSourceDirectory>
     <JoltBrowserArchiveDirectory Condition="'$(JoltBrowserArchiveDirectory)' == ''">$(MSBuildThisFileDirectory)Build/Dependencies/JoltBrowser/native/archives</JoltBrowserArchiveDirectory>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Browser'">
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Browser' or '$(MSBuildProjectName)' == 'XREngine.Browser.Standalone' or '$(MSBuildProjectName)' == 'XREngine.BrowserSite'">
     <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
   </PropertyGroup>
 

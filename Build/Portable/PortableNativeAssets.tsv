@@ -1,3 +1,5 @@
 # Project\tRuntime identifier\tArtifact filename\tReviewed supply boundary
-XREngine.Browser	browser-wasm	joltc.a	Pinned single-threaded Jolt C wrapper; JoltBrowserNative.targets verifies source lock and archive alias
-XREngine.Browser	browser-wasm	libJolt.a	Pinned Jolt 5.6.0 Emscripten archive; JoltBrowserNative.targets verifies source lock
+XREngine.Browser.Standalone	browser-wasm	joltc.a	Pinned single-threaded Jolt C wrapper; JoltBrowserNative.targets verifies source lock and archive alias
+XREngine.Browser.Standalone	browser-wasm	libJolt.a	Pinned Jolt 5.6.0 Emscripten archive; JoltBrowserNative.targets verifies source lock
+XREngine.BrowserSite	browser-wasm	joltc.a	Generated site launcher uses the same pinned browser Jolt C wrapper and source lock
+XREngine.BrowserSite	browser-wasm	libJolt.a	Generated site launcher uses the same pinned Jolt archive and source lock

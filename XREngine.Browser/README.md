@@ -1,5 +1,13 @@
 # Browser runtime entry points
 
+`XREngine.Browser` is the reusable engine library. It owns the JavaScript exports.
+`XREngine.Browser.Standalone` is the executable for the developer harness.
+The publisher generates a separate `XREngine.BrowserSite` executable for each
+authored project. Its `Main` calls `BrowserRuntime.Initialize` once with the game
+bootstrap and registration callbacks. World startup invokes those callbacks only
+after engine asset services are ready. Stop and restart keep the same callbacks.
+A failed initialization requires a page reload.
+
 ## Authored engine player
 
 The editor's `BrowserWebGPU` target installs `engine-player.html` as the site
@@ -209,10 +217,10 @@ source guard runs as a C# MSBuild task using the SDK; no Python process is invok
 
 ```sh
 dotnet workload install wasm-tools
-dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -m:1
+dotnet publish XREngine.Browser.Standalone/XREngine.Browser.Standalone.csproj -c Release -m:1 -p:XREngineJoltBrowser=true
 ```
 
-`Directory.Build.props` marks the browser and its shared project closure with
+`Directory.Build.props` and the shared browser host targets mark the browser projects with
 `XREnginePortableProject=true`; they compile their complete source sets. No
 separate portable build property or source profile is needed on restore or build.
 The browser project remains outside the default desktop solution, so desktop

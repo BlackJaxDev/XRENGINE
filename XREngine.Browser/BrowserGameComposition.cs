@@ -1,10 +1,8 @@
 namespace XREngine.Browser;
 
-/// <summary>Compile-time anchor for the game's generated registrations in an authored browser publish.</summary>
-internal static partial class BrowserGameComposition
+/// <summary>Runs launcher-provided game composition after engine asset services are ready.</summary>
+internal static class BrowserGameComposition
 {
-    internal static Func<IGameLaunchBootstrap>? BootstrapFactory { get; set; }
-    internal static IGameLaunchBootstrap? CreateBootstrap() => BootstrapFactory?.Invoke();
-    internal static void Initialize() => RegisterProvidedGame();
-    static partial void RegisterProvidedGame();
+    internal static IGameLaunchBootstrap? CreateBootstrap() => BrowserRuntime.CreateBootstrap();
+    internal static void Initialize() => BrowserRuntime.RegisterGame();
 }

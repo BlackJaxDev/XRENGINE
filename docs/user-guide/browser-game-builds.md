@@ -1,6 +1,6 @@
 # Build and publish a browser game
 
-Updated: 2026-10-07
+Updated: 2026-10-09
 
 Use this guide to publish a project as a static BrowserWebGPU site. The Editor builds the project code, checks the saved startup world, cooks its required assets, and writes a complete WebAssembly site.
 
@@ -33,6 +33,12 @@ dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -c Release -p:Plat
 The Editor prints `Browser static bundle ready: ...` when the build finishes and the output contains `index.html`. With the standard project layout, the output is `<project-root>/Build/Browser`. The browser CLI requires `--build-project`; the managed-only `--build-project-code` command does not publish the browser application.
 
 The output is a complete static site. It includes the player page and JavaScript, WebAssembly runtime files, `browser-publish.json`, `content/manifest.json`, content payloads, and any required font notices. Keep the directory layout intact.
+
+The publisher generates a small `XREngine.BrowserSite` executable in the project's `Intermediate/BrowserPublishing/Launcher` directory. `XREngine.Browser` is a reusable library. The launcher calls `BrowserRuntime.Initialize` once and supplies typed game bootstrap and registration delegates. Game registration still runs after engine asset services are ready. A second initialization fails; after a failed initialization, reload the page.
+
+A binary browser SDK supplies `BrowserPublishing/browser-host.json`, verified engine DLLs in `lib`, shared host targets, assets, and the portable/native build policy. With this SDK, publishing compiles the game and generated launcher without compiling engine C# sources. Native WebAssembly linking and project asset cooking still run. Source-checkout publishing references the browser library project instead. JavaScript loads exports from `XREngine.Browser` and runs the generated executable's entry point.
+
+For standalone diagnostics, publish `XREngine.Browser.Standalone/XREngine.Browser.Standalone.csproj` with the same browser workload and native inputs. Do not publish the browser library as an executable.
 
 The publisher builds the site in a sibling staging directory. It checks the entry page, launch descriptor, manifest, and required notices before it activates the new site. It then replaces the whole output directory. If the build fails before activation, the previous site stays in place. If activation fails after it moves the previous site, the publisher tries to restore it. Keep files that you need outside `Build/Browser`; the next build replaces that complete directory.
 

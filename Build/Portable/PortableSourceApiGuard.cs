@@ -37,7 +37,7 @@ namespace XREngine.Build
 
         public string GeneratedBrowserStaticRegistrations { get; set; } = string.Empty;
 
-        public string GeneratedBrowserGameRegistrations { get; set; } = string.Empty;
+        public string GeneratedBrowserLauncherSource { get; set; } = string.Empty;
 
         public string GeneratedOutputRoot { get; set; } = string.Empty;
 
@@ -53,6 +53,8 @@ namespace XREngine.Build
 
         public ITaskItem[] ProjectReferences { get; set; } = Array.Empty<ITaskItem>();
 
+        public ITaskItem[] TransitiveProjectReferences { get; set; } = Array.Empty<ITaskItem>();
+
         public ITaskItem[] Packages { get; set; } = Array.Empty<ITaskItem>();
 
         public override bool Execute()
@@ -63,7 +65,7 @@ namespace XREngine.Build
                     throw new ArgumentException("The portable Compile source list is empty.");
 
                 HashSet<string> portableProjects = ReadProjects();
-                if (!portableProjects.Contains(ProjectName))
+                if (!portableProjects.Contains(ProjectName) && ProjectName != "XREngine.BrowserSite")
                     throw new ArgumentException($"{ProjectName} was marked portable but is absent from the reviewed project set.");
                 ValidateWholeProjectSourceSet();
                 ValidateProjectReferences(portableProjects);
@@ -114,9 +116,9 @@ namespace XREngine.Build
                     string fullPath = Path.GetFullPath(source.GetMetadata("FullPath"));
                     if (!visited.Add(fullPath))
                         continue;
-                    bool generatedGameAnchor = ProjectName == "XREngine.Browser"
-                        && !string.IsNullOrWhiteSpace(GeneratedBrowserGameRegistrations)
-                        && fullPath.Equals(Path.GetFullPath(GeneratedBrowserGameRegistrations), comparison);
+                    bool generatedGameAnchor = ProjectName == "XREngine.BrowserSite"
+                        && !string.IsNullOrWhiteSpace(GeneratedBrowserLauncherSource)
+                        && fullPath.Equals(ResolveProjectPath(GeneratedBrowserLauncherSource), comparison);
                     bool generatedPublisherSource = IsPublisherGeneratedSource(fullPath, comparison);
                     bool sdkGeneratedSource = IsSdkGeneratedSource(fullPath, comparison);
                     if ((!fullPath.StartsWith(root, comparison) && !generatedGameAnchor && !generatedPublisherSource && !sdkGeneratedSource) || !File.Exists(fullPath))
@@ -124,10 +126,12 @@ namespace XREngine.Build
                         Log.LogError("Portable Compile item is absent or outside the repository: {0}", source.ItemSpec);
                         continue;
                     }
-                    string relative = generatedGameAnchor ? "Generated/BrowserGameComposition.g.cs"
+                    string relative = generatedGameAnchor ? "Generated/BrowserSiteProgram.g.cs"
                         : generatedPublisherSource || sdkGeneratedSource ? "Generated/" + Path.GetFileName(fullPath)
                         : fullPath.Substring(root.Length).Replace('\\', '/');
                     string code = mask.Replace(File.ReadAllText(fullPath), BlankLiteral);
+                    if (generatedGameAnchor && CreateRegex(@"\bJSExport(?:Attribute)?\b").IsMatch(code))
+                        Log.LogError("The generated browser launcher must not declare JavaScript exports; exports belong to XREngine.Browser.");
                     foreach (KeyValuePair<string, Regex> rule in forbidden)
                         foreach (Match match in rule.Value.Matches(code))
                             if (!reviewedApis.Contains(relative + "|" + rule.Key + "|" + match.Value))
@@ -186,14 +190,21 @@ namespace XREngine.Build
 
         private bool IsSdkGeneratedSource(string fullPath, StringComparison comparison)
         {
-            if (string.IsNullOrWhiteSpace(GeneratedOutputRoot) || string.IsNullOrWhiteSpace(GeneratedIntermediateRoot))
+            if (string.IsNullOrWhiteSpace(GeneratedIntermediateRoot))
                 return false;
-            string outputRoot = Path.GetFullPath(GeneratedOutputRoot).TrimEnd(
-                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
             string intermediateRoot = ResolveProjectPath(GeneratedIntermediateRoot).TrimEnd(
                 Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            if (!intermediateRoot.StartsWith(outputRoot, comparison) || !fullPath.StartsWith(intermediateRoot, comparison))
+            if (!fullPath.StartsWith(intermediateRoot, comparison))
                 return false;
+            if (ProjectName != "XREngine.BrowserSite")
+            {
+                if (string.IsNullOrWhiteSpace(GeneratedOutputRoot))
+                    return false;
+                string outputRoot = Path.GetFullPath(GeneratedOutputRoot).TrimEnd(
+                    Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                if (!intermediateRoot.StartsWith(outputRoot, comparison))
+                    return false;
+            }
 
             return MatchesGeneratedPath(fullPath, GeneratedGlobalUsingsFile, comparison)
                 || MatchesGeneratedPath(fullPath, GeneratedAssemblyInfoFile, comparison)
@@ -233,16 +244,34 @@ namespace XREngine.Build
                     reference.GetMetadata("ReferenceOutputAssembly").Equals("false", StringComparison.OrdinalIgnoreCase))
                     continue;
                 string name = Path.GetFileNameWithoutExtension(reference.ItemSpec);
-                bool authoredGame = ProjectName == "XREngine.Browser" && !string.IsNullOrWhiteSpace(BrowserGameProject)
+                bool authoredGame = ProjectName == "XREngine.BrowserSite" && !string.IsNullOrWhiteSpace(BrowserGameProject)
                     && Path.GetFullPath(reference.GetMetadata("FullPath")).Equals(Path.GetFullPath(BrowserGameProject),
                         Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-                bool reviewedJoltSource = (ProjectName == "XREngine.Runtime.Physics.Jolt" || ProjectName == "XREngine.Browser")
+                bool reviewedJoltSource = (ProjectName == "XREngine.Runtime.Physics.Jolt" || ProjectName == "XREngine.Browser"
+                    || ProjectName == "XREngine.Browser.Standalone" || ProjectName == "XREngine.BrowserSite")
                     && name == "JoltPhysicsSharp.Browser"
                     && Path.GetFullPath(reference.GetMetadata("FullPath")).Equals(
                         Path.GetFullPath(Path.Combine(RepositoryRoot, "Tools/Dependencies/JoltBrowser/Managed/JoltPhysicsSharp.Browser.csproj")),
                         Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
                 if (!portableProjects.Contains(name) && !authoredGame && !reviewedJoltSource)
                     Log.LogError("Portable project {0} references nonportable project {1}.", ProjectName, reference.ItemSpec);
+                bool reviewedTransitiveProject = false;
+                if (ProjectName == "XREngine.BrowserSite" && portableProjects.Contains(name))
+                {
+                    StringComparison comparison = Path.DirectorySeparatorChar == '\\'
+                        ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                    string fullPath = Path.GetFullPath(reference.GetMetadata("FullPath"));
+                    string expectedPath = Path.GetFullPath(Path.Combine(RepositoryRoot, name, name + ".csproj"));
+                    if (fullPath.Equals(expectedPath, comparison))
+                        foreach (ITaskItem transitive in TransitiveProjectReferences)
+                            if (fullPath.Equals(Path.GetFullPath(transitive.GetMetadata("FullPath")), comparison))
+                                reviewedTransitiveProject = true;
+                }
+                if (ProjectName == "XREngine.BrowserSite" && !authoredGame && !reviewedJoltSource && !reviewedTransitiveProject &&
+                    !Path.GetFullPath(reference.GetMetadata("FullPath")).Equals(
+                        Path.GetFullPath(Path.Combine(RepositoryRoot, "XREngine.Browser/XREngine.Browser.csproj")),
+                        Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                    Log.LogError("The generated browser launcher can reference only the browser library, its exact game project, and reviewed SDK-resolved transitive projects.");
                 string removed = reference.GetMetadata("GlobalPropertiesToRemove");
                 if (removed.IndexOf("XREnginePortableProject", StringComparison.OrdinalIgnoreCase) >= 0)
                     Log.LogError("Portable project {0} removes the portability property from {1}.", ProjectName, reference.ItemSpec);
@@ -255,10 +284,30 @@ namespace XREngine.Build
             if (ProjectName == "XREngine.Browser")
             {
                 ValidateGeneratedSource(GeneratedBrowserStaticRegistrations, "BrowserStaticRegistrations.g.cs");
-                const string gameAnchor = "<Compile Include=\"$(XREngineBrowserGameRegistrationSource)\" />";
-                if (!string.IsNullOrWhiteSpace(BrowserGameProject))
-                    ValidateGeneratedSource(GeneratedBrowserGameRegistrations, "BrowserGameComposition.g.cs");
-                project = project.Replace(gameAnchor, string.Empty);
+            }
+            if (ProjectName == "XREngine.BrowserSite")
+            {
+                ValidateGeneratedSource(GeneratedBrowserLauncherSource, "Program.g.cs");
+                string projectDirectory = Path.GetDirectoryName(Path.GetFullPath(ProjectFile)) ?? string.Empty;
+                StringComparison comparison = Path.DirectorySeparatorChar == '\\'
+                    ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                string expectedSource = Path.Combine(projectDirectory, "Program.g.cs");
+                if (string.IsNullOrWhiteSpace(GeneratedBrowserLauncherSource) ||
+                    !ResolveProjectPath(GeneratedBrowserLauncherSource).Equals(expectedSource, comparison) ||
+                    string.IsNullOrWhiteSpace(BrowserGameProject) || !File.Exists(BrowserGameProject))
+                    Log.LogError("The generated browser launcher requires its own Program.g.cs and an existing exact game project.");
+                foreach (ITaskItem source in Sources)
+                {
+                    string fullPath = Path.GetFullPath(source.GetMetadata("FullPath"));
+                    if (!fullPath.Equals(expectedSource, comparison) && !IsSdkGeneratedSource(fullPath, comparison))
+                        Log.LogError("The generated browser launcher rejects an extra Compile item: {0}", source.ItemSpec);
+                }
+                const string launcherItem = "<Compile Include=\"Program.g.cs\" />";
+                const string defaultItems = "<EnableDefaultCompileItems>false</EnableDefaultCompileItems>";
+                if (project.IndexOf(launcherItem, StringComparison.Ordinal) < 0 ||
+                    project.IndexOf(defaultItems, StringComparison.Ordinal) < 0)
+                    Log.LogError("The generated browser launcher must compile only its explicit Program.g.cs.");
+                project = project.Replace(launcherItem, string.Empty).Replace(defaultItems, string.Empty);
             }
             if (ProjectName == "XREngine.Runtime.Rendering")
             {
@@ -347,7 +396,7 @@ namespace XREngine.Build
             {
                 // The WebAssembly SDK injects its own build pack. It is not an engine
                 // dependency; the resolved native-runtime check handles SDK assets.
-                if (ProjectName == "XREngine.Browser" &&
+                if ((ProjectName == "XREngine.Browser.Standalone" || ProjectName == "XREngine.BrowserSite") &&
                     package.ItemSpec.Equals("Microsoft.NET.Sdk.WebAssembly.Pack", StringComparison.OrdinalIgnoreCase))
                     continue;
 
