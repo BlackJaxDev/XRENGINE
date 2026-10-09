@@ -97,7 +97,7 @@ public sealed partial class AgentSwarmRunner
                 _providerSlots.Release();
             }
             node.AddResult(result); cancellationToken.ThrowIfCancellationRequested();
-            if (result.Status != AgentRunStatus.Completed || !string.Equals(result.ActualModel, LunaModel, StringComparison.Ordinal)) throw Fail(node, result.Failure?.Summary ?? "The provider phase did not complete with GPT-6 Luna.", result.Failure?.Category ?? AgentFailureCategory.ModelSubstitution, result.Failure?.DiagnosticDetail ?? string.Empty);
+            if (result.Status != AgentRunStatus.Completed || !string.Equals(result.ActualModel, root.RequestedModel, StringComparison.Ordinal)) throw Fail(node, result.Failure?.Summary ?? "The provider phase did not complete with the requested swarm model.", result.Failure?.Category ?? AgentFailureCategory.ModelSubstitution, result.Failure?.DiagnosticDetail ?? string.Empty);
             if (result.FinalText.Length > AgentSwarmWire.MaxResponseCharacters) throw Fail(node, "Provider response exceeds the swarm JSON size limit.");
             return result.FinalText;
         }
@@ -117,7 +117,7 @@ public sealed partial class AgentSwarmRunner
         foreach (AgentSwarmPlanChild child in plan.Children)
         {
             string id = $"{parent.Id}.{children.Count + 1}";
-            var node = new AgentSwarmMutableNode(id, parent.Id, parent.Depth + 1, child.Role, child.Objective, child.Paths);
+            var node = new AgentSwarmMutableNode(id, parent.Id, parent.Depth + 1, child.Role, child.Objective, child.Paths, parent.RequestedModel);
             if (!_nodes.TryAdd(id, node)) throw new InvalidOperationException($"Duplicate swarm node '{id}'.");
             children.Add(node);
         }

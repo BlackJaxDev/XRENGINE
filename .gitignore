@@ -29,6 +29,10 @@ bld/
 [Ll]og/
 [Ll]ogs/
 
+# Keep generated Vulkan binaries out of the repository root.
+/XREngine.Runtime.Rendering.Vulkan.dll
+/*.spv
+
 # The VMA runtime package contains only the DLL; import/linker outputs are generated locally.
 /XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/VulkanMemoryAllocatorBridge.Native.lib
 /XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/VulkanMemoryAllocatorBridge.Native.exp

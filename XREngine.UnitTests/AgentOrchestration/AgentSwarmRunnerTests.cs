@@ -8,10 +8,11 @@ namespace XREngine.UnitTests.AgentOrchestration;
 [TestFixture]
 public class AgentSwarmRunnerTests
 {
-    [Test]
-    public async Task SemaphoreOneHierarchyMergesTwoLeafEditsAndUsesLunaMax()
+    [TestCase("gpt-6-luna")]
+    [TestCase("claude-haiku-5-5")]
+    public async Task SemaphoreOneHierarchyMergesTwoLeafEditsAndPreservesSelectedModel(string model)
     {
-        var client = new DelegatingModelClient(request => request.Run.SystemInstructions.Contains("reviewer", StringComparison.Ordinal)
+        var client = new DelegatingModelClient(request => (request.Run.SystemInstructions.Contains("reviewer", StringComparison.Ordinal)
             ? Response("{\"approved\":true,\"summary\":\"looks good\"}")
             : request.Run.Objective switch
             {
@@ -19,30 +20,36 @@ public class AgentSwarmRunnerTests
                 "alpha" => Response("{\"path\":\"Source.cs\",\"base_sha256\":\"hash\",\"old_text\":\"alpha\",\"new_text\":\"ALPHA\"}"),
                 "beta" => Response("{\"path\":\"Source.cs\",\"base_sha256\":\"hash\",\"old_text\":\"beta\",\"new_text\":\"BETA\"}"),
                 _ => throw new InvalidOperationException("Unexpected swarm phase."),
-            });
-        AgentSwarmRunResult result = await RunAsync(client, new AgentSwarmOptions { AllowedPaths = ["Source.cs"], MaxAgents = 3, MaxChildren = 2, MaxParallelAgents = 2 });
+            }) with { ActualModel = model });
+        AgentSwarmRunResult result = await RunAsync(client, new AgentSwarmOptions { AllowedPaths = ["Source.cs"], MaxAgents = 3, MaxChildren = 2, MaxParallelAgents = 2 }, model: model);
 
         result.Aggregate.Status.ShouldBe(AgentRunStatus.Completed);
         result.Changes.Count.ShouldBe(2);
         AgentSwarmChangeMerger.Merge(result.Changes, [Snapshot()]).Single().NewText.ShouldBe("ALPHA\nBETA\n");
         client.Requests.ShouldAllBe(request =>
-            request.Run.RequestedModel == "gpt-6-luna" && request.Run.ReasoningEffort == "max");
+            request.Run.RequestedModel == model && request.Run.ReasoningEffort == "max");
+        result.Aggregate.RequestedModel.ShouldBe(model);
+        result.Aggregate.ActualModel.ShouldBe(model);
+        result.Snapshot.Nodes.ShouldAllBe(node => node.RequestedModel == model && node.ActualModel == model);
     }
 
-    [Test]
-    public async Task ProviderModelSubstitutionRetainsModelSubstitutionFailure()
+    [TestCase("gpt-6-luna", "gpt-6-sol")]
+    [TestCase("claude-haiku-5-5", "gpt-6-luna")]
+    public async Task ProviderModelSubstitutionRetainsModelSubstitutionFailure(string requestedModel, string actualModel)
     {
         var client = new DelegatingModelClient(_ => new AgentModelTurnResult
         {
-            ActualModel = "gpt-6-sol",
+            ActualModel = actualModel,
             OutputText = "{}",
         });
 
-        AgentSwarmRunResult result = await RunAsync(client, new AgentSwarmOptions { AllowedPaths = ["Source.cs"] });
+        AgentSwarmRunResult result = await RunAsync(client, new AgentSwarmOptions { AllowedPaths = ["Source.cs"] }, model: requestedModel);
 
         result.Aggregate.Status.ShouldBe(AgentRunStatus.Failed);
         result.Aggregate.Failure!.Category.ShouldBe(AgentFailureCategory.ModelSubstitution);
         result.Changes.ShouldBeEmpty();
+        result.Aggregate.RequestedModel.ShouldBe(requestedModel);
+        result.Snapshot.Nodes.ShouldAllBe(node => node.RequestedModel == requestedModel);
     }
 
     [Test]
@@ -173,14 +180,15 @@ public class AgentSwarmRunnerTests
         DelegatingModelClient client,
         AgentSwarmOptions options,
         CancellationToken cancellationToken = default,
-        IReadOnlyList<AgentContextFileSnapshot>? snapshots = null)
+        IReadOnlyList<AgentContextFileSnapshot>? snapshots = null,
+        string model = "gpt-6-luna")
     {
         using var providerSlots = new SemaphoreSlim(1, 1);
         var runner = new AgentSwarmRunner(new AgentOrchestrator(client), providerSlots);
         return await runner.RunAsync("swarm-test", new AgentRunRequest
         {
             Objective = "root",
-            RequestedModel = "gpt-6-luna",
+            RequestedModel = model,
             ReasoningEffort = "max",
             Swarm = options,
             Budget = new AgentRunBudget { MaxOutputTokens = 0, MaxElapsedSeconds = 60 },

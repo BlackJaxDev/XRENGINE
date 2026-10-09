@@ -17,8 +17,8 @@ internal static class SwarmRequestValidator
         // Reserve room for every ancestor's exact artifact review under the shared request cap.
         if (JsonSerializer.Serialize(request).Length > 65_536)
             throw new ArgumentException("Swarm request metadata cannot exceed 65536 serialized characters; use context_files for source content.");
-        if (request.RequestedModel != AgentModelCatalog.Luna6 || request.ReasoningEffort != "max")
-            throw new ArgumentException("Swarms require requested_model 'gpt-6-luna' and reasoning_effort 'max'.");
+        if (!AgentModelCatalog.SupportsSwarm(request.RequestedModel) || request.ReasoningEffort != "max")
+            throw new ArgumentException("Swarms require requested_model 'gpt-6-luna' or 'claude-haiku-5-5' and reasoning_effort 'max'.");
         if (request.EditorSession is not null || request.RepositoryAccess.Enabled || request.RequireToolUse
             || request.HostedTools.Count > 0 || request.ToolPolicy.AllowMutation || request.ToolPolicy.AllowDestructive
             || request.UseBackgroundMode || !request.UseCompactHandoffPrompt || request.InitialImageDataUri is not null)

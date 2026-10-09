@@ -12,7 +12,7 @@ internal static class Program
         try
         {
             BrokerConfiguration configuration = BrokerConfiguration.Parse(args);
-            using var httpClient = new HttpClient
+            using var httpClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
             {
                 Timeout = Timeout.InfiniteTimeSpan,
             };

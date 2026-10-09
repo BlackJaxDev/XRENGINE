@@ -12,7 +12,7 @@ internal static class SwarmPresentation
         if (snapshot.Swarm is not { } swarm)
             return text;
         var result = new StringBuilder();
-        result.AppendLine("## Luna Max swarm").AppendLine();
+        result.AppendLine("## Code swarm").AppendLine();
         if (snapshot.SwarmOptions is { } options)
             result.Append("Mode: ").Append(options.AutoApply ? "Apply after parent review" : "Reviewed proposals")
                 .Append(". Limits: ").Append(options.MaxAgents).Append(" agents, depth ")

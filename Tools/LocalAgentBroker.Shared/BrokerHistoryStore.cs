@@ -47,7 +47,7 @@ public sealed class BrokerHistoryStore
         {
             try
             {
-                string json = File.ReadAllText(path);
+                string json = ReadSnapshot(path);
                 BrokerHistoryRecord? record = JsonSerializer.Deserialize<BrokerHistoryRecord>(
                     json,
                     s_jsonOptions);
@@ -74,7 +74,7 @@ public sealed class BrokerHistoryStore
         {
             if (!File.Exists(_paths.SettingsPath))
                 return new BrokerUiSettings();
-            string json = File.ReadAllText(_paths.SettingsPath);
+            string json = ReadSnapshot(_paths.SettingsPath);
             return (JsonSerializer.Deserialize<BrokerUiSettings>(json, s_jsonOptions)
                 ?? new BrokerUiSettings()).Normalize();
         }
@@ -144,6 +144,15 @@ public sealed class BrokerHistoryStore
     private static bool IsValidRunId(string runId)
         => runId.Length == 32
             && runId.All(static character => char.IsAsciiHexDigit(character));
+
+    private static string ReadSnapshot(string path)
+    {
+        // Writers replace files atomically. Readers must permit that replacement on Windows.
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
 
     private static void WriteAtomically(string path, string content)
     {

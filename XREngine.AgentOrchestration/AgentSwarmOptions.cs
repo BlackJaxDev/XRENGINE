@@ -1,7 +1,7 @@
 namespace XREngine.AgentOrchestration;
 
 /// <summary>
-/// Bounds a read-only hierarchical GPT-6 Luna swarm proposal run.
+/// Bounds a read-only hierarchical code swarm proposal run.
 /// </summary>
 public sealed record AgentSwarmOptions
 {

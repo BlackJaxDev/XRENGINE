@@ -7,8 +7,6 @@ namespace XREngine.LocalAgentBroker;
 /// <summary>Runs a bounded, read-only hierarchy that produces reviewed code proposals.</summary>
 public sealed partial class AgentSwarmRunner(AgentOrchestrator orchestrator, SemaphoreSlim providerSlots)
 {
-    private const string LunaModel = "gpt-6-luna";
-    private const string LunaEffort = "max";
     private const int MaxObjectiveCharacters = 8_000;
     private const int MaxArtifactCharacters = 131_072;
     private readonly AgentOrchestrator _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
@@ -35,7 +33,7 @@ public sealed partial class AgentSwarmRunner(AgentOrchestrator orchestrator, Sem
         ArgumentNullException.ThrowIfNull(rootRequest);
         ArgumentNullException.ThrowIfNull(snapshots);
         AgentSwarmOptions options = GetEffectiveOptions(rootRequest);
-        IReadOnlyList<string> validation = Validate(options, snapshots);
+        IReadOnlyList<string> validation = Validate(rootRequest, options, snapshots);
         if (validation.Count > 0)
         {
             _publishGate.Dispose();
@@ -47,7 +45,7 @@ public sealed partial class AgentSwarmRunner(AgentOrchestrator orchestrator, Sem
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(options.MaxElapsedSeconds));
         Stopwatch stopwatch = Stopwatch.StartNew();
-        var root = new AgentSwarmMutableNode("root", null, 0, AgentSwarmRole.Orchestrator, rootRequest.Objective, options.AllowedPaths);
+        var root = new AgentSwarmMutableNode("root", null, 0, AgentSwarmRole.Orchestrator, rootRequest.Objective, options.AllowedPaths, rootRequest.RequestedModel);
         _nodes[root.Id] = root;
         try
         {
@@ -87,8 +85,10 @@ public sealed partial class AgentSwarmRunner(AgentOrchestrator orchestrator, Sem
         return options with { MaxOutputTokens = request.Budget.MaxOutputTokens > 0 ? Math.Min(options.MaxOutputTokens, request.Budget.MaxOutputTokens) : options.MaxOutputTokens, MaxPhaseOutputTokens = request.Budget.MaxOutputTokens > 0 ? Math.Min(options.MaxPhaseOutputTokens, request.Budget.MaxOutputTokens) : options.MaxPhaseOutputTokens, MaxElapsedSeconds = request.Budget.MaxElapsedSeconds > 0 ? Math.Min(options.MaxElapsedSeconds, request.Budget.MaxElapsedSeconds) : options.MaxElapsedSeconds };
     }
 
-    private static IReadOnlyList<string> Validate(AgentSwarmOptions options, IReadOnlyList<AgentContextFileSnapshot> snapshots)
+    private static IReadOnlyList<string> Validate(AgentRunRequest request, AgentSwarmOptions options, IReadOnlyList<AgentContextFileSnapshot> snapshots)
     {
+        if (!AgentModelCatalog.SupportsSwarm(request.RequestedModel) || request.ReasoningEffort != "max")
+            return ["Swarms require requested_model 'gpt-6-luna' or 'claude-haiku-5-5' and reasoning_effort 'max'."];
         HashSet<string> captured = snapshots.Select(static file => file.Path).ToHashSet(StringComparer.Ordinal);
         return options.AllowedPaths.All(captured.Contains) ? [] : ["Every allowed path requires an immutable admission snapshot."];
     }

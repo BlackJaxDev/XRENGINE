@@ -9,6 +9,8 @@ internal sealed record BrokerConfiguration
 
     public string ApiKeyEnvironmentVariable { get; init; } = "OPENAI_API_KEY";
 
+    public string AnthropicApiKeyEnvironmentVariable { get; init; } = "ANTHROPIC_API_KEY";
+
     public string? EditorAuthTokenEnvironmentVariable { get; init; }
 
     public int MaximumRetainedRuns { get; init; } = 32;
@@ -24,6 +26,8 @@ internal sealed record BrokerConfiguration
         string? repositoryRoot = null;
         string apiKeyEnvironmentVariable =
             Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_API_KEY_ENV") ?? "OPENAI_API_KEY";
+        string anthropicApiKeyEnvironmentVariable =
+            Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_ANTHROPIC_API_KEY_ENV") ?? "ANTHROPIC_API_KEY";
         string? editorAuthEnvironmentVariable =
             Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV");
 
@@ -34,6 +38,8 @@ internal sealed record BrokerConfiguration
                 repositoryRoot = ReadValue(args, ref index, argument);
             else if (string.Equals(argument, "--api-key-env", StringComparison.OrdinalIgnoreCase))
                 apiKeyEnvironmentVariable = ReadValue(args, ref index, argument);
+            else if (string.Equals(argument, "--anthropic-api-key-env", StringComparison.OrdinalIgnoreCase))
+                anthropicApiKeyEnvironmentVariable = ReadValue(args, ref index, argument);
             else if (string.Equals(argument, "--editor-auth-env", StringComparison.OrdinalIgnoreCase))
                 editorAuthEnvironmentVariable = ReadValue(args, ref index, argument);
             else
@@ -62,6 +68,7 @@ internal sealed record BrokerConfiguration
         {
             RepositoryRoot = fullRepositoryRoot,
             ApiKeyEnvironmentVariable = ValidateEnvironmentVariableName(apiKeyEnvironmentVariable),
+            AnthropicApiKeyEnvironmentVariable = ValidateEnvironmentVariableName(anthropicApiKeyEnvironmentVariable),
             EditorAuthTokenEnvironmentVariable = string.IsNullOrWhiteSpace(editorAuthEnvironmentVariable)
                 ? null
                 : ValidateEnvironmentVariableName(editorAuthEnvironmentVariable),
@@ -73,15 +80,27 @@ internal sealed record BrokerConfiguration
     }
 
     public string ReadApiKey()
+        => ReadProviderApiKey(ApiKeyEnvironmentVariable);
+
+    public string ReadAnthropicApiKey()
+        => ReadProviderApiKey(AnthropicApiKeyEnvironmentVariable);
+
+    /// <summary>
+    /// Gets the optional workspace used by an Anthropic key with multiple workspaces.
+    /// </summary>
+    public string ReadAnthropicWorkspaceId()
+        => ReadProviderApiKey("ANTHROPIC_WORKSPACE_ID");
+
+    private static string ReadProviderApiKey(string environmentVariable)
     {
-        string? inheritedValue = Environment.GetEnvironmentVariable(ApiKeyEnvironmentVariable);
+        string? inheritedValue = Environment.GetEnvironmentVariable(environmentVariable);
         if (!string.IsNullOrWhiteSpace(inheritedValue) || !OperatingSystem.IsWindows())
             return inheritedValue ?? string.Empty;
 
         try
         {
             return Environment.GetEnvironmentVariable(
-                ApiKeyEnvironmentVariable,
+                environmentVariable,
                 EnvironmentVariableTarget.User) ?? string.Empty;
         }
         catch (Exception exception) when (exception is PlatformNotSupportedException

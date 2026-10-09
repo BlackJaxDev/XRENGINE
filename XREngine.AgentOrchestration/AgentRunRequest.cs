@@ -18,8 +18,8 @@ public sealed record AgentRunRequest
     public string ReasoningEffort { get; init; } = "medium";
 
     /// <summary>
-    /// Requested Responses API text verbosity. This shapes visible response
-    /// length independently of any optional run output-token limit.
+    /// Requested text verbosity. OpenAI uses its native control. Anthropic
+    /// uses a prompt instruction. This does not set an output-token limit.
     /// </summary>
     public string TextVerbosity { get; init; } = "medium";
 
@@ -53,7 +53,7 @@ public sealed record AgentRunRequest
 
     public AgentRunBudget Budget { get; init; } = new();
 
-    /// <summary>Opt-in bounded hierarchical Luna Max code swarm, executed by the broker host.</summary>
+    /// <summary>Opt-in bounded hierarchical code swarm, executed by the broker host.</summary>
     public AgentSwarmOptions? Swarm { get; init; }
 
     public IReadOnlyList<AgentHostedTool> HostedTools { get; init; } = [];

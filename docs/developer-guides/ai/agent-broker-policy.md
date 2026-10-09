@@ -6,8 +6,9 @@ Read this policy before using the local agent broker or a hierarchical swarm. It
 
 The optional `local-agent-broker` MCP server is a supported, checkout-local
 evidence-worker surface. Each worker is a separate, independently billed public
-OpenAI Responses API request. It does not change the model running the current
-Codex task and must never be described as an in-place switch or native handoff.
+OpenAI Responses or Anthropic Messages API request. It does not change the model
+running the current Codex task and must never be described as an in-place switch
+or native handoff.
 
 ### Standing Authorization And Preconditions
 
@@ -34,6 +35,11 @@ Call `start_agent_run` only when all of these conditions are true:
   `low`, `medium`, `high`, `xhigh`, or `max` effort; `none` and `minimal` are
   rejected before launch. Automatic route advice continues to select
   `gpt-6-sol` for ordinary work.
+  Explicit Claude runs can select `claude-fable-5-1`, `claude-opus-5-5`,
+  `claude-sonnet-5-5`, or `claude-haiku-5-5`. These models use
+  `ANTHROPIC_API_KEY` and accept `low`, `medium`, `high`, `xhigh`, or `max` effort.
+  They do not change automatic GPT routing. Haiku 5.5 also supports the swarm
+  contract at `max` effort.
 - The five broker tools are callable in the current session. If they are
   missing, follow `docs/user-guide/ai/local-agent-broker.md` for setup,
   project trust, and restart requirements. Do not simulate a broker run.
@@ -46,8 +52,8 @@ Call `start_agent_run` only when all of these conditions are true:
   exposes no local tools, and cannot mutate repository, process, or editor
   state. Use `context_files` for immutable selected repository text, or enable
   read-only repository tools only with explicit narrow `allowed_roots`; both
-  mechanisms send selected content to the OpenAI API. A run that needs editor
-  evidence targets one exact named session created with
+  mechanisms send selected content to the selected provider API. A run that
+  needs editor evidence targets one exact named session created with
   `Tools/Manage-McpEditorSession.ps1`; the broker accepts only that session's
   manifest and loopback endpoint and never discovers or manages processes.
 - The objective is one bounded reasoning/editor slice with explicit success
@@ -61,8 +67,10 @@ files, 256 KiB per raw file, 1 MiB aggregate raw content, and 2 MiB rendered
 provider input. The broker defaults to no run-wide output-token cap and no
 elapsed-time timeout for every model. It omits `max_output_tokens` from the
 Responses request and relies on the selected model/provider maximum; the
-caller can still cancel a run. Explicit positive token and elapsed-time limits
-remain hard caps. Raise any other individual limit only when the objective
+caller can still cancel a run. Anthropic Messages requires `max_tokens`; the
+broker sends the selected model maximum when the run has no broker output cap.
+Explicit positive token and elapsed-time limits remain hard caps. Raise any
+other individual limit only when the objective
 requires it and the expected validation benefit justifies the additional cost.
 Global broker concurrency remains bounded by
 `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
@@ -70,7 +78,8 @@ Global broker concurrency remains bounded by
 ### Opt-In Hierarchical Code Swarms
 
 When the user requests a hierarchical swarm, `start_agent_run` also accepts
-`swarm` with exact `gpt-6-luna` and `reasoning_effort: "max"`. Keep the node,
+`swarm` with exact `gpt-6-luna` or `claude-haiku-5-5` and
+`reasoning_effort: "max"`. Every node uses the selected root model. Keep the node,
 depth, fanout, concurrency, output-reservation, and elapsed-time bounds narrow.
 Supply exact `allowed_paths` and any read-only `context_files`. Every node
 either decomposes/reviews or proposes one small code replacement. Agents have

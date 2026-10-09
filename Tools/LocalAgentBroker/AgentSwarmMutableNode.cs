@@ -16,12 +16,13 @@ internal sealed class AgentSwarmMutableNode
     private IReadOnlyList<AgentSwarmCodeChange> _artifacts = [];
     private readonly List<string> _failures = [];
     private readonly List<AgentProviderAttemptDiagnostic> _attempts = [];
-    public AgentSwarmMutableNode(string id, string? parentId, int depth, AgentSwarmRole role, string objective, IReadOnlyList<string> paths) { Id = id; ParentId = parentId; Depth = depth; Role = role; Objective = objective; Paths = paths.ToArray(); }
+    public AgentSwarmMutableNode(string id, string? parentId, int depth, AgentSwarmRole role, string objective, IReadOnlyList<string> paths, string requestedModel) { Id = id; ParentId = parentId; Depth = depth; Role = role; Objective = objective; Paths = paths.ToArray(); RequestedModel = requestedModel; }
     public string Id { get; }
     public string? ParentId { get; }
     public int Depth { get; }
     public AgentSwarmRole Role { get; }
     public string Objective { get; }
+    public string RequestedModel { get; }
     public IReadOnlyList<string> Paths { get; }
     public AgentSwarmNodeStatus Status { get { lock (_gate) return _status; } set { lock (_gate) _status = value; } }
     public bool? Approved { get { lock (_gate) return _approved; } set { lock (_gate) _approved = value; } }
@@ -38,5 +39,5 @@ internal sealed class AgentSwarmMutableNode
     }
     public void AddFailure(string failure) { lock (_gate) _failures.Add(failure); }
     public void AddResult(AgentRunResult result) { lock (_gate) { _usage += result.Usage; _turnCount += result.TurnCount; _retryCount += result.RetryCount; _attempts.AddRange(result.ProviderAttempts); _actualModel = result.ActualModel; } }
-    public AgentSwarmNodeSnapshot Snapshot() { lock (_gate) return new() { Id = Id, ParentId = ParentId, Depth = Depth, Role = Role, Objective = Objective, Status = _status, Approved = _approved, ReviewSummary = _reviewSummary, Failures = _failures.ToArray(), RequestedModel = "gpt-6-luna", ActualModel = _actualModel, Usage = _usage, ProviderAttempts = _attempts.ToArray(), Artifacts = _artifacts.ToArray() }; }
+    public AgentSwarmNodeSnapshot Snapshot() { lock (_gate) return new() { Id = Id, ParentId = ParentId, Depth = Depth, Role = Role, Objective = Objective, Status = _status, Approved = _approved, ReviewSummary = _reviewSummary, Failures = _failures.ToArray(), RequestedModel = RequestedModel, ActualModel = _actualModel, Usage = _usage, ProviderAttempts = _attempts.ToArray(), Artifacts = _artifacts.ToArray() }; }
 }
