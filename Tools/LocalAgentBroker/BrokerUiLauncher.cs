@@ -8,11 +8,13 @@ internal static class BrokerUiLauncher
 {
     public static void EnsureStarted(string repositoryRoot)
     {
-        if (!OperatingSystem.IsWindows() || IsRunning(repositoryRoot))
+        if (!OperatingSystem.IsWindows())
             return;
 
         try
         {
+            if (IsRunning(repositoryRoot))
+                return;
             string trayDirectory = Path.Combine(AppContext.BaseDirectory, "tray");
             string executablePath = Path.Combine(
                 trayDirectory,
@@ -44,6 +46,7 @@ internal static class BrokerUiLauncher
         }
         catch (Exception exception) when (exception is System.ComponentModel.Win32Exception
             or IOException
+            or UnauthorizedAccessException
             or InvalidOperationException)
         {
             // Tray startup is supplemental and must never strand an accepted API run.

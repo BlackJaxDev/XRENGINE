@@ -52,7 +52,17 @@ internal sealed class BrokerHistoryPublisher : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(record);
         _pending.TryRemove(record.RunId, out _);
-        _store.SaveRecord(CreateHistoryRecord(record));
+        try
+        {
+            _store.SaveRecord(CreateHistoryRecord(record));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // History is supplemental. A file lock must not change the provider result.
+            Console.Error.WriteLine("Broker history could not be saved. The run result remains available through MCP.");
+            if (!_shutdown.IsCancellationRequested)
+                QueueUpdate(record);
+        }
     }
 
     public async ValueTask DisposeAsync()

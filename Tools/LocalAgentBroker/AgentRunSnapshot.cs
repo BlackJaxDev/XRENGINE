@@ -40,10 +40,10 @@ public sealed record AgentRunSnapshot
     /// <summary>Requested provider controls retained with the run for auditability.</summary>
     public string RequestedReasoningEffort { get; init; } = string.Empty;
 
-    /// <summary>Requested Responses API visible-text verbosity.</summary>
+    /// <summary>Requested visible-text verbosity.</summary>
     public string RequestedTextVerbosity { get; init; } = string.Empty;
 
-    /// <summary>Hard run-wide Responses API output-token budget.</summary>
+    /// <summary>Run-wide output-token budget, or zero for no broker limit.</summary>
     public int MaxOutputTokens { get; init; }
 
     public string? EditorSession { get; init; }

@@ -1,7 +1,8 @@
 # Local Agent Broker
 
 The local agent broker is a BCL-only .NET 10 orchestration surface shared with
-the ImGui MCP Assistant. It starts explicit public OpenAI Responses API calls
+the ImGui MCP Assistant. The broker starts explicit public OpenAI Responses or
+Anthropic Messages API calls
 as tool-free reasoning runs, repository-context/read runs, editor-aware runs
 that proxy model function calls to one named loopback editor MCP session, or a
 composition of the read-only repository and editor tool providers.
@@ -13,7 +14,7 @@ Internet-facing editor bridge.
 
 | Project | Owns | Must not own |
 |---|---|---|
-| `XREngine.AgentOrchestration` | Provider-neutral run contracts, prompt packet, budgets, bounded tool loop, Responses transport/SSE parsing, HTTP MCP client | ImGui state, editor globals, process/session lifecycle |
+| `XREngine.AgentOrchestration` | Provider-neutral run contracts, prompt packet, budgets, bounded tool loop, Responses and Messages transport/SSE parsing, HTTP MCP client | ImGui state, editor globals, process/session lifecycle |
 | `Tools/LocalAgentBroker` | Stdio MCP host, exact model catalog/routing advice, run registry, bounded swarm scheduler and approved patch application, repository snapshot/path/read policy, named-session resolution, provider composition, leases, trace policy, durable history publishing | Editor implementation, shell/Git execution, agent-controlled filesystem tools, API-key persistence |
 | `Tools/LocalAgentBroker.Shared` | Tray/history contracts, checkout-local paths, atomic record and settings storage | MCP transport, API calls, Windows UI |
 | `Tools/LocalAgentBroker.Tray` | Windows notifications and notification icon, running-task menu, live prompt/response viewer, idle exit, history cleanup | API keys, provider calls, broker process ownership |
@@ -33,6 +34,11 @@ preserve the reader's viewport and selection or ease toward the current scroll
 maximum when tail-following is active. Newly appended blocks fade in. Theme selection
 is stored in the shared UI settings as system, light, or dark; system mode
 resolves the Windows app theme.
+
+History readers permit file replacement on Windows. If a history write fails,
+the broker reports a diagnostic and preserves the run result through MCP. A
+later queued write can retry while the publisher is active. Tray startup and
+mutex access failures do not reject an accepted run.
 
 The history window uses fixed-height title and metadata rows so a large
 objective cannot push the conversation viewport outside the window. The title
@@ -167,6 +173,35 @@ provider-cancellation acceptance. Prompts, response bodies, headers, and
 credentials are excluded. Background poll transport failures resume polling
 the same response instead of creating a duplicate response.
 
+## Anthropic Messages Protocol
+
+`BrokerModelClient` selects a provider by the exact approved model ID. Claude
+uses `AnthropicMessagesModelClient` and `https://api.anthropic.com/v1/messages`.
+The client reads a separate key delegate and sets `x-api-key` and
+`anthropic-version` on each request. The production HTTP client rejects
+redirects. Credentials are never shared through default HTTP headers.
+`ANTHROPIC_WORKSPACE_ID` selects a workspace for multi-workspace keys through
+the `anthropic-workspace-id` header. Key and workspace lookup both use process
+scope first, then Windows user scope. A workspace-scoped key can omit the ID.
+
+The Messages client streams text and tool arguments. Continuation state keeps
+the full message history, including thinking blocks and signatures. Tool
+results use their original call IDs. Incomplete streams and invalid terminal
+states fail before the orchestrator can execute their tool calls.
+
+The four approved Claude models accept `low`, `medium`, `high`, `xhigh`, and
+`max` effort through `output_config.effort`. They use adaptive thinking.
+`text_verbosity` becomes a prompt instruction. Claude runs reject background
+mode and provider-hosted tools. Fable 5.1, Opus 5.5, and Sonnet 5.5 also reject
+`require_tool_use`; Haiku 5.5 supports it. Local tools retain the existing broker
+authorization and execution rules.
+
+Messages requires `max_tokens`. A zero broker output cap sends the model maximum
+of 128,000 tokens per turn. A positive cap sends the remaining run allowance,
+up to that maximum. The run-wide budget still includes thinking output.
+See the [streaming guide](https://platform.claude.com/docs/en/build-with-claude/streaming)
+and [effort reference](https://platform.claude.com/docs/en/build-with-claude/effort).
+
 ## Stdio MCP Surface
 
 `McpStdioServer` uses one JSON-RPC object per line and writes only protocol
@@ -267,13 +302,17 @@ semantics. Caller cancellation, model/provider output limits, rate limits, and
 other bounded tool/run controls remain in force.
 
 The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`,
-`gpt-5.6-sol`, `gpt-6-luna`, `gpt-6-sol`, `gpt-6.1-sol`, and `gpt-6-astra`.
+`gpt-5.6-sol`, `gpt-6-luna`, `gpt-6-sol`, `gpt-6.1-sol`, `gpt-6-astra`,
+`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, and `claude-haiku-5-5`.
+Broker version `0.11.0` adds these explicit Claude selections. Automatic route
+advice stays in the selected GPT family. The editor assistant retains its
+existing OpenAI client; this change adds Claude to broker runs.
 Explicit independent `gpt-6.1-sol` runs accept `low`, `medium`, `high`,
 `xhigh`, and `max` reasoning effort; `none` and `minimal` are rejected before
 provider execution. See the official
 [GPT-6.1 Sol model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
 Automatic route advice still selects `gpt-6-sol` for ordinary work, and
-hierarchical swarms still require exact `gpt-6-luna` at `max`.
+hierarchical swarms accept exact `gpt-6-luna` or `claude-haiku-5-5` at `max`.
 Route advice implements the repository policy but has no launch
 side effect. Both the requested and provider-reported model must match the same
 exact ID; aliases and dated snapshot suffixes are terminal substitution failures
@@ -292,7 +331,11 @@ deprecated compatibility route). Recommendations and starts identify deprecated
 model selection. Model controls are validated
 against `AgentModelCatalog` before any paid request.
 
-`SwarmRequestValidator` enforces bounded options and exact Luna/max selection.
+`SwarmRequestValidator` enforces bounded options and exact Luna or Haiku selection
+at `max` effort. Version `0.11.1` adds Haiku swarms. `AgentModelCatalog.SupportsSwarm`
+defines the two accepted IDs. Each provider request and the aggregate result use
+the root request's exact model. The public runner also rejects unsupported
+model/effort combinations before starting a provider request.
 `SwarmWorkspace` captures authorized paths plus optional reference context,
 using existing secret/path/context policies. Missing explicitly named files
 receive the `missing` base-hash sentinel. Models never discover a path or gain
@@ -322,7 +365,7 @@ remain the exact reviewed leaf proposals; a merged whole-file replacement is
 used only during deterministic host application.
 
 Planning, coding, and review are separate single-turn executions of the shared
-orchestrator. All request `gpt-6-luna`, `reasoning_effort: max`, and no tools,
+orchestrator. All request the root model, `reasoning_effort: max`, and no tools,
 background mode, or retries. JSON contracts enforce roles rather than granting
 spawn or write functions to the model. No automatic repair run follows a
 rejection. Node failures and model mismatches prevent the root from approving.
@@ -470,6 +513,7 @@ Windows user-scope fallback without copying the value into arguments or durable
 state. Process-level bounds come from:
 
 - `XRE_LOCAL_AGENT_BROKER_API_KEY_ENV`
+- `XRE_LOCAL_AGENT_BROKER_ANTHROPIC_API_KEY_ENV`
 - `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`
 - `XRE_LOCAL_AGENT_BROKER_MAX_RUNS`
 - `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`
@@ -492,8 +536,11 @@ workflow uses loopback and no bearer token.
 
 ## Tests And Validation
 
+The [broker validation matrix](../../work/testing/ai/local-agent-broker.md)
+records live provider and tool-continuation checks.
+
 Tests under `XREngine.UnitTests/AgentOrchestration` use scripted model clients
-and fake HTTP handlers; ordinary tests never contact OpenAI or a live editor.
+and fake HTTP handlers; ordinary tests never contact a provider or a live editor.
 They cover streaming reconstruction, malformed/provider events, `store: false`
 continuation replay, exact model selection and substitution, mutation
 read-back, duplicate call IDs, cancellation, MCP error preservation, session

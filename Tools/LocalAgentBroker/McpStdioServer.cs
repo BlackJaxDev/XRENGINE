@@ -217,7 +217,7 @@ internal sealed class McpStdioServer(
             ["serverInfo"] = new JsonObject
             {
                 ["name"] = "XREngine.LocalAgentBroker",
-                ["version"] = "0.10.0",
+                ["version"] = "0.11.1",
             },
             ["capabilities"] = new JsonObject
             {

@@ -26,7 +26,7 @@ public sealed record AgentModelTurnRequest
 
     /// <summary>
     /// Remaining run-wide output-token budget for this provider turn, or zero
-    /// when the broker should omit the provider control.
+    /// when only the provider maximum applies.
     /// </summary>
     public int MaxOutputTokens { get; init; }
 }

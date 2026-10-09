@@ -1,8 +1,9 @@
 # Local Agent Broker
 
 The local agent broker is an optional, checkout-local stdio MCP app. It lets
-Codex or another MCP client start a bounded OpenAI Responses API worker on an
-explicit GPT-6 tier, with deprecated GPT-5.6 IDs retained for compatibility.
+Codex or another MCP client start a bounded OpenAI Responses or Anthropic
+Messages API worker. GPT-6 is the default routing family. Claude models require
+an explicit model selection. Deprecated GPT-5.6 IDs remain available.
 A run may receive immutable snapshots of selected
 repository text files, opt into bounded read-only repository search/read tools,
 and/or receive controlled access to one named, loopback XRENGINE editor MCP
@@ -40,17 +41,17 @@ remain serialized.
 ## Requirements
 
 Publishing and protocol-smoke-testing the app do not require an API key and do
-not make an OpenAI API request. Starting a worker requires every item below.
+not make a provider API request. Starting a worker requires every item below.
 
 | Requirement | How to satisfy or verify it |
 |---|---|
 | Supported checkout | Use Windows 10/11 with this XRENGINE checkout and the .NET 10 SDK. |
 | Published broker | Run `Tools/Setup-LocalAgentBroker.ps1`; verify `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker.current` names a versioned deployment containing `XREngine.LocalAgentBroker.dll`. |
 | Trusted project configuration | Trust the repository in Codex. Project-scoped `.codex/config.toml` MCP configuration is loaded only for trusted projects. Restart Codex after setup or configuration changes. |
-| API project | Use an OpenAI API project with billing/quota and access to the exact selected model. API service is managed and billed separately from ChatGPT subscriptions. |
-| API key | Put the project key in the process environment or, on Windows, the user environment, normally as `OPENAI_API_KEY`. Never put the value in the repository, MCP arguments, a prompt, logs, or command-line arguments. |
+| API project | Use an API account with billing/quota and access to the exact selected model. API billing is separate from chat subscriptions. |
+| API key | Set `OPENAI_API_KEY` for OpenAI or `ANTHROPIC_API_KEY` for Claude in the process environment or Windows user environment. Only the selected provider needs a key. Never put the value in the repository, MCP arguments, a prompt, logs, or command-line arguments. |
 | Broker tools | Confirm the `local-agent-broker` MCP server exposes `recommend_agent_route`, `start_agent_run`, `get_agent_run`, `cancel_agent_run`, and `list_agent_runs`. |
-| Repository context when needed | Use `context_files` for immutable selected UTF-8 text snapshots. Enable `repository_access` only when the worker must discover more context, and name explicit repository-relative roots. Both mechanisms send selected content to the OpenAI API. |
+| Repository context when needed | Use `context_files` for immutable selected UTF-8 text snapshots. Enable `repository_access` only when the worker must discover more context, and name explicit repository-relative roots. Both mechanisms send selected content to the selected provider API. |
 | Editor session when needed | Omit `editor_session` when no editor tools are required. For editor evidence or mutation, start one exact session with `Tools/Manage-McpEditorSession.ps1`; its manifest and loopback MCP endpoint must be live for the whole run. |
 | Standing authority | `AGENTS.md` pre-authorizes bounded broker/API spend for XRENGINE tasks. The coordinator selects the lowest-cost suitable model automatically without asking per run. Mutation and destructive operations still require authority from the task itself. |
 | Bounded request | Set narrow turn, tool-call, retry, and tool-result limits appropriate to the task. Output-token and elapsed-time limits are opt-in. |
@@ -64,6 +65,18 @@ The supported exact model IDs are:
 - `gpt-5.6-luna` (deprecated)
 - `gpt-5.6-terra` (deprecated)
 - `gpt-5.6-sol` (deprecated)
+- `claude-fable-5-1`
+- `claude-opus-5-5`
+- `claude-sonnet-5-5`
+- `claude-haiku-5-5`
+
+Claude runs accept `low`, `medium`, `high`, `xhigh`, and `max` effort.
+They reject `none`, background mode, and provider-hosted tools. Local repository
+and editor tools remain available under the existing access policy.
+Only Haiku 5.5 supports `require_tool_use` among these Claude models. The other
+three models can choose tools with the default automatic tool choice.
+See the [Claude model catalog](https://platform.claude.com/docs/en/models/overview)
+and [tool choice documentation](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools).
 
 `recommend_agent_route` defaults to `model_family: "gpt-6"` to choose Luna for
 bounded tasks, Sol for ordinary implementation, and Astra for difficult or
@@ -75,7 +88,7 @@ reasoning; GPT-6 Luna and Sol also accept `none`. GPT-6.1 Sol rejects both
 `none` and `minimal` before a paid call. Use `requested_model: "gpt-6.1-sol"`
 and `reasoning_effort: "max"` for an explicit independent worker.
 Automatic route advice continues to choose `gpt-6-sol` for ordinary work;
-hierarchical swarms require `gpt-6-luna` at `max`. See the official
+hierarchical swarms accept `gpt-6-luna` or `claude-haiku-5-5` at `max`. See the official
 [GPT-6.1 Sol model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
 and [GPT-6 model guidance](https://developers.openai.com/api/docs/guides/latest-model).
 
@@ -214,11 +227,15 @@ from a stale caller or transport.
 ### Response Controls And Output Budget
 
 `start_agent_run` accepts `text_verbosity` as `low`, `medium`, or `high`; it
-defaults to `medium`. The broker sends this as the Responses API `text.verbosity`
-control and preserves `reasoning_effort` separately. Start, get, and list
+defaults to `medium`. OpenAI uses the Responses API `text.verbosity` control.
+Claude uses a prompt instruction for response length. This is not a hard length
+limit. The broker preserves `reasoning_effort` separately. Start, get, and list
 responses retain both requested controls and the resolved `max_output_tokens`
 setting. By default, `max_output_tokens` is `0`: the broker enforces no
 run-wide output-token cap and omits the field from Responses API requests.
+For Claude, Messages requires `max_tokens`. With no broker cap, the broker sends
+128,000 tokens per turn. A positive cap sends the remaining run allowance,
+up to the model maximum.
 The selected model/provider maximum still applies. Set a positive value to
 create a hard combined visible-output/reasoning-token limit; the broker never
 raises an explicit limit automatically. `max_elapsed_seconds` follows the same
@@ -227,10 +244,13 @@ value is a hard timeout. Broker-created repository and editor tool providers
 also have no independent local timeout. Caller cancellation remains available
 in either mode.
 
-## Hierarchical Luna Max Code Swarms
+## Hierarchical Code Swarms
 
 Add a `swarm` object to `start_agent_run`, with `requested_model: "gpt-6-luna"`
-and `reasoning_effort: "max"`. Every node uses that exact model and effort.
+or `requested_model: "claude-haiku-5-5"` and `reasoning_effort: "max"`.
+Every node uses that exact model and effort for planning, proposals, and review.
+Haiku uses `ANTHROPIC_API_KEY` and, for multi-workspace keys,
+`ANTHROPIC_WORKSPACE_ID`. A swarm never mixes providers or substitutes models.
 The root decomposes the objective into children. A child is either an
 orchestrator that decomposes and reviews, or a leaf that returns one small
 exact text replacement. Orchestrators never write code, and leaves cannot
@@ -278,7 +298,7 @@ The output budget is a conservative reservation ceiling: each planning,
 coding, or review phase reserves its full `max_phase_output_tokens` allowance,
 without a refund for unused tokens. It includes reasoning and visible output,
 but is not a dollar or input-token cap. Input tokens are reported separately.
-Each phase uses one Responses call, no local tools, and no retries. Parents
+Each phase uses one call to the selected provider, no local tools, and no retries. Parents
 release their concurrency slots while children run. Swarm concurrency also
 shares the broker process's global provider limit. Cancelling the root cancels
 queued and active descendants. Explicit positive ordinary output/time budgets
@@ -376,6 +396,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Invoke-LocalAgentBroke
 
 ## Per-Run Workflow
 
+### Claude Key And Model Selection
+
+Set `ANTHROPIC_API_KEY` in the Windows user environment or in the environment
+inherited by the broker. Do not put the key in chat. The broker checks process
+scope first, then Windows user scope. It reads the value when a run starts.
+
+If the key has access to multiple workspaces, also set `ANTHROPIC_WORKSPACE_ID`
+to the intended workspace ID. The broker sends it in the
+`anthropic-workspace-id` header. A key scoped to one workspace does not need
+this variable. Find the ID under **Settings > Workspaces** in the Claude Console.
+See [Anthropic authentication](https://platform.claude.com/docs/en/manage-claude/authentication).
+
+To use another variable name, set
+`XRE_LOCAL_AGENT_BROKER_ANTHROPIC_API_KEY_ENV` before starting the broker, or
+pass `--anthropic-api-key-env <variable-name>` to the broker executable. These
+options contain only the variable name. They never contain the key value.
+
+After publishing the update, restart the Codex chat or app so that it loads the
+new broker tool schema. For example, call `start_agent_run` with:
+
+```json
+{
+  "objective": "Review the supplied evidence and list unresolved questions.",
+  "requested_model": "claude-sonnet-5-5",
+  "reasoning_effort": "medium",
+  "budget": { "max_turns": 1, "max_tool_calls": 0, "max_retries": 0 }
+}
+```
+
+Automatic route advice continues to select GPT-6. Claude runs use the selected
+exact ID and fail if the provider returns another model.
+
 ### 1. Choose Context, Repository, And Editor Access
 
 For focused reasoning over a compact evidence packet, omit both
@@ -386,7 +438,7 @@ editor state.
 Use `context_files` when the relevant files are already known. The broker
 resolves repository-relative paths, rejects the whole run if any file is
 ineligible, snapshots the raw bytes before queuing, records a SHA-256, and sends
-each selected text range as a separate untrusted `input_text` block. A snapshot
+each selected text range as a separate untrusted text block. A snapshot
 never changes during its run.
 
 Enable `repository_access` only when the worker must discover context. It adds
@@ -695,7 +747,7 @@ output-token and elapsed-time limits remain hard caps. Provider/model context,
 output, rate, and service limits still apply even when local limits are disabled.
 
 Requests, context-file snapshots, repository search/read results, and editor
-evidence selected for the run leave the machine for OpenAI processing. A local
+evidence selected for the run leave the machine for the selected provider. A local
 path alone is never sent as implicit authority to read anything. The editor MCP
 endpoint remains loopback-only. Responses use
 `store: false`; continuations replay prior output items, correlated tool
@@ -741,6 +793,8 @@ are also resolved on demand by the launcher and broker:
 | Environment variable | Default | Allowed values |
 |---|---:|---|
 | `XRE_LOCAL_AGENT_BROKER_API_KEY_ENV` | `OPENAI_API_KEY` | Valid environment-variable name |
+| `XRE_LOCAL_AGENT_BROKER_ANTHROPIC_API_KEY_ENV` | `ANTHROPIC_API_KEY` | Valid environment-variable name |
+| `ANTHROPIC_WORKSPACE_ID` | Unset | Optional `wrkspc_` workspace ID; required by multi-workspace keys |
 | `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV` | unset | Name of an optional editor bearer-token variable |
 | `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY` | 4 | 1-100 |
 | `XRE_LOCAL_AGENT_BROKER_MAX_RUNS` | Larger of 32 and configured concurrency | 4-256; at least configured concurrency |

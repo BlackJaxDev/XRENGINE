@@ -40,6 +40,23 @@ Preferred VS Code tasks:
 
 Use `.vscode/launch.json` as the source of truth for debug profiles, including default/unit-testing editor, client/server, VRClient, and profiler configurations.
 
+## Shader Compiler Output
+
+When a shader check generates SPIR-V, set an explicit output path with `-o`.
+Without this option, `glslangValidator` writes files such as `comp.spv`,
+`mesh.spv`, and `vert.spv` to the current directory.
+
+Use the current task run under `Build/_AgentValidation/`. Create its `scratch/`
+directory before running the command. Replace the placeholders in this example:
+
+```powershell
+glslangValidator -V -S comp -o "Build/_AgentValidation/<run>/scratch/shader.spv" "<shader-path>"
+```
+
+Follow the run creation and retention rules in [AGENTS.md](../../../AGENTS.md).
+Keep generated assemblies in build output directories. Do not copy them to the
+repository root.
+
 ## ExecTool
 
 `ExecTool.bat` provides a numbered menu for scripts under `Tools/`.

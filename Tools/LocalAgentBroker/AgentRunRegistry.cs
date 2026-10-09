@@ -35,7 +35,7 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
         _configuration = configuration;
         _httpClient = httpClient;
         _orchestrator = new AgentOrchestrator(
-            new OpenAiResponsesModelClient(httpClient, configuration.ReadApiKey));
+            new BrokerModelClient(httpClient, configuration));
         _sessionResolver = new EditorSessionResolver(configuration.RepositoryRoot);
         _repositoryPathPolicy = new RepositoryPathPolicy(configuration.RepositoryRoot);
         _contextSnapshotter = new RepositoryContextSnapshotter(_repositoryPathPolicy);
@@ -60,11 +60,22 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
             throw new ArgumentException("The exact requested_model does not support broker response controls.");
         if (!AgentModelCatalog.SupportsReasoningEffort(request.RequestedModel, request.ReasoningEffort))
             throw new ArgumentException("reasoning_effort is unsupported by the exact requested_model.");
+        bool isAnthropic = AgentModelCatalog.IsAnthropic(request.RequestedModel);
+        if (isAnthropic && request.UseBackgroundMode)
+            throw new ArgumentException("Claude runs do not support use_background_mode.");
+        if (isAnthropic && request.HostedTools.Count > 0)
+            throw new ArgumentException("Claude runs do not support hosted tools.");
+        if (isAnthropic && request.RequireToolUse && request.RequestedModel != AgentModelCatalog.ClaudeHaiku55)
+            throw new ArgumentException("require_tool_use is supported only by Claude Haiku 5.5 among the Claude models.");
         SwarmRequestValidator.Validate(request);
-        if (string.IsNullOrWhiteSpace(_configuration.ReadApiKey()))
+        string apiKey = isAnthropic ? _configuration.ReadAnthropicApiKey() : _configuration.ReadApiKey();
+        if (string.IsNullOrWhiteSpace(apiKey))
         {
+            string variable = isAnthropic
+                ? _configuration.AnthropicApiKeyEnvironmentVariable
+                : _configuration.ApiKeyEnvironmentVariable;
             throw new InvalidOperationException(
-                $"Environment variable '{_configuration.ApiKeyEnvironmentVariable}' is not set.");
+                $"Environment variable '{variable}' is not set.");
         }
 
         IReadOnlyList<AgentContextFileSnapshot> contextSnapshots;

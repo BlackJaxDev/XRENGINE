@@ -41,8 +41,8 @@ public sealed partial class AgentSwarmRunner
     {
         RunId = runId,
         Status = status,
-        RequestedModel = LunaModel,
-        ActualModel = _nodes.Count > 0 && _nodes.Values.All(static node => node.ActualModel == LunaModel) ? LunaModel : string.Empty,
+        RequestedModel = request.RequestedModel,
+        ActualModel = _nodes.Count > 0 && _nodes.Values.All(node => node.ActualModel == request.RequestedModel) ? request.RequestedModel : string.Empty,
         ElapsedMilliseconds = elapsed,
         FinalText = finalText,
         Usage = _nodes.Values.Aggregate(new AgentTokenUsage(), static (usage, node) => usage + node.Usage),

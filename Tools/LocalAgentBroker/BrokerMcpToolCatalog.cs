@@ -29,7 +29,7 @@ internal static class BrokerMcpToolCatalog
         new McpToolSpec
         {
             Name = "start_agent_run",
-            Description = "Start a bounded exact-model Responses API worker, or opt into a hierarchical GPT-6 Luna Max code swarm with the swarm object. Swarms return parent-reviewed code changes by default; auto_apply explicitly authorizes host writes to allowed_paths. Returns a run ID immediately.",
+            Description = "Start a bounded exact-model OpenAI Responses or Anthropic Messages API worker, or opt into a hierarchical code swarm using GPT-6 Luna or Claude Haiku 5.5 at max effort. Swarms return parent-reviewed code changes by default; auto_apply explicitly authorizes host writes to allowed_paths. Returns a run ID immediately.",
             InputSchema = StartRunSchema(),
         },
         new McpToolSpec
@@ -75,7 +75,7 @@ internal static class BrokerMcpToolCatalog
             ("requested_model", new JsonObject
             {
                 ["type"] = "string",
-                ["description"] = "Prefer GPT-6 Luna, Sol, or Astra. GPT-6.1 Sol is available for explicit independent runs. GPT-5.6 selections are deprecated but remain explicitly callable.",
+                ["description"] = "Prefer GPT-6 Luna, Sol, or Astra. GPT-6.1 Sol and Claude models are available for explicit runs. Swarms accept GPT-6 Luna or Claude Haiku 5.5 at max effort. Claude uses ANTHROPIC_API_KEY by default. GPT-5.6 selections are deprecated but remain explicitly callable.",
                 ["enum"] = new JsonArray(
                     AgentModelCatalog.Luna6,
                     AgentModelCatalog.Sol6,
@@ -83,39 +83,43 @@ internal static class BrokerMcpToolCatalog
                     AgentModelCatalog.Astra6,
                     AgentModelCatalog.Luna,
                     AgentModelCatalog.Terra,
-                    AgentModelCatalog.Sol),
+                    AgentModelCatalog.Sol,
+                    AgentModelCatalog.ClaudeFable51,
+                    AgentModelCatalog.ClaudeOpus55,
+                    AgentModelCatalog.ClaudeSonnet55,
+                    AgentModelCatalog.ClaudeHaiku55),
             }),
             ("reasoning_effort", new JsonObject
             {
                 ["type"] = "string",
                 ["enum"] = new JsonArray("none", "low", "medium", "high", "xhigh", "max"),
                 ["default"] = "medium",
-                ["description"] = "Model-specific effort is validated before launch. GPT-6.1 Sol and GPT-6 Astra reject none; minimal is unsupported.",
+                ["description"] = "Model-specific effort is validated before launch. Claude, GPT-6.1 Sol, and GPT-6 Astra reject none; minimal is unsupported.",
             }),
             ("text_verbosity", new JsonObject
             {
                 ["type"] = "string",
                 ["enum"] = new JsonArray("low", "medium", "high"),
                 ["default"] = "medium",
-                ["description"] = "Responses API visible-text verbosity. This is independent of the optional combined visible-output and reasoning-token limit.",
+                ["description"] = "Visible-text verbosity. OpenAI uses its native control; Claude uses a prompt instruction. This is independent of the optional output-token limit.",
             }),
             ("use_background_mode", new JsonObject
             {
                 ["type"] = "boolean",
                 ["default"] = false,
-                ["description"] = "Opt in to asynchronous Responses API execution and polling. Provider response data is temporarily stored for polling and is not Zero Data Retention compatible.",
+                ["description"] = "OpenAI only: opt in to asynchronous Responses API execution and polling. Claude rejects this option. Provider response data is temporarily stored for polling and is not Zero Data Retention compatible.",
             }),
             ("require_tool_use", new JsonObject
             {
                 ["type"] = "boolean",
                 ["default"] = false,
-                ["description"] = "Require the first provider turn to call an available tool. Rejected when neither repository nor editor tools are configured.",
+                ["description"] = "Require the first provider turn to call an available tool. Rejected without local tools. Among Claude models, only Haiku 5.5 supports this option.",
             }),
             ("editor_session", StringSchema("Optional exact session created by Manage-McpEditorSession.ps1. Omit when no editor tools are needed; repository tools are configured independently.")),
             ("context_files", new JsonObject
             {
                 ["type"] = "array",
-                ["description"] = "Repository-relative UTF-8 text files snapshotted before the run is queued. Their contents are sent to the OpenAI API as untrusted context.",
+                ["description"] = "Repository-relative UTF-8 text files snapshotted before the run is queued. Their contents are sent to the selected provider API as untrusted context.",
                 ["maxItems"] = 64,
                 ["default"] = new JsonArray(),
                 ["items"] = ObjectSchema(
@@ -134,7 +138,7 @@ internal static class BrokerMcpToolCatalog
             {
                 ["type"] = "object",
                 ["additionalProperties"] = false,
-                ["description"] = "Opt-in read-only repository_search and repository_read_text tools. Content returned by these tools is sent to the OpenAI API.",
+                ["description"] = "Opt-in read-only repository_search and repository_read_text tools. Content returned by these tools is sent to the selected provider API.",
                 ["properties"] = new JsonObject
                 {
                     ["enabled"] = BooleanSchema(false),
@@ -180,7 +184,7 @@ internal static class BrokerMcpToolCatalog
                         0,
                         128_000,
                         defaultValue: 0,
-                        description: "Optional combined visible-output and reasoning-token limit. Zero or omission disables the broker limit and omits max_output_tokens from the provider request; the model/provider maximum still applies."),
+                        description: "Optional combined visible-output and reasoning-token limit. Zero or omission disables the broker limit. OpenAI omits max_output_tokens; Claude sends the model maximum as required max_tokens."),
                     ["max_tool_result_bytes"] = IntegerSchema(1_024, 4_194_304, 262_144),
                     ["max_context_files"] = IntegerSchema(0, 64, 16),
                     ["max_context_file_bytes"] = IntegerSchema(

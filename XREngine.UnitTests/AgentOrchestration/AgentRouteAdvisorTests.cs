@@ -33,9 +33,9 @@ public class AgentRouteAdvisorTests
     }
 
     [Test]
-    public void CatalogSupportsSevenExactModelsAndModelSpecificEffortRules()
+    public void CatalogSupportsElevenExactModelsAndModelSpecificEffortRules()
     {
-        AgentModelCatalog.Models.Count.ShouldBe(7);
+        AgentModelCatalog.Models.Count.ShouldBe(11);
         AgentModelCatalog.Models.ShouldContain(AgentModelCatalog.Luna);
         AgentModelCatalog.Models.ShouldContain(AgentModelCatalog.Terra);
         AgentModelCatalog.Models.ShouldContain(AgentModelCatalog.Sol);
@@ -43,6 +43,10 @@ public class AgentRouteAdvisorTests
         AgentModelCatalog.Models.ShouldContain(AgentModelCatalog.Luna6);
         AgentModelCatalog.Models.ShouldContain(AgentModelCatalog.Sol6);
         AgentModelCatalog.Models.ShouldContain(AgentModelCatalog.Sol61);
+        AgentModelCatalog.Models.ShouldContain(AgentModelCatalog.ClaudeFable51);
+        AgentModelCatalog.Models.ShouldContain(AgentModelCatalog.ClaudeOpus55);
+        AgentModelCatalog.Models.ShouldContain(AgentModelCatalog.ClaudeSonnet55);
+        AgentModelCatalog.Models.ShouldContain(AgentModelCatalog.ClaudeHaiku55);
         AgentModelCatalog.IsApproved(AgentModelCatalog.Sol61).ShouldBeTrue();
         AgentModelCatalog.SupportsResponseControls(AgentModelCatalog.Sol61).ShouldBeTrue();
         AgentModelCatalog.IsApproved("GPT-6.1-SOL").ShouldBeFalse();
@@ -54,6 +58,8 @@ public class AgentRouteAdvisorTests
         AgentModelCatalog.SupportsReasoningEffort(AgentModelCatalog.Astra6, "none").ShouldBeFalse();
         AgentModelCatalog.SupportsReasoningEffort(AgentModelCatalog.Astra6, "max").ShouldBeTrue();
         AgentModelCatalog.SupportsReasoningEffort(AgentModelCatalog.Luna6, "none").ShouldBeTrue();
+        AgentModelCatalog.IsApproved("CLAUDE-OPUS-5-5").ShouldBeFalse();
+        AgentModelCatalog.IsDeprecated(AgentModelCatalog.ClaudeFable51).ShouldBeFalse();
     }
 
     [TestCase("low")]
@@ -68,6 +74,20 @@ public class AgentRouteAdvisorTests
     [TestCase("minimal")]
     public void Gpt61SolRejectsUnsupportedReasoningEfforts(string effort)
         => AgentModelCatalog.SupportsReasoningEffort(AgentModelCatalog.Sol61, effort).ShouldBeFalse();
+
+    [TestCase(AgentModelCatalog.ClaudeFable51, "low")]
+    [TestCase(AgentModelCatalog.ClaudeOpus55, "medium")]
+    [TestCase(AgentModelCatalog.ClaudeSonnet55, "xhigh")]
+    [TestCase(AgentModelCatalog.ClaudeHaiku55, "max")]
+    public void ClaudeModelsAcceptSupportedReasoningEfforts(string model, string effort)
+        => AgentModelCatalog.SupportsReasoningEffort(model, effort).ShouldBeTrue();
+
+    [TestCase(AgentModelCatalog.ClaudeFable51, "none")]
+    [TestCase(AgentModelCatalog.ClaudeOpus55, "minimal")]
+    [TestCase(AgentModelCatalog.ClaudeSonnet55, "none")]
+    [TestCase(AgentModelCatalog.ClaudeHaiku55, "minimal")]
+    public void ClaudeModelsRejectUnsupportedReasoningEfforts(string model, string effort)
+        => AgentModelCatalog.SupportsReasoningEffort(model, effort).ShouldBeFalse();
 
     [Test]
     public void StartSchemaAdvertisesEveryApprovedExactModel()
