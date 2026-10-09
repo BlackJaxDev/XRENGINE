@@ -78,6 +78,7 @@ Temporary references are allowed **only when the associated todo document is act
 
 ## Repository And Commands
 
+- Use descriptive branch names without the `codex/` prefix for new branches.
 - Runtime: `XREngine.Runtime.Core/`, `XREngine.Runtime.Rendering/`, feature libraries, and integration adapters; desktop composition: `XREngine.Runtime.Bootstrap/`; native APIs: subsystem leaf projects. See [project organization](docs/architecture/runtime/project-organization.md). Editor/unit-world bootstrap: `XREngine.Editor/`; executables: `XREngine.Server/`, `XREngine.VRClient/`, `XREngine.Browser/`; tests: `XREngine.UnitTests/`; submodules: `Build/Submodules/`.
 - Canonical tasks/debug profiles: `.vscode/tasks.json`, `.vscode/launch.json`. Build tasks: `Build-Editor`, `Build-Server`, `Build-VRClient`. Script menu: `ExecTool.bat`.
 - Build: `dotnet restore`, then `dotnet build XRENGINE.slnx` or `dotnet build XREngine.Editor/XREngine.Editor.csproj`.
