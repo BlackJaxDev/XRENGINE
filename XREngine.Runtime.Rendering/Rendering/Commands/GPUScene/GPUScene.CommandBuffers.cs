@@ -108,8 +108,11 @@ namespace XREngine.Rendering.Commands
                 
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
-                if (commandSnapshotDirty || drawMetadataDirty)
+                if (commandSnapshotDirty || drawMetadataDirty || _rendererRoutesDirty)
+                {
                     PublishRendererCommandIndices();
+                    _rendererRoutesDirty = false;
+                }
                 PublishMeshSubmissionIfRequested();
                 using (RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers.AdvancedPublication"))
                     PublishAdvancedResidentSceneIfRequested();
@@ -756,6 +759,8 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _skinningPaletteBuffer;
 
         private DirtyRange _drawMetadataDirtyRange;
+        // Set under _lock when an update changes only the accepted snapshot renderer.
+        private bool _rendererRoutesDirty;
         private DirtyRange _transformDirtyRange;
         private DirtyRange _previousPublishedTransformDirtyRange;
         private DirtyRange _boundsDirtyRange;

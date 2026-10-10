@@ -33,6 +33,9 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
     private readonly Dictionary<IAbstractDynamicRigidBody, PhysicsResetState> _initialDynamicBodyPoses =
         new(ReferenceEqualityComparer.Instance);
     private readonly RuntimeWorldLifecycle _lifecycle;
+
+    /// <summary>Runs the action after this thread's current tick dispatch of this world ends.</summary>
+    internal void RunAfterTickDispatch(Action action) => _lifecycle.RunAfterTickDispatch(action);
     private bool _physicsEnabled;
     private bool _physicsResetCacheValid;
     private XRWorld? _targetWorld;

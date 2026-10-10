@@ -402,6 +402,10 @@ namespace XREngine.Rendering.Commands
                     BoundsGpu existingBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(index);
                     bool boundsChanged = !existingBounds.Equals(updatedBounds);
                     RecordAllocationPhase(ref allocationMark, ref observation.BoundsCompareAllocatedBytes);
+                    // Routes follow the accepted snapshot renderer. A renderer change can leave
+                    // every published row byte-identical, so mark the routes dirty explicitly.
+                    if (!ReferenceEquals(_commandIndexLookup[index].snapshot.Renderer, snapshot.Renderer))
+                        _rendererRoutesDirty = true;
                     _commandIndexLookup[index] = (meshCmd, subMeshIndex, snapshot);
                     CaptureUpdatingMeshSubmission(index, snapshot, mesh, material, subMeshIndex, lodCount,
                         updated, updatedBounds);

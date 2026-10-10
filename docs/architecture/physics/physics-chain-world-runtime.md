@@ -109,10 +109,16 @@ in progress finishes. A context without a disposal event must call
 - Disposal waits for the current tick. A batch worker of the world never waits
   for its own tick. The outer tick finishes the teardown after all workers
   signal completion.
-- If code inside a tick or a batch worker requests disposal of the owning
-  `RuntimeWorld`, that disposal runs after the tick releases its gate and its
-  transition read lock. Owner disposal can change the scene, so it cannot run
-  inside a tick.
+- If code inside a tick, a batch worker, or a scene-mutation lease of the
+  world requests disposal of the owning `RuntimeWorld`, that disposal waits.
+  It runs after the frame releases its gate and transition lock, and after the
+  current tick-group dispatch of that world ends. Later callbacks of the same
+  dispatch then never run on a torn-down world.
+- A disposal request from another world's physics callback, batch worker, or
+  scene-mutation lease fails with `InvalidOperationException` before admission
+  closes, and the world stays usable. Dispose the world after that callback ends.
+- Mutation leases and transfer releases count as ticks, so teardown never runs
+  while one of them still uses world state.
 - Teardown releases only the bindings that the disposing world owns. A
   component that already moved to another world registers there again.
 - A deferred transfer never adds a component to a disposed destination. The

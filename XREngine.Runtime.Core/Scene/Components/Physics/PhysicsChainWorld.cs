@@ -748,11 +748,19 @@ public sealed partial class PhysicsChainWorld : IDisposable
     {
         PhysicsChainComponent component = transfer.Component;
         PhysicsChainWorld? previousContext = s_outerTickWorld;
+        bool disposeOwner = false;
         try
         {
             using var admission = new TickAdmissionScope(rejectNestedTick: false);
             using (_tickGate.EnterScope())
             {
+                // A closed world releases its components in teardown, which forwards
+                // moved components to their destination.
+                if (IsDisposed)
+                    return false;
+                // Count this frame as a tick: property callbacks can request disposal,
+                // and teardown must wait until this frame stops using world state.
+                ++_tickDepth;
                 s_outerTickWorld ??= this;
                 try
                 {
@@ -773,10 +781,14 @@ public sealed partial class PhysicsChainWorld : IDisposable
                     RemoveComponent(component, registerCurrentWorld: false);
                     return true;
                 }
-                finally { s_outerTickWorld = previousContext; }
+                finally
+                {
+                    s_outerTickWorld = previousContext;
+                    disposeOwner = CompleteTick();
+                }
             }
         }
-        finally { if (previousContext is null) DrainDeferredTransfers(); }
+        finally { FinishOuterTick(previousContext, disposeOwner); }
     }
 
     private static void CompleteDeferredTransfer(in DeferredTransfer transfer)

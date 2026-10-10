@@ -15,6 +15,12 @@ public sealed partial class RuntimeWorldLifecycle
     private readonly Dictionary<ETickGroup, TickGroupQueues> _ticks = [];
     private volatile bool _ticksReleased;
 
+    // The lifecycle whose tick group this thread dispatches, and the actions that
+    // must run after that dispatch ends. Both are per thread, because the fixed
+    // and normal groups of one world can dispatch on different threads.
+    [ThreadStatic] private static RuntimeWorldLifecycle? t_dispatchingLifecycle;
+    [ThreadStatic] private static Action? t_afterDispatch;
+
     public RuntimeWorldLifecycle(
         IRuntimeWorldContext worldContext,
         Action<SceneNode>? onRootNodeDestroying = null,
@@ -72,6 +78,40 @@ public sealed partial class RuntimeWorldLifecycle
     /// a queue created meanwhile joins the next dispatch of the group.
     /// </summary>
     public void TickGroup(ETickGroup group)
+    {
+        RuntimeWorldLifecycle? previous = t_dispatchingLifecycle;
+        t_dispatchingLifecycle = this;
+        try
+        {
+            TickGroupCore(group);
+        }
+        finally
+        {
+            t_dispatchingLifecycle = previous;
+            if (previous is null && t_afterDispatch is { } after)
+            {
+                t_afterDispatch = null;
+                after();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Runs the action after the outermost tick-group dispatch on this thread ends,
+    /// or at once when this thread is not dispatching this world. Use it for work
+    /// that must not run while later callbacks of the same dispatch can still run,
+    /// such as disposing the world.
+    /// </summary>
+    internal void RunAfterTickDispatch(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        if (ReferenceEquals(t_dispatchingLifecycle, this))
+            t_afterDispatch += action;
+        else
+            action();
+    }
+
+    private void TickGroupCore(ETickGroup group)
     {
         using var parityScope = IsPlaySessionActive
             ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;

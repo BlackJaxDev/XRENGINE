@@ -41,6 +41,8 @@ The completed UR00 reference-harness requirements and their evidence are in the 
 
 ### UR06 — Modular Render Pipeline Web Support
 
+- [ ] **UR06.10** Implement `WebGpuMeshRenderer.RenderIndexedIndirect` for retained GPU-authored indexed arguments (`XREngine.Runtime.Rendering.WebGPU/WebGpuMeshRenderer.IndexedIndirect.cs`). The desktop physics-chain branch added this `IApiMeshRenderer` member; physics-chain debug points and lines use it. WebGPU now returns `WebGpuMeshRenderer.IndexedIndirectUnsupported` and draws nothing. Done when WebGPU draws from the retained argument buffer without a CPU readback.
+
 - [ ] **UR06.09f2** Publish GPU-selected mesh/LOD decisions and use them in generic meshlet expansion, preserving authored LOD policy without CPU visibility/count readback. The initial route explicitly rejects dynamic multi-LOD sources.
 
 

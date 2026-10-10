@@ -552,10 +552,10 @@ public sealed partial class AdvancedGpuDeformationResources :
             slice = default;
             return false;
         }
-        if (retainedEnvelope is { } envelope &&
-            (!envelope.Matches(renderer, mesh) ||
-                (mesh.BlendshapeCount != 0u &&
-                    envelope.BlendshapeWeightsVersion != inputs.MorphVersion)))
+        // Matches checks the renderer-wide weights version that the physics producer
+        // captured. Do not compare it with the per-mesh input version: a submesh can
+        // have its own morph version while it uses the retained renderer weights.
+        if (retainedEnvelope is { } envelope && !envelope.Matches(renderer, mesh))
         {
             slice = default;
             return false;
@@ -619,7 +619,7 @@ public sealed partial class AdvancedGpuDeformationResources :
             _activeBlendshapeCount,
             activeCount,
             inputs.PoseVersion,
-            inputs.MorphVersion);
+            retainedEnvelope?.BlendshapeWeightsVersion ?? inputs.MorphVersion);
         _paletteCount = requiredPalette;
         _activeBlendshapeCount = requiredActive;
         _poseEntries[key] =
