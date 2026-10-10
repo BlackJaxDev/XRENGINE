@@ -85,7 +85,7 @@ public sealed partial class PhysicsChainWorld
             firstFault?.Throw();
         }
         if (disposeOwner)
-            DisposeOwnerWorld();
+            ScheduleOwnerDisposal();
     }
 
     internal static bool PrepareWorldDisposal(RuntimeWorld world)
@@ -93,14 +93,29 @@ public sealed partial class PhysicsChainWorld
         PhysicsChainWorld? scheduler;
         using (RegistryLock.EnterScope())
             Worlds.TryGetValue(world, out scheduler);
+
+        // The world's own tick, worker, or mutation lease defers the disposal until it ends.
+        bool ownContext = scheduler is not null &&
+            (ReferenceEquals(s_executingWorkerWorld, scheduler)
+                || (scheduler._tickGate.IsHeldByCurrentThread &&
+                    (scheduler._tickDepth > 0 || scheduler._attachingCallbacks)));
+
+        // Another world's physics callback, worker, or scene mutation cannot wait for
+        // this world or start its scene teardown. Reject before admission closes, so
+        // the world stays usable.
+        if (!ownContext && (s_outerTickWorld is not null
+            || s_executingWorkerWorld is not null
+            || s_activeWorldMutation is not null
+            || s_hierarchyReadCallbackDepth != 0))
+            throw new InvalidOperationException(
+                "Dispose the runtime world after the current physics callback or scene mutation completes.");
+
         if (scheduler is null)
             return true;
 
         scheduler._ownerDisposalPending = true;
         scheduler.CloseAdmission();
-        if (ReferenceEquals(s_executingWorkerWorld, scheduler)
-            || (scheduler._tickGate.IsHeldByCurrentThread &&
-                (scheduler._tickDepth > 0 || scheduler._attachingCallbacks)))
+        if (ownContext)
         {
             scheduler._deferredOwnerDisposal = true;
             return false;
@@ -149,8 +164,20 @@ public sealed partial class PhysicsChainWorld
         finally
         {
             if (disposeOwner)
-                DisposeOwnerWorld();
+                ScheduleOwnerDisposal();
         }
+    }
+
+    /// <summary>
+    /// Disposes the owner world after the current tick dispatch of that world ends.
+    /// Later callbacks of the same dispatch then never run on a torn-down world.
+    /// </summary>
+    private void ScheduleOwnerDisposal()
+    {
+        if (_world is RuntimeWorld world)
+            world.RunAfterTickDispatch(DisposeOwnerWorld);
+        else
+            DisposeOwnerWorld();
     }
 
     private bool FinishPendingDisposal()

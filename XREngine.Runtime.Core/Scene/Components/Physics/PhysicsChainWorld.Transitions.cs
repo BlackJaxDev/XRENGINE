@@ -147,7 +147,12 @@ public sealed partial class PhysicsChainWorld
                 return;
 
             s_activeWorldMutation = null;
-            _source?._tickGate.Exit();
+            bool disposeOwner = false;
+            if (_source is { } source)
+            {
+                try { disposeOwner = source.CompleteTick(); }
+                finally { source._tickGate.Exit(); }
+            }
             s_outerTickWorld = _previousContext;
             for (int i = 0; i < _participants.Count; ++i)
                 _participants[i].EndWorldMutation();
@@ -158,6 +163,9 @@ public sealed partial class PhysicsChainWorld
             ReplayMutationRegistrations(_participants);
             if (_previousContext is null)
                 _source?.DrainDeferredTransfers();
+            // A disposal requested by a lifecycle callback runs after every gate opens.
+            if (disposeOwner)
+                _source!.ScheduleOwnerDisposal();
         }
     }
 
@@ -395,6 +403,9 @@ public sealed partial class PhysicsChainWorld
 
             source?._tickGate.Enter();
             sourceGateEntered = source is not null;
+            // Count the lease as a tick, so a disposal request inside it waits until it ends.
+            if (sourceGateEntered)
+                ++source!._tickDepth;
             if (!ReferenceEquals(target.World, oldWorld)
                 || !SnapshotsMatch(before, CaptureMutationSnapshot(target, incoming)))
                 throw new InvalidOperationException(
@@ -435,7 +446,10 @@ public sealed partial class PhysicsChainWorld
         catch
         {
             if (sourceGateEntered)
-                source!._tickGate.Exit();
+            {
+                --source!._tickDepth;
+                source._tickGate.Exit();
+            }
             if (marked is not null)
                 for (int i = 0; i < marked.Count; ++i)
                     marked[i].EndWorldMutation();

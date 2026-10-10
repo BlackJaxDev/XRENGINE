@@ -1,6 +1,6 @@
 # Branch Integration Handoff
 
-Updated: 2026-10-09. The browser merge is resolved and built in the working tree. It is not committed.
+Updated: 2026-10-09. The browser merge is committed on local `branch-integration` as `e9eb73bac`. It is not pushed.
 
 Code work: [Branch integration TODO](../../todo/runtime/branch-integration-todo.md)
 Checks: [Branch integration validation](../../testing/runtime/branch-integration-validation.md)
@@ -10,7 +10,7 @@ Checks: [Branch integration validation](../../testing/runtime/branch-integration
 | Ref | State |
 |---|---|
 | `master` | `b89e427c4`. No physics or browser integration was promoted. |
-| `branch-integration` | Local only. `ce54e3c9b` merges `physics-chain-gpu-covered-rendering` at `55375186c` into `master`. The working tree holds the resolved, uncommitted merge of `origin/browser-library-boundary` at `fb827fb5a` (`MERGE_HEAD` is set). |
+| `branch-integration` | Local only. `ce54e3c9b` merges `physics-chain-gpu-covered-rendering` at `55375186c` into `master`. `e9eb73bac` merges `origin/browser-library-boundary` at `fb827fb5a`. Not pushed. |
 | `physics-chain-gpu-covered-rendering` | `55375186c`; includes Unity prefab branch `52f011649`. |
 | `browser-library-boundary` | `fb827fb5a`; includes WebGPU `ff0eabf95`. |
 
@@ -27,11 +27,10 @@ The first `branch-integration` (`0011f22c5`) existed only in another clone. It w
 
 ## Resume Order
 
-1. Get user decisions on the TODO items that need clearance (the test-fixture change and the commit).
-2. Commit the merge on `branch-integration`. Exclude `Samples/MonkeyBallVR/` (old local build output that the browser `.gitignore` no longer ignores), `Build/Dependencies/vcpkg/`, and the untracked submodule folders.
-3. Close the open code items, then finish the open checks in the validation document.
-4. Promote to `master` only after desktop validation.
-5. Review remaining features and dependency updates separately. Recheck remote existence before acting.
+1. Get user clearance for the test-fixture change in the TODO.
+2. Close the open code items, then finish the open checks in the validation document.
+3. Promote to `master` only after desktop validation.
+4. Review remaining features and dependency updates separately. Recheck remote existence before acting.
 
 ## Branch Cleanup
 

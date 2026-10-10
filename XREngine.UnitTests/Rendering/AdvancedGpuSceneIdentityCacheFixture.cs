@@ -86,11 +86,11 @@ internal sealed class AdvancedGpuSceneIdentityCacheFixture : IDisposable
         foreach (RenderCommandMesh3D command in _commands)
             command.SwapBuffers();
         Scene.SwapCommandBuffers();
-        var lookup = (Dictionary<uint, (IRenderCommandMesh command, int subMeshIndex)>)
+        var lookup = (Dictionary<uint, (IRenderCommandMesh command, int subMeshIndex, GpuSceneMeshCommandSnapshot snapshot)>)
             SourceLookupField.GetValue(Scene)!;
-        (IRenderCommandMesh command, int subMeshIndex) original = lookup[0u];
+        (IRenderCommandMesh command, int subMeshIndex, GpuSceneMeshCommandSnapshot snapshot) original = lookup[0u];
         if (nullEntry)
-            lookup[0u] = (null!, original.subMeshIndex);
+            lookup[0u] = (null!, original.subMeshIndex, original.snapshot);
         else
             lookup.Remove(0u);
         try
