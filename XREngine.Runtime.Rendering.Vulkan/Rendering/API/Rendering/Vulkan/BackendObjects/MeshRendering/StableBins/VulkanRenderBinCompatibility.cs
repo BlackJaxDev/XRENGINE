@@ -28,12 +28,15 @@ internal readonly struct VulkanRenderBinNativeCompatibility : IEquatable<VulkanR
     private readonly object? _materialOverride;
 
     internal VulkanRenderBinNativeCompatibility(
-        in VulkanResidentDrawTemplateNativeState native)
+        in VulkanResidentDrawTemplateNativeState native,
+        bool ignoreDrawCounts = false)
     {
         _pipelineLayoutHandle = native.PipelineLayout.Handle;
-        _primitive0 = native.Primitive0;
-        _primitive1 = native.Primitive1;
-        _primitive2 = native.Primitive2;
+        // Visibility arguments carry each draw count. Count is not a native
+        // buffer or pipeline binding in that lane.
+        _primitive0 = ignoreDrawCounts ? native.Primitive0 with { ElementCount = 0u } : native.Primitive0;
+        _primitive1 = ignoreDrawCounts ? native.Primitive1 with { ElementCount = 0u } : native.Primitive1;
+        _primitive2 = ignoreDrawCounts ? native.Primitive2 with { ElementCount = 0u } : native.Primitive2;
         _primitiveCount = native.PrimitiveCount;
         _vertexBufferCount = native.VertexBufferCount;
         _vertexBuffer0 = _vertexBufferCount > 0 ? native.GetVertexBuffer(0) : default;

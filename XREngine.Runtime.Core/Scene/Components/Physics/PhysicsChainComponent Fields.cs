@@ -4,6 +4,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Numerics;
 using XREngine.Core.Reflection.Attributes;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components;
 
@@ -127,8 +128,6 @@ public partial class PhysicsChainComponent : XRComponent
     private int _recentInteractionQualityFramesRemaining;
     private int _offscreenQualityFrames;
     private bool _runtimeVisible = true;
-    private bool _qualityPhaseInitialized;
-    private float _qualityCadencePhase;
     private bool _enableAutomaticSleep = true;
     private float _sleepVelocityThreshold = 0.0005f;
     private float _sleepConstraintErrorThreshold = 0.0005f;
@@ -165,16 +164,31 @@ public partial class PhysicsChainComponent : XRComponent
     private Vector3 _rootBonePrevPosition;
     private Vector3 _smoothedObjectMove;
 
-    private float _time = 0;
-    private float _qualityCadenceProgress;
     private float _weight = 1.0f;
     private bool _distantDisabled = false;
     private int _preUpdateCount = 0;
-    private long _fixedUpdateRenderAccumulatedTicks;
     private bool _lastSimulationProducedResults;
 
-    private readonly List<ParticleTree> _particleTrees = [];
-    private readonly Dictionary<Transform, (Vector3 LocalPosition, Quaternion LocalRotation)> _initialLocalStates = [];
+    [NonSerialized]
+    private PhysicsChainRuntimeGraph? _runtimeGraph;
+
+    [YamlIgnore]
+    private PhysicsChainRuntimeGraph RuntimeGraph
+        => _runtimeGraph ?? PhysicsChainWorld.BindPendingRuntimeGraph(this);
+
+    [YamlIgnore]
+    private List<ParticleTree> _particleTrees => RuntimeGraph.ParticleTrees;
+
+    [YamlIgnore]
+    private Dictionary<Transform, (Vector3 LocalPosition, Quaternion LocalRotation)> _initialLocalStates
+        => RuntimeGraph.InitialLocalStates;
+
+    internal void BindRuntimeGraph(PhysicsChainRuntimeGraph graph)
+    {
+        if (_runtimeGraph is not null && !ReferenceEquals(_runtimeGraph, graph))
+            throw new InvalidOperationException("A physics chain cannot change its rest graph while it is bound.");
+        _runtimeGraph = graph;
+    }
 
     // prepare data
     private float _deltaTime;
@@ -195,9 +209,16 @@ public partial class PhysicsChainComponent : XRComponent
     private int _particleTreesForJobCount;
 
     private static int _prepareFrame;
+    [NonSerialized]
+    private readonly Lock _runtimeBindingSync = new();
+    [NonSerialized]
+    private PhysicsChainWorld? _runtimeOwnerWorld;
     private PhysicsChainRuntimeHandle _runtimeHandle = PhysicsChainRuntimeHandle.Invalid;
 
-    [Browsable(false)]
+    [YamlIgnore]
+    internal Lock RuntimeBindingSync => _runtimeBindingSync;
+
+    [Browsable(false), YamlIgnore]
     public PhysicsChainRuntimeHandle RuntimeHandle => _runtimeHandle;
 
     [Range(0, 1)]
@@ -386,7 +407,11 @@ public partial class PhysicsChainComponent : XRComponent
     public bool DebugDrawChains
     {
         get => _debugDrawChains;
-        set => SetField(ref _debugDrawChains, value);
+        set
+        {
+            if (SetField(ref _debugDrawChains, value))
+                RuntimePhysicsChainRendering.Current.SetDebugDrawChains(this, value);
+        }
     }
 
     [Category("Execution")]
@@ -479,7 +504,11 @@ public partial class PhysicsChainComponent : XRComponent
     public int OffscreenQualityFrames => _offscreenQualityFrames;
 
     [Browsable(false)]
-    public float QualityCadencePhase => _qualityCadencePhase;
+    public float QualityCadencePhase
+        => _cpuBackendWorld is not null
+            && _cpuBackendWorld.TryGetSimulationClock(_runtimeHandle, this, out PhysicsChainSimulationClock clock)
+                ? clock.Phase
+                : 0.0f;
 
     [Browsable(false)]
     public PhysicsChainQualityTier EffectiveQualityTier => _effectiveQualityTier;

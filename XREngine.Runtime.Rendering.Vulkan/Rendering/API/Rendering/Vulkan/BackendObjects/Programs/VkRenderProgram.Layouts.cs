@@ -28,6 +28,63 @@ internal unsafe partial class VkRenderProgram
         BuildStageLookup();
         DestroyLayoutsAfterPipelineCompileDrain();
 
+        VulkanProgramInterfaceKey key = CaptureProgramInterfaceKey();
+        VulkanProgramInterfaceEntry entry = BackendContext.Resources.ProgramInterfaces.Acquire(
+            key,
+            this,
+            CanShareProgramInterface() && key.StageCount == _stageLookup.Count);
+        try
+        {
+            DescriptorLayoutBuildResult result = entry.Descriptors;
+            _descriptorSetLayouts = result.Layouts;
+            _programDescriptorBindings.Clear();
+            _programDescriptorBindings.AddRange(result.Bindings);
+            _hasGlobalTextureArrayOnlySet = entry.HasGlobalTextureArrayOnlySet;
+            _canBindGlobalTextureArraySeparately = entry.CanBindGlobalTextureArraySeparately;
+            _descriptorSetLayoutsBeforeGlobalMaterial = entry.LayoutsBeforeGlobalMaterial;
+            _descriptorLayoutFingerprint = entry.LayoutFingerprint;
+            _descriptorSchemaFingerprint = entry.SchemaFingerprint;
+            _descriptorSetUsesUpdateAfterBind = result.SetUsesUpdateAfterBind;
+            _descriptorSetsRequireUpdateAfterBind = result.RequiresUpdateAfterBind;
+            _descriptorSetsRequireVariableDescriptorCount = result.RequiresVariableDescriptorCount;
+            _externallyOwnedDescriptorSetMask = result.ExternallyOwnedSetMask;
+            _descriptorHeapLayout = entry.DescriptorHeapLayout;
+
+            _autoUniformBlocks.Clear();
+            _autoUniformBlocksByBinding.Clear();
+            _frameMaterialBindingSnapshots.Clear();
+            _autoUniformMaterialWritePlans.Clear();
+            _frequencyOwnedAutoUniformWritePlans.Clear();
+            foreach (AutoUniformBlockInfo block in entry.AutoUniformBlocks)
+            {
+                _autoUniformBlocks[block.InstanceName] = block;
+                _autoUniformBlocksByBinding[(block.Set, block.Binding)] = block;
+            }
+
+            ulong linkGeneration = unchecked((ulong)Interlocked.Increment(ref _linkGeneration));
+            _bindingSchema = VulkanProgramBindingSchema.Compile(
+                linkGeneration,
+                _autoUniformBlocks,
+                _programDescriptorBindings);
+            _pipelineLayout = entry.PipelineLayout;
+            _interfaceEntry = entry;
+            IsLinked = true;
+        }
+        catch
+        {
+            _interfaceEntry = null;
+            IsLinked = false;
+            BackendContext.Resources.ProgramInterfaces.Release(entry);
+            _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
+            _pipelineLayout = default;
+            throw;
+        }
+    }
+
+    internal VulkanProgramInterfaceEntry CreateProgramInterfaceEntry(
+        VulkanProgramInterfaceKey key,
+        ulong generation)
+    {
         IEnumerable<DescriptorBindingInfo> shaderBindings = EnumerateShaderDescriptorBindings();
         string programName = Data.Name ?? "UnnamedProgram";
         var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(
@@ -38,87 +95,79 @@ internal unsafe partial class VkRenderProgram
             programName,
             Data.ExternallyOwnedDescriptorSetMask);
 
-        _descriptorSetLayouts = result.Layouts;
-        _programDescriptorBindings.Clear();
-        _programDescriptorBindings.AddRange(result.Bindings);
-        _hasGlobalTextureArrayOnlySet =
-            VulkanBindlessMaterialDescriptors.IsGlobalTextureArrayOnlySet(_programDescriptorBindings);
-        _canBindGlobalTextureArraySeparately = _hasGlobalTextureArrayOnlySet;
-        if (_canBindGlobalTextureArraySeparately)
+        PipelineLayout pipelineLayout = default;
+        try
         {
-            for (int bindingIndex = 0; bindingIndex < _programDescriptorBindings.Count; bindingIndex++)
+            DescriptorHeapProgramLayout? heapLayout = null;
+            if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
             {
-                if (_programDescriptorBindings[bindingIndex].Set > VulkanBindlessMaterialDescriptors.TextureArraySet)
-                {
-                    _canBindGlobalTextureArraySeparately = false;
-                    break;
-                }
+                heapLayout = BackendContext.Resources.DescriptorLifetime.CreateDescriptorHeapProgramLayout(
+                    result.Bindings,
+                    programName,
+                    out string descriptorHeapReason,
+                    shaderConstantByteCount: VulkanPipelineManager.CommonPushConstantByteSize);
+                if (heapLayout is null)
+                    throw new InvalidOperationException($"Failed to create Vulkan descriptor heap mapping for program '{programName}': {descriptorHeapReason}");
             }
-        }
-        if (_canBindGlobalTextureArraySeparately)
-        {
-            int ownedSetCount = Math.Min(
-                checked((int)VulkanBindlessMaterialDescriptors.TextureArraySet),
-                _descriptorSetLayouts.Length);
-            _descriptorSetLayoutsBeforeGlobalMaterial = new DescriptorSetLayout[ownedSetCount];
-            Array.Copy(
-                _descriptorSetLayouts,
-                _descriptorSetLayoutsBeforeGlobalMaterial,
-                ownedSetCount);
-        }
-        else
-        {
-            _descriptorSetLayoutsBeforeGlobalMaterial = _descriptorSetLayouts;
-        }
-        _descriptorLayoutFingerprint = ComputeDescriptorLayoutFingerprint(_descriptorSetLayouts);
-        _descriptorSchemaFingerprint = ComputeDescriptorSchemaFingerprint(
-            _programDescriptorBindings,
-            _descriptorSetLayouts.Length);
-        _descriptorSetUsesUpdateAfterBind = result.SetUsesUpdateAfterBind;
-        _descriptorSetsRequireUpdateAfterBind = result.RequiresUpdateAfterBind;
-        _descriptorSetsRequireVariableDescriptorCount = result.RequiresVariableDescriptorCount;
-        _externallyOwnedDescriptorSetMask = result.ExternallyOwnedSetMask;
-        _descriptorHeapLayout = null;
-        if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
-        {
-            _descriptorHeapLayout = BackendContext.Resources.DescriptorLifetime.CreateDescriptorHeapProgramLayout(
-                _programDescriptorBindings,
-                programName,
-                out string descriptorHeapReason,
-                // Preserve the same shader-constant prefix as conventional
-                // program layouts. Heap indices must never alias common
-                // per-draw or native program push-constant writes.
-                shaderConstantByteCount: VulkanPipelineManager.CommonPushConstantByteSize);
-            if (_descriptorHeapLayout is null)
-                throw new InvalidOperationException($"Failed to create Vulkan descriptor heap mapping for program '{programName}': {descriptorHeapReason}");
-        }
 
-        _autoUniformBlocks.Clear();
-        _autoUniformBlocksByBinding.Clear();
-        _frameMaterialBindingSnapshots.Clear();
-        _autoUniformMaterialWritePlans.Clear();
-        _frequencyOwnedAutoUniformWritePlans.Clear();
-        foreach (VkShader shader in _shaderCache.Values)
-        {
-            IReadOnlyList<AutoUniformBlockInfo> shaderBlocks =
-                shader.AutoUniformBlocks;
-            for (int blockIndex = 0;
-                 blockIndex < shaderBlocks.Count;
-                 blockIndex++)
+            List<AutoUniformBlockInfo> blocks = [];
+            foreach (EProgramStageMask slot in VulkanProgramUtilities.StageOrder)
             {
-                AutoUniformBlockInfo block = shaderBlocks[blockIndex];
-                _autoUniformBlocks[block.InstanceName] = block;
-                _autoUniformBlocksByBinding[(block.Set, block.Binding)] = block;
+                if (!_stageLookup.TryGetValue(slot, out VkShader? shader))
+                    continue;
+                IReadOnlyList<AutoUniformBlockInfo> shaderBlocks = shader.AutoUniformBlocks;
+                for (int blockIndex = 0; blockIndex < shaderBlocks.Count; ++blockIndex)
+                    blocks.Add(shaderBlocks[blockIndex]);
             }
-        }
 
-        ulong linkGeneration = unchecked((ulong)Interlocked.Increment(ref _linkGeneration));
-        _bindingSchema = VulkanProgramBindingSchema.Compile(
-            linkGeneration,
-            _autoUniformBlocks,
-            _programDescriptorBindings);
-        CreatePipelineLayout(_descriptorSetLayouts);
-        IsLinked = true;
+            bool hasGlobalTextureArrayOnlySet =
+                VulkanBindlessMaterialDescriptors.IsGlobalTextureArrayOnlySet(result.Bindings);
+            bool canBindGlobalTextureArraySeparately = hasGlobalTextureArrayOnlySet;
+            if (canBindGlobalTextureArraySeparately)
+            {
+                for (int bindingIndex = 0; bindingIndex < result.Bindings.Count; ++bindingIndex)
+                    if (result.Bindings[bindingIndex].Set > VulkanBindlessMaterialDescriptors.TextureArraySet)
+                    {
+                        canBindGlobalTextureArraySeparately = false;
+                        break;
+                    }
+            }
+            DescriptorSetLayout[] layoutsBeforeGlobalMaterial = result.Layouts;
+            if (canBindGlobalTextureArraySeparately)
+            {
+                int ownedSetCount = Math.Min(
+                    checked((int)VulkanBindlessMaterialDescriptors.TextureArraySet),
+                    result.Layouts.Length);
+                layoutsBeforeGlobalMaterial = new DescriptorSetLayout[ownedSetCount];
+                Array.Copy(result.Layouts, layoutsBeforeGlobalMaterial, ownedSetCount);
+            }
+
+            pipelineLayout = CreatePipelineLayout(result.Layouts);
+            return new VulkanProgramInterfaceEntry(
+                key,
+                generation,
+                BackendContext,
+                result,
+                layoutsBeforeGlobalMaterial,
+                hasGlobalTextureArrayOnlySet,
+                canBindGlobalTextureArraySeparately,
+                [.. blocks],
+                heapLayout,
+                pipelineLayout,
+                ComputeDescriptorLayoutFingerprint(result.Layouts),
+                ComputeDescriptorSchemaFingerprint(result.Bindings, result.Layouts.Length));
+        }
+        catch
+        {
+            if (pipelineLayout.Handle != 0 &&
+                ProgramCreationPort.TryBeginDestroyPipelineLayout(pipelineLayout, "VkRenderProgram.InterfaceBuildFailure"))
+                Api!.DestroyPipelineLayout(Device, pipelineLayout, null);
+            for (int setIndex = 0; setIndex < result.Layouts.Length; ++setIndex)
+                if (!VulkanAdvancedSceneProgramBindingContract.IsExternallyOwnedSet(
+                        result.ExternallyOwnedSetMask, (uint)setIndex))
+                    BackendContext.Resources.Descriptors.ReleaseProgramDescriptorSetLayout(result.Layouts[setIndex]);
+            throw;
+        }
     }
 
     /// <summary>
@@ -221,13 +270,12 @@ internal unsafe partial class VkRenderProgram
         return false;
     }
 
-    private void CreatePipelineLayout(IReadOnlyList<DescriptorSetLayout> layouts)
+    private PipelineLayout CreatePipelineLayout(IReadOnlyList<DescriptorSetLayout> layouts)
     {
         if (!BackendContext.IsDeviceOperational)
-            return;
+            return default;
 
-        DestroyPipelineLayout("VkRenderProgram.CreatePipelineLayout");
-
+        PipelineLayout layout;
         if (layouts.Count == 0)
         {
             PushConstantRange pushRange = CreateCommonPushConstantRange();
@@ -237,10 +285,10 @@ internal unsafe partial class VkRenderProgram
                 PushConstantRangeCount = 1,
                 PPushConstantRanges = &pushRange
             };
-            if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
+            if (Api!.CreatePipelineLayout(Device, ref info, null, out layout) != Result.Success)
                 throw new InvalidOperationException($"Failed to create pipeline layout for program '{Data.Name ?? "UnnamedProgram"}'.");
-            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, $"VkRenderProgram.PipelineLayout#{BindingId}");
-            return;
+            ProgramCreationPort.TrackPipelineLayout(layout, $"VkRenderProgram.PipelineLayout#{BindingId}");
+            return layout;
         }
 
         DescriptorSetLayout[] layoutArray = layouts.ToArray();
@@ -256,10 +304,11 @@ internal unsafe partial class VkRenderProgram
                 PPushConstantRanges = &pushRange
             };
 
-            if (Api!.CreatePipelineLayout(Device, ref info, null, out _pipelineLayout) != Result.Success)
+            if (Api!.CreatePipelineLayout(Device, ref info, null, out layout) != Result.Success)
                 throw new InvalidOperationException($"Failed to create pipeline layout for program '{Data.Name ?? "UnnamedProgram"}'.");
-            ProgramCreationPort.TrackPipelineLayout(_pipelineLayout, $"VkRenderProgram.PipelineLayout#{BindingId}");
+            ProgramCreationPort.TrackPipelineLayout(layout, $"VkRenderProgram.PipelineLayout#{BindingId}");
         }
+        return layout;
     }
 
     private void DestroyLayouts()
@@ -284,24 +333,17 @@ internal unsafe partial class VkRenderProgram
             _computePipeline = default;
         }
 
-        if (_descriptorSetLayouts.Length > 0)
-        {
-            for (int setIndex = 0; setIndex < _descriptorSetLayouts.Length; ++setIndex)
-                if (!IsDescriptorSetExternallyOwned((uint)setIndex))
-                {
-                    BackendContext.Resources.Descriptors.ReleaseProgramDescriptorSetLayout(
-                        _descriptorSetLayouts[setIndex]);
-                }
-
-            _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
-        }
+        VulkanProgramInterfaceEntry? entry = _interfaceEntry;
+        _interfaceEntry = null;
+        _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
 
         _descriptorSetLayoutsBeforeGlobalMaterial = Array.Empty<DescriptorSetLayout>();
         _hasGlobalTextureArrayOnlySet = false;
         _canBindGlobalTextureArraySeparately = false;
 
-        if (_pipelineLayout.Handle != 0)
-            DestroyPipelineLayout("VkRenderProgram.DestroyLayouts");
+        _pipelineLayout = default;
+        if (entry is not null)
+            BackendContext.Resources.ProgramInterfaces.Release(entry);
 
         _programDescriptorBindings.Clear();
         _autoUniformBlocks.Clear();
@@ -320,18 +362,6 @@ internal unsafe partial class VkRenderProgram
         IsLinked = false;
         if (invalidatedPublishedInterface)
             Interlocked.Increment(ref _linkGeneration);
-    }
-
-    private void DestroyPipelineLayout(string owner)
-    {
-        if (_pipelineLayout.Handle == 0)
-            return;
-
-        PipelineLayout pipelineLayout = _pipelineLayout;
-        _pipelineLayout = default;
-
-        if (ProgramCreationPort.TryBeginDestroyPipelineLayout(pipelineLayout, owner))
-            Api!.DestroyPipelineLayout(Device, pipelineLayout, null);
     }
 
     private void DestroyComputeUniformBuffers()
@@ -401,6 +431,21 @@ internal unsafe partial class VkRenderProgram
 
     private IEnumerable<DescriptorBindingInfo> EnumerateShaderDescriptorBindings()
     {
+        // A shared interface must use the same stage order as its cache key.
+        // Keep the original reflection order when duplicate stages prevent sharing.
+        if (_shaderCache.Count == _stageLookup.Count)
+        {
+            for (int stageIndex = 0; stageIndex < VulkanProgramUtilities.StageOrderCount; ++stageIndex)
+            {
+                EProgramStageMask slot = VulkanProgramUtilities.StageAt(stageIndex);
+                if (!_stageLookup.TryGetValue(slot, out VkShader? shader))
+                    continue;
+                foreach (DescriptorBindingInfo binding in shader.DescriptorBindings)
+                    yield return binding;
+            }
+            yield break;
+        }
+
         foreach (VkShader shader in _shaderCache.Values)
         {
             foreach (DescriptorBindingInfo binding in shader.DescriptorBindings)

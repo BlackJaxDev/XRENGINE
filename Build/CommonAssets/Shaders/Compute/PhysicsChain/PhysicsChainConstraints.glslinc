@@ -1,0 +1,23 @@
+#ifndef PHYSICS_CHAIN_CONSTRAINTS_INCLUDED
+#define PHYSICS_CHAIN_CONSTRAINTS_INCLUDED
+
+// Scaling before normalization prevents squared lengths from overflowing.
+vec3 normalizeChainDirection(vec3 direction)
+{
+    if (any(isnan(direction)) || any(isinf(direction)))
+        return vec3(0.0);
+    float largest = max(abs(direction.x), max(abs(direction.y), abs(direction.z)));
+    if (!(largest > 0.0) || isinf(largest) || isnan(largest))
+        return vec3(0.0);
+    vec3 scaled = direction / largest;
+    return scaled * inversesqrt(dot(scaled, scaled));
+}
+
+// Build the constrained point from its parent to avoid cancellation at large offsets.
+vec3 constrainChainSegment(vec3 position, vec3 parentPosition, float segmentLength)
+{
+    vec3 direction = normalizeChainDirection(position - parentPosition);
+    return parentPosition + direction * max(segmentLength, 0.0);
+}
+
+#endif

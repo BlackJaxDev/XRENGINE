@@ -58,6 +58,7 @@ public partial class VisualScene3D
         IRuntimeCullingCamera? camera,
         bool collectMirrors,
         XRRenderPipelineInstance.RenderingState state,
+        bool allowGpuCollection,
         out int visibleRenderables)
     {
         visibleRenderables = 0;
@@ -113,6 +114,8 @@ public partial class VisualScene3D
         {
             ref readonly CpuBvhMaskedResult<Rendering.Info.RenderInfo3D> candidate = ref entry.Results.Get(i);
             Rendering.Info.RenderInfo3D renderable = candidate.Item;
+            if (IsCollectedByCanonicalGpu(renderable, allowGpuCollection))
+                continue;
             ulong exactRequestedMask = candidate.ExactViewMask & requestedViewMask;
             if (exactRequestedMask == 0UL)
                 continue;

@@ -15,6 +15,24 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
     private ulong _value;
     private int _state;
     private int _disposePendingBackendResolution;
+    private long _rentalId;
+    private ulong _authoredFrame;
+    private int _authoredPass;
+    private ulong _commandBuffer;
+    private GpuFenceFailureDiagnostic? _firstFailure;
+
+    public override long DiagnosticRentalId => _rentalId;
+    public override GpuFenceFailureDiagnostic? FirstFailureDiagnostic
+    {
+        get
+        {
+            VulkanCommandRuntime? runtime = _runtime;
+            if (runtime is null)
+                return _firstFailure;
+            lock (runtime.Synchronization._submissionMarkerLock)
+                return _firstFailure;
+        }
+    }
 
     public override EGpuFenceSubmissionStatus SubmissionStatus
         => Volatile.Read(ref _state) switch
@@ -29,9 +47,21 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
         ResetForReuse();
         _api = api; _device = device; _runtime = runtime; _resources = resources;
         _semaphore = 0; _value = 0;
+        _rentalId = runtime.Synchronization.NextFenceRentalIdNoLock();
+        _authoredFrame = 0;
+        _authoredPass = 0;
+        _commandBuffer = 0;
+        _firstFailure = null;
         Volatile.Write(ref _disposePendingBackendResolution, 0);
         Volatile.Write(ref _state, 0);
     }
+    internal void SetAuthoringContext(ulong frame, int pass)
+    {
+        _authoredFrame = frame;
+        _authoredPass = pass;
+    }
+
+    internal void SetCommandBuffer(ulong handle) => _commandBuffer = handle;
     internal void Bind(ulong semaphore, ulong value)
     {
         VulkanCommandRuntime? runtime = _runtime;
@@ -51,6 +81,8 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
 
             if (semaphore == 0 || value == 0)
             {
+                RecordFirstFailureNoLock(runtime, EGpuFenceFailureSite.MissingTimelineSignal,
+                    EGpuFenceNativeSubmission.Accepted, 0);
                 Volatile.Write(ref _state, 2);
                 return;
             }
@@ -60,7 +92,9 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
             Volatile.Write(ref _state, 1);
         }
     }
-    internal void Fail()
+    internal void Fail(EGpuFenceFailureSite site = EGpuFenceFailureSite.Unknown,
+        EGpuFenceNativeSubmission nativeSubmission = EGpuFenceNativeSubmission.Unknown,
+        int nativeResult = 0)
     {
         VulkanCommandRuntime? runtime = _runtime;
         if (runtime is null)
@@ -71,6 +105,7 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
 
         lock (runtime.Synchronization._submissionMarkerLock)
         {
+            RecordFirstFailureNoLock(runtime, site, nativeSubmission, nativeResult);
             if (Volatile.Read(ref _disposePendingBackendResolution) != 0)
             {
                 ReturnToPoolNoLock(runtime);
@@ -80,14 +115,29 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
             Volatile.Write(ref _state, 2);
         }
     }
+    private void RecordFirstFailureNoLock(VulkanCommandRuntime runtime,
+        EGpuFenceFailureSite site, EGpuFenceNativeSubmission nativeSubmission, int nativeResult)
+    {
+        if (_firstFailure.HasValue)
+            return;
+        GpuFenceFailureDiagnostic failure = new(
+            _rentalId, _authoredFrame, _authoredPass,
+            RuntimeEngine.Rendering.State.RenderFrameId, site, SubmissionStatus,
+            _commandBuffer, nativeSubmission, nativeResult,
+            site is EGpuFenceFailureSite.NativeSubmitFailed or EGpuFenceFailureSite.TimelineQuery,
+            _semaphore, _value);
+        _firstFailure = failure;
+        runtime.Synchronization.RecordFenceFailureNoLock(in failure);
+    }
     protected override unsafe EGpuFenceStatus PollCore()
     {
         if (Volatile.Read(ref _state) == 2) return EGpuFenceStatus.Failed;
         if (_api is not { } api || _device is not { } device || _runtime is not { } runtime || _resources is not { } resources || !device.StateMachine.IsOperational)
-        { Fail(); return EGpuFenceStatus.Failed; }
+        { Fail(EGpuFenceFailureSite.BackendUnavailable); return EGpuFenceStatus.Failed; }
         if (Volatile.Read(ref _state) == 0 || _semaphore == 0 || _value == 0) return EGpuFenceStatus.Pending;
         Result result = runtime.Synchronization.QueryTimelineCompletion(api, device, resources.Lifetime.Tracker, new Semaphore(_semaphore), _value, out bool completed);
-        if (result != Result.Success) { Fail(); return EGpuFenceStatus.Failed; }
+        if (result != Result.Success) { Fail(EGpuFenceFailureSite.TimelineQuery,
+            EGpuFenceNativeSubmission.Accepted, (int)result); return EGpuFenceStatus.Failed; }
         return completed ? EGpuFenceStatus.Signaled : EGpuFenceStatus.Pending;
     }
     protected override void DisposeCore()

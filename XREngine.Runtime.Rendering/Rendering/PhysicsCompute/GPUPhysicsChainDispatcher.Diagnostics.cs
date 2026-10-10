@@ -19,14 +19,18 @@ public sealed partial class GPUPhysicsChainDispatcher
     private void DebugReadbackGpuDrivenBonePaletteIfRequested(IPhysicsChainComputeBackend backend)
     {
         if (!RenderDiagnosticsFlags.SkinningPrepassDiag
-            || _gpuDrivenPaletteDiagnosticLogCount >= GpuDrivenPaletteDiagnosticLogLimit
+            || _gpuDrivenPaletteDiagnosticLogCount >= GpuDrivenPaletteDiagnosticLogLimit)
+            return;
+
+        XRDataBuffer<PhysicsChainAffineInput>? completedTransforms =
+            GetLastCompletedTransformInput(backend);
+        if (completedTransforms is null
             || backend.Renderer is not IRuntimeRendererHost renderer
             || !renderer.TryGetBackendCapability<IBufferDiagnosticReadbackBackendCapability>(out var readback)
             || readback is null
             || _gpuDrivenSkinPaletteBuffer is null
             || _gpuDrivenBoneInvBindMatricesBuffer is null
             || _particlesBuffer is null
-            || _transformMatricesBuffer is null
             || _gpuDrivenBoneMappings.Count == 0)
             return;
 
@@ -34,7 +38,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             checked((int)Math.Min(_gpuDrivenSkinPaletteBuffer.ElementCount, _gpuDrivenBoneInvBindMatricesBuffer.ElementCount)),
             GpuDrivenPaletteDiagnosticEntryLimit);
         int particleEntryCount = Math.Min(
-            checked((int)Math.Min(_particlesBuffer.ElementCount, _transformMatricesBuffer.ElementCount)),
+            checked((int)Math.Min(_particlesBuffer.ElementCount, completedTransforms.ElementCount)),
             GpuDrivenPaletteDiagnosticEntryLimit);
         if (paletteEntryCount <= 0 || particleEntryCount <= 0)
             return;
@@ -42,7 +46,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         Span<SkinPaletteMatrix> palettes = stackalloc SkinPaletteMatrix[paletteEntryCount];
         Span<Matrix4x4> inverseBinds = stackalloc Matrix4x4[paletteEntryCount];
         Span<GPUParticleData> particles = stackalloc GPUParticleData[particleEntryCount];
-        Span<Matrix4x4> transforms = stackalloc Matrix4x4[particleEntryCount];
+        Span<PhysicsChainAffineInput> transforms = stackalloc PhysicsChainAffineInput[particleEntryCount];
 
         bool paletteRead = readback.TryReadBufferBytes(
             _gpuDrivenSkinPaletteBuffer,
@@ -60,7 +64,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             MemoryMarshal.AsBytes(particles),
             out string particleRoute);
         bool transformRead = readback.TryReadBufferBytes(
-            _transformMatricesBuffer,
+            completedTransforms,
             0u,
             MemoryMarshal.AsBytes(transforms),
             out string transformRoute);
@@ -101,7 +105,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             SkinPaletteMatrix palette = palettes[mapping.BoneMatrixIndex];
             Matrix4x4 inverseBind = inverseBinds[mapping.BoneMatrixIndex];
             GPUParticleData particle = particles[mapping.ParticleIndex];
-            Matrix4x4 transform = transforms[mapping.ParticleIndex];
+            Matrix4x4 transform = transforms[mapping.ParticleIndex].ToMatrix();
             Matrix4x4.Invert(inverseBind, out Matrix4x4 bindWorld);
             Vector3 bindPosition = bindWorld.Translation;
             Vector3 palettePosition = new(

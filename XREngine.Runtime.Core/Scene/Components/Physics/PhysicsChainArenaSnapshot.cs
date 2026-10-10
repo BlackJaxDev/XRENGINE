@@ -8,4 +8,8 @@ public readonly record struct PhysicsChainArenaSnapshot(
     int LiveCount,
     int FreeSlotCount,
     int GrowthCount,
-    float FragmentationRatio);
+    float FragmentationRatio)
+{
+    /// <summary>Counts structural allocations that exceeded the arena limit.</summary>
+    public long CapacityFailureCount { get; init; }
+}

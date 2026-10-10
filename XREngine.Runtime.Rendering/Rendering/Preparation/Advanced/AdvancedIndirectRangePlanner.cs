@@ -65,6 +65,8 @@ public sealed class AdvancedIndirectRangePlanner
         => _producers.AsSpan(0, _payloadCount);
     public ReadOnlySpan<EAdvancedGeometryProducer> ProducersByPayload
         => _producersByPayload.AsSpan(0, _payloadCount);
+    internal ReadOnlySpan<int> RangeIndicesByPayload
+        => _rangeIndicesByPayload.AsSpan(0, _payloadCount);
 
     public AdvancedIndirectPreparationResult Build(
         ReadOnlySpan<AdvancedVisibilityPayload> payloads,
@@ -124,13 +126,18 @@ public sealed class AdvancedIndirectRangePlanner
                     break;
             }
 
+            // Indexed draws use one canonical index atlas. Each payload keeps
+            // its own geometry handle and indexed arguments.
             AdvancedIndirectRangeKey key = new(
-                payload.Geometry,
+                producer == EAdvancedGeometryProducer.IndirectIndexed
+                    ? default
+                    : payload.Geometry,
                 payload.RasterStateClass,
                 payload.Coverage,
                 payload.CullMode,
                 payload.PrimitiveTopology,
-                producer);
+                producer,
+                payload.Skinned);
             int lookupSlot = FindRangeSlot(key);
             int rangeIndex;
             if (_lookupEpochs[lookupSlot] != _lookupEpoch)
@@ -247,6 +254,7 @@ public sealed class AdvancedIndirectRangePlanner
         HashValue(ref hash, key.CullMode);
         HashValue(ref hash, key.PrimitiveTopology);
         HashValue(ref hash, (uint)key.Producer);
+        HashValue(ref hash, key.UsesDeformedVertexSource ? 1u : 0u);
         return hash ^ (hash >> 32);
     }
 
@@ -264,6 +272,7 @@ public sealed class AdvancedIndirectRangePlanner
             HashValue(ref hash, range.Key.CullMode);
             HashValue(ref hash, range.Key.PrimitiveTopology);
             HashValue(ref hash, (uint)range.Key.Producer);
+            HashValue(ref hash, range.Key.UsesDeformedVertexSource ? 1u : 0u);
             HashValue(ref hash, range.PayloadCapacity);
         }
         return hash;

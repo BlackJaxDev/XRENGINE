@@ -232,7 +232,8 @@ internal sealed partial class VulkanFrameLoop
         XRRenderProgram program,
         uint groupsX,
         uint groupsY,
-        uint groupsZ)
+        uint groupsZ,
+        IRenderResourceLeaseOwner? authoringLease = null)
         {
         if (!_deviceContext.IsOperational)
             return ERendererComputeEnqueueStatus.DeviceLost;
@@ -294,14 +295,27 @@ internal sealed partial class VulkanFrameLoop
         // The sealed frame-plan preparation owns native compute-pipeline
         // readiness. Admission must preserve this dispatch while that request
         // is Pending; dropping it here would make an async compile invisible.
-        EnqueueFrameOp(ComputeDispatchOp.Rent(
-            passIndex,
-            vkProgram,
-            x,
-            y,
-            z,
-            snapshot,
-            context));
+        ComputeDispatchOp? operation = null;
+        try
+        {
+            operation = ComputeDispatchOp.Rent(
+                passIndex,
+                vkProgram,
+                x,
+                y,
+                z,
+                snapshot,
+                context);
+            if (authoringLease is not null)
+                operation.SealAuthoringSnapshot();
+            operation.AttachAuthoringResource(authoringLease);
+            EnqueueFrameOp(operation);
+        }
+        catch
+        {
+            operation?.ReleaseAuthoringSnapshot();
+            throw;
+        }
         return ERendererComputeEnqueueStatus.Enqueued;
         }
 

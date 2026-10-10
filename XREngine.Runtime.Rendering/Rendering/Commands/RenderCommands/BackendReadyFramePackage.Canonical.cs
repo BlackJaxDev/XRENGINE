@@ -233,7 +233,8 @@ public sealed partial class BackendReadyFramePackage
         XRCamera? camera,
         int viewportWidth,
         int viewportHeight,
-        bool excludeProjectiveMirrors)
+        bool excludeProjectiveMirrors,
+        EMeshSubmissionStrategy submissionStrategy)
     {
         // A late package preparation only has command membership. It must not
         // discard the already captured canonical publication and its lease.
@@ -279,7 +280,7 @@ public sealed partial class BackendReadyFramePackage
             identity.FrameGeneration,
             checked((ulong)Math.Max(0L, SourceRevision)),
             DependencySignature);
-        SubmissionResolution = CreateCanonicalSubmissionResolution();
+        SubmissionResolution = CreateCanonicalSubmissionResolution(submissionStrategy);
 
         if (RenderFrameViewSetPublication.TryGetLatest(out RenderFrameViewSet viewSet))
         {
@@ -341,6 +342,7 @@ public sealed partial class BackendReadyFramePackage
         {
             FoveationCenterAndBias = AdvancedFoveationContract.CaptureCenterAndBias(source.Foveation),
             FoveationRadii = AdvancedFoveationContract.CaptureRadii(source.Foveation),
+            CullingLayerMask = source.CullingLayerMask,
         };
     }
 
@@ -366,7 +368,10 @@ public sealed partial class BackendReadyFramePackage
             new Vector4(camera.Transform.RenderTranslation, camera.NearZ),
             new Vector4(camera.Transform.RenderForward, camera.FarZ),
             new Vector4(camera.ProjectionJitter.X, camera.ProjectionJitter.Y, 0.0f, 0.0f), 0u, flags,
-            RenderFrameViewSetCapture.MonoHistoryKey, camera.RenderIdentity, 1u, 0u, generation);
+            RenderFrameViewSetCapture.MonoHistoryKey, camera.RenderIdentity, 1u, 0u, generation) with
+        {
+            CullingLayerMask = camera.CullingLayerMask,
+        };
     }
 
     private static BackendReadyCanonicalViewRecord CreateCanonicalViewRecord(
@@ -812,12 +817,13 @@ public sealed partial class BackendReadyFramePackage
             _ => EGpuDiagnosticReadbackDecoder.None,
         };
 
-    private static BackendReadySubmissionResolution CreateCanonicalSubmissionResolution()
+    private static BackendReadySubmissionResolution CreateCanonicalSubmissionResolution(
+        EMeshSubmissionStrategy requested)
     {
-        EMeshSubmissionStrategy requested =
-            RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
-        EMeshSubmissionStrategy resolved =
-            RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy;
+        // The package captures this output's intent. A previous output's
+        // resolved strategy cannot classify its producer ranges. Backend
+        // admission checks the captured lane against its current capabilities.
+        EMeshSubmissionStrategy resolved = requested;
         return new BackendReadySubmissionResolution(
             requested,
             resolved,

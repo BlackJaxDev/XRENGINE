@@ -317,7 +317,7 @@ struct XRAdvancedViewRecord
     vec4 foveationRadii;
     uint sourceCameraIdentityLo;
     uint sourceCameraIdentityHi;
-    uint sourceCameraIdentityPadding0;
+    uint cullingLayerMask;
     uint sourceCameraIdentityPadding1;
 };
 

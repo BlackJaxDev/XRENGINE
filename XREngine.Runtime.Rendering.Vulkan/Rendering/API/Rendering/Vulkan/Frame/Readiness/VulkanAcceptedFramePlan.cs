@@ -724,7 +724,8 @@ internal sealed class VulkanAcceptedFramePlan
                 continue;
             }
 
-            fence?.Fail();
+            fence?.Fail(EGpuFenceFailureSite.PlanExcluded,
+                EGpuFenceNativeSubmission.NotCalled);
         }
 
         _submissionMarkers.AsSpan(
@@ -789,7 +790,8 @@ internal sealed class VulkanAcceptedFramePlan
             return;
 
         for (int index = 0; index < _submissionMarkerCount; index++)
-            _submissionMarkers[index]?.Fail();
+            _submissionMarkers[index]?.Fail(EGpuFenceFailureSite.PlanUnsubmitted,
+                EGpuFenceNativeSubmission.NotCalled);
         _submissionMarkers.AsSpan(0, _submissionMarkerCount).Clear();
         _submissionMarkerCount = 0;
         for (int index = 0; index < _outputCompletionCount; index++)
@@ -1749,7 +1751,8 @@ internal sealed class VulkanAcceptedFramePlan
     private static void FailOutputCompletionFence(XRGpuFence? fence)
     {
         if (fence is VulkanTimelineGpuFence timelineFence)
-            timelineFence.Fail();
+            timelineFence.Fail(EGpuFenceFailureSite.OutputCompletionAbandoned,
+                EGpuFenceNativeSubmission.Unknown);
         else
             fence?.Dispose();
     }

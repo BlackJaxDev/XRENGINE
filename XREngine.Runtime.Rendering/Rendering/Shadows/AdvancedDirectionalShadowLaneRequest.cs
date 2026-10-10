@@ -29,6 +29,9 @@ public sealed class AdvancedDirectionalShadowLaneRequest
     /// <summary>Depth value each tile is cleared to before its casters are drawn.</summary>
     public float DepthClearValue { get; private set; }
 
+    /// <summary>Effective layer mask of the grouped cascade collection camera.</summary>
+    public uint CullingLayerMask { get; private set; }
+
     /// <summary>Render frame that scheduled the group.</summary>
     public ulong RenderFrameId { get; private set; }
 
@@ -43,19 +46,23 @@ public sealed class AdvancedDirectionalShadowLaneRequest
 
     /// <summary>Atlas-manager bookkeeping slot; not meaningful to backends.</summary>
     internal int PendingSlot { get; set; } = -1;
+    internal bool RequiresStrictGpu { get; set; }
+    internal AdvancedDirectionalShadowConsumerAuthority ConsumerAuthority { get; set; }
 
     internal void Reset(
         XRFrameBuffer pageFrameBuffer,
         Guid lightId,
         ulong renderFrameId,
         bool reversedDepth,
-        float depthClearValue)
+        float depthClearValue,
+        uint cullingLayerMask)
     {
         PageFrameBuffer = pageFrameBuffer;
         LightId = lightId;
         RenderFrameId = renderFrameId;
         ReversedDepth = reversedDepth;
         DepthClearValue = depthClearValue;
+        CullingLayerMask = cullingLayerMask;
         CascadeCount = 0;
     }
 
@@ -63,7 +70,10 @@ public sealed class AdvancedDirectionalShadowLaneRequest
     {
         PageFrameBuffer = null;
         CascadeCount = 0;
+        CullingLayerMask = 0u;
         PendingSlot = -1;
+        RequiresStrictGpu = false;
+        ConsumerAuthority = default;
     }
 
     internal bool TryAddCascade(in BoundingRectangle tileRect, in Matrix4x4 viewProjection)

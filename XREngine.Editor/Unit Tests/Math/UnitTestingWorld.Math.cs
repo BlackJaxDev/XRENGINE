@@ -27,6 +27,11 @@ public static partial class EditorUnitTests
         scene.RootNodes.Add(rootNode);
 
         Pawns.CreatePlayerPawn(setUI, isServer, rootNode);
+        rootNode.IterateComponents<CameraComponent>(static camera =>
+        {
+            camera.SetManualExposure(1.0f);
+            camera.SetBloomEnabled(false);
+        }, iterateChildHierarchy: true);
         if (Toggles.DirLight)
             Lighting.AddDirLight(rootNode);
 
@@ -1102,12 +1107,13 @@ public static partial class EditorUnitTests
 
         if (includeSkinnedMesh)
         {
-            AddPhysicsChainSkinnedBoxVisual(testNode, chainBones, chainColor);
+            AddPhysicsChainSkinnedBoxVisual(testNode, chainBones, chainColor, controller?.BenchmarkMeshVariant ?? 0);
             // The visual is added after component activation. This either binds
             // the zero-readback palette or explicitly leaves the renderer on its
             // CPU transform-updated palette, according to the scenario.
             chain.InvalidateGpuDrivenRenderers();
         }
+        chain.EnableRigidGpuRestInputCache = useGpuDrivenSkinning && !gpuSyncToBones;
 
         var debug = testNode.AddComponent<DebugDrawComponent>()!;
         // Run in Late tick group AFTER PhysicsChainComponent.LateUpdate (Late+Animation)
@@ -1194,7 +1200,26 @@ public static partial class EditorUnitTests
         return bones;
     }
 
-    private static void AddPhysicsChainSkinnedBoxVisual(SceneNode testNode, Transform[] chainBones, ColorF4 color)
+    /// <summary>
+    /// When this environment variable is "1", the skinned chain test material
+    /// declares neutral vertex-effect parameters. Validation tools can then
+    /// change them through material uniform tools.
+    /// </summary>
+    private const string PhysicsChainVertexEffectParametersVariable = "XRE_PHYSICS_CHAIN_TEST_VERTEX_EFFECTS";
+
+    private static ShaderVar[] CreateNeutralVertexEffectParameters()
+        =>
+        [
+            new ShaderFloat(0.0f, "_VertexEffectsEnabled"),
+            new ShaderVector3(Vector3.Zero, "_VertexManipulationLocalTranslation"),
+            new ShaderVector3(Vector3.Zero, "_VertexManipulationLocalRotation"),
+            new ShaderVector3(Vector3.Zero, "_VertexManipulationLocalRotationSpeed"),
+            new ShaderVector3(Vector3.One, "_VertexManipulationLocalScale"),
+            new ShaderVector3(Vector3.Zero, "_VertexManipulationWorldTranslation"),
+            new ShaderFloat(0.0f, "_VertexManipulationHeight"),
+        ];
+
+    private static void AddPhysicsChainSkinnedBoxVisual(SceneNode testNode, Transform[] chainBones, ColorF4 color, int meshVariant)
     {
         Transform testTransform = testNode.GetTransformAs<Transform>(true)!;
         testTransform.RecalculateMatrixHierarchy(
@@ -1205,9 +1230,11 @@ public static partial class EditorUnitTests
         var visualNode = testNode.NewChild("SkinnedBoxVisual");
         visualNode.SetTransform<Transform>();
 
-        XRMesh mesh = CreatePhysicsChainSkinnedPrismMesh(testTransform, chainBones);
+        XRMesh mesh = CreatePhysicsChainSkinnedPrismMesh(testTransform, chainBones, meshVariant);
         XRMaterial material = XRMaterial.CreateLitColorMaterial(color);
         material.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
+        if (Environment.GetEnvironmentVariable(PhysicsChainVertexEffectParametersVariable) == "1")
+            material.Parameters = [.. material.Parameters, .. CreateNeutralVertexEffectParameters()];
 
         var modelComponent = visualNode.AddComponent<ModelComponent>()!;
         modelComponent.Model = new Model([new SubMesh(mesh, material)]);
@@ -1296,9 +1323,17 @@ public static partial class EditorUnitTests
         return true;
     }
 
-    private static XRMesh CreatePhysicsChainSkinnedPrismMesh(Transform visualParent, Transform[] chainBones)
+    /// <summary>
+    /// Builds the skinned prism around a chain. Variant zero is the shared shape. A nonzero
+    /// variant widens the cross-section by a small distinct amount, so its vertex content differs
+    /// from every other variant with the same topology, vertex count, and material.
+    /// </summary>
+    private static XRMesh CreatePhysicsChainSkinnedPrismMesh(Transform visualParent, Transform[] chainBones, int meshVariant = 0)
     {
-        const float halfWidth = 0.18f;
+        // The step is many float ulps at the prism's coordinates, so each variant stays distinct
+        // after vertex positions are added to bone centers. 10,000 variants add 0.1 to the width.
+        const float meshVariantHalfWidthStep = 1.0e-5f;
+        float halfWidth = 0.18f + meshVariant * meshVariantHalfWidthStep;
         const float halfHeight = 0.12f;
 
         var utilizedBones = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[chainBones.Length];

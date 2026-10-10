@@ -275,7 +275,8 @@ internal sealed partial class VulkanFrameLoop
         }
         catch
         {
-            _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+            VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
             _meshOperationMaterializationScratch.AsSpan(0, requestCount).Clear();
             _meshOperationCohortEntryScratch.AsSpan(0, requestCount).Clear();
             throw;

@@ -16,6 +16,8 @@ internal readonly record struct VulkanMeshOperationRequest(
     XRFrameBuffer? ExplicitTarget,
     bool RequiresExternalUploadBlock)
 {
+    internal VulkanMeshIndexedIndirectPayload? IndexedIndirect { get; init; }
+
     internal FrameOpContext Context
         => ProducerSnapshot.Context;
 

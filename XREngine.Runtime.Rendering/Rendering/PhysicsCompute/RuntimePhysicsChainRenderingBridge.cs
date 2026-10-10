@@ -21,6 +21,44 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
     public PhysicsChainGpuBackendState BackendState
         => (PhysicsChainGpuBackendState)GPUPhysicsChainDispatcher.Instance.BackendStatus.State;
 
+    /// <summary>Reads chain bindings and the last captured frame counters.</summary>
+    public PhysicsChainRenderingDiagnostics GetDiagnostics(PhysicsChainComponent chain)
+    {
+        _sources.TryGetValue(chain, out Source? source);
+        AdvancedPreparationDiagnosticSnapshot? preparation =
+            AdvancedSharedPreparationService.GetCurrentDiagnostics();
+        AdvancedPreparationPublication publication = preparation?.Publication ?? default;
+        GPUPhysicsChainDispatcher dispatcher = GPUPhysicsChainDispatcher.Instance;
+        GPUPhysicsChainBackendStatus backend = dispatcher.BackendStatus;
+        PhysicsChainDispatchDiagnostics dispatch = dispatcher.DispatchDiagnostics;
+        PhysicsChainInputPageDiagnostics inputPages = dispatcher.InputPageDiagnostics;
+        string? lastError = backend.State != GPUPhysicsChainBackendState.Ready
+            ? backend.Diagnostic
+            : dispatch.FailureCount > 0L
+                ? dispatch.LastFailureStage
+                : inputPages.FailureCount > 0L
+                    ? inputPages.LastFailure
+                    : null;
+
+        return new PhysicsChainRenderingDiagnostics(
+            source?.BoundRendererCount ?? 0,
+            RuntimeEngine.Rendering.Stats.SceneAssets.VisibleRendererCount,
+            publication.DeformationDispatchCount,
+            RuntimeEngine.Rendering.Stats.SceneAssets.SkinningComputeDispatchCount,
+            publication.GpuResourcesPublished && publication.IndirectRangeCount > 0u
+                ? publication.DrawCount
+                : 0u,
+            publication.Backend == RuntimeGraphicsApiKind.Vulkan,
+            publication.Backend == RuntimeGraphicsApiKind.Vulkan
+                ? RuntimeEngine.Rendering.Stats.Vulkan.VulkanIndirectSubmittedDraws
+                : 0L,
+            RuntimeEngine.Rendering.Stats.RendererState.GpuIndirectDrawCalls,
+            RuntimeEngine.Rendering.Stats.Frame.DrawCalls,
+            RuntimeEngine.Rendering.Stats.SceneAssets.VisibleTriangleCount,
+            source?.GetConservativeBoundsStatus(),
+            lastError);
+    }
+
     /// <summary>Installs the renderer implementation after the rendering runtime has initialized.</summary>
     public static IDisposable Install()
         => RuntimePhysicsChainRendering.Install(Instance);
@@ -77,17 +115,21 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
             return;
 
         source.UpdateReadbackCoordinator();
-        source.Copy(snapshot);
-        GPUPhysicsChainDispatcher.Instance.SubmitData(source, source.Particles, source.ParticleStatic, source.Trees,
-            source.Transforms, source.Colliders, snapshot.DeltaTime, snapshot.ObjectScale, snapshot.Weight,
-            snapshot.Force, snapshot.Gravity, snapshot.ObjectMove, snapshot.FreezeAxis, snapshot.LoopCount,
-            snapshot.TimeVar, snapshot.ExecutionGeneration, snapshot.SubmissionId, snapshot.StaticDataVersion,
-            snapshot.ParticleStateVersion, snapshot.TransformSignature, snapshot.ColliderSignature,
-            snapshot.TreeDataVersion);
+        if (source.DebugDrawChains)
+            GPUPhysicsChainDispatcher.Instance.RefreshDebugDrawChainsWorld(source);
+        GPUPhysicsChainDispatcher.Instance.SubmitData(source, snapshot,
+            chain.UseGpuDrivenSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning &&
+                RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader);
     }
 
     public void RenderDebug(PhysicsChainComponent chain)
-        => GPUPhysicsChainDispatcher.Instance.RenderSelectedGpuDebug();
+        => GPUPhysicsChainDispatcher.Instance.RenderSelectedGpuDebug(chain.World);
+
+    public void SetDebugDrawChains(PhysicsChainComponent chain, bool selected)
+    {
+        if (_sources.TryGetValue(chain, out Source? source))
+            source.SetDebugDrawChains(selected);
+    }
 
     public void NotifyReadbackUnavailable(PhysicsChainComponent chain, string reason)
     {
@@ -107,31 +149,30 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
     private sealed class Source(PhysicsChainComponent chain) : IPhysicsChainComputeSource
     {
         private readonly PhysicsChainComponent _chain = chain;
-        public readonly List<GPUPhysicsChainDispatcher.GPUParticleData> Particles = [];
-        public readonly List<GPUPhysicsChainDispatcher.GPUParticleStaticData> ParticleStatic = [];
-        public readonly List<GPUPhysicsChainDispatcher.GPUParticleTreeData> Trees = [];
-        public readonly List<Matrix4x4> Transforms = [];
-        public readonly List<GPUPhysicsChainDispatcher.GPUColliderData> Colliders = [];
         private readonly List<PhysicsChainGpuParticle> _readback = [];
         private readonly List<PhysicsChainGpuBone> _bones = [];
         private readonly Dictionary<Transform, int> _particleIndices = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         private readonly Dictionary<int, int> _firstChildren = [];
         private readonly List<PaletteState> _paletteStates = [];
-        private bool _hasCopiedInput;
-        private int _copiedParticleStateVersion;
-        private int _copiedStaticDataVersion;
-        private int _copiedTreeDataVersion;
         private int _copiedBoneStructureSignature;
-        private int _copiedTransformSignature;
-        private int _copiedColliderSignature;
         private int _bindingGeneration;
+        private volatile bool _paletteBindingsDirty;
+        private int _bindingInvalidationRevision;
+        private int _bindingAppliedRevision;
+        private volatile bool _paletteBindingRetryPending;
+        private XRMeshRenderer? _paletteRetryRenderer;
+        private long _paletteRetryGeneration;
+        private bool _paletteRetryAttempted;
         private int _particleStateVersion;
+        private volatile bool _debugDrawChains = chain.DebugDrawChains;
+        private bool _effectiveGpuMode;
         private PhysicsChainReadbackCoordinatorAdapter? _readbackCoordinator;
         private IRuntimeWorldContext? _readbackRuntimeWorld;
 
         public Guid ID => _chain.ID;
         public IRuntimeWorldContext? World => _chain.World;
         public PhysicsChainRuntimeHandle RuntimeHandle => _chain.RuntimeHandle;
+        public long ReadbackSourceGeneration => _chain.ReadbackSourceGeneration;
         public IPhysicsChainReadbackCoordinator? ReadbackCoordinator
             => Volatile.Read(ref _readbackCoordinator);
 
@@ -169,7 +210,48 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
         public int UpdateMode => (int)_chain.UpdateMode;
         public bool UseBatchedDispatcher => _chain.UseBatchedDispatcher;
         public bool HasGpuDrivenRenderers => _paletteStates.Count > 0;
-        public bool DebugDrawChains => _chain.DebugDrawChains;
+        public int BoundRendererCount => _paletteStates.Count;
+
+        public string? GetConservativeBoundsStatus()
+        {
+            if (_paletteStates.Count == 0)
+                return null;
+
+            GPUPhysicsChainDispatcher dispatcher = GPUPhysicsChainDispatcher.Instance;
+            EPhysicsChainSpatialBoundsStatus status = EPhysicsChainSpatialBoundsStatus.Ready;
+            for (int index = 0; index < _paletteStates.Count; ++index)
+            {
+                status = dispatcher.GetCommittedSpatialBoundsStatus(_paletteStates[index].Renderer);
+                if (status != EPhysicsChainSpatialBoundsStatus.Ready)
+                    break;
+            }
+            return status switch
+            {
+                EPhysicsChainSpatialBoundsStatus.Ready => nameof(EPhysicsChainSpatialBoundsStatus.Ready),
+                EPhysicsChainSpatialBoundsStatus.NoPublishedOutput => nameof(EPhysicsChainSpatialBoundsStatus.NoPublishedOutput),
+                EPhysicsChainSpatialBoundsStatus.IncompleteBoneCoverage => nameof(EPhysicsChainSpatialBoundsStatus.IncompleteBoneCoverage),
+                EPhysicsChainSpatialBoundsStatus.MissingBoundsSource => nameof(EPhysicsChainSpatialBoundsStatus.MissingBoundsSource),
+                EPhysicsChainSpatialBoundsStatus.UnavailableProducer => nameof(EPhysicsChainSpatialBoundsStatus.UnavailableProducer),
+                EPhysicsChainSpatialBoundsStatus.MissingRendererState => nameof(EPhysicsChainSpatialBoundsStatus.MissingRendererState),
+                EPhysicsChainSpatialBoundsStatus.BoundsSourceChanged => nameof(EPhysicsChainSpatialBoundsStatus.BoundsSourceChanged),
+                EPhysicsChainSpatialBoundsStatus.InvalidSpatialBounds => nameof(EPhysicsChainSpatialBoundsStatus.InvalidSpatialBounds),
+                EPhysicsChainSpatialBoundsStatus.MissingMesh => nameof(EPhysicsChainSpatialBoundsStatus.MissingMesh),
+                EPhysicsChainSpatialBoundsStatus.MaterialRouteChanged => nameof(EPhysicsChainSpatialBoundsStatus.MaterialRouteChanged),
+                EPhysicsChainSpatialBoundsStatus.MeshEnvelopeChanged => nameof(EPhysicsChainSpatialBoundsStatus.MeshEnvelopeChanged),
+                EPhysicsChainSpatialBoundsStatus.BoneGenerationChanged => nameof(EPhysicsChainSpatialBoundsStatus.BoneGenerationChanged),
+                EPhysicsChainSpatialBoundsStatus.UnsupportedMaterial => nameof(EPhysicsChainSpatialBoundsStatus.UnsupportedMaterial),
+                EPhysicsChainSpatialBoundsStatus.MaterialPaddingChanged => nameof(EPhysicsChainSpatialBoundsStatus.MaterialPaddingChanged),
+                EPhysicsChainSpatialBoundsStatus.StaleMaterialSnapshot => nameof(EPhysicsChainSpatialBoundsStatus.StaleMaterialSnapshot),
+                _ => "Unknown",
+            };
+        }
+        public bool DebugDrawChains => _debugDrawChains;
+
+        public void SetDebugDrawChains(bool selected)
+        {
+            _debugDrawChains = selected;
+            GPUPhysicsChainDispatcher.Instance.SetDebugDrawChainsSelection(this, selected);
+        }
         public int GpuDebugInterpolationMode => (int)_chain.InterpolationMode;
         public float GetGpuDebugInterpolationAlpha() => 0.0f;
         public bool RequiresGpuReadback() => _chain.RequiresGpuReadback();
@@ -186,67 +268,39 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
         public void AppendBatchedGpuDrivenBonePaletteBindings(int particleBaseOffset, List<GPUPhysicsChainDispatcher.GpuDrivenRendererPaletteBinding> bindings)
         {
             for (int i = 0; i < _paletteStates.Count; ++i)
-            { PaletteState state = _paletteStates[i]; bindings.Add(new(this, state.Renderer, state.Mappings, particleBaseOffset, state.BoneMatrixElementCount, state.Complete, _bindingGeneration, _particleStateVersion)); }
+            {
+                PaletteState state = _paletteStates[i];
+                if (state.BoneBufferGeneration != state.Renderer.BoneBufferGeneration)
+                {
+                    _paletteBindingsDirty = true;
+                    continue;
+                }
+                bindings.Add(new(this, state.Renderer, state.Mappings, particleBaseOffset,
+                    state.BoneMatrixElementCount, state.Complete, _bindingGeneration,
+                    _particleStateVersion, state.BoneBufferGeneration));
+            }
         }
         public void ClearBatchedGpuDrivenBonePaletteSources()
         { for (int i = 0; i < _paletteStates.Count; ++i) _paletteStates[i].Renderer.ClearGpuDrivenSkinPaletteSource(this); }
         public bool PublishGpuDrivenBoneMatrices(XRDataBuffer? particlesBuffer, XRDataBuffer? transformsBuffer, int particleBaseOffset, bool includeCompletePalettes = true, IPhysicsChainComputeBackend? backend = null) => true;
 
-        public void Copy(in PhysicsChainGpuDispatchSnapshot snapshot)
+        public void AcceptGpuDrivenBoneBindings(ReadOnlySpan<PhysicsChainGpuBone> bones,
+            int boneStructureSignature, int particleStateVersion, bool effectiveGpuDrivenSkinning)
         {
-            _particleStateVersion = snapshot.ParticleStateVersion;
-            if (!_hasCopiedInput ||
-                _copiedParticleStateVersion != snapshot.ParticleStateVersion ||
-                Particles.Count != snapshot.Particles.Length)
-                CopyParticles(snapshot.Particles);
-            if (!_hasCopiedInput ||
-                _copiedStaticDataVersion != snapshot.StaticDataVersion ||
-                ParticleStatic.Count != snapshot.ParticleStatic.Length)
-                CopyStatic(snapshot.ParticleStatic);
-            if (!_hasCopiedInput ||
-                _copiedTreeDataVersion != snapshot.TreeDataVersion ||
-                Trees.Count != snapshot.Trees.Length)
-                CopyTrees(snapshot.Trees);
-            if (!_hasCopiedInput ||
-                _copiedTransformSignature != snapshot.TransformSignature ||
-                Transforms.Count != snapshot.Transforms.Length)
-                CopyMatrices(snapshot.Transforms);
-            if (!_hasCopiedInput ||
-                _copiedColliderSignature != snapshot.ColliderSignature ||
-                Colliders.Count != snapshot.Colliders.Length)
-                CopyColliders(snapshot.Colliders);
-            if (!_hasCopiedInput ||
-                _copiedBoneStructureSignature != snapshot.BoneStructureSignature ||
-                _bones.Count != snapshot.Bones.Length)
-                CopyBones(snapshot.Bones);
-
-            _copiedParticleStateVersion = snapshot.ParticleStateVersion;
-            _copiedStaticDataVersion = snapshot.StaticDataVersion;
-            _copiedTreeDataVersion = snapshot.TreeDataVersion;
-            _copiedBoneStructureSignature = snapshot.BoneStructureSignature;
-            _copiedTransformSignature = snapshot.TransformSignature;
-            _copiedColliderSignature = snapshot.ColliderSignature;
-            _hasCopiedInput = true;
+            bool modeChanged = effectiveGpuDrivenSkinning != _effectiveGpuMode;
+            if (modeChanged)
+            {
+                _effectiveGpuMode = effectiveGpuDrivenSkinning;
+                ReleasePaletteBindings();
+            }
+            _particleStateVersion = particleStateVersion;
+            if (modeChanged || _copiedBoneStructureSignature != boneStructureSignature || _bones.Count != bones.Length)
+            {
+                CopyBones(bones);
+                _copiedBoneStructureSignature = boneStructureSignature;
+            }
+            _ = RefreshGpuDrivenBoneBindings();
         }
-
-        private void CopyParticles(ReadOnlySpan<PhysicsChainGpuParticle> values)
-        {
-            Particles.Clear();
-            for (int i = 0; i < values.Length; ++i)
-                Particles.Add(new() { Position = values[i].Position, PrevPosition = values[i].PrevPosition, IsColliding = values[i].IsColliding, PreviousPhysicsPosition = values[i].PreviousPhysicsPosition });
-        }
-        private void CopyStatic(ReadOnlySpan<PhysicsChainGpuParticleStatic> values)
-        {
-            ParticleStatic.Clear();
-            for (int i = 0; i < values.Length; ++i)
-            { var value = values[i]; ParticleStatic.Add(new() { TransformLocalPosition = value.TransformLocalPosition, ParentIndex = value.ParentIndex, Damping = value.Damping, Elasticity = value.Elasticity, Stiffness = value.Stiffness, Inert = value.Inert, Friction = value.Friction, Radius = value.Radius, BoneLength = value.BoneLength, TreeIndex = value.TreeIndex }); }
-        }
-        private void CopyTrees(ReadOnlySpan<PhysicsChainGpuTree> values)
-        { Trees.Clear(); for (int i = 0; i < values.Length; ++i) Trees.Add(new() { RestGravity = values[i].RestGravity, ParticleOffset = values[i].ParticleOffset, ParticleCount = values[i].ParticleCount }); }
-        private void CopyMatrices(ReadOnlySpan<Matrix4x4> values)
-        { Transforms.Clear(); for (int i = 0; i < values.Length; ++i) Transforms.Add(values[i]); }
-        private void CopyColliders(ReadOnlySpan<PhysicsChainGpuCollider> values)
-        { Colliders.Clear(); for (int i = 0; i < values.Length; ++i) Colliders.Add(new() { Center = values[i].Center, Params = values[i].Params, Orientation = values[i].Orientation, Type = values[i].Type }); }
 
         private void CopyBones(ReadOnlySpan<PhysicsChainGpuBone> values)
         {
@@ -257,10 +311,12 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
 
         private void RebuildPaletteBindings()
         {
+            _paletteBindingsDirty = false;
+            _paletteBindingRetryPending = false;
             ReleasePaletteBindings();
             unchecked { ++_bindingGeneration; }
             _particleIndices.Clear(); _firstChildren.Clear();
-            if (!_chain.UseGpuDrivenSkinning || _chain.SceneNode is null)
+            if (!_effectiveGpuMode || _chain.SceneNode is null)
                 return;
             for (int i = 0; i < _bones.Count; ++i)
             {
@@ -274,11 +330,51 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
                 foreach (XRMeshRenderer renderer in model.GetAllRenderersWhere(static value => value.Mesh?.HasSkinning == true))
                     TryAddPaletteBinding(renderer);
             }, true);
+            if (!_paletteBindingRetryPending)
+            {
+                _paletteRetryRenderer = null;
+                _paletteRetryAttempted = false;
+            }
         }
 
         public void InvalidateGpuDrivenRenderers()
         {
-            RebuildPaletteBindings();
+            Interlocked.Increment(ref _bindingInvalidationRevision);
+        }
+
+        public bool RefreshGpuDrivenBoneBindings()
+        {
+            int revision = Volatile.Read(ref _bindingInvalidationRevision);
+            if (revision != _bindingAppliedRevision)
+            {
+                RebuildPaletteBindings();
+                _bindingAppliedRevision = revision;
+                return true;
+            }
+
+            if (!_paletteBindingsDirty && !_paletteBindingRetryPending)
+                return false;
+
+            _paletteBindingsDirty = false;
+            if (_paletteBindingRetryPending && _paletteRetryRenderer is { } retryRenderer &&
+                (!_paletteRetryAttempted || retryRenderer.BoneBufferGeneration != _paletteRetryGeneration))
+            {
+                _paletteRetryGeneration = retryRenderer.BoneBufferGeneration;
+                _paletteRetryAttempted = true;
+                RebuildPaletteBindings();
+                return true;
+            }
+
+            for (int i = 0; i < _paletteStates.Count; ++i)
+            {
+                PaletteState state = _paletteStates[i];
+                if (state.BoneBufferGeneration == state.Renderer.BoneBufferGeneration)
+                    continue;
+                RebuildPaletteBindings();
+                return true;
+            }
+
+            return false;
         }
 
         public void ReleasePaletteBindings()
@@ -286,17 +382,26 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
             for (int i = 0; i < _paletteStates.Count; ++i)
             {
                 PaletteState state = _paletteStates[i];
+                state.Renderer.GpuDrivenBoneCoverageChanged -= RendererCoverageChanged;
                 state.Renderer.ClearGpuDrivenSkinPaletteSource(this);
-                state.Renderer.UnregisterGpuDrivenBoneIndices(state.Indices);
+                state.Renderer.UnregisterGpuDrivenBoneIndices(state.Indices, state.BoneBufferGeneration);
             }
             _paletteStates.Clear();
         }
 
         private void TryAddPaletteBinding(XRMeshRenderer renderer)
         {
-            XRMesh? mesh = renderer.Mesh;
-            if (mesh?.UtilizedBones is not { Length: > 0 } || !renderer.EnsureSkinningBuffers())
+            if (!renderer.EnsureSkinningBuffers())
+            {
+                QueuePaletteBindingRetry(renderer);
                 return;
+            }
+            (XRMesh? mesh, long expectedGeneration) = renderer.CaptureGpuDrivenBoneMappingSource();
+            if (mesh?.UtilizedBones is not { Length: > 0 })
+            {
+                QueuePaletteBindingRetry(renderer);
+                return;
+            }
             var mappings = new List<GPUPhysicsChainDispatcher.GPUDrivenBoneMappingData>();
             var indices = new List<uint>();
             for (int boneIndex = 0; boneIndex < mesh.UtilizedBones.Length; ++boneIndex)
@@ -308,11 +413,40 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
                 indices.Add((uint)(boneIndex + 1));
             }
             if (mappings.Count == 0) return;
-            uint[] driven = indices.ToArray(); renderer.RegisterGpuDrivenBoneIndices(driven);
-            _paletteStates.Add(new(renderer, mappings.ToArray(), driven, (uint)mesh.UtilizedBones.Length + 1u, mappings.Count == mesh.UtilizedBones.Length));
+            uint[] driven = indices.ToArray();
+            long boneBufferGeneration = renderer.RegisterGpuDrivenBoneIndices(driven, expectedGeneration, mesh);
+            if (boneBufferGeneration == 0)
+            {
+                QueuePaletteBindingRetry(renderer);
+                return;
+            }
+            _paletteStates.Add(new(renderer, mappings.ToArray(), driven,
+                (uint)mesh.UtilizedBones.Length + 1u,
+                mappings.Count == mesh.UtilizedBones.Length, boneBufferGeneration));
+            renderer.GpuDrivenBoneCoverageChanged += RendererCoverageChanged;
         }
 
-        private sealed record PaletteState(XRMeshRenderer Renderer, GPUPhysicsChainDispatcher.GPUDrivenBoneMappingData[] Mappings, uint[] Indices, uint BoneMatrixElementCount, bool Complete);
+        private void QueuePaletteBindingRetry(XRMeshRenderer renderer)
+        {
+            if (!ReferenceEquals(_paletteRetryRenderer, renderer))
+            {
+                _paletteRetryRenderer = renderer;
+                _paletteRetryGeneration = renderer.BoneBufferGeneration;
+                _paletteRetryAttempted = false;
+            }
+            _paletteBindingRetryPending = true;
+        }
+
+        private void RendererCoverageChanged(XRMeshRenderer renderer, GpuDrivenBoneCoverageSnapshot snapshot)
+            => _paletteBindingsDirty = true;
+
+        private sealed record PaletteState(
+            XRMeshRenderer Renderer,
+            GPUPhysicsChainDispatcher.GPUDrivenBoneMappingData[] Mappings,
+            uint[] Indices,
+            uint BoneMatrixElementCount,
+            bool Complete,
+            long BoneBufferGeneration);
     }
 
     private sealed class PhysicsChainReadbackCoordinatorAdapter(PhysicsChainWorld world) : IPhysicsChainReadbackCoordinator

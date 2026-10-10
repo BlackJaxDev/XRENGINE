@@ -311,6 +311,9 @@ internal sealed partial class VulkanFrameLoop
         RunCleanupStep("GPU render statistics readbacks", DisposeGpuRenderStatsReadbacks, failures);
         RunCleanupStep("compute transient resources", _commandRuntime.DestroyComputeTransientResources, failures);
         RunCleanupStep("compute descriptor caches", () => _ = _resourceRuntime.RetireComputeDescriptorCachesForShutdown(), failures);
+        // A pinned plan keeps its interface leases. Stop teardown until its
+        // consumer retires, then release every physical stream before wrappers.
+        _framePlanner.FramePlanBuilder.ReleasePhysicalStreamsForShutdown();
         RunCleanupStep("dangling Vulkan wrappers", DestroyDanglingWrappers, failures);
         RunCleanupStep(
             "advanced-scene native resources",

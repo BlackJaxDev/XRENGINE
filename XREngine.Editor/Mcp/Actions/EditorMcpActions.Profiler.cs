@@ -321,6 +321,31 @@ namespace XREngine.Editor.Mcp
                 }));
         }
 
+        [XRMcp(
+            Name = "arm_vulkan_desktop_frame_fault",
+            Permission = McpPermissionLevel.Mutate,
+            PermissionReason = "Intentionally fails an upcoming Vulkan desktop frame to validate recovery from an unsubmitted frame plan.")]
+        [Description("Arm a development-only diagnostic that fails the occurrence-th upcoming observation of one Vulkan desktop frame phase boundary. The frame takes its normal failure path, so markers of its unsubmitted plan fail with PlanUnsubmitted. point 'Clear' disarms.")]
+        public static Task<McpToolResponse> ArmVulkanDesktopFrameFaultAsync(
+            McpToolContext context,
+            [McpName("point"), Description("Acquire, ImagePreparation, SceneRecording, OverlayRecording, Submission, PostSubmitAuxiliary, Presentation, PostPresentAuxiliary, or Clear.")]
+            string point,
+            [McpName("occurrence"), Description("Which upcoming observation of the point fails (1 = the next one).")]
+            int occurrence = 1)
+        {
+            string? failure;
+            bool succeeded = string.Equals(point, "Clear", StringComparison.OrdinalIgnoreCase)
+                ? VulkanDesktopFrameFaultInjection.TryClear(out failure)
+                : VulkanDesktopFrameFaultInjection.TryArm(point, occurrence, out failure);
+            if (!succeeded)
+                return Task.FromResult(new McpToolResponse(failure ?? "The desktop frame fault was not armed.", isError: true));
+
+            return Task.FromResult(new McpToolResponse(
+                string.Equals(point, "Clear", StringComparison.OrdinalIgnoreCase)
+                    ? "Cleared the Vulkan desktop frame fault."
+                    : $"Armed a Vulkan desktop frame fault at {point}, occurrence {occurrence}."));
+        }
+
         [XRMcp(Name = "dump_cpu_frame_profile", Permission = McpPermissionLevel.ReadOnly)]
         [McpRequiredCapabilities(McpCapability.ProfilerSession)]
         [Description("Dump the latest CPU profiler frame snapshot to an LLM-readable log file in the current Build/Logs run directory.")]
@@ -520,6 +545,7 @@ namespace XREngine.Editor.Mcp
                         frame_packages_prepared_late = RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackagesPreparedLate,
                         frame_packages_rejected = RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackagesRejected,
                         frame_package_generation_age = RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackageGenerationAge,
+                        phase_totals = BuildFrameLifecyclePhaseTotals(RuntimeEngine.Rendering.Stats.FrameLifecycle.CapturePhaseTotals()),
                     },
                     gpu_pipeline = new
                     {
@@ -1543,6 +1569,28 @@ namespace XREngine.Editor.Mcp
                     },
                 }));
         }
+
+        /// <summary>
+        /// Formats the cumulative frame-loop phase totals. Callers subtract two snapshots
+        /// to get the time and call count of each phase over a measurement window.
+        /// </summary>
+        private static object BuildFrameLifecyclePhaseTotals(FrameLifecyclePhaseTotals totals)
+            => new
+            {
+                update = BuildFrameLifecyclePhaseTotal(totals.Update),
+                collect = BuildFrameLifecyclePhaseTotal(totals.Collect),
+                swap = BuildFrameLifecyclePhaseTotal(totals.Swap),
+                render = BuildFrameLifecyclePhaseTotal(totals.Render),
+                collect_wait_for_render = BuildFrameLifecyclePhaseTotal(totals.CollectWaitForRender),
+                render_wait_for_collect = BuildFrameLifecyclePhaseTotal(totals.RenderWaitForCollect),
+            };
+
+        private static object BuildFrameLifecyclePhaseTotal(FrameLifecyclePhaseTotal total)
+            => new
+            {
+                calls = total.Calls,
+                total_ms = total.TotalMilliseconds,
+            };
 
         private static object BuildFrameOutputManifest(RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot snapshot)
         {

@@ -22,7 +22,7 @@ namespace XREngine
                 /// <summary>
                 /// Cross-thread frame lifecycle telemetry for the update/collect/swap/render fence chain.
                 /// </summary>
-                public static class FrameLifecycle
+                public static partial class FrameLifecycle
                 {
                     private static long _collectWaitForRenderTicks;
                     private static long _renderWaitForCollectTicks;
@@ -110,6 +110,7 @@ namespace XREngine
 
                     internal static void RecordCollectWaitForRender(long stopwatchTicks)
                     {
+                        AddPhase(ref _collectWaitForRenderTotalTicks, ref _collectWaitForRenderTotalCalls, stopwatchTicks);
                         if (!EnableTracking)
                             return;
 
@@ -120,6 +121,7 @@ namespace XREngine
 
                     internal static void RecordRenderWaitForCollect(long stopwatchTicks)
                     {
+                        AddPhase(ref _renderWaitForCollectTotalTicks, ref _renderWaitForCollectTotalCalls, stopwatchTicks);
                         if (!EnableTracking)
                             return;
 

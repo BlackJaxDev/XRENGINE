@@ -19,6 +19,8 @@ public partial class VisualScene3D
     private static bool TestIntersection(RenderInfo3D item, IVolume? cullingVolume, bool containsOnly)
     {
         CollectionContext context = GetActiveCollectionContext();
+        if (context.Scene!._gpuBoundsEligibleSet.Contains(item))
+            return false;
         RenderCommandCollection commands = context.Commands!;
         bool allowed = item.AllowRender(
             cullingVolume,
@@ -48,6 +50,13 @@ public partial class VisualScene3D
     }
 
     private static void CollectRenderCommands(RenderInfo3D renderable)
+    {
+        if (GetActiveCollectionContext().Scene!._gpuBoundsEligibleSet.Contains(renderable))
+            return;
+        CollectRenderCommandsCore(renderable);
+    }
+
+    private static void CollectRenderCommandsCore(RenderInfo3D renderable)
     {
         CollectionContextStack stack = t_collectionContextStack
             ?? throw new InvalidOperationException("No active VisualScene3D collection context.");

@@ -10,4 +10,5 @@ public readonly record struct PhysicsChainComputeBufferCopy(
     nint SourceOffset,
     XRDataBuffer Destination,
     nint DestinationOffset,
-    nuint ByteCount);
+    nuint ByteCount,
+    IRenderResourceLeaseOwner? AuthoringLease = null);

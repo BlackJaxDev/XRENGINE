@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Numerics;
 
 namespace XREngine.Rendering.Compute;
 
@@ -13,4 +14,6 @@ internal struct PhysicsChainGpuReadbackGatherItem
     public uint SourceIndex;
     public uint DestinationWordOffset;
     public uint WordCount;
+    public Vector3 RestLocalDirection;
+    public int ChildSourceIndex;
 }

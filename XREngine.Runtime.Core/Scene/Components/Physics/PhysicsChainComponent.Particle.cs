@@ -11,7 +11,7 @@ public partial class PhysicsChainComponent
     /// <see cref="XRBase"/>: solver writes are internal state transitions, not
     /// authored property changes, and must not enter notification machinery.
     /// </summary>
-    private sealed class Particle(Transform? transform, int parentIndex)
+    internal sealed class Particle(Transform? transform, int parentIndex)
     {
         public Transform? Transform { get; } = transform;
         public int ParentIndex { get; } = parentIndex;

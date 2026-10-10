@@ -370,7 +370,8 @@ internal sealed partial class VulkanCommandRuntime
                     out List<VulkanTimelineGpuFence>? existing))
             {
                 for (int markerIndex = 0; markerIndex < existing.Count; markerIndex++)
-                    existing[markerIndex].Fail();
+                    existing[markerIndex].Fail(EGpuFenceFailureSite.CommandBufferReuse,
+                        EGpuFenceNativeSubmission.Unknown);
                 existing.Clear();
             }
             RegisterSubmissionMarkersNoLock(commandBuffer, frameOps);
@@ -404,9 +405,12 @@ internal sealed partial class VulkanCommandRuntime
                 // structural submission markers. Their original artifact is
                 // deliberately one-shot; reject any attempted reuse rather than
                 // transferring evidence from a prior recording generation.
-                marker.Fence.Fail();
+                marker.Fence.SetCommandBuffer((ulong)commandBuffer.Handle);
+                marker.Fence.Fail(EGpuFenceFailureSite.RequiredProducerReuse,
+                    EGpuFenceNativeSubmission.Unknown);
                 continue;
             }
+            marker.Fence.SetCommandBuffer((ulong)commandBuffer.Handle);
             markers.Add(marker.Fence);
         }
     }
@@ -684,7 +688,8 @@ internal sealed partial class VulkanCommandRuntime
                 return;
             }
             for (int index = 0; index < markers.Count; index++)
-                markers[index].Fail();
+                markers[index].Fail(EGpuFenceFailureSite.CommandBufferReuse,
+                    EGpuFenceNativeSubmission.Unknown);
         }
     }
 
@@ -1601,6 +1606,7 @@ internal sealed partial class VulkanCommandRuntime
                     markers);
             }
 
+            fence.SetCommandBuffer((ulong)commandBuffer.Handle);
             markers.Add(fence);
         }
     }

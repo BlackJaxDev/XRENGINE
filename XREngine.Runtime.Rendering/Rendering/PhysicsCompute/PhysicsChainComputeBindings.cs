@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Compute;
 public readonly record struct PhysicsChainComputeBindings(
     XRDataBuffer<GPUPhysicsChainDispatcher.GPUParticleData> Particles,
     XRDataBuffer<GPUPhysicsChainDispatcher.GPUParticleStaticData> ParticleStatic,
-    XRDataBuffer<Matrix4x4> Transforms,
+    XRDataBuffer<PhysicsChainAffineInput> Transforms,
     XRDataBuffer<GPUPhysicsChainDispatcher.GPUColliderData> Colliders,
     XRDataBuffer<GPUPhysicsChainDispatcher.GPUPerTreeParams> PerTreeParams,
     int ResourceGeneration)

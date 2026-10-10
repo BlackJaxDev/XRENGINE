@@ -95,6 +95,7 @@ public static partial class EditorUnitTests
             => model.ImporterBackend switch
             {
                 ModelImportBackendPreference.AssimpOnly => FbxImportBackend.Assimp,
+                ModelImportBackendPreference.NativeOnly => FbxImportBackend.Native,
                 _ => FbxImportBackend.Auto,
             };
 
@@ -102,6 +103,7 @@ public static partial class EditorUnitTests
             => model.ImporterBackend switch
             {
                 ModelImportBackendPreference.AssimpOnly => GltfImportBackend.Assimp,
+                ModelImportBackendPreference.NativeOnly => GltfImportBackend.Native,
                 _ => GltfImportBackend.Auto,
             };
 
@@ -128,7 +130,7 @@ public static partial class EditorUnitTests
                 || separateMeshIslands
                 || spatiallyPartitionForOcclusion
                 || generateSceneNodesPerSubmesh
-                || model.ImporterBackend is ModelImportBackendPreference.AssimpOnly
+                || model.ImporterBackend is ModelImportBackendPreference.AssimpOnly or ModelImportBackendPreference.NativeOnly
                 || textureLoadDirSearchPaths.Length > 0;
 
             if (!needsImportOptions)

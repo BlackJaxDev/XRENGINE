@@ -621,6 +621,9 @@ namespace XREngine.Editor.Mcp
             return true;
         }
 
+        /// <summary>Maximum public properties serialized for one struct or plain object.</summary>
+        private const int MaxSerializedStructProperties = 20;
+
         /// <summary>
         /// Recursively serializes a value to an MCP-safe representation with depth limiting.
         /// </summary>
@@ -723,10 +726,12 @@ namespace XREngine.Editor.Mcp
             // Structs / other objects — serialize top-level properties.
             // Filter out ref-returning, ByRefLike, and otherwise non-invocable properties
             // to avoid NotSupportedException from the reflection invoke path.
-            var structProps = type
+            var invocableProps = type
                 .GetProperties(BindingFlags.Instance | BindingFlags.Public)
                 .Where(IsInvocableProperty)
-                .Take(20)
+                .ToArray();
+            var structProps = invocableProps
+                .Take(MaxSerializedStructProperties)
                 .ToDictionary(
                     p => p.Name,
                     p =>
@@ -734,6 +739,17 @@ namespace XREngine.Editor.Mcp
                         try { return SerializeValue(p.GetValue(value), currentDepth + 1, maxDepth); }
                         catch { return null; }
                     });
+
+            // Name the omitted properties so callers never mistake a truncated object for a complete one.
+            if (invocableProps.Length > MaxSerializedStructProperties)
+            {
+                return new
+                {
+                    type = FormatTypeName(type),
+                    properties = structProps,
+                    omittedProperties = invocableProps.Skip(MaxSerializedStructProperties).Select(p => p.Name).ToArray(),
+                };
+            }
 
             return new { type = FormatTypeName(type), properties = structProps };
         }

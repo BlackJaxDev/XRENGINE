@@ -23,17 +23,65 @@ layout(std430, binding = 2) readonly buffer BoundsCopyItemBuffer
     BoundsCopyItem CopyItems[];
 };
 
+layout(std430, binding = 3) buffer SceneCullBoundsBuffer
+{
+    uvec4 SceneCullBoundsBits[];
+};
+
 uniform uint CopyItemCount;
+uniform uint BoundsVersion;
 
 void main()
 {
     uint index = gl_GlobalInvocationID.x;
-    if (index >= CopyItemCount)
+    if (index >= CopyItemCount || index >= uint(CopyItems.length()))
         return;
 
     BoundsCopyItem item = CopyItems[index];
-    uint source = item.SourceSlot * 2u;
+    if (item.TargetCommandSlot >= uint(SceneBoundsBits.length()) / 2u ||
+        item.TargetCommandSlot >= uint(SceneCullBoundsBits.length()) / 4u)
+        return;
+
     uint target = item.TargetCommandSlot * 2u;
+    uint cullTarget = item.TargetCommandSlot * 4u;
+    if (item.SourceSlot == 0xffffffffu)
+    {
+        SceneBoundsBits[target] = uvec4(0u);
+        SceneBoundsBits[target + 1u] = uvec4(0u);
+        SceneCullBoundsBits[cullTarget] = uvec4(0u);
+        SceneCullBoundsBits[cullTarget + 1u] = uvec4(0u);
+        SceneCullBoundsBits[cullTarget + 2u] = uvec4(0u);
+        SceneCullBoundsBits[cullTarget + 3u] = uvec4(0u);
+        return;
+    }
+    if (item.SourceSlot >= uint(ChainBoundsBits.length()) / 2u)
+        return;
+    uint source = item.SourceSlot * 2u;
+    vec3 minimum = uintBitsToFloat(ChainBoundsBits[source].xyz);
+    vec3 maximum = uintBitsToFloat(ChainBoundsBits[source + 1u].xyz);
+    vec3 extent = (maximum - minimum) * 0.5;
+    vec3 center = minimum + extent;
+    float radius = length(extent);
+    if (any(isnan(minimum)) || any(isinf(minimum)) ||
+        any(isnan(maximum)) || any(isinf(maximum)) ||
+        any(greaterThan(minimum, maximum)) ||
+        any(isnan(center)) || any(isinf(center)) ||
+        isnan(radius) || isinf(radius) || radius < 0.0)
+    {
+        // A finite point with version zero marks rejected bounds.
+        SceneBoundsBits[target] = uvec4(0u);
+        SceneBoundsBits[target + 1u] = uvec4(0u);
+        SceneCullBoundsBits[cullTarget] = uvec4(0u);
+        SceneCullBoundsBits[cullTarget + 1u] = uvec4(0u);
+        SceneCullBoundsBits[cullTarget + 2u] = uvec4(0u);
+        SceneCullBoundsBits[cullTarget + 3u] = uvec4(0u);
+        return;
+    }
+
     SceneBoundsBits[target] = ChainBoundsBits[source];
     SceneBoundsBits[target + 1u] = ChainBoundsBits[source + 1u];
+    SceneCullBoundsBits[cullTarget] = uvec4(floatBitsToUint(center), floatBitsToUint(radius));
+    SceneCullBoundsBits[cullTarget + 1u] = ChainBoundsBits[source];
+    SceneCullBoundsBits[cullTarget + 2u] = ChainBoundsBits[source + 1u];
+    SceneCullBoundsBits[cullTarget + 3u] = uvec4(BoundsVersion, 0u, 0u, 0u);
 }

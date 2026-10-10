@@ -30,7 +30,7 @@ internal static partial class SerializedSceneImporter
         }
 
         Dictionary<string, XRMaterial> externalMaterials = ImportExternalMaterialRemaps(metadata, state);
-        ModelImportOptions options = CreateSerializedModelImportOptions(metadata, externalMaterials);
+        ModelImportOptions options = CreateSerializedModelImportOptions(metadata, externalMaterials, state.Context.FbxBackend);
 
         using var importer = new ModelAssetImporter(modelPath, onCompleted: null, materialFactory: null)
         {
@@ -46,7 +46,7 @@ internal static partial class SerializedSceneImporter
             return ModelAssetImporter.MakeMaterialDeferred(textureList, textureSlots, materialName);
         };
 
-        state.Context.Progress?.Invoke(0.25f, $"Importing model {Path.GetFileName(modelPath)}");
+        state.Context.Progress?.Invoke(0.25f, $"Importing model {Path.GetFileName(modelPath)} with FBX policy {options.FbxBackend}");
         SceneNode? root = importer.Import(
             options.ImportSteps,
             preservePivots: options.FbxPivotPolicy == XREngine.Fbx.FbxPivotImportPolicy.PreservePivotSemantics,
@@ -63,7 +63,30 @@ internal static partial class SerializedSceneImporter
         if (root is null)
             throw new SourceVisualImportException($"Model importer returned no hierarchy for '{modelPath}'.");
 
-        root = CollapseAssimpSyntheticRoot(root, modelPath, metadata.PreserveHierarchy);
+        string actualBackend = importer.LastBackendSelection?.ProducerId
+            ?? throw new SourceVisualImportException("The model importer returned no backend provenance.");
+        string firstChildEvidence = root.Transform.Children.Count == 0
+            ? "FirstChild=<none>"
+            : $"FirstChild={root.Transform.Children[0].SceneNode?.Name}; " +
+              $"FirstChildLocalMatrix={root.Transform.Children[0].LocalMatrix}";
+        string backendEvidence = $"Model={Path.GetFileName(modelPath)}; RequestedFbxBackend={options.FbxBackend}; " +
+            $"ActualBackend={actualBackend}; WrapperLocalMatrix={root.Transform.LocalMatrix}; " +
+            $"WrapperChildren={root.Transform.Children.Count}; {firstChildEvidence}.";
+        Debug.Meshes($"[UnityPrefab] {backendEvidence}");
+        state.Context.AddDiagnostic(
+            "UNITYMODEL0006",
+            SourceImportDiagnosticSeverity.Info,
+            SourceImportDiagnosticCategory.ModelIdentity,
+            backendEvidence,
+            modelPath);
+        if (actualBackend == ModelImportBackendIds.NativeFbx)
+        {
+            throw new SourceVisualImportException(
+                $"Native FBX model-base normalization is not yet supported for Unity prefab composition. {backendEvidence} " +
+                "The native content basis, handedness, and mesh-local cluster binds require a shared conversion contract before publication.");
+        }
+
+        root = CollapseAssimpSyntheticRoot(root, modelPath, metadata, options, state);
         ApplySourceImportedSkeletonBindPose(root, metadata, state);
         if (metadata.SortHierarchyByName)
             SortHierarchyByName(root);
@@ -101,21 +124,18 @@ internal static partial class SerializedSceneImporter
             SourceImportDiagnosticCategory.ModelIdentity,
             $"Imported model with Unity fileIDsGeneration 2, animationType={metadata.AnimationType}, " +
             $"importAnimation={metadata.ImportAnimation}, importBlendShapes={metadata.ImportBlendShapes}, " +
-            $"Assimp FBX compatibility backend, and {metadata.ExternalMaterialRemaps.Count} external material remaps.",
+            $"backend={actualBackend}, and {metadata.ExternalMaterialRemaps.Count} external material remaps.",
             modelPath);
         return hierarchy;
     }
 
     internal static ModelImportOptions CreateSerializedModelImportOptions(
         SerializedModelImporterDocument metadata,
-        IReadOnlyDictionary<string, XRMaterial> externalMaterials)
+        IReadOnlyDictionary<string, XRMaterial> externalMaterials,
+        FbxImportBackend fbxBackend = FbxImportBackend.Assimp)
         => new()
         {
-            // Unity's generated hierarchy/fileID correspondence is currently validated against
-            // the mature Assimp FBX path. The native FBX path retains a much larger sparse
-            // morph/skin working set for production avatar files and is not yet a safe choice
-            // for editor-side Unity prefab composition.
-            FbxBackend = FbxImportBackend.Assimp,
+            FbxBackend = fbxBackend,
             ScaleConversion = metadata.GlobalScale,
             ZUp = false,
             // Unity-authored assets face +Z while XRENGINE faces -Z. Assimp applies this
@@ -305,7 +325,9 @@ internal static partial class SerializedSceneImporter
     private static SceneNode CollapseAssimpSyntheticRoot(
         SceneNode root,
         string modelPath,
-        bool preserveHierarchy)
+        SerializedModelImporterDocument metadata,
+        ModelImportOptions options,
+        ImportState state)
     {
         if (root.Transform.Children.Count != 1 ||
             root.Transform.Children[0].SceneNode is not SceneNode syntheticRoot ||
@@ -318,13 +340,36 @@ internal static partial class SerializedSceneImporter
         if (syntheticRoot.Transform is not Transform transform ||
             !IsIdentityTransform(transform))
         {
-            throw new SourceVisualImportException(
-                $"Assimp produced a non-identity synthetic RootNode while importing '{modelPath}'. " +
-                "The Unity generation-2 hierarchy cannot be flattened without applying an additional coordinate conversion.");
+            string evidence =
+                $"RootTransformType={syntheticRoot.Transform.GetType().Name}; " +
+                $"RootLocalMatrix={syntheticRoot.Transform.LocalMatrix}; " +
+                $"WrapperLocalMatrix={root.Transform.LocalMatrix}; " +
+                $"RootChildren={syntheticRoot.Transform.Children.Count}; " +
+                $"FbxBackend={options.FbxBackend}; GlobalScale={metadata.GlobalScale}; " +
+                $"UseFileScale={metadata.UseFileScale}; UseFileUnits={metadata.UseFileUnits}; " +
+                $"SortHierarchyByName={metadata.SortHierarchyByName}; BakeAxisConversion={metadata.BakeAxisConversion}; " +
+                $"PreserveHierarchy={metadata.PreserveHierarchy}; PivotPolicy={options.FbxPivotPolicy}; " +
+                $"MakeLeftHanded={options.MakeLeftHanded}; FlipWindingOrder={options.FlipWindingOrder}.";
+            string normalizationReason = "A non-identity root with a sole authored child requires separate bounds normalization.";
+            if ((!metadata.PreserveHierarchy && syntheticRoot.Transform.Children.Count == 1) ||
+                !TryRedistributeSyntheticRootBasis(root, syntheticRoot, out normalizationReason))
+            {
+                throw new SourceVisualImportException(
+                    $"Cannot normalize the synthetic model root for '{Path.GetFileName(modelPath)}'. {evidence} " +
+                    normalizationReason);
+            }
+
+            Debug.Meshes($"[UnityPrefab] Redistributed synthetic root basis for {Path.GetFileName(modelPath)}. {evidence}");
+            state.Context.AddDiagnostic(
+                "UNITYMODEL0007",
+                SourceImportDiagnosticSeverity.Info,
+                SourceImportDiagnosticCategory.ModelIdentity,
+                $"Redistributed the synthetic root basis into its direct children. {evidence}",
+                modelPath);
         }
 
         SceneNode importedRoot = syntheticRoot;
-        if (!preserveHierarchy &&
+        if (!metadata.PreserveHierarchy &&
             syntheticRoot.Components.Count == 0 &&
             syntheticRoot.Transform.Children.Count == 1 &&
             syntheticRoot.Transform.Children[0].SceneNode is SceneNode singleAuthoredRoot)

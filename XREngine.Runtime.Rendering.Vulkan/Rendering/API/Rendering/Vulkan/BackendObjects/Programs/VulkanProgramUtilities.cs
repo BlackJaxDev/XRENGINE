@@ -9,6 +9,20 @@ namespace XREngine.Rendering.Vulkan;
 
 internal static class VulkanProgramUtilities
 {
+    private static readonly EProgramStageMask[] StageOrderValues =
+    [
+        EProgramStageMask.TaskShaderBit,
+        EProgramStageMask.MeshShaderBit,
+        EProgramStageMask.VertexShaderBit,
+        EProgramStageMask.TessControlShaderBit,
+        EProgramStageMask.TessEvaluationShaderBit,
+        EProgramStageMask.GeometryShaderBit,
+        EProgramStageMask.FragmentShaderBit,
+        EProgramStageMask.ComputeShaderBit,
+    ];
+
+    internal static int StageOrderCount => StageOrderValues.Length;
+    internal static EProgramStageMask StageAt(int index) => StageOrderValues[index];
     internal const EProgramStageMask GraphicsStageMask =
         EProgramStageMask.VertexShaderBit |
         EProgramStageMask.TessControlShaderBit |
@@ -209,17 +223,7 @@ internal static class VulkanProgramUtilities
             : binding;
     }
 
-    internal static ReadOnlySpan<EProgramStageMask> StageOrder =>
-    [
-        EProgramStageMask.TaskShaderBit,
-        EProgramStageMask.MeshShaderBit,
-        EProgramStageMask.VertexShaderBit,
-        EProgramStageMask.TessControlShaderBit,
-        EProgramStageMask.TessEvaluationShaderBit,
-        EProgramStageMask.GeometryShaderBit,
-        EProgramStageMask.FragmentShaderBit,
-        EProgramStageMask.ComputeShaderBit,
-    ];
+    internal static ReadOnlySpan<EProgramStageMask> StageOrder => StageOrderValues;
 
     internal static IEnumerable<EProgramStageMask> EnumerateStages(EProgramStageMask mask)
     {

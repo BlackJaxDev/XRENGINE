@@ -57,6 +57,15 @@ internal sealed class OpenGLPhysicsChainComputeBackend : IPhysicsChainComputeBac
         uint groupsY,
         uint groupsZ,
         PhysicsChainComputePassKind passKind)
+        => TryDispatchDirect(program, groupsX, groupsY, groupsZ, passKind, null);
+
+    public PhysicsChainComputeEnqueueStatus TryDispatchDirect(
+        XRRenderProgram program,
+        uint groupsX,
+        uint groupsY,
+        uint groupsZ,
+        PhysicsChainComputePassKind passKind,
+        IRenderResourceLeaseOwner? authoringLease)
         => (PhysicsChainComputeEnqueueStatus)_renderer.TryDispatchCompute(program, groupsX, groupsY, groupsZ);
 
     public PhysicsChainComputeEnqueueStatus TryCopyBuffer(in PhysicsChainComputeBufferCopy copy)

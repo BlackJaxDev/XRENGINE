@@ -28,14 +28,7 @@ public static class RuntimeTimingServices
     private static IRuntimeTimingServices _current = Default;
     private static long _generation;
 
-    public static IRuntimeTimingServices Current
-    {
-        get
-        {
-            lock (Sync)
-                return _current;
-        }
-    }
+    public static IRuntimeTimingServices Current => Volatile.Read(ref _current);
 
     public static IDisposable Install(IRuntimeTimingServices services)
     {
@@ -44,7 +37,7 @@ public static class RuntimeTimingServices
         lock (Sync)
         {
             long generation = ++_generation;
-            _current = services;
+            Volatile.Write(ref _current, services);
             return new InstallationLease(generation);
         }
     }
@@ -64,7 +57,7 @@ public static class RuntimeTimingServices
                 if (RuntimeTimingServices._generation != installedGeneration)
                     return;
 
-                _current = Default;
+                Volatile.Write(ref _current, Default);
                 ++RuntimeTimingServices._generation;
             }
         }

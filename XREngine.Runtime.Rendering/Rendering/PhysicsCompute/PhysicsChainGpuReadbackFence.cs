@@ -8,21 +8,37 @@ namespace XREngine.Rendering.Compute;
 internal sealed class PhysicsChainGpuReadbackFence : IPhysicsChainReadbackFence, IDisposable
 {
     private XRGpuFence? _fence;
+    private bool _ownsFence;
+    private bool _rejected;
 
-    public void Reset(XRGpuFence fence)
-        => _fence = fence;
+    public void Reset(XRGpuFence fence, bool ownsFence = true)
+    {
+        _fence = fence;
+        _ownsFence = ownsFence;
+        _rejected = false;
+    }
+
+    internal void Reject() => _rejected = true;
 
     public PhysicsChainReadbackFenceStatus Poll()
-        => _fence?.Poll() switch
+    {
+        if (_rejected || _fence is null || _fence.IsDisposed || _fence.SubmissionStatus == EGpuFenceSubmissionStatus.Failed)
+            return PhysicsChainReadbackFenceStatus.Failed;
+        if (_fence.SubmissionStatus == EGpuFenceSubmissionStatus.AwaitingSubmission)
+            return PhysicsChainReadbackFenceStatus.Pending;
+        return _fence.Poll() switch
         {
             EGpuFenceStatus.Pending => PhysicsChainReadbackFenceStatus.Pending,
-            EGpuFenceStatus.Signaled or null => PhysicsChainReadbackFenceStatus.Signaled,
+            EGpuFenceStatus.Signaled => PhysicsChainReadbackFenceStatus.Signaled,
             _ => PhysicsChainReadbackFenceStatus.Failed,
         };
+    }
 
     public void Dispose()
     {
-        _fence?.Dispose();
+        if (_ownsFence)
+            _fence?.Dispose();
         _fence = null;
+        _ownsFence = false;
     }
 }

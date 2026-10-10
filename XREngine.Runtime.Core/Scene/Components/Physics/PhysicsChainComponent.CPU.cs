@@ -82,8 +82,18 @@ public partial class PhysicsChainComponent
 
     internal void AttachCpuBackend(PhysicsChainWorld world, PhysicsChainCpuBackend backend)
     {
+        if (!ReferenceEquals(_runtimeOwnerWorld, world))
+            throw new InvalidOperationException("A physics chain CPU backend needs its world registration.");
+        if (_cpuBackendWorld is not null && !ReferenceEquals(_cpuBackendWorld, world))
+            throw new InvalidOperationException("A physics chain CPU backend is owned by another world.");
         _cpuBackendWorld = world;
         _cpuBackend = backend;
+    }
+
+    internal void DetachCpuBackend(PhysicsChainWorld world)
+    {
+        if (ReferenceEquals(_cpuBackendWorld, world))
+            DetachCpuBackend();
     }
 
     internal void DetachCpuBackend()
@@ -187,19 +197,27 @@ public partial class PhysicsChainComponent
         if (_cpuBackendHandle.IsValid)
             _cpuBackend.Remove(_cpuBackendHandle);
 
-        _cpuTreeInputs = new PhysicsChainCpuTreeInput[treeCount];
-        _cpuParticleInputs = new PhysicsChainCpuParticleInput[particleCount];
-        _cpuInitialStates = new PhysicsChainCpuState[particleCount];
-        _cpuPublishedOutputs = new PhysicsChainCpuOutput[particleCount];
+        if (_cpuTreeInputs.Length != treeCount)
+            _cpuTreeInputs = new PhysicsChainCpuTreeInput[treeCount];
+        if (_cpuParticleInputs.Length != particleCount)
+            _cpuParticleInputs = new PhysicsChainCpuParticleInput[particleCount];
+        if (_cpuInitialStates.Length != particleCount)
+            _cpuInitialStates = new PhysicsChainCpuState[particleCount];
+        if (_cpuPublishedOutputs.Length != particleCount)
+            _cpuPublishedOutputs = new PhysicsChainCpuOutput[particleCount];
         _cpuSharedColliderSet = null;
         if (_cpuBackendWorld is not null && _colliderSnapshotsForJob is not null)
             _cpuBackendWorld.TryGetOrCreateCpuSharedColliderSet(
                 Colliders ?? _effectiveColliders,
                 _colliderSnapshotsForJob.AsSpan(0, colliderCount),
                 out _cpuSharedColliderSet);
-        _cpuColliders = _cpuSharedColliderSet is null
-            ? new PhysicsChainCpuCollider[colliderCount]
-            : [];
+        if (_cpuSharedColliderSet is null)
+        {
+            if (_cpuColliders.Length != colliderCount)
+                _cpuColliders = new PhysicsChainCpuCollider[colliderCount];
+        }
+        else
+            _cpuColliders = [];
         FillCpuDynamicInputs();
         FillCpuInitialStates();
         PhysicsChainCpuInput input = new(

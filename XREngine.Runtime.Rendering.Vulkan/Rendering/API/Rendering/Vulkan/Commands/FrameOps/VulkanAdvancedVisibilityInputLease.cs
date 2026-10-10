@@ -57,28 +57,54 @@ internal sealed class VulkanAdvancedVisibilityInputLease
         in VulkanAdvancedVisibilityStageRequest request,
         out string failureReason)
     {
-        if (!IsAvailable)
+        if (Interlocked.CompareExchange(ref _referenceCount, -1, 0) != 0)
         {
             failureReason =
                 "The advanced visibility authoring lease is already active.";
             return false;
         }
-        if (!Input.TryCaptureAtAuthoring(in request, out failureReason))
-            return false;
-
-        Volatile.Write(ref _referenceCount, 1);
-        return true;
+        bool captured = false;
+        try
+        {
+            captured = Input.TryCaptureAtAuthoring(in request, out failureReason);
+            if (!captured)
+                Input.Reset();
+            return captured;
+        }
+        catch
+        {
+            Input.Reset();
+            throw;
+        }
+        finally
+        {
+            Volatile.Write(ref _referenceCount, captured ? 1 : 0);
+        }
     }
 
     internal void Release()
     {
-        int remaining = Interlocked.Decrement(ref _referenceCount);
-        if (remaining >= 0)
+        while (true)
+        {
+            int observed = Volatile.Read(ref _referenceCount);
+            if (observed <= 0)
+                throw new InvalidOperationException(
+                    "An advanced visibility authoring lease was released more than once.");
+            int next = observed == 1 ? -1 : observed - 1;
+            if (Interlocked.CompareExchange(ref _referenceCount, next, observed) != observed)
+                continue;
+            if (next != -1)
+                return;
+            try
+            {
+                Input.Reset();
+            }
+            finally
+            {
+                Volatile.Write(ref _referenceCount, 0);
+            }
             return;
-
-        Interlocked.Exchange(ref _referenceCount, 0);
-        throw new InvalidOperationException(
-            "An advanced visibility authoring lease was released more than once.");
+        }
     }
 
     internal static void ReleaseOperations(ReadOnlySpan<FrameOp> operations)

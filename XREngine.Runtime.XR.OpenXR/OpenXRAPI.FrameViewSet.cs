@@ -159,6 +159,7 @@ public unsafe partial class OpenXRAPI
                 PreviousViewProjectionMatrixUnjittered: previousUnjittered)
             {
                 SourceCameraIdentity = eyeCamera?.RenderIdentity ?? 0UL,
+                CullingLayerMask = eyeCamera?.CullingLayerMask ?? uint.MaxValue,
             });
             _openXrPendingViewProjection[i] = viewProjection;
             _openXrPendingViewProjectionUnjittered[i] = viewProjection;

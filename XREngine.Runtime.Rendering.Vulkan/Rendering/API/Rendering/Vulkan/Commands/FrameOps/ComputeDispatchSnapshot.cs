@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Collections.Concurrent;
 using System.Threading;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Materials;
@@ -7,6 +8,8 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed class ComputeDispatchSnapshot
 {
+    private static readonly ConcurrentDictionary<string, string> VertexBaseUniformNames = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, string> VertexSuffixedUniformNames = new(StringComparer.Ordinal);
     private SpinLock _liveFrameSourceResourceSignatureLock;
     private ulong _liveFrameSourceResourceSignatureFrameId;
     private int _liveFrameSourceResourceSignaturePipelineIdentity;
@@ -422,7 +425,15 @@ internal sealed class ComputeDispatchSnapshot
     }
 
     internal bool HasRuntimeUniform(string name)
-        => Uniforms.ContainsKey(name);
+    {
+        if (Uniforms.ContainsKey(name))
+            return true;
+        return name.EndsWith("_VTX", StringComparison.Ordinal)
+            ? Uniforms.ContainsKey(VertexBaseUniformNames.GetOrAdd(name,
+                static value => value[..^4]))
+            : Uniforms.ContainsKey(VertexSuffixedUniformNames.GetOrAdd(name,
+                static value => string.Concat(value, "_VTX")));
+    }
 
     internal bool IsMutableLegacyUniform(string name)
     {

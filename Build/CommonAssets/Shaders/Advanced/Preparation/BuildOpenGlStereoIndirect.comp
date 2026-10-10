@@ -8,11 +8,13 @@ layout(push_constant, std430) uniform XRAdvancedStereoPreparationPush
     uint reserved;
 } XR_ADV_StereoPush;
 #define XR_ADV_VISIBILITY_COUNTER_INDEX 0u
+#define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
 #include "../Visibility/VisibilityInterface.glslinc"
 
 layout(std430, binding = 75) writeonly buffer StereoArguments { uint words[]; } XR_ADV_StereoArguments;
 layout(std430, binding = 76) buffer StereoRangeCounts { uint counts[]; } XR_ADV_StereoRangeCounts;
 layout(std430, binding = 77) writeonly buffer StereoViewMasks { uint masks[]; } XR_ADV_StereoViewMasks;
+layout(std430, binding = 81) buffer StereoGroupCounts { uint counts[]; } XR_ADV_StereoGroupCounts;
 layout(local_size_x = 256) in;
 
 void main()
@@ -32,19 +34,44 @@ void main()
     XR_ADV_StereoViewMasks.masks[payloadIndex] = viewMask;
     if (viewMask == 0u || XR_ADV_VisibilityProducers.records[payloadIndex] != XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED)
         return;
-    uint range = XR_ADV_VisibilityRangeIndices.records[payloadIndex];
-    uint rangeCount = uint(XR_ADV_VisibilityRangeOffsets.records.length());
-    if (range >= rangeCount) return;
-    uint begin = XR_ADV_VisibilityRangeOffsets.records[range];
-    uint end = range + 1u < rangeCount ? XR_ADV_VisibilityRangeOffsets.records[range + 1u] : XR_ADV_StereoPush.payloadCapacity;
-    uint local = atomicAdd(XR_ADV_StereoRangeCounts.counts[range], 1u);
-    // CPU admission proves that each payload belongs to exactly one range.
-    if (begin + local >= end) return;
     XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[payloadIndex];
-    uint argument = (begin + local) * 5u;
-    XR_ADV_StereoArguments.words[argument] = payload.indexCount;
-    XR_ADV_StereoArguments.words[argument + 1u] = max(payload.instanceCount, 1u);
-    XR_ADV_StereoArguments.words[argument + 2u] = payload.firstIndex;
-    XR_ADV_StereoArguments.words[argument + 3u] = payload.vertexOffset;
-    XR_ADV_StereoArguments.words[argument + 4u] = payloadIndex;
+    uint groupPlusOne = payload.instanceGroupIndexPlusOne;
+    uint groupCount = uint(XR_ADV_VisibilityInstanceGroups.records.length());
+    if (groupPlusOne == 0u || groupPlusOne > groupCount)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return;
+    }
+    uint groupIndex = groupPlusOne - 1u;
+    XRAdvancedIndexedInstanceGroup group = XR_ADV_VisibilityInstanceGroups.records[groupIndex];
+    uint range = XR_ADV_VisibilityRangeIndices.records[payloadIndex];
+    uint memberCapacity = XR_ADV_StereoPush.late != 0u
+        ? uint(XR_ADV_VisibilityLateMeshPayloads.records.length())
+        : uint(XR_ADV_VisibilityMeshPayloads.records.length());
+    if (group.rangeIndex != range || groupIndex >= uint(XR_ADV_StereoGroupCounts.counts.length()) ||
+        group.firstMember > XR_ADV_StereoPush.payloadCapacity ||
+        group.memberCapacity > XR_ADV_StereoPush.payloadCapacity - group.firstMember ||
+        group.firstMember > memberCapacity ||
+        group.memberCapacity > memberCapacity - group.firstMember)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return;
+    }
+    uint member = atomicAdd(XR_ADV_StereoGroupCounts.counts[groupIndex], 0u);
+    while (member < group.memberCapacity)
+    {
+        uint prior = atomicCompSwap(XR_ADV_StereoGroupCounts.counts[groupIndex], member, member + 1u);
+        if (prior == member)
+            break;
+        member = prior;
+    }
+    if (member >= group.memberCapacity)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+        return;
+    }
+    if (XR_ADV_StereoPush.late != 0u)
+        XR_ADV_VisibilityLateMeshPayloads.records[group.firstMember + member] = payloadIndex;
+    else
+        XR_ADV_VisibilityMeshPayloads.records[group.firstMember + member] = payloadIndex;
 }

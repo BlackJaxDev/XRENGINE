@@ -211,12 +211,16 @@ public sealed class AdvancedDeformedVertexArena
             _historyProduced[slot] = 1;
     }
 
-    /// <summary>Invalidates history for an acquired owner whose job will not execute.</summary>
-    public void InvalidateOwnerHistory(AdvancedGpuHandle owner)
+    /// <summary>Invalidates owner history. An explicit reset also clears pose continuity.</summary>
+    public void InvalidateOwnerHistory(AdvancedGpuHandle owner, bool reset = false)
     {
         int slot = FindOwner(owner);
         if (slot >= 0)
+        {
             _historyProduced[slot] = 0;
+            if (reset)
+                _historyReset[slot] = 1;
+        }
     }
 
     /// <summary>

@@ -19,8 +19,8 @@ public struct AdvancedVisibilityGpuCounters
     public uint DecodeOutOfBounds;
     public uint DepthPyramidBuilds;
     public uint UnsupportedDisplacement;
-    public uint Reserved0;
-    public uint Reserved1;
+    public uint PhysicsChainBoundsRouteRejected;
+    public uint PhysicsChainBoundsNumericRejected;
     public uint Reserved2;
     public uint Reserved3;
     public uint Reserved4;

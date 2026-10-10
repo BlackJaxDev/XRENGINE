@@ -65,14 +65,16 @@ internal sealed class EditorSerializedPrefabAssetLoadingServices(
                 $"Target asset '{targetAsset.GetType().FullName}' is not a prefab source.",
                 nameof(targetAsset)),
         };
-        ModelImportOptions options = importOptions as ModelImportOptions ?? new ModelImportOptions();
+        ModelImportOptions options = importOptions as ModelImportOptions
+            ?? new ModelImportOptions { FbxBackend = FbxImportBackend.Assimp };
         string? destinationPath = context.DestinationAssetPath ?? prefab.FilePath;
         SerializedPrefabConversionResult conversion = SerializedSceneImporter.ImportPrefabWithManifest(
             filePath,
             destinationPath,
             options.SourceProjectRootOverride,
             context.CancellationToken,
-            progress: (progress, _) => options.ProgressCallback?.Invoke(progress));
+            progress: (progress, _) => options.ProgressCallback?.Invoke(progress),
+            fbxBackend: options.FbxBackend);
         context.CancellationToken.ThrowIfCancellationRequested();
 
         if (conversion.RootNode is null)

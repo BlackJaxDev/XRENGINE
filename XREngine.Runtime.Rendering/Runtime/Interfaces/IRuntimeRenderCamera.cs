@@ -60,6 +60,19 @@ public interface IRuntimeRenderCamera
     /// </summary>
     bool RendersLayer(int layer);
 
+    /// <summary>Gets the layer mask captured for GPU visibility.</summary>
+    uint CullingLayerMask
+    {
+        get
+        {
+            uint mask = 0u;
+            for (int layer = 0; layer < 32; ++layer)
+                if (RendersLayer(layer))
+                    mask |= 1u << layer;
+            return mask;
+        }
+    }
+
     /// <summary>
     /// Computes the signed distance from the render near plane to a world-space point.
     /// </summary>

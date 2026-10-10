@@ -1,6 +1,8 @@
 // SkipUpdateParticles.comp
 #version 450
 
+#include "Compute/PhysicsChain/PhysicsChainAffineInput.glslinc"
+
 layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 // --- Struct Definitions ---
@@ -71,7 +73,7 @@ layout(std430, binding = 1) readonly buffer ParticleStaticBuffer
 
 layout(std430, binding = 3) buffer TransformMatricesBuffer 
 {
-    mat4 TransformMatrices[];
+    PhysicsChainAffineInput TransformMatrices[];
 };
 
 layout(std430, binding = 5) readonly buffer PerTreeParamsBuffer
@@ -100,7 +102,7 @@ void main()
     {
         ParticleStatic particleStatic = ParticleStatics[pid];
         ParticleState p = Particles[pid];
-        vec3 transformPosition = TransformMatrices[pid][3].xyz;
+        vec3 transformPosition = physicsChainAffineTranslation(TransformMatrices[pid]);
         int parentIndex = particleStatic.ParentIndex;
 
         if (parentIndex < particleStart || parentIndex >= pid)
@@ -117,7 +119,7 @@ void main()
             float stiffness = mix(1.0, particleStatic.Stiffness, tp.Weight);
             if (stiffness > 0.0)
             {
-                mat4 parentMatrix = TransformMatrices[parentIndex];
+                mat4 parentMatrix = decodePhysicsChainAffineInput(TransformMatrices[parentIndex]);
                 parentMatrix[3].xyz = parent.Position;
                 vec3 restPosition = (parentMatrix * vec4(particleStatic.TransformLocalPosition, 1.0)).xyz;
                 vec3 displacement = restPosition - p.Position;

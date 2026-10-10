@@ -33,6 +33,7 @@ public static partial class EditorUnitTests
     {
         PreferNativeThenAssimp,
         AssimpOnly,
+        NativeOnly,
     }
 
     [Flags]

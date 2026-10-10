@@ -33,6 +33,8 @@ public sealed class PhysicsChainSlotArena<T>
     public int MaximumCapacity { get; }
     public int LiveCount { get; private set; }
     public int GrowthCount { get; private set; }
+    /// <summary>Counts allocations rejected by the configured capacity.</summary>
+    public long CapacityFailureCount { get; private set; }
     public float FragmentationRebuildThreshold { get; set; } = 0.5f;
     public bool ShouldRecommendRebuild
         => _nextUnusedSlot > 0
@@ -52,6 +54,7 @@ public sealed class PhysicsChainSlotArena<T>
         {
             if (_nextUnusedSlot == MaximumCapacity)
             {
+                ++CapacityFailureCount;
                 handle = PhysicsChainArenaHandle.Invalid;
                 return false;
             }
@@ -133,7 +136,7 @@ public sealed class PhysicsChainSlotArena<T>
             LiveCount,
             freeSlotCount,
             GrowthCount,
-            fragmentation);
+            fragmentation) { CapacityFailureCount = CapacityFailureCount };
     }
 
     private void Grow()

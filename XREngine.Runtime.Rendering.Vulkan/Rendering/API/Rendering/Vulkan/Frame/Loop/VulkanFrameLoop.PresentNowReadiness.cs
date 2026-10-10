@@ -201,7 +201,8 @@ internal sealed partial class VulkanFrameLoop
                 acceptedPlan.CanonicalPublicationPins);
             if (capacityExceededCount > 0)
             {
-                _meshOperationRequestScratch.AsSpan(0, requestCount).Clear();
+                VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                    _meshOperationRequestScratch.AsSpan(0, requestCount));
                 string detail = capacityFailure.HasFailure
                     ? capacityFailure.FormatDiagnostic(capacityExceededCount)
                     : $"FramePlanCapacityExceeded lane=MainScene " +
@@ -226,55 +227,63 @@ internal sealed partial class VulkanFrameLoop
                 "The bounded request queue rejected an accepted foreground cohort.");
         }
 
-        if (!openXrPublication.HasViewSet)
-            requestCount = RemoveOpenXrMeshRequests(requestCount);
-
-        attempt.PresentNowMeshRequestCount = requestCount;
-        acceptedPlan.CaptureRequiredTextureReferences(
-            _meshOperationRequestScratch.AsSpan(0, requestCount));
-        _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
-            acceptedPlan.RequiredTextureUploads,
-            acceptedPlan.RequiredTextures,
-            acceptedPlan.RequiredTextureGenerations,
-            requireExactDescriptorPublication: false);
-        if (!CompleteAcceptedPresentNowTextureReadiness(
-                acceptedPlan,
-                ref watchdog,
-                "DesktopScene -> visible material snapshot -> texture generation",
-                out retry))
+        try
         {
-            acceptedPlan.ResetAuthoredOperations();
-            return false;
-        }
+            if (!openXrPublication.HasViewSet)
+                requestCount = RemoveOpenXrMeshRequests(requestCount);
 
-        if (!MaterializeQueuedMeshRenderRequests(
-                requestCount,
-                allowPreparedCohort: true,
-                out string meshFailure,
-                out bool coldSliceDeferred,
-                ref watchdog,
-                sourceFrameId: attempt.FrameNumber,
-                allowFrameOwnedAuthoringOperations: true))
-        {
-            if (coldSliceDeferred)
-            {
-                CapturePresentNowAuthoredOperations(
+            attempt.PresentNowMeshRequestCount = requestCount;
+            acceptedPlan.CaptureRequiredTextureReferences(
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
+            _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+                acceptedPlan.RequiredTextureUploads,
+                acceptedPlan.RequiredTextures,
+                acceptedPlan.RequiredTextureGenerations,
+                requireExactDescriptorPublication: false);
+            if (!CompleteAcceptedPresentNowTextureReadiness(
                     acceptedPlan,
-                    in openXrPublication);
+                    ref watchdog,
+                    "DesktopScene -> visible material snapshot -> texture generation",
+                    out retry))
+            {
                 acceptedPlan.ResetAuthoredOperations();
-                retry = watchdog.CreateRetry(
-                    EVulkanPresentNowReadinessStage.MeshMaterialization,
-                    "visible-mesh-cold-admission",
-                    "DesktopScene -> visible meshes -> program/buffer/descriptor",
-                    meshFailure);
                 return false;
             }
 
-            throw watchdog.CreateFailure(
-                EVulkanPresentNowReadinessStage.MeshMaterialization,
-                "visible-mesh-generation",
-                "DesktopScene -> visible meshes -> program/buffer/descriptor",
-                meshFailure);
+            if (!MaterializeQueuedMeshRenderRequests(
+                    requestCount,
+                    allowPreparedCohort: true,
+                    out string meshFailure,
+                    out bool coldSliceDeferred,
+                    ref watchdog,
+                    sourceFrameId: attempt.FrameNumber,
+                    allowFrameOwnedAuthoringOperations: true))
+            {
+                if (coldSliceDeferred)
+                {
+                    CapturePresentNowAuthoredOperations(
+                        acceptedPlan,
+                        in openXrPublication);
+                    acceptedPlan.ResetAuthoredOperations();
+                    retry = watchdog.CreateRetry(
+                        EVulkanPresentNowReadinessStage.MeshMaterialization,
+                        "visible-mesh-cold-admission",
+                        "DesktopScene -> visible meshes -> program/buffer/descriptor",
+                        meshFailure);
+                    return false;
+                }
+
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.MeshMaterialization,
+                    "visible-mesh-generation",
+                    "DesktopScene -> visible meshes -> program/buffer/descriptor",
+                    meshFailure);
+            }
+        }
+        finally
+        {
+            VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
         }
 
         CapturePresentNowAuthoredOperations(acceptedPlan, in openXrPublication);
@@ -757,7 +766,11 @@ internal sealed partial class VulkanFrameLoop
             VulkanMeshRenderRequest request = _meshOperationRequestScratch[index];
             if (request.Context.ContextKind is EVulkanFrameOpContextKind.OpenXrEye or
                 EVulkanFrameOpContextKind.OpenXrMirror)
+            {
+                VulkanMeshRenderRequest.ReleaseAuthoringLease(
+                    ref _meshOperationRequestScratch[index]);
                 continue;
+            }
             _meshOperationRequestScratch[retainedCount++] = request;
         }
 

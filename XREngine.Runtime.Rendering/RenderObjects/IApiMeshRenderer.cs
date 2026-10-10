@@ -18,4 +18,18 @@ public interface IApiMeshRenderer
         EMeshBillboardMode billboardMode,
         bool forceNoStereo,
         in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot);
+
+    /// <summary>Submits one indexed draw from retained GPU-authored arguments.</summary>
+    bool RenderIndexedIndirect(
+        Matrix4x4 modelMatrix,
+        Matrix4x4 previousModelMatrix,
+        XRMaterial? materialOverride,
+        RenderingParameters? renderOptionsOverride,
+        XRDataBuffer arguments,
+        nuint byteOffset,
+        EPrimitiveType topology,
+        EMeshBillboardMode billboardMode,
+        bool forceNoStereo,
+        IRenderResourceLeaseOwner? authoringLease,
+        out string failureReason);
 }

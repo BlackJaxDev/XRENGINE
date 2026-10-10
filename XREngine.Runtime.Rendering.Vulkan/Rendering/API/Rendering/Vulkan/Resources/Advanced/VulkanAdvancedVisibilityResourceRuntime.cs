@@ -244,6 +244,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                     current.PayloadCapacity != publication.DrawCount ||
                     current.ViewCount != viewCount ||
                     current.RangeCapacity != Math.Max(1u, indirect.RangeCount) ||
+                    current.BoundsPageToken != input.BoundsPage.Token ||
                     !current.Geometry.MatchesSources(in geometry))
                 {
                     failure = EVulkanAdvancedVisibilityResourceFailure.InvalidPreparation;
@@ -272,12 +273,16 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             uint totalIndirectBytes;
             uint totalMeshArgumentBytes;
             uint totalCounterBytes;
+            uint indexedGroupBytes;
+            uint totalIndexedGroupCountBytes;
+            uint boundsRouteBytes;
             uint totalPayloadCapacity;
             uint persistentStateBytes;
             try
             {
                 payloadBytes = checked(bindingPayloadCapacity * (uint)Unsafe.SizeOf<AdvancedVisibilityPayload>());
                 candidateBytes = checked(bindingPayloadCapacity * (uint)Unsafe.SizeOf<AdvancedVisibilityCandidate>());
+                boundsRouteBytes = checked(bindingPayloadCapacity * (uint)Unsafe.SizeOf<AdvancedGpuBoundsPatchRoute>());
                 producerBytes = checked(bindingPayloadCapacity * sizeof(uint));
                 deformationOverlayBytes = checked(
                     (hasLogicalDraws ? (uint)deformationOverlay.Length : 1u) *
@@ -292,6 +297,10 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 totalIndirectBytes = checked(perViewIndirectBytes * viewCount);
                 totalMeshArgumentBytes = checked(perViewMeshArgumentBytes * viewCount);
                 totalCounterBytes = checked(CounterByteLength * viewCount);
+                indexedGroupBytes = checked(Math.Max(1u, (uint)input.IndexedInstanceGroups.Length) *
+                    (uint)Unsafe.SizeOf<AdvancedIndexedInstanceGroup>());
+                totalIndexedGroupCountBytes = checked(Math.Max(1u,
+                    (uint)input.IndexedInstanceGroups.Length * viewCount) * sizeof(uint));
                 persistentStateBytes = checked(
                     publication.DrawCount * viewCount *
                     PersistentStateRecordByteLength);
@@ -313,6 +322,9 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             // This is the capacity proof used by the set-1 frame-slot lane.
             ulong requiredBytes = AlignedStorageBytes(payloadBytes) +
                 AlignedStorageBytes(candidateBytes) +
+                AlignedStorageBytes(boundsRouteBytes) +
+                AlignedStorageBytes(indexedGroupBytes) +
+                AlignedStorageBytes(totalIndexedGroupCountBytes) * 2UL +
                 AlignedStorageBytes(producerBytes) +
                 AlignedStorageBytes(deformationOverlayBytes) +
                 AlignedStorageBytes(perViewIndexBytes) +
@@ -368,6 +380,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 return false;
             }
             if (!arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, candidateBytes, StorageAlignment, out VulkanFrameDataSlice candidates) ||
+                !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, boundsRouteBytes, StorageAlignment, out VulkanFrameDataSlice boundsRoutes) ||
                 !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalIndexBytes, StorageAlignment, out VulkanFrameDataSlice deferredIndices) ||
                 !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalIndexBytes, StorageAlignment, out VulkanFrameDataSlice visibleIndices) ||
                 !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, producerBytes, StorageAlignment, out VulkanFrameDataSlice producers) ||
@@ -377,11 +390,14 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalRangeBytes, StorageAlignment, out VulkanFrameDataSlice rangeCounts) ||
                 !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalMeshArgumentBytes, StorageAlignment, out VulkanFrameDataSlice meshArguments) ||
                 !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalIndexBytes, StorageAlignment, out VulkanFrameDataSlice meshPayloads) ||
+                !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, indexedGroupBytes, StorageAlignment, out VulkanFrameDataSlice indexedInstanceGroups) ||
+                !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalIndexedGroupCountBytes, StorageAlignment, out VulkanFrameDataSlice earlyIndexedGroupCounts) ||
                 !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalIndexBytes, StorageAlignment, out VulkanFrameDataSlice lateVisibleIndices) ||
                 !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalRangeBytes, StorageAlignment, out VulkanFrameDataSlice lateRangeCounts) ||
                 !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalIndirectBytes, StorageAlignment, out VulkanFrameDataSlice lateIndirectArguments) ||
                 !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalMeshArgumentBytes, StorageAlignment, out VulkanFrameDataSlice lateMeshArguments) ||
-                !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalIndexBytes, StorageAlignment, out VulkanFrameDataSlice lateMeshPayloads))
+                !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalIndexBytes, StorageAlignment, out VulkanFrameDataSlice lateMeshPayloads) ||
+                !arena.TryAllocate(frameSlot, EVulkanFrameDataLane.AdvancedVisibilityStorage, totalIndexedGroupCountBytes, StorageAlignment, out VulkanFrameDataSlice lateIndexedGroupCounts))
             {
                 if (!TryRollbackFrameStorageTransaction(
                         arena, frameSlot, rollbackCursor, out string rollbackReason))
@@ -397,9 +413,15 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             if (!(hasLogicalDraws
                     ? TryWritePayloads(arena, payloads, sourcePayloads)
                     : TryClear(arena, payloads)) ||
+                !(hasLogicalDraws && !input.IndexedInstanceGroups.IsEmpty
+                    ? TryWritePayloads(arena, indexedInstanceGroups, input.IndexedInstanceGroups)
+                    : TryClear(arena, indexedInstanceGroups)) ||
                 !(hasLogicalDraws
                     ? TryWritePayloads(arena, candidates, input.Candidates)
                     : TryClear(arena, candidates)) ||
+                !(hasLogicalDraws
+                    ? TryWritePayloads(arena, boundsRoutes, input.BoundsRoutes)
+                    : TryClear(arena, boundsRoutes)) ||
                 !(hasLogicalDraws
                     ? TryWritePayloads(arena, producers, input.Producers)
                     : TryClear(arena, producers)) ||
@@ -418,10 +440,12 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 !TryInitializeCounters(arena, counters, in lookupSegments, viewCount) ||
                 !TryClear(arena, arguments) ||
                 !TryClear(arena, meshArguments) || !TryClear(arena, meshPayloads) ||
+                !TryClear(arena, earlyIndexedGroupCounts) ||
                 !TryClear(arena, lateVisibleIndices) ||
                 !TryClear(arena, lateRangeCounts) ||
                 !TryClear(arena, lateIndirectArguments) || !TryClear(arena, lateMeshArguments) ||
-                !TryClear(arena, lateMeshPayloads))
+                !TryClear(arena, lateMeshPayloads) ||
+                !TryClear(arena, lateIndexedGroupCounts))
             {
                 if (!TryRollbackFrameStorageTransaction(
                         arena, frameSlot, rollbackCursor, out string rollbackReason))
@@ -449,6 +473,31 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             }
             VulkanAdvancedVisibilityGeometrySlices realizedGeometry =
                 geometry with { DeformationOverlay = overlay };
+            VulkanNativeBufferRange boundsAtlas = default;
+            VulkanNativeBufferRange boundsMetadata = default;
+            if (input.BoundsPage.Token.IsValid)
+            {
+                reason = "The physics-chain output page changed before Vulkan preparation.";
+                if (!XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.Instance.TryValidateOutputPage(
+                        input.BoundsPage.Token, out _) ||
+                    !_resources.TryCaptureNativeBufferRange(input.BoundsPage.BoundsAtlasBuffer,
+                        0u, input.BoundsPage.BoundsAtlasBuffer.Length,
+                        BufferUsageFlags.StorageBufferBit, out boundsAtlas, out reason) ||
+                    !_resources.TryCaptureNativeBufferRange(input.BoundsPage.SlotMetadataBuffer,
+                        0u, input.BoundsPage.SlotMetadataBuffer.Length,
+                        BufferUsageFlags.StorageBufferBit, out boundsMetadata, out reason))
+                {
+                    if (!TryRollbackFrameStorageTransaction(arena, frameSlot,
+                        rollbackCursor, out string rollbackReason))
+                    {
+                        failure = EVulkanAdvancedVisibilityResourceFailure.TransactionIntegrityFailure;
+                        reason = rollbackReason;
+                        return false;
+                    }
+                    failure = EVulkanAdvancedVisibilityResourceFailure.InvalidPreparation;
+                    return false;
+                }
+            }
             VulkanAdvancedVisibilityFamilySeal realizedSeal =
                 familySeal with { Geometry = realizedGeometry };
             if (!realizedSeal.IsValid || !realizedGeometry.IsValid)
@@ -477,14 +526,22 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 RangeCounts: rangeCounts, Counters: counters,
                 IndirectArguments: arguments, MeshArguments: meshArguments,
                 MeshPayloads: meshPayloads, Geometry: realizedGeometry,
+                IndexedInstanceGroups: indexedInstanceGroups,
+                EarlyIndexedGroupCounts: earlyIndexedGroupCounts,
                 LateVisibleIndices: lateVisibleIndices,
                 LateRangeCounts: lateRangeCounts,
                 LateIndirectArguments: lateIndirectArguments,
                 LateMeshArguments: lateMeshArguments,
                 LateMeshPayloads: lateMeshPayloads,
+                LateIndexedGroupCounts: lateIndexedGroupCounts,
+                BoundsRoutes: boundsRoutes,
+                BoundsAtlas: boundsAtlas,
+                BoundsMetadata: boundsMetadata,
+                BoundsPageToken: input.BoundsPage.Token,
                 ViewCount: viewCount,
                 PayloadCapacity: publication.DrawCount,
                 RangeCapacity: Math.Max(1u, indirect.RangeCount),
+                IndexedInstanceGroupCount: (uint)input.IndexedInstanceGroups.Length,
                 IndirectArgumentCapacity: totalPayloadCapacity);
             if (!TryUpdateDescriptorSet(
                     candidateState.DescriptorSet,
@@ -740,7 +797,13 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
 VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityDeformationOverlayBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityCanonicalIndicesBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilityReconstructionCountersBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilityReconstructionCountersBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityPhysicsBoundsRoutesBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityPhysicsBoundsAtlasBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityPhysicsBoundsMetadataBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityIndexedInstanceGroupsBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityEarlyIndexedGroupCountsBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding];
         ReadOnlySpan<uint> nativeStorageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeActiveTilesBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeKernelTilesBinding,
@@ -752,6 +815,14 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeLightingCountersBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeFroxelDecalGridBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDecalIndicesBinding];
+        uint requiredStorageBuffers = checked((uint)(
+            storageBindingNumbers.Length + nativeStorageBindingNumbers.Length));
+        if (device.PhysicalDeviceCapabilities is not { } capabilities ||
+            capabilities.Properties.Limits.MaxDescriptorSetStorageBuffers < requiredStorageBuffers)
+        {
+            reason = $"Advanced set-1 requires {requiredStorageBuffers} storage buffers; the Vulkan device does not expose sufficient descriptor limits.";
+            return false;
+        }
         ReadOnlySpan<uint> nativeSampledBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeIdentityBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeMetadataBinding,
@@ -916,11 +987,16 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 DeferredIndices: default, VisibleIndices: default, Producers: default,
                 RangeIndices: default, RangeOffsets: default, RangeCounts: default,
                 Counters: default, IndirectArguments: default, MeshArguments: default,
-                MeshPayloads: default, Geometry: default,
+                MeshPayloads: default, IndexedInstanceGroups: default,
+                EarlyIndexedGroupCounts: default, Geometry: default,
                 LateVisibleIndices: default, LateRangeCounts: default,
                 LateIndirectArguments: default, LateMeshArguments: default,
-                LateMeshPayloads: default, ViewCount: 0u,
+                LateMeshPayloads: default, LateIndexedGroupCounts: default,
+                BoundsRoutes: default,
+                BoundsPageToken: default,
+                BoundsAtlas: default, BoundsMetadata: default, ViewCount: 0u,
                 PayloadCapacity: 0u, RangeCapacity: 0u,
+                IndexedInstanceGroupCount: 0u,
                 IndirectArgumentCapacity: 0u);
 
         // The normal frame-slot table is rewritten only before early work is
@@ -970,6 +1046,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             externallyOwned: false);
 
         _lateDescriptorSets = new DescriptorSet[lateSetCount];
+        _directionalShadowStates = new VulkanAdvancedDirectionalShadowResourceState[lateSetCount];
         _lateDescriptorGenerations = new ulong[lateSetCount];
         _lateDescriptorSignatures = new VulkanLateDepthPyramidDescriptorSignature[lateSetCount];
         int lateOperationCount = checked((int)((uint)_states.Length *
@@ -1086,8 +1163,14 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             state.Geometry.CurrentVertices;
         VulkanVisibilityPreparedVertexSource previousVertices =
             state.Geometry.PreviousVertices;
+        VulkanNativeBufferRange boundsAtlas = state.BoundsAtlas;
+        VulkanNativeBufferRange boundsMetadata = state.BoundsMetadata;
         if (!currentVertices.TryValidate(_resources, out reason) ||
-            !previousVertices.TryValidate(_resources, out reason))
+            !previousVertices.TryValidate(_resources, out reason) ||
+            boundsAtlas.IsValid && !_resources.TryValidateNativeBufferRange(
+                in boundsAtlas, out reason) ||
+            boundsMetadata.IsValid && !_resources.TryValidateNativeBufferRange(
+                in boundsMetadata, out reason))
         {
             return false;
         }
@@ -1105,7 +1188,10 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             state.LateVisibleIndices, state.LateRangeCounts,
             state.LateIndirectArguments, state.LateMeshArguments,
             state.LateMeshPayloads, state.Geometry.DeformationOverlay,
-            state.Geometry.Indices, state.Counters
+            state.Geometry.Indices, state.Counters,
+            state.BoundsRoutes, state.BoundsRoutes, state.BoundsRoutes,
+            state.IndexedInstanceGroups, state.EarlyIndexedGroupCounts,
+            state.LateIndexedGroupCounts
         };
         ReadOnlySpan<uint> storageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.VisibilityCandidatesBinding,
@@ -1134,7 +1220,13 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityDeformationOverlayBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityCanonicalIndicesBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilityReconstructionCountersBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilityReconstructionCountersBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityPhysicsBoundsRoutesBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityPhysicsBoundsAtlasBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityPhysicsBoundsMetadataBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityIndexedInstanceGroupsBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityEarlyIndexedGroupCountsBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding];
         if (slices.Length != storageBindingNumbers.Length)
         {
             reason = "The advanced-visibility storage binding map is incomplete.";
@@ -1166,6 +1258,18 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                     Buffer = state.Geometry.PreviousVertices.Buffer,
                     Offset = state.Geometry.PreviousVertices.Offset,
                     Range = state.Geometry.PreviousVertices.Length,
+                },
+                28 when state.BoundsAtlas.IsValid => new DescriptorBufferInfo
+                {
+                    Buffer = state.BoundsAtlas.Buffer,
+                    Offset = state.BoundsAtlas.Offset,
+                    Range = state.BoundsAtlas.Length,
+                },
+                29 when state.BoundsMetadata.IsValid => new DescriptorBufferInfo
+                {
+                    Buffer = state.BoundsMetadata.Buffer,
+                    Offset = state.BoundsMetadata.Offset,
+                    Range = state.BoundsMetadata.Length,
                 },
                 _ => new DescriptorBufferInfo
                 {
@@ -2153,6 +2257,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             };
         _familySeals.AsSpan().Clear();
         _lateDescriptorGenerations.AsSpan().Clear();
+        _directionalShadowStates.AsSpan().Clear();
         _lateDescriptorSignatures.AsSpan().Clear();
         _lateOperationKeys.AsSpan().Clear();
         _lateOperationGenerations.AsSpan().Clear();
@@ -2180,6 +2285,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             _lateDescriptorPool = default;
         }
         _lateDescriptorSets = [];
+        _directionalShadowStates = [];
         _lateDescriptorGenerations = [];
         _lateDescriptorSignatures = [];
         _lateOperationKeys = [];

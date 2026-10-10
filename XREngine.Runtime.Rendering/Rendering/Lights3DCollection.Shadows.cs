@@ -771,7 +771,8 @@ namespace XREngine.Scene
                 projection,
                 projNear,
                 projFar,
-                desiredResolution);
+                desiredResolution,
+                camera.CullingLayerMask);
             ulong receiverSamplingHash = BuildShadowReceiverSamplingHash(
                 light,
                 projectionType,
@@ -1714,7 +1715,8 @@ namespace XREngine.Scene
             in Matrix4x4 projection,
             float projectionNear,
             float projectionFar,
-            uint desiredResolution)
+            uint desiredResolution,
+            uint cameraLayerMask)
         {
             ulong hash = 14695981039346656037UL;
             AddGuid(ref hash, light.ID);
@@ -1735,6 +1737,9 @@ namespace XREngine.Scene
                         source,
                         faceOrCascadeIndex));
             }
+            if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary &&
+                World.VisualScene.TryGetCoveredShadowCasterOutputRevision(cameraLayerMask, out ulong outputRevision))
+                Add(ref hash, outputRevision);
             if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary)
                 AddDirectionalCascadeMatrix(ref hash, view, projection, desiredResolution);
             else

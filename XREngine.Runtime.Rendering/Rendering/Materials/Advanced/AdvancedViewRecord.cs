@@ -51,6 +51,6 @@ public struct AdvancedViewRecord
 
     public uint SourceCameraIdentityLo;
     public uint SourceCameraIdentityHi;
-    public uint SourceCameraIdentityPadding0;
+    public uint CullingLayerMask;
     public uint SourceCameraIdentityPadding1;
 }
