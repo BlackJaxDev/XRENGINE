@@ -42,6 +42,7 @@ public static class AdvancedViewRecordFactory
             FoveationCenterAndBias = source.FoveationCenterAndBias, FoveationRadii = source.FoveationRadii,
             SourceCameraIdentityLo = unchecked((uint)source.SourceCameraIdentity),
             SourceCameraIdentityHi = unchecked((uint)(source.SourceCameraIdentity >> 32)),
+            CullingLayerMask = source.CullingLayerMask,
         };
     }
 

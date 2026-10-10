@@ -16,4 +16,8 @@ internal sealed partial class VulkanCommandRuntime
             return fence;
         }
     }
+
+    /// <summary>Copies the most recent first-failure records for marker rentals.</summary>
+    internal GpuFenceFailureDiagnostic[] CaptureGpuFenceFailureHistory()
+        => Synchronization.CaptureFenceFailureHistory();
 }

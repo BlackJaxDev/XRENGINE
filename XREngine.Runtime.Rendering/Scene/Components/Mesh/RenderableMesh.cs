@@ -173,11 +173,15 @@ namespace XREngine.Components.Scene.Mesh
                         if (e.PropertyName == nameof(SubMeshLOD.Mesh))
                         {
                             XRMesh? previousMesh = renderer.Mesh;
-                            TrackBones(previousMesh, false);
+                            bool tracked = _boneTrackingByRenderer.TryGetValue(renderer, out bool wasTracked) && wasTracked;
+                            if (tracked)
+                                TrackBones(previousMesh, false);
                             ReleaseOwnedRuntimeMesh(previousMesh);
                             renderer.Mesh = CreateRuntimeMesh(lod.Mesh, GetTransformReferenceSearchRoot());
                             AdvanceLodRegistrationVersion();
                             TrackBones(renderer.Mesh, true);
+                            _boneTrackingByRenderer[renderer] = true;
+                            Volatile.Write(ref _committedBoundsStateDirty, 1);
                             MarkSkinnedDataDirty();
                             MarkSkinnedBoneCullingVolumesDirty();
                             RefreshSkinnedCullingIntersectionOverride();
@@ -196,6 +200,7 @@ namespace XREngine.Components.Scene.Mesh
                     _sourceLodSubscriptions.Add((lod, sourceLodHandler));
                     LODs.AddLast(new RenderableLOD(renderer, lod.MaxVisibleDistance, lod.MinProjectedScreenRadiusPixels));
                     TrackBones(renderer.Mesh, true);
+                    RegisterCommittedBoundsRenderer(renderer);
                 }
                 Volatile.Write(ref _lodCount, LODs.Count);
                 AdvanceLodRegistrationVersion();
@@ -217,7 +222,8 @@ namespace XREngine.Components.Scene.Mesh
             _usesAuthoredSkinnedCullingBounds = mesh.CullingBounds.HasValue;
             RenderInfo.LocalCullingVolume = mesh.CullingBounds ?? mesh.Bounds;
             _bindPoseBounds = RenderInfo.LocalCullingVolume ?? mesh.Bounds;
-            RenderInfo.PreCollectCommandsCallback = BeforeAdd;
+            _primaryCollectionCallback = BeforeAdd;
+            RenderInfo.PreCollectCommandsCallback = _primaryCollectionCallback;
             RenderInfo.RenderCullingVolumeDebugOverride = RenderCullingVolumeDebugOverride;
             RefreshSkinnedCullingIntersectionOverride();
             RenderInfo.PropertyChanged += RenderInfoPropertyChanged;
@@ -259,6 +265,7 @@ namespace XREngine.Components.Scene.Mesh
             CaptureRenderDeformationSettings(IsSkinned);
             EnsureInitialSubscriptions();
             RuntimeEngine.Rendering.SettingsChanged += Rendering_SettingsChanged;
+            ReconcileCommittedWorldBounds();
         }
 
         private void EnsureInitialSubscriptions()
@@ -293,7 +300,7 @@ namespace XREngine.Components.Scene.Mesh
             {
                 long t = RenderableMeshStageTelemetry.Begin();
                 PublishRenderCommandCullingVolume();
-                RenderableMeshStageTelemetry.End(13, t);
+                RenderableMeshStageTelemetry.End(RenderableMeshStage.PublishRenderCommandCullingVolume, t);
             }
         }
 
@@ -337,13 +344,7 @@ namespace XREngine.Components.Scene.Mesh
             // One-shot: construction-time palette/draw-matrix seeds can capture stale RenderMatrix
             // values. The toggle path fixes that by re-reading current transform state; do the same
             // here before the first real draw.
-            if (!_initialRenderStateSeeded)
-            {
-                _initialRenderStateSeeded = true;
-                if (rend?.Mesh?.HasSkinning == true && rend.EnsureSkinningBuffers(logWarnings: false))
-                    rend.RefreshBoneMatricesFromRenderState();
-                QueueCurrentRenderMatrixUpdate();
-            }
+            SeedInitialRenderState(rend);
 
             // Vertex draw path pose-settle: keep re-seeding the CPU-built skin palette from current
             // bone render state until the skeleton pose stabilizes. The compute path does this in
@@ -361,12 +362,16 @@ namespace XREngine.Components.Scene.Mesh
                 _vertexSkinSeedSettled = rend.ReseedSkinPaletteUntilPoseStable();
             }
 
-            RenderableMeshStageTelemetry.End(6, tHead);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.BeforeAddSkinningState, tHead);
             long tBounds = RenderableMeshStageTelemetry.Begin();
             if (skinned)
             {
-                bool skinnedBoundsOk = RefreshSkinnedCullingBoundsForSceneCulling();
-                LogSkinnedCullingDiagnosticsOnce(skinnedBoundsOk);
+                ReconcileCommittedWorldBounds();
+                if (!UsesCommittedWorldBounds)
+                {
+                    bool skinnedBoundsOk = RefreshSkinnedCullingBoundsForSceneCulling();
+                    LogSkinnedCullingDiagnosticsOnce(skinnedBoundsOk);
+                }
             }
             else
             {
@@ -375,7 +380,7 @@ namespace XREngine.Components.Scene.Mesh
                 RenderInfo.LocalCullingVolume = ExpandVertexEffectLocalBounds(_bindPoseBounds, mat);
                 RenderInfo.CullingOffsetMatrix = basis;
             }
-            RenderableMeshStageTelemetry.End(7, tBounds);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.BeforeAddCullingBounds, tBounds);
 
             long tSet = RenderableMeshStageTelemetry.Begin();
             _rc.Mesh = rend;
@@ -387,17 +392,17 @@ namespace XREngine.Components.Scene.Mesh
                     XRTexture2D.RecordImportedTextureStreamingUsage(mat, BuildImportedTextureStreamingUsage(rend?.Mesh, camera as XRCamera, distance));
                 _rc.RenderPass = mat.RenderPass;
             }
-            RenderableMeshStageTelemetry.End(8, tSet);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.BeforeAddCommandState, tSet);
 
             long tSync = RenderableMeshStageTelemetry.Begin();
             SyncMaterialPassCommands(rend, mat, passes.IsShadowPass);
-            RenderableMeshStageTelemetry.End(9, tSync);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.BeforeAddMaterialPasses, tSync);
             long tTail = RenderableMeshStageTelemetry.Begin();
             ApplyHighlightRenderOptionsOverride(mat);
             ModelRenderDiagnostics.LogCommandCollect(this, _rc, passes, camera, distance);
             ProcessPendingGpuMeshBvhRefresh();
-            RenderableMeshStageTelemetry.End(10, tTail);
-            RenderableMeshStageTelemetry.End(5, tTotal);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.BeforeAddDiagnostics, tTail);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.BeforeAdd, tTotal);
 
             return true;
         }
@@ -451,6 +456,9 @@ namespace XREngine.Components.Scene.Mesh
         {
             // Default to an invalid box so callers can check IsValid before use.
             worldBounds = default;
+
+            if (UsesCommittedWorldBounds && RenderInfo.TryGetCommittedWorldBounds(out worldBounds, out _))
+                return true;
 
             // Prefer the live skinned bounds when skinning is active and successfully computed.
             if (IsSkinned && TryGetSkinnedBoneAggregateWorldBounds(out worldBounds))
@@ -546,6 +554,8 @@ namespace XREngine.Components.Scene.Mesh
                         CaptureRenderDeformationSettings(skinned);
                         _rc.WorldMatrix = skinned ? Matrix4x4.Identity : GetCurrentTransformMatrix(Component.Transform);
                         RefreshVertexEffectCullingBounds();
+                        Volatile.Write(ref _committedBoundsStateDirty, 1);
+                        ReconcileCommittedWorldBounds();
                     }
                     break;
             }
@@ -568,6 +578,7 @@ namespace XREngine.Components.Scene.Mesh
             transform.RenderMatrixChanged -= Component_WorldMatrixChanged;
             Component.PropertyChanged -= ComponentPropertyChanged;
             Component.PropertyChanging -= ComponentPropertyChanging;
+            UnregisterCommittedBoundsRenderers();
             UntrackAllBones();
             SkinnedMeshBoundsCalculator.Instance.UnregisterSkinnedMesh(this, World?.VisualScene?.GPUCommands);
             RenderableLOD[] lods;

@@ -4,4 +4,5 @@ public enum ModelImportBackendPreference
 {
     PreferNativeThenAssimp,
     AssimpOnly,
+    NativeOnly,
 }

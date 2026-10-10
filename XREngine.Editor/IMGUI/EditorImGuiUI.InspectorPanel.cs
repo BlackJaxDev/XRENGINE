@@ -2287,6 +2287,8 @@ public static partial class EditorImGuiUI
             if (editor is null)
             {
                 DrawDefaultComponentInspector(component, visited);
+                if (component is PhysicsChainComponent chain)
+                    DrawPhysicsChainRuntimeDiagnostics(chain);
                 return;
             }
 
@@ -2300,6 +2302,8 @@ public static partial class EditorImGuiUI
                 Debug.LogException(ex, $"Custom component editor '{editor.GetType().FullName}' failed for '{component.GetType().FullName}'");
                 DrawDefaultComponentInspector(component, visited);
             }
+            if (component is PhysicsChainComponent physicsChain)
+                DrawPhysicsChainRuntimeDiagnostics(physicsChain);
         }
 
         private static void DrawPawnPossessButton(PawnComponent pawn)

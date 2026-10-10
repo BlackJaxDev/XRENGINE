@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 
@@ -13,6 +14,8 @@ public sealed partial class AdvancedGpuDeformationResources
     private PendingGpuDeformationMeshPreparation? _pendingMeshPreparation;
     private readonly ConditionalWeakTable<XRMesh, UnsupportedGpuDeformationMeshPreparationWitness>
         _unsupportedMeshPreparationSources = new();
+    private readonly ConditionalWeakTable<XRMesh, AdvancedGpuDeformationMeshAliasWitness>
+        _meshAliasWitnesses = new();
     private static readonly ConditionalWeakTable<XRMesh, ImportedGpuDeformationMeshPayload>
         ImportedMeshPayloads = new();
     private static readonly object ImportedMeshPayloadsSync = new();
@@ -78,12 +81,17 @@ public sealed partial class AdvancedGpuDeformationResources
     {
         ThrowIfFrameClosed();
         ArgumentNullException.ThrowIfNull(mesh);
-        if (_meshSlices.TryGetValue(mesh, out slice) &&
-            slice.TopologyGeneration == topologyGeneration)
-            return AdvancedGpuDeformationMeshPreparationStatus.Ready;
+        if (_meshSlices.TryGetValue(mesh, out slice))
+        {
+            if (slice.TopologyGeneration == topologyGeneration &&
+                _meshAliasWitnesses.TryGetValue(mesh, out var witness) &&
+                witness.Matches(mesh, in slice))
+                return AdvancedGpuDeformationMeshPreparationStatus.Ready;
+            _meshSlices.Remove(mesh);
+            _meshAliasWitnesses.Remove(mesh);
+        }
         if (_unsupportedMeshPreparationSources.TryGetValue(mesh, out var unsupported) &&
-            unsupported.GeometryRevision == mesh.GeometryRevision &&
-            unsupported.TopologyGeneration == topologyGeneration)
+            unsupported.Matches(mesh, topologyGeneration))
         {
             slice = default;
             return AdvancedGpuDeformationMeshPreparationStatus.Unsupported;
@@ -301,12 +309,27 @@ public sealed partial class AdvancedGpuDeformationResources
 
     private void RememberUnsupportedMesh(PendingGpuDeformationMeshPreparation pending)
     {
+        XRMeshSkinningBufferState state = pending.SkinningState ??
+            pending.Mesh.GetSkinningBufferStateSnapshot();
         _unsupportedMeshPreparationSources.Remove(pending.Mesh);
         _unsupportedMeshPreparationSources.Add(pending.Mesh,
             new UnsupportedGpuDeformationMeshPreparationWitness
             {
                 GeometryRevision = pending.GeometryRevision,
                 TopologyGeneration = pending.TopologyGeneration,
+                SkinningState = state,
+                CoreIndicesRevision = state.CoreIndices?.Revision ?? 0UL,
+                CoreWeightsRevision = state.CoreWeights?.Revision ?? 0UL,
+                SpillHeadersRevision = state.SpillHeaders?.Revision ?? 0UL,
+                SpillEntriesRevision = state.SpillEntries?.Revision ?? 0UL,
+                CoreIndicesCount = state.CoreIndices?.ElementCount ?? 0u,
+                CoreWeightsCount = state.CoreWeights?.ElementCount ?? 0u,
+                SpillHeadersCount = state.SpillHeaders?.ElementCount ?? 0u,
+                SpillEntriesCount = state.SpillEntries?.ElementCount ?? 0u,
+                CoreIndicesReadable = UnsupportedGpuDeformationMeshPreparationWitness.IsReadable(state.CoreIndices),
+                CoreWeightsReadable = UnsupportedGpuDeformationMeshPreparationWitness.IsReadable(state.CoreWeights),
+                SpillHeadersReadable = UnsupportedGpuDeformationMeshPreparationWitness.IsReadable(state.SpillHeaders),
+                SpillEntriesReadable = UnsupportedGpuDeformationMeshPreparationWitness.IsReadable(state.SpillEntries),
             });
     }
 
@@ -635,8 +658,20 @@ public sealed partial class AdvancedGpuDeformationResources
             _pendingMeshPreparation = null;
             return false;
         }
+        ulong payloadHash = HashPendingMeshPayload(pending);
+        if (_staticGeneration.HasCpuMirror &&
+            TryFindInternedMeshPayload(pending, payloadHash, out slice))
+        {
+            RememberMeshAlias(pending, in slice);
+            return true;
+        }
         if (!TryEnsureStaticInputsWritable())
             return false;
+        if (TryFindInternedMeshPayload(pending, payloadHash, out slice))
+        {
+            RememberMeshAlias(pending, in slice);
+            return true;
+        }
 
         uint vertexCount = checked((uint)pending.Mesh.VertexCount);
         uint rangeCount = checked((uint)pending.ActiveBlendshapeCount);
@@ -705,9 +740,188 @@ public sealed partial class AdvancedGpuDeformationResources
         slice = new AdvancedGpuDeformationMeshSlice(
             sourceBase, influenceBase, rangeBase, vertexCount, rangeCount,
             pending.TopologyGeneration);
-        _meshSlices[pending.Mesh] = slice;
+        int entryIndex = _staticGeneration.PayloadEntries.Count;
+        int priorHead = _staticGeneration.PayloadHashHeads.TryGetValue(
+            payloadHash, out int head) ? head : -1;
+        _staticGeneration.PayloadEntries.Add(new AdvancedGpuDeformationMeshPayloadEntry(
+            payloadHash, slice, spillBase, pending.SpillCount,
+            recordBase, recordCount, deltaBase, deltaCount, priorHead));
+        _staticGeneration.PayloadHashHeads[payloadHash] = entryIndex;
+        RememberMeshAlias(pending, in slice);
         return true;
     }
+
+    private void RememberMeshAlias(
+        PendingGpuDeformationMeshPreparation pending,
+        in AdvancedGpuDeformationMeshSlice slice)
+    {
+        _meshSlices[pending.Mesh] = slice;
+        _meshAliasWitnesses.Remove(pending.Mesh);
+        _meshAliasWitnesses.Add(pending.Mesh,
+            new AdvancedGpuDeformationMeshAliasWitness
+            {
+                Slice = slice,
+                GeometryRevision = pending.GeometryRevision,
+                SkinningState = pending.SkinningState!,
+                CoreIndicesRevision = pending.CoreIndicesRevision,
+                CoreWeightsRevision = pending.CoreWeightsRevision,
+                SpillHeadersRevision = pending.SpillHeadersRevision,
+                SpillEntriesRevision = pending.SpillEntriesRevision,
+                BlendshapeNames = pending.Names,
+                BlendshapeCounts = pending.Blendshapes.IsValid
+                    ? pending.Blendshapes.Counts : null,
+                BlendshapeIndices = pending.Blendshapes.IsValid
+                    ? pending.Blendshapes.Indices : null,
+                BlendshapeDeltas = pending.Blendshapes.IsValid
+                    ? pending.Blendshapes.Deltas : null,
+                BlendshapeCountsRevision = pending.BlendshapeCountsRevision,
+                BlendshapeIndicesRevision = pending.BlendshapeIndicesRevision,
+                BlendshapeDeltasRevision = pending.BlendshapeDeltasRevision,
+            });
+    }
+
+    private static ulong HashPendingMeshPayload(
+        PendingGpuDeformationMeshPreparation pending)
+    {
+        const ulong offset = 14695981039346656037UL;
+        ulong hash = offset;
+        hash = MixPayloadHash(hash, pending.TopologyGeneration);
+        hash = MixPayloadHash(hash, checked((ulong)pending.VertexCount));
+        hash = MixPayloadHash(hash, pending.SpillCount);
+        hash = MixPayloadHash(hash, checked((ulong)pending.ActiveBlendshapeCount));
+        hash = MixPayloadHash(hash, pending.PackedRecordCount);
+        hash = MixPayloadHash(hash, pending.PackedDeltaCount);
+        hash = HashPayloadBytes(hash, MemoryMarshal.AsBytes(
+            pending.VerticesScratch.AsSpan(0, pending.VertexCount)));
+        hash = HashPayloadBytes(hash, MemoryMarshal.AsBytes(
+            pending.InfluencesScratch.AsSpan(0, pending.VertexCount)));
+        hash = HashPayloadBytes(hash, MemoryMarshal.AsBytes(
+            pending.SpillScratch.AsSpan(0, checked((int)pending.SpillCount))));
+        hash = HashPayloadBytes(hash, MemoryMarshal.AsBytes(
+            pending.RangesScratch.AsSpan(0, pending.ActiveBlendshapeCount)));
+        hash = HashPayloadBytes(hash, MemoryMarshal.AsBytes(
+            pending.RecordsScratch.AsSpan(0, checked((int)pending.PackedRecordCount))));
+        return HashPayloadBytes(hash, MemoryMarshal.AsBytes(
+            pending.DeltasScratch.AsSpan(0, checked((int)pending.PackedDeltaCount))));
+    }
+
+    private static ulong MixPayloadHash(ulong hash, ulong value)
+        => unchecked((hash ^ value) * 1099511628211UL);
+
+    private static ulong HashPayloadBytes(ulong hash, ReadOnlySpan<byte> bytes)
+    {
+        for (int index = 0; index < bytes.Length; ++index)
+            hash = unchecked((hash ^ bytes[index]) * 1099511628211UL);
+        return hash;
+    }
+
+    private bool TryFindInternedMeshPayload(
+        PendingGpuDeformationMeshPreparation pending,
+        ulong hash,
+        out AdvancedGpuDeformationMeshSlice slice)
+    {
+        if (_staticGeneration.PayloadHashHeads.TryGetValue(hash, out int entryIndex))
+        {
+            while (entryIndex >= 0)
+            {
+                AdvancedGpuDeformationMeshPayloadEntry entry =
+                    _staticGeneration.PayloadEntries[entryIndex];
+                if (PayloadMatches(pending, in entry))
+                {
+                    slice = entry.Slice;
+                    return true;
+                }
+                entryIndex = entry.NextHashEntry;
+            }
+        }
+        slice = default;
+        return false;
+    }
+
+    private bool PayloadMatches(
+        PendingGpuDeformationMeshPreparation pending,
+        in AdvancedGpuDeformationMeshPayloadEntry entry)
+    {
+        AdvancedGpuDeformationMeshSlice slice = entry.Slice;
+        if (slice.TopologyGeneration != pending.TopologyGeneration ||
+            slice.VertexCount != pending.VertexCount ||
+            slice.BlendshapeCount != pending.ActiveBlendshapeCount ||
+            entry.SpillCount != pending.SpillCount ||
+            entry.RecordCount != pending.PackedRecordCount ||
+            entry.DeltaCount + 1u != pending.PackedDeltaCount ||
+            (ulong)slice.SourceVertexOffset + slice.VertexCount > _sourceVertexCount ||
+            (ulong)slice.BoneInfluenceOffset + slice.VertexCount > _skinInfluenceCount ||
+            (ulong)entry.SpillBase + entry.SpillCount > _spillInfluenceCount ||
+            (ulong)slice.BlendshapeRangeOffset + slice.BlendshapeCount > _blendshapeRangeCount ||
+            (ulong)entry.RecordBase + entry.RecordCount > _blendshapeRecordCount ||
+            (ulong)entry.DeltaBase + entry.DeltaCount > _blendshapeDeltaCount)
+            return false;
+
+        for (uint index = 0u; index < slice.VertexCount; ++index)
+        {
+            AdvancedDeformedVertex vertex =
+                _sourceVertices[slice.SourceVertexOffset + index];
+            vertex.SourceVertex -= slice.SourceVertexOffset;
+            if (!SamePayloadBytes(in vertex,
+                    in pending.VerticesScratch[index]))
+                return false;
+
+            AdvancedSkinInfluence influence =
+                _skinInfluences[slice.BoneInfluenceOffset + index];
+            influence.SpillOffset -= entry.SpillBase;
+            if (!SamePayloadBytes(in influence,
+                    in pending.InfluencesScratch[index]))
+                return false;
+        }
+        if (!MemoryMarshal.AsBytes(_spillInfluences.AsSpan(
+                checked((int)entry.SpillBase), checked((int)entry.SpillCount)))
+            .SequenceEqual(MemoryMarshal.AsBytes(
+                pending.SpillScratch.AsSpan(0, checked((int)entry.SpillCount)))))
+            return false;
+
+        for (uint index = 0u; index < slice.BlendshapeCount; ++index)
+        {
+            AdvancedBlendshapeRange stored =
+                _blendshapeRanges[slice.BlendshapeRangeOffset + index];
+            AdvancedBlendshapeRange local = stored with
+            {
+                RecordOffset = stored.RecordOffset - entry.RecordBase,
+            };
+            if (!SamePayloadBytes(in local,
+                    in pending.RangesScratch[index]))
+                return false;
+        }
+        for (uint index = 0u; index < entry.RecordCount; ++index)
+        {
+            AdvancedBlendshapeSparseRecord stored =
+                _blendshapeRecords[entry.RecordBase + index];
+            AdvancedBlendshapeSparseRecord local = stored with
+            {
+                PositionDelta = LocalDeltaIndex(stored.PositionDelta, entry.DeltaBase),
+                NormalDelta = LocalDeltaIndex(stored.NormalDelta, entry.DeltaBase),
+                TangentDelta = LocalDeltaIndex(stored.TangentDelta, entry.DeltaBase),
+            };
+            if (!SamePayloadBytes(in local,
+                    in pending.RecordsScratch[index]))
+                return false;
+        }
+        return SamePayloadBytes(in _blendshapeDeltas[0],
+                   in pending.DeltasScratch[0]) &&
+               MemoryMarshal.AsBytes(_blendshapeDeltas.AsSpan(
+                       checked((int)entry.DeltaBase), checked((int)entry.DeltaCount)))
+                   .SequenceEqual(MemoryMarshal.AsBytes(
+                       pending.DeltasScratch.AsSpan(1, checked((int)entry.DeltaCount))));
+    }
+
+    private static uint LocalDeltaIndex(uint globalIndex, uint deltaBase)
+        => globalIndex == 0u ? 0u : globalIndex - deltaBase + 1u;
+
+    private static bool SamePayloadBytes<T>(in T left, in T right)
+        where T : unmanaged
+        => MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(
+                ref Unsafe.AsRef(in left), 1))
+            .SequenceEqual(MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(
+                ref Unsafe.AsRef(in right), 1)));
 
     private static uint RebaseDelta(uint localIndex, uint deltaBase)
         => localIndex == 0u ? 0u : checked(deltaBase + localIndex - 1u);

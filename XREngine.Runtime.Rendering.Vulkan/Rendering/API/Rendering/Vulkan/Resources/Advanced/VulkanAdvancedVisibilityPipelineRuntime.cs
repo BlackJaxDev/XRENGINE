@@ -13,7 +13,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 {
     private readonly VulkanResourceRuntime _resources;
     private XRRenderProgram? _earlyVisibilityProgram;
+    private XRRenderProgram? _boundsPatchProgram;
     private XRRenderProgram? _buildIndirectProgram;
+    private XRRenderProgram? _earlyIndexedGroupFinalizeProgram;
+    private XRRenderProgram? _lateIndexedGroupFinalizeProgram;
     private XRRenderProgram? _buildDepthPyramidProgram;
     private XRRenderProgram? _lateVisibilityProgram;
     private XRRenderProgram? _opaqueRasterProgram;
@@ -26,37 +29,162 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private XRRenderProgram? _maskedMultiviewMeshRasterProgram;
     private XRRenderProgram? _directionalShadowOpaqueProgram;
     private XRRenderProgram? _directionalShadowMaskedProgram;
+    private XRRenderProgram? _directionalShadowCullProgram;
     private readonly List<GeneratedShaderSource> _generatedShaderSources = [];
 
     internal VulkanAdvancedVisibilityPipelineRuntime(VulkanResourceRuntime resources)
         => _resources = resources;
 
     internal VulkanAdvancedVisibilityPipelineReadiness TryGetComputePipelines(
+        out VkRenderProgram boundsPatch,
         out VkRenderProgram earlyVisibility,
         out VkRenderProgram buildIndirect,
         out string reason)
     {
+        boundsPatch = null!;
         earlyVisibility = null!;
         buildIndirect = null!;
         VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
             return readiness;
-        if (_resources.WrapperLookup.GetOrCreate(_earlyVisibilityProgram!, generateNow: false) is not VkRenderProgram early ||
+        if (_resources.WrapperLookup.GetOrCreate(_boundsPatchProgram!, generateNow: false) is not VkRenderProgram patch ||
+            _resources.WrapperLookup.GetOrCreate(_earlyVisibilityProgram!, generateNow: false) is not VkRenderProgram early ||
             _resources.WrapperLookup.GetOrCreate(_buildIndirectProgram!, generateNow: false) is not VkRenderProgram indirect)
         {
             reason = "Prepared visibility compute wrappers are unavailable.";
             return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
+        boundsPatch = patch;
         earlyVisibility = early;
         buildIndirect = indirect;
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 
+    internal VulkanAdvancedVisibilityPipelineReadiness TryGetIndexedGroupFinalizePipelines(
+        out VkRenderProgram earlyFinalize,
+        out VkRenderProgram lateFinalize,
+        out string reason)
+    {
+        earlyFinalize = null!;
+        lateFinalize = null!;
+        VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        if (_resources.WrapperLookup.GetOrCreate(_earlyIndexedGroupFinalizeProgram!, generateNow: false) is not VkRenderProgram early ||
+            _resources.WrapperLookup.GetOrCreate(_lateIndexedGroupFinalizeProgram!, generateNow: false) is not VkRenderProgram late)
+        {
+            reason = "Prepared indexed group finalizers are unavailable.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+        earlyFinalize = early;
+        lateFinalize = late;
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+    }
+
+    /// <summary>Gets the sealed GPU caster cull program for indexed shadows.</summary>
+    internal VulkanAdvancedVisibilityPipelineReadiness TryGetDirectionalShadowCullProgram(
+        out VkRenderProgram program,
+        out string reason)
+    {
+        program = null!;
+        VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        lock (_preparationGate)
+        {
+            readiness = PrepareDirectionalShadowCullProgram(out reason);
+            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return readiness;
+        }
+        if (_resources.WrapperLookup.GetOrCreate(_directionalShadowCullProgram!,
+                generateNow: false) is not VkRenderProgram wrapper)
+        {
+            reason = "The directional shadow caster cull wrapper is unavailable.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+        program = wrapper;
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+    }
+
+    private VulkanAdvancedVisibilityPipelineReadiness PrepareDirectionalShadowCullProgram(
+        out string reason)
+    {
+        if (IsProgramCurrent(_directionalShadowCullProgram, compute: true))
+        {
+            reason = "Ready";
+            return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+        }
+        try
+        {
+            _directionalShadowCullProgram ??= CreateComputeProgram(
+                AdvancedVisibilityShaderLibrary.CullDirectionalShadowCastersCompute,
+                "VulkanAdvancedDirectionalShadowCasterCull");
+            VulkanAdvancedVisibilityPipelineReadiness readiness = TryPrepareProgram(
+                _directionalShadowCullProgram, out VkRenderProgram program,
+                out reason, "directional shadow caster cull did not link a Vulkan pipeline layout");
+            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return readiness;
+            VulkanComputePipelineReadiness pipelineReadiness =
+                program.TryGetOrRequestComputePipeline(int.MinValue, null,
+                    out _, out string pipelineReason);
+            return pipelineReadiness == VulkanComputePipelineReadiness.Ready
+                ? VulkanAdvancedVisibilityPipelineReadiness.Ready
+                : DescribeComputePipelineReadiness(pipelineReadiness,
+                    "directional shadow caster cull", pipelineReason, out reason);
+        }
+        catch (Exception exception)
+        {
+            reason = exception.Message;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+    }
+
+    private VulkanAdvancedVisibilityPipelineReadiness PrepareIndexedGroupFinalizePipelines(out string reason)
+    {
+        try
+        {
+            _earlyIndexedGroupFinalizeProgram ??= CreateComputeProgram(
+                AdvancedVisibilityShaderLibrary.FinalizeIndexedInstanceGroupsCompute,
+                "VulkanAdvancedEarlyIndexedGroupFinalize");
+            _lateIndexedGroupFinalizeProgram ??= CreateComputeProgram(
+                AdvancedVisibilityShaderLibrary.FinalizeIndexedInstanceGroupsCompute,
+                "VulkanAdvancedLateIndexedGroupFinalize", "#define XR_ADV_LATE_GROUPS 1\n");
+            VulkanAdvancedVisibilityPipelineReadiness readiness = TryPrepareProgram(
+                _earlyIndexedGroupFinalizeProgram, out VkRenderProgram early, out reason,
+                "early indexed group finalizer did not link a Vulkan pipeline layout");
+            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return readiness;
+            readiness = TryPrepareProgram(_lateIndexedGroupFinalizeProgram,
+                out VkRenderProgram late, out reason,
+                "late indexed group finalizer did not link a Vulkan pipeline layout");
+            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return readiness;
+            VulkanComputePipelineReadiness pipelineReadiness =
+                early.TryGetOrRequestComputePipeline(int.MinValue, null, out _, out string pipelineReason);
+            if (pipelineReadiness != VulkanComputePipelineReadiness.Ready)
+                return DescribeComputePipelineReadiness(pipelineReadiness,
+                    "early indexed group finalizer", pipelineReason, out reason);
+            pipelineReadiness = late.TryGetOrRequestComputePipeline(
+                int.MinValue, null, out _, out pipelineReason);
+            return pipelineReadiness == VulkanComputePipelineReadiness.Ready
+                ? VulkanAdvancedVisibilityPipelineReadiness.Ready
+                : DescribeComputePipelineReadiness(pipelineReadiness,
+                    "late indexed group finalizer", pipelineReason, out reason);
+        }
+        catch (Exception exception)
+        {
+            reason = exception.Message;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+    }
+
     private VulkanAdvancedVisibilityPipelineReadiness PrepareComputePipelines(
+        out VkRenderProgram boundsPatch,
         out VkRenderProgram earlyVisibility,
         out VkRenderProgram buildIndirect,
         out string reason)
     {
+        boundsPatch = null!;
         earlyVisibility = null!;
         buildIndirect = null!;
         reason = "Ready";
@@ -69,6 +197,9 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 
         try
         {
+            _boundsPatchProgram ??= CreateComputeProgram(
+                AdvancedVisibilityShaderLibrary.PhysicsChainBoundsPatchCompute,
+                "VulkanAdvancedPhysicsChainBoundsPatch");
             _earlyVisibilityProgram ??= CreateComputeProgram(
                 AdvancedVisibilityShaderLibrary.EarlyVisibilityCompute,
                 "VulkanAdvancedEarlyVisibility");
@@ -77,6 +208,13 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                 "VulkanAdvancedBuildVisibilityIndirect");
 
             VulkanAdvancedVisibilityPipelineReadiness linkReadiness = TryPrepareProgram(
+                _boundsPatchProgram,
+                out VkRenderProgram patch,
+                out reason,
+                "physics-chain bounds patch compute program did not link a Vulkan pipeline layout");
+            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return linkReadiness;
+            linkReadiness = TryPrepareProgram(
                 _earlyVisibilityProgram,
                 out VkRenderProgram early,
                 out reason,
@@ -91,6 +229,11 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 return linkReadiness;
 
+            VulkanComputePipelineReadiness patchReadiness = patch.TryGetOrRequestComputePipeline(
+                int.MinValue, null, out _, out string patchReason);
+            if (patchReadiness != VulkanComputePipelineReadiness.Ready)
+                return DescribeComputePipelineReadiness(patchReadiness, "physics-chain bounds patch", patchReason, out reason);
+
             VulkanComputePipelineReadiness earlyReadiness = early.TryGetOrRequestComputePipeline(
                 int.MinValue, null, out _, out string earlyReason);
             if (earlyReadiness != VulkanComputePipelineReadiness.Ready)
@@ -101,6 +244,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             if (indirectReadiness != VulkanComputePipelineReadiness.Ready)
                 return DescribeComputePipelineReadiness(indirectReadiness, "visibility indirect", indirectReason, out reason);
 
+            boundsPatch = patch;
             earlyVisibility = early;
             buildIndirect = indirect;
             return VulkanAdvancedVisibilityPipelineReadiness.Ready;

@@ -3784,10 +3784,9 @@ public sealed partial class ShadowAtlasManager
             out _);
 
     /// <summary>
-    /// Renders one directional cascade group, preferring the Advanced lane when
-    /// the scheduled-tile pass allows it, then the grouped layered pass, then
-    /// sequential tiles. A deferred group is complete only once the lane's
-    /// consumer accepts it, so the caller must not record its render event.
+    /// Renders one directional cascade group. A strict GPU request uses only
+    /// the Advanced lane. Other requests can use the grouped layered pass or
+    /// sequential tiles. A deferred group completes only after lane acceptance.
     /// </summary>
     private bool TryRenderDirectionalCascadeGroup(
         ShadowAtlasRenderPlan plan,
@@ -3840,6 +3839,22 @@ public sealed partial class ShadowAtlasManager
 
             _advancedLaneLastDeclineReason = laneDeclineReason;
             _advancedLaneGenericGroups++;
+        }
+
+        if (RequiresStrictDirectionalShadowLane())
+        {
+            elapsedMs = ElapsedMilliseconds(start);
+            RecordDirectionalGroupedRenderEvent(
+                seedRequest,
+                group,
+                elapsedMs,
+                succeeded: false,
+                usedSequentialFallback: false,
+                criticalBudgetBypassUsed: false,
+                _advancedLaneLastDeclineReason ??
+                    "The strict GPU directional shadow lane did not accept this group.",
+                null);
+            return false;
         }
 
         string? groupedDeclineReason = !canRenderFullGroup

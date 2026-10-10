@@ -1,4 +1,5 @@
 using XREngine.Rendering.GI.Contracts;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Shadows;
 
@@ -200,7 +201,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             AdvancedSharedPreparationService.Instance.Acquire(
                 world,
                 state.FrameViewSet,
-                pipeline.RequiredPreparationConsumers);
+                pipeline.RequiredPreparationConsumers,
+                ActivePipelineInstance.ActiveMeshRenderCommands
+                    .RenderingBackendReadyPackage.SubmissionResolution.Resolved);
         bool requiresAmbientOcclusion =
             Stage == EAdvancedRenderStage.AmbientOcclusion;
         bool requiresNativeOpaqueShading =
@@ -357,7 +360,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         in RenderWorldSnapshot world)
     {
         using IDisposable? passScope = PushRenderGraphPass(Descriptor.PassName);
-        XRViewport? viewport = state.WindowViewport ?? ActivePipelineInstance.LastWindowViewport;
+        XRViewport? viewport = state.WindowViewport;
         ShadowAtlasManager? atlas = viewport?.World?.Lights?.ShadowAtlas;
         if (atlas is null)
         {
@@ -369,16 +372,19 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         }
 
         string? unavailableReason = null;
+        ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        RenderCommandCollection commands = ActivePipelineInstance.ActiveMeshRenderCommands;
+        using var renderingBufferScope = commands.EnterRenderingBufferReadScope();
+        BackendReadyFramePackage package = commands.RenderingBackendReadyPackage;
+        AdvancedDirectionalShadowConsumerAuthority stageAuthority = new(
+            viewport, ActivePipelineInstance, commands, renderFrameId,
+            package.PackageGeneration, package.Identity,
+            package.SubmissionResolution.Resolved);
         AdvancedVisibilityStageBackendRequest template = default;
         IAdvancedVisibilityStageBackendCapability? visibility = null;
         bool ready = ShadowAtlasManager.AdvancedDirectionalShadowLaneEnabled;
         if (!ready)
             unavailableReason = "The Advanced directional shadow lane is disabled by XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE.";
-        else if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.CpuDirect)
-        {
-            ready = false;
-            unavailableReason = "The directional shadow lane records CPU-direct draws; GPU-driven submission strategies keep the generic path.";
-        }
         else if (!TryBuildStageRequest(
                      state,
                      in world,
@@ -391,9 +397,23 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             ready = false;
         }
+        else if (template.BackendReadyPackage?.SubmissionResolution.Resolved is not
+            (EMeshSubmissionStrategy.CpuDirect or EMeshSubmissionStrategy.GpuIndirectZeroReadback))
+        {
+            ready = false;
+            unavailableReason = "The frozen directional shadow submission strategy has no supported caster producer.";
+        }
+        else if (!stageAuthority.Matches(viewport!, ActivePipelineInstance,
+                     commands, package, renderFrameId) ||
+                 !atlas.MatchesAdvancedDirectionalShadowConsumerAuthority(in stageAuthority) ||
+                 !ReferenceEquals(template.BackendReadyPackage, package))
+        {
+            ready = false;
+            unavailableReason = "The directional shadow stage does not own this frame's frozen desktop command package.";
+        }
 
         atlas.NotifyAdvancedDirectionalShadowLaneConsumer(
-            RuntimeEngine.Rendering.State.RenderFrameId,
+            renderFrameId,
             ready,
             unavailableReason);
 
@@ -403,12 +423,16 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         while (atlas.TryDequeuePendingAdvancedDirectionalShadowGroup(
                    out AdvancedDirectionalShadowLaneRequest lane))
         {
-            if (!ready || lane.PageFrameBuffer is not { } page)
+            if (!ready || lane.PageFrameBuffer is not { } page ||
+                lane.RenderFrameId != renderFrameId ||
+                !lane.ConsumerAuthority.SameAs(in stageAuthority) ||
+                !lane.ConsumerAuthority.Matches(viewport!, ActivePipelineInstance,
+                    commands, package, renderFrameId))
             {
                 atlas.CompleteAdvancedDirectionalShadowGroup(
                     lane,
                     accepted: false,
-                    unavailableReason ?? "The deferred cascade group has no atlas page.");
+                    unavailableReason ?? "The deferred cascade group has no matching frozen desktop consumer or atlas page.");
                 rejected++;
                 continue;
             }

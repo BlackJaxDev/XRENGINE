@@ -1497,7 +1497,6 @@ internal static partial class SerializedSceneImporter
         TransformBase? parentTransform = node.Transform.Parent;
         if (parentTransform is not null)
         {
-            parentTransform.Children.Remove(node.Transform);
             node.Transform.Parent = null;
         }
 
@@ -1605,7 +1604,7 @@ internal static partial class SerializedSceneImporter
     {
         foreach (TransformBase existingChild in parent.Transform.Children.ToArray())
         {
-            while (parent.Transform.Children.Remove(existingChild)) { }
+            existingChild.Parent = null;
         }
 
         foreach (TransformBase orderedChild in orderedChildren)

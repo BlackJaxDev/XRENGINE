@@ -141,6 +141,9 @@ Code todos list only open implementation items. Checks are in the [testing docs]
 - [todo/physics/box3d-backend-integration-todo.md](todo/physics/box3d-backend-integration-todo.md)
 - [todo/physics/jolt-character-controller-correctness-todo.md](todo/physics/jolt-character-controller-correctness-todo.md)
 - [todo/physics/physics-chain-thousands-scale-optimization-todo.md](todo/physics/physics-chain-thousands-scale-optimization-todo.md)
+- [Physics chain steady-state CPU design](design/physics/physics-chain-steady-state-cpu-design.md)
+- [Skinned GPU chain benchmark investigation](investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
+- [Distance cadence and GPU pose presentation proposal](design/physics/distance-cadence-gpu-presentation.md)
 
 ### platform
 

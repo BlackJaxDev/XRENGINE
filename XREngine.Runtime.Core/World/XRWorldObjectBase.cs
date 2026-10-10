@@ -101,7 +101,11 @@ public abstract class XRWorldObjectBase : XRObjectBase
     public IRuntimeWorldContext? World
     {
         get => _world;
-        internal protected set => SetField(ref _world, value);
+        internal protected set
+        {
+            using var mutation = PhysicsChainWorld.BeginWorldObjectMutation(this, _world, value);
+            SetField(ref _world, value);
+        }
     }
 
     public TWorld? WorldAs<TWorld>() where TWorld : class

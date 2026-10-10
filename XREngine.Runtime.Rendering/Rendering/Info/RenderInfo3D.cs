@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Threading;
 using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data;
@@ -15,6 +16,9 @@ namespace XREngine.Rendering.Info
     public class RenderInfo3D : RenderInfo, IOctreeItem, IRuntimeRenderInfo3DRegistrationItem
     {
         public override ITreeNode? TreeNode => OctreeNode;
+
+        /// <summary>Gets whether frozen draw flags can replace custom CPU collection policy.</summary>
+        public virtual bool SupportsCanonicalGpuCollection => GetType() == typeof(RenderInfo3D);
 
         public static Func<IRenderable, RenderCommand[], RenderInfo3D>? ConstructorOverride { get; set; } = null;
 
@@ -84,6 +88,9 @@ namespace XREngine.Rendering.Info
         private Matrix4x4 _cullingMatrix = Matrix4x4.Identity;
         private OctreeNodeBase? _octreeNode;
         private Box? _lastQueuedWorldBounds;
+        private ICommittedWorldBoundsProvider? _committedWorldBoundsProvider;
+        internal bool HasCommittedWorldBoundsProvider
+            => Volatile.Read(ref _committedWorldBoundsProvider) is not null;
         private bool _receivesShadows = true;
         private bool _castsShadows = true;
         private bool _visibleInLightingProbes = true;
@@ -136,6 +143,39 @@ namespace XREngine.Rendering.Info
                     SetField(ref _localCullingVolume, value);
             }
         }
+
+        /// <summary>Gets the bound of the active committed deformation output.</summary>
+        public bool TryGetCommittedWorldBounds(out AABB bounds, out ulong outputGeneration)
+        {
+            ICommittedWorldBoundsProvider? provider = Volatile.Read(ref _committedWorldBoundsProvider);
+            if (provider is not null &&
+                provider.TryGetCommittedWorldBounds(out bounds, out outputGeneration) &&
+                bounds.IsValid)
+                return true;
+
+            bounds = default;
+            outputGeneration = 0;
+            return false;
+        }
+
+        /// <summary>Changes the committed bound source and moves the CPU tree item.</summary>
+        public void SetCommittedWorldBoundsProvider(ICommittedWorldBoundsProvider? provider)
+        {
+            if (ReferenceEquals(Volatile.Read(ref _committedWorldBoundsProvider), provider))
+                return;
+
+            Volatile.Write(ref _committedWorldBoundsProvider, provider);
+            TryQueueOctreeMove(force: true);
+        }
+
+        /// <summary>Moves the CPU tree item after a new output generation commits.</summary>
+        public void NotifyCommittedWorldBoundsChanged()
+            => TryQueueOctreeMove(force: true);
+
+        Box? IOctreeItem.WorldCullingVolume
+            => TryGetCommittedWorldBounds(out AABB bounds, out _)
+                ? bounds.ToBox(Matrix4x4.Identity)
+                : LocalCullingVolume?.ToBox(CullingOffsetMatrix);
 
         /// <summary>
         /// The octree bounding box this object is currently located in.
@@ -271,25 +311,24 @@ namespace XREngine.Rendering.Info
 
         protected override void RenderCullingVolume()
         {
-            var box = LocalCullingVolume;
-            if (box is null)
+            Box? worldBox = ((IOctreeItem)this).WorldCullingVolume;
+            if (worldBox is null)
                 return;
 
-            Box worldBox = box.Value.ToBox(CullingOffsetMatrix);
-            Matrix4x4 orientation = worldBox.Transform;
+            Matrix4x4 orientation = worldBox.Value.Transform;
             orientation.M41 = 0.0f;
             orientation.M42 = 0.0f;
             orientation.M43 = 0.0f;
-            RuntimeRenderingHostServices.DebugDrawing.RenderDebugBox(worldBox.LocalHalfExtents, worldBox.WorldCenter, orientation, false, ColorF4.Red);
+            RuntimeRenderingHostServices.DebugDrawing.RenderDebugBox(worldBox.Value.LocalHalfExtents, worldBox.Value.WorldCenter, orientation, false, ColorF4.Red);
         }
 
-        private void TryQueueOctreeMove()
+        private void TryQueueOctreeMove(bool force = false)
         {
             if (OctreeNode is null)
                 return;
 
             var worldBounds = ((IOctreeItem)this).WorldCullingVolume;
-            if (worldBounds.HasValue &&
+            if (!force && worldBounds.HasValue &&
                 _lastQueuedWorldBounds.HasValue &&
                 BoxNearlyEqual(_lastQueuedWorldBounds.Value, worldBounds.Value))
             {

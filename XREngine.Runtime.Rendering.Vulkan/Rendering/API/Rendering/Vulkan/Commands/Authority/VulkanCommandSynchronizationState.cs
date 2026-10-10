@@ -49,6 +49,32 @@ internal sealed unsafe class VulkanCommandSynchronizationState
     internal readonly object _submissionMarkerLock = new();
     internal readonly Dictionary<nint, List<VulkanTimelineGpuFence>> _submissionMarkersByCommandBuffer = [];
     internal readonly Stack<VulkanTimelineGpuFence> _timelineGpuFencePool = [];
+    private const int FenceFailureHistoryCapacity = 512;
+    private readonly GpuFenceFailureDiagnostic[] _fenceFailureHistory = new GpuFenceFailureDiagnostic[FenceFailureHistoryCapacity];
+    private long _nextFenceRentalId;
+    private long _fenceFailureCount;
+
+    internal long NextFenceRentalIdNoLock() => ++_nextFenceRentalId;
+
+    internal void RecordFenceFailureNoLock(in GpuFenceFailureDiagnostic failure)
+    {
+        long index = _fenceFailureCount++;
+        _fenceFailureHistory[(int)(index % FenceFailureHistoryCapacity)] = failure;
+    }
+
+    /// <summary>Copies retained fence failures without reading a live marker.</summary>
+    internal GpuFenceFailureDiagnostic[] CaptureFenceFailureHistory()
+    {
+        lock (_submissionMarkerLock)
+        {
+            int count = (int)Math.Min(_fenceFailureCount, FenceFailureHistoryCapacity);
+            GpuFenceFailureDiagnostic[] result = new GpuFenceFailureDiagnostic[count];
+            int start = (int)((_fenceFailureCount - count) % FenceFailureHistoryCapacity);
+            for (int index = 0; index < count; index++)
+                result[index] = _fenceFailureHistory[(start + index) % FenceFailureHistoryCapacity];
+            return result;
+        }
+    }
 
     internal VulkanStableImageSubresourceSlotHandle PublishStableImageSubresourceNoLock(
         VulkanImageSubresourceState state)
@@ -382,7 +408,7 @@ internal sealed unsafe class VulkanCommandSynchronizationState
             foreach (List<VulkanTimelineGpuFence> markers in _submissionMarkersByCommandBuffer.Values)
             {
                 for (int index = 0; index < markers.Count; index++)
-                    markers[index].Fail();
+                    markers[index].Fail(EGpuFenceFailureSite.BackendUnavailable);
             }
 
             _submissionMarkersByCommandBuffer.Clear();
@@ -531,7 +557,8 @@ internal sealed unsafe class VulkanCommandSynchronizationState
         for (int index = 0; index < frameOperations.Length; index++)
         {
             if (frameOperations[index] is SubmissionMarkerOp marker)
-                marker.Fence.Fail();
+                marker.Fence.Fail(EGpuFenceFailureSite.UnsubmittedMarker,
+                    EGpuFenceNativeSubmission.NotCalled);
         }
     }
 

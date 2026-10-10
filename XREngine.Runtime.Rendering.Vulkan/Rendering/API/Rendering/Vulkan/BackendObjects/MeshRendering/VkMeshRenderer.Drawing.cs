@@ -1389,40 +1389,52 @@ internal unsafe partial class VkMeshRenderer
 		string targetName,
 		int drawUniformSlot,
 		int frameDataImageIndex,
-		out IndexType indexType)
+		out IndexType indexType,
+		out string failureReason)
 	{
 		indexType = IndexType.Uint32;
+		failureReason = string.Empty;
 		var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
         bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
             ? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, frameDataImageIndex, out global::System.String prepareReason)
             : TryPrepareForRendering(material, out prepareReason);
         if (!preparedForRecord)
 		{
+			failureReason = $"mesh preparation failed: {prepareReason}; {LastPrepareDetail}";
 			Debug.VulkanWarningEvery(
 				$"Vulkan.IndirectDraw.PrepareSkip.{MeshRenderer.Name ?? "IndirectRenderer"}.{prepareReason}",
 				TimeSpan.FromSeconds(2),
-				"[Vulkan] Skipping indirect draw because atlas renderer preparation failed: {0}. {1}",
-				prepareReason,
-				LastPrepareDetail);
+				"[Vulkan] Skipping indirect draw: {0}",
+				failureReason);
 			return false;
 		}
 
-		if (!TryResolveIndexBinding(_triangleIndexBuffer, _triangleIndexSize, out VkBufferHandle indexHandle, out indexType, out uint indexCount) ||
+		VkDataBuffer? indirectIndices = draw.IndirectTopology == EPrimitiveType.Points
+			? _pointIndexBuffer : _triangleIndexBuffer;
+		IndexSize indirectIndexSize = draw.IndirectTopology == EPrimitiveType.Points
+			? _pointIndexSize : _triangleIndexSize;
+		PrimitiveTopology indirectTopology = draw.IndirectTopology == EPrimitiveType.Points
+			? PrimitiveTopology.PointList : PrimitiveTopology.TriangleList;
+		if (!TryResolveIndexBinding(indirectIndices, indirectIndexSize, out VkBufferHandle indexHandle, out indexType, out uint indexCount) ||
 			indexCount == 0)
 		{
+			failureReason = "indexed indirect input buffer is not ready or has no indices";
 			Debug.VulkanWarningEvery(
 				$"Vulkan.IndirectDraw.IndexMissing.{MeshRenderer.Name ?? "IndirectRenderer"}",
 				TimeSpan.FromSeconds(2),
-				"[Vulkan] Skipping indirect draw because the atlas triangle index buffer is not ready.");
+				"[Vulkan] Skipping indirect draw: {0}.", failureReason);
 			return false;
 		}
 
-		if (!EnsurePipeline(material, PrimitiveTopology.TriangleList, draw, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, out var pipeline))
+		if (!EnsurePipeline(material, indirectTopology, draw, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, out var pipeline))
+		{
+			failureReason = $"graphics pipeline is not ready for pass {passIndex} (pipeline '{pipelineName}', target '{targetName}')";
 			return false;
+		}
 
 		CommandOperations.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
 
-		if (!BindVertexBuffersForCurrentPipeline(commandBuffer))
+		if (!BindVertexBuffersForCurrentPipeline(commandBuffer, out failureReason))
 			return false;
 
 		if (_program?.Data is { } programData)
@@ -1438,7 +1450,8 @@ internal unsafe partial class VkMeshRenderer
 				draw,
 				drawUniformSlot,
 				frameDataImageIndex,
-				passIndex))
+				passIndex,
+				out failureReason))
 			return false;
 
 		CommandOperations.BindIndexBufferTracked(commandBuffer, indexHandle, 0, indexType);
@@ -1487,14 +1500,20 @@ internal unsafe partial class VkMeshRenderer
 		if (!preparedForRecord)
 			return false;
 
-		if (!TryResolveIndexBinding(_triangleIndexBuffer, _triangleIndexSize, out VkBufferHandle indexHandle, out IndexType indexType, out uint indexCount) ||
+		VkDataBuffer? indirectIndices = draw.IndirectTopology == EPrimitiveType.Points
+			? _pointIndexBuffer : _triangleIndexBuffer;
+		IndexSize indirectIndexSize = draw.IndirectTopology == EPrimitiveType.Points
+			? _pointIndexSize : _triangleIndexSize;
+		PrimitiveTopology indirectTopology = draw.IndirectTopology == EPrimitiveType.Points
+			? PrimitiveTopology.PointList : PrimitiveTopology.TriangleList;
+		if (!TryResolveIndexBinding(indirectIndices, indirectIndexSize, out VkBufferHandle indexHandle, out IndexType indexType, out uint indexCount) ||
 			indexCount == 0)
 		{
-			reason = "atlas triangle index buffer is not ready";
+			reason = "indexed indirect input buffer is not ready";
 			return false;
 		}
 
-		if (!EnsurePipeline(material, PrimitiveTopology.TriangleList, draw, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: true, out var pipeline))
+		if (!EnsurePipeline(material, indirectTopology, draw, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: true, out var pipeline))
 		{
 			reason = "pipeline pending";
 			return false;
@@ -1776,7 +1795,11 @@ internal unsafe partial class VkMeshRenderer
 	/// Returns false (and warns) if any binding has no backing buffer.
 	/// </summary>
 	private bool BindVertexBuffersForCurrentPipeline(CommandBuffer commandBuffer)
+		=> BindVertexBuffersForCurrentPipeline(commandBuffer, out _);
+
+	private bool BindVertexBuffersForCurrentPipeline(CommandBuffer commandBuffer, out string failureReason)
 	{
+		failureReason = string.Empty;
 		lock (_bufferStateSync)
 		{
 			if (_vertexBindings.Length == 0)
@@ -1786,18 +1809,21 @@ internal unsafe partial class VkMeshRenderer
 			{
 				if (!_vertexBuffersByBinding.TryGetValue(binding.Binding, out VkDataBuffer? sourceBuffer))
 				{
+					failureReason = $"vertex binding {binding.Binding} has no backing buffer";
 					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} has no backing buffer.");
 					return false;
 				}
 
 				if (!sourceBuffer.TryEnsureReadyForRendering(BackendContext.Resources.AllowSynchronousResourceUploads))
 				{
+					failureReason = $"vertex binding {binding.Binding} buffer is not ready";
 					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not ready.");
 					return false;
 				}
 
 				if (sourceBuffer.BufferHandle is not { } handle || handle.Handle == 0)
 				{
+					failureReason = $"vertex binding {binding.Binding} buffer is not allocated";
 					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because vertex binding {binding.Binding} buffer is not allocated.");
 					return false;
 				}
@@ -1816,7 +1842,11 @@ internal unsafe partial class VkMeshRenderer
 	/// uniform buffers in addition to material resources.
 	/// </summary>
 	internal bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw, int drawUniformSlot, int frameDataImageIndex, int passIndex)
+		=> BindDescriptorsIfAvailable(commandBuffer, material, draw, drawUniformSlot, frameDataImageIndex, passIndex, out _);
+
+	private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw, int drawUniformSlot, int frameDataImageIndex, int passIndex, out string failureReason)
 	{
+		failureReason = string.Empty;
 		if (_program is null)
 			return true;
 
@@ -1851,6 +1881,7 @@ internal unsafe partial class VkMeshRenderer
 
 		if (!EnsureDescriptorSets(material, drawUniformSlot, imageIndex, draw.ProgramBindingSnapshot))
 		{
+			failureReason = $"descriptor-set preparation failed: {_lastDescriptorPreparationFailure}";
 			if (traceWindowPresentation)
 				Debug.VulkanEvery(
 					$"Vulkan.FinalPresentation.BindDescriptors.EnsureFailed.{BindingId}.{programName}",
@@ -1872,6 +1903,7 @@ internal unsafe partial class VkMeshRenderer
 
 		if (!TryRefreshFrameSourceDescriptorSetsForDraw(imageIndex, drawUniformSlot, material, draw.ProgramBindingSnapshot, commandBuffer, draw.WindowPresentationSourceMarker, out string frameSourceDescriptorReason))
 		{
+			failureReason = $"frame-source descriptor refresh failed: {frameSourceDescriptorReason}";
 			if (traceWindowPresentation)
 				Debug.VulkanEvery(
 					$"Vulkan.FinalPresentation.BindDescriptors.FrameSourceFailed.{BindingId}.{programName}",
@@ -1893,6 +1925,7 @@ internal unsafe partial class VkMeshRenderer
 
 		if (_descriptorSets is null || _descriptorSets.Length == 0)
 		{
+			failureReason = "descriptor set array is null or empty";
 			WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor set array is null or empty");
 			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 				programName,
@@ -1916,6 +1949,7 @@ internal unsafe partial class VkMeshRenderer
 				draw,
 				out string autoUniformFailure))
 		{
+			failureReason = $"auto-uniform update failed: {autoUniformFailure}";
 			WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=auto uniforms: {autoUniformFailure}");
 			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 				programName,
@@ -1932,6 +1966,7 @@ internal unsafe partial class VkMeshRenderer
 		DescriptorSet[] sets = _descriptorSets[descriptorSlotIndex];
 		if (sets.Length == 0)
 		{
+			failureReason = $"descriptor set array at image index {imageIndex}, draw slot {drawUniformSlot} is empty";
 			WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor set array at imageIndex {imageIndex}, drawSlot {drawUniformSlot} is empty");
 			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 				programName,
@@ -1952,6 +1987,7 @@ internal unsafe partial class VkMeshRenderer
 					drawUniformSlot,
 					out string autoUniformHeapReason))
 			{
+				failureReason = $"descriptor heap auto-uniform refresh failed: {autoUniformHeapReason}";
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor heap auto uniforms: {autoUniformHeapReason}");
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 					programName,
@@ -1971,6 +2007,7 @@ internal unsafe partial class VkMeshRenderer
 					: null;
 			if (!CommandOperations.TryPushDescriptorHeapProgramData(commandBuffer, _program, payload, out string heapReason))
 			{
+				failureReason = $"descriptor heap push failed: {heapReason}";
 				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor heap push failed: {heapReason}");
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 					programName,
@@ -1999,7 +2036,8 @@ internal unsafe partial class VkMeshRenderer
 			_program.PipelineLayout,
 			sets,
 			imageIndex,
-			drawUniformSlot);
+			drawUniformSlot,
+			out failureReason);
 		if (traceWindowPresentation)
 			Debug.VulkanEvery(
 				$"Vulkan.FinalPresentation.BindDescriptors.Result.{BindingId}.{programName}.{bound}",
@@ -2017,7 +2055,19 @@ internal unsafe partial class VkMeshRenderer
 		int frameIndex,
 		int drawUniformSlot,
 		ulong sealedFrameDataGeneration = 0)
+		=> BindMeshDescriptorSets(commandBuffer, program, pipelineLayout, sets, frameIndex, drawUniformSlot, out _, sealedFrameDataGeneration);
+
+	private bool BindMeshDescriptorSets(
+		CommandBuffer commandBuffer,
+		VkRenderProgram program,
+		PipelineLayout pipelineLayout,
+		DescriptorSet[] sets,
+		int frameIndex,
+		int drawUniformSlot,
+		out string failureReason,
+		ulong sealedFrameDataGeneration = 0)
 	{
+		failureReason = string.Empty;
 		if (!CommandOperations.TryAcquireMappedFrameArenaRecordingLease(
 				commandBuffer,
 				this,
@@ -2025,6 +2075,7 @@ internal unsafe partial class VkMeshRenderer
 				sealedFrameDataGeneration,
 				out string leaseReason))
 		{
+			failureReason = $"frame-data generation lease was rejected: {leaseReason}";
 			WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because its frame-data generation lease was rejected: {leaseReason}.");
 			return false;
 		}
@@ -2046,6 +2097,7 @@ internal unsafe partial class VkMeshRenderer
 
 			if (dynamicOffsetCount > 64)
 			{
+				failureReason = $"descriptor set {setIndex} has {dynamicOffsetCount} dynamic uniform offsets; limit is 64";
 				WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because set {setIndex} has {dynamicOffsetCount} dynamic uniform offsets; the bounded limit is 64.");
 				return false;
 			}
@@ -2068,6 +2120,7 @@ internal unsafe partial class VkMeshRenderer
 						commandBuffer,
 						out uint offset))
 				{
+					failureReason = $"dynamic uniform '{binding.Name}' could not resolve a bounded offset";
 					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because dynamic uniform '{binding.Name}' could not resolve a bounded offset.");
 					return false;
 				}

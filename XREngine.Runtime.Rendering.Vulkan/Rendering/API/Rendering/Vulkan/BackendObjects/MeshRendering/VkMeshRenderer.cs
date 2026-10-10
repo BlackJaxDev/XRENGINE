@@ -443,7 +443,44 @@ internal unsafe partial class VkMeshRenderer(
     }
 
     void IApiMeshRenderer.Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
+        => _ = EnqueueMeshRender(modelMatrix, prevModelMatrix, materialOverride,
+            renderOptionsOverride, instances, billboardMode, forceNoStereo,
+            canonicalDrawIdentitySnapshot, null, out _);
+
+    bool IApiMeshRenderer.RenderIndexedIndirect(Matrix4x4 modelMatrix,
+        Matrix4x4 previousModelMatrix, XRMaterial? materialOverride,
+        RenderingParameters? renderOptionsOverride, XRDataBuffer arguments,
+        nuint byteOffset, EPrimitiveType topology, EMeshBillboardMode billboardMode,
+        bool forceNoStereo, IRenderResourceLeaseOwner? authoringLease,
+        out string failureReason)
     {
+        if (topology != EPrimitiveType.Points && topology != EPrimitiveType.Triangles)
+        {
+            failureReason = "Indexed indirect topology is not supported.";
+            return false;
+        }
+        if (arguments.Target != EBufferTarget.DrawIndirectBuffer ||
+            (byteOffset & 3u) != 0 ||
+            (ulong)byteOffset > arguments.Length ||
+            arguments.Length - (ulong)byteOffset < 20u)
+        {
+            failureReason = "Indexed indirect arguments have an invalid target or byte range.";
+            return false;
+        }
+        return EnqueueMeshRender(modelMatrix, previousModelMatrix, materialOverride,
+            renderOptionsOverride, 1u, billboardMode, forceNoStereo, default,
+            new VulkanMeshIndexedIndirectPayload(arguments, byteOffset, topology,
+                authoringLease),
+            out failureReason);
+    }
+
+    private bool EnqueueMeshRender(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix,
+        XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride,
+        uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo,
+        in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot,
+        VulkanMeshIndexedIndirectPayload? indexedIndirect, out string failureReason)
+    {
+        failureReason = string.Empty;
         ObjectDisposedException.ThrowIf(IsRetired || Data.IsDestroyed, this);
         ValidateOwnerGeneration();
         int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
@@ -507,7 +544,10 @@ internal unsafe partial class VkMeshRenderer(
                 context.ContextKind, instances, expandedInstances, shadowUniformState.IsShadowPass, pipeline?.InstanceId ?? 0);
         }
         if (expandedInstances == 0u)
-            return;
+        {
+            failureReason = "The resolved material has no draw instances.";
+            return false;
+        }
 
         VulkanMeshDrawViewSnapshot viewSnapshot =
             CaptureEnqueueViewSnapshot(
@@ -553,7 +593,10 @@ internal unsafe partial class VkMeshRenderer(
             forceNoStereo,
             canonicalDrawIdentitySnapshot,
             residentTemplateHandle,
-            windowPresentationSourceMarker);
+            windowPresentationSourceMarker)
+        {
+            IndexedIndirect = indexedIndirect,
+        };
         VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult scheduleResult =
             _meshRequests?.TryEnqueue(in request)
             ?? VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.TerminalFailure;
@@ -568,7 +611,7 @@ internal unsafe partial class VkMeshRenderer(
         }
         if (scheduleResult is VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.Scheduled
             or VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.AlreadyReady)
-            return;
+            return true;
 
         CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
         Debug.VulkanWarningEvery(
@@ -577,6 +620,8 @@ internal unsafe partial class VkMeshRenderer(
             "[Vulkan] Mesh request was not scheduled at renderer='{0}' (result={1}); the pending queue remains intact.",
             MeshRenderer.Name ?? "<unnamed renderer>",
             scheduleResult);
+        failureReason = $"Vulkan mesh request was not scheduled: {scheduleResult}.";
+        return false;
     }
 
     private ulong CapturePreparationCompatibilitySignature(
@@ -989,6 +1034,8 @@ internal unsafe partial class VkMeshRenderer(
         {
             PreparationCompatibilitySignature =
                 request.PreparationCompatibilitySignature,
+            IndirectTopology = request.IndexedIndirect?.Topology ?? EPrimitiveType.Triangles,
+            IndexedIndirectAuthoringLease = request.IndexedIndirect?.AuthoringLease,
             AutoUniformPublication =
                 VulkanAutoUniformPublicationSnapshot.Capture(
                     draw,
@@ -1052,7 +1099,10 @@ internal unsafe partial class VkMeshRenderer(
                 producer,
                 ExplicitTarget: null,
                 RequiresExternalUploadBlock: producer.IsExternalSwapchainTarget &&
-                    !producer.IsPrewarmingExternalSwapchainTarget);
+                    !producer.IsPrewarmingExternalSwapchainTarget)
+            {
+                IndexedIndirect = request.IndexedIndirect,
+            };
         }
         return true;
     }

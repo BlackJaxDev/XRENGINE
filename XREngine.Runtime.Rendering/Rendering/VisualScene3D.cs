@@ -48,6 +48,8 @@ namespace XREngine.Scene
 
         public VisualScene3D()
         {
+            for (int index = 0; index < MaximumQueuedRaycasts; ++index)
+                _raycastContexts.Push(new RaycastQueryContext());
             EMeshSubmissionStrategy strategy = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
             _useGpuBvhActive = VulkanFeatureProfile.ResolveGpuBvhUsage(strategy);
             GPUCommands.UseGpuBvh = _useGpuBvhActive;
@@ -73,7 +75,11 @@ namespace XREngine.Scene
             _hasSceneBounds = true;
 
             if (_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
+            {
                 GPUCommands.Bounds = bounds;
+                if (_isGpuDispatchActive)
+                    ActiveCpuRenderTree.Remake(bounds);
+            }
             else
                 ActiveCpuRenderTree.Remake(bounds);
 
@@ -109,10 +115,7 @@ namespace XREngine.Scene
             Func<RenderInfo3D, Segment, (float? distance, object? data)> directTest,
             Action<SortedDictionary<float, List<(RenderInfo3D item, object? data)>>> finishedCallback)
         {
-            if (_cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh)
-                _bvhRenderTree.RaycastAsync(worldSegment, items, directTest, finishedCallback);
-            else
-                RenderTree.RaycastAsync(worldSegment, items, directTest, finishedCallback);
+            QueueRaycast(worldSegment, items, directTest, finishedCallback);
         }
 
         public void Raycast(
@@ -120,10 +123,19 @@ namespace XREngine.Scene
             SortedDictionary<float, List<(RenderInfo3D item, object? data)>> items,
             Func<RenderInfo3D, Segment, (float? distance, object? data)> directTest)
         {
-            if (_cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh)
-                _bvhRenderTree.Raycast(worldSegment, items, directTest);
-            else
-                RenderTree.Raycast(worldSegment, items, directTest);
+            RaycastQueryContext context = RentRaycastContext(directTest);
+            try
+            {
+                if (_cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh)
+                    _bvhRenderTree.Raycast(worldSegment, items, context.Test);
+                else
+                    RenderTree.Raycast(worldSegment, items, context.Test);
+                RaycastCommittedBoundsProviders(worldSegment, items, context);
+            }
+            finally
+            {
+                ReturnRaycastContext(context);
+            }
         }
 
         public override void CollectRenderedItems(
@@ -141,6 +153,9 @@ namespace XREngine.Scene
             CollectRenderedItems(meshRenderCommands, collectionVolume, camera, collectMirrors);
         }
         public void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors)
+            => CollectRenderedItems(commands, collectionVolume, camera, collectMirrors, allowGpuCollection: false);
+
+        private void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors, bool allowGpuCollection)
         {
             using var sample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems", ProfilerScopeKind.AlwaysOnHotPathLoop);
             int visibleRenderables = 0;
@@ -150,7 +165,7 @@ namespace XREngine.Scene
             if (IsGpuCulling)
             {
                 using var gpuSample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu", ProfilerScopeKind.AlwaysOnHotPathLoop);
-                visibleRenderables = CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors, modelDiagActive);
+                visibleRenderables = CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors, modelDiagActive, allowGpuCollection);
             }
             else
             {
@@ -171,6 +186,7 @@ namespace XREngine.Scene
                         false,
                         CollectRenderCommandsCallback,
                         IntersectionTestCallback);
+                    CollectGpuBoundsEligibleRenderables(commands, camera, collectMirrors, allowGpuCollection);
                     visibleRenderables = contextStack.Current.VisibleRenderables;
                 }
                 finally
@@ -209,6 +225,10 @@ namespace XREngine.Scene
         private long _shadowCasterMembershipRevision;
         private bool IsGpuCulling => _isGpuDispatchActive;
         private readonly HashSet<RenderableMesh> _skinnedMeshes = new();
+        private readonly HashSet<RenderInfo3D> _committedCpuTreeMembers = new();
+        private readonly List<RenderInfo3D> _gpuBoundsEligibleRenderables = [];
+        private readonly HashSet<RenderInfo3D> _gpuBoundsEligibleSet = [];
+        private readonly List<uint> _gpuBoundsRestoreScratch = new(16);
         private uint _lastGpuVisibleDraws;
         private uint _lastGpuVisibleInstances;
 
@@ -240,6 +260,11 @@ namespace XREngine.Scene
             base.GlobalCollectVisible();
             SyncCpuSceneCullingStructurePreference();
             ProcessPendingRenderableOperations();
+            RefreshGpuBoundsEligibility();
+            RefreshCoveredCommandSources();
+
+            if (_isGpuDispatchActive)
+                ActiveCpuRenderTree.Swap();
 
             if (!_isGpuDispatchActive)
             {
@@ -293,7 +318,9 @@ namespace XREngine.Scene
         public override void GlobalSwapBuffers()
         {
             SyncCpuGpuCommandMirrorState();
+            PublishCoveredCommandSources();
             base.GlobalSwapBuffers();
+            ProcessQueuedRaycasts();
             SwapBuffersHook?.Invoke(this);
         }
 
@@ -358,8 +385,10 @@ namespace XREngine.Scene
             {
                 if (useGpu)
                 {
-                    // GPU dispatch: remove from RenderTree, keep in GPUCommands.
+                    // Keep committed CPU bounds in the tree for spatial queries.
                     ActiveCpuRenderTree.RemoveRange(_renderables);
+                    _committedCpuTreeMembers.Clear();
+                    RefreshCommittedCpuTreeMembers();
                     ActiveCpuRenderTree.Swap();
 
                     if (_hasSceneBounds)
@@ -389,6 +418,7 @@ namespace XREngine.Scene
                         ActiveCpuRenderTree.Remake();
 
                     ActiveCpuRenderTree.AddRange(_renderables);
+                    _committedCpuTreeMembers.Clear();
                     ActiveCpuRenderTree.Swap();
                 }
 
@@ -433,6 +463,11 @@ namespace XREngine.Scene
                     oldTree.RemoveRange(_renderables);
                     oldTree.Swap();
                 }
+                else
+                {
+                    oldTree.RemoveRange(_committedCpuTreeMembers);
+                    oldTree.Swap();
+                }
 
                 _cpuSceneCullingStructureActive = structure;
                 I3DRenderTree<RenderInfo3D> newTree = ActiveCpuRenderTree;
@@ -445,6 +480,11 @@ namespace XREngine.Scene
                 if (!_isGpuDispatchActive)
                 {
                     newTree.AddRange(_renderables);
+                    newTree.Swap();
+                }
+                else
+                {
+                    newTree.AddRange(_committedCpuTreeMembers);
                     newTree.Swap();
                 }
             }
@@ -515,6 +555,8 @@ namespace XREngine.Scene
 
                         if (!_isGpuDispatchActive)
                             ActiveCpuRenderTree.Remove(operation.renderable);
+                        else if (_committedCpuTreeMembers.Remove(operation.renderable))
+                            ActiveCpuRenderTree.Remove(operation.renderable);
 
                         _renderables.Remove(operation.renderable);
                         if (operation.renderable.CastsShadows)
@@ -547,7 +589,61 @@ namespace XREngine.Scene
         private void RefreshSkinnedCpuCullingBounds()
         {
             foreach (RenderableMesh mesh in _skinnedMeshes)
-                _ = mesh.RefreshSkinnedCullingBoundsForSceneCulling();
+            {
+                mesh.ReconcileCommittedWorldBounds();
+                if (!mesh.UsesCommittedWorldBounds)
+                    _ = mesh.RefreshSkinnedCullingBoundsForSceneCulling();
+            }
+        }
+
+        private void RefreshCommittedCpuTreeMembers()
+        {
+            foreach (RenderableMesh mesh in _skinnedMeshes)
+            {
+                mesh.ReconcileCommittedWorldBounds();
+                RenderInfo3D info = mesh.RenderInfo;
+                if (mesh.UsesCommittedWorldBounds)
+                {
+                    if (_committedCpuTreeMembers.Add(info))
+                        ActiveCpuRenderTree.Add(info);
+                }
+                else if (_committedCpuTreeMembers.Remove(info))
+                    ActiveCpuRenderTree.Remove(info);
+            }
+        }
+
+        private void RefreshGpuBoundsEligibility()
+        {
+            _gpuBoundsEligibleRenderables.Clear();
+            _gpuBoundsEligibleSet.Clear();
+            foreach (RenderableMesh mesh in _skinnedMeshes)
+            {
+                XRMeshRenderer? renderer = mesh.CurrentLODRenderer;
+                if (renderer is null) continue;
+                if (renderer.HasCompleteGpuDrivenBoneCoverage)
+                {
+                    _gpuBoundsEligibleRenderables.Add(mesh.RenderInfo);
+                    _gpuBoundsEligibleSet.Add(mesh.RenderInfo);
+                }
+                else if (GPUCommands.IsRendererOwnsGpuCopiedAabb(renderer))
+                    GPUCommands.RestoreCpuCommandAabbsForRenderer(renderer, mesh.RenderInfo, _gpuBoundsRestoreScratch);
+            }
+        }
+
+        private void CollectGpuBoundsEligibleRenderables(
+            RenderCommandCollection commands,
+            IRuntimeCullingCamera? camera,
+            bool collectMirrors,
+            bool allowGpuCollection)
+        {
+            for (int index = 0; index < _gpuBoundsEligibleRenderables.Count; ++index)
+            {
+                RenderInfo3D renderable = _gpuBoundsEligibleRenderables[index];
+                if (IsCollectedByCanonicalGpu(renderable, allowGpuCollection))
+                    continue;
+                if (renderable.AllowRender(null, commands, camera, false, collectMirrors))
+                    CollectRenderCommandsCore(renderable);
+            }
         }
 
         private void SyncCpuSceneCullingStructurePreference()
@@ -572,7 +668,7 @@ namespace XREngine.Scene
             }
         }
 
-        private int CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors, bool modelDiagActive)
+        private int CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors, bool modelDiagActive, bool allowGpuCollection)
         {
             using var sample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItemsGpu");
             int visibleRenderables = 0;
@@ -591,7 +687,11 @@ namespace XREngine.Scene
             for (int i = 0; i < _renderables.Count; i++)
             {
                 var renderable = _renderables[i];
-                bool allowed = renderable.AllowRender(allowRenderVolume, commands, camera, false, collectMirrors);
+                if (IsCollectedByCanonicalGpu(renderable, allowGpuCollection))
+                    continue;
+                bool allowed = renderable.AllowRender(
+                    _gpuBoundsEligibleSet.Contains(renderable) ? null : allowRenderVolume,
+                    commands, camera, false, collectMirrors);
                 if (!allowed)
                 {
                     if (modelDiagActive)
