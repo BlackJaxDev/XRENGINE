@@ -41,7 +41,8 @@ public sealed class WebGpuRendererBackendModule : IRendererBackendModule
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_registered)
             throw new InvalidOperationException("Register the WebGPU module before creating a canvas renderer.");
-        if (context.Target is not BrowserCanvasRenderTarget target || context.LinkRendererToWindow)
+        if (context.Target is not IBrowserCanvasPresentationTarget target || context.LinkRendererToWindow ||
+            target.ExecutionMode != RenderExecutionMode.BrowserCanvas)
             throw new NotSupportedException("The WebGPU module requires an explicit browser canvas target without desktop window ownership.");
         if (context.ModuleGeneration != Metadata.Generation)
             throw new InvalidOperationException("The WebGPU factory received an obsolete module generation.");

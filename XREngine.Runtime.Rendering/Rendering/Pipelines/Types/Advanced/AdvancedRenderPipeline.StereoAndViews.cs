@@ -1,3 +1,5 @@
+using YamlDotNet.Serialization;
+
 namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline
@@ -15,6 +17,7 @@ public partial class AdvancedRenderPipeline
     /// Stereo execution topology derived from the configured stage family and
     /// renderer. It cannot disagree with the immutable layered resource profile.
     /// </summary>
+    [YamlIgnore]
     public EAdvancedStereoMode StereoMode
         => _stageFamilyExecutionProfile == EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye
             ? EAdvancedStereoMode.RvcTwoPass
@@ -89,17 +92,17 @@ public partial class AdvancedRenderPipeline
               EAdvancedPreparationConsumer.Capture;
 
     private bool IncludesStage(EAdvancedRenderStage stage)
-        => !UsesMinimalVisibilityOutput || stage is
+        => !(stage == EAdvancedRenderStage.AmbientOcclusion &&
+             Shaders.Compilation.WebPipelineRasterProgram.IsActive && !UsesWebAmbientOcclusion) &&
+           (!UsesMinimalVisibilityOutput || stage is
             EAdvancedRenderStage.FrameBegin or
             EAdvancedRenderStage.Deformation or
             EAdvancedRenderStage.VisibilityPreparation or
             EAdvancedRenderStage.VisibilityRaster or
             EAdvancedRenderStage.DepthPyramidAndLateVisibility or
-            EAdvancedRenderStage.Output;
+            EAdvancedRenderStage.Output);
 
-    // The two-pass family is rebound to the physical RVC eye instance before
-    // execution. Its persistent resources and frame-view-history identity are
-    // consequently per eye, even though the command definition is cached.
+    // Each Advanced OpenXR eye owns its persistent resources and frame history.
     // Keep all temporal begin/accumulate/pop/commit predicates together.
     private bool AllowsPostAntiAliasing
         => true;

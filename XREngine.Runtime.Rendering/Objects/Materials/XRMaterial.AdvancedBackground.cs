@@ -53,13 +53,13 @@ public partial class XRMaterial
     /// Lequal is the engine's canonical comparison; the backend maps it to Gequal
     /// when the active camera uses reversed depth, matching the sky shader's far clip.
     /// </summary>
-    public bool TryValidateAdvancedBackground(bool stereo, out string? reason)
+    public bool TryValidateAdvancedBackground(bool stereo, out string? reason, bool multisampleCoverage = false)
     {
-        reason = GetAdvancedBackgroundRejection(stereo);
+        reason = GetAdvancedBackgroundRejection(stereo, multisampleCoverage);
         return reason is null;
     }
 
-    private string? GetAdvancedBackgroundRejection(bool stereo)
+    private string? GetAdvancedBackgroundRejection(bool stereo, bool multisampleCoverage)
     {
         AdvancedBackgroundMaterialProfile? profile = AdvancedBackgroundProfile;
         if (profile is null)
@@ -78,7 +78,10 @@ public partial class XRMaterial
         RenderingParameters options = RenderOptions;
         if (options.DepthTest.Enabled != ERenderParamUsage.Enabled || options.DepthTest.UpdateDepth || options.DepthTest.Function != EComparison.Lequal)
             return "Background drawing requires depth testing, canonical Lequal comparison, and disabled depth writes.";
-        if (options.WriteAlpha || options.StencilTest.Enabled != ERenderParamUsage.Disabled)
+        // The multisample lane installs GetMultisampleBackgroundParameters,
+        // whose required coverage blend always writes alpha. The source alpha
+        // mask remains authoritative for ordinary single-sample background draws.
+        if (options.WriteAlpha && !multisampleCoverage || options.StencilTest.Enabled != ERenderParamUsage.Disabled)
             return "Background drawing must preserve native alpha and stencil.";
         if (options.BlendModeAllDrawBuffers?.Enabled != ERenderParamUsage.Disabled || options.BlendModesPerDrawBuffer?.Count > 0)
             return "Background drawing requires explicitly disabled blending without per-attachment overrides.";

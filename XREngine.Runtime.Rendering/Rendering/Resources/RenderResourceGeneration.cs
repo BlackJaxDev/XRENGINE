@@ -21,6 +21,8 @@ public sealed class RenderResourceGeneration(
     private readonly List<string> _diagnostics = [];
     private readonly Dictionary<string, IIncrementalFrameBufferFactory> _incrementalFrameBufferFactories = new(StringComparer.Ordinal);
     private readonly Stopwatch _buildTimer = new();
+    private GenericRenderObject? _materializingResource;
+    private string? _materializingResourceName;
     private XRGpuFence? _retirementFence;
     private int _failedRetirementFenceRetryCount;
 
@@ -198,6 +200,35 @@ public sealed class RenderResourceGeneration(
         return created;
     }
 
+    internal T? GetMaterializingResource<T>(string resourceName) where T : GenericRenderObject
+    {
+        if (_materializingResource is null)
+            return null;
+        if (_materializingResourceName != resourceName || _materializingResource is not T resource)
+            throw new InvalidOperationException("A generation cannot prepare two unpublished resources concurrently.");
+        return resource;
+    }
+
+    /// <summary>Retains a factory result until validation and registry publication both finish.</summary>
+    internal T RetainMaterializingResource<T>(string resourceName, T resource) where T : GenericRenderObject
+    {
+        if (_materializingResource is not null)
+            throw new InvalidOperationException("A generation already owns an unpublished factory result.");
+        _materializingResourceName = resourceName;
+        _materializingResource = resource;
+        return resource;
+    }
+
+    internal void TransferMaterializingResourceOwnership(string resourceName)
+    {
+        if (_materializingResource is null)
+            return;
+        if (_materializingResourceName != resourceName)
+            throw new InvalidOperationException("The unpublished resource does not match the completed specification.");
+        _materializingResource = null;
+        _materializingResourceName = null;
+    }
+
     internal void TransferIncrementalFrameBufferFactoryOwnership(string resourceName)
     {
         if (!_incrementalFrameBufferFactories.Remove(resourceName))
@@ -309,6 +340,19 @@ public sealed class RenderResourceGeneration(
             }
         }
         _incrementalFrameBufferFactories.Clear();
+
+        try
+        {
+            // A completed factory may still be awaiting backend preparation or
+            // publication and therefore not yet belong to the registry.
+            _materializingResource?.Destroy(now: true);
+        }
+        catch (Exception ex)
+        {
+            firstFailure ??= ex;
+        }
+        _materializingResource = null;
+        _materializingResourceName = null;
 
         try
         {

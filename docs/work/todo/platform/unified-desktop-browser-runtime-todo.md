@@ -1,104 +1,92 @@
 # Unified Desktop And Browser Runtime TODO
 
-Last Updated: 2026-10-06
-Status: Active
-Architecture: [Portable Engine Host](../../../architecture/runtime/portable-engine-host.md)  Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md)
-Validation: [Platform Validation](../../testing/platform/platform-validation.md)
+Last Updated: 2026-10-08
+Status: Open backlog. **122 of 163 named requirements complete; 41 open** (103/118 implementation, 13/38 verification, 6/7 owner decisions). The documentation split adds no completion credit.
+Architecture: [Portable Engine Host](../../../architecture/runtime/portable-engine-host.md), [Default Pipeline Notes](../../../architecture/rendering/default-render-pipeline-notes.md), [Mesh Submission Strategies](../../../architecture/rendering/mesh-submission-strategies.md)  Design: [Unified desktop and browser runtime](../../design/platform/unified-desktop-browser-runtime-design.md), [Modular browser pipelines](../../design/platform/modular-browser-render-pipelines-2026-10-02.md)
+Validation: [Platform Validation](../../testing/platform/platform-validation.md#unified-runtime-ur-verification-view)  Completed work: [122 completed requirements](../../progress/platform/unified-desktop-browser-runtime-completed-work-2026-10-08.md)  Requirement history: [163-ID state and evidence ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md)
 
 ## Current State
 
-`XREngine.Runtime.Host` exists as a portable `net10.0` host for the `Engine` facade, `EngineTimer`, settings, snapshots, and world hosting. `XREngine.Browser` references Host, Core, Rendering, WebGPU, and Animation, and uses browser manifest registration. The browser still contains reference runtime types such as `BrowserSceneSession`, `BrowserMeshComponent`, and `BrowserRenderPipeline`. Real browser-world startup, browser Jolt linkage, full WebGPU renderer parity, editor browser publishing, physical device validation, and separate-runtime retirement remain open.
+The remaining code work includes the blocking and host-file inventories, complete cooking and shader coverage, dynamic multi-LOD meshlets, packaged Editor publishing, download size, user documentation, and retirement of the separate browser runtime. Full material, deformation, shadow/decal, device, performance, full-size, UI, networking, and desktop comparison coverage remains open in [platform validation](../../testing/platform/platform-validation.md#unified-runtime-ur-verification-view). The frozen reference browser runtime remains until parity allows retirement. The [completed-work view](../../progress/platform/unified-desktop-browser-runtime-completed-work-2026-10-08.md) preserves completed requirements and their limits, including the [final source qualification and unresolved UI/shadow checks](../../progress/platform/unified-desktop-browser-runtime-completed-work-2026-10-08.md#final-source-qualification-and-remaining-blockers); the [dated ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md) is the authoritative record.
+
+## Counting And Ownership
+
+The 163-ID requirement metric contains 118 implementation, 38 verification, and 7 owner rows. This code TODO carries the 15 open implementation IDs and one open owner ID. [Platform validation](../../testing/platform/platform-validation.md#unified-runtime-ur-verification-view) carries the 25 open verification IDs. The [completed-work view](../../progress/platform/unified-desktop-browser-runtime-completed-work-2026-10-08.md) contains exactly the 122 Complete rows. The [dated ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md#requirement-states-and-evidence) preserves all 163 states and evidence. Moving a row between documents or merging master adds no completed item. Use the original UR ID when reporting progress.
+
+<a id="ur00--stabilize-the-branch-as-a-reference-harness"></a>
+The completed UR00 reference-harness requirements and their evidence are in the [completed-work view](../../progress/platform/unified-desktop-browser-runtime-completed-work-2026-10-08.md#ur00.01) and [dated ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md#ur00.01).
 
 ## Open Code Items
 
-<a id="ur00--stabilize-the-branch-as-a-reference-harness"></a>
+### UR02 — Platform Host, Frame Stepping, And Scheduling
 
-### Browser Composition And World Startup
+- [ ] **UR02.03b** Inventory every remaining blocking and thread-creating site in the shared closure and make each asynchronous, move it to a desktop leaf, or confine it to cook and editor code. The [current closure inventory](../../progress/platform/browser-caller-blocking-inventory-2026-10-03.md) records implemented caller-job, transform, event, Uber, image-resize and HLOD/impostor paths, plus explicit media/host-I/O admission. Guarded desktop compatibility implementations remain physically present in shared assemblies; the literal placement requirement stays open. Regenerate the inventory with the original expressions. Use the exact search expressions and historical counts in the [requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md#ur02.03b). Done when every remaining browser-reachable blocking or thread-creation site has an asynchronous owner, a desktop leaf, or a cook/editor boundary.
 
-- [ ] Make `XREngine.Browser` install the full portable assembly closure and each integration adapter needed for real-world boot. Files/types: `XREngine.Browser/XREngine.Browser.csproj`, `XREngine.Browser/Program.cs`, browser composition services. Done when: the evaluated closure includes the needed portable projects and startup reports each installed or unavailable service by name.
-- [ ] Replace the reference `BrowserSceneSession` startup path with `RuntimeWorld` and `RuntimeWorldHost`. Files/types: `BrowserSceneSession`, `RuntimeWorldHost`, browser startup. Done when: a fetched cooked `XRWorld` constructs scenes, game mode, pawns, and components, then runs fixed and variable updates.
-- [ ] Generate browser component, transform, serializer, resource, module, and game-assembly registrations through the approved manifest route. Files/types: `Build/Registration/FactoryRegistrations.targets`, `XREngine.Browser/browser-registration-manifest.json`, generated browser registrations. Done when: missing metadata fails by name and the old browser Python generator is not needed.
-- [ ] Audit browser-reachable static constructors, module initializers, reflection scans, dynamic loading, and service boundaries. Files/types: browser closure projects in `Build/Portable/PortableProjects.tsv`. Done when: desktop initialization is moved to leaves or blocked with named diagnostics.
-- [ ] Implement supported external asset loading for fetched YAML, MemoryPack, and cooked-binary payloads. Files/types: asset source contracts, browser asset source, `RuntimeWorld` loading. Done when: representative worlds, prefabs, components, and external references load without native filesystem assumptions.
 
-### Frame Step And Platform Host
+### UR03 — Asset I/O And Per-Platform Cooking
 
-- [ ] Extend `EngineTimer.BeginExplicitFrame` into the shared host step for desktop and browser. Files/types: `XREngine.Runtime.Host/Core/Time/EngineTimer.ExplicitFrames.cs`, frame scheduling services. Done when: fixed-step simulation, variable update, visibility, render recording, and submission can run on the calling thread.
-- [ ] Support a caller-thread render path. Files/types: `EngineTimer`, `RuntimeRenderThreadHost`, render scheduling services. Done when: update, swap, collect, render, and submit run in sequence without a dedicated render thread on browser hosts.
-- [ ] Add a caller-thread executor for shared jobs and remove browser-reachable blocking waits. Files/types: `JobManager`, Core, Rendering, Data, Extensions, Animation, AudioIntegration, InputIntegration, Browser. Done when: browser-reachable code has no required `.Wait()`, `.Result`, thread join, sleep, or unbounded `Task.Run` path.
-- [ ] Create the browser platform host from the current canvas contracts. Files/types: `BrowserCanvasRenderTarget`, `IRuntimeSurfaceHost`, browser canvas services, JavaScript canvas host. Done when: CSS size, backing size, DPR caps, orientation, safe area, detach, reattach, and output generations are owned by a browser platform service.
-- [ ] Handle page visibility, freeze/resume, `pagehide`, and `pageshow` in the host. Files/types: browser lifecycle services, frame scheduler. Done when: timing resets and temporal history invalidates after suspension or large elapsed time.
+- [ ] **UR03.02b2** Remove the remaining synchronous load wrappers and physical host-file operations from runtime-reachable paths. On 2026-09-30 the asset manager had 10 sync-over-async sites, and Core and Rendering had 136 direct `File`/`Directory`/`FileStream` call sites across 39 files that bypass the asset source. The [runtime I/O record](../../progress/platform/browser-runtime-asset-io-boundaries-2026-10-03.md) distinguishes implemented catalog/cache-only loading, identity/handoff boundaries, nonblocking shader preloads and named source-admission guards from the remaining physical separation of desktop APIs. The [asset-manager boundary record](../../progress/platform/browser-asset-manager-source-boundaries-2026-10-03.md) adds constructor/load/cache/metadata admission, sticky catalog ownership, retired watcher rejection and remote-response rollback; published browser delivery requires a registered cooked target or a feature-specific async reader. The targeted review found no new bypass in those paths and does not close the literal whole-inventory removal requirement.
 
-### Asset I/O And Cooking
+- [ ] **UR03.03** Add a platform target to cooking (`CookContent` in `XREngine.Editor/ProjectBuilder.cs`). Preserve all admitted texture interpretation and sampler state through the cooked carrier: raw `XRTexture2D` currently omits `ImportedColorSpace` and `MaxAnisotropy`; material-specific color-space metadata does not close that shared carrier gap. A compatibility-preserving solution must retain non-default anisotropy rather than silently replace authored sampling. Web cooking produces:
+  - WGSL shader artifacts;
+  - ASTC 4×4 and ETC2 texture variants with RGBA8 fallbacks, reconciled with the [texture compression TODO](../texturing/texture-compression-and-cooked-cache-todo.md);
+  - web-decodable audio;
+  - per-asset capability requirements.
 
-- [ ] Route runtime asset loading through asynchronous asset-source APIs. Files/types: `IRuntimeAssetSource`, `IAssetReadBatch`, `DirectStorageIO.Source`, browser asset source. Done when: browser reads use same-origin, credential-free, hash-verified fetches and required synchronous calls fail by name.
-- [ ] Remove sync-over-async and direct filesystem loading from browser-reachable runtime paths. Files/types: `AssetManager`, Core, Rendering. Done when: browser runtime code does not require native file enumeration, watchers, or blocking fetch wrappers.
-- [ ] Add a browser platform target to content cooking. Files/types: `XREngine.Editor/ProjectBuilder.cs`, shader cooker, texture cooker, audio cooker. Done when: web cooking creates WGSL shader artifacts, mobile texture variants with fallbacks, web-decodable audio, and capability requirements.
-- [ ] Generalize browser content package rules to the real asset graph. Files/types: content packager, manifest builder, launch descriptor. Done when: payload URLs, hashes, dependency closures, essential and streamed splits, and strict limits come from authored assets.
-- [ ] Implement bounded browser delivery budgets. Files/types: browser content loader, asset integration scheduler. Done when: download concurrency, cancellation, retry, progress, retained bytes, staging bytes, and estimated GPU bytes are bounded and reported.
 
-### WebGPU Renderer And Shader Path
+### UR05 — Shaders And Materials
 
-- [ ] Implement `AbstractRenderer` coverage in `XREngine.Runtime.Rendering.WebGPU`. Files/types: `WebGpuRendererBackendModule`, `WebGpuRendererHost`, WebGPU wrappers. Done when: every abstract member is implemented or fails with a named unsupported diagnostic and the renderer can clear and present.
-- [ ] Add WebGPU data buffers, views, programs, mesh renderers, and vertex layouts. Files/types: `WebGpuRendererHost.Resources.cs`, `WebGpuRendererHost.Pipeline.cs`, mesh renderers. Done when: an unlit `ModelComponent` renders through an engine camera.
-- [ ] Add WebGPU textures, samplers, framebuffers, render buffers, materials, uniforms, and compute dispatch. Files/types: WebGPU resource and command files. Done when: textured and lit materials, offscreen targets, resolves, and compute dispatch work through engine contracts.
-- [ ] Track GL-shaped state in C# and lower it to WebGPU pipeline, layout, and bind-group caches. Files/types: WebGPU pipeline cache, renderer state. Done when: complete cache keys bound cache growth and incompatible entries fail.
-- [ ] Flush one prepared packet per frame to JavaScript. Files/types: WebGPU command packet builder and executor. Done when: ordinary draws do not create per-draw managed-to-JavaScript crossings.
-- [ ] Make non-blocking renderer APIs honest. Files/types: runtime image readback, screenshot, pixel read, luminance, `WaitForGpu`, capability probes. Done when: non-blocking hosts use async readbacks or reject sync waits by name.
-- [ ] Present through `RenderFrameOutputDescription` and surface generations. Files/types: canvas target, WebGPU presentation. Done when: resize rejects obsolete plans and reacquires output for each frame.
-- [ ] Implement WebGPU pending, ready, failed, lost, and recovery states. Files/types: WebGPU device/session state. Done when: device loss stops invalid work and rebuilds resources from CPU or cooked sources before resume.
-- [ ] Add WebGPU error scopes, debug labels, counters, and allocation guards. Files/types: WebGPU diagnostics. Done when: recording and submission avoid per-frame heap allocations in the hot path.
-- [ ] Inventory web-tier shaders for `DefaultRenderPipeline`. Files/types: shader inventory doc, `Build/CommonAssets/Shaders`, pipeline pass list. Done when: each shader is classed as Slang-portable, WGSL rewrite, or desktop-only.
-- [ ] Cook engine shaders and material generation to WGSL. Files/types: `Tools/ShaderCooker`, `ShaderCompileTarget.WebGPUWgsl`, material shader generator. Done when: artifacts carry source, dependency, compiler, schema, layout, and capability identity.
-- [ ] Port the required web-tier shaders. Files/types: depth, shadow, forward, sky, tonemap, UI, and text shader sources. Done when: each pass group cooks without errors and has a known-value render check in validation.
-- [ ] Define the WebGPU capability profile for `DefaultRenderPipeline` and `AdvancedRenderPipeline`. Files/types: pipeline capability policy, pass selection. Done when: unsupported required passes fail by name and optional exclusions are listed before runtime.
-- [ ] Resolve WebGPU mesh submission, skinning, blendshapes, UI, and quality tiers. Files/types: mesh submission strategy, WebGPU compute, UI renderer, quality settings. Done when: CPU-direct works first, GPU paths are opt-in until measured, and disabled effects allocate no resources.
+- [ ] **UR05.07** Port the hand-written web-tier shaders from the UR05.01 list by the route chosen in D7: depth and shadow casters, forward lit surfaces, sky and environment, tonemapping and the bounded post-process set, then UI and text. Implement coherent groups with narrow cook/compile checks and run known-value rendering at end-to-end milestones; each group's known-value result must be recorded before this coverage is closed, not before work on another group begins. Desktop GLSL behavior is unchanged.
 
-### Browser Physics, Audio, Input, UI, And Game Code
 
-- [ ] Productize the approved browser `joltc` native asset supply. Files/types: Jolt browser build scripts, `.props`, `NativeFileReference`, Jolt package policy. Done when: browser publishes link the approved archive without changing desktop supply.
-- [ ] Retarget the Jolt leaf for browser admission. Files/types: `XREngine.Runtime.Physics.Jolt`, `Build/Portable/PortableRuntime.targets`. Done when: the Jolt project builds for browser and native asset allowances are narrow and documented.
-- [ ] Install Jolt in browser composition with single-threaded job execution. Files/types: browser composition, Jolt runtime services. Done when: required Jolt features report truthful capability and unsupported PhysX-only worlds fail by component path.
-- [ ] Implement Web Audio, browser input, browser UI, text, and accessibility leaves. Files/types: audio service, input service, UI/text services, browser JavaScript modules. Done when: touch, keyboard, IME, wheel, gamepad, audio activation, spatial audio, and UI hit testing use engine contracts.
-- [ ] Make project templates and game projects target portable engine assemblies for browser publishing. Files/types: `XREngine.Editor/CodeManager.cs`, `XREngine.Editor/EditorProjectInitializer.cs`, browser publish checks. Done when: blocked references list type and member names.
-- [ ] Make the selected parity target portable or choose another target. Files/types: `Samples/MonkeyBallVR`, physics calls, VR rig, OpenVR manifest, cooked-world serializer. Done when: gameplay code references portable projects and the desktop build adds desktop-only VR parts.
+### UR06 — Modular Render Pipeline Web Support
 
-### Editor Publish, CI, Hosting, And Runtime Retirement
+- [ ] **UR06.09f2** Publish GPU-selected mesh/LOD decisions and use them in generic meshlet expansion, preserving authored LOD policy without CPU visibility/count readback. The initial route explicitly rejects dynamic multi-LOD sources.
 
-- [ ] Replace `BrowserWorldPublishExporter` with the unified publish flow. Files/types: editor publish pipeline, content cook, browser host publish, launch descriptor. Done when: Build Project cooks the startup world's web closure, builds game assemblies, publishes the browser host, writes the descriptor, and activates output atomically.
-- [ ] Report web-unsupported components and features before publish. Files/types: publish diagnostics, world scan. Done when: unsupported required features block publish with scene paths and reasons.
-- [ ] Ship a player shell page separate from the developer harness. Files/types: browser shell HTML/JS/CSS. Done when: loading, progress, errors, and audio unlock are production-oriented.
-- [ ] Keep the editor CLI and Build Project action stable. Files/types: editor build command, packaged editor publish. Done when: `--build-project <project> --build-platform BrowserWebGPU` works from source and packaged editor.
-- [ ] Add browser build, publish, smoke, and physical-device lanes. Files/types: CI workflows, test scripts, device evidence templates. Done when: clean publish and smoke results are reproducible and device evidence names exact versions.
-- [ ] Document production hosting and troubleshooting after validation. Files/types: user guide, hosting guide, support matrix. Done when: HTTPS, MIME, compression, caching, CSP, permissions, limitations, and diagnostics are covered.
-- [ ] Retire the separate browser runtime after the unified path covers its cases. Files/types: `BrowserMeshComponent`, `BrowserSpinComponent`, `SceneBootComponent`, browser DTOs, `BrowserSceneSession`, `BrowserRenderPipeline`, `BrowserCpuAnimator`, `BrowserCookedAnimationPlayer`, `BrowserKinematicCharacter`, `BrowserWorldPublishExporter`, browser-only cook recipes, browser Python scripts. Done when: removed types have no remaining required consumers and the developer harness either uses the unified runtime or is removed.
 
-### Native Subsystem Follow-Up
+### UR11 — Editor Browser Publishing On The Unified Path
 
-- [ ] Promote Jolt to the default physics backend for new projects and the unit-testing world after owner approval and browser proof. Files/types: physics architecture docs, user docs, editor labels, unit-testing settings, generated settings schema, `EPhysicsLibrary` persistence. Done when: new projects and the unit-testing world select Jolt, and saved PhysX projects still load with PhysX.
+- [ ] **UR11.04** Keep the CLI entry point (`--build-project <project> --build-platform BrowserWebGPU`) and the editor Build Project action stable. Browser publishing must also work from a packaged editor, not only a source checkout.
 
-### Browser Runtime Carry-Over
 
-- [ ] Carry the canvas host, bridge, resource lifetime, content delivery, recovery, and performance policies into engine-owned services. Files/types: browser platform host, WebGPU renderer, content loader, recovery controller, diagnostics counters. Done when: the reference harness contains no unique production policy.
-- [ ] Keep WebGL2, worker/offscreen canvas, PWA/offline packaging, WebXR, native mobile applications, and advanced desktop feature promotion separate. Files/types: future design docs and backend modules. Done when: the WebGPU package reports unavailable fallback or unsupported features honestly.
+### UR13 — Performance, Runtime Mode, And Size
+
+- [ ] **UR13.03** Reduce download size through trimming, lazy assembly loading, and streamed content, against the [readiness budgets](../../progress/rendering/mobile-browser-readiness.md#devices-and-measurable-budgets). The [download-size boundary](../../progress/platform/browser-download-size-boundary-2026-10-04.md) records the current 25.46 MiB gzip framework build-resource subtotal, implemented scene streaming and deferred scene shader delivery. Genuine authored export and production-loader checks establish bounded shader deferral; managed-assembly loading, trimming, measured published transfer and browser attachment remain open.
+
+
+### UR15 — CI, Hosting, And Evidence
+
+- [ ] **UR15.05** Publish user-facing build, publish, hosting, support-matrix, and troubleshooting docs after validation.
+
+
+### UR16 — Retire The Separate Browser Runtime
+
+- [ ] **UR16.01** Remove `BrowserMeshComponent`, `BrowserSpinComponent`, `SceneBootComponent`, and the browser registration manifest and generator.
+
+- [ ] **UR16.02** Remove `BrowserCooked*` scene and instance DTOs and the `BrowserSceneSession` content, motion, collision, and animation paths.
+
+- [ ] **UR16.03** Remove `BrowserRenderPipeline`, its packet types, and `browser-render-pipeline.js` once the engine pipeline covers their cases.
+
+- [ ] **UR16.04** Remove `BrowserCpuAnimator`, `BrowserCookedAnimationPlayer`, and `BrowserKinematicCharacter`.
+
+- [ ] **UR16.05** Remove `BrowserWorldPublishExporter`, `Tools/BrowserContentCooker`'s browser-only recipe format (keeping the generalized packager), and the Python scripts (`Tools/Generate-BrowserRegistrations.py`, `Tools/Reports/audit_browser_dependencies.py`, `Tools/Shaders/cook_browser_shaders.py`).
+
+- [ ] **UR16.06** Keep the developer harness page only if it still exercises the unified runtime; otherwise remove it.
+
+- [ ] **UR16.07** Close or rewrite superseded mobile TODO rows and progress docs; move durable content into stable docs.
 
 ## Decisions Needed
 
-- [ ] Choose the parity target if MonkeyBall remains blocked by PhysX, VR, OpenVR, or cooked-world serializer dependencies. Owner: product/runtime owner.
-- [ ] Decide Jolt default-promotion criteria for desktop and browser. Owner: runtime/physics owner.
-- [ ] Decide the reviewed browser managed Jolt binding supply after the signature conflict. Owner: runtime/physics owner.
-- [ ] Choose the web-tier shader authoring route: Slang sources cooked to every target, or hand-written WGSL beside GLSL. Owner: rendering owner.
-- [ ] Decide headless-browser smoke tooling after license review. Owner: tooling owner.
-- [ ] Choose the browser shipping runtime mode from measurements. Owner: product/runtime owner.
-- [ ] Decide whether to retire the separate browser runtime fully or keep a small standalone demo. Owner: product owner.
-- [ ] Decide whether to run the optional Box3D comparison or defer it. Owner: physics owner.
-- [ ] Decide the remaining Bootstrap modeling-integration scan question. Owner: runtime owner.
+- [ ] **UR13.02** Qualify shipping AOT versus the untrimmed interpreter with generated serialization and registration metadata, trimming roots, build time, download size, and runtime cost. Owner: product/runtime owner. The 2026-10-01 D11 decision retains the interpreter path until measurements support a shipping choice.
+
+## Build Gate
+
+Use targeted compile and shader-cook checks for a coherent implementation group. Before publication, use the full Editor, Server, VRClient, portable browser compile, and Browser publish gate recorded in the [dated ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md#build-gate). Each result applies only to its tested source revision.
+
+## Owner Decisions
+
+D1–D16 and their dated approvals or limits are preserved in the [requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md#owner-decisions). D11 leaves UR13.02 open until measured shipping-mode qualification.
 
 ## Out Of Scope
 
-- Browser-hosted editor.
-- Immersive WebXR runtime.
-- WebGL2 backend and automatic backend selection.
-- Native Android or iOS applications.
-- PWA/offline packaging.
-- Multithreaded browser runtime.
+- Browser-hosted editor, immersive WebXR, WebGL2 fallback, native Android/iOS applications, PWA/offline packaging, and a multithreaded browser runtime.

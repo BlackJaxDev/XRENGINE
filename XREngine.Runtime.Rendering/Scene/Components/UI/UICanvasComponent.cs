@@ -61,10 +61,18 @@ namespace XREngine.Components
         private RenderInfo3D? _worldSpaceQuadRenderInfo;
         private XRMaterial? _offscreenMaterial;
         private XRMaterialFrameBuffer? _offscreenFbo;
+        private XRTexture2D? _ownedOffscreenTexture;
+        private XRMesh? _ownedOffscreenMesh;
+        private XRMeshRenderer? _ownedOffscreenRenderer;
+        private Vector2 _screenCameraSize;
+        private UserInterfaceRenderPipeline? _ownedDefaultPipeline;
         private bool _timerHooksInstalled = false;
         private int _collectGeneration = 0;
         private int _lastSwappedGeneration = -1;
         private int _lastRenderObservedSwapGeneration = -1;
+        private ulong _nonScreenRenderAttempts;
+        private ulong _lastNonScreenCallbackRenderFrame;
+        private bool _nonScreenCommandChainCompleted;
         private bool _loggedStaleNonScreenFrameWarning = false;
         private bool _forceDirectRenderingForBackdropBlur = false;
         private bool _autoDisableOffscreenForBackdropBlur = true;
@@ -98,25 +106,60 @@ namespace XREngine.Components
 
         private void EnsureOffscreenResourcesInitialized()
         {
+            EnsureWorldSpaceRenderInfoInitialized();
+            bool webGpu = OperatingSystem.IsBrowser() || AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU ||
+                RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked;
+            if (webGpu)
+            {
+                ValidateWebGpuProfile();
+                // Keep registration stable for a later draw-space change without
+                // allocating an unused texture, material or mesh for screen UI.
+                if (CanvasDrawSpaceOrDefault == ECanvasDrawSpace.Screen)
+                    return;
+            }
             if (_offscreenFbo is not null)
                 return;
 
             var offscreenTexture = XRTexture2D.CreateFrameBufferTexture(
                 1u,
                 1u,
-                EPixelInternalFormat.Rgba8,
+                webGpu ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8,
                 EPixelFormat.Rgba,
-                EPixelType.UnsignedByte,
+                webGpu ? EPixelType.HalfFloat : EPixelType.UnsignedByte,
                 EFrameBufferAttachment.ColorAttachment0);
+            SetField(ref _ownedOffscreenTexture, offscreenTexture);
 
-            _offscreenMaterial = XRMaterial.CreateUnlitTextureMaterialForward(offscreenTexture);
-            _offscreenMaterial.EnableTransparency();
-            _offscreenMaterial.RenderOptions.CullMode = ECullMode.None;
+            XRMaterial offscreenMaterial;
+            if (webGpu)
+            {
+                offscreenTexture.MinFilter = ETexMinFilter.Linear;
+                offscreenTexture.MagFilter = ETexMagFilter.Linear;
+                offscreenMaterial = UICanvasSurfaceMaterial.Create(offscreenTexture);
+            }
+            else
+            {
+                offscreenMaterial = XRMaterial.CreateUnlitTextureMaterialForward(offscreenTexture);
+                offscreenMaterial.EnableTransparency();
+            }
+            offscreenMaterial.RenderOptions.CullMode = ECullMode.None;
+            SetField(ref _offscreenMaterial, offscreenMaterial);
 
             var quadMesh = XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false));
-            var quadRenderer = new XRMeshRenderer(quadMesh, _offscreenMaterial);
+            var quadRenderer = new XRMeshRenderer(quadMesh, offscreenMaterial);
+            SetField(ref _ownedOffscreenMesh, quadMesh);
+            SetField(ref _ownedOffscreenRenderer, quadRenderer);
 
-            _worldSpaceQuadCommand = new RenderCommandMesh3D((int)EDefaultRenderPass.TransparentForward, quadRenderer, Matrix4x4.Identity);
+            _worldSpaceQuadCommand!.Mesh = quadRenderer;
+
+            SetField(ref _offscreenFbo, new XRMaterialFrameBuffer(offscreenMaterial));
+        }
+
+        private void EnsureWorldSpaceRenderInfoInitialized()
+        {
+            if (_worldSpaceQuadRenderInfo is not null)
+                return;
+
+            _worldSpaceQuadCommand = new RenderCommandMesh3D(EDefaultRenderPass.TransparentForward);
             _worldSpacePreRenderCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.PreRender, RenderNonScreenCanvasToTexture);
             _worldSpaceQuadRenderInfo = RenderInfo3D.New(this, _worldSpaceQuadCommand, _worldSpacePreRenderCommand);
             _worldSpaceQuadRenderInfo.PreCollectCommandsCallback = ShouldRenderWorldSpaceQuad;
@@ -124,9 +167,16 @@ namespace XREngine.Components
             _worldSpaceQuadRenderInfo.ReceivesShadows = false;
             _worldSpaceQuadRenderInfo.VisibleInLightingProbes = false;
 
-            _offscreenFbo = new XRMaterialFrameBuffer(_offscreenMaterial);
+            SetField(ref _renderedObjects, [_worldSpaceQuadRenderInfo]);
+        }
 
-            _renderedObjects = [_worldSpaceQuadRenderInfo];
+        /// <summary>Checks the canvas route implemented by the cooked WebGPU UI family.</summary>
+        public void ValidateWebGpuProfile()
+        {
+            if (StrictOneByOneRenderCalls)
+                throw new NotSupportedException("WebGPU.UI.UnbatchedUnsupported: the cooked canvas requires the shared UI batch collector.");
+            if (CanvasDrawSpaceOrDefault != ECanvasDrawSpace.Screen && !UseOffscreenRenderingForNonScreenSpaces())
+                throw new NotSupportedException("WebGPU.UI.DirectCanvasUnsupported: camera/world canvases require their owned offscreen target; direct and viewport-backdrop canvas paths are not admitted.");
         }
 
         private bool _strictOneByOneRenderCalls = false;
@@ -190,8 +240,9 @@ namespace XREngine.Components
 
         private void ResizeScreenSpace(BoundingRectangleF bounds)
         {
-            //Recreate the size of the render tree to match the new size.
-            VisualScene2D.SetBounds(bounds);
+            // The 2D target and input tree have a local origin even when the canvas
+            // itself is translated or rotated in the 3D scene.
+            VisualScene2D.SetBounds(new BoundingRectangleF(Vector2.Zero, new Vector2(bounds.Width, bounds.Height)));
 
             //Update the camera parameters to match the new size.
             if (Camera2D.Parameters is XROrthographicCameraParameters orthoParams)
@@ -201,6 +252,7 @@ namespace XREngine.Components
             }
             else
                 Camera2D.Parameters = new XROrthographicCameraParameters(bounds.Width, bounds.Height, DefaultNearZ, DefaultFarZ);
+            SetField(ref _screenCameraSize, new Vector2(bounds.Width, bounds.Height));
 
             if (Transform is UICanvasTransform tfm)
                 _renderPipeline.ViewportResized(tfm.ActualSize);
@@ -449,19 +501,55 @@ namespace XREngine.Components
             RemoveTimerHooks();
         }
 
+        protected override void OnDestroying()
+        {
+            RemoveTimerHooks();
+            try { base.OnDestroying(); }
+            finally
+            {
+                if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
+                    ReleaseOwnedCanvasResources();
+                else
+                    RuntimeEngine.EnqueueRenderThreadTask(ReleaseOwnedCanvasResources,
+                        "UICanvas.ReleaseResources", RenderThreadJobKind.RenderPipelineResource);
+            }
+        }
+
+        private void ReleaseOwnedCanvasResources()
+        {
+            List<Exception>? failures = null;
+            Release(_renderPipeline.RequestTerminalTeardown);
+            Release(BatchCollector.Dispose);
+            Release(() => _visualScene2D?.Destroy());
+            Release(() => _worldSpaceQuadRenderInfo?.Dispose());
+            Release(() => _offscreenFbo?.Destroy(true));
+            Release(() => _ownedOffscreenRenderer?.Destroy(true));
+            Release(() => _ownedOffscreenMesh?.Destroy(true));
+            Release(() => _offscreenMaterial?.Destroy(true));
+            Release(() => _ownedOffscreenTexture?.Destroy(true));
+            Release(() => _camera2D?.Transform.Destroy(true));
+            Release(() => _ownedDefaultPipeline?.Destroy(true));
+            if (failures is not null)
+                throw new AggregateException("The canvas could not release all owned rendering resources.", failures);
+
+            void Release(Action release)
+            {
+                try { release(); }
+                catch (Exception error) { (failures ??= []).Add(error); }
+            }
+        }
+
         private void EnsureTimerHooksInstalled()
         {
             if (_timerHooksInstalled)
                 return;
 
-            RuntimeEngine.Time.Timer.UpdateFrame -= UpdateLayout;
-            RuntimeEngine.Time.Timer.CollectVisible -= CollectVisibleItemsNonScreen;
-            RuntimeEngine.Time.Timer.SwapBuffers -= SwapBuffersNonScreen;
-
+            // The installed flag owns registration. An unmatched removal queued by
+            // the host event would cancel this new subscription on its first dispatch.
             RuntimeEngine.Time.Timer.UpdateFrame += UpdateLayout;
             RuntimeEngine.Time.Timer.CollectVisible += CollectVisibleItemsNonScreen;
             RuntimeEngine.Time.Timer.SwapBuffers += SwapBuffersNonScreen;
-            _timerHooksInstalled = true;
+            SetField(ref _timerHooksInstalled, true, publishNotifications: false);
         }
 
         private void RemoveTimerHooks()
@@ -472,7 +560,7 @@ namespace XREngine.Components
             RuntimeEngine.Time.Timer.UpdateFrame -= UpdateLayout;
             RuntimeEngine.Time.Timer.CollectVisible -= CollectVisibleItemsNonScreen;
             RuntimeEngine.Time.Timer.SwapBuffers -= SwapBuffersNonScreen;
-            _timerHooksInstalled = false;
+            SetField(ref _timerHooksInstalled, false, publishNotifications: false);
         }
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
@@ -660,6 +748,9 @@ namespace XREngine.Components
 
         private void RenderNonScreenCanvasToTexture()
         {
+            SetField(ref _nonScreenRenderAttempts, _nonScreenRenderAttempts + 1, publishNotifications: false);
+            SetField(ref _lastNonScreenCallbackRenderFrame, RuntimeEngine.Rendering.State.RenderFrameId, publishNotifications: false);
+            SetField(ref _nonScreenCommandChainCompleted, false, publishNotifications: false);
             if (!IsActive)
                 return;
 
@@ -698,7 +789,7 @@ namespace XREngine.Components
             //    _renderDiagCount++;
             //}
 
-            _renderPipeline.Render(
+            bool completed = _renderPipeline.TryRender(
                 VisualScene2D,
                 Camera2D,
                 null,
@@ -707,6 +798,42 @@ namespace XREngine.Components
                 null,
                 false,
                 false);
+            SetField(ref _nonScreenCommandChainCompleted, completed, publishNotifications: false);
+            // Atomic consumers need this invocation's producer. Preserve a nested
+            // decline instead of losing its cause at the later texture readiness check.
+            if (!completed && AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
+                throw new RenderResourcePreparationPendingException(_renderPipeline.LastRenderDeclineReason
+                    ?? "UI.Canvas.ProducerPending: the offscreen canvas command chain did not execute.");
+        }
+
+        /// <summary>Formats offscreen producer state only when a host requests failure diagnostics.</summary>
+        public bool TryAppendOffscreenRenderingStatus(System.Text.StringBuilder output)
+        {
+            ArgumentNullException.ThrowIfNull(output);
+            if (CanvasDrawSpaceOrDefault == ECanvasDrawSpace.Screen)
+                return false;
+            if (output.Length != 0)
+                output.Append(" | ");
+            output.Append(SceneNode?.Name ?? "unnamed canvas")
+                .Append(" active=").Append(IsActiveInHierarchy)
+                .Append(" hooks=").Append(_timerHooksInstalled)
+                .Append(" attempts=").Append(_nonScreenRenderAttempts)
+                .Append(" lastCallbackRenderFrame=").Append(_nonScreenRenderAttempts == 0 ? "none" : _lastNonScreenCallbackRenderFrame.ToString())
+                .Append(" commandChainCompleted=").Append(_nonScreenCommandChainCompleted)
+                .Append(" collect=").Append(_collectGeneration)
+                .Append(" swap=").Append(_lastSwappedGeneration)
+                .Append(" observedSwap=").Append(_lastRenderObservedSwapGeneration)
+                .Append(" package=").Append(_renderPipeline.MeshRenderCommands.RenderingBackendReadyPackage.State)
+                .Append(" commands=").Append(_renderPipeline.MeshRenderCommands.GetRenderingCommandCount())
+                .Append(" target=").Append(_offscreenFbo?.Width ?? 0).Append('x').Append(_offscreenFbo?.Height ?? 0)
+                .Append(" cachedTargetComplete=").Append(_offscreenFbo?.IsLastCheckComplete ?? false)
+                .Append(" targetMatchesSurface=").Append(_offscreenFbo?.Targets is { Length: 1 } targets &&
+                    _offscreenMaterial?.Textures is { Count: 1 } textures &&
+                    ReferenceEquals(targets[0].Target, textures[0]) &&
+                    ReferenceEquals(textures[0], _ownedOffscreenTexture))
+                .Append(" decline=").Append(_renderPipeline.LastRenderDeclineReason ?? "none")
+                .Append(" resourceFailure=").Append(_renderPipeline.LastResourceGenerationFailure ?? "none");
+            return true;
         }
 
         private void EnsureCameraSpaceBinding()
@@ -838,8 +965,8 @@ namespace XREngine.Components
             }
 
             bool needsResize =
-                MathF.Abs(width - _offscreenFbo!.Width) > 0.5f ||
-                MathF.Abs(height - _offscreenFbo.Height) > 0.5f;
+                MathF.Abs(width - _screenCameraSize.X) > 0.5f ||
+                MathF.Abs(height - _screenCameraSize.Y) > 0.5f;
 
             var proj = Camera2D.ProjectionMatrix;
             bool invalidProjection =
@@ -855,6 +982,38 @@ namespace XREngine.Components
             if (_worldSpaceQuadCommand is null || _worldSpaceQuadRenderInfo is null)
                 return;
 
+            Matrix4x4 world = GetWorldSpaceCanvasMatrix(out Vector2 size);
+            float width = size.X;
+            float height = size.Y;
+            _worldSpaceQuadCommand.WorldMatrix = Matrix4x4.CreateScale(width, height, 1.0f) * world;
+
+            _worldSpaceQuadRenderInfo.LocalCullingVolume = AABB.FromSize(new Vector3(width, height, 0.05f));
+            _worldSpaceQuadRenderInfo.CullingOffsetMatrix = Matrix4x4.CreateTranslation(width * 0.5f, height * 0.5f, 0.0f) * world;
+        }
+
+        /// <summary>
+        /// Resolves the inverse of the displayed canvas placement, including automatic world/camera placement.
+        /// Pointer rays use this same mapping as the composited world quad.
+        /// </summary>
+        public bool TryGetWorldToCanvasMatrix(out Matrix4x4 worldToCanvas)
+            => TryGetWorldToCanvasMatrix(out worldToCanvas, out _);
+
+        /// <summary>Also returns the resolved local extent used by the displayed canvas quad.</summary>
+        public bool TryGetWorldToCanvasMatrix(out Matrix4x4 worldToCanvas, out Vector2 canvasSize)
+        {
+            Matrix4x4 canvasToWorld;
+            if (UseOffscreenRenderingForNonScreenSpaces())
+                canvasToWorld = GetWorldSpaceCanvasMatrix(out canvasSize);
+            else
+            {
+                canvasToWorld = CanvasTransform.WorldMatrix;
+                canvasSize = CanvasTransform.ActualSize;
+            }
+            return Matrix4x4.Invert(canvasToWorld, out worldToCanvas);
+        }
+
+        private Matrix4x4 GetWorldSpaceCanvasMatrix(out Vector2 size)
+        {
             var tfm = CanvasTransform;
             var bounds = tfm.GetActualBounds();
             if (bounds.Width <= 1.0f || bounds.Height <= 1.0f)
@@ -868,11 +1027,8 @@ namespace XREngine.Components
                 height = 1080.0f;
             }
 
-            var world = ResolveWorldSpaceCanvasMatrix(tfm, width, height);
-            _worldSpaceQuadCommand.WorldMatrix = Matrix4x4.CreateScale(width, height, 1.0f) * world;
-
-            _worldSpaceQuadRenderInfo.LocalCullingVolume = AABB.FromSize(new Vector3(width, height, 0.05f));
-            _worldSpaceQuadRenderInfo.CullingOffsetMatrix = Matrix4x4.CreateTranslation(width * 0.5f, height * 0.5f, 0.0f) * world;
+            size = new Vector2(width, height);
+            return ResolveWorldSpaceCanvasMatrix(tfm, width, height);
         }
 
         private Matrix4x4 ResolveWorldSpaceCanvasMatrix(UICanvasTransform transform, float width, float height)
@@ -889,7 +1045,7 @@ namespace XREngine.Components
                         csCameraRight * (width * 0.5f) -
                         csCameraUp * (height * 0.5f);
 
-                    return Matrix4x4.CreateWorld(csBottomLeft, -csCameraForward, csCameraUp);
+                    return Matrix4x4.CreateWorld(csBottomLeft, csCameraForward, csCameraUp);
                 }
 
                 return world;
@@ -910,7 +1066,7 @@ namespace XREngine.Components
                 cameraRight * (width * 0.5f) -
                 cameraUp * (height * 0.5f);
 
-            return Matrix4x4.CreateWorld(bottomLeft, -cameraForward, cameraUp);
+            return Matrix4x4.CreateWorld(bottomLeft, cameraForward, cameraUp);
         }
 
         private static bool TryGetCameraSpaceBasis(UICanvasTransform transform, out Vector3 position, out Vector3 forward, out Vector3 up, out Vector3 right)
@@ -1030,7 +1186,11 @@ namespace XREngine.Components
         private void EnsureRenderPipelineInitialized()
         {
             if (_renderPipeline.AssignedPipeline is null)
-                RenderPipeline = new UserInterfaceRenderPipeline();
+            {
+                if (_ownedDefaultPipeline is null)
+                    SetField(ref _ownedDefaultPipeline, new UserInterfaceRenderPipeline());
+                RenderPipeline = _ownedDefaultPipeline;
+            }
         }
     }
 }

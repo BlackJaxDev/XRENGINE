@@ -6,27 +6,38 @@ namespace XREngine.Rendering.WebGPU;
 public sealed partial class WebGpuRendererHost
 {
     private const string MeshletUnsupportedReason =
-        "WebGPU has no task or mesh shader stages.";
+        "The engine WebGPU meshlet route requires an installed compute-to-indexed-indirect lowering and cooked meshlet shader family. Hardware task/mesh shader stages are unavailable.";
 
-    public BrowserDeviceCapabilities? DeviceCapabilities { get; private set; }
+    private BrowserDeviceCapabilities? _deviceCapabilities;
+    public BrowserDeviceCapabilities? DeviceCapabilities
+    {
+        get => _deviceCapabilities;
+        private set => SetField(ref _deviceCapabilities, value);
+    }
 
-    // WebGPU exposes neither a GPU-written draw count nor task/mesh shader stages, so every
-    // count-driven and meshlet submission path reports unavailable instead of being emulated.
-    public bool SupportsIndirectCountDraw() => false;
+    /// <summary>Count lowering is GPU-only; canonical draw identity requires enabled indirect first-instance.</summary>
+    public override bool SupportsIndirectCountDraw()
+    {
+        if (State != BrowserRendererState.Ready || DeviceCapabilities is not { } capabilities)
+            return false;
+        for (int index = 0; index < capabilities.Features.Count; index++)
+            if (capabilities.Features[index] == "indirect-first-instance") return true;
+        return false;
+    }
 
-    public EMeshShaderDialect MeshShaderDialect => EMeshShaderDialect.None;
+    public override EMeshShaderDialect MeshShaderDialect => EMeshShaderDialect.None;
 
-    public bool SupportsDirectMeshTaskDispatch() => false;
+    public override bool SupportsDirectMeshTaskDispatch() => false;
 
-    public bool SupportsIndirectCountMeshTaskDispatch() => false;
+    public override bool SupportsIndirectCountMeshTaskDispatch() => false;
 
-    public bool SupportsProductionMeshletShaders() => false;
+    public override bool SupportsProductionMeshletShaders() => false;
 
-    public bool SupportsMeshletDispatch() => false;
+    public override bool SupportsMeshletDispatch() => false;
 
-    public string MeshletDispatchUnsupportedReason => MeshletUnsupportedReason;
+    public override string MeshletDispatchUnsupportedReason => MeshletUnsupportedReason;
 
-    public bool TryDrawMeshTasksIndirectCount(
+    public override bool TryDrawMeshTasksIndirectCount(
         XRRenderProgram program,
         XRDataBuffer indirectBuffer,
         XRDataBuffer countBuffer,

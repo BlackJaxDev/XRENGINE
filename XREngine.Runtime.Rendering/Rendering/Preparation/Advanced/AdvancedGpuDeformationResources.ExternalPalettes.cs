@@ -1,12 +1,49 @@
 using System.Runtime.CompilerServices;
+using XREngine.Data;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
 
 public sealed partial class AdvancedGpuDeformationResources
 {
-    private readonly AdvancedGpuPaletteCopy[] _externalPaletteCopies;
+    private AdvancedGpuPaletteCopy[] _externalPaletteCopies;
     private int _externalPaletteCopyCount;
+    private uint[] _gpuDrivenPaletteIndices = [];
+
+    private void CaptureDesktopPaletteCopies(XRMeshRenderer renderer, XRDataBuffer source, uint sourceBase, uint count,
+        bool usesLocalBoneOwnership)
+    {
+        if (!usesLocalBoneOwnership)
+        {
+            AddExternalPaletteCopy(source, sourceBase, _paletteCount, count);
+            return;
+        }
+
+        if (!ReferenceEquals(source, renderer.SkinPaletteBuffer) || sourceBase != 0u ||
+            source.ComponentType != EComponentType.Float || source.ElementSize != 48 ||
+            source.ClientSideSource is not { } memory || memory.Length < source.Length ||
+            !source.TryGetAddress(out VoidPtr address) || address == VoidPtr.Zero)
+            throw new InvalidOperationException("AggregateDeformation.MixedPaletteSourceInvalid: the local mixed palette requires its complete CPU-owned source image.");
+
+        if (_gpuDrivenPaletteIndices.Length < count)
+            Array.Resize(ref _gpuDrivenPaletteIndices, checked((int)NextPowerOfTwo(count)));
+        int drivenCount = renderer.CaptureGpuDrivenBoneIndices(source, _gpuDrivenPaletteIndices.AsSpan(0, checked((int)count)));
+
+        // CPU-owned rows may have changed without a source GPU upload. Seed the
+        // aggregate image, then overwrite only GPU-owned rows with ordered copies.
+        CopyPalette(source, 0u, _paletteScratch, _paletteCount, count);
+        for (int index = 0; index < drivenCount;)
+        {
+            uint first = _gpuDrivenPaletteIndices[index++];
+            uint end = first + 1u;
+            while (index < drivenCount && _gpuDrivenPaletteIndices[index] == end)
+            {
+                ++index;
+                ++end;
+            }
+            AddExternalPaletteCopy(source, first, checked(_paletteCount + first), end - first);
+        }
+    }
 
     private void AddExternalPaletteCopy(XRDataBuffer source, uint sourceBase, uint destinationBase, uint count)
     {
@@ -23,7 +60,14 @@ public sealed partial class AdvancedGpuDeformationResources
         }
 
         if (_externalPaletteCopyCount == _externalPaletteCopies.Length)
-            throw new InvalidOperationException("External palette copies exceed the draw capacity.");
+        {
+            // Mixed palettes can require several runs per draw. Each copy owns
+            // at least one admitted palette row; grow only during preparation.
+            int capacity = checked((int)NextPowerOfTwo(checked((uint)_externalPaletteCopyCount + 1u)));
+            if (capacity > _paletteScratch.Length)
+                throw new InvalidOperationException("AggregateDeformation.PaletteCopyCapacity: GPU copy ranges exceed the admitted palette capacity.");
+            Array.Resize(ref _externalPaletteCopies, capacity);
+        }
         _externalPaletteCopies[_externalPaletteCopyCount++] = new(source, sourceBase, destinationBase, count);
     }
 

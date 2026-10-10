@@ -15,6 +15,31 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 
 `GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
+WebGPU preserves the requested authored strategy, including instrumented modes
+when diagnostics are disabled. Generic traditional indirect and compute-meshlet
+routes share a material-independent resident `GPUScene` publication and exact
+authored raster preparation. Traditional indirect uses a cooked GPU producer to
+refit current position bounds and publish one whole-primitive argument record
+over the frozen original index stream; it requires no meshlet payload. The
+generic meshlet route uses cooked GPU
+cull/expand and bounds-refit companions, and GPU-written uint32 indices and
+`drawIndexedIndirect` arguments. It reuses the original authored raster program
+and does not require Advanced native material eligibility or hardware task/mesh
+stages. Pending or rejected meshlet work never falls through to original
+indexed replay. Both routes use the shared GPU-selected resident LOD candidates. Runtime instance
+publishers provide exact current/previous transforms and bounds under the authored
+raster ABI; conservative GPU union visibility preserves the full native instance
+count and first-instance zero without optional instance remapping.
+Bounded transparent GPU ordering uses the actual full-resident collection's
+frozen insertion tokens, GPU source ranks and candidate-owned raster input
+copies. Explicit CPU-owned V2 color/coverage sources retain direct draws through
+verified vertex rank gates in the same ordered replay. Unproven raster programs,
+non-mesh commands and other unavailable selected profiles report specific
+diagnostics. The [authored meshlet lowering
+record](../../work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md)
+describes ownership, conservative bounds, capacities, and pending runtime
+acceptance.
+
 Zero-readback passes execute from configured GPU-pass topology even when CPU
 visibility collection publishes no mesh commands. The GPU scene and the pass
 culling mask own mesh membership; CPU visibility must not suppress a default,
@@ -73,7 +98,18 @@ Diagnostics profiles resolve to `GpuIndirectInstrumented`. `ShippingFast` resolv
 
 `SupportsMeshletDispatch()` means the backend can run the production zero-readback meshlet path: matching shader dialect, production task/mesh shaders, and indirect-count mesh-task dispatch from GPU-written counts.
 
-The lower-level probes describe partial backend support:
+The browser's native Advanced stage family has a separate compute/indirect
+meshlet capability. It consumes canonical resident meshlet records, compacts
+triangle identities on the GPU, and issues vertex-pulled indirect raster work
+without reading visibility or counts back to the CPU. This does not advertise
+hardware task/mesh shader extensions. The separate generic Default/custom
+compute-meshlet route preserves authored raster programs and has its own
+residency, deformation and indirect-index contracts described above. WebGPU
+preserves an explicitly requested submission strategy and reports unsupported
+operations instead of applying the desktop fallback policy described below. See
+[WebGPU indirect submission](webgpu-indirect-submission.md).
+
+The lower-level hardware probes describe partial backend support:
 
 - `MeshShaderDialect` reports `None`, `OpenGLNV`, `OpenGLEXT`, or `VulkanEXT`.
 - `SupportsDirectMeshTaskDispatch()` covers CPU-specified task counts and is diagnostic-only.

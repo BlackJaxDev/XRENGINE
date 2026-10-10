@@ -1,8 +1,10 @@
 using System;
 using System.Numerics;
 using System.Threading;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -12,6 +14,19 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public sealed class VPRC_FXAA : ViewportRenderCommand
 {
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
+    {
+        requirements.RequireOperation("fullscreen-quad");
+        if (requirements.Backend != RendererBackendId.WebGPU)
+            return;
+        requirements.RequireRasterProgram("advanced::fxaa");
+        requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Fxaa);
+        if (Stereo || requirements.OutputProfile.Stereo || requirements.OutputProfile.ViewCount != 1)
+            requirements.Diagnostics.Add("The cooked FXAA operation requires a mono output.");
+        if (string.IsNullOrWhiteSpace(SourceTextureName) && string.IsNullOrWhiteSpace(SourceFBOName))
+            requirements.Diagnostics.Add("The cooked FXAA operation requires an explicit source texture or framebuffer.");
+    }
+
     private sealed class FxaaBindingPublisher(
         VPRC_FXAA owner) : IRenderBindingPublisher
     {
@@ -61,6 +76,12 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
 
     private XRMaterial? _material;
     private XRQuadFrameBuffer? _quad;
+    private bool _webResources;
+    private string? _cachedPassSource;
+    private string? _cachedPassDestination;
+    private string? _cachedPassName;
+    private string? _cachedProfilingSource;
+    private string? _cachedProfilingName;
 
     public string? SourceTextureName { get; set; }
     public string? SourceFBOName { get; set; }
@@ -68,17 +89,42 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
     public bool Stereo { get; set; }
 
     public override string GpuProfilingName
-        => string.IsNullOrWhiteSpace(SourceTextureName) && string.IsNullOrWhiteSpace(SourceFBOName)
-            ? nameof(VPRC_FXAA)
-            : $"{nameof(VPRC_FXAA)}:{SourceTextureName ?? SourceFBOName}";
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(SourceTextureName) && string.IsNullOrWhiteSpace(SourceFBOName))
+                return nameof(VPRC_FXAA);
+            string? source = SourceTextureName ?? SourceFBOName;
+            if (_cachedProfilingName is not null && _cachedProfilingSource == source)
+                return _cachedProfilingName;
+            _cachedProfilingSource = source;
+            return _cachedProfilingName = $"{nameof(VPRC_FXAA)}:{source}";
+        }
+    }
 
     internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
+    {
+        // Browser branches share a command container; only the selected branch
+        // may require and instantiate its cooked program.
+        if (!WebPipelineRasterProgram.IsActive)
+            EnsureResources(instance);
+    }
+
+    private void EnsureResources(XRRenderPipelineInstance instance)
     {
         if (_quad is not null)
             return;
 
         string shaderName = Stereo ? "FXAAStereo.fs" : "FXAA.fs";
-        _material = new(Array.Empty<XRTexture?>(), XRShader.EngineShader(Path.Combine(SceneShaderPath, shaderName), EShaderType.Fragment))
+        _webResources = WebPipelineRasterProgram.IsActive;
+        if (_webResources && Stereo)
+            throw new NotSupportedException("WebGPU.FXAA.StereoUnsupported: the cooked FXAA pass requires a mono source and destination.");
+        XRShader[] shaders = _webResources
+            ? WebPipelineRasterProgram.CreateShaders(
+                instance.Pipeline ?? throw new InvalidOperationException("WebGPU.FXAA.PipelineMissing: the selected FXAA pass requires an owning pipeline."),
+                "advanced::fxaa")
+            : [XRShader.EngineShader(Path.Combine(SceneShaderPath, shaderName), EShaderType.Fragment)];
+        _material = new(Array.Empty<XRTexture?>(), shaders)
         {
             RenderOptions = new RenderingParameters()
             {
@@ -93,9 +139,24 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             }
         };
 
-        _quad = new XRQuadFrameBuffer(_material, useMultiview: Stereo);
-        _quad.FullScreenMesh.BindingPublishers.Add(
-            new FxaaBindingPublisher(this));
+        try
+        {
+            _quad = new XRQuadFrameBuffer(_material, useMultiview: Stereo, deriveRenderTargetsFromMaterial: !_webResources, prepareForInitialRendering: !_webResources);
+            _quad.FullScreenMesh.BindingPublishers.Add(new FxaaBindingPublisher(this));
+            if (_webResources)
+                WebPipelineRasterProgram.OwnMaterial(_quad);
+        }
+        catch
+        {
+            _quad?.Destroy(true);
+            _quad = null;
+            _material.Destroy(true);
+            _material = null;
+            if (_webResources)
+                foreach (XRShader shader in shaders)
+                    shader.Destroy(true);
+            throw;
+        }
     }
 
     internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
@@ -106,25 +167,40 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             _quad = null;
         }
 
-        _material?.Destroy();
+        if (!_webResources)
+            _material?.Destroy();
         _material = null;
+        _webResources = false;
     }
 
     protected override void Execute()
     {
         XRRenderPipelineInstance instance = ActivePipelineInstance;
-        if (_quad is null ||
-            !VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? sourceTexture, out _)
-            || sourceTexture is null)
+        if (WebPipelineRasterProgram.IsActive)
+            EnsureResources(instance);
+        if (_quad is null)
             return;
+        if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? sourceTexture, out string failure)
+            || sourceTexture is null)
+        {
+            if (_webResources)
+                throw new InvalidOperationException($"WebGPU.FXAA.SourceMissing: {failure}");
+            return;
+        }
 
         XRFrameBuffer? destination = null;
         if (!string.IsNullOrWhiteSpace(DestinationFBOName))
         {
             destination = instance.GetFBO<XRFrameBuffer>(DestinationFBOName!);
             if (destination is null)
+            {
+                if (_webResources)
+                    throw new InvalidOperationException($"WebGPU.FXAA.TargetMissing: destination '{DestinationFBOName}' was not declared.");
                 return;
+            }
         }
+        else if (_webResources)
+            destination = instance.RenderState.CurrentRenderTargetBinding?.FrameBuffer ?? instance.RenderState.OutputFBO;
 
         if (_material is not null &&
             (_material.Textures.Count != 1 || !ReferenceEquals(_material.Textures[0], sourceTexture)))
@@ -133,11 +209,16 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             _material.Textures.Add(sourceTexture);
         }
 
+        if (_webResources && sourceTexture is not (XRTexture2D or XRTexture2DView))
+            throw new NotSupportedException("WebGPU.FXAA.SourceUnsupported: the cooked FXAA pass requires a two-dimensional color texture.");
+
         string destinationName = ResolveDestinationLabel(instance);
         string passName = BuildPassName(destinationName);
         int passIndex = ResolvePassIndex(passName, out bool hasRenderGraphMetadata);
         if (passIndex == int.MinValue && hasRenderGraphMetadata)
         {
+            if (_webResources)
+                throw new InvalidOperationException($"WebGPU.FXAA.PassMissing: selected pass '{passName}' is absent from the render graph.");
             Debug.RenderingWarningEvery(
                 $"Fxaa.MissingRenderGraphPass.{passName}",
                 TimeSpan.FromSeconds(2),
@@ -176,7 +257,17 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             ?? context.CurrentRenderTarget?.Name
             ?? RenderGraphResourceNames.OutputRenderTarget;
 
-        context.GetOrCreateSyntheticPass(BuildPassName(destination))
+        string passName = BuildPassName(destination);
+        string? sourceName = !string.IsNullOrWhiteSpace(SourceTextureName) ? SourceTextureName : SourceFBOName;
+        if (WebPipelineRasterProgram.IsActive && context.ResourceLayout is not null &&
+            (sourceName is not null && !context.HasResource(sourceName) ||
+                destination != RenderGraphResourceNames.OutputRenderTarget && !context.HasResource(destination)))
+        {
+            context.ReserveSyntheticPassIndex(passName);
+            return;
+        }
+
+        context.GetOrCreateSyntheticPass(passName)
             .WithStage(ERenderGraphPassStage.Graphics)
             .SampleTexture(source)
             .UseColorAttachment(MakeFboColorResource(destination), ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
@@ -189,7 +280,17 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             ?? RenderGraphResourceNames.OutputRenderTarget;
 
     private string BuildPassName(string destination)
-        => $"Fxaa_{GetSourceDisplayName()}_to_{destination}";
+    {
+        string source = GetSourceDisplayName();
+        if (_cachedPassName is not null &&
+            string.Equals(_cachedPassSource, source, StringComparison.Ordinal) &&
+            string.Equals(_cachedPassDestination, destination, StringComparison.Ordinal))
+            return _cachedPassName;
+
+        _cachedPassSource = source;
+        _cachedPassDestination = destination;
+        return _cachedPassName = $"Fxaa_{source}_to_{destination}";
+    }
 
     private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
     {
@@ -217,6 +318,11 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             return;
 
         Vector2 texelStep = ResolveTexelStep(instance, sourceTexture);
+        if (_webResources)
+        {
+            WebPipelineRasterProgram.PublishRenderArea(program);
+            program.Sampler("Texture0", sourceTexture, 0);
+        }
         program.Uniform("FxaaTexelStep", texelStep);
     }
 

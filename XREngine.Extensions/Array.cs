@@ -450,6 +450,8 @@ namespace XREngine.Extensions
             => ForEachParallelArray(array, action, CancellationToken.None);
         public static void ForEachParallelArray<T>(this T[] array, Action<T, ParallelLoopState> action, CancellationToken cancellationToken)
         {
+            if (OperatingSystem.IsBrowser())
+                throw new PlatformNotSupportedException("Parallel array traversal requires desktop worker threads. Use ordinary foreach in a browser world.");
             try
             {
                 if (array != null && action != null)
@@ -472,6 +474,8 @@ namespace XREngine.Extensions
             => ForEachParallelArray(array, action, CancellationToken.None);
         public static void ForEachParallelArray<T>(this T[] array, Action<T> action, CancellationToken cancellationToken)
         {
+            if (OperatingSystem.IsBrowser())
+                throw new PlatformNotSupportedException("Parallel array traversal requires desktop worker threads. Use ordinary foreach in a browser world.");
             try
             {
                 if (array != null && action != null)

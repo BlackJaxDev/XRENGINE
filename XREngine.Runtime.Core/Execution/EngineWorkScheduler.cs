@@ -9,8 +9,8 @@ namespace XREngine.Execution;
 /// </summary>
 public sealed class EngineWorkScheduler : IDisposable
 {
-    private readonly EngineGeneralWorkDomain _generalDomain;
-    private readonly EngineJobAuxiliaryWorkDomain _jobAuxiliaryDomain;
+    private readonly IEngineGeneralWorkDomain _generalDomain;
+    private readonly IEngineJobAuxiliaryWorkDomain _jobAuxiliaryDomain;
     private int _shutdownState;
 
     public EngineWorkScheduler(
@@ -19,6 +19,7 @@ public sealed class EngineWorkScheduler : IDisposable
         int? generalQueueWarningThreshold = null)
     {
         ArgumentNullException.ThrowIfNull(topology);
+        IEngineWorkerDomainFactory workerFactory = EngineWorkerDomainServices.GetRequiredFactory();
         Topology = topology;
 
         GeneralJobs = new JobManager(
@@ -27,20 +28,38 @@ public sealed class EngineWorkScheduler : IDisposable
             generalQueueWarningThreshold,
             topology.Request.GeneralWorkerThreadCap,
             createWorkerDomains: false);
-        _generalDomain = new EngineGeneralWorkDomain(GeneralJobs, topology.GeneralWorkerThreadCount);
-        _jobAuxiliaryDomain = new EngineJobAuxiliaryWorkDomain(GeneralJobs);
-
+        GeneralJobs.InitializeWorkerDomains(workerFactory, topology.GeneralWorkerThreadCount);
+        _generalDomain = GeneralJobs.GeneralDomain;
+        _jobAuxiliaryDomain = GeneralJobs.AuxiliaryDomain;
         try
         {
-            GeneralJobs.AttachGeneralDomain(_generalDomain);
-            GeneralJobs.AttachAuxiliaryDomain(_jobAuxiliaryDomain);
             Render = new RenderWorkDomain(
                 topology.RenderWorkerThreadCount,
                 topology.RenderWorkerQos);
         }
-        catch
+        catch (Exception startupError)
         {
-            GeneralJobs.Shutdown(waitForWorkers: true);
+            bool stopped;
+            Exception? cleanupError;
+            try
+            {
+                stopped = GeneralJobs.Shutdown(
+                    waitForWorkers: true,
+                    RenderWorkDomain.FatalBatchWait,
+                    out cleanupError);
+            }
+            catch (Exception exception)
+            {
+                throw new AggregateException(startupError, exception);
+            }
+
+            if (!stopped)
+            {
+                cleanupError ??= new TimeoutException(
+                    "Job worker cleanup did not finish within the scheduler shutdown bound.");
+                throw new AggregateException(startupError, cleanupError);
+            }
+
             throw;
         }
     }
@@ -63,20 +82,72 @@ public sealed class EngineWorkScheduler : IDisposable
 
     internal bool Shutdown(bool waitForWorkers, TimeSpan timeout)
     {
-        Interlocked.Exchange(ref _shutdownState, 1);
-        Render.Shutdown(waitForWorkers: false);
-        GeneralJobs.Shutdown(waitForWorkers: false);
-        if (!waitForWorkers)
-            return false;
+        bool stopped = Shutdown(waitForWorkers, timeout, out Exception? shutdownError);
+        if (shutdownError is not null)
+            throw shutdownError;
+        return stopped;
+    }
 
+    private bool Shutdown(bool waitForWorkers, TimeSpan timeout, out Exception? shutdownError)
+    {
         long deadline = CreateDeadline(timeout);
-        bool renderStopped = Render.Shutdown(
-            waitForWorkers: true,
-            GetRemaining(deadline));
-        bool generalStopped = GeneralJobs.Shutdown(
-            waitForWorkers: true,
-            GetRemaining(deadline));
-        return renderStopped && generalStopped;
+        List<Exception>? failures = null;
+        Interlocked.Exchange(ref _shutdownState, 1);
+        try
+        {
+            Render.Shutdown(waitForWorkers: false);
+        }
+        catch (Exception exception)
+        {
+            (failures ??= new List<Exception>()).Add(exception);
+        }
+
+        try
+        {
+            GeneralJobs.Shutdown(waitForWorkers: false, GetRemaining(deadline), out Exception? jobError);
+            if (jobError is not null)
+                (failures ??= new List<Exception>()).Add(jobError);
+        }
+        catch (Exception exception)
+        {
+            (failures ??= new List<Exception>()).Add(exception);
+        }
+
+        if (!waitForWorkers)
+        {
+            shutdownError = failures is null ? null : new AggregateException(failures);
+            return false;
+        }
+
+        bool renderStopped = false;
+        try
+        {
+            renderStopped = Render.Shutdown(
+                waitForWorkers: true,
+                GetRemaining(deadline));
+        }
+        catch (Exception exception)
+        {
+            (failures ??= new List<Exception>()).Add(exception);
+        }
+
+        bool generalStopped = false;
+        try
+        {
+            generalStopped = GeneralJobs.Shutdown(
+                waitForWorkers: true,
+                GetRemaining(deadline),
+                out Exception? jobError);
+            if (jobError is not null)
+                (failures ??= new List<Exception>()).Add(jobError);
+        }
+        catch (Exception exception)
+        {
+            (failures ??= new List<Exception>()).Add(exception);
+        }
+
+        shutdownError = failures is null ? null : new AggregateException(failures);
+        return renderStopped && generalStopped && failures is null;
     }
 
     /// <summary>
@@ -86,10 +157,14 @@ public sealed class EngineWorkScheduler : IDisposable
     /// A domain remained live at the lifecycle bound. Callers must retain all
     /// scheduler-dependent state and retry or abandon the process.
     /// </exception>
+    /// <exception cref="AggregateException">A domain reported a shutdown fault.</exception>
     public void Dispose()
     {
-        if (!Shutdown(waitForWorkers: true))
+        if (!Shutdown(waitForWorkers: true, RenderWorkDomain.FatalBatchWait, out Exception? shutdownError))
         {
+            if (shutdownError is not null)
+                throw shutdownError;
+
             throw new TimeoutException(
                 "Engine scheduler disposal timed out with live execution work. " +
                 "Scheduler-dependent state must remain alive until a later clean shutdown.");

@@ -110,6 +110,7 @@ namespace XREngine.Rendering.Commands
                 TotalCommandCount = _updatingCommandCount;
                 if (commandSnapshotDirty || drawMetadataDirty)
                     PublishRendererCommandIndices();
+                PublishMeshSubmissionIfRequested();
                 using (RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers.AdvancedPublication"))
                     PublishAdvancedResidentSceneIfRequested();
 
@@ -436,19 +437,10 @@ namespace XREngine.Rendering.Commands
                 StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
                 RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent,
             };
-            InitializeLodTransitionBuffer(buffer);
+            // Scene mirroring prepares CPU state even for CPU-only draw submission.
+            // The caller commits initialized rows through the owner-first write contract;
+            // only an actual backend binding should create and allocate its API wrapper.
             return buffer;
-        }
-
-        private static void InitializeLodTransitionBuffer(XRDataBuffer buffer)
-        {
-            // Publish the fully constructed owner-first buffer before Generate enters the object cache.
-            // Generate performs the initial backend upload where a wrapper exists. Mapping remains
-            // lazy until a CPU read needs it, avoiding an eager driver synchronization.
-            if (RuntimeEngine.IsRenderThread)
-                buffer.Generate();
-            else
-                RuntimeEngine.EnqueueMainThreadTask(buffer.Generate, "GPUScene.LodTransitionBuffer.Initialize");
         }
 
         private void EnsureLodTransitionBufferCapacity(uint requiredSize)
@@ -915,7 +907,7 @@ namespace XREngine.Rendering.Commands
         {
             _meshlets.Clear();
 
-            foreach ((uint commandIndex, (IRenderCommandMesh command, int subMeshIndex) entry) in _commandIndexLookup.OrderBy(static kvp => kvp.Key))
+            foreach (var (commandIndex, entry) in _commandIndexLookup.OrderBy(static kvp => kvp.Key))
             {
                 IRenderCommandMesh meshCommand = entry.command;
                 var subMeshes = meshCommand.Mesh?.GetMeshes();

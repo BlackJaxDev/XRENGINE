@@ -99,6 +99,32 @@ predicate. These paths reject before they wait or change fields. Nested
 lifecycle callbacks use the current transition and its recorded objects and
 child pairs. They do not start another world transfer.
 
+### World disposal
+
+`RuntimeWorld` disposal closes admission on its `PhysicsChainWorld` first. After
+that, the world accepts no new registration, command, or tick. A tick that is
+in progress finishes. A context without a disposal event must call
+`PhysicsChainWorld.Release(context)`. That context cannot register chains again.
+
+- Disposal waits for the current tick. A batch worker of the world never waits
+  for its own tick. The outer tick finishes the teardown after all workers
+  signal completion.
+- If code inside a tick or a batch worker requests disposal of the owning
+  `RuntimeWorld`, that disposal runs after the tick releases its gate and its
+  transition read lock. Owner disposal can change the scene, so it cannot run
+  inside a tick.
+- Teardown releases only the bindings that the disposing world owns. A
+  component that already moved to another world registers there again.
+- A deferred transfer never adds a component to a disposed destination. The
+  destination rejects the add command after admission closes.
+- Readback calls on a disposed world do not throw. Disposal frees the
+  requests, and new requests fail with `InvalidInstance`. In-flight staging
+  slots keep their renderer fences. The next `PollReadbackTransfers` call on the
+  render thread releases them, and then the renderer retires the world. A
+  readback call from a batch worker of the same world throws.
+- Teardown never shrinks slot-indexed lists. Some readers resolve handles
+  without the tick gate, so teardown invalidates every slot instead.
+
 ## Runtime Records
 
 | Record | Lifetime | Contents |

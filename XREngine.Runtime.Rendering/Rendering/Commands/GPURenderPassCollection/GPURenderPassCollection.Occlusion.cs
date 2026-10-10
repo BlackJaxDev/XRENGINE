@@ -75,11 +75,13 @@ namespace XREngine.Rendering.Commands
                 _lastFlushTicks = nowTicks;
                 if (_stats.Count == 0)
                     return;
+                RuntimeAssetReadServices.EnsureHostFileAccess("HiZ stage log");
+                IRuntimeDiagnosticTextFileOutput output = RuntimeDiagnosticCaptureFileOutput.RequireTextOutput();
                 
                 _logPath ??= System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Build", "Logs", "hiz-stage-stats.log");
                 try
                 { 
-                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_logPath)!);
+                    output.EnsureDiagnosticLogDirectory(System.IO.Path.GetDirectoryName(_logPath)!);
                 }
                 catch
                 {
@@ -113,7 +115,7 @@ namespace XREngine.Rendering.Commands
                 sb.AppendLine();
                 try 
                 {
-                    System.IO.File.AppendAllText(_logPath, sb.ToString());
+                    output.AppendDiagnosticLogText(_logPath, sb.ToString());
                 }
                 catch
                 {
@@ -522,12 +524,12 @@ namespace XREngine.Rendering.Commands
                 => _builder.ToStringAndClear();
         }
 
-        private static string GetCrumbFilePath()
+        private static string GetCrumbFilePath(IRuntimeDiagnosticTextFileOutput output)
         {
             if (_crumbFilePath is not null)
                 return _crumbFilePath;
             string logsRoot = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Build", "Logs");
-            try { System.IO.Directory.CreateDirectory(logsRoot); } catch { }
+            try { output.EnsureDiagnosticLogDirectory(logsRoot); } catch { }
             _crumbFilePath = System.IO.Path.Combine(logsRoot, "crumbs.log");
             return _crumbFilePath;
         }
@@ -536,12 +538,14 @@ namespace XREngine.Rendering.Commands
         {
             if (!AreCrashBreadcrumbsEnabled())
                 return;
+            RuntimeAssetReadServices.EnsureHostFileAccess("Crash breadcrumb log");
+            IRuntimeDiagnosticTextFileOutput output = RuntimeDiagnosticCaptureFileOutput.RequireTextOutput();
             // No GPU sync: WaitForGpu may itself stall or throw on a corrupted context,
             // hiding the breadcrumb we are trying to capture.
             string line = "[" + DateTime.Now.ToString("HH:mm:ss.fff") + "] [CRUMB] " + label + Environment.NewLine;
             lock (_crumbFileLock)
             {
-                try { System.IO.File.AppendAllText(GetCrumbFilePath(), line); } catch { }
+                try { output.AppendDiagnosticLogText(GetCrumbFilePath(output), line); } catch { }
             }
         }
 

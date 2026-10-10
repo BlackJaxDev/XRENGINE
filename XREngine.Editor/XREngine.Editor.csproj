@@ -36,6 +36,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../Tools/BrowserRuntimeMetadataCooker/AotRuntimeMetadataBuilder.cs" Link="Publishing/AotRuntimeMetadataBuilder.cs" />
+    <Compile Include="../Tools/BrowserRuntimeMetadataCooker/BrowserMetadataLoadContext.cs" Link="Publishing/BrowserMetadataLoadContext.cs" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering.ImGui\XREngine.Runtime.Rendering.ImGui.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.UI.Rive\XREngine.Runtime.UI.Rive.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Platform.Desktop\XREngine.Runtime.Platform.Desktop.csproj" />
@@ -133,6 +135,7 @@
   </ItemGroup>
 
   <Import Project="../Build/Shared/BrowserContentPublishing.props" />
+  <Import Project="../Build/Shared/BrowserPublisherPayload.targets" />
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Audio.Audio2Face\XREngine.Audio.Audio2Face.csproj" />
   </ItemGroup>

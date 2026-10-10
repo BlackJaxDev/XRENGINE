@@ -22,6 +22,8 @@ public enum RealtimeTransportKind : byte
     NativeUdp = 0,
     /// <summary>Managed realtime datagrams framed inside server-authenticated TLS 1.3 over TCP.</summary>
     NativeTls = 1,
+    /// <summary>Managed realtime datagrams carried by binary messages over authenticated wss.</summary>
+    WebSocket = 2,
 }
 
 [MemoryPackable]

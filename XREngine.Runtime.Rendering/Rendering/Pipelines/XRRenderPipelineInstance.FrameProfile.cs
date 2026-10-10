@@ -35,7 +35,7 @@ public sealed partial class XRRenderPipelineInstance
             ? EAntiAliasingMode.None
             : effectiveAntiAliasingMode;
         EffectiveMsaaSampleCountThisFrame = Math.Max(1u,
-            FinalOutput?.Properties.SampleCount ??
+            FinalOutput?.SceneSampleCountOverride ??
             effectiveAntiAliasingCamera?.MsaaSampleCountOverride ??
             frameTiming.DefaultMsaaSampleCount);
         EffectiveTsrRenderScaleThisFrame = !useDlssSuperResolution && effectiveAntiAliasingMode == EAntiAliasingMode.Tsr

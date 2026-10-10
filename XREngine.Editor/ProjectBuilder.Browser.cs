@@ -1,4 +1,7 @@
 using System.Text.Json;
+using XREngine.Core.Files;
+using XREngine.Core;
+using XREngine.Components.Scripting;
 using XREngine.Diagnostics;
 using XREngine.Editor.Publishing;
 using XREngine.Publishing;
@@ -14,6 +17,10 @@ internal static partial class ProjectBuilder
             "." + Path.GetFileName(context.BuildRoot) + ".browser-stage-" + Guid.NewGuid().ToString("N"));
         private string? _siteRoot;
         private string? _recipePath;
+        private string? _configuration;
+        private bool _includesDefaultUiFont;
+        private IReadOnlyList<BrowserUiFontCookRequest> _authoredFonts = [];
+        private BrowserSharedWorldPackage? _sharedWorldPackage;
 
         private string SourceRoot => Path.Combine(_stageRoot, "content-source");
         private string PublishRoot => Path.Combine(_stageRoot, "publish");
@@ -34,11 +41,49 @@ internal static partial class ProjectBuilder
 
         internal void ExportAuthoredWorld()
         {
+            using IDisposable diagnosticPreferences = XREngine.Rendering.RenderDiagnosticsFlags.SuppressDeferredDebugViewWritesForCurrentThread();
             try
             {
                 Cancellation.ThrowIfCancellationRequested();
-                XRWorld world = LoadStartupWorld(context);
-                _recipePath = BrowserWorldPublishExporter.Export(world, SourceRoot, Cancellation);
+                var activeGame = GameCSProjLoader.GetLoadedAssembly("GAME")
+                    ?? throw new InvalidOperationException("BrowserCook.GameAssemblyMissing: the browser-target game must be loaded before world export.");
+                string gameName = activeGame.GetName().Name!;
+                using IDisposable preferredGameTypes = AotRuntimeMetadataStore.PreferDevelopmentTypes((name, ignoreCase) =>
+                {
+                    string fullName = SerializedTypeIdentity.GetUnqualifiedTypeName(name);
+                    if (name.Length > fullName.Length)
+                    {
+                        string qualifier = name[(fullName.Length + 1)..].Split(',')[0].Trim();
+                        if (!string.Equals(qualifier, gameName, StringComparison.Ordinal))
+                            return null;
+                    }
+                    return activeGame.GetType(fullName, throwOnError: false, ignoreCase: ignoreCase);
+                });
+                if (string.IsNullOrWhiteSpace(context.Project.BrowserSharedWorldPackageManifestPath))
+                {
+                    using XREngine.Data.Core.ObjectCachePublicationScope publication = XREngine.Data.Core.XRObjectBase.BeginIndependentObjectCachePublication();
+                    XRWorld world = LoadStartupWorld(context);
+                    _recipePath = CookBrowserEngineWorld(world, context.Project, context.AssetsDirectory, SourceRoot,
+                        Cancellation, out _includesDefaultUiFont, out _authoredFonts);
+                    using XREngine.Data.Core.ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
+                }
+                else
+                {
+                    string worldPath = ResolveBrowserStartupWorldPath(context);
+                    _sharedWorldPackage = PrepareBrowserSharedWorldPackage(context.Project, worldPath, context.AssetsDirectory, Cancellation);
+                    using XREngine.Data.Core.ObjectCachePublicationScope publication = XREngine.Data.Core.XRObjectBase.BeginIndependentObjectCachePublication();
+                    using StringReader reader = new(DecodeSharedNativeWorld(_sharedWorldPackage.NativeWorldBytes));
+                    using var sourceContext = AssetDeserializationContext.Push(worldPath);
+                    XRWorld world = AssetManager.Deserializer.Deserialize<XRWorld>(reader)
+                        ?? throw new InvalidDataException("BrowserCook.SharedPackageWorldInvalid: retained native bytes did not hydrate an XRWorld.");
+                    if (world.GetType() != typeof(XRWorld))
+                        throw new NotSupportedException("BrowserCook.SharedPackageProfileUnsupported: requires the exact base XRWorld type.");
+                    world.FilePath = worldPath;
+                    _recipePath = CookBrowserEngineWorld(world, context.Project, context.AssetsDirectory, SourceRoot,
+                        Cancellation, out _includesDefaultUiFont, out _authoredFonts);
+                    RequireSharedBrowserCook(_sharedWorldPackage, _recipePath);
+                    using XREngine.Data.Core.ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
+                }
             }
             catch
             {
@@ -51,8 +96,9 @@ internal static partial class ProjectBuilder
         {
             try
             {
+                _configuration = configuration;
                 _siteRoot = global::CodeManager.Instance.PublishBrowserApplication(
-                    configuration, PublishRoot, context.Settings.IncludePdbFiles, Cancellation);
+                    configuration, PublishRoot, context.Settings.IncludePdbFiles, context.IntermediateDirectory, Cancellation);
             }
             catch
             {
@@ -67,7 +113,10 @@ internal static partial class ProjectBuilder
             {
                 string recipe = _recipePath ?? throw new InvalidOperationException("Browser world export did not produce a recipe.");
                 string site = _siteRoot ?? throw new InvalidOperationException("Browser application has not been published.");
+                string configuration = _configuration ?? throw new InvalidOperationException("Browser publish configuration was not recorded.");
+                WriteBrowserRuntimeMetadata(configuration, context.IntermediateDirectory, SourceRoot, site);
                 BrowserContentPackageBuilder.Build(recipe, Path.Combine(site, "content"), Cancellation);
+                PublishBrowserSharedWorldPackage(_sharedWorldPackage, Path.Combine(site, "content"), Cancellation);
             }
             catch
             {
@@ -83,13 +132,15 @@ internal static partial class ProjectBuilder
                 Cancellation.ThrowIfCancellationRequested();
                 string site = _siteRoot ?? throw new InvalidOperationException("Browser application has not been published.");
                 InstallPlayerShell(site);
+                if (_includesDefaultUiFont)
+                    InstallDefaultUiFontLicense(site);
+                InstallAuthoredFontLicenses(site, context.AssetsDirectory, _authoredFonts);
                 byte[] json = JsonSerializer.SerializeToUtf8Bytes(new
                 {
-                    schema = 1,
-                    world = "./content/manifest.json",
-                    quality = "balanced",
-                    submissionStrategy = "Auto",
-                    skinning = "Cpu"
+                    schema = 2,
+                    format = "xrengine-engine-launch",
+                    manifest = "./content/manifest.json",
+                    quality = (string?)null
                 });
                 File.WriteAllBytes(Path.Combine(site, "browser-publish.json"), json);
             }
@@ -121,9 +172,9 @@ internal static partial class ProjectBuilder
                 return path;
             }
 
-            string player = PlayerFile("player.html");
-            if (!File.Exists(player) || !File.Exists(PlayerFile("player.js")) ||
-                !File.Exists(PlayerFile("browser-runtime.js")))
+            string player = PlayerFile("engine-player.html");
+            if (!File.Exists(player) || !File.Exists(PlayerFile("engine-player.js")) ||
+                !File.Exists(PlayerFile("engine-runtime.js")))
                 throw new InvalidOperationException("Browser publish did not include the player shell.");
 
             // Static hosts may prefer stale precompressed variants over the replaced HTML.
@@ -136,13 +187,62 @@ internal static partial class ProjectBuilder
             File.Copy(player, PlayerFile("index.html"), overwrite: true);
         }
 
+        private static void InstallDefaultUiFontLicense(string site)
+        {
+            string source = Engine.Assets.ResolveEngineAssetPath("Fonts", "Roboto", "LICENSE.txt");
+            FileInfo license = new(source);
+            if (!license.Exists || license.LinkTarget is not null ||
+                (license.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new FileNotFoundException("BrowserCook.DefaultUiFontLicenseMissing: canonical Roboto license is unavailable.", source);
+            string licensesDirectory = Path.Combine(site, "licenses");
+            DirectoryInfo destinationDirectory = new(licensesDirectory);
+            if (destinationDirectory.Exists && (destinationDirectory.LinkTarget is not null ||
+                (destinationDirectory.Attributes & FileAttributes.ReparsePoint) != 0))
+                throw new NotSupportedException("BrowserCook.DefaultUiFontLicenseLinked: license output cannot be linked.");
+            Directory.CreateDirectory(licensesDirectory);
+            string destination = Path.Combine(licensesDirectory, "Roboto-LICENSE.txt");
+            FileInfo existing = new(destination);
+            if (existing.Exists && (existing.LinkTarget is not null ||
+                (existing.Attributes & FileAttributes.ReparsePoint) != 0))
+                throw new NotSupportedException("BrowserCook.DefaultUiFontLicenseLinked: license output cannot be linked.");
+            File.Copy(source, destination, overwrite: true);
+        }
+
+        private static void InstallAuthoredFontLicenses(string site, string assetRoot,
+            IReadOnlyList<BrowserUiFontCookRequest> fonts)
+        {
+            if (fonts.Count == 0)
+                return;
+            string directory = Path.Combine(site, "licenses");
+            DirectoryInfo output = new(directory);
+            if (output.Exists && (output.LinkTarget is not null ||
+                (output.Attributes & FileAttributes.ReparsePoint) != 0))
+                throw new NotSupportedException("BrowserCook.FontNoticeOutputLinked: license directory cannot be linked.");
+            Directory.CreateDirectory(directory);
+            foreach (BrowserUiFontCookRequest font in fonts)
+            {
+                RequireBrowserRegularFile(font.NoticePath, assetRoot, 256 * 1024, "FontNotice");
+                byte[] notice = File.ReadAllBytes(font.NoticePath);
+                if (Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(notice)) != font.NoticeHash)
+                    throw new InvalidDataException("BrowserCook.FontNoticeChanged: notice changed during publication.");
+                string destination = Path.Combine(directory, font.NoticeOutputName);
+                FileInfo existing = new(destination);
+                if (existing.Exists && (existing.LinkTarget is not null ||
+                    (existing.Attributes & FileAttributes.ReparsePoint) != 0))
+                    throw new NotSupportedException("BrowserCook.FontNoticeOutputLinked: license output cannot be linked.");
+                File.WriteAllBytes(destination, notice);
+            }
+        }
+
         internal void Commit()
         {
             Cancellation.ThrowIfCancellationRequested();
             string site = _siteRoot ?? throw new InvalidOperationException("Browser application has not been published.");
             if (!File.Exists(Path.Combine(site, "index.html")) ||
                 !File.Exists(Path.Combine(site, "browser-publish.json")) ||
-                !File.Exists(Path.Combine(site, "content", "manifest.json")))
+                !File.Exists(Path.Combine(site, "content", "manifest.json")) ||
+                (_includesDefaultUiFont && !File.Exists(Path.Combine(site, "licenses", "Roboto-LICENSE.txt"))) ||
+                _authoredFonts.Any(font => !File.Exists(Path.Combine(site, "licenses", font.NoticeOutputName))))
             {
                 Cleanup();
                 throw new InvalidOperationException("Browser output is incomplete; keeping the previous build.");
@@ -198,7 +298,14 @@ internal static partial class ProjectBuilder
         if (settings.SaveSettingsBeforeBuild)
             steps.Add(new BuildStep("Saving project settings", Engine.SaveProjectSettings));
         steps.Add(new BuildStep("Preparing staged browser output", state.Prepare));
-        steps.Add(new BuildStep("Exporting authored startup world", state.ExportAuthoredWorld));
+        steps.Add(new BuildStep("Compiling portable game assemblies", () =>
+        {
+            global::CodeManager manager = global::CodeManager.Instance;
+            manager.RemakeSolutionAsDLL(false);
+            manager.BuildBrowserGameAssemblyForPublishing(ResolveConfiguration(settings.Configuration),
+                _activeJob?.CancellationToken ?? CancellationToken.None);
+        }));
+        steps.Add(new BuildStep("Cooking authored engine startup world", state.ExportAuthoredWorld));
         steps.Add(new BuildStep("Publishing WebAssembly browser application",
             () => state.PublishApplication(ResolveConfiguration(settings.Configuration))));
         steps.Add(new BuildStep("Packaging browser content", state.PackageContent));
@@ -223,6 +330,17 @@ internal static partial class ProjectBuilder
 
     private static XRWorld LoadStartupWorld(BuildContext context)
     {
+        string path = ResolveBrowserStartupWorldPath(context);
+        // Deserialize afresh from the authored asset; AssetManager.Load may return the editor's mutable cache.
+        // The abstract base lets the saved type hint select a game-owned XRWorld subclass.
+        XRWorld world = AssetManager.DeserializeAssetFile(path, typeof(XRAsset)) as XRWorld
+            ?? throw new InvalidOperationException("Startup target asset did not deserialize as XRWorld.");
+        world.FilePath = path;
+        return world;
+    }
+
+    private static string ResolveBrowserStartupWorldPath(BuildContext context)
+    {
         GameStartupSettings startup = Engine.PersistentGameSettings
             ?? throw new InvalidOperationException("Save game startup settings before browser publishing.");
         if (startup.RunWithoutWindows)
@@ -238,7 +356,13 @@ internal static partial class ProjectBuilder
             path = candidate;
         }
         if (path is null)
-            throw new InvalidOperationException("Select and save a startup window target world before browser publishing.");
+        {
+            string selectedWorld = context.Project.StartupScenePath;
+            if (string.IsNullOrWhiteSpace(selectedWorld) || Path.IsPathRooted(selectedWorld) ||
+                Uri.TryCreate(selectedWorld, UriKind.Absolute, out _))
+                throw new InvalidOperationException("Select and save a startup window target world or project StartupScenePath before browser publishing.");
+            path = Path.GetFullPath(Path.Combine(context.AssetsDirectory, selectedWorld));
+        }
         string assetRoot = Path.GetFullPath(context.AssetsDirectory);
         string relative = Path.GetRelativePath(assetRoot, path);
         if (Path.IsPathRooted(relative) || relative == ".." ||
@@ -246,11 +370,7 @@ internal static partial class ProjectBuilder
             !string.Equals(Path.GetExtension(path), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException("Browser startup world must be a saved project .asset inside Assets.");
         if (!File.Exists(path)) throw new FileNotFoundException("Saved browser startup world was not found.", path);
-        // Deserialize afresh from the authored asset; AssetManager.Load may return the editor's mutable cache.
-        XRWorld world = AssetManager.DeserializeAssetFile(path, typeof(XRWorld)) as XRWorld
-            ?? throw new InvalidOperationException("Startup target asset did not deserialize as XRWorld.");
-        world.FilePath = path;
-        return world;
+        return path;
     }
 
     private static void RejectBrowserOutputLinks(string output, string buildDirectory)

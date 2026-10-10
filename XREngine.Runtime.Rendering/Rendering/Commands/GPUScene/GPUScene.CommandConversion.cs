@@ -402,6 +402,9 @@ namespace XREngine.Rendering.Commands
                     BoundsGpu existingBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(index);
                     bool boundsChanged = !existingBounds.Equals(updatedBounds);
                     RecordAllocationPhase(ref allocationMark, ref observation.BoundsCompareAllocatedBytes);
+                    _commandIndexLookup[index] = (meshCmd, subMeshIndex, snapshot);
+                    CaptureUpdatingMeshSubmission(index, snapshot, mesh, material, subMeshIndex, lodCount,
+                        updated, updatedBounds);
 
                     bool metadataChanged = !existing.Equals(updated);
                     if (metadataChanged || transformChanged || boundsChanged)

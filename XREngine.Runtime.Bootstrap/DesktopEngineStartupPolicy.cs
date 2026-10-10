@@ -59,7 +59,7 @@ internal sealed class DesktopEngineStartupPolicy : IRuntimeEngineStartupPolicy
         if (!_environmentRealtimeHandoffApplied
             && !ManagedClientWorldLoader.IsConfigured
             && !settings.IgnoreEnvironmentRealtimeHandoffs
-            && RealtimeJoinHandoff.TryApplyFromEnvironment(settings, out _, out string? handoffSource))
+            && DesktopRealtimeJoinHandoffLoader.TryApplyFromEnvironment(settings, out _, out string? handoffSource))
         {
             _environmentRealtimeHandoffApplied = true;
             Debug.Networking("[Realtime Handoff] Applied join payload from {0}.", handoffSource ?? "<unknown>");

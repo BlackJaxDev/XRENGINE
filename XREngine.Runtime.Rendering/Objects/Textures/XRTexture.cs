@@ -310,8 +310,8 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
-        /// When true, the Vulkan backend will include <c>VK_IMAGE_USAGE_STORAGE_BIT</c>
-        /// on the VkImage so it can be bound as a storage image in compute shaders.
+        /// Requests explicit storage-image allocation usage on backends such as Vulkan and WebGPU.
+        /// The selected backend validates the exact format, access mode and sample count.
         /// Set this before the texture is generated.
         /// </summary>
         private bool _requiresStorageUsage;

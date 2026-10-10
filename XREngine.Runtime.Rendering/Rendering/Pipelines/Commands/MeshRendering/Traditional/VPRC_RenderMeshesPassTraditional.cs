@@ -39,6 +39,12 @@ internal static class VPRC_RenderMeshesPassTraditional
         // iteration, fallback warning budget) which is pure overhead when
         // the GPU is authoritative for mesh visibility.
         RenderCommandCollection commands = activeInstance.ActiveMeshRenderCommands;
+        if (AbstractRenderer.Current is IAuthoredIndexedBackendCapability)
+        {
+            commands.RenderGPU(command.RenderPass, meshSubmissionStrategy, int.MinValue,
+                EAuthoredIndexedCpuReplayPolicy.MeshesAndNonMesh);
+            return;
+        }
         using (RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.NonMeshPrefilter", ProfilerScopeKind.AlwaysOnHotPathLoop))
         {
             commands.RenderCPUNonMeshAndExcluded(command.RenderPass);

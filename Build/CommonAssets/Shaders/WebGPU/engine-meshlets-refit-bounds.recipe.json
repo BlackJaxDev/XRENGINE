@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 3,
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "matrixLayout": "column-major",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "pipeline": {},
+  "name": "engine-meshlets-refit-bounds",
+  "pass": "refit-bounds",
+  "pipelineArtifact": {
+    "scope": "meshlets",
+    "pass": "refit-bounds"
+  },
+  "source": "engine-meshlets-refit-bounds.wgsl",
+  "entryPoints": {
+    "compute": "meshletsRefitBounds"
+  },
+  "workgroupSize": [
+    64,
+    1,
+    1
+  ],
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 5,
+    "maxUniformBufferBindingSize": 48,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 4,
+    "maxStorageBufferBindingSize": 4,
+    "maxComputeWorkgroupSizeX": 64,
+    "maxComputeWorkgroupSizeY": 1,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 64,
+    "maxComputeWorkgroupStorageSize": 2320
+  },
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "Source",
+        "physicalName": "source",
+        "group": 0,
+        "binding": 0,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Positions",
+        "physicalName": "positions",
+        "group": 0,
+        "binding": 1,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Bounds",
+        "physicalName": "bounds",
+        "group": 0,
+        "binding": 2,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "State",
+        "physicalName": "state",
+        "group": 0,
+        "binding": 3,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 4,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 48,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "meshletCount",
+            "provider": "MeshletCount",
+            "offset": 0,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "vertexCount",
+            "provider": "VertexCount",
+            "offset": 4,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "positionWordCount",
+            "provider": "PositionWordCount",
+            "offset": 8,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "descriptorWordOffset",
+            "provider": "DescriptorWordOffset",
+            "offset": 12,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "remapWordOffset",
+            "provider": "RemapWordOffset",
+            "offset": 16,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "remapCount",
+            "provider": "RemapCount",
+            "offset": 20,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "boundsWordOffset",
+            "provider": "BoundsWordOffset",
+            "offset": 24,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "boundsWordCount",
+            "provider": "BoundsWordCount",
+            "offset": 28,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved0",
+            "provider": "Reserved0",
+            "offset": 32,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved1",
+            "provider": "Reserved1",
+            "offset": 36,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved2",
+            "provider": "Reserved2",
+            "offset": 40,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved3",
+            "provider": "Reserved3",
+            "offset": 44,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  }
+}

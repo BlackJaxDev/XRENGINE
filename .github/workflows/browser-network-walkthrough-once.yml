@@ -1,0 +1,204 @@
+name: Windows network walkthrough once
+
+on:
+  push:
+    branches: [codex/webgpu-readiness-audit]
+    paths:
+      - '.github/workflows/browser-network-walkthrough-once.yml'
+      - 'Tools/BrowserSmoke/network-walkthrough/**'
+      - '.github/diagnostic-requests/network-walkthrough-20261005.json'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: windows-network-walkthrough-once
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+  ALSOFT_DRIVERS: 'null'
+  CONTROL_ROOT: workflow/Build/_AgentValidation/20261005-170000-network-walkthrough-control
+
+jobs:
+  network-walkthrough:
+    name: Validate and prepare one Windows network walkthrough
+    if: github.run_attempt == 1
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout immutable invocation helpers
+        uses: actions/checkout@v7
+        with:
+          path: workflow
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up the existing Node version
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Parse PowerShell and compile owned-job declarations without execution
+        shell: pwsh
+        run: |
+          ./workflow/Tools/BrowserSmoke/network-walkthrough/Test-NetworkWalkthroughStatic.ps1 `
+            -RepositoryRoot (Join-Path $env:GITHUB_WORKSPACE 'workflow') `
+            -Output (Join-Path $env:GITHUB_WORKSPACE "$env:CONTROL_ROOT/static-result.public.json")
+
+      - name: Preserve static prerequisite evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: network-walkthrough-static-${{ github.run_id }}-1
+          path: ${{ env.CONTROL_ROOT }}/static-result.public.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Admit only the dedicated new request push
+        id: request
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node ./workflow/Tools/BrowserSmoke/network-walkthrough/admit-network-walkthrough.mjs inspect `
+            --static-result (Join-Path $env:GITHUB_WORKSPACE "$env:CONTROL_ROOT/static-result.public.json") `
+            --output (Join-Path $env:GITHUB_WORKSPACE "$env:CONTROL_ROOT/admission.public.json")
+          if ($LASTEXITCODE -ne 0) { throw 'The request is not admitted.' }
+
+      - name: Checkout exact qualified engine source
+        if: steps.request.outputs.candidate == 'true'
+        uses: actions/checkout@v7
+        with:
+          path: engine
+          ref: e4a90cf2f865a08421bb68c293d27616465e1558
+          persist-credentials: false
+
+      - name: Initialize only the recorded native project submodules
+        if: steps.request.outputs.candidate == 'true'
+        shell: pwsh
+        working-directory: engine
+        run: |
+          git submodule update --init --checkout -- Build/Submodules/OscCore-NET9 Build/Submodules/OpenVR.NET
+          if ($LASTEXITCODE -ne 0) { throw 'Recorded native submodules are unavailable.' }
+          foreach ($path in @('Build/Submodules/OscCore-NET9', 'Build/Submodules/OpenVR.NET')) {
+            $entry = (& git ls-tree HEAD -- $path).Trim()
+            if ($LASTEXITCODE -ne 0 -or $entry -notmatch '^160000 commit ([0-9a-f]{40})\s+') { throw 'A recorded gitlink is missing.' }
+            $expected = $Matches[1]
+            if ((& git -C $path rev-parse HEAD).Trim() -ne $expected -or $LASTEXITCODE -ne 0) { throw 'A submodule differs from its qualified gitlink.' }
+          }
+
+      - name: Set up the existing qualified .NET SDK
+        if: steps.request.outputs.candidate == 'true'
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: engine/global.json
+
+      - name: Provision only the already approved locked Playwright and Chromium
+        if: steps.request.outputs.candidate == 'true'
+        shell: pwsh
+        working-directory: engine/Tools/BrowserSmoke
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/xr-network-playwright
+        run: |
+          $package = Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json
+          if ($package.devDependencies.'@playwright/test' -ne '1.63.0') { throw 'Unexpected Playwright dependency.' }
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'Locked browser tooling provisioning failed.' }
+          npx --no-install playwright install chromium
+          if ($LASTEXITCODE -ne 0) { throw 'The pinned official Chromium build is unavailable.' }
+
+      - name: Prepare exact artifact, native binaries and real local first frame
+        if: steps.request.outputs.candidate == 'true'
+        id: prepare
+        timeout-minutes: 30
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/xr-network-playwright
+        run: |
+          $run = Join-Path $env:GITHUB_WORKSPACE "engine/Build/_AgentValidation/20261005-170000-network-walkthrough-$env:GITHUB_RUN_ID"
+          ./workflow/Tools/BrowserSmoke/network-walkthrough/Invoke-NetworkWalkthrough.ps1 -Mode Prepare `
+            -RepoRoot (Join-Path $env:GITHUB_WORKSPACE 'engine') -RunRoot $run `
+            -AdmissionFile (Join-Path $env:GITHUB_WORKSPACE "$env:CONTROL_ROOT/admission.public.json")
+
+      - name: Publish only successful sanitized prerequisite evidence
+        if: steps.prepare.outcome == 'success'
+        id: prerequisites
+        uses: actions/upload-artifact@v7
+        with:
+          name: network-walkthrough-prerequisites-${{ github.run_id }}-1
+          path: |
+            ${{ env.CONTROL_ROOT }}/static-result.public.json
+            ${{ env.CONTROL_ROOT }}/admission.public.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/prepared-state.public.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/artifact-provenance.public.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/preflight-result.public.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/supervisor-result.public.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/cleanup.public.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Wait read-only for reviewed exact-run activation
+        if: steps.prerequisites.outcome == 'success'
+        timeout-minutes: 12
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          XRE_NETWORK_PREREQUISITE_ARTIFACT_ID: ${{ steps.prerequisites.outputs.artifact-id }}
+        run: |
+          node ./workflow/Tools/BrowserSmoke/network-walkthrough/admit-network-walkthrough.mjs wait-activation `
+            --admission (Join-Path $env:GITHUB_WORKSPACE "$env:CONTROL_ROOT/admission.public.json") `
+            --state (Join-Path $env:GITHUB_WORKSPACE "engine/Build/_AgentValidation/20261005-170000-network-walkthrough-$env:GITHUB_RUN_ID/prepared-state.public.json") `
+            --output (Join-Path $env:GITHUB_WORKSPACE "$env:CONTROL_ROOT/activation.public.json")
+          if ($LASTEXITCODE -ne 0) { throw 'No exact activation was admitted; trust remains unconsumed.' }
+
+      - name: Consume the single approved trust action and run the real walkthrough
+        if: steps.prerequisites.outcome == 'success'
+        id: live
+        timeout-minutes: 12
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          XRE_NETWORK_PREREQUISITE_ARTIFACT_ID: ${{ steps.prerequisites.outputs.artifact-id }}
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/xr-network-playwright
+        run: |
+          $run = Join-Path $env:GITHUB_WORKSPACE "engine/Build/_AgentValidation/20261005-170000-network-walkthrough-$env:GITHUB_RUN_ID"
+          ./workflow/Tools/BrowserSmoke/network-walkthrough/Invoke-NetworkWalkthrough.ps1 -Mode Run `
+            -RepoRoot (Join-Path $env:GITHUB_WORKSPACE 'engine') -RunRoot $run `
+            -AdmissionFile (Join-Path $env:GITHUB_WORKSPACE "$env:CONTROL_ROOT/admission.public.json") `
+            -ActivationFile (Join-Path $env:GITHUB_WORKSPACE "$env:CONTROL_ROOT/activation.public.json")
+
+      - name: Admit final evidence only after verified complete cleanup
+        if: always() && steps.request.outputs.candidate == 'true'
+        id: evidence
+        shell: pwsh
+        run: |
+          $file = Join-Path $env:GITHUB_WORKSPACE "engine/Build/_AgentValidation/20261005-170000-network-walkthrough-$env:GITHUB_RUN_ID/cleanup.public.json"
+          if (Test-Path -LiteralPath $file) {
+            $cleanup = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+            if ($cleanup.allOwnedProcessesExited -eq $true -and $cleanup.certificateRemoved -eq $true -and
+                $cleanup.privateFilesRemoved -eq $true -and @($cleanup.errors).Count -eq 0) {
+              'safe=true' >> $env:GITHUB_OUTPUT
+            }
+          }
+
+      - name: Preserve only permitted final evidence files
+        if: always() && steps.evidence.outputs.safe == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: network-walkthrough-result-${{ github.run_id }}-1
+          path: |
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/supervisor-result.public.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/nonsecret-result.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/preflight-result.public.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/cleanup.public.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/cleanup-detail.public.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/consumed-binding.public.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/owned-job.public.json
+            engine/Build/_AgentValidation/20261005-170000-network-walkthrough-${{ github.run_id }}/certificate-thumbprint.public.txt
+          if-no-files-found: error
+          retention-days: 7

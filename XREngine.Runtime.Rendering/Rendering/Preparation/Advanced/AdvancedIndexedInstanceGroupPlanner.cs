@@ -223,7 +223,7 @@ internal sealed class AdvancedIndexedInstanceGroupPlanner
         Hash(ref hash, (uint)material.RequiredAttributeMask);
         Hash(ref hash, (uint)material.FeatureFlags);
         Hash(ref hash, (uint)material.EligibilityFlags);
-        Hash(ref hash, material.Reserved);
+        Hash(ref hash, (uint)material.SourceContract);
         Hash(ref hash, layout.LayoutHash);
         Hash(ref hash, layout.ConstantWordCount);
         Hash(ref hash, layout.TextureReferenceCount);
@@ -289,7 +289,7 @@ internal sealed class AdvancedIndexedInstanceGroupPlanner
             first.RequiredAttributeMask != second.RequiredAttributeMask ||
             first.FeatureFlags != second.FeatureFlags ||
             first.EligibilityFlags != second.EligibilityFlags ||
-            first.Reserved != second.Reserved ||
+            first.SourceContract != second.SourceContract ||
             !materials.TryGetConstantWords(first, out ReadOnlySpan<uint> firstConstants) ||
             !materials.TryGetConstantWords(second, out ReadOnlySpan<uint> secondConstants) ||
             !firstConstants.SequenceEqual(secondConstants) ||

@@ -1,0 +1,7 @@
+{
+  "name": "xrengine-browser-smoke",
+  "private": true,
+  "type": "module",
+  "description": "Local browser runtime qualification tools",
+  "devDependencies": { "@playwright/test": "1.63.0" }
+}

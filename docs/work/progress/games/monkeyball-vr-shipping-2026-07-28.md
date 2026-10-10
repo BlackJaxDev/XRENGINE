@@ -88,4 +88,4 @@ Current validation after the complete shipping-path implementation:
 Code signing certificates, store credentials/listing material, and physical
 headset/controller testing are release-owner inputs and are not fabricated by
 the build. Track hardware results in
-`docs/work/testing/xr/monkeyball-vr-release-matrix.md`.
+`docs/work/testing/xr/rolling-ball-release-matrix.md` (renamed from the MonkeyBall VR matrix).

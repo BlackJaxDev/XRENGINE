@@ -1,0 +1,216 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-motion-blur",
+  "pass": "motion-blur",
+  "source": "AdvancedMotionBlur.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "outputVertex",
+    "fragment": "outputFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 5,
+    "maxUniformBufferBindingSize": 48,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 3,
+    "maxSamplersPerShaderStage": 2
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 12,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "OutputUniforms",
+        "physicalName": "outputUniforms_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 48,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "ScreenWidth_0",
+            "provider": "ScreenWidth",
+            "offset": 0,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ScreenHeight_0",
+            "provider": "ScreenHeight",
+            "offset": 4,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ScreenOrigin_0",
+            "provider": "ScreenOrigin",
+            "offset": 8,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "TexelSize_0",
+            "provider": "TexelSize",
+            "offset": 16,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "ShutterScale_0",
+            "provider": "ShutterScale",
+            "offset": 24,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "VelocityThreshold_0",
+            "provider": "VelocityThreshold",
+            "offset": 28,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "DepthRejectThreshold_0",
+            "provider": "DepthRejectThreshold",
+            "offset": 32,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "MaxBlurPixels_0",
+            "provider": "MaxBlurPixels",
+            "offset": 36,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "SampleFalloff_0",
+            "provider": "SampleFalloff",
+            "offset": 40,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "MaxSamples_0",
+            "provider": "MaxSamples",
+            "offset": 44,
+            "bytes": 4,
+            "type": "i32"
+          }
+        ]
+      },
+      {
+        "name": "MotionBlur",
+        "physicalName": "MotionBlur_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "MotionBlur",
+        "physicalName": "MotionBlurSampler_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Velocity",
+        "physicalName": "Velocity_0",
+        "group": 1,
+        "binding": 2,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Velocity",
+        "physicalName": "VelocitySampler_0",
+        "group": 1,
+        "binding": 3,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "DepthView",
+        "physicalName": "DepthView_0",
+        "group": 1,
+        "binding": 4,
+        "kind": "texture-depth-2d",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "motion-blur"
+  }
+}

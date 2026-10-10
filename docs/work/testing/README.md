@@ -33,7 +33,7 @@ Validation docs hold manual, runtime, visual, hardware, profiler, benchmark, and
 - [OpenXR Validation](xr/openxr-validation.md)
 - [OpenXR SteamVR Hardware Validation](xr/openxr-steamvr-hardware-validation.md)
 - [OpenVR VRClient GPU Handoff Validation](xr/openvr-vrclient-gpu-handoff-validation.md)
-- [MonkeyBall VR Release Matrix](xr/monkeyball-vr-release-matrix.md)
+- [Rolling Ball Release Matrix](xr/rolling-ball-release-matrix.md)
 
 ### Other Subsystems
 

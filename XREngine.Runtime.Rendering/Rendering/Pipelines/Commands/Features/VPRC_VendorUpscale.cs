@@ -5,6 +5,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Shaders.Compilation;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -15,7 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// via a passthrough quad instead of re-running the source quad shader directly to the backbuffer.
     /// </summary>
     [RenderPipelineScriptCommand]
-    public class VPRC_VendorUpscale : VPRC_RenderQuadToFBO
+    public partial class VPRC_VendorUpscale : VPRC_RenderQuadToFBO
     {
         private static bool _diagEnabled => RenderDiagnosticsFlags.DiagVendorUpscale;
 
@@ -150,6 +151,8 @@ void main()
         internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
         {
             base.AllocateContainerResources(instance);
+            if (WebPipelineRasterProgram.IsActive)
+                return;
             if (_fallbackQuad is not null)
                 return;
 
@@ -173,6 +176,7 @@ void main()
 
         internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
         {
+            ReleaseWebFallbackResources();
             if (_fallbackQuad is not null)
             {
                 _fallbackQuad.SettingUniforms -= FallbackSettingUniforms;
@@ -206,8 +210,6 @@ void main()
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {
-            base.DescribeRenderPass(context);
-
             if (SourceQuadFBOName is null)
                 return;
 
@@ -216,7 +218,18 @@ void main()
                 ?? context.CurrentRenderTarget?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
-            var builder = context.GetOrCreateSyntheticPass(BuildQuadBlitPassName(SourceQuadFBOName, destination));
+            string passName = BuildQuadBlitPassName(SourceQuadFBOName, destination, RenderGraphPassVariant);
+            string sourceName = !string.IsNullOrWhiteSpace(SourceTextureName) ? SourceTextureName : SourceQuadFBOName;
+            if (WebPipelineRasterProgram.IsActive && context.ResourceLayout is not null &&
+                (!context.HasResource(SourceQuadFBOName) || !context.HasResource(sourceName) ||
+                    destination != RenderGraphResourceNames.OutputRenderTarget && !context.HasResource(destination)))
+            {
+                context.ReserveSyntheticPassIndex(passName);
+                return;
+            }
+
+            base.DescribeRenderPass(context);
+            var builder = context.GetOrCreateSyntheticPass(passName);
             if (!string.IsNullOrWhiteSpace(SourceTextureName))
             {
                 builder.SampleTexture(MakeTextureResource(SourceTextureName));
@@ -229,6 +242,11 @@ void main()
 
         protected override void Execute()
         {
+            if (WebPipelineRasterProgram.IsActive)
+            {
+                ExecuteWebFallback();
+                return;
+            }
             _fallbackApplySharpen = false;
             _fallbackSharpenStrength = 0.0f;
             _fallbackEncodeOutputSrgb = false;

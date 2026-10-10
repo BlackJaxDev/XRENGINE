@@ -57,21 +57,25 @@ namespace XREngine.Rendering.Models.Materials
             get => _requiredEngineUniforms;
             set => SetField(ref _requiredEngineUniforms, value);
         }
+        [DefaultValue(true)]
         public bool WriteRed
         {
             get => _writeRed;
             set => SetField(ref _writeRed, value);
         }
+        [DefaultValue(true)]
         public bool WriteGreen
         {
             get => _writeGreen;
             set => SetField(ref _writeGreen, value);
         }
+        [DefaultValue(true)]
         public bool WriteBlue
         {
             get => _writeBlue;
             set => SetField(ref _writeBlue, value);
         }
+        [DefaultValue(true)]
         public bool WriteAlpha
         {
             get => _writeAlpha;
@@ -90,6 +94,7 @@ namespace XREngine.Rendering.Models.Materials
         /// Specifies the winding order of the triangles.
         /// Default is counter-clockwise.
         /// </summary>
+        [DefaultValue(EWinding.CounterClockwise)]
         public EWinding Winding
         {
             get => _winding;
@@ -98,6 +103,7 @@ namespace XREngine.Rendering.Models.Materials
         /// <summary>
         /// Specifies which side(s) of each triangle should be left unrendered, if any.
         /// </summary>
+        [DefaultValue(ECullMode.Back)]
         public ECullMode CullMode
         {
             get => _cullMode;

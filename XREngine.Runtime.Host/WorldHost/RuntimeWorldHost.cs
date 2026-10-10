@@ -16,6 +16,7 @@ public sealed class RuntimeWorldHost : IDisposable
     private bool _visualSceneInitialized;
     private bool _timeCallbacksLinked;
     private bool _disposed;
+    private bool _endingPlay;
     private XRWorld? _subscribedWorld;
 
     internal RuntimeWorldHost(AbstractPhysicsScene physicsScene, VisualScene3D visualScene)
@@ -68,6 +69,7 @@ public sealed class RuntimeWorldHost : IDisposable
             {
                 afterTargetAssigned?.Invoke();
                 RenderWorld.BindSettings(targetWorld.Settings);
+                EnsurePhysicsInitialized();
                 ApplyPhysicsSettings(targetWorld.Settings);
                 SubscribeToWorldSettings(targetWorld);
             });
@@ -89,12 +91,11 @@ public sealed class RuntimeWorldHost : IDisposable
             beforeNodeActivation: () =>
             {
                 RenderWorld.BindSettings(TargetWorld.Settings);
+                EnsurePhysicsInitialized();
                 ApplyPhysicsSettings(TargetWorld.Settings);
                 RenderWorld.Lights.RebuildCachesFromWorld();
                 RenderWorld.VisualScene.Initialize();
                 _visualSceneInitialized = true;
-                Engine.InvokePhysicsThreadTask(CoreWorld.PhysicsScene.Initialize);
-                _physicsInitialized = true;
                 RenderWorld.VisualScene.GenericRenderTree.Swap();
                 return Task.CompletedTask;
             },
@@ -131,7 +132,7 @@ public sealed class RuntimeWorldHost : IDisposable
     /// <summary>Ends Core callbacks before tearing down backend-specific resources.</summary>
     public void EndPlay()
     {
-        if (_disposed || !CoreWorld.IsPlaySessionActive)
+        if (_disposed || _endingPlay || CoreWorld.PlayState == RuntimeWorldPlayState.Stopped)
             return;
 
         EndPlaySession();
@@ -139,14 +140,25 @@ public sealed class RuntimeWorldHost : IDisposable
 
     private void EndPlaySession()
     {
-        UnlinkTimeCallbacks();
-        CoreWorld.EndPlay(
-            afterNodeDeactivation: () =>
-            {
-                TearDownBackends();
-                RenderWorld.ResetPhysicsDebugRenderer();
-            },
-            afterPersistentRootReactivation: RenderWorld.Lights.RebuildCachesFromWorld);
+        if (_endingPlay)
+            return;
+
+        _endingPlay = true;
+        try
+        {
+            UnlinkTimeCallbacks();
+            CoreWorld.EndPlay(
+                afterNodeDeactivation: () =>
+                {
+                    TearDownBackends();
+                    RenderWorld.ResetPhysicsDebugRenderer();
+                },
+                afterPersistentRootReactivation: RenderWorld.Lights.RebuildCachesFromWorld);
+        }
+        finally
+        {
+            _endingPlay = false;
+        }
     }
 
     /// <summary>Retargets this composed host while preserving its runtime identity.</summary>
@@ -163,6 +175,7 @@ public sealed class RuntimeWorldHost : IDisposable
             {
                 afterTargetAssigned?.Invoke();
                 RenderWorld.BindSettings(targetWorld.Settings);
+                EnsurePhysicsInitialized();
                 ApplyPhysicsSettings(targetWorld.Settings);
                 SubscribeToWorldSettings(targetWorld);
             });
@@ -223,7 +236,7 @@ public sealed class RuntimeWorldHost : IDisposable
         Engine.Time.Timer.UpdateFrame += CoreWorld.Update;
         Engine.Time.Timer.PostUpdateFrame += ProcessDirtyTransforms;
         Engine.Time.Timer.FixedUpdate += CoreWorld.FixedUpdate;
-        Engine.Time.Timer.WorldSwapBuffers += RenderWorld.GlobalSwapBuffers;
+        Engine.Time.Timer.WorldSwapBuffers += SwapWorldBuffers;
         Engine.Time.Timer.PreCollectVisible += RenderWorld.GlobalPreCollectVisible;
         Engine.Time.Timer.CollectVisible += RenderWorld.GlobalCollectVisible;
         RenderWorld.SetCollectPublicationOpen(true);
@@ -241,7 +254,7 @@ public sealed class RuntimeWorldHost : IDisposable
         Engine.Time.Timer.UpdateFrame -= CoreWorld.Update;
         Engine.Time.Timer.PostUpdateFrame -= ProcessDirtyTransforms;
         Engine.Time.Timer.FixedUpdate -= CoreWorld.FixedUpdate;
-        Engine.Time.Timer.WorldSwapBuffers -= RenderWorld.GlobalSwapBuffers;
+        Engine.Time.Timer.WorldSwapBuffers -= SwapWorldBuffers;
         Engine.Time.Timer.PreCollectVisible -= RenderWorld.GlobalPreCollectVisible;
         Engine.Time.Timer.CollectVisible -= RenderWorld.GlobalCollectVisible;
         _timeCallbacksLinked = false;
@@ -249,6 +262,24 @@ public sealed class RuntimeWorldHost : IDisposable
 
     private void ProcessDirtyTransforms()
         => CoreWorld.ProcessDirtyTransforms(Engine.EffectiveSettings.RecalcChildMatricesLoopType);
+
+    private void SwapWorldBuffers()
+    {
+        if (Engine.Time.Timer.IsCallerThreadLoop)
+            RenderWorld.GlobalSwapBuffers(Engine.Time.Timer.CallerThreadCollectionRenderFrameId);
+        else
+            RenderWorld.GlobalSwapBuffers();
+    }
+
+    /// <summary>Prepares native resources before world assignment can activate components.</summary>
+    private void EnsurePhysicsInitialized()
+    {
+        if (_physicsInitialized)
+            return;
+
+        Engine.InvokePhysicsThreadTask(CoreWorld.PhysicsScene.Initialize);
+        _physicsInitialized = true;
+    }
 
     private void TearDownBackends()
     {

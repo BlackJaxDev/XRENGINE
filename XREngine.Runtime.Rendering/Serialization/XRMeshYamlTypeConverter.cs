@@ -210,10 +210,10 @@ public sealed class XRMeshYamlTypeConverter : IYamlTypeConverter
             return loadedMesh;
 
         string? referenceAssetPath = AssetDeserializationContext.CurrentFilePath;
-        if (!services.TryResolveAssetPathById(id, referenceAssetPath, out string? assetPath) || string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
+        if (!services.TryResolveAssetPathById(id, referenceAssetPath, out string? assetPath) || string.IsNullOrWhiteSpace(assetPath))
             return null;
 
-        if (DeferredAssetReferenceContext.TryDeferAssetLoad(assetPath, typeof(XRMesh), out XRAsset? deferredAsset))
+        if (services.TryDeferAssetLoad(assetPath, typeof(XRMesh), out XRAsset? deferredAsset))
             return deferredAsset as XRMesh;
 
         return services.LoadImmediate(assetPath, typeof(XRMesh)) as XRMesh;

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-unlit-opaque-texture",
+  "shadingModel": "unlit",
+  "surface": "opaque",
+  "baseColor": "opaque-texture",
+  "semanticVersion": 3
+}

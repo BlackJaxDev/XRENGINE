@@ -2834,6 +2834,13 @@ namespace XREngine.Components.Lights
 
         private void EnsureCascadeShadowResources()
         {
+            if (UsesCookedWebGpuShadowMaterial)
+            {
+                if (ShouldValidateCookedWebGpuShadowConfiguration)
+                    ValidateCookedWebGpuShadowConfiguration();
+                return;
+            }
+
             EnsureCascadeShadowResources(ShadowRequestSource.Desktop);
             if (RuntimeEngine.VRState.IsInVR)
                 EnsureCascadeShadowResources(ShadowRequestSource.Hmd);
@@ -2841,6 +2848,13 @@ namespace XREngine.Components.Lights
 
         private void EnsureCascadeShadowResources(ShadowRequestSource source)
         {
+            if (UsesCookedWebGpuShadowMaterial)
+            {
+                if (ShouldValidateCookedWebGpuShadowConfiguration)
+                    ValidateCookedWebGpuShadowConfiguration();
+                return;
+            }
+
             if (!CastsShadows || !CanRenderDirectionalCascadesForCurrentBackend())
                 return;
 
@@ -3612,6 +3626,7 @@ namespace XREngine.Components.Lights
 
         protected override void OnComponentActivated()
         {
+            ValidateCookedWebGpuShadowConfiguration();
             base.OnComponentActivated();
             EnsureCascadeShadowResources();
             SetCascadeSourceWorldOverride(_desktopCascadeState);
@@ -3631,9 +3646,28 @@ namespace XREngine.Components.Lights
             base.OnComponentDeactivated();
         }
 
-        public override void SetShadowMapResolution(uint width, uint height)
+        protected override void ResizeShadowMapResources(uint width, uint height)
         {
-            base.SetShadowMapResolution(width, height);
+            if (UsesCookedWebGpuShadowMaterial && IsActiveInHierarchy && (width == 0u || height == 0u))
+                throw new ArgumentOutOfRangeException(nameof(width), "WebGPU.DirectionalShadow.InvalidResolution: shadow dimensions must be positive.");
+            bool cooked = UsesCookedWebGpuShadowMaterial;
+            if (cooked)
+                SetField(ref _constructingCookedShadowTarget, true, publishNotifications: false);
+            try
+            {
+                base.ResizeShadowMapResources(width, height);
+            }
+            finally
+            {
+                if (cooked)
+                {
+                    SetField(ref _constructingCookedShadowTarget, false, publishNotifications: false);
+                    _pendingCookedShadowDepth?.Destroy();
+                    _pendingCookedShadowMaterial?.Destroy();
+                    SetField(ref _pendingCookedShadowDepth, null, publishNotifications: false);
+                    SetField(ref _pendingCookedShadowMaterial, null, publishNotifications: false);
+                }
+            }
             EnsureCascadeShadowResources();
         }
 
@@ -3881,6 +3915,8 @@ namespace XREngine.Components.Lights
             if (!IsActiveInHierarchy || !CastsShadows)
                 return;
 
+            ValidateCookedWebGpuShadowConfiguration();
+
             if (ShouldCollectPrimaryShadowViewport() &&
                 TryGetPrimaryShadowViewportForProcessing(out XRViewport primaryViewport))
             {
@@ -4007,6 +4043,8 @@ namespace XREngine.Components.Lights
         {
             if (!IsActiveInHierarchy || !CastsShadows)
                 return;
+
+            ValidateCookedWebGpuShadowConfiguration();
 
             if (ShouldCollectPrimaryShadowViewport() &&
                 TryGetPrimaryShadowViewportForProcessing(out XRViewport primaryViewport))
@@ -4607,6 +4645,8 @@ namespace XREngine.Components.Lights
             if (!IsActiveInHierarchy || !CastsShadows)
                 return;
 
+            ValidateCookedWebGpuShadowConfiguration();
+
             Interlocked.Increment(ref _standaloneShadowRenderRequestCount);
 
             if (collectVisibleNow)
@@ -4632,9 +4672,11 @@ namespace XREngine.Components.Lights
                 int casterCount = primaryViewport.RenderPipelineInstance.MeshRenderCommands
                     .GetRenderingMeshCommandCount();
                 Volatile.Write(ref _primaryShadowCasterCount, casterCount);
-                primaryViewport.Render(shadowMap, null, null, true, shadowMaterial);
-                Interlocked.Increment(ref _standaloneShadowRenderPassCount);
-                GenerateMomentShadowMipmapsIfNeeded();
+                if (primaryViewport.TryRender(shadowMap, null, null, true, shadowMaterial))
+                {
+                    Interlocked.Increment(ref _standaloneShadowRenderPassCount);
+                    GenerateMomentShadowMipmapsIfNeeded();
+                }
             }
 
             if (shadowMaterial is null)

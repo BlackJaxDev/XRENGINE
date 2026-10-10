@@ -20,6 +20,8 @@
   <Project Path="XREngine.Runtime.AudioIntegration/XREngine.Runtime.AudioIntegration.csproj" />
   <Project Path="XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj" />
   <Project Path="XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
+  <Project Path="XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
+  <Project Path="XREngine.Runtime.Execution.Threads/XREngine.Runtime.Execution.Threads.csproj" />
   <Project Path="XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
   <Project Path="XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />
   <Project Path="XREngine.Runtime.ModelAssetPipeline/XREngine.Runtime.ModelAssetPipeline.csproj" />
@@ -53,6 +55,7 @@
   <Project Path="XREngine.Runtime.Media.FFmpeg/XREngine.Runtime.Media.FFmpeg.csproj" />
   <Project Path="XREngine.Runtime.Imaging.Magick/XREngine.Runtime.Imaging.Magick.csproj" />
   <Project Path="XREngine.Runtime.Platform.Desktop/XREngine.Runtime.Platform.Desktop.csproj" />
+  <Project Path="XREngine.Runtime.Platform.Browser/XREngine.Runtime.Platform.Browser.csproj" />
   <Project Path="XREngine.Input.Silk/XREngine.Input.Silk.csproj" />
   <Project Path="XREngine.Input.XInput/XREngine.Input.XInput.csproj" />
   <Project Path="XREngine.Runtime.XR.OpenVR/XREngine.Runtime.XR.OpenVR.csproj" />
@@ -67,4 +70,6 @@
   <Project Path="XREngine.Runtime.Net.Osc/XREngine.Runtime.Net.Osc.csproj" />
   <Project Path="XREngine.Runtime.Diagnostics.Desktop/XREngine.Runtime.Diagnostics.Desktop.csproj" />
   <Project Path="XREngine.Runtime.MeshProcessing.Meshoptimizer/XREngine.Runtime.MeshProcessing.Meshoptimizer.csproj" />
+  <Project Path="XREngine.Audio.WebAudio/XREngine.Audio.WebAudio.csproj" />
+  <Project Path="XREngine.Runtime.Net.WebSockets/XREngine.Runtime.Net.WebSockets.csproj" />
 </Solution>

@@ -91,10 +91,13 @@ namespace XREngine.Scene
         }
 
         private static bool ShouldCollectShadowItems(LightComponent? light)
-            => light is not null &&
-               light.IsActiveInHierarchy &&
-               light.CastsShadows &&
-               (light.ShadowMap is not null || UsesShadowAtlasCollectionPath(light));
+        {
+            if (light is null || !light.IsActiveInHierarchy || !light.CastsShadows)
+                return false;
+            if (light is PointLightComponent point)
+                point.PrepareStandaloneShadowCollection();
+            return light.ShadowMap is not null || UsesShadowAtlasCollectionPath(light);
+        }
 
         private static bool UsesShadowAtlasCollectionPath(LightComponent light)
             => light switch
@@ -148,7 +151,7 @@ namespace XREngine.Scene
         {
             DirectionalLightComponent dir => AnyCameraIntersectsDirectional(dir, cameras),
             SpotLightComponent spot => AnyCameraIntersectsSpot(spot, cameras),
-            PointLightComponent point => AnyCameraIntersectsPoint(point, cameras),
+            PointLightComponent point => point.RequiresCompleteStandaloneShadowCube || AnyCameraIntersectsPoint(point, cameras),
             _ => true,
         };
 
@@ -277,6 +280,15 @@ namespace XREngine.Scene
         {
             ShadowScratch scratch = CurrentShadowScratch;
 
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            IBrowserShadowReuseCapability? browserReuse = !collectVisibleNow
+                ? renderer as IBrowserShadowReuseCapability : null;
+            ulong outputGeneration = renderer?.CurrentFrameOutput?.TargetGeneration ?? 0;
+            int browserInterval = browserReuse is not null && outputGeneration != 0
+                ? RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.ShadowUpdateInterval : 1;
+            ulong shadowFrame = RuntimeEngine.Rendering.State.RenderFrameId;
+            ulong casterMembershipRevision = World.VisualScene.ShadowCasterMembershipRevision;
+
             SynchronizeDirectionalShadowAtlasMode();
 
             if (collectVisibleNow)
@@ -299,20 +311,50 @@ namespace XREngine.Scene
                 {
                     DirectionalLightComponent light = DynamicDirectionalLights[i];
                     if (ShouldRenderLegacyDirectionalShadowMap(light, out bool renderCascades))
+                    {
+                        if (browserInterval > 1 && browserReuse is not null &&
+                            !light.ShouldRenderBrowserShadow(shadowFrame, outputGeneration, casterMembershipRevision,
+                                browserInterval, browserReuse))
+                            continue;
+                        if (browserReuse is not null)
+                            light.BeginBrowserShadowRender(shadowFrame, browserReuse);
                         light.RenderShadowMap(collectVisibleNow, renderCascades);
+                        if (browserReuse is not null)
+                            light.RecordBrowserShadowRender(shadowFrame, outputGeneration, casterMembershipRevision, browserReuse);
+                    }
                 }
                 for (int i = 0; i < DynamicSpotLights.Count; i++)
                 {
                     SpotLightComponent light = DynamicSpotLights[i];
                     bool relevant = IsSpotShadowRelevantForRender(light, scratch);
                     if (relevant && (!light.UsesSpotShadowAtlasForCurrentEncoding || ShouldRenderLegacySpotShadowMap(light)))
+                    {
+                        if (browserInterval > 1 && browserReuse is not null &&
+                            !light.ShouldRenderBrowserShadow(shadowFrame, outputGeneration, casterMembershipRevision,
+                                browserInterval, browserReuse))
+                            continue;
+                        if (browserReuse is not null)
+                            light.BeginBrowserShadowRender(shadowFrame, browserReuse);
                         light.RenderShadowMap(collectVisibleNow);
+                        if (browserReuse is not null)
+                            light.RecordBrowserShadowRender(shadowFrame, outputGeneration, casterMembershipRevision, browserReuse);
+                    }
                 }
                 for (int i = 0; i < DynamicPointLights.Count; i++)
                 {
                     PointLightComponent light = DynamicPointLights[i];
                     if (!light.UsesPointShadowAtlasForCurrentEncoding)
+                    {
+                        if (browserInterval > 1 && browserReuse is not null && light.CastsShadows &&
+                            !light.ShouldRenderBrowserShadow(shadowFrame, outputGeneration, casterMembershipRevision,
+                                browserInterval, browserReuse))
+                            continue;
+                        if (browserReuse is not null && light.CastsShadows)
+                            light.BeginBrowserShadowRender(shadowFrame, browserReuse);
                         light.RenderShadowMap(collectVisibleNow);
+                        if (browserReuse is not null && light.CastsShadows)
+                            light.RecordBrowserShadowRender(shadowFrame, outputGeneration, casterMembershipRevision, browserReuse);
+                    }
                 }
             }
             finally
@@ -568,7 +610,9 @@ namespace XREngine.Scene
 
         private int CalculatePointShadowFaceMask(PointLightComponent light, ShadowScratch scratch)
         {
-            if (scratch.LocalShadowRelevanceFrusta.Count <= 0)
+            // A standalone cube that filters across seams refreshes all faces;
+            // its collection and swap must admit the same complete producer set.
+            if (light.RequiresCompleteStandaloneShadowCube || scratch.LocalShadowRelevanceFrusta.Count <= 0)
                 return LocalShadowFrustumRelevance.AllPointFacesMask;
 
             ShadowRelevanceCameraSet cameras = CurrentLocalShadowRelevanceCameras(scratch);

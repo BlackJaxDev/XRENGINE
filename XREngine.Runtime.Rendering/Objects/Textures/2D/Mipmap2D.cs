@@ -1,6 +1,9 @@
 using System;
 using System.ComponentModel;
+using System.Threading;
+using System.Threading.Tasks;
 using XREngine.Imaging;
+using XREngine.Execution;
 using MemoryPack;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -84,6 +87,9 @@ namespace XREngine.Rendering
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
             bool change = base.OnPropertyChanging(propName, field, @new);
+            if (change && propName is nameof(Data) or nameof(DataBytes) or nameof(Width) or nameof(Height)
+                or nameof(PixelFormat) or nameof(PixelType) or nameof(InternalFormat))
+                Interlocked.Increment(ref _resizeRevision);
             if (change && propName == nameof(Data) && Data is not null)
                 Data.Dispose();
             return change;
@@ -190,6 +196,9 @@ namespace XREngine.Rendering
         private uint _height = 0;
         [MemoryPackIgnore]
         [YamlIgnore]
+        private int _resizeRevision;
+        [MemoryPackIgnore]
+        [YamlIgnore]
         public XRDataBuffer? _streamingPBO = null;
 
         public EPixelInternalFormat InternalFormat
@@ -244,13 +253,84 @@ namespace XREngine.Rendering
         }
 
         public Task ResizeAsync(uint width, uint height)
-            => Task.Run(() => Resize(width, height));
+            => UseCallerThreadResize()
+                ? ResizeOnCallerThreadAsync(width, height, RuntimeImageResizeMode.Standard)
+                : Task.Run(() => Resize(width, height));
 
         public Task InterpolativeResizeAsync(uint width, uint height, RuntimeImageResizeMode mode)
-            => Task.Run(() => InterpolativeResize(width, height, mode));
+            => UseCallerThreadResize()
+                ? ResizeOnCallerThreadAsync(width, height, mode)
+                : Task.Run(() => InterpolativeResize(width, height, mode));
 
         public Task AdaptiveResizeAsync(uint width, uint height)
-            => Task.Run(() => AdaptiveResize(width, height));
+            => UseCallerThreadResize()
+                ? ResizeOnCallerThreadAsync(width, height, RuntimeImageResizeMode.Adaptive)
+                : Task.Run(() => AdaptiveResize(width, height));
+
+        private static bool UseCallerThreadResize()
+            => OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread;
+
+        /// <summary>
+        /// Owns a request-time pixel snapshot until the caller job finishes. Another resize
+        /// or an observed source change invalidates queued work before publication begins.
+        /// </summary>
+        private async Task ResizeOnCallerThreadAsync(uint width, uint height, RuntimeImageResizeMode mode)
+        {
+            JobManager jobs = RuntimeWorkScheduler.CaptureCallerThreadJobs();
+            int revision = Interlocked.Increment(ref _resizeRevision);
+            DataSource? input = Data;
+            if (input?.IsDisposed == true)
+                throw new OperationCanceledException("The mipmap resize source was disposed before the request.");
+
+            uint inputLength = input?.Length ?? 0;
+            VoidPtr inputAddress = input?.Address ?? VoidPtr.Zero;
+            uint inputWidth = Width;
+            uint inputHeight = Height;
+            EPixelFormat inputFormat = PixelFormat;
+            EPixelType inputType = PixelType;
+            EPixelInternalFormat inputInternalFormat = InternalFormat;
+            bool hasImage = input is { Length: > 0 } && inputWidth > 0 && inputHeight > 0;
+            using RuntimeImage? source = hasImage ? GetImage() : null;
+
+            bool IsCurrent()
+                => Volatile.Read(ref _resizeRevision) == revision
+                    && ReferenceEquals(Data, input)
+                    && (input is null || (!input.IsDisposed
+                        && input.Length == inputLength && input.Address == inputAddress))
+                    && Width == inputWidth && Height == inputHeight
+                    && PixelFormat == inputFormat && PixelType == inputType
+                    && InternalFormat == inputInternalFormat;
+
+            bool superseded = false;
+            ActionJob job = new(() =>
+            {
+                if (!IsCurrent())
+                {
+                    superseded = true;
+                    return;
+                }
+
+                if (source is null)
+                {
+                    Width = width;
+                    Height = height;
+                    return;
+                }
+
+                using RuntimeImage resized = RuntimeImageCodecs.Require().Resize(source, width, height, mode);
+                if (!IsCurrent())
+                {
+                    superseded = true;
+                    return;
+                }
+
+                SetFromImage(resized);
+            });
+            JobHandle handle = jobs.Schedule(job);
+            await handle.WaitAsync();
+            if (superseded)
+                throw new OperationCanceledException("The mipmap resize was superseded before publication.");
+        }
         public Mipmap2D Clone(bool cloneImage)
             => new()
             {

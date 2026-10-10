@@ -1,85 +1,53 @@
 using System;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Threading;
 using JoltPhysicsSharp;
 
 namespace XREngine.Scene.Physics.Jolt
 {
     /// <summary>
-    /// Minimal Jolt initialization - matches official JoltPhysicsSharp samples exactly.
+    /// Owns process-wide Jolt initialization without requiring host filesystem services.
     /// </summary>
     internal static class JoltBootstrap
     {
-        private static int _initialized;
+        private static readonly Lock InitializationLock = new();
+        private static bool _initialized;
 
         public static void EnsureInitialized()
         {
-            if (Interlocked.Exchange(ref _initialized, 1) != 0)
-                return;
-
-            // Write to console and file immediately for debugging
-            var logPath = Path.Combine(Path.GetTempPath(), "jolt_init.log");
-            var msg = $"[{DateTime.Now:O}] JoltBootstrap.EnsureInitialized() called. BaseDir={AppContext.BaseDirectory}, Arch={RuntimeInformation.ProcessArchitecture}";
-            Console.WriteLine(msg);
-            try { File.AppendAllText(logPath, msg + Environment.NewLine); } catch { }
-
-            // Set up trace handler for diagnostics (optional but helps debugging)
-            Foundation.SetTraceHandler((message) =>
+            lock (InitializationLock)
             {
-                System.Diagnostics.Debug.WriteLine($"[Jolt] {message}");
-                Console.WriteLine($"[Jolt] {message}");
-            });
+                if (_initialized)
+                    return;
+
+                Foundation.SetTraceHandler(static message =>
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Jolt] {message}");
+                    Console.WriteLine($"[Jolt] {message}");
+                });
 
 #if DEBUG
-            // Set up assert handler in debug builds
-            Foundation.SetAssertFailureHandler((expression, message, file, line) =>
-            {
-                string outMessage = $"[Jolt] Assertion failure at {file}:{line}: {message ?? expression}";
-                System.Diagnostics.Debug.WriteLine(outMessage);
-                Console.WriteLine(outMessage);
-                // Return true to break into debugger, false to continue
-                return true;
-            });
+                Foundation.SetAssertFailureHandler(static (expression, message, file, line) =>
+                {
+                    string outMessage = $"[Jolt] Assertion failure at {file}:{line}: {message ?? expression}";
+                    System.Diagnostics.Debug.WriteLine(outMessage);
+                    Console.WriteLine(outMessage);
+                    return true;
+                });
 #endif
+                if (!Foundation.Init(doublePrecision: false))
+                    throw new InvalidOperationException("Jolt Foundation.Init() failed. The selected native joltc module may be missing or incompatible.");
 
-            // Initialize Jolt - this MUST be called before any other Jolt API
-            Console.WriteLine("[JoltBootstrap] Calling Foundation.Init()...");
-            try { File.AppendAllText(logPath, $"[{DateTime.Now:O}] Calling Foundation.Init()...{Environment.NewLine}"); } catch { }
-            
-            bool initResult;
-            try
-            {
-                initResult = Foundation.Init(doublePrecision: false);
-            }
-            catch (Exception ex)
-            {
-                var errMsg = $"[JoltBootstrap] Foundation.Init() threw: {ex.GetType().Name}: {ex.Message}";
-                Console.WriteLine(errMsg);
-                try { File.AppendAllText(logPath, errMsg + Environment.NewLine); } catch { }
-                throw;
-            }
-
-            if (!initResult)
-            {
-                throw new InvalidOperationException("Jolt Foundation.Init() failed. The native joltc.dll may not be found or is incompatible.");
-            }
-
-            Console.WriteLine("[JoltBootstrap] Foundation.Init() succeeded!");
-            try { File.AppendAllText(logPath, $"[{DateTime.Now:O}] Foundation.Init() succeeded!{Environment.NewLine}"); } catch { }
-
-            // Register shutdown handler
-            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
-            {
-                try
+                // Publish success only after initialization; a failed attempt must not cause a
+                // later scene to silently use an uninitialized native module.
+                _initialized = true;
+                if (!OperatingSystem.IsBrowser())
                 {
-                    Foundation.Shutdown();
+                    AppDomain.CurrentDomain.ProcessExit += static (_, _) =>
+                    {
+                        try { Foundation.Shutdown(); }
+                        catch { /* The process is already exiting. */ }
+                    };
                 }
-                catch
-                {
-                    // Best-effort shutdown
-                }
-            };
+            }
         }
     }
 }

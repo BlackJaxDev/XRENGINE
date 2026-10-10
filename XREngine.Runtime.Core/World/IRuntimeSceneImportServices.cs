@@ -16,7 +16,9 @@ public interface IRuntimeSceneImportServices
 /// </summary>
 public static class RuntimeSceneImportServices
 {
+    private static readonly object Sync = new();
     private static IRuntimeSceneImportServices? _current;
+    private static InstallationLease? _head;
 
     /// <summary>Gets the installed scene importer, or <see langword="null"/> when none is installed.</summary>
     public static IRuntimeSceneImportServices? Current => Volatile.Read(ref _current);
@@ -28,21 +30,38 @@ public static class RuntimeSceneImportServices
     public static IDisposable Install(IRuntimeSceneImportServices services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        IRuntimeSceneImportServices? previous = Interlocked.Exchange(ref _current, services);
-        return new InstallationLease(services, previous);
+        lock (Sync)
+        {
+            InstallationLease lease = new(services, _head);
+            _head = lease;
+            Volatile.Write(ref _current, services);
+            return lease;
+        }
     }
 
     private sealed class InstallationLease(
         IRuntimeSceneImportServices installed,
-        IRuntimeSceneImportServices? previous) : IDisposable
+        InstallationLease? previous) : IDisposable
     {
-        private IRuntimeSceneImportServices? _installed = installed;
+        public IRuntimeSceneImportServices Installed { get; } = installed;
+        public InstallationLease? Previous { get; } = previous;
+        public bool IsDisposed { get; private set; }
 
         public void Dispose()
         {
-            IRuntimeSceneImportServices? current = Interlocked.Exchange(ref _installed, null);
-            if (current is not null)
-                Interlocked.CompareExchange(ref _current, previous, current);
+            lock (Sync)
+            {
+                if (IsDisposed)
+                    return;
+                IsDisposed = true;
+                if (!ReferenceEquals(_head, this))
+                    return;
+                InstallationLease? next = Previous;
+                while (next?.IsDisposed == true)
+                    next = next.Previous;
+                _head = next;
+                Volatile.Write(ref _current, next?.Installed);
+            }
         }
     }
 }

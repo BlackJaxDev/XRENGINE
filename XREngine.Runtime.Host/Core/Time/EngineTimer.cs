@@ -5,6 +5,7 @@ using System;
 using XREngine.Data.Core;
 using XREngine.Data.Profiling;
 using XREngine.Data.Runtime.Memory;
+using XREngine.Execution;
 
 namespace XREngine.Timers
 {
@@ -190,7 +191,7 @@ namespace XREngine.Timers
         public long ConsumedCollectGeneration => _visibilityGenerationGate.ConsumedGeneration;
         public long RequiredCollectGeneration => _visibilityGenerationGate.RequiredGeneration;
 
-        public bool IsRunning => _watch.IsRunning;
+        public bool IsRunning => _watch.IsRunning || IsCallerThreadLoop;
         public EngineTimerTerminalFault? FirstTerminalFault => Volatile.Read(ref _firstTerminalFault);
 
         public DeltaManager Render { get; } = new();
@@ -219,6 +220,12 @@ namespace XREngine.Timers
         /// </summary>
         public void RunGameLoop()
         {
+            if (OperatingSystem.IsBrowser())
+                throw new PlatformNotSupportedException("Browser hosts must drive StartCallerThreadLoop and StepFrame without worker threads.");
+            if (RuntimeWorkScheduler.IsCallerThread)
+                throw new InvalidOperationException("RunGameLoop cannot create worker loops while caller-thread jobs are configured; drive StepFrame.");
+            if (IsCallerThreadLoop || Volatile.Read(ref _explicitFrameOwnerThreadId) != 0)
+                throw new InvalidOperationException("A caller-thread frame clock cannot be replaced by the threaded game loop while active.");
             if (IsRunning)
                 return;
 
@@ -228,6 +235,7 @@ namespace XREngine.Timers
                 throw new InvalidOperationException(
                     "The previous engine loop is still stopping. Call StopAndWait before restarting it.");
 
+            _usesExplicitFrameClock = false;
             _watch.Start();
             Interlocked.Exchange(ref _firstTerminalFault, null);
             Volatile.Write(ref _collectVisiblePhase, "RunGameLoop");
@@ -345,6 +353,7 @@ namespace XREngine.Timers
 
         public void BlockForRendering(Func<bool> runUntilPredicate)
         {
+            RejectCallerThreadWait();
             Debug.Out("Blocking for rendering.");
             while (runUntilPredicate())
                 WaitToRender();
@@ -391,7 +400,7 @@ namespace XREngine.Timers
 
         private void RunCollectVisibleIteration()
         {
-            long collectGeneration = _visibilityGenerationGate.RequestNextCollect();
+            long collectGeneration;
 #if !XRE_PUBLISHED
             long allocStart = 0;
             Engine.AllocationScope allocationScope = default;
@@ -411,13 +420,12 @@ namespace XREngine.Timers
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchCollectVisible", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
                         Volatile.Write(ref _collectVisiblePhase, "DispatchCollectVisible");
-                        if (!DispatchCollectVisible())
+                        if (!TryCollectVisibleGeneration(out collectGeneration))
                         {
                             Stop();
                             return;
                         }
                     }
-                    _visibilityGenerationGate.MarkCollectCompleted(collectGeneration);
 
                     //Wait for the render thread to swap update buffers with render buffers
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.WaitForRender", ProfilerScopeKind.AlwaysOnHotPathLoop))
@@ -441,30 +449,13 @@ namespace XREngine.Timers
                         : default;
 #endif
 
-                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.ProcessCollectVisibleSwapJobs", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                    // The shared publication path pumps frame-swap jobs, then swaps world and
+                    // viewport buffers, and publishes only after every callback succeeds.
+                    if (!TryPublishCollectVisibleGeneration(collectGeneration))
                     {
-                        Volatile.Write(ref _collectVisiblePhase, "ProcessCollectVisibleSwapJobs");
-                        Engine.SetFrameSwapThread(true);
-                        try
-                        {
-                            Engine.Jobs.ProcessCollectVisibleSwapJobs();
-                        }
-                        finally
-                        {
-                            Engine.SetFrameSwapThread(false);
-                        }
+                        Stop();
+                        return;
                     }
-
-                    using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop))
-                    {
-                        Volatile.Write(ref _collectVisiblePhase, "DispatchSwapBuffers");
-                        DispatchSwapBuffers();
-                    }
-
-                    // Publish only after every swap listener completed. A failed listener leaves
-                    // this generation unavailable and terminates the loop through the outer catch.
-                    Volatile.Write(ref _collectVisiblePhase, "GatePublish");
-                    _visibilityGenerationGate.Publish(collectGeneration);
                     RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordSwapPhase(Stopwatch.GetTimestamp() - swapPhaseStartTicks);
                 }
             }
@@ -512,9 +503,7 @@ namespace XREngine.Timers
                 long timestampTicks = TimeTicks();
                 long elapsedTicks = Math.Clamp(timestampTicks - _fixedUpdateClockTimestampTicks, 0L, Stopwatch.Frequency);
                 _fixedUpdateClockTimestampTicks = timestampTicks;
-                _fixedUpdateAccumulatorTicks = Math.Min(
-                    _fixedUpdateAccumulatorTicks + elapsedTicks,
-                    _fixedUpdateDeltaTicks * MaxFixedCatchUpSteps);
+                AccumulateFixedUpdateTicks(elapsedTicks);
 
                 if (_fixedUpdateAccumulatorTicks < _fixedUpdateDeltaTicks)
                 {
@@ -522,38 +511,7 @@ namespace XREngine.Timers
                     continue;
                 }
 
-                int steps = 0;
-                while (IsRunning && steps < MaxFixedCatchUpSteps && _fixedUpdateAccumulatorTicks >= _fixedUpdateDeltaTicks)
-                {
-                    long dispatchStartTicks = TimeTicks();
-                    FixedUpdateManager.DeltaTicks = _fixedUpdateDeltaTicks;
-                    FixedUpdateManager.LastTimestampTicks = dispatchStartTicks;
-
-#if !XRE_PUBLISHED
-                    long allocStart = 0;
-                    bool trackAlloc = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
-                    if (trackAlloc)
-                        allocStart = GC.GetAllocatedBytesForCurrentThread();
-#endif
-
-                    DispatchFixedUpdate();
-
-#if !XRE_PUBLISHED
-                    if (trackAlloc)
-                    {
-                        long allocEnd = GC.GetAllocatedBytesForCurrentThread();
-                        Engine.Allocations.RecordFixedUpdateTick(allocEnd - allocStart);
-                    }
-#endif
-
-                    timestampTicks = TimeTicks();
-                    FixedUpdateManager.ElapsedTicks = Math.Max(0L, timestampTicks - dispatchStartTicks);
-                    _fixedUpdateAccumulatorTicks -= _fixedUpdateDeltaTicks;
-                    steps++;
-                }
-
-                if (_fixedUpdateAccumulatorTicks >= _fixedUpdateDeltaTicks)
-                    _fixedUpdateAccumulatorTicks %= _fixedUpdateDeltaTicks;
+                DispatchAccumulatedFixedUpdates();
             }
         }
         /// <summary>
@@ -567,6 +525,7 @@ namespace XREngine.Timers
         /// </param>
         public void WaitToRender(int publicationWaitMilliseconds = Timeout.Infinite)
         {
+            RejectCallerThreadWait();
             bool reusedPreviousVisibility = false;
             while (IsRunning)
             {
@@ -643,6 +602,7 @@ namespace XREngine.Timers
         public void Stop()
         {
             _watch.Stop();
+            Volatile.Write(ref _callerThreadLoopOwnerThreadId, 0);
 
             _visibilityGenerationGate.Terminate();
             _renderDone?.Set();
@@ -661,6 +621,11 @@ namespace XREngine.Timers
                 throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "The shutdown timeout must be non-negative.");
 
             Stop();
+
+            // Caller-owned callbacks cannot be joined. Their host must return to its
+            // event loop before releasing state used by the in-flight explicit frame.
+            if (Volatile.Read(ref _explicitFrameOwnerThreadId) != 0)
+                return false;
 
             Thread? updateThread = UpdateThreadHandle;
             Thread? collectVisibleThread = CollectVisibleThreadHandle;
@@ -718,7 +683,7 @@ namespace XREngine.Timers
         /// </summary>
         /// <returns></returns>
         public long TimeTicks()
-            => Volatile.Read(ref _explicitFrameOwnerThreadId) != 0
+            => _usesExplicitFrameClock
                 ? Volatile.Read(ref _explicitFrameTimestampTicks)
                 : _watch.ElapsedTicks;
 
@@ -858,57 +823,9 @@ namespace XREngine.Timers
                         return false;
                     }
 
-                    //Debug.Out("Dispatching render.");
-                    using var sample = Engine.Profiler.Start("EngineTimer.DispatchRender", ProfilerScopeKind.AlwaysOnHotPathLoop);
-
-#if !XRE_PUBLISHED
-                    long allocStart = 0;
-                    Engine.AllocationScope allocationScope = default;
-                    bool trackAlloc = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
-                    if (trackAlloc)
-                    {
-                        allocStart = GC.GetAllocatedBytesForCurrentThread();
-                        allocationScope = Engine.Allocations.BeginScope("Render.Frame", AllocationScopeCategory.RenderSubmission);
-                    }
-#endif
-
-                    Render.DeltaTicks = elapsedTicks;
-                    Render.LastTimestampTicks = timestampTicks;
-                    Volatile.Write(ref _renderReadyForNextCollectSignaled, 0);
-
-                    ulong renderFrameId = RuntimeEngine.Rendering.BeginRenderFrame();
-                    long renderFrameStartTicks = TimeTicks();
                     long renderPhaseStartTicks = Stopwatch.GetTimestamp();
-                    Engine.SetDispatchingRenderFrame(true);
-                    try
-                    {
-                        if (processMainThreadTasks)
-                            Engine.ProcessMainThreadTasks();
-                        RenderFrame?.Invoke(); // This dispatch has to be synchronous to stay on the render thread
-                    }
-                    finally
-                    {
-                        Engine.SetDispatchingRenderFrame(false);
-                    }
+                    DispatchRenderFrame(timestampTicks, elapsedTicks, processMainThreadTasks);
                     RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderPhase(Stopwatch.GetTimestamp() - renderPhaseStartTicks);
-
-#if !XRE_PUBLISHED
-                    if (trackAlloc)
-                    {
-                        allocationScope.Dispose();
-                        long allocEnd = GC.GetAllocatedBytesForCurrentThread();
-                        Engine.Allocations.RecordRender(allocEnd - allocStart);
-                    }
-#endif
-
-                    timestampTicks = TimeTicks();
-                    Render.ElapsedTicks = Math.Max(0L, timestampTicks - Render.LastTimestampTicks);
-
-                    long renderFrameElapsedTicks = Math.Max(0L, timestampTicks - renderFrameStartTicks);
-                    double renderFrameMs = renderFrameElapsedTicks * 1000.0 / Stopwatch.Frequency;
-                    RuntimeEngine.Rendering.CompleteRenderFrame(renderFrameId, renderFrameElapsedTicks);
-                    XREngine.Rendering.RenderPipelineGpuProfiler.Instance.RecordRenderThreadFrameMs(renderFrameId, renderFrameMs);
-                    PresentFrameId = renderFrameId;
                     deferredReason = XREngine.Rendering.EInteractiveResizeDispatchReason.None;
                     // Backend/window early-release hooks remain disabled for modal
                     // frames. Release this epoch only after every callback has finished
@@ -937,8 +854,7 @@ namespace XREngine.Timers
                     ? Engine.Allocations.BeginScope("Visibility.Collect", AllocationScopeCategory.RenderSubmission)
                     : default;
 #endif
-                long collectPhaseStartTicks = Stopwatch.GetTimestamp();
-
+                long callbackStartTicks = Stopwatch.GetTimestamp();
                 long timestampTicks = TimeTicks();
                 long elapsedTicks = Math.Clamp(timestampTicks - Collect.LastTimestampTicks, 0L, Stopwatch.Frequency);
                 Collect.DeltaTicks = elapsedTicks;
@@ -947,12 +863,17 @@ namespace XREngine.Timers
                 {
                     CollectFrameId++;
                 }
-                PreCollectVisible?.Invoke();
-                CollectVisible?.Invoke();
-                PostCollectVisible?.Invoke();
-                timestampTicks = TimeTicks();
-                Collect.ElapsedTicks = Math.Max(0L, timestampTicks - Collect.LastTimestampTicks);
-                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordCollectPhase(Stopwatch.GetTimestamp() - collectPhaseStartTicks);
+                try
+                {
+                    PreCollectVisible?.Invoke();
+                    CollectVisible?.Invoke();
+                    PostCollectVisible?.Invoke();
+                }
+                finally
+                {
+                    Collect.ElapsedTicks = Math.Max(0L, Stopwatch.GetTimestamp() - callbackStartTicks);
+                }
+                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordCollectPhase(Stopwatch.GetTimestamp() - callbackStartTicks);
                 return true;
             }
             catch (Exception e)
@@ -1012,6 +933,7 @@ namespace XREngine.Timers
 
         public void DispatchUpdate()
         {
+            RejectCallerThreadWait();
             // Check if we should dispatch updates (handles pause/step)
             if (!ShouldDispatchUpdate())
             {
@@ -1037,66 +959,10 @@ namespace XREngine.Timers
                 //Raise UpdateFrame events until we catch up with the target update period
                 while (IsRunning && elapsedTicks > 0L && elapsedTicks + _updateTimeDiffTicks >= _targetUpdatePeriodTicks)
                 {
-                    using var updateIterationSample = Engine.Profiler.Start("EngineTimer.DispatchUpdate.Iteration", ProfilerScopeKind.AlwaysOnHotPathLoop);
                     long updatePhaseStartTicks = Stopwatch.GetTimestamp();
-
-#if !XRE_PUBLISHED
-                    long allocStart = 0;
-                    Engine.AllocationScope allocationScope = default;
-                    bool trackAlloc = Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
-                    if (trackAlloc)
-                    {
-                        allocStart = GC.GetAllocatedBytesForCurrentThread();
-                        allocationScope = Engine.Allocations.BeginScope("Update.Frame", AllocationScopeCategory.RuntimeSystem);
-                    }
-#endif
-
-                    Update.DeltaTicks = elapsedTicks;
-                    Update.LastTimestampTicks = timestampTicks;
-                    unchecked
-                    {
-                        UpdateFrameId++;
-                    }
-
-                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PreUpdate", ProfilerScopeKind.AlwaysOnHotPathLoop))
-                    {
-                        PreUpdateFrame?.Invoke();
-                    }
-
-                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.Update", ProfilerScopeKind.AlwaysOnHotPathLoop))
-                    {
-#if !XRE_PUBLISHED
-                        Engine.Profiler.BeginComponentTimingFrame(Time());
-                        try
-                        {
-                            UpdateFrame?.Invoke();
-                        }
-                        finally
-                        {
-                            Engine.Profiler.EndComponentTimingFrame(Time());
-                        }
-#else
-                        UpdateFrame?.Invoke();
-#endif
-                    }
-
-                    using (Engine.Profiler.Start("EngineTimer.DispatchUpdate.PostUpdate", ProfilerScopeKind.AlwaysOnHotPathLoop))
-                    {
-                        PostUpdateFrame?.Invoke();
-                    }
+                    DispatchVariableUpdate(timestampTicks, elapsedTicks);
                     RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordUpdatePhase(Stopwatch.GetTimestamp() - updatePhaseStartTicks);
-
-#if !XRE_PUBLISHED
-                    if (trackAlloc)
-                    {
-                        allocationScope.Dispose();
-                        long allocEnd = GC.GetAllocatedBytesForCurrentThread();
-                        Engine.Allocations.RecordUpdateTick(allocEnd - allocStart);
-                    }
-#endif
-
                     timestampTicks = TimeTicks();
-                    Update.ElapsedTicks = Math.Max(0L, timestampTicks - Update.LastTimestampTicks);
 
                     // Calculate difference (positive or negative) between
                     // actual elapsed time and target elapsed time. We must

@@ -487,6 +487,7 @@ internal sealed partial class ImportedTextureStreamingManager
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         ArgumentNullException.ThrowIfNull(texture);
+        RuntimeTextureSourceAccess.RequireHostFiles();
 
         EnsureCallbacksSubscribed();
 
@@ -517,6 +518,7 @@ internal sealed partial class ImportedTextureStreamingManager
         if (string.IsNullOrWhiteSpace(filePath))
             throw new ArgumentException("File path must be provided.", nameof(filePath));
 
+        RuntimeTextureSourceAccess.RequireHostFiles();
         XRTexture2D target = texture ?? new XRTexture2D();
         XRTexture2D.ApplyTextureStreamingAuthorityPath(target, filePath);
         if (string.IsNullOrWhiteSpace(target.Name))

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>XRENGINE</title>
+  <script type="module" src="./engine-player.js"></script>
+  <style>
+    html { scrollbar-gutter: stable; }
+    body { margin: 2rem auto; padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); max-width: 72rem; background: #10151d; color: #e4edf4; font: 16px/1.5 system-ui, sans-serif; }
+    button { padding: .6rem 1rem; }
+    canvas { display: block; width: 100%; aspect-ratio: 16 / 9; background: #080d14; outline: 1px solid #526478; touch-action: none; }
+    canvas:focus-visible { outline: 2px solid #90c9ef; }
+    [data-state="failed"] { color: #ffb5b5; }
+    [data-state="running"] { color: #a8ebc0; }
+  </style>
+</head>
+<body>
+  <h1>XRENGINE</h1>
+  <!-- Status text and delivery progress must not move the input surface. -->
+  <canvas id="input-surface" tabindex="0" aria-label="Engine input surface"></canvas>
+  <p id="status" role="status" data-state="loading">Loading the engine world…</p>
+  <p id="content-progress" aria-label="Asset delivery progress" hidden></p>
+  <p>Focus the surface for keyboard, pointer, and touch input</p>
+  <p>
+    <button id="retry" type="button" hidden>Retry</button>
+    <button id="enable-audio" type="button">Enable audio</button>
+    <label><input id="gamepad" type="checkbox"> Enable standard gamepad while focused <span role="status"></span></label>
+  </p>
+  <p id="audio-status" role="status">Audio awaits a user gesture</p>
+</body>
+</html>

@@ -84,3 +84,16 @@
 *.dll filter=lfs diff=lfs merge=lfs -text
 *.exe filter=lfs diff=lfs merge=lfs -text
 *.riv filter=lfs diff=lfs merge=lfs -text
+# Offline shader identities must be stable across checkout platforms.
+/Build/CommonAssets/Shaders/WebGPU/** text eol=lf
+/Samples/RollingBall/Assets/Shaders/WebGPU/** text eol=lf
+# Preserve Slang's hash-addressed output bytes, including its trailing blank line.
+/Samples/RollingBall/Assets/Shaders/WebGPU/*.wgsl whitespace=-blank-at-eof
+# Keep hash-pinned patches byte-stable and preserve mandatory blank context-line prefixes.
+/Tools/Dependencies/JoltBrowser/managed-lifetime.patch text eol=lf -whitespace
+/Tools/Dependencies/JoltBrowser/managed-callback-abi.patch text eol=lf -whitespace
+/Tools/Dependencies/JoltBrowser/managed-body-properties-abi.patch text eol=lf -whitespace
+/Tools/Dependencies/JoltBrowser/managed-body-query-abi.patch text eol=lf -whitespace
+# Exact-run approval hashes compare these Windows checkout bytes with Git blobs.
+/Tools/BrowserSmoke/network-walkthrough/** text eol=lf
+/.github/workflows/browser-network-walkthrough-once.yml text eol=lf

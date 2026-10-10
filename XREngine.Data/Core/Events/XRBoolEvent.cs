@@ -1,4 +1,6 @@
-﻿namespace XREngine.Data.Core
+﻿using System.Runtime.ExceptionServices;
+
+namespace XREngine.Data.Core
 {
     /// <summary>
     /// Event system for XR that returns a bool from its listeners.
@@ -75,10 +77,29 @@
                     return;
                 }
 
-                var tasks = new Task<bool>[snapshot.Length];
+                Task<bool>[]? tasks = null;
                 using (BeginProfiling("XRBoolEvent<T>.AsyncActions"))
                 {
                     object? profilingContext = CaptureLinkedProfilingContext();
+                    if (OperatingSystem.IsBrowser())
+                    {
+                        result = true;
+                        ExceptionDispatchInfo? firstFault = null;
+                        for (int i = 0; i < snapshot.Length; i++)
+                        {
+                            try
+                            {
+                                result &= InvokeLinkedListener(snapshot[i], item, i, profilingContext, "XRBoolEvent<T>.AsyncAction");
+                            }
+                            catch (Exception error)
+                            {
+                                firstFault ??= ExceptionDispatchInfo.Capture(error);
+                            }
+                        }
+                        firstFault?.Throw();
+                        return;
+                    }
+                    tasks = new Task<bool>[snapshot.Length];
                     for (int i = 0; i < snapshot.Length; i++)
                     {
                         Func<T, bool> listener = snapshot[i];
@@ -89,9 +110,9 @@
                     await Task.WhenAll(tasks);
                 }
 
-                var results = new bool[tasks.Length];
-                for (int i = 0; i < tasks.Length; i++)
-                    results[i] = tasks[i].Result;
+                var results = new bool[snapshot.Length];
+                for (int i = 0; i < snapshot.Length; i++)
+                    results[i] = tasks![i].Result;
                 result = results.All(static x => x);
             });
             return result;
@@ -102,6 +123,8 @@
         /// </summary>
         public bool InvokeAllMatchParallel(T item)
         {
+            if (OperatingSystem.IsBrowser())
+                throw new PlatformNotSupportedException("Concurrent event invocation requires desktop worker threads. Use InvokeAllMatch or InvokeAllMatchAsync in a browser world.");
             bool result = false;
             WithProfiling("XRBoolEvent<T>.InvokeAllMatchParallel", () =>
             {
@@ -195,6 +218,23 @@
                 using (BeginProfiling("XRBoolEvent<T>.AsyncActions"))
                 {
                     object? profilingContext = CaptureLinkedProfilingContext();
+                    if (OperatingSystem.IsBrowser())
+                    {
+                        ExceptionDispatchInfo? firstFault = null;
+                        for (int i = 0; i < snapshot.Length; i++)
+                        {
+                            try
+                            {
+                                result |= InvokeLinkedListener(snapshot[i], item, i, profilingContext, "XRBoolEvent<T>.AsyncAction");
+                            }
+                            catch (Exception error)
+                            {
+                                firstFault ??= ExceptionDispatchInfo.Capture(error);
+                            }
+                        }
+                        firstFault?.Throw();
+                        return;
+                    }
                     for (int i = 0; i < snapshot.Length; i++)
                     {
                         Func<T, bool> listener = snapshot[i];
@@ -224,6 +264,8 @@
         /// </summary>
         public bool InvokeAnyMatchParallel(T item)
         {
+            if (OperatingSystem.IsBrowser())
+                throw new PlatformNotSupportedException("Concurrent event invocation requires desktop worker threads. Use InvokeAnyMatch or InvokeAnyMatchAsync in a browser world.");
             bool result = false;
             WithProfiling("XRBoolEvent<T>.InvokeAnyMatchParallel", () =>
             {

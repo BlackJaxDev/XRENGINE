@@ -98,6 +98,8 @@ public partial class ClientNetworkingManager
             ++_replicationAttemptGeneration;
             _receivedPosePackets.Clear();
             _replicationFailure = null;
+            if (_replicationConnectionGeneration != assignment.ReplicationConnectionGeneration)
+                ClearPredictedInputs();
             _replicationConnectionGeneration = assignment.ReplicationConnectionGeneration;
             _replicationTransferId = Guid.Empty;
             _replicationBaselineTick = 0;
