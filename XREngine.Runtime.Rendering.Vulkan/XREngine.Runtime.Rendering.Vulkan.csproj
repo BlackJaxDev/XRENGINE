@@ -11,6 +11,9 @@
     <VmaBridgeNativeConfiguration Condition="'$(VmaBridgeNativeConfiguration)' == ''">$([System.Text.RegularExpressions.Regex]::Replace('$(Configuration)', '^.*(Debug|Release)$', '$1'))</VmaBridgeNativeConfiguration>
     <VmaBridgeGeneratedDir>$(MSBuildProjectDirectory)\..\Build\_AgentValidation\00000000-000000-shared\tools\bin\VulkanMemoryAllocatorBridge\$(VmaBridgeNativeConfiguration)\</VmaBridgeGeneratedDir>
     <VmaBridgeNativeDll Condition="'$(XREngineUseExistingNativeBridges)' != 'true'">$(VmaBridgeGeneratedDir)VulkanMemoryAllocatorBridge.Native.dll</VmaBridgeNativeDll>
+    <!-- Cross-compiling the Windows application cannot run MSVC. Reuse the
+         repository-managed Windows bridge; this does not enable a Linux renderer. -->
+    <VmaBridgeNativeDll Condition="'$(OS)' != 'Windows_NT' and Exists('$(VmaBridgePackagedDll)')">$(VmaBridgePackagedDll)</VmaBridgeNativeDll>
     <VmaBridgeNativeDll Condition="'$(XREngineUseExistingNativeBridges)' == 'true'">$(VmaBridgePackagedDll)</VmaBridgeNativeDll>
     <VmaBridgeBuildStateFile>$(BaseIntermediateOutputPath)vma-$(VmaBridgeNativeConfiguration)-active-native-configuration.txt</VmaBridgeBuildStateFile>
     <VmaBridgeBuildStampFile>$(BaseIntermediateOutputPath)vma-$(VmaBridgeNativeConfiguration)-native-build.stamp</VmaBridgeBuildStampFile>
@@ -79,6 +82,10 @@
     <None Include="$(VmaBridgeNativeDll)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <TargetPath>VulkanMemoryAllocatorBridge.Native.dll</TargetPath>
+    </None>
+    <None Include="$(VmaBridgeGeneratedDir)VulkanMemoryAllocatorBridge.Native.pdb" Condition="Exists('$(VmaBridgeGeneratedDir)VulkanMemoryAllocatorBridge.Native.pdb')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>VulkanMemoryAllocatorBridge.Native.pdb</TargetPath>
     </None>
   </ItemGroup>
 

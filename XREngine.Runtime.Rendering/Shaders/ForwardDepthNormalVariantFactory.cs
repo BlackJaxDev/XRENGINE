@@ -48,6 +48,29 @@ public static class ForwardDepthNormalVariantFactory
     {
         ArgumentNullException.ThrowIfNull(sourceMaterial);
 
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.UberBaseV1)
+            return UberBaseVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.DepthNormal);
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1)
+            return AuthoredTexturedVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.DepthNormal);
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1)
+            return TexturedAlphaVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.DepthNormal);
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic.IsUnlit())
+            return UnlitVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.DepthNormal);
+
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+            sourceMaterial.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
+            return StandardLitTextureVariantFactory.CreateDepthNormal(sourceMaterial);
+
+        if (sourceMaterial.EngineSemantic.IsColorCoverage())
+            return StandardLitColorVariantFactory.Create(sourceMaterial, EStandardLitColorAuxiliaryPass.DepthNormal);
+
         if (sourceMaterial.RenderPass != (int)EDefaultRenderPass.OpaqueForward &&
             sourceMaterial.RenderPass != (int)EDefaultRenderPass.MaskedForward)
             return null;

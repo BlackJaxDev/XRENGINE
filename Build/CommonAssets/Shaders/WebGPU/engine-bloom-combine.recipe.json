@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-bloom-combine",
+  "pass": "bloom-combine",
+  "source": "BloomCombine.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "bloomCombineVertex",
+    "fragment": "bloomCombineFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 12,
+    "maxUniformBufferBindingSize": 64,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 6,
+    "maxSamplersPerShaderStage": 6
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 12,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "BloomCombine",
+        "physicalName": "bloomCombine_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 64,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "outputArea_0",
+            "provider": "BloomOutputArea",
+            "offset": 0,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "controls_0",
+            "provider": "BloomCombineControls",
+            "offset": 16,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "weights0To3_0",
+            "provider": "BloomWeights0To3",
+            "offset": 32,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "weights4_0",
+            "provider": "BloomWeight4",
+            "offset": 48,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "HdrTexture",
+        "physicalName": "hdrTexture_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomMip0",
+        "physicalName": "bloomMip0_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomMip1",
+        "physicalName": "bloomMip1_0",
+        "group": 1,
+        "binding": 2,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomMip2",
+        "physicalName": "bloomMip2_0",
+        "group": 1,
+        "binding": 3,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomMip3",
+        "physicalName": "bloomMip3_0",
+        "group": 1,
+        "binding": 4,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomMip4",
+        "physicalName": "bloomMip4_0",
+        "group": 1,
+        "binding": 5,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "HdrTexture",
+        "physicalName": "hdrSampler_0",
+        "group": 1,
+        "binding": 6,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomMip0",
+        "physicalName": "bloomSampler0_0",
+        "group": 1,
+        "binding": 7,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomMip1",
+        "physicalName": "bloomSampler1_0",
+        "group": 1,
+        "binding": 8,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomMip2",
+        "physicalName": "bloomSampler2_0",
+        "group": 1,
+        "binding": 9,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomMip3",
+        "physicalName": "bloomSampler3_0",
+        "group": 1,
+        "binding": 10,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomMip4",
+        "physicalName": "bloomSampler4_0",
+        "group": 1,
+        "binding": 11,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": { "pass": "bloom-combine" }
+}

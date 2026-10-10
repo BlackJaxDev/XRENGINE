@@ -132,6 +132,7 @@ The Jolt integration lives in `XREngine.Runtime.Physics.Jolt` under the stable `
 
 - `JoltScene` spins up a `PhysicsSystem` and `JobSystemThreadPool` during `Initialize()`. The default settings mirror PhysX defaults (gravity, solver iterations, cache sizes) to keep gameplay tuning similar.
 - Actors (`JoltActor`, `JoltRigidActor`, `JoltDynamicRigidBody`, `JoltStaticRigidBody`) wrap Jolt `BodyID`s and read poses/velocities through the `PhysicsSystem.BodyInterface`. Components opt-in by storing a reference to their owning body wrapper.
+- Native body allocation ownership is separate from active scene attachment. Deactivation removes a body from simulation without giving up ownership, so reactivation in the same live scene preserves its identifier. Scene destruction releases attached and detached bodies and their shape metadata, invalidates their identifiers, and clears component body links. Destroyed wrappers and wrappers allocated by another physics system cannot be reattached; `AllocatedActorCount` includes detached allocations while `GetDiagnostics()` reports active registrations.
 - Ray, sweep, and overlap queries use `NarrowPhaseQuery` with shared layer masks and static/dynamic actor filters. Results include the owning component, hit position, normal, distance, and backend payload where applicable.
 - `StepSimulation()` consumes buffered controller movement, updates `PhysicsSystem`, publishes its debug frame, propagates dynamic body poses through `IPhysicsStepListener.OnPhysicsStepped()`, and raises `NotifySimulationStepped()`. Cross-platform deterministic replay is not claimed with the current desktop native supply.
 
@@ -144,6 +145,8 @@ The Jolt integration lives in `XREngine.Runtime.Physics.Jolt` under the stable `
 
 ## Engine Components & Transforms
 Physics components live in `Scene/Components/Physics` and abstract simulation specifics away from gameplay code.
+
+Shared rendered and headless world hosts initialize the native physics scene before attaching authored scene nodes. Assigning a world context can activate components before gameplay begins, so actor creation must already be available at that boundary. Hosts apply authored physics settings after native initialization and reuse the initialized scene when beginning play; gameplay and component-activation callback ordering stays unchanged.
 
 - `DynamicRigidBodyComponent` and `StaticRigidBodyComponent` both require a `RigidBodyTransform`. When the `RigidBody` property changes, the component automatically removes the old actor from the world, rebinds its neutral actor ownership, and re-adds the new actor if the component is active. The world then pulls updated poses inside `RigidBodyTransform.OnPhysicsStepped()`.
 - `PhysicsActorComponent` defines the shared activation/deactivation behavior for components that manage any physics actor. It uses the world reference exposed by `XRComponent` to locate the current `AbstractPhysicsScene` and registers actors appropriately.

@@ -15,6 +15,12 @@ public partial class AdvancedRenderPipeline
         if (builder.Profile.AntiAliasingMode != EAntiAliasingMode.Msaa || builder.Profile.MsaaSampleCount <= 1u)
             return;
 
+        if (AdvancedVisibilitySampleContract.Select(builder.Profile) == EAdvancedVisibilitySampleEncoding.PackedUInt16)
+        {
+            DeclarePackedMultisampleVisibilityResources(builder);
+            return;
+        }
+
         uint samples = builder.Profile.MsaaSampleCount;
         DeclareMultisampleVisibilityTexture(builder, layers, samples,
             AdvancedVisibilityResourceNames.SamplePositionMultisample,

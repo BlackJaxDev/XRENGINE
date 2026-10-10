@@ -62,6 +62,7 @@ Architecture link: [USD Import And Export Design](../../design/assets/usd-import
 ### Model Import Binary Cache
 
 Architecture link: [Model Import Binary Cache](../../../architecture/assets/model-import-binary-cache.md).
+Historical requirements and phase evidence: [model-cache branch record](../../progress/assets/model-import-binary-cache-reconciliation-2026-10-07.md).
 
 | Check | Procedure | Expected | Status | Last evidence |
 |---|---|---|---|---|
@@ -72,6 +73,11 @@ Architecture link: [Model Import Binary Cache](../../../architecture/assets/mode
 | Atomic publication | Interrupt a cache write and read during replacement. | The previous entry remains valid. Corrupt entries quarantine without blocking source import. | Open | Last evidence: none. |
 | Manual reimport transaction | Reimport a generated model asset after cache staging. | GUIDs, remaps, project-authored materials, and bindings remain authoritative; cancel or failure keeps the previous assets and cache. | Open | Last evidence: none. |
 | Editor cache inspection | Open a cached model in the editor after inspector work lands. | The editor shows cache state, producer, rejection reason, dependency status, versions, and repair state. | Open | Last evidence: none. |
+| Cold and second-load baseline | Record parser calls, wall time, allocations, node, mesh, and material counts, structural hashes, and second-load behavior before full cache hydration. | The later warm path has a reproducible baseline with the same fixture and settings. | Open | Last evidence: none. |
+| Import format matrix | Cold-load and warm-load FBX, external glTF, embedded GLB, skinned, morph, and animated glTF, OBJ with MTL, and a Unity prefab after hydration exists. | Structure, bindings, skin, morph, animation references, and dependency invalidation match. A valid warm load makes zero source parser calls. | Blocked by incomplete hydration path | Last evidence: none. |
+| Deterministic semantic bytes | Cook equivalent imported models across repeat runs and compare semantic sections. | Equivalent inputs produce byte-identical semantic sections; diagnostic header fields may differ only where the format permits. | Blocked by incomplete cooked sections | Last evidence: none. |
+| Cold, warm, and partial benchmarks | Measure cold import, full warm hydration, and each partial-hydration mode with matched settings. | Record parser calls, wall time, allocations, bytes read, and chunks read; no valid warm load rebuilds a present LOD or meshlet. | Blocked by incomplete hydration path | Last evidence: none. |
+| Editor cache actions | Exercise rebuild, remove, inspect, and reimport or reconcile in the editor. | Each action reports the current owner/result; cancel and failure preserve project assets and the previous valid cache. | Open | Last evidence: none. |
 
 ### glTF
 

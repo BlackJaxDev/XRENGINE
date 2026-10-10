@@ -48,9 +48,9 @@ public static class RenderPipelineFeatureSynchronizer
 
         try
         {
-            var sourceState = sourceCamera.PostProcessStates.GetOrCreateState(sourcePipeline);
+            var sourceState = sourceCamera.GetPostProcessState(sourcePipeline)!;
             var destinationState =
-                destinationCamera.PostProcessStates.GetOrCreateState(destinationPipeline);
+                destinationCamera.GetPostProcessState(destinationPipeline)!;
 
             foreach (var (stageKey, sourceStage) in sourceState.Stages)
             {

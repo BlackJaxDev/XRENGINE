@@ -1,3 +1,5 @@
+using YamlDotNet.Serialization;
+
 namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline : IAdvancedRenderPipelineCapabilitySource
@@ -5,6 +7,7 @@ public partial class AdvancedRenderPipeline : IAdvancedRenderPipelineCapabilityS
     private AdvancedRenderPipelineCapabilityResult _capabilityResult;
 
     /// <inheritdoc />
+    [YamlIgnore]
     public AdvancedRenderPipelineCapabilityResult CapabilityResult
     {
         get => _capabilityResult;

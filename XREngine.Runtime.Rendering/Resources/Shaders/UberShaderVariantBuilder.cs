@@ -35,6 +35,9 @@ internal static partial class UberShaderVariantBuilder
     private static readonly ConcurrentDictionary<VertexPermutationCacheKey, ulong> VertexPermutationHashCache = new();
     private static readonly ConcurrentDictionary<string, long> LastKnownSourceVersionsByPath = new(StringComparer.Ordinal);
     private static readonly ConditionalWeakTable<ShaderUiManifest, ManifestDerivedData> ManifestDerivedCache = new();
+    private static readonly object CacheOwnerGate = new();
+    private static ShaderSourceProviderOwner _cacheOwner;
+    private static bool _hasCacheOwner;
     private static long _resolvedSourceCacheHits;
     private static long _resolvedSourceCacheMisses;
     private static readonly string[] PipelineAxisMacros =
@@ -53,9 +56,15 @@ internal static partial class UberShaderVariantBuilder
         DisableForwardPbrResourcesMacro,
     ];
 
-    private readonly record struct UberVariantCacheKey(ulong VariantHash, long SourceVersion, ulong SourcePathHash, string? SourcePath);
-    private readonly record struct SourceResolveCacheKey(string SourceText, string? SourcePath, bool EmitIncludeDeadCodeMarkers);
-    private readonly record struct VertexPermutationCacheKey(EShaderType Type, string SourceText, string? SourcePath, long SourceVersion);
+    private readonly record struct UberVariantCacheKey(ulong VariantHash, long SourceVersion, ulong SourcePathHash, string? SourcePath, ShaderSourceProviderOwner Owner);
+    private readonly record struct SourceResolveCacheKey(
+        string SourceText,
+        string? SourcePath,
+        bool EmitIncludeDeadCodeMarkers,
+        bool HostFileAccess,
+        long RegisteredSnippetVersion,
+        ShaderSourceProviderOwner Owner);
+    private readonly record struct VertexPermutationCacheKey(EShaderType Type, string SourceText, string? SourcePath, long SourceVersion, ShaderSourceProviderOwner Owner);
 
     private sealed class ResolvedUberShaderSource
     {
@@ -64,7 +73,10 @@ internal static partial class UberShaderVariantBuilder
         public required ulong SourcePathHash { get; init; }
         public required long SourceVersion { get; init; }
         public required ShaderSourceFileDependency[] Dependencies { get; init; }
+        public required ShaderSourceDirectoryDependency[] DirectoryDependencies { get; init; }
         public required string[] PipelineMacros { get; init; }
+        public required ShaderSourceProviderOwner Owner { get; init; }
+        public required bool Cacheable { get; init; }
     }
 
     private sealed class PreResolvedMaterialVariantAxes
@@ -115,13 +127,41 @@ internal static partial class UberShaderVariantBuilder
 
     internal static void ClearCachesForTests()
     {
+        ClearProviderCaches();
+        Interlocked.Exchange(ref _resolvedSourceCacheHits, 0);
+        Interlocked.Exchange(ref _resolvedSourceCacheMisses, 0);
+    }
+
+    private static void ClearProviderCaches()
+    {
         GeneratedSourceCache.Clear();
         GeneratedShaderCache.Clear();
         ResolvedSourceCache.Clear();
         VertexPermutationHashCache.Clear();
         LastKnownSourceVersionsByPath.Clear();
-        Interlocked.Exchange(ref _resolvedSourceCacheHits, 0);
-        Interlocked.Exchange(ref _resolvedSourceCacheMisses, 0);
+    }
+
+    private static void EnsureCacheOwner(ShaderSourceProviderOwner owner)
+    {
+        lock (CacheOwnerGate)
+        {
+            if (_hasCacheOwner && _cacheOwner.Equals(owner))
+                return;
+        }
+
+        if (!ShaderSourceResolver.IsOwnerCurrent(owner))
+            return;
+
+        lock (CacheOwnerGate)
+        {
+            if ((!_hasCacheOwner || !_cacheOwner.Equals(owner)) &&
+                ShaderSourceResolver.IsOwnerInstallationCurrent(owner))
+            {
+                ClearProviderCaches();
+                _cacheOwner = owner;
+                _hasCacheOwner = true;
+            }
+        }
     }
 
     internal static CacheStats GetCacheStatsForTests()
@@ -149,7 +189,7 @@ internal static partial class UberShaderVariantBuilder
         cancellationToken.ThrowIfCancellationRequested();
 
         UberMaterialVariantRequest request = BuildRequest(material, preResolvedAxes, resolvedSource, additionalPipelineMacros);
-        UberVariantCacheKey cacheKey = new(request.VariantHash, request.SourceVersion, resolvedSource.SourcePathHash, request.SourcePath);
+        UberVariantCacheKey cacheKey = new(request.VariantHash, request.SourceVersion, resolvedSource.SourcePathHash, request.SourcePath, resolvedSource.Owner);
         PruneStaleSourceEntries(request.SourcePath, resolvedSource.SourcePathHash, request.SourceVersion);
 
         bool hasGeneratedSource = GeneratedSourceCache.TryGetValue(cacheKey, out string? cachedGeneratedSource);
@@ -284,7 +324,6 @@ internal static partial class UberShaderVariantBuilder
         IReadOnlyCollection<string> resolvedPipelineMacros,
         IReadOnlyCollection<string>? additionalPipelineMacros)
     {
-        HashSet<string> enabledFeatureSet = new(enabledFeatures, StringComparer.Ordinal);
         HashSet<string> pipelineMacros = new(resolvedPipelineMacros, StringComparer.Ordinal);
         if (additionalPipelineMacros is not null)
             pipelineMacros.UnionWith(additionalPipelineMacros);
@@ -302,7 +341,7 @@ internal static partial class UberShaderVariantBuilder
                 break;
         }
 
-        bool forwardLightingEnabled = RequiresForwardLighting(material, enabledFeatureSet);
+        bool forwardLightingEnabled = RequiresForwardLighting(material, enabledFeatures);
         bool forwardShadowsEnabled = forwardLightingEnabled && RequiresForwardShadows(material);
         if (!forwardLightingEnabled)
             pipelineMacros.Add(DisableForwardLightingMacro);
@@ -320,17 +359,30 @@ internal static partial class UberShaderVariantBuilder
         return pipelineMacroArray;
     }
 
-    private static bool RequiresForwardLighting(XRMaterial material, IReadOnlySet<string> enabledFeatures)
+    /// <summary>Checks live source requirements against a retained prepared variant without preparing shaders or allocating.</summary>
+    internal static bool MatchesForwardPipelineRequirements(XRMaterial material, string[] enabledFeatures, string[] pipelineMacros)
     {
-        if (material.RenderOptions.RequiredEngineUniforms.HasFlag(EUniformRequirements.Lights))
+        bool lighting = RequiresForwardLighting(material, enabledFeatures);
+        bool shadows = lighting && RequiresForwardShadows(material);
+        return HasMacro(DisableForwardLightingMacro) == !lighting &&
+            HasMacro(DisableForwardAmbientOcclusionMacro) == (!lighting || (material.RenderOptions.RequiredEngineUniforms & EUniformRequirements.AmbientOcclusion) == 0) &&
+            HasMacro(DisableForwardShadowsMacro) == !shadows &&
+            HasMacro(DisableForwardContactShadowsMacro) == (!shadows || !RequiresForwardContactShadows(material)) &&
+            HasMacro(DisableForwardPbrResourcesMacro) == (!lighting || !RequiresForwardPbrResources(material));
+
+        bool HasMacro(string name) => Array.IndexOf(pipelineMacros, name) >= 0;
+    }
+
+    private static bool RequiresForwardLighting(XRMaterial material, IReadOnlyList<string> enabledFeatures)
+    {
+        if ((material.RenderOptions.RequiredEngineUniforms & EUniformRequirements.Lights) != 0)
             return true;
 
-        return enabledFeatures.Contains("stylized-shading") ||
-               enabledFeatures.Contains("shadow-masks") ||
-               enabledFeatures.Contains("matcap") ||
-               enabledFeatures.Contains("rim-lighting") ||
-               enabledFeatures.Contains("advanced-specular") ||
-               enabledFeatures.Contains("subsurface");
+        for (int index = 0; index < enabledFeatures.Count; index++)
+            if (enabledFeatures[index] is "stylized-shading" or "shadow-masks" or "matcap" or
+                "rim-lighting" or "advanced-specular" or "subsurface")
+                return true;
+        return false;
     }
 
     private static bool RequiresForwardShadows(XRMaterial material)
@@ -456,12 +508,19 @@ internal static partial class UberShaderVariantBuilder
 
     private static ResolvedUberShaderSource ResolveShaderSourceCached(XRShader shader, bool emitIncludeDeadCodeMarkers)
     {
-        string sourceText = shader.Source?.Text ?? string.Empty;
-        string? sourcePath = ResolveShaderSourcePathOrName(shader);
-        SourceResolveCacheKey cacheKey = new(sourceText, NormalizeSourcePathKey(sourcePath), emitIncludeDeadCodeMarkers);
-
         while (true)
         {
+            ShaderSourceProviderOwner owner = ShaderSourceResolver.CaptureOwner();
+            EnsureCacheOwner(owner);
+            string sourceText = shader.Source?.Text ?? string.Empty;
+            string? sourcePath = ResolveShaderSourcePathOrName(shader);
+            SourceResolveCacheKey cacheKey = new(
+                sourceText,
+                NormalizeSourcePathKey(sourcePath, owner),
+                emitIncludeDeadCodeMarkers,
+                owner.HostFileAccess,
+                ShaderSourceResolver.RegisteredSnippetVersion,
+                owner);
             if (ResolvedSourceCache.TryGetValue(cacheKey, out Lazy<ResolvedUberShaderSource>? cachedLazy))
             {
                 ResolvedUberShaderSource cached;
@@ -475,7 +534,8 @@ internal static partial class UberShaderVariantBuilder
                     throw;
                 }
 
-                if (ShaderSourceResolver.AreDependenciesCurrent(cached.Dependencies))
+                if (cached.Owner.Equals(owner) &&
+                    ShaderSourceResolver.AreDependenciesCurrent(cached.Dependencies, cached.DirectoryDependencies, owner))
                 {
                     Interlocked.Increment(ref _resolvedSourceCacheHits);
                     return cached;
@@ -485,18 +545,22 @@ internal static partial class UberShaderVariantBuilder
             }
 
             Lazy<ResolvedUberShaderSource> created = new(
-                () => ResolveShaderSourceUncached(shader, sourceText, sourcePath, emitIncludeDeadCodeMarkers),
+                () => ResolveShaderSourceUncached(shader, sourceText, sourcePath, emitIncludeDeadCodeMarkers, owner),
                 LazyThreadSafetyMode.ExecutionAndPublication);
             Lazy<ResolvedUberShaderSource> actual = ResolvedSourceCache.GetOrAdd(cacheKey, created);
 
             try
             {
                 ResolvedUberShaderSource resolved = actual.Value;
-                if (!ShaderSourceResolver.AreDependenciesCurrent(resolved.Dependencies))
+                if (!resolved.Owner.Equals(owner) ||
+                    !ShaderSourceResolver.AreDependenciesCurrent(resolved.Dependencies, resolved.DirectoryDependencies, owner))
                 {
                     ResolvedSourceCache.TryRemove(cacheKey, out _);
                     continue;
                 }
+
+                if (!resolved.Cacheable)
+                    ResolvedSourceCache.TryRemove(cacheKey, out _);
 
                 if (ReferenceEquals(actual, created))
                     Interlocked.Increment(ref _resolvedSourceCacheMisses);
@@ -518,10 +582,12 @@ internal static partial class UberShaderVariantBuilder
         XRShader shader,
         string sourceText,
         string? sourcePath,
-        bool emitIncludeDeadCodeMarkers)
+        bool emitIncludeDeadCodeMarkers,
+        ShaderSourceProviderOwner owner)
     {
         string resolvedSource;
         ShaderSourceFileDependency[] dependencies = [];
+        ShaderSourceDirectoryDependency[] directoryDependencies = [];
         string[] directPipelineMacros = ResolvePipelineMacros(sourceText);
 
         if (!string.IsNullOrEmpty(sourceText))
@@ -538,31 +604,41 @@ internal static partial class UberShaderVariantBuilder
                     });
                 resolvedSource = result.Source;
                 dependencies = result.FileDependencies;
-                return CreateResolvedShaderSource(resolvedSource, sourcePath, dependencies, directPipelineMacros);
+                directoryDependencies = result.SearchRootDependencies;
+                return CreateResolvedShaderSource(resolvedSource, sourcePath, dependencies, directoryDependencies,
+                    directPipelineMacros, result.Owner);
             }
-            catch
+            catch when (ShaderSourceResolver.CanAccessHostShaderFiles)
             {
             }
         }
 
-        bool resolved = shader.TryGetResolvedSource(out resolvedSource, annotateIncludes: false, logFailures: true);
+        bool resolved = shader.TryGetResolvedShaderSource(out ResolvedShaderSource resolvedPayload, annotateIncludes: false, logFailures: true);
+        resolvedSource = resolvedPayload.ResolvedSource;
+        if (!resolved && !owner.HostFileAccess)
+            throw new NotSupportedException("ShaderSource.ResolutionUnavailable: an Uber shader variant cannot use unresolved source on this runtime.");
         if (resolved)
         {
             // XRShader owns the detailed dependency cache for this fallback path;
             // this local cache entry remains direct-source validated only.
-            dependencies = [];
+            dependencies = resolvedPayload.FileDependencies;
+            directoryDependencies = resolvedPayload.SearchRootDependencies;
         }
 
-        return CreateResolvedShaderSource(resolvedSource, sourcePath, dependencies, directPipelineMacros);
+        return CreateResolvedShaderSource(resolvedSource, sourcePath, dependencies, directoryDependencies,
+            directPipelineMacros, owner, cacheable: false);
     }
 
     private static ResolvedUberShaderSource CreateResolvedShaderSource(
         string resolvedSource,
         string? sourcePath,
         ShaderSourceFileDependency[] dependencies,
-        IReadOnlyCollection<string> directPipelineMacros)
+        ShaderSourceDirectoryDependency[] directoryDependencies,
+        IReadOnlyCollection<string> directPipelineMacros,
+        ShaderSourceProviderOwner owner,
+        bool cacheable = true)
     {
-        string? normalizedPath = NormalizeSourcePathKey(sourcePath);
+        string? normalizedPath = NormalizeSourcePathKey(sourcePath, owner);
         HashSet<string> pipelineMacros = new(directPipelineMacros, StringComparer.Ordinal);
         pipelineMacros.UnionWith(ResolvePipelineMacros(resolvedSource));
         string[] pipelineMacroArray = [.. pipelineMacros];
@@ -574,7 +650,10 @@ internal static partial class UberShaderVariantBuilder
             SourcePathHash = ComputeStableHash(normalizedPath ?? string.Empty),
             SourceVersion = unchecked((long)ComputeStableHash(resolvedSource)),
             Dependencies = dependencies,
+            DirectoryDependencies = directoryDependencies,
             PipelineMacros = pipelineMacroArray,
+            Owner = owner,
+            Cacheable = cacheable,
         };
     }
 
@@ -1150,20 +1229,14 @@ internal static partial class UberShaderVariantBuilder
     private static bool HasPositiveFloatParameter(XRMaterial material, string name)
         => material.Parameter<ShaderFloat>(name) is { Value: > 0.000001f };
 
-    private static bool HasTruthyParameter(XRMaterial material, params string[] names)
+    private static bool HasTruthyParameter(XRMaterial material, string first, string second)
     {
-        foreach (string name in names)
-        {
-            if (material.Parameter<ShaderBool>(name) is { Value: true } ||
-                material.Parameter<ShaderInt>(name) is { Value: not 0 } ||
-                material.Parameter<ShaderUInt>(name) is { Value: not 0u } ||
-                material.Parameter<ShaderFloat>(name) is { Value: > 0.000001f })
-            {
-                return true;
-            }
-        }
+        return IsTruthy(first) || IsTruthy(second);
 
-        return false;
+        bool IsTruthy(string name) => material.Parameter<ShaderBool>(name) is { Value: true } ||
+            material.Parameter<ShaderInt>(name) is { Value: not 0 } ||
+            material.Parameter<ShaderUInt>(name) is { Value: not 0u } ||
+            material.Parameter<ShaderFloat>(name) is { Value: > 0.000001f };
     }
 
     private static bool HasAuthoredSamplerTexture(XRMaterial material, string samplerName)
@@ -1431,7 +1504,8 @@ internal static partial class UberShaderVariantBuilder
                 shader.Type,
                 shader.Source?.Text ?? string.Empty,
                 resolved.SourcePath,
-                resolved.SourceVersion);
+                resolved.SourceVersion,
+                resolved.Owner);
             ulong shaderHash = VertexPermutationHashCache.GetOrAdd(cacheKey, static key =>
             {
                 XxHash64 shaderHasher = new();
@@ -1491,14 +1565,17 @@ internal static partial class UberShaderVariantBuilder
         return hash.GetCurrentHashAsUInt64();
     }
 
-    private static string? NormalizeSourcePathKey(string? sourcePath)
+    private static string? NormalizeSourcePathKey(string? sourcePath, ShaderSourceProviderOwner owner)
     {
         if (string.IsNullOrWhiteSpace(sourcePath))
             return sourcePath;
 
+        if (!owner.HostFileAccess)
+            return sourcePath;
+
         try
         {
-            return File.Exists(sourcePath)
+            return owner.FileBackend!.FileExists(sourcePath)
                 ? Path.GetFullPath(sourcePath)
                 : sourcePath;
         }

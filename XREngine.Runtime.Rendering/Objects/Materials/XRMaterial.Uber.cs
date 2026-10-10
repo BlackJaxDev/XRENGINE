@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
+using XREngine.Execution;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using YamlDotNet.Serialization;
@@ -30,6 +31,10 @@ public partial class XRMaterial
     [YamlIgnore]
     private Task? _uberVariantBuildTask;
     [YamlIgnore]
+    private Task? _uberVariantDebounceTask;
+    [YamlIgnore]
+    private CallerUberTerminalFailure? _uberCallerTerminalFailure;
+    [YamlIgnore]
     private readonly object _uberVariantBuildLock = new();
     [YamlIgnore]
     private CancellationTokenSource? _uberVariantBuildCancellation;
@@ -37,6 +42,10 @@ public partial class XRMaterial
     private readonly object _uberVariantRequestDebounceLock = new();
     [YamlIgnore]
     private CancellationTokenSource? _uberVariantRequestDebounceCancellation;
+
+    private sealed record CallerUberTerminalFailure(
+        long RequestSerial, long AuthoredRevision, CancellationTokenSource? DebounceOwner,
+        int OwnerThreadId, string Reason);
 
     public bool TryGetUberMaterialState(out XRShader? fragmentShader, out ShaderUiManifest manifest)
     {
@@ -670,6 +679,9 @@ public partial class XRMaterial
     // to backend-facing compile/adoption once a prepared variant is ready.
     public void RequestUberVariantRebuild()
     {
+        if (IsDestroyed || IsMaterialTeardownRequested)
+            return;
+
         CancelUberVariantRebuildDebounce();
 
         if (!TryGetUberMaterialState(out XRShader? fragmentShader, out ShaderUiManifest manifest) || fragmentShader is null)
@@ -677,9 +689,16 @@ public partial class XRMaterial
 
         EnsureUberStateInitialized(fragmentShader, manifest);
         XRShader canonicalShader = ResolveCanonicalUberFragmentShader(fragmentShader);
+        bool callerThread = OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread;
+        JobManager? callerJobs = callerThread ? RuntimeWorkScheduler.CaptureCallerThreadJobs() : null;
+        int callerThreadId = callerThread ? Environment.CurrentManagedThreadId : 0;
 
         long serial = Interlocked.Increment(ref _uberVariantRequestSerial);
+        Interlocked.Exchange(ref _uberCallerTerminalFailure, null);
         CancellationTokenSource cancellationTokenSource = ResetUberVariantBuildCancellation();
+        CancellationToken cancellationToken = cancellationTokenSource.Token;
+        long authoredRevision = UberStateRevision;
+        long shaderRevision = ShaderStateRevision;
         UberShaderVariantTelemetry.RecordRequest();
         SetUberVariantStatus(new UberMaterialVariantStatus
         {
@@ -688,10 +707,19 @@ public partial class XRMaterial
             RequestedVariantHash = RequestedUberVariant.VariantHash,
         });
 
+        if (callerThread)
+        {
+            if (IsCurrentCallerUberRequest(serial, cancellationToken, authoredRevision, shaderRevision))
+                _uberVariantBuildTask = PrepareUberVariantOnCallerThreadAsync(
+                    serial, cancellationToken, authoredRevision, shaderRevision, canonicalShader, manifest,
+                    callerJobs!, callerThreadId);
+            return;
+        }
+
         _uberVariantBuildTask = Task.Run(async () =>
         {
-            await Task.Delay(UberVariantDebounceMilliseconds, cancellationTokenSource.Token).ConfigureAwait(false);
-            cancellationTokenSource.Token.ThrowIfCancellationRequested();
+            await Task.Delay(UberVariantDebounceMilliseconds, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
 
             SetUberVariantStatus(new UberMaterialVariantStatus
             {
@@ -700,23 +728,308 @@ public partial class XRMaterial
                 RequestedVariantHash = RequestedUberVariant.VariantHash,
             });
 
-            return UberShaderVariantBuilder.PrepareVariant(this, canonicalShader, manifest, cancellationTokenSource.Token);
-        }, cancellationTokenSource.Token).ContinueWith(task => ApplyPreparedUberVariant(serial, task), TaskScheduler.Default);
+            return UberShaderVariantBuilder.PrepareVariant(this, canonicalShader, manifest, cancellationToken);
+        }, cancellationToken).ContinueWith(task => ApplyPreparedUberVariant(serial, task), TaskScheduler.Default);
+    }
+
+    private bool IsCurrentCallerUberOperation(long serial, CancellationToken cancellationToken, long authoredRevision)
+        => !cancellationToken.IsCancellationRequested &&
+           !IsDestroyed && !IsMaterialTeardownRequested &&
+           serial == Interlocked.Read(ref _uberVariantRequestSerial) &&
+           authoredRevision == Volatile.Read(ref _uberStateRevision);
+
+    private bool IsCurrentCallerUberRequest(long serial, CancellationToken cancellationToken,
+        long authoredRevision, long shaderRevision)
+        => IsCurrentCallerUberOperation(serial, cancellationToken, authoredRevision) &&
+           shaderRevision == Volatile.Read(ref _shaderStateRevision);
+
+    private void PublishCallerUberTerminalFailure(CallerUberTerminalFailure failure)
+    {
+        while (true)
+        {
+            if (failure.RequestSerial != Interlocked.Read(ref _uberVariantRequestSerial) ||
+                failure.AuthoredRevision != Volatile.Read(ref _uberStateRevision) ||
+                IsDestroyed || IsMaterialTeardownRequested ||
+                (failure.DebounceOwner is not null &&
+                 !ReferenceEquals(Volatile.Read(ref _uberVariantRequestDebounceCancellation), failure.DebounceOwner)))
+                return;
+
+            CallerUberTerminalFailure? current = Volatile.Read(ref _uberCallerTerminalFailure);
+            if (current is not null && current.RequestSerial > failure.RequestSerial)
+                return;
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _uberCallerTerminalFailure, failure, current), current))
+                return;
+        }
+    }
+
+    /// <summary>Publishes a delayed caller-job failure only when its material owner next checks readiness.</summary>
+    internal bool ObserveCallerUberTerminalFailure()
+    {
+        CallerUberTerminalFailure? failure = Volatile.Read(ref _uberCallerTerminalFailure);
+        if (failure is null || Environment.CurrentManagedThreadId != failure.OwnerThreadId ||
+            !ReferenceEquals(Interlocked.CompareExchange(ref _uberCallerTerminalFailure, null, failure), failure))
+            return false;
+
+        if (IsDestroyed || IsMaterialTeardownRequested ||
+            failure.RequestSerial != Interlocked.Read(ref _uberVariantRequestSerial) ||
+            failure.AuthoredRevision != Volatile.Read(ref _uberStateRevision) ||
+            (failure.DebounceOwner is not null &&
+             !ReferenceEquals(Volatile.Read(ref _uberVariantRequestDebounceCancellation), failure.DebounceOwner)))
+            return false;
+
+        if (UberVariantStatus.Stage == EUberMaterialVariantStage.Failed &&
+            string.Equals(UberVariantStatus.FailureReason, failure.Reason, StringComparison.Ordinal))
+            return true;
+
+        UberShaderVariantTelemetry.RecordFailure();
+        SetUberVariantStatus(new UberMaterialVariantStatus
+        {
+            Stage = EUberMaterialVariantStage.Failed,
+            RequestedVariantHash = RequestedUberVariant.VariantHash,
+            ActiveVariantHash = ActiveUberVariant.VariantHash,
+            FailureReason = failure.Reason,
+        });
+        return true;
+    }
+
+    private static string CallerUberJobFailureReason(Exception exception, bool canceled, string stage)
+    {
+        string reason = exception.GetBaseException().Message;
+        return canceled
+            ? $"UberVariant.CallerJobCanceled: {stage} was canceled before it could complete. {reason}"
+            : $"UberVariant.CallerJobUnavailable: {stage} could not complete on the caller scheduler. {reason}";
+    }
+
+    private async Task PrepareUberVariantOnCallerThreadAsync(long serial, CancellationToken cancellationToken,
+        long authoredRevision, long shaderRevision, XRShader canonicalShader, ShaderUiManifest manifest,
+        JobManager callerJobs, int ownerThreadId)
+    {
+        JobHandle handle = default;
+        try
+        {
+            await Task.Delay(UberVariantDebounceMilliseconds, cancellationToken);
+            if (!IsCurrentCallerUberRequest(serial, cancellationToken, authoredRevision, shaderRevision))
+                return;
+
+            ActionJob job = new(() =>
+                PrepareUberVariantOnCallerThread(serial, cancellationToken, authoredRevision,
+                    shaderRevision, canonicalShader, manifest));
+            handle = callerJobs.Schedule(job, cancellationToken);
+            await handle.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (IsCurrentCallerUberOperation(serial, cancellationToken, authoredRevision))
+                PublishCallerUberTerminalFailure(new CallerUberTerminalFailure(serial, authoredRevision, null, ownerThreadId,
+                    CallerUberJobFailureReason(ex, handle.IsCanceled, "Uber variant preparation")));
+        }
+    }
+
+    private void PrepareUberVariantOnCallerThread(long serial, CancellationToken cancellationToken,
+        long authoredRevision, long shaderRevision, XRShader canonicalShader, ShaderUiManifest manifest)
+    {
+        bool IsCurrent() => IsCurrentCallerUberRequest(serial, cancellationToken, authoredRevision, shaderRevision);
+        if (!IsCurrent())
+            return;
+
+        try
+        {
+            SetUberVariantStatus(new UberMaterialVariantStatus
+            {
+                Stage = EUberMaterialVariantStage.Preparing,
+                ActiveVariantHash = ActiveUberVariant.VariantHash,
+                RequestedVariantHash = RequestedUberVariant.VariantHash,
+            });
+            if (!IsCurrent())
+                return;
+
+            UberShaderVariantBuilder.PreparedUberVariant prepared = UberShaderVariantBuilder.PrepareVariant(
+                this, canonicalShader, manifest, cancellationToken);
+            if (!IsCurrent())
+                return;
+
+            ApplyPreparedUberVariantOnCallerThread(prepared, IsCurrent,
+                () => IsCurrentCallerUberRequest(serial, cancellationToken, authoredRevision, shaderRevision + 1));
+        }
+        catch (OperationCanceledException) when (!IsCurrent())
+        {
+        }
+        catch (Exception ex)
+        {
+            if (cancellationToken.IsCancellationRequested || IsDestroyed || IsMaterialTeardownRequested ||
+                serial != Interlocked.Read(ref _uberVariantRequestSerial) ||
+                authoredRevision != UberStateRevision)
+                return;
+
+            UberShaderVariantTelemetry.RecordFailure();
+            SetUberVariantStatus(new UberMaterialVariantStatus
+            {
+                Stage = EUberMaterialVariantStage.Failed,
+                RequestedVariantHash = RequestedUberVariant.VariantHash,
+                ActiveVariantHash = ActiveUberVariant.VariantHash,
+                FailureReason = ex.GetBaseException().Message,
+            });
+        }
+    }
+
+    private void ApplyPreparedUberVariantOnCallerThread(
+        UberShaderVariantBuilder.PreparedUberVariant prepared, Func<bool> isCurrent,
+        Func<bool> isCurrentAfterShaderChange)
+    {
+        if (!isCurrent())
+            return;
+
+        SetRequestedUberVariant(prepared.Request);
+        if (!isCurrent())
+            return;
+
+        SetUberVariantStatus(new UberMaterialVariantStatus
+        {
+            Stage = EUberMaterialVariantStage.Compiling,
+            RequestedVariantHash = prepared.Request.VariantHash,
+            ActiveVariantHash = ActiveUberVariant.VariantHash,
+            CacheHit = prepared.CacheHit,
+            PreparationMilliseconds = prepared.PreparationMilliseconds,
+            UniformCount = prepared.UniformCount,
+            SamplerCount = prepared.SamplerCount,
+            GeneratedSourceLength = prepared.GeneratedSourceLength,
+        });
+        if (!isCurrent())
+            return;
+
+        if (ActiveUberVariant.Equals(prepared.BindingState) &&
+            UberShaderVariantBuilder.IsGeneratedVariant(GetShader(EShaderType.Fragment)))
+        {
+            UberMaterialVariantStatus currentStatus = new()
+            {
+                Stage = EUberMaterialVariantStage.Active,
+                RequestedVariantHash = prepared.Request.VariantHash,
+                ActiveVariantHash = prepared.BindingState.VariantHash,
+                CacheHit = true,
+                PreparationMilliseconds = prepared.PreparationMilliseconds,
+                UniformCount = prepared.UniformCount,
+                SamplerCount = prepared.SamplerCount,
+                GeneratedSourceLength = prepared.GeneratedSourceLength,
+            };
+            if (isCurrent())
+            {
+                SetUberVariantStatus(currentStatus);
+                if (isCurrent())
+                    UberShaderVariantTelemetry.RecordSuccess(currentStatus);
+            }
+            return;
+        }
+
+        UberMaterialVariantBindingState previousBinding = ActiveUberVariant;
+        XRShader? previousShader = GetShader(EShaderType.Fragment);
+        Stopwatch adoptionStopwatch = Stopwatch.StartNew();
+        try
+        {
+            SetActiveUberVariant(prepared.BindingState);
+            if (!isCurrent())
+            {
+                if (!IsDestroyed && !IsMaterialTeardownRequested && ActiveUberVariant.Equals(prepared.BindingState))
+                    SetActiveUberVariant(previousBinding);
+                return;
+            }
+
+            SetShader(EShaderType.Fragment, prepared.FragmentShader, coerceShaderType: true);
+            if (!isCurrentAfterShaderChange())
+            {
+                if (!IsDestroyed && !IsMaterialTeardownRequested)
+                    RestoreInterruptedCallerUberAdoption(prepared, previousBinding, previousShader);
+                return;
+            }
+        }
+        catch
+        {
+            if (!IsDestroyed && !IsMaterialTeardownRequested)
+                RestoreInterruptedCallerUberAdoption(prepared, previousBinding, previousShader);
+            throw;
+        }
+        adoptionStopwatch.Stop();
+
+        UberMaterialVariantStatus activeStatus = new()
+        {
+            Stage = EUberMaterialVariantStage.Active,
+            RequestedVariantHash = prepared.Request.VariantHash,
+            ActiveVariantHash = prepared.BindingState.VariantHash,
+            CacheHit = prepared.CacheHit,
+            PreparationMilliseconds = prepared.PreparationMilliseconds,
+            AdoptionMilliseconds = adoptionStopwatch.Elapsed.TotalMilliseconds,
+            UniformCount = prepared.UniformCount,
+            SamplerCount = prepared.SamplerCount,
+            GeneratedSourceLength = prepared.GeneratedSourceLength,
+        };
+        SetUberVariantStatus(activeStatus);
+        if (isCurrentAfterShaderChange())
+            UberShaderVariantTelemetry.RecordSuccess(activeStatus);
+    }
+
+    private void RestoreInterruptedCallerUberAdoption(UberShaderVariantBuilder.PreparedUberVariant prepared,
+        UberMaterialVariantBindingState previousBinding, XRShader? previousShader)
+    {
+        if (ReferenceEquals(GetShader(EShaderType.Fragment), prepared.FragmentShader))
+            SetShader(EShaderType.Fragment, previousShader, coerceShaderType: true);
+        if (ActiveUberVariant.Equals(prepared.BindingState))
+            SetActiveUberVariant(previousBinding);
     }
 
     public bool PrepareUberVariantImmediately()
     {
+        if (IsDestroyed || IsMaterialTeardownRequested)
+            return false;
+
         CancelUberVariantRebuildDebounce();
+        if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread)
+        {
+            Interlocked.Increment(ref _uberVariantRequestSerial);
+            Interlocked.Exchange(ref _uberCallerTerminalFailure, null);
+            lock (_uberVariantBuildLock)
+            {
+                _uberVariantBuildCancellation?.Cancel();
+                _uberVariantBuildCancellation?.Dispose();
+                _uberVariantBuildCancellation = null;
+            }
+        }
 
         if (!TryGetUberMaterialState(out XRShader? fragmentShader, out ShaderUiManifest manifest) || fragmentShader is null)
             return false;
 
         EnsureUberStateInitialized(fragmentShader, manifest);
         XRShader canonicalShader = ResolveCanonicalUberFragmentShader(fragmentShader);
+        bool callerThread = OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread;
+        long serial = Interlocked.Read(ref _uberVariantRequestSerial);
+        long authoredRevision = UberStateRevision;
+        long shaderRevision = ShaderStateRevision;
 
         try
         {
             UberShaderVariantBuilder.PreparedUberVariant prepared = UberShaderVariantBuilder.PrepareVariant(this, canonicalShader, manifest);
+            if (callerThread)
+            {
+                bool IsCurrent(long expectedShaderRevision)
+                    => !IsDestroyed && !IsMaterialTeardownRequested &&
+                       serial == Interlocked.Read(ref _uberVariantRequestSerial) &&
+                       authoredRevision == UberStateRevision && ShaderStateRevision == expectedShaderRevision;
+                if (!IsCurrent(shaderRevision))
+                    return false;
+
+                if (ActiveUberVariant.Equals(prepared.BindingState) &&
+                    UberShaderVariantBuilder.IsGeneratedVariant(GetShader(EShaderType.Fragment)))
+                    return true;
+
+                UberShaderVariantTelemetry.RecordRequest();
+                ApplyPreparedUberVariantOnCallerThread(prepared,
+                    () => IsCurrent(shaderRevision), () => IsCurrent(shaderRevision + 1));
+                return (IsCurrent(shaderRevision) || IsCurrent(shaderRevision + 1)) &&
+                    ActiveUberVariant.Equals(prepared.BindingState) &&
+                    ReferenceEquals(GetShader(EShaderType.Fragment), prepared.FragmentShader);
+            }
+
             SetRequestedUberVariant(prepared.Request);
 
             if (ActiveUberVariant.VariantHash != 0 &&
@@ -762,7 +1075,13 @@ public partial class XRMaterial
         }
         catch (Exception ex)
         {
-            RestoreSafeUberFallback();
+            if (callerThread && (IsDestroyed || IsMaterialTeardownRequested ||
+                serial != Interlocked.Read(ref _uberVariantRequestSerial) ||
+                authoredRevision != UberStateRevision))
+                return false;
+
+            if (!OperatingSystem.IsBrowser() && !RuntimeWorkScheduler.IsCallerThread)
+                RestoreSafeUberFallback();
             UberShaderVariantTelemetry.RecordFailure();
             SetUberVariantStatus(new UberMaterialVariantStatus
             {
@@ -777,6 +1096,9 @@ public partial class XRMaterial
 
     public bool EnsureUberVariantPreparedForRendering()
     {
+        if (ObserveCallerUberTerminalFailure())
+            return false;
+
         XRShader? activeFragmentShader = GetShader(EShaderType.Fragment);
         if (HasRenderableUberVariantState(activeFragmentShader))
             return false;
@@ -805,6 +1127,8 @@ public partial class XRMaterial
     /// </summary>
     public bool IsUberVariantReadyForRendering()
     {
+        ObserveCallerUberTerminalFailure();
+
         XRShader? activeFragmentShader = GetShader(EShaderType.Fragment);
         if (HasRenderableUberVariantState(activeFragmentShader))
             return true;
@@ -813,8 +1137,8 @@ public partial class XRMaterial
         if (!TryGetUberMaterialState(out _, out _))
             return true;
 
-        // Failed prep falls back to the canonical shader; don't keep the queue
-        // blocked waiting on a state that won't progress.
+        // A failed request is terminal until another request is made; do not
+        // keep the queue blocked waiting for work that cannot progress.
         return UberVariantStatus.Stage is EUberMaterialVariantStage.Failed;
     }
 
@@ -824,6 +1148,9 @@ public partial class XRMaterial
     /// </summary>
     public void RequestUberVariantPreparationIfNeeded()
     {
+        if (ObserveCallerUberTerminalFailure())
+            return;
+
         XRShader? activeFragmentShader = GetShader(EShaderType.Fragment);
         if (HasRenderableUberVariantState(activeFragmentShader))
             return;
@@ -856,25 +1183,76 @@ public partial class XRMaterial
 
     public void RequestUberVariantRebuildDebounced(int debounceMilliseconds = UberConstantPropertyEditDebounceMilliseconds)
     {
+        if (IsDestroyed || IsMaterialTeardownRequested)
+            return;
+
         if (debounceMilliseconds <= 0)
         {
             RequestUberVariantRebuild();
             return;
         }
 
+        bool callerThread = OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread;
+        JobManager? callerJobs = callerThread ? RuntimeWorkScheduler.CaptureCallerThreadJobs() : null;
+        int callerThreadId = callerThread ? Environment.CurrentManagedThreadId : 0;
         CancellationTokenSource cancellationTokenSource = ResetUberVariantRequestDebounceCancellation();
+        CancellationToken cancellationToken = cancellationTokenSource.Token;
+        if (callerThread)
+        {
+            Interlocked.Exchange(ref _uberCallerTerminalFailure, null);
+            _uberVariantDebounceTask = RequestUberVariantRebuildDebouncedOnCallerThreadAsync(
+                debounceMilliseconds, cancellationTokenSource, cancellationToken,
+                Interlocked.Read(ref _uberVariantRequestSerial), UberStateRevision, callerJobs!, callerThreadId);
+            return;
+        }
+
         _ = Task.Run(async () =>
         {
             try
             {
-                await Task.Delay(debounceMilliseconds, cancellationTokenSource.Token).ConfigureAwait(false);
-                cancellationTokenSource.Token.ThrowIfCancellationRequested();
+                await Task.Delay(debounceMilliseconds, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 RequestUberVariantRebuild();
             }
             catch (OperationCanceledException)
             {
             }
-        }, cancellationTokenSource.Token);
+        }, cancellationToken);
+    }
+
+    private async Task RequestUberVariantRebuildDebouncedOnCallerThreadAsync(
+        int debounceMilliseconds, CancellationTokenSource requestOwner, CancellationToken cancellationToken,
+        long serial, long authoredRevision, JobManager callerJobs, int ownerThreadId)
+    {
+        JobHandle handle = default;
+        try
+        {
+            await Task.Delay(debounceMilliseconds, cancellationToken);
+            if (cancellationToken.IsCancellationRequested || IsDestroyed || IsMaterialTeardownRequested ||
+                !ReferenceEquals(Volatile.Read(ref _uberVariantRequestDebounceCancellation), requestOwner))
+            {
+                return;
+            }
+
+            ActionJob job = new(() =>
+            {
+                if (!cancellationToken.IsCancellationRequested && !IsDestroyed && !IsMaterialTeardownRequested &&
+                    ReferenceEquals(Volatile.Read(ref _uberVariantRequestDebounceCancellation), requestOwner))
+                {
+                    RequestUberVariantRebuild();
+                }
+            });
+            handle = callerJobs.Schedule(job, cancellationToken);
+            await handle.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            PublishCallerUberTerminalFailure(new CallerUberTerminalFailure(serial, authoredRevision, requestOwner, ownerThreadId,
+                CallerUberJobFailureReason(ex, handle.IsCanceled, "Uber variant edit debounce")));
+        }
     }
 
     private void ApplyPreparedUberVariant(long serial, Task<UberShaderVariantBuilder.PreparedUberVariant> task)
@@ -1027,7 +1405,8 @@ public partial class XRMaterial
         // recognized as Uber-backed. This also keeps the lightweight pending
         // fallback active while a large OpenGL variant finishes linking.
         string? shaderPath = fragmentShader.Source?.FilePath ?? fragmentShader.FilePath;
-        if (!string.IsNullOrWhiteSpace(shaderPath) && File.Exists(shaderPath))
+        if (ShaderSourceResolver.CanAccessHostShaderFiles &&
+            !string.IsNullOrWhiteSpace(shaderPath) && File.Exists(shaderPath))
         {
             TextFile text = new(shaderPath);
             text.LoadText(shaderPath);
@@ -1040,7 +1419,15 @@ public partial class XRMaterial
             return _uberCanonicalFragmentShader;
         }
 
-        _uberCanonicalFragmentShader = ShaderHelper.UberFragForward();
+        try
+        {
+            _uberCanonicalFragmentShader = ShaderHelper.UberFragForward();
+        }
+        catch (NotSupportedException ex) when (!ShaderSourceResolver.CanAccessHostShaderFiles)
+        {
+            throw new NotSupportedException(
+                "UberVariant.CanonicalSourceUnavailable: the canonical Uber shader must be published in the browser shader catalog before a generated material can be rehydrated.", ex);
+        }
         return _uberCanonicalFragmentShader;
     }
 

@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-depth-normal-msaa-resolve",
+  "pass": "depth-normal-msaa-resolve",
+  "source": "DepthNormalMsaaResolve.wgsl",
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "entryPoints": { "vertex": "resolveVertex", "fragment": "resolveFragment" },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 2,
+    "maxUniformBufferBindingSize": 16,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 2
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [{ "slot": 0, "stride": 12, "stepMode": "vertex", "attributes": [
+      { "location": 0, "offset": 0, "format": "float32x3", "semantic": "position" }
+    ] }],
+    "bindings": [
+      {
+        "name": "Resolve", "physicalName": "resolve", "group": 0, "binding": 0,
+        "kind": "uniform", "visibility": ["fragment"], "owner": "Material", "frequency": "Material",
+        "bytes": 16, "dynamic": true,
+        "members": [{ "name": "parameters", "provider": "ResolveParameters", "offset": 0, "bytes": 16, "type": "vec4<f32>" }]
+      },
+      {
+        "name": "MultisampleDepth", "physicalName": "multisampleDepth", "group": 1, "binding": 0,
+        "kind": "texture-depth-multisampled-2d", "visibility": ["fragment"], "owner": "Material", "frequency": "Material",
+        "bytes": 0, "dynamic": false, "members": []
+      },
+      {
+        "name": "MultisampleNormal", "physicalName": "multisampleNormal", "group": 1, "binding": 1,
+        "kind": "texture-multisampled-2d-unfilterable-float", "visibility": ["fragment"], "owner": "Material", "frequency": "Material",
+        "bytes": 0, "dynamic": false, "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": { "pass": "depth-normal-msaa-resolve" }
+}

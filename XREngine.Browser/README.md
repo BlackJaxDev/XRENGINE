@@ -1,4 +1,200 @@
-# Browser canvas host
+# Browser runtime entry points
+
+`XREngine.Browser` is the reusable engine library. It owns the JavaScript exports.
+`XREngine.Browser.Standalone` is the executable for the developer harness.
+The publisher generates a separate `XREngine.BrowserSite` executable for each
+authored project. Its `Main` calls `BrowserRuntime.Initialize` once with the game
+bootstrap and registration callbacks. World startup invokes those callbacks only
+after engine asset services are ready. Stop and restart keep the same callbacks.
+A failed initialization requires a page reload.
+
+## Authored engine player
+
+The editor's `BrowserWebGPU` target installs `engine-player.html` as the site
+entry point. It loads the canonical cooked `XRWorld` and statically linked game
+assembly through the shared runtime. Its bounded `DefaultRenderPipeline` WebGPU
+profile supports lit output; unsupported authored features fail with a named
+capability diagnostic. Full application and device parity remain under
+qualification. See the
+[current checkpoint](../docs/work/progress/platform/unified-browser-checkpoint-2026-10-01.md)
+for exact build/runtime evidence and remaining work.
+
+The [authored asset delivery contract](../docs/work/progress/platform/browser-authored-asset-delivery-2026-10-02.md)
+describes essential/streamed catalog roots, shared hydration admission, lifetime
+accounting and on-demand progress/memory estimates. Native package preflight
+still authenticates all files; its transfer cost is reported separately from
+lazy scene hydration. The shipping player displays progress only while delivery
+is active and performs no idle diagnostic polling.
+
+Browser composition installs its built-in material target before deserializing
+the world. Material semantics and parameters are retained without loading
+desktop GLSL. Hash-owned `materialVariants` metadata is validated before play;
+it does not make an absent renderer variant available.
+
+An authored world manifest declares the hash-owned
+`/engine/Metadata/AotRuntimeMetadata.bin` payload. Startup verifies and installs
+that type table before selecting Published mode, binding engine assets, running
+game registrations, or reading the cooked world. Missing metadata or an earlier
+development type-discovery scan fails by name. The type-table fingerprint is
+process-wide: a restart using the same table is supported, while different
+published type metadata requires a page reload. The fingerprint does not name
+the whole content bundle; worlds and assets keep their own hash-owned identities.
+Restricted local MSBuild hosts can set `XRE_BROWSER_PUBLISH_SINGLE_MSBUILD_NODE=1`
+to serialize the Editor's child browser game-build and browser-publish commands. Normal builds do
+not set it; the published output and failure checks are unchanged.
+
+### Host-service composition
+
+`BrowserEngineSession` composes the real shared `Engine` on the browser event
+thread. The process-wide service replacement is serialized on that thread for
+the session lifetime; it does not support a simultaneously installed desktop
+VR provider. Installation is retained before provider mutation, and shutdown
+restores prior providers only while the browser still owns each direct slot.
+Later direct overrides must be retired before session teardown. Import-service
+scopes support out-of-order retirement without restoring a disposed provider.
+
+| Service slots | Browser provider or availability |
+| --- | --- |
+| `RuntimeApplicationCapabilityServices`, `RuntimeEngineStartupPolicyServices` | Browser capabilities and startup policy |
+| `RuntimeRenderingHostServices`, `RuntimeRenderObjectServices`, `RuntimeShaderServices`, `RuntimeCharacterMovementVisualizationServices` | Shared caller-thread rendering bootstrap with WebGPU backend and browser pipeline recipe |
+| `RuntimeAnimationHostServices`, `RuntimeAudioIntegrationServices`, `RuntimeInputServices`, `RuntimeInputCaptureServices` | Shared adapter bootstrap; input snapshots come from the browser canvas, audio output from Web Audio |
+| `RuntimeGameModeHostServices`, `RuntimePawnHostServices`, `RuntimePlayerControllerServices` | Shared adapter bootstrap |
+| `RuntimeWorldHostServices`, `RuntimeWorldRegistryServices`, `RuntimeNetworkingHostServices` | Shared adapter bootstrap; rendered or headless world selected by canvas presence, WebSocket transport installed by session |
+| `RuntimeWorldObjectServices`, `RuntimeThreadServices`, `RuntimeMaintenanceServices`, `RuntimeSceneNodeServices`, `RuntimeSceneStreamingHostServices`, `RuntimeTransformServices` | Shared `Engine` facade providers |
+| `RuntimeTimingServices`, `RuntimePhysicsServices`, `RuntimeStaticColliderAuthoringServices` | Shared `Engine` timer/physics providers; Jolt scene factory supplied by the browser |
+| `RuntimeDebugHostServices` | Shared default diagnostics provider |
+| `RuntimeVideoStreamingServices` | Named failure for video-frame GPU action creation |
+| `RuntimeWindowApplicationServices` | No native window pump; window creation and task routing fail by name before invoking callbacks |
+| `RuntimeVrInputServices`, `RuntimeVrStateServices` | No active VR runtime; optional action registration and pose/device queries return false or empty |
+| `RuntimeVrRenderingServices`, `RuntimeEngine.VRState.LifecycleServices` | No browser VR output; required eye/render-model/startup operations fail by name |
+| `RuntimeOpenVrStateServices`, `RuntimeOpenVrCompositorServices` | No tracking/projection; compositor submission fails by name |
+| `RuntimeNetworkDiscoveryHostServices` | LAN discovery configuration fails by name before networking starts |
+| `RuntimeClipboardServices` | Native clipboard operations fail by name; DOM text editing uses the page bridge |
+| `RuntimeThirdPartyAssetLoadingServices`, `RuntimeModelSceneLoadingServices`, `RuntimeSceneImportServices` | Development import operations fail by name instead of entering native, reflection, or file paths |
+| `RuntimeWorldHostCompositionServices` | Optional editor-only composition left uninstalled |
+
+`RuntimeModelImportServices` belongs to the desktop `ModelAssetPipeline` project,
+which is outside the browser assembly closure. Only cooked, published assets are
+admitted by the browser asset source; model import is unavailable. Browser
+WebGPU is mono-output only; stereo, XR, and offscreen pipeline requests fail
+without selecting a substitute recipe.
+
+The shared sky background route preserves authored gradient, solid-color,
+equirectangular, octahedral, cubemap and procedural skies in HDR before sorted
+transparency, bloom and tonemapping. Each mode needs its exact cooked material
+variant. RGBA16F environment images retain half-float data; cube arrays, live
+capture and probe/IBL lighting remain explicit exclusions. See the
+[sky background contract](../docs/architecture/rendering/webgpu-sky-background.md)
+for camera/depth conventions, shader recipes and acceptance boundaries.
+
+A rendered local player owns the same `XRViewport` used for camera and UI
+coordinates. `XRViewport.BindInputSource` accepts the externally owned browser
+snapshot source, and `BindLocalPlayer` maintains player/view ownership.
+Unbound desktop viewports still read their window's input. Browser pointer
+publication converts CSS coordinates to canvas backing pixels.
+
+The browser input bridge keeps native DOM editing attached to the currently
+focused engine text component. Completed IME compositions and selected-range
+edits pass through that component's validation path; stale generations or
+intervening engine edits are rejected. When an active text control is removed,
+keyboard focus returns to the canvas. A focused, visible engine button also
+receives a native DOM button proxy for its label, keyboard activation, and
+screen-reader role. These proxies use the same projected canvas coordinates
+as the engine UI and do not replace the rendered UI. Other engine controls
+and nonfocused UI are not yet represented in a browsable DOM accessibility tree.
+
+Startup failures include their managed stage and full exception. An initial
+resource-generation failure is reported immediately. If a visible canvas
+otherwise cannot present its first frame after 45 seconds of active frame time,
+the shell reports the renderer, pipeline-decline, and resource-failure state
+instead of waiting indefinitely. Restart creates a fresh owner; unsupported
+passes do not select a substitute renderer or simplified game runtime.
+
+Unexpected WebGPU device loss in the authored player now starts bounded device
+replacement without reloading the world. Gameplay and simulation time remain
+paused while a fresh renderer reacquires its device/capabilities, rebinds the
+retained cooked artifacts and rebuilds output resources. Recovery accepts the
+first complete current-output frame only after WebGPU error-scope validation
+and queue completion. Hidden or detached canvases wait for a drawable output;
+resize during completion requires a newly rendered output. Intentional Stop
+cancels recovery and rejects late callbacks.
+
+Each world session permits three replacement attempts in total. Device
+acquisition is bounded to 20 seconds, replacement frame preparation to 45
+active seconds, and validation/completion to 10 seconds per operation. Exhausted
+recovery reports the retained failure diagnostics and leaves the world paused;
+the player's **Retry** action explicitly reloads it. There is no WebGL or CPU
+rendering fallback. A stopped caller-thread lifecycle cannot be revived by
+device replacement. These paths have source/build and controlled host-boundary
+evidence, with live GPU/mobile qualification still open; see the
+[device recovery record](../docs/work/progress/platform/browser-webgpu-device-recovery-2026-10-02.md).
+
+The authored engine output reads `RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality`.
+Its default preserves the currently admitted WebGPU light, shadow, texture, and
+post-effect behavior, with canvas DPR capped at 2 and backing extent at 1920.
+The published `browser-publish.json` has an optional `quality` value of `low`,
+`balanced`, or `high`. A null value keeps the authored engine setting; a named
+value explicitly selects the corresponding browser profile before world startup.
+Hosts embedding `EngineCanvasHost` can pass the same named value to `start`.
+The host asks the engine for the resolved canvas sizing policy rather than
+maintaining a separate set of quality numbers. Choose a profile before world
+startup; change it by restarting the browser world.
+The selected light limits apply to both Default forward lighting and Advanced
+native scene publication. Selected GTAO and bloom gates remove their Default
+and Advanced WebGPU effect targets, execution, and cooked-program requirements,
+while retaining the authored camera settings for a later quality selection.
+Advanced native shading uses a shared neutral binding with AO fixed to one when
+the profile disables GTAO; its cooked program must declare that contract.
+
+Browser shadow targets scale to the selected directional, point, and spot
+dimension caps while keeping the light's authored resolution. The shadow
+viewport and directional texel bias use the same effective dimensions. High,
+balanced, and low refresh unchanged shadows every 1, 2, and 3 render frames;
+light binding, caster membership/transform/material identity, projection,
+output, or resource changes refresh immediately.
+Skinned, mesh-deformed, textured, coverage, and multi-instance casters refresh
+every frame; cadence reuse is reserved for unchanged static opaque color casters
+and unchanged empty caster sets.
+Only a shadow image produced by an accepted WebGPU frame can be reused. See
+[browser shadow quality](../docs/work/progress/platform/browser-webgpu-shadow-quality-2026-10-02.md)
+for the exact reuse and validation boundary.
+
+The production canvas host and `BrowserCanvasRenderTarget` belong to
+`XREngine.Runtime.Platform.Browser`; the published `engine-canvas-host.js` URL and
+page-facing exports remain unchanged. The host measures the canvas's CSS bounds,
+applies the selected DPR/resolution/backing limits, and publishes a new output
+generation when WebGPU changes the backing extent. Orientation and viewport
+resize refresh those bounds. The player shell uses browser safe-area insets so
+the canvas and its input coordinates stay inside the visible page area. Hidden,
+frozen, zero-sized, or detached canvases suspend rendering; reattachment or
+visibility restoration resumes the same session with a reset frame clock.
+`pagehide` stops discarded pages while a back/forward-cached page resumes on
+`pageshow`. A valid active frame gap over 250 ms invalidates temporal history,
+while the engine retains its bounded elapsed-time and fixed-step accumulator.
+Active elapsed is capped at one second with at most four fixed ticks per frame;
+sustained slow presentation therefore does not freeze simulation. The first
+frame after suspension still admits zero elapsed time.
+Focus-only and unchanged-size events preserve frame cadence.
+
+The audio unlock button drives the shared Web Audio leaf directly from a trusted
+gesture. Page/freeze/cache visibility and canvas visibility compose separate
+suspension blockers; restoring only one cannot resume a still-hidden output.
+`XRWorld.RequiresAudio` is an authored declaration, defaulting to false. Required
+worlds retain their own activation output and pause fixed/variable simulation
+until current output is ready while still presenting the world and processing
+activation input. Optional audio never blocks simulation. See the
+[audio transport contract](../XREngine.Audio.WebAudio/README.md) for supported
+spatial, queue, looping and ownership behavior and remaining device validation.
+
+Lower profiles reduce the backing resolution, cap admitted directional/point/
+spot light counts and texture dimensions, and cap authored standalone shadow-map
+dimensions. Excess required lights, textures, or shadow sizes fail visibly;
+authored content is never silently clipped or resized. `low` explicitly disables
+GTAO and bloom. Their passes and generation-owned targets are then omitted.
+Shadow update cadence and physical shadow-map downscaling are not yet supported;
+all admitted shadows retain the normal per-frame producer/receiver contract.
+
+## Frozen reference harness
 
 This standalone application composes the engine's shared scene/component/transform
 runtime with a browser-owned WebGPU canvas. A ticking `XRComponent` rotates and
@@ -21,10 +217,10 @@ source guard runs as a C# MSBuild task using the SDK; no Python process is invok
 
 ```sh
 dotnet workload install wasm-tools
-dotnet publish XREngine.Browser/XREngine.Browser.csproj -c Release -m:1
+dotnet publish XREngine.Browser.Standalone/XREngine.Browser.Standalone.csproj -c Release -m:1 -p:XREngineJoltBrowser=true
 ```
 
-`Directory.Build.props` marks the browser and its shared project closure with
+`Directory.Build.props` and the shared browser host targets mark the browser projects with
 `XREnginePortableProject=true`; they compile their complete source sets. No
 separate portable build property or source profile is needed on restore or build.
 The browser project remains outside the default desktop solution, so desktop
@@ -35,12 +231,28 @@ Serve the `wwwroot` directory in the publish output reported by the SDK through 
 or localhost HTTP, with `.wasm` served as `application/wasm` and `.wgsl` as text.
 This direct browser publish is the developer harness (`index.html` and `main.js`),
 including the interactive demo and diagnostic controls. An editor **Build Project**
-publish with the `BrowserWebGPU` target instead installs `player.html` as
+publish with the `BrowserWebGPU` target instead installs `engine-player.html` as
 `index.html` and removes `main.js` from its staged site. The player requires the
 generated `browser-publish.json` to name a cooked startup world and reports an
 error if the world is absent. It shows load progress and failures, supports gesture
 audio activation and explicit restart, and hides the current fixture overlay.
 No demo scene or diagnostic controls are included in that published entrypoint.
+Back/forward-cache page suspension keeps the authored world, stops frame
+submission, resets input and elapsed timing, and resumes through the same surface
+lifecycle on `pageshow`. A discarded page instead requests engine teardown.
+The focused page-state probe passes; real browser history/cache behavior remains
+part of lifecycle qualification.
+
+The engine runtime also exposes an explicit asynchronous managed WebSocket join
+for authenticated application hosts. It consumes the shared handoff only in
+memory, requires an independently verified loaded world identity, and keeps
+gameplay paused until the production server baseline commits. Page suspension
+and world teardown retire the client; resuming requires fresh admission.
+Microphone/voice support is explicitly unavailable. See the
+[browser realtime contract](../docs/developer-guides/networking/browser-realtime.md)
+for the entry points, origin/cookie policy, queue bounds, and remaining
+real-server qualification. A local published game does not become a networked
+game merely because the transport leaf is installed.
 The separate browser scene, animation, collision and focused pipeline are a
 frozen reference harness. Changes may fix harness defects; new engine features
 follow the [unified runtime design](../docs/work/design/platform/unified-desktop-browser-runtime-design.md).
@@ -52,6 +264,39 @@ usable adapter. `?renderer=WebGPU` and `?renderer=Auto` select the packaged WebG
 path; `WebGL2` and unknown renderer names produce a diagnostic. No fallback
 renderer is packaged. The shader package declares the initial profile
 requirements; adapter limits are checked before requesting the device.
+
+An editor-published engine-asset manifest may carry `materialVariants` entries
+for exact semantic, target, pass, vertex-profile, and output-profile keys. Each
+entry refers to one hash-verified shader descriptor containing the same explicit
+declaration. Browser startup rejects duplicate keys, missing hashes, and
+mismatched descriptors before activating the world. A missing catalog entry
+does not trigger a shader-name or authored-source fallback.
+
+Pipeline-owned raster shaders use a separate optional `pipelineArtifacts` array.
+An entry declares a bounded lowercase `pass`, the `descriptorIdentity` SHA-256
+hash of a descriptor already in `shaderArtifacts`, and an optional bounded
+lowercase `scope`. Both identifiers allow letters, digits, periods, and hyphens
+and must start with a letter. An unscoped entry binds under its `pass`, retaining
+the previous manifest shape and output. A scoped entry binds under
+`scope::pass`; its hash-owned descriptor still declares only the original
+`pass`. This permits distinct authored pipelines to use the same pass name
+without substituting one pipeline's program for another. Unknown fields,
+duplicate binding keys, missing references, and arrays exceeding 256 entries
+are rejected. The cooker, browser loader, and managed source require the
+hash-owned descriptor to declare the same pass, the `WebGPUWgsl` target, and
+complete raster stages without a material variant. The browser verifies the
+descriptor bytes before exposing the catalog, and managed startup resolves each
+module from the verified shader catalog. Missing required passes leave that
+authored pipeline unsupported. Shader names and source paths never select a
+pipeline artifact.
+
+The isolated `diagnostics/engine-mesh.html?probe=effects` page loads the verified
+package catalog and renders real static `ModelComponent` geometry through the
+shared `DefaultRenderPipeline`. It exposes generation-owned depth, oct-normal,
+GTAO, HDR, and bloom targets for bounded readback and numeric camera-setting
+changes. It does not start authored-world gameplay or physics. Depth32 readback
+copies the complete single-sample depth subresource before selecting pixels;
+other depth formats and multisampled depth are not enabled for copying.
 
 Keep hash-addressed cooked shader payloads under `Assets/shaders/` as LF bytes.
 Line-ending conversion changes their hashes and causes the loader to reject them.
@@ -90,6 +335,14 @@ The offline packager accepts preconverted mesh/material/scene JSON and full raw
 texture mip chains. Supported device-enabled ASTC 4×4 or ETC2 RGBA8 variants can
 be selected with a matching RGBA8 fallback. Conversion, native imports, collision
 cooking and font generation stay offline; no runtime Basis transcoder is included.
+Authored screen UI bitmap fonts are rasterized with FreeType during ordinary browser
+publication and loaded as hash-verified cooked assets. A custom TTF/OTF source must
+be under the project's Assets tree, and its font import options must set
+`BrowserLicenseNoticePath` to a regular UTF-8 notice file relative to that tree.
+The project is responsible for confirming redistribution rights and supplying the
+required notice; setting this path is not a license grant. The native shared-world
+package profile still requires a self-contained world and rejects custom fonts.
+See [browser UI font cooking](../docs/developer-guides/runtime/browser-ui-fonts.md).
 The fixed material sampler is linear with clamp-to-edge addressing. Payloads use
 immutable hash URLs; the bootstrap is revalidated. Persistent browser storage is
 not required.

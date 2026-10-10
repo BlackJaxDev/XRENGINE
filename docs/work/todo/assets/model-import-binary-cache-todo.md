@@ -1,9 +1,10 @@
 # Model Import Binary Cache TODO
 
-Last Updated: 2026-10-06
+Last Updated: 2026-10-07
 Status: Active
 Architecture: [Model Import Binary Cache](../../../architecture/assets/model-import-binary-cache.md)  Design: [Model Import Binary Cache Design](../../design/assets/model-import-binary-cache-design.md)
 Validation: [Asset Import Validation](../../testing/assets/asset-import-validation.md#model-import-binary-cache)
+History: [Branch requirements and evidence](../../progress/assets/model-import-binary-cache-reconciliation-2026-10-07.md)
 
 ## Current State
 
@@ -56,6 +57,7 @@ The shared cache contracts are in `XREngine.Data/Core/Assets/Caching/`. The excl
 - [ ] Stage a complete cache candidate during manual reimport, match entities to generated assets by `ImportedEntityKey`, and keep project GUIDs, remaps, and bindings. `XREngine.Editor/Importers/ThirdParty/AssetManager.ThirdPartyImport.cs`. Done when: a reimport test keeps GUIDs for matched entities.
 - [ ] Preview additions, removals, remaps, and identity breaks, then commit assets and cache as one recoverable transaction. Done when: a cancel or failure test keeps the previous assets and cache.
 - [ ] Show cache state, producer, rejection reason, dependency status, versions, and repair state in the editor. `XREngine.Editor/`. Done when: the inspector shows these fields for a cached model.
+- [ ] Add rebuild, remove, inspect, and reimport or reconcile actions to the editor cache UI. `XREngine.Editor/`. Done when: each action uses the cache owner and reports its result without changing project-owned assets on cancel or failure.
 
 ## Decisions Needed
 

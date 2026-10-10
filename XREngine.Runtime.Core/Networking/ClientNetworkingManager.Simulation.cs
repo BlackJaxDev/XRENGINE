@@ -1,6 +1,7 @@
 using System.Numerics;
 using XREngine.Input;
 using XREngine.Networking;
+using XREngine.Players;
 using XREngine.Scene.Transforms;
 using XREngine.Timers;
 
@@ -11,6 +12,8 @@ public partial class ClientNetworkingManager
     private const float PredictedCharacterLocomotionSpeed = 5.0f;
     private readonly object _predictionLock = new();
     private readonly Dictionary<int, SortedDictionary<uint, PlayerInputSnapshot>> _predictedInputs = [];
+    private readonly Dictionary<int, (Guid SessionId, NetworkEntityId EntityId, Guid ConnectionGeneration,
+        long ServerTickId, uint InputSequence)> _appliedLocalCorrections = new(4);
     private long _correctionCount;
     private double _lastCorrectionMagnitudeMeters;
     private double _peakCorrectionMagnitudeMeters;
@@ -92,6 +95,41 @@ public partial class ClientNetworkingManager
         }
     }
 
+    /// <summary>Admits one monotonically advancing correction for the current local pawn assignment.</summary>
+    private bool TryAcceptManagedLocalCorrection(PlayerInfo player, PlayerTransformUpdate correction)
+    {
+        Guid connectionGeneration = _replicationConnectionGeneration;
+        if (connectionGeneration == Guid.Empty
+            || correction.SessionId == Guid.Empty
+            || correction.SessionId != _activeSessionId
+            || correction.SessionId != player.SessionId
+            || correction.EntityId.IsEmpty
+            || correction.EntityId != player.NetworkEntityId)
+        {
+            return false;
+        }
+
+        lock (_predictionLock)
+        {
+            // Direct messages and replication batches can repeat an older pose in a newer packet.
+            if (_appliedLocalCorrections.TryGetValue(correction.ServerPlayerIndex, out var previous)
+                && previous.SessionId == correction.SessionId
+                && previous.EntityId == correction.EntityId
+                && previous.ConnectionGeneration == connectionGeneration
+                && (correction.ServerTickId < previous.ServerTickId
+                    || correction.LastProcessedInputSequence < previous.InputSequence
+                    || (correction.ServerTickId == previous.ServerTickId
+                        && correction.LastProcessedInputSequence == previous.InputSequence)))
+            {
+                return false;
+            }
+
+            _appliedLocalCorrections[correction.ServerPlayerIndex] = (correction.SessionId, correction.EntityId,
+                connectionGeneration, correction.ServerTickId, correction.LastProcessedInputSequence);
+            return true;
+        }
+    }
+
     /// <summary>Rewinds to an authoritative correction and reapplies only unacknowledged locomotion input.</summary>
     private void ReplayPredictedInputs(IPawnController player, PlayerTransformUpdate correction)
     {
@@ -100,6 +138,12 @@ public partial class ClientNetworkingManager
         {
             return;
         }
+
+        // Managed replay starts at the authoritative local pose, even when no
+        // unacknowledged input remains. Old smoothing targets must not undo it.
+        transform.TargetTranslation = null;
+        transform.TargetRotation = null;
+        transform.SetLocalTranslationRotation(correction.Translation, correction.Rotation);
 
         lock (_predictionLock)
         {
@@ -112,8 +156,13 @@ public partial class ClientNetworkingManager
             float fixedDelta = Math.Clamp(RuntimeTimingServices.Current.FixedDeltaSeconds, 0.001f, 0.1f);
             foreach (PlayerInputSnapshot snapshot in history.Values)
             {
-                if (snapshot.Input is not CharacterPawnInputSnapshot input || !IsFinite(input.Movement))
+                if (snapshot.SessionId != correction.SessionId
+                    || snapshot.EntityId != correction.EntityId
+                    || snapshot.Input is not CharacterPawnInputSnapshot input
+                    || !IsFinite(input.Movement))
+                {
                     continue;
+                }
 
                 Vector2 movement = input.Movement;
                 if (movement.LengthSquared() > 1.0f)
@@ -129,6 +178,9 @@ public partial class ClientNetworkingManager
     private void ClearPredictedInputs()
     {
         lock (_predictionLock)
+        {
             _predictedInputs.Clear();
+            _appliedLocalCorrections.Clear();
+        }
     }
 }

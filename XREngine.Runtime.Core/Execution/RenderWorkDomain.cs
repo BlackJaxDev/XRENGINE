@@ -97,6 +97,10 @@ public sealed partial class RenderWorkDomain : IDisposable
         int initialDependencyCapacity = DefaultInitialDependencyCapacity,
         int inlineItemThreshold = DefaultInlineItemThreshold)
     {
+        if (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser())
+            throw new InvalidOperationException(
+                "RenderWorkDomain requires worker-thread execution and cannot be constructed for a caller-thread host.");
+
         if (backgroundWorkerCount is < 0 or > EngineExecutionTopology.MaximumWorkerCount)
             throw new ArgumentOutOfRangeException(nameof(backgroundWorkerCount));
         if (!Enum.IsDefined(qos))

@@ -42,18 +42,14 @@ public partial class XRShader
     }
 
     /// <summary>Publishes the native compiler's import graph to the asset hot-reload index.</summary>
-    internal void RegisterNativeSourceDependencies(IReadOnlyList<ShaderCompileDependency> dependencies)
+    internal void RegisterNativeSourceDependencies(
+        string? sourcePath,
+        IReadOnlyList<string> includeDirectories,
+        IReadOnlyList<ShaderSourceFileDependency> dependencies)
     {
-        ShaderSourceFileDependency[] files = new ShaderSourceFileDependency[dependencies.Count];
-        for (int index = 0; index < files.Length; index++)
-        {
-            FileInfo info = new(dependencies[index].Path);
-            files[index] = new ShaderSourceFileDependency(info.FullName, info.LastWriteTimeUtc.Ticks, info.Length);
-        }
-        string? sourcePath = Source?.FilePath ?? FilePath;
-        List<string> directories = [.. SlangOptions.Includes];
+        List<string> directories = [.. includeDirectories];
         if (!string.IsNullOrEmpty(sourcePath) && Path.GetDirectoryName(Path.GetFullPath(sourcePath)) is string sourceDirectory)
             directories.Add(sourceDirectory);
-        ShaderSourceDependencyIndex.Update(this, sourcePath, files, directories);
+        ShaderSourceDependencyIndex.Update(this, sourcePath, dependencies, directories);
     }
 }

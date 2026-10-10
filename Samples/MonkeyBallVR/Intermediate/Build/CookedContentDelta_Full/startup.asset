@@ -1,0 +1,208 @@
+﻿__type: XREngine.GameStartupSettings
+LogOutputToFile: true
+DefaultUserSettings:
+  VSync: Adaptive
+  TextureQuality: Highest
+  ModelQuality: Highest
+  SoundQuality: Highest
+  AudioDisableFadeSeconds: 0.5
+  GlobalIlluminationMode: LightProbesAndIbl
+  WindowedResolution:
+    X: 1920
+    Y: 1080
+  JobWorkersOverride:
+    HasOverride: false
+    Value: 0
+  JobWorkerCapOverride:
+    HasOverride: false
+    Value: 0
+  JobQueueLimitOverride:
+    HasOverride: false
+    Value: 0
+  JobQueueWarningThresholdOverride:
+    HasOverride: false
+    Value: 0
+  GPURenderDispatchOverride:
+    HasOverride: false
+    Value: false
+  OutputVerbosityOverride:
+    HasOverride: false
+    Value: None
+  EnableGpuIndirectDebugLoggingOverride:
+    HasOverride: false
+    Value: false
+  EnableGpuIndirectCpuFallbackOverride:
+    HasOverride: false
+    Value: false
+  EnableGpuIndirectValidationLoggingOverride:
+    HasOverride: false
+    Value: false
+  AntiAliasingModeOverride:
+    HasOverride: false
+    Value: None
+  MsaaSampleCountOverride:
+    HasOverride: false
+    Value: 0
+  VSyncOverride:
+    HasOverride: false
+    Value: Off
+  GlobalIlluminationModeOverride:
+    HasOverride: false
+    Value: None
+  TickGroupedItemsInParallelOverride:
+    HasOverride: false
+    Value: false
+  EnableNvidiaDlssOverride:
+    HasOverride: false
+    Value: false
+  DlssQualityOverride:
+    HasOverride: false
+    Value: UltraPerformance
+  EnableIntelXessOverride:
+    HasOverride: false
+    Value: false
+  XessQualityOverride:
+    HasOverride: false
+    Value: UltraPerformance
+  TargetUpdatesPerSecondOverride:
+    HasOverride: false
+    Value: 0
+  FixedFramesPerSecondOverride:
+    HasOverride: false
+    Value: 0
+  TargetFramesPerSecondOverride:
+    HasOverride: false
+    Value: 0
+  UnfocusedTargetFramesPerSecondOverride:
+    HasOverride: false
+    Value: 0
+  ID: 6fe82a52-aff2-4f4b-a4ce-f0583801fdad
+NetworkingType: Local
+UdpMulticastGroupIP: 239.0.0.222
+UdpMulticastPort: 5000
+UdpClientRecievePort: 5001
+UdpServerSendPort: 5000
+ServerIP: 127.0.0.1
+TargetUpdatesPerSecond: 90
+TargetFramesPerSecond: 90
+FixedFramesPerSecond: 90
+RunVRInPlace: true
+LayerNames:
+  0: Dynamic
+  1: Static
+  31: Gizmos
+BuildSettings:
+  Configuration: Development
+  Platform: Windows64
+  OutputSubfolder: Game
+  CleanOutputDirectory: true
+  CookContent: true
+  BuildManagedAssemblies: true
+  CopyGameAssemblies: true
+  CopyEngineBinaries: true
+  BuildLauncherExecutable: true
+  GenerateConfigArchive: true
+  SaveSettingsBeforeBuild: true
+  ContentArchiveName: GameContent.pak
+  ConfigArchiveName: GameConfig.pak
+  ContentOutputFolder: Content
+  ConfigOutputFolder: Config
+  BinariesOutputFolder: Binaries
+  LauncherExecutableName: Game.exe
+  ID: 75c177ae-8266-4de6-a262-415812f289f3
+MaxMirrorRecursionCount: Eight
+JobWorkersOverride:
+  HasOverride: false
+  Value: 0
+JobWorkerCapOverride:
+  HasOverride: false
+  Value: 0
+JobQueueLimitOverride:
+  HasOverride: false
+  Value: 0
+JobQueueWarningThresholdOverride:
+  HasOverride: false
+  Value: 0
+OutputVerbosityOverride:
+  HasOverride: false
+  Value: None
+EnableGpuIndirectDebugLoggingOverride:
+  HasOverride: false
+  Value: false
+EnableGpuIndirectCpuFallbackOverride:
+  HasOverride: false
+  Value: false
+EnableGpuIndirectValidationLoggingOverride:
+  HasOverride: false
+  Value: false
+TransformReplicationKeyframeIntervalSecOverride:
+  HasOverride: false
+  Value: 0
+TimeBetweenReplicationsOverride:
+  HasOverride: false
+  Value: 0
+UseGpuBvhOverride:
+  HasOverride: false
+  Value: false
+BvhLeafMaxPrimsOverride:
+  HasOverride: false
+  Value: 0
+BvhModeOverride:
+  HasOverride: false
+  Value: Morton
+BvhRefitOnlyWhenStableOverride:
+  HasOverride: false
+  Value: false
+RaycastBufferSizeOverride:
+  HasOverride: false
+  Value: 0
+EnableGpuBvhTimingQueriesOverride:
+  HasOverride: false
+  Value: false
+VulkanGpuDrivenProfileOverride:
+  HasOverride: false
+  Value: Auto
+AntiAliasingModeOverride:
+  HasOverride: false
+  Value: None
+MsaaSampleCountOverride:
+  HasOverride: false
+  Value: 0
+VSyncOverride:
+  HasOverride: false
+  Value: Off
+GlobalIlluminationModeOverride:
+  HasOverride: false
+  Value: None
+TickGroupedItemsInParallelOverride:
+  HasOverride: false
+  Value: false
+EnableNvidiaDlssOverride:
+  HasOverride: false
+  Value: false
+DlssQualityOverride:
+  HasOverride: false
+  Value: UltraPerformance
+EnableIntelXessOverride:
+  HasOverride: false
+  Value: false
+XessQualityOverride:
+  HasOverride: false
+  Value: UltraPerformance
+AllowShaderPipelinesOverride:
+  HasOverride: false
+  Value: false
+UseIntegerWeightingIdsOverride:
+  HasOverride: false
+  Value: false
+RecalcChildMatricesLoopTypeOverride:
+  HasOverride: false
+  Value: Sequential
+CalculateSkinningInComputeShaderOverride:
+  HasOverride: false
+  Value: false
+CalculateBlendshapesInComputeShaderOverride:
+  HasOverride: false
+  Value: false
+ID: 05672df0-2ca1-4333-8688-b118fca53144
+Name: VR_MonkeyBall_Sample

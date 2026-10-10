@@ -16,15 +16,30 @@ internal static class ShaderSourceDependencyIndex
         public string[] Paths { get; set; } = [];
     }
 
-    private sealed class PendingChange(ShaderSourceFileChange change, CancellationTokenSource cancellation)
+    private sealed class PendingChange(ShaderSourceFileChange change, CancellationTokenSource cancellation,
+        IRuntimeShaderServices? sourceOwner, int serviceVersion,
+        IShaderSourceFileBackend fileBackend, int fileBackendGeneration)
     {
         public ShaderSourceFileChange Change { get; } = change;
         public CancellationTokenSource Cancellation { get; } = cancellation;
+        public CancellationToken CancellationToken { get; } = cancellation.Token;
+        public IRuntimeShaderServices? SourceOwner { get; } = sourceOwner;
+        public int SourceVersion { get; } = sourceOwner?.ShaderAssetCacheVersion ?? 0;
+        public int ServiceVersion { get; } = serviceVersion;
+        public IShaderSourceFileBackend FileBackend { get; } = fileBackend;
+        public int FileBackendGeneration { get; } = fileBackendGeneration;
     }
 
     private readonly record struct PreparedRootRefresh(
         XRShader Shader, TextFile Source, long SourceIdentityRevision, string Path, string BaselineText,
         long MutationRevision, long RequestRevision, string RefreshedText);
+
+    private readonly record struct SourceOwnership(
+        IRuntimeShaderServices? Service, int ServiceVersion, int SourceVersion,
+        IShaderSourceFileBackend FileBackend, int FileBackendGeneration);
+
+    private const string MissingFileBackendDiagnostic =
+        "ShaderSourceRefresh.HostFileBackendUnavailable: install a shader source file backend before disk refresh.";
 
     private static readonly object Sync = new();
     private static readonly Dictionary<string, List<WeakReference<XRShader>>> ShadersByPath =
@@ -86,10 +101,24 @@ internal static class ShaderSourceDependencyIndex
     }
 
     public static void QueueFileChange(in ShaderSourceFileChange change)
+        => QueueFileChange(change, RuntimeShaderServices.Current, RuntimeShaderServices.ServiceVersion);
+
+    internal static void QueueFileChange(in ShaderSourceFileChange change,
+        IRuntimeShaderServices? sourceOwner, int serviceVersion)
     {
+        if (!ShaderSourceResolver.CanAccessHostShaderFiles ||
+            !ReferenceEquals(sourceOwner, RuntimeShaderServices.Current) ||
+            serviceVersion != RuntimeShaderServices.ServiceVersion)
+            return;
         string normalizedPath = NormalizePath(change.Path);
         if (normalizedPath.Length == 0)
             return;
+        if (!ShaderSourceFileBackendServices.TryCapture(out IShaderSourceFileBackend? fileBackend,
+                out int fileBackendGeneration))
+        {
+            ReportMissingFileBackend(sourceOwner);
+            return;
+        }
 
         ShaderSourceFileChange normalizedChange = change with
         {
@@ -98,7 +127,8 @@ internal static class ShaderSourceDependencyIndex
         };
 
         CancellationTokenSource cancellation = new();
-        PendingChange pending = new(normalizedChange, cancellation);
+        PendingChange pending = new(normalizedChange, cancellation, sourceOwner, serviceVersion,
+            fileBackend!, fileBackendGeneration);
         PendingChanges.AddOrUpdate(
             normalizedPath,
             pending,
@@ -125,21 +155,40 @@ internal static class ShaderSourceDependencyIndex
     /// </summary>
     public static int ReloadAllDiskRoots(string reason)
     {
+        if (!ShaderSourceResolver.CanAccessHostShaderFiles)
+            return 0;
+        IRuntimeShaderServices? service = RuntimeShaderServices.Current;
+        if (!ShaderSourceFileBackendServices.TryCapture(out IShaderSourceFileBackend? fileBackend,
+                out int fileBackendGeneration))
+        {
+            ReportMissingFileBackend(service);
+            return 0;
+        }
+        SourceOwnership ownership = new(service, RuntimeShaderServices.ServiceVersion,
+            service?.ShaderAssetCacheVersion ?? 0, fileBackend!, fileBackendGeneration);
         XRShader[] shaders = CollectAllShaders();
         if (shaders.Length != 0)
-            _ = Task.Run(() => PrepareManualRootRefreshesAsync(shaders, reason));
+            _ = Task.Run(() => PrepareManualRootRefreshesAsync(shaders, reason, ownership));
         return shaders.Length;
     }
 
-    private static async Task PrepareManualRootRefreshesAsync(XRShader[] shaders, string reason)
+    private static void ReportMissingFileBackend(IRuntimeShaderServices? service)
+    {
+        if (service is not null)
+            service.LogWarning(MissingFileBackendDiagnostic);
+        else
+            Debug.LogWarning(MissingFileBackendDiagnostic);
+    }
+
+    private static async Task PrepareManualRootRefreshesAsync(XRShader[] shaders, string reason, SourceOwnership ownership)
     {
         try
         {
-            await PrepareAndPublishRootRefreshesAsync(shaders, null, reason, CancellationToken.None).ConfigureAwait(false);
+            await PrepareAndPublishRootRefreshesAsync(shaders, null, reason, ownership, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            RuntimeShaderServices.Current?.LogWarning($"Manual shader root reload failed before publication: {ex.Message}");
+            ownership.Service?.LogWarning($"Manual shader root reload failed before publication: {ex.Message}");
         }
     }
 
@@ -166,12 +215,18 @@ internal static class ShaderSourceDependencyIndex
     internal static int ProcessFileChangeImmediately(
         in ShaderSourceFileChange change,
         bool publishAtFrameSwap = false)
+        => ProcessFileChangeImmediately(change, publishAtFrameSwap, sourceOwner: null);
+
+    private static int ProcessFileChangeImmediately(
+        in ShaderSourceFileChange change,
+        bool publishAtFrameSwap,
+        PendingChange? sourceOwner)
     {
-        int invalidated = InvalidatePath(change.Path, publishAtFrameSwap);
+        int invalidated = InvalidatePath(change.Path, publishAtFrameSwap, sourceOwner);
         if (!string.IsNullOrWhiteSpace(change.PreviousPath) &&
             !string.Equals(change.Path, change.PreviousPath, StringComparison.OrdinalIgnoreCase))
         {
-            invalidated += InvalidatePath(change.PreviousPath, publishAtFrameSwap);
+            invalidated += InvalidatePath(change.PreviousPath, publishAtFrameSwap, sourceOwner);
         }
 
         return invalidated;
@@ -199,17 +254,23 @@ internal static class ShaderSourceDependencyIndex
 
     private static async Task ProcessPendingChangeAsync(string key, PendingChange pending)
     {
-        CancellationToken cancellationToken = pending.Cancellation.Token;
+        CancellationToken cancellationToken = pending.CancellationToken;
         try
         {
             int delay = DebounceMilliseconds;
             if (delay > 0)
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
 
+            if (!IsSourceOwnerCurrent(pending))
+            {
+                Interlocked.Increment(ref _staleNotificationsRejected);
+                return;
+            }
             if (pending.Change.Kind is ShaderSourceFileChangeKind.Created or ShaderSourceFileChangeKind.Changed or ShaderSourceFileChangeKind.Renamed)
-                await WaitForReadableStableFileAsync(pending.Change.Path, cancellationToken).ConfigureAwait(false);
+                await WaitForReadableStableFileAsync(pending, cancellationToken).ConfigureAwait(false);
 
-            if (!PendingChanges.TryGetValue(key, out PendingChange? current) ||
+            if (!IsSourceOwnerCurrent(pending) ||
+                !PendingChanges.TryGetValue(key, out PendingChange? current) ||
                 !ReferenceEquals(current, pending))
             {
                 Interlocked.Increment(ref _staleNotificationsRejected);
@@ -218,14 +279,16 @@ internal static class ShaderSourceDependencyIndex
 
             XRShader[] shaders = CollectChangedShaders(pending.Change.Path, pending.Change.PreviousPath);
             await PrepareAndPublishRootRefreshesAsync(
-                shaders, pending.Change.Path, pending.Change.Path, cancellationToken).ConfigureAwait(false);
+                shaders, pending.Change.Path, pending.Change.Path,
+                new(pending.SourceOwner, pending.ServiceVersion, pending.SourceVersion,
+                    pending.FileBackend, pending.FileBackendGeneration), cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
         }
         catch (Exception ex)
         {
-            RuntimeShaderServices.Current?.LogWarning(
+            pending.SourceOwner?.LogWarning(
                 $"Shader source change for '{pending.Change.Path}' failed before publication: {ex.Message}");
         }
         finally
@@ -235,23 +298,31 @@ internal static class ShaderSourceDependencyIndex
         }
     }
 
-    private static async Task WaitForReadableStableFileAsync(string path, CancellationToken cancellationToken)
+    private static bool IsSourceOwnerCurrent(PendingChange pending)
+    {
+        if (!ShaderSourceFileBackendServices.IsCurrent(pending.FileBackend, pending.FileBackendGeneration) ||
+            !ShaderSourceResolver.CanAccessHostShaderFiles ||
+            pending.SourceVersion != (pending.SourceOwner?.ShaderAssetCacheVersion ?? 0) ||
+            pending.ServiceVersion != RuntimeShaderServices.ServiceVersion ||
+            !ReferenceEquals(pending.SourceOwner, RuntimeShaderServices.Current))
+            return false;
+        return ShaderSourceFileBackendServices.IsCurrent(pending.FileBackend, pending.FileBackendGeneration);
+    }
+
+    private static async Task WaitForReadableStableFileAsync(PendingChange pending, CancellationToken cancellationToken)
     {
         long previousLength = -1;
         for (int attempt = 0; attempt < 6; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!IsSourceOwnerCurrent(pending))
+                return;
             try
             {
-                FileInfo file = new(path);
-                if (file.Exists)
+                if (pending.FileBackend.TryGetReadableLength(pending.Change.Path, out long length))
                 {
-                    long length = file.Length;
-                    using FileStream stream = new(
-                        path,
-                        FileMode.Open,
-                        FileAccess.Read,
-                        FileShare.ReadWrite | FileShare.Delete);
+                    if (!IsSourceOwnerCurrent(pending))
+                        return;
                     if (length == previousLength)
                         return;
 
@@ -269,7 +340,7 @@ internal static class ShaderSourceDependencyIndex
         }
     }
 
-    private static int InvalidatePath(string? path, bool publishAtFrameSwap)
+    private static int InvalidatePath(string? path, bool publishAtFrameSwap, PendingChange? sourceOwner = null)
     {
         string normalizedPath = NormalizePath(path);
         if (normalizedPath.Length == 0)
@@ -277,7 +348,7 @@ internal static class ShaderSourceDependencyIndex
 
         XRShader[] shaders = CollectChangedShaders(normalizedPath, null);
         return publishAtFrameSwap
-            ? PublishInvalidationsAtFrameSwap(shaders, normalizedPath)
+            ? PublishInvalidationsAtFrameSwap(shaders, normalizedPath, sourceOwner)
             : PublishInvalidations(shaders, normalizedPath);
     }
 
@@ -323,12 +394,14 @@ internal static class ShaderSourceDependencyIndex
     }
 
     private static async Task PrepareAndPublishRootRefreshesAsync(
-        XRShader[] shaders, string? changedPath, string reason, CancellationToken cancellationToken)
+        XRShader[] shaders, string? changedPath, string reason, SourceOwnership ownership, CancellationToken cancellationToken)
     {
         List<PreparedRootRefresh> prepared = [];
         for (int i = 0; i < shaders.Length; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!TryAdmitSourceOwner(ownership))
+                return;
             XRShader shader = shaders[i];
             if (!shader.CanPublishSourceChanges)
                 continue;
@@ -339,10 +412,15 @@ internal static class ShaderSourceDependencyIndex
                 !source.TryCaptureDiskRefresh(path, out string baselineText,
                     out long mutationRevision, out long requestRevision, out Encoding encoding))
                 continue;
+            if (!TryAdmitSourceOwner(ownership))
+                return;
 
             try
             {
-                string refreshedText = await File.ReadAllTextAsync(path, encoding, cancellationToken).ConfigureAwait(false);
+                string refreshedText = await ownership.FileBackend.ReadAllTextAsync(
+                    path, encoding, cancellationToken).ConfigureAwait(false);
+                if (!TryAdmitSourceOwner(ownership))
+                    return;
                 prepared.Add(new PreparedRootRefresh(
                     shader, source, sourceIdentityRevision, path, baselineText,
                     mutationRevision, requestRevision, refreshedText));
@@ -353,17 +431,18 @@ internal static class ShaderSourceDependencyIndex
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
-                RuntimeShaderServices.Current?.LogWarning(
+                ownership.Service?.LogWarning(
                     $"Failed to refresh disk-backed shader root '{path}': {ex.Message}");
             }
         }
 
         PreparedRootRefresh[] refreshes = [.. prepared];
-        PublishPreparedRootRefreshesAtFrameSwap(shaders, refreshes, reason);
+        cancellationToken.ThrowIfCancellationRequested();
+        PublishPreparedRootRefreshesAtFrameSwap(shaders, refreshes, reason, ownership);
     }
 
     private static void PublishPreparedRootRefreshesAtFrameSwap(
-        XRShader[] shaders, PreparedRootRefresh[] refreshes, string reason)
+        XRShader[] shaders, PreparedRootRefresh[] refreshes, string reason, SourceOwnership ownership)
     {
         if (shaders.Length == 0)
             return;
@@ -371,17 +450,17 @@ internal static class ShaderSourceDependencyIndex
         if (!RuntimeRenderingHostServices.HasConcreteHost ||
             RuntimeRenderingHostServices.Scheduling.IsFrameSwapThread)
         {
-            PublishPreparedRootRefreshes(shaders, refreshes, reason);
+            PublishPreparedRootRefreshes(shaders, refreshes, reason, ownership);
             return;
         }
 
         RuntimeRenderingHostServices.Scheduling.EnqueueFrameSwapTask(
-            () => PublishPreparedRootRefreshes(shaders, refreshes, reason),
+            () => PublishPreparedRootRefreshes(shaders, refreshes, reason, ownership),
             $"ShaderSourceDependencyIndex.Refresh[{reason}]");
     }
 
     private static void PublishPreparedRootRefreshes(
-        XRShader[] shaders, PreparedRootRefresh[] refreshes, string reason)
+        XRShader[] shaders, PreparedRootRefresh[] refreshes, string reason, SourceOwnership ownership)
     {
         int published = 0;
         long[] revisions = new long[shaders.Length];
@@ -390,6 +469,8 @@ internal static class ShaderSourceDependencyIndex
 
         for (int i = 0; i < refreshes.Length; i++)
         {
+            if (!TryAdmitSourceOwner(ownership))
+                return;
             PreparedRootRefresh refresh = refreshes[i];
             refresh.Shader.TryApplyDiskRootRefresh(
                 refresh.Source, refresh.SourceIdentityRevision, refresh.Path, refresh.BaselineText,
@@ -401,10 +482,31 @@ internal static class ShaderSourceDependencyIndex
             if (!shaders[i].CanPublishSourceChanges)
                 continue;
             if (shaders[i].SourceRevision == revisions[i])
-                shaders[i].NotifySourceDependencyChanged(reason);
+            {
+                if (!TryAdmitSourceOwner(ownership))
+                    break;
+                shaders[i].NotifySourceDependencyChanged(reason, ownership.Service);
+            }
             published++;
         }
         Interlocked.Add(ref _notificationsPublished, published);
+    }
+
+    private static bool TryAdmitSourceOwner(in SourceOwnership ownership)
+    {
+        if (!ShaderSourceFileBackendServices.IsCurrent(
+                ownership.FileBackend, ownership.FileBackendGeneration))
+        {
+            Interlocked.Increment(ref _staleNotificationsRejected);
+            return false;
+        }
+        if (RuntimeShaderServices.TryAdmitSourceInvalidation(
+                ownership.Service, ownership.ServiceVersion, ownership.SourceVersion) &&
+            ShaderSourceFileBackendServices.IsCurrent(
+                ownership.FileBackend, ownership.FileBackendGeneration))
+            return true;
+        Interlocked.Increment(ref _staleNotificationsRejected);
+        return false;
     }
 
     /// <summary>
@@ -416,23 +518,54 @@ internal static class ShaderSourceDependencyIndex
     /// </summary>
     private static int PublishInvalidationsAtFrameSwap(
         XRShader[] shaders,
-        string reason)
+        string reason,
+        PendingChange? sourceOwner = null)
     {
         if (shaders.Length == 0)
             return 0;
 
         if (!RuntimeRenderingHostServices.HasConcreteHost)
-            return PublishInvalidations(shaders, reason);
+            return PublishOwnedInvalidations(shaders, reason, sourceOwner);
 
         IRuntimeRenderSchedulingServices scheduling =
             RuntimeRenderingHostServices.Scheduling;
         if (scheduling.IsFrameSwapThread)
-            return PublishInvalidations(shaders, reason);
+            return PublishOwnedInvalidations(shaders, reason, sourceOwner);
 
         scheduling.EnqueueFrameSwapTask(
-            () => PublishInvalidations(shaders, reason),
+            () => PublishOwnedInvalidations(shaders, reason, sourceOwner),
             $"ShaderSourceDependencyIndex.Publish[{reason}]");
         return shaders.Length;
+    }
+
+    private static int PublishOwnedInvalidations(XRShader[] shaders, string reason, PendingChange? sourceOwner)
+    {
+        if (sourceOwner is null)
+            return PublishInvalidations(shaders, reason);
+
+        int invalidated = 0;
+        for (int i = 0; i < shaders.Length; i++)
+        {
+            if (!shaders[i].CanPublishSourceChanges)
+                continue;
+            if (!ShaderSourceFileBackendServices.IsCurrent(
+                    sourceOwner.FileBackend, sourceOwner.FileBackendGeneration) ||
+                !RuntimeShaderServices.TryAdmitSourceInvalidation(
+                    sourceOwner.SourceOwner, sourceOwner.ServiceVersion, sourceOwner.SourceVersion) ||
+                !ShaderSourceFileBackendServices.IsCurrent(
+                    sourceOwner.FileBackend, sourceOwner.FileBackendGeneration))
+            {
+                Interlocked.Increment(ref _staleNotificationsRejected);
+                break;
+            }
+
+            // One admitted notification keeps its synchronous property/event
+            // semantics. Reentrant retirement stops the next shader in this job.
+            shaders[i].NotifySourceDependencyChanged(reason, sourceOwner.SourceOwner);
+            invalidated++;
+        }
+        Interlocked.Add(ref _notificationsPublished, invalidated);
+        return invalidated;
     }
 
     private static int PublishInvalidations(XRShader[] shaders, string reason)

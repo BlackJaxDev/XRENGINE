@@ -10,6 +10,17 @@ namespace XREngine.Audio
     {
         public ListenerContext ParentListener { get; }
         private AudioBufferHandle _transportHandle;
+        private int _poolLeaseVersion;
+        private int _retirementReferences;
+        internal int PoolLeaseVersion => _poolLeaseVersion;
+
+        internal void BeginStreamingRetirement() => _retirementReferences++;
+        internal bool CompleteStreamingRetirement(int lease)
+        {
+            if (lease != _poolLeaseVersion)
+                return false;
+            return --_retirementReferences == 0;
+        }
 
         public uint Handle => _transportHandle.Id;
         internal AudioBufferHandle TransportHandle => _transportHandle;
@@ -30,7 +41,8 @@ namespace XREngine.Audio
             if (!_transportHandle.IsValid)
                 return;
 
-            ParentListener.ActiveTransport.DestroyBuffer(_transportHandle);
+            if (ParentListener.ActiveTransport.IsOpen)
+                ParentListener.ActiveTransport.DestroyBuffer(_transportHandle);
 
             _transportHandle = AudioBufferHandle.Invalid;
         }
@@ -226,12 +238,15 @@ namespace XREngine.Audio
 
         void IPoolable.OnPoolableReset()
         {
+            unchecked { _poolLeaseVersion++; }
             // The caller should call SetData after taking a buffer from the pool.
             // No-op: reuse the existing native handle.
         }
 
         void IPoolable.OnPoolableReleased()
         {
+            unchecked { _poolLeaseVersion++; }
+            _retirementReferences = 0;
             // Clear cached data reference so we don't pin managed arrays unnecessarily.
             _data = null;
         }

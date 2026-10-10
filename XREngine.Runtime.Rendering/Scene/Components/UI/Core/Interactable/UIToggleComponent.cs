@@ -1,10 +1,18 @@
 using XREngine.Data.Core;
-using XREngine.Input.Devices;
 
 namespace XREngine.Rendering.UI
 {
     public class UIToggleComponent : UIInspectorEditorComponent
     {
+        public UIToggleComponent()
+        {
+            // Use the canvas's accepted interaction so focus does not reset a
+            // pending mouse press by registering another release callback.
+            InteractAction += OnToggleChecked;
+        }
+
+        public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.CheckBox;
+        public override bool AccessibilityActivate() => Toggle();
         public XREvent<ECurrentState>? OnStateChanged;
 
         protected override void OnComponentActivated()
@@ -51,12 +59,6 @@ namespace XREngine.Rendering.UI
                 LastState = currentState;
                 OnStateChanged?.Invoke(currentState);
             }
-        }
-
-        public override void RegisterInput(IInputRegistration input)
-        {
-            base.RegisterInput(input);
-            input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Released, OnToggleChecked);
         }
 
         public ECurrentState CurrentState
@@ -185,14 +187,26 @@ namespace XREngine.Rendering.UI
                     Property.SetValue(target, value);
         }
 
-        private void OnToggleChecked()
+        public bool Toggle()
         {
             if (Property == null || Targets == null || Targets.Length == 0)
-                return;
+                return false;
 
             bool majorityValue = GetMajorityValue();
             bool newValue = !majorityValue; // Toggle the value
             SetValue(newValue);
+            return true;
+        }
+
+        private void OnToggleChecked(UIInteractableComponent component)
+        {
+            // Gamepad focus can remain after the control or canvas becomes hidden or inactive.
+            if (!IsActiveInHierarchy || !UITransform.IsVisibleInHierarchy ||
+                UserInterfaceCanvas is not { IsActiveInHierarchy: true } canvas ||
+                !canvas.CanvasTransform.IsVisibleInHierarchy)
+                return;
+
+            Toggle();
         }
     }
 }

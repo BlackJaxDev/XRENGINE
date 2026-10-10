@@ -50,4 +50,14 @@ public readonly record struct AdvancedManagedDeformationSourceRow(
     ulong SourceVersion,
     ulong MeshVersion,
     PhysicsChainGpuBoundsSource? GpuBoundsSource = null,
-    PhysicsChainDrawMaterialSnapshot MaterialSnapshot = default);
+    PhysicsChainDrawMaterialSnapshot MaterialSnapshot = default)
+{
+    /// <summary>Immutable source facts retained before canonical packing repairs missing or degenerate bases.</summary>
+    public AdvancedBrowserGeometryBasisSource? BrowserBasisSource { get; init; }
+    /// <summary>Full-float source UV/color image associated with this exact geometry producer.</summary>
+    public AdvancedBrowserUberAttributeSource? BrowserUberAttributesSource { get; init; }
+    /// <summary>Identifies a producer whose UV/color output lacks a retained browser source companion.</summary>
+    public string? BrowserUberAttributesProducerRejection { get; init; }
+    /// <summary>Identifies a producer whose output lacks a retained browser basis contract.</summary>
+    public string? BrowserBasisProducerRejection { get; init; }
+}

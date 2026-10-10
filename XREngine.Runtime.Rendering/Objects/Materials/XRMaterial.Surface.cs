@@ -110,6 +110,15 @@ public partial class XRMaterial
     }
 
     private bool _surfaceEmissionPublisherAttached;
+    private Action<XRMaterialBase, XRRenderProgram>? _surfaceEmissionHandler;
+
+    /// <summary>Allows the known emission publisher while rejecting custom surface callbacks.</summary>
+    internal bool HasOnlyStandardSurfaceUniformHandlers
+        => HasOnlySettingUniformsHandler(_surfaceEmissionHandler);
+
+    /// <summary>Allows known source consumers alongside the surface publisher installed by ordinary hydration.</summary>
+    internal bool HasOnlyStandardSurfaceAndUniformHandlers(IReadOnlySet<Action<XRMaterialBase, XRRenderProgram>> handlers)
+        => HasOnlySettingUniformsHandlers(handlers, _surfaceEmissionHandler);
 
     /// <summary>
     /// Attaches the surface-emission uniform publisher once the material carries
@@ -124,8 +133,9 @@ public partial class XRMaterial
         if (_surfaceEmissionPublisherAttached || !HasSurfaceEmissionState())
             return;
 
-        SettingUniforms += PublishSurfaceEmission;
-        _surfaceEmissionPublisherAttached = true;
+        SetField(ref _surfaceEmissionHandler, PublishSurfaceEmission, publishNotifications: false);
+        SettingUniforms += _surfaceEmissionHandler;
+        SetField(ref _surfaceEmissionPublisherAttached, true, publishNotifications: false);
     }
 
     private bool HasSurfaceEmissionState()

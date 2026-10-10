@@ -81,15 +81,16 @@ public sealed unsafe class CookedPayloadOwner : MemoryManager<byte>
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         string fullPath = Path.GetFullPath(filePath);
-        FileInfo info = new(fullPath);
-        if (!info.Exists)
+        RuntimeAssetReadServices.EnsureHostFileAccess("Cooked payload file mapping");
+        IFileMappingBackend backend = FileMappingServices.Required;
+        if (!backend.TryGetFileLength(fullPath, out long fileLength))
             throw new FileNotFoundException($"File '{fullPath}' not found.", fullPath);
-        if (info.Length > int.MaxValue)
-            throw new IOException($"File '{fullPath}' is {info.Length} bytes, which exceeds the supported single-mapping size.");
-        if (info.Length == 0)
+        if (fileLength > int.MaxValue)
+            throw new IOException($"File '{fullPath}' is {fileLength} bytes, which exceeds the supported single-mapping size.");
+        if (fileLength == 0)
             return new CookedPayloadOwner([], null, null, 0, default, ECookedPayloadStorage.Pooled);
 
-        FileMap map = FileMap.FromFile(fullPath, FileMapProtect.Read);
+        FileMap map = FileMap.FromFile(fullPath, FileMapProtect.Read, backend);
         try
         {
             return new CookedPayloadOwner(null, (byte*)map.Address, map, checked((int)map.Length), default, ECookedPayloadStorage.Mapped);

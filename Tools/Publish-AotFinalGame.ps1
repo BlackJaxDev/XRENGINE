@@ -1,5 +1,5 @@
 param(
-    [string]$ProjectPath = ".\Samples\MonkeyBallVR\MonkeyBallVR.xrproj",
+    [string]$ProjectPath = ".\Samples\RollingBall\RollingBall.xrproj",
     [ValidateSet("Debug", "Release")]
     [string]$EditorConfiguration = "Release",
     [ValidateSet("Development", "Release")]

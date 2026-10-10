@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using XREngine.Core.Files;
+using XREngine.Data;
 
 namespace XREngine.Rendering;
 
@@ -20,7 +21,12 @@ public partial class XRMesh
     public override void Reload(string filePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
-        byte[] bytes = File.ReadAllBytes(filePath);
+        byte[] bytes;
+        using (RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture())
+        {
+            read.EnsureHostFileAccess("Cooked mesh reload");
+            bytes = read.ReadAllBytes(filePath);
+        }
         if (RuntimeCookedBinarySerializer.Deserialize(typeof(XRMesh), bytes) is not XRMesh loaded)
             throw new InvalidDataException($"Cooked mesh reload returned no XRMesh for '{filePath}'.");
 

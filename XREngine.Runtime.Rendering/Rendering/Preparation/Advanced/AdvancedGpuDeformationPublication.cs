@@ -16,4 +16,11 @@ public readonly record struct AdvancedGpuDeformationPublication(
     XRDataBuffer GroupedJobVertexOffsets,
     uint JobCount,
     uint GroupedJobCount,
-    bool PreviousOutputValid);
+    bool PreviousOutputValid)
+{
+    /// <summary>Changes on every input publication, including retries in the same world frame.</summary>
+    public ulong InputGeneration { get; init; }
+
+    /// <summary>Frozen copy ranges owned by the completion-protected current frame slot.</summary>
+    public ReadOnlyMemory<AdvancedGpuDeformationPaletteCopy> GpuPaletteCopies { get; init; }
+}

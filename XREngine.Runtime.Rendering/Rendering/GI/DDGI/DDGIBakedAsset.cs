@@ -16,7 +16,7 @@ namespace XREngine.Rendering.GI.DDGI
     /// irradiance and visibility atlas data across cascade layers.
     /// Skips probe tracing while retaining atlas visibility sampling for a stationary volume.
     /// </summary>
-    public sealed class DDGIBakedAsset
+    public sealed partial class DDGIBakedAsset
     {
         public const uint AssetMagic = 0x49474444u; // "DDGI" in little-endian ASCII
         // Version 2 uses directional distance moments with the narrow visibility
@@ -190,12 +190,9 @@ namespace XREngine.Rendering.GI.DDGI
         /// </summary>
         public void Save(string filePath)
         {
-            string? dir = Path.GetDirectoryName(filePath);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-            using var fs = File.Create(filePath);
+            XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Baked DDGI asset save");
+            XREngine.Data.IHostAssetFileOutput output = XREngine.Data.HostAssetFileOutputServices.Required;
+            using Stream fs = output.CreateFileWithParentDirectory(filePath);
             Save(fs);
         }
 
@@ -279,12 +276,16 @@ namespace XREngine.Rendering.GI.DDGI
         /// </summary>
         public static DDGIBakedAsset Load(string filePath)
         {
-            if (!File.Exists(filePath))
+            using XREngine.Data.RuntimeAssetReadLease read = XREngine.Data.RuntimeAssetReadServices.Capture();
+            if (!read.Exists(filePath))
             {
                 throw new FileNotFoundException($"Baked DDGI asset file not found: {filePath}", filePath);
             }
-            using var fs = File.OpenRead(filePath);
-            return Load(fs);
+            byte[] bytes = read.ReadAllBytes(filePath);
+            using MemoryStream stream = new(bytes, writable: false);
+            DDGIBakedAsset asset = Load(stream);
+            read.EnsureCurrent();
+            return asset;
         }
 
         /// <summary>

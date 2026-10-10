@@ -39,6 +39,7 @@ namespace XREngine
 
         private T? LoadCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath) where T : XRAsset, new()
         {
+            EnsureHostFileAssetAccess();
             T? file;
             filePath = Path.GetFullPath(filePath);
             using var progressScope = AssetLoadProgressContext.EnterAsset(filePath);
@@ -107,6 +108,7 @@ namespace XREngine
 
         private XRAsset? LoadCore(string filePath, Type type)
         {
+            EnsureHostFileAssetAccess();
             XRAsset? file;
             filePath = Path.GetFullPath(filePath);
             using var progressScope = AssetLoadProgressContext.EnterAsset(filePath);

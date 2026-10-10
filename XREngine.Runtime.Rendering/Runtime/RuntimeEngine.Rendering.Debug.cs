@@ -277,6 +277,12 @@ namespace XREngine
 
                 private static readonly DebugPrimitiveSceneState _debug3D = new();
                 private static readonly DebugPrimitiveSceneState _debug2D = new();
+
+                /// <summary>Read-only 3D debug population and submission diagnostics for output qualification.</summary>
+                public static (uint Points, uint Lines, uint Triangles, long DrawCalls) Debug3DVisualizerState
+                    => (_debug3D.Visualizer.PointCount, _debug3D.Visualizer.LineCount,
+                        _debug3D.Visualizer.TriangleCount, _debug3D.Visualizer.DrawCallCount);
+
                 [ThreadStatic]
                 private static DebugPrimitiveSceneState? _expandingShapeScene;
                 [ThreadStatic]

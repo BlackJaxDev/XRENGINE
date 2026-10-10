@@ -170,6 +170,7 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
         string bootstrapHostRoot = Path.Combine(bootstrapRoot, "SubsystemHost");
         string bootstrapProject = File.ReadAllText(Path.Combine(bootstrapRoot, "XREngine.Runtime.Bootstrap.csproj"));
         string adapterBootstrap = File.ReadAllText(Path.Combine(hostRoot, "RuntimeAdapterBootstrap.cs"));
+        string factoryGenerator = File.ReadAllText(Path.Combine(root, "XREngine.SourceGenerators", "RuntimeFactoryGenerator.cs"));
 
         string[] hostFiles =
         [
@@ -204,6 +205,10 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
         foreach (string adapterName in BootstrapAotAdapterNames)
             bootstrapProject.ShouldContain($"..\\{adapterName}\\{adapterName}.csproj");
         bootstrapProject.ShouldContain("../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj");
+        bootstrapProject.ShouldContain("<XREngineRuntimeContractMode>Desktop</XREngineRuntimeContractMode>");
+        bootstrapProject.ShouldContain("../Build/Registration/RuntimeContracts.props");
+        factoryGenerator.ShouldContain(";XREngine.Runtime.ModelAssetPipeline;");
+        factoryGenerator.ShouldContain(";XREngine.Runtime.ModelingIntegration;");
         bootstrapProject.ShouldNotContain("..\\XREngine.Runtime.ModelingIntegration\\**\\*.cs");
         File.Exists(Path.Combine(root, "XRENGINE", "XREngine.csproj")).ShouldBeFalse();
     }

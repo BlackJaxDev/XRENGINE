@@ -12,6 +12,12 @@ issuance, and world artifact delivery live in the adjacent control-plane app.
 See [Runtime Project Organization](../runtime/project-organization.md) for the
 project dependency boundary.
 
+`XREngine.Runtime.Net.WebSockets` adds a portable, asynchronous WebSocket leaf
+for the same Core admission and replication protocol. Its encrypted socket-leaf
+gateway forwards to an immutable loopback worker, without providing browser UDP
+or multicast emulation. See [browser realtime transport](../../developer-guides/networking/browser-realtime.md)
+for deployment policy and the unqualified browser/session integration boundary.
+
 For local development and tests, `XREngine.ControlPlane` now provides an in-process control-plane DLL with basic host registration, instance creation/listing, join handoff generation, opaque session tokens, and local world package manifest verification. It is a reusable control-plane substrate, not an engine realtime transport.
 
 For the stable developer guide, see [XRENGINE Networking](../../developer-guides/networking/networking.md). Planned peer-to-peer host switching is tracked in [Peer-To-Peer Host Switching Implementation](../../work/design/networking/peer-to-peer-host-switching.md).

@@ -38,6 +38,11 @@ namespace XREngine.Components.Lights
         private int _slowUpdateIntervalFrames = 30;
         private string? _bakedAssetPath;
         private DDGIBakedAsset? _bakedAsset;
+        private ulong _bakedAssetPathRevision;
+        private ulong _pendingBakedAssetPathRevision;
+        private ulong _bakedAssetAssignmentRevision;
+        private long _bakedPathSetterSerial;
+        private long _bakedAssetSetterSerial;
         private bool _debugDrawProbes = false;
         private EDDGIDebugMode _debugMode = EDDGIDebugMode.None;
         private bool _volumeEnabled = true;
@@ -52,6 +57,9 @@ namespace XREngine.Components.Lights
         private int _selectionPriority = 0;
 
         private IRuntimeRenderWorld? _registeredWorld;
+        internal event Action? BakedLoadOwnerEnded;
+        internal ulong BakedAssetPathRevision => _bakedAssetPathRevision;
+        internal ulong PendingBakedAssetPathRevision => _pendingBakedAssetPathRevision;
 
         /// <summary>
         /// Authoritative runtime state representation for this volume.
@@ -265,8 +273,29 @@ namespace XREngine.Components.Lights
             get => _bakedAssetPath;
             set
             {
-                if (SetField(ref _bakedAssetPath, value))
+                long setterSerial = Interlocked.Increment(ref _bakedPathSetterSerial);
+                ulong assignmentRevision = _bakedAssetAssignmentRevision;
+                if (!SetField(ref _bakedAssetPath, value) ||
+                    !string.Equals(_bakedAssetPath, value, StringComparison.Ordinal) ||
+                    setterSerial != Volatile.Read(ref _bakedPathSetterSerial))
+                    return;
+                BakedLoadOwnerEnded?.Invoke();
+                if (setterSerial != Volatile.Read(ref _bakedPathSetterSerial))
+                    return;
+                _bakedAssetPathRevision++;
+                if (_bakedAssetAssignmentRevision != assignmentRevision)
+                {
+                    _pendingBakedAssetPathRevision = 0;
+                    return;
+                }
+                if (!string.IsNullOrWhiteSpace(value) &&
+                    (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread))
+                    _pendingBakedAssetPathRevision = _bakedAssetPathRevision;
+                else
+                {
+                    _pendingBakedAssetPathRevision = 0;
                     BakedAsset = null;
+                }
             }
         }
 
@@ -277,7 +306,56 @@ namespace XREngine.Components.Lights
         public DDGIBakedAsset? BakedAsset
         {
             get => _bakedAsset;
-            set => SetField(ref _bakedAsset, value);
+            set
+            {
+                long setterSerial = Interlocked.Increment(ref _bakedAssetSetterSerial);
+                _bakedAssetAssignmentRevision++;
+                _pendingBakedAssetPathRevision = 0;
+                BakedLoadOwnerEnded?.Invoke();
+                if (setterSerial != Volatile.Read(ref _bakedAssetSetterSerial))
+                    return;
+                SetField(ref _bakedAsset, value);
+            }
+        }
+
+        internal bool TryAdoptBakedAsset(
+            DDGIBakedAsset candidate, string path, ulong pathRevision, DDGIBakedAsset? previous,
+            Func<ulong, bool> ownerIsCurrent)
+        {
+            if (!string.Equals(_bakedAssetPath, path, StringComparison.Ordinal) ||
+                _bakedAssetPathRevision != pathRevision ||
+                _pendingBakedAssetPathRevision != pathRevision ||
+                !ReferenceEquals(_bakedAsset, previous))
+                return false;
+            ulong assignmentRevision = _bakedAssetAssignmentRevision;
+            ulong runtimeRevision = RuntimeState.InvalidationRevision;
+            try { SetField(ref _bakedAsset, candidate, nameof(BakedAsset)); }
+            catch
+            {
+                if (ReferenceEquals(_bakedAsset, candidate) &&
+                    _bakedAssetAssignmentRevision == assignmentRevision)
+                {
+                    try { SetField(ref _bakedAsset, previous, nameof(BakedAsset)); }
+                    catch (Exception rollbackError)
+                    {
+                        System.Diagnostics.Trace.TraceError("Failed to restore a baked DDGI asset after a notification error: {0}", rollbackError);
+                    }
+                }
+                throw;
+            }
+            if (_bakedAssetAssignmentRevision != assignmentRevision)
+                return false;
+            if (!ReferenceEquals(_bakedAsset, candidate))
+                return false;
+            if (_pendingBakedAssetPathRevision != pathRevision ||
+                !string.Equals(_bakedAssetPath, path, StringComparison.Ordinal) ||
+                IsDestroyed || !IsActiveInHierarchy || !ownerIsCurrent(unchecked(runtimeRevision + 1)))
+            {
+                SetField(ref _bakedAsset, previous, nameof(BakedAsset));
+                return false;
+            }
+            _pendingBakedAssetPathRevision = 0;
+            return true;
         }
 
         /// <summary>
@@ -455,6 +533,7 @@ namespace XREngine.Components.Lights
 
         protected override void OnComponentDeactivated()
         {
+            BakedLoadOwnerEnded?.Invoke();
             Unregister();
             RuntimeState.Invalidate();
             base.OnComponentDeactivated();
@@ -469,6 +548,7 @@ namespace XREngine.Components.Lights
 
         protected override void OnDestroying()
         {
+            BakedLoadOwnerEnded?.Invoke();
             base.OnDestroying();
             Unregister();
         }

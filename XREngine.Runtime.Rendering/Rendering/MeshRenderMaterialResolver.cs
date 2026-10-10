@@ -25,6 +25,9 @@ public static class MeshRenderMaterialResolver
         if (renderState?.ShadowPass ?? false)
         {
             XRMaterial? shadowSourceMaterial = localMaterialOverride ?? meshRenderer.Material;
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                return CookedShadowMaterialResolver.Resolve(shadowSourceMaterial, globalMaterialOverride);
+
             bool pointLightShadowOverride = globalMaterialOverride is not null &&
                 UsesPointLightShadowDepthOutput(globalMaterialOverride);
 
@@ -80,7 +83,15 @@ public static class MeshRenderMaterialResolver
 
         if (renderState?.UseDepthNormalMaterialVariants ?? false)
         {
-            XRMaterial? depthNormalVariant = meshRenderer.Material?.DepthNormalPrePassVariant;
+            XRMaterial? depthNormalSource = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
+                localMaterialOverride?.EngineSemantic.IsColorCoverage() == true
+                ? localMaterialOverride ?? meshRenderer.Material
+                : meshRenderer.Material;
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+                AdvancedNativeVertexMaterialSource.IsRequested(depthNormalSource))
+                return new(depthNormalSource!.GetNativeVertexPassMaterial(Shaders.Generation.EngineNativeVertexAuxiliaryPass.DepthNormal),
+                    null, false, true, "CookedNativeVertexDepthNormal");
+            XRMaterial? depthNormalVariant = depthNormalSource?.DepthNormalPrePassVariant;
             if (depthNormalVariant is not null)
                 return new(depthNormalVariant, null, false, true, "DepthNormalVariant");
 
@@ -178,6 +189,10 @@ public static class MeshRenderMaterialResolver
     {
         if (!shadowState.IsShadowPass)
             return;
+
+        // Built-in coverage is not an arbitrary material callback. Publish it
+        // even on backends whose shadow capture skips event-based material hooks.
+        material.PublishStandardLitColorCoverage(program);
 
         XRMaterial? shadowUniformSource = material.ShadowUniformSourceMaterial;
         if (shadowUniformSource?.HasSettingShadowUniformHandlers == true)

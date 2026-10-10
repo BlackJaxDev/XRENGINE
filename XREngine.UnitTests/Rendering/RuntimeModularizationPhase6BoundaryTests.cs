@@ -424,7 +424,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
             "XREngine.VRClient/XREngine.VRClient.csproj",
             "XREngine.UnitTests/XREngine.UnitTests.csproj",
             "XREngine.Benchmarks/XREngine.Benchmarks.csproj",
-            "Samples/MonkeyBallVR/MonkeyBallVR.csproj",
+            "Samples/RollingBall/RollingBall.csproj",
         ];
 
         foreach (string relativeProject in formerConsumers)

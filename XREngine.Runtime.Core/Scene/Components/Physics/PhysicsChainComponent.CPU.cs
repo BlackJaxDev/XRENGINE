@@ -96,6 +96,26 @@ public partial class PhysicsChainComponent
             DetachCpuBackend();
     }
 
+    /// <summary>
+    /// Releases the runtime state that a disposing world owns. A binding to
+    /// another world stays in place, so an old world cannot detach a replacement owner.
+    /// Returns true only when this call released the world's ownership.
+    /// </summary>
+    internal bool DetachWorldRuntime(PhysicsChainWorld world)
+    {
+        using (_runtimeBindingSync.EnterScope())
+        {
+            DetachCpuBackend(world);
+            if (!ReferenceEquals(_runtimeOwnerWorld, world))
+                return false;
+            AbortWorldLateTick();
+            RuntimeGraph.UnbindReadbackSource();
+            _runtimeOwnerWorld = null;
+            SetField(ref _runtimeHandle, PhysicsChainRuntimeHandle.Invalid, nameof(RuntimeHandle));
+            return true;
+        }
+    }
+
     internal void DetachCpuBackend()
     {
         if (_cpuBackend is not null && _cpuBackendHandle.IsValid)

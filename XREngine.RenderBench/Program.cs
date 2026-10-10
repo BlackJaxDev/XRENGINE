@@ -8,6 +8,7 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        RuntimeApplicationBootstrap.PrepareLoggingServices();
         Runtime.Imaging.Magick.MagickImagingBackend.Register();
         Rendering.Meshlets.MeshOptimizerBackend.Register();
         RenderBenchOptions options;

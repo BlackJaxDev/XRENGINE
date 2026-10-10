@@ -10,6 +10,8 @@ Notes:
 - This lists direct `PackageReference`s from solution projects, not all transitive dependencies.
 - NVIDIA proprietary SDK binaries (DLSS/NGX, Reflex, Streamline) are **not redistributed** and are expected to be provided by end users via `ThirdParty/NVIDIA/SDK/win-x64/`.
 - Manual unknown-license resolutions are loaded from `docs/dependency-license-overrides.json`.
+- Browser Jolt source entries were reconciled on 2026-10-01 from `Tools/Dependencies/JoltBrowser.lock.json`; a full refresh was interrupted during remote metadata lookup, so unrelated prior metadata is retained.
+- Playwright and Slang tool-only entries were reconciled on 2026-10-01 from the exact installed official packages and license files. A subsequent full generator run was blocked on an unintended Visual Studio telemetry connection; it is not recorded as a successful refresh.
 - Prompt mode for unknown licenses: False (use -PromptForUnknownLicenses or -NoPromptForUnknownLicenses to override).
 
 ## Git submodules / vendored submodules
@@ -26,8 +28,13 @@ Notes:
 |---|---|---|---|---|
 | CDT | CoACD | artem-ogre | [MPL-2.0](licenses/github/CDT-MPL-2.0.txt) | https://github.com/artem-ogre/CDT |
 | fastgltf v0.9.0 | FastGltfBridge | Sean Apeler | [MIT](licenses/nested/fastgltf v0.9.0-MIT.md) | https://github.com/spnda/fastgltf/tree/v0.9.0 |
+| Jolt v5.6.0 (browser static source) | Jolt browser native archives | Jorrit Rouwe | [MIT](licenses/nested/Jolt%20v5.6.0%20%28browser%20static%20source%29-MIT.txt) | https://github.com/jrouwe/JoltPhysics/tree/e77f175595e64cb44218cc9d9d56fc365ad0e36a |
+| joltc (browser static source) | Jolt browser native archives | Amer Koleci and Contributors | [MIT](licenses/nested/joltc%20%28browser%20static%20source%29-MIT.txt) | https://github.com/amerkoleci/joltc/tree/886e088675bae3a086f8318c7803f8ee962c2f2c |
+| JoltPhysicsSharp 2.22.0 (browser source) | Jolt browser managed binding | Amer Koleci and Contributors | [MIT](licenses/nested/JoltPhysicsSharp%202.22.0%20%28browser%20source%29-MIT.txt) | https://github.com/amerkoleci/JoltPhysicsSharp/tree/77a5be2dd30d587c1981dfcaf15851f18041b39c |
 | KaTeX v0.18.4 (including fonts and mhchem) | LocalAgentBroker.Tray | Khan Academy and contributors | [MIT AND Apache-2.0](licenses/nested/KaTeX v0.18.4 (including fonts and mhchem)-MIT AND Apache-2.0.txt) | https://github.com/KaTeX/KaTeX/tree/v0.18.4 |
 | markdown-it v15.0.0 (browser bundle) | LocalAgentBroker.Tray | Vitaly Puzrin, Alex Kocharin and contributors | [MIT AND BSD-2-Clause](licenses/nested/markdown-it v15.0.0 (browser bundle)-MIT AND BSD-2-Clause.txt) | https://github.com/markdown-it/markdown-it/tree/15.0.0 |
+| Playwright 1.63.0 (browser validation tooling) | Tools/BrowserSmoke; development and CI only | Microsoft Corporation | [Apache-2.0](licenses/Playwright-1.63.0.txt) | https://github.com/microsoft/playwright/tree/v1.63.0 |
+| Slang 2026.8 (shader compiler tooling) | Tools/ShaderCooker; cook time only | Slang project contributors | [Apache-2.0 WITH LLVM-exception](licenses/Slang-2026.8.txt) | https://github.com/shader-slang/slang/tree/v2026.8 |
 | simdjson v3.12.3 | FastGltfBridge | simdjson authors | [Apache-2.0](licenses/nested/simdjson v3.12.3-Apache-2.0.txt) | https://github.com/simdjson/simdjson/tree/v3.12.3 |
 | Vulkan Memory Allocator v3.3.0 | VulkanMemoryAllocatorBridge | Advanced Micro Devices, Inc. (GPUOpen) | [MIT](licenses/nested/Vulkan Memory Allocator v3.3.0-MIT.txt) | https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/tree/v3.3.0 |
 
@@ -69,7 +76,7 @@ Notes:
 | SharpCompress | 0.50.3 | adamhathcock | [MIT](licenses/nuget/SharpCompress-0.50.3-MIT.txt) | XREngine.Editor.csproj |
 | SharpFont.Dependencies | 2.6.0 | Robmaister | [FreeType License (FTL)](licenses/nuget/SharpFont.Dependencies-2.6.0-FreeType License (FTL).txt) | XREngine.Runtime.Text.FreeType.csproj |
 | SharpFont.NetStandard | 1.0.5 | vonderborch | [MIT](licenses/nuget/SharpFont.NetStandard-1.0.5-MIT.txt) | XREngine.Runtime.Text.FreeType.csproj |
-| SharpZipLib | 1.4.2 | icsharpcode | [MIT](licenses/nuget/SharpZipLib-1.4.2-MIT.txt) | XREngine.Data.csproj |
+| SharpZipLib | 1.4.2 | icsharpcode | [MIT](licenses/nuget/SharpZipLib-1.4.2-MIT.txt) | XREngine.Runtime.Platform.Desktop.csproj |
 | Shouldly | 4.3.0 | shouldly | [BSD-3-Clause](licenses/nuget/Shouldly-4.3.0-BSD-3-Clause.txt) | XREngine.HeadlessTests.csproj, XREngine.UnitTests.csproj |
 | Silk.NET | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET-2.23.0-MIT.txt) | XREngine.Editor.csproj |
 | Silk.NET.Core | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Core-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.IO.DirectStorage.csproj, XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.Runtime.Rendering.Vulkan.csproj, XREngine.UnitTests.csproj |

@@ -6,6 +6,9 @@ namespace XREngine
 {
     public abstract class FileMap : IDisposable
     {
+        private static readonly Action<string, string> ReportFallback =
+            static (path, tempPath) => Trace.WriteLine($"File at {path} is in use; creating temporary copy at {tempPath}.");
+
         protected VoidPtr _addr;
         protected long _length;
         protected string? _path;
@@ -36,42 +39,43 @@ namespace XREngine
             => FromFile(path, prot, offset, length, FileOptions.RandomAccess);
         public static FileMap FromFile(string path, FileMapProtect prot, long offset, long length, FileOptions options)
         {
-            FileStream stream;
+            RuntimeAssetReadServices.EnsureHostFileAccess("File mapping");
+            IFileMappingBackend backend = FileMappingServices.Required;
+            return FromFileCore(path, prot, offset, length, options, backend);
+        }
+
+        internal static FileMap FromFile(string path, FileMapProtect prot, IFileMappingBackend backend)
+        {
+            RuntimeAssetReadServices.EnsureHostFileAccess("File mapping");
+            return FromFileCore(path, prot, 0, 0, FileOptions.RandomAccess, backend);
+        }
+
+        private static FileMap FromFileCore(string path, FileMapProtect prot, long offset, long length, FileOptions options, IFileMappingBackend backend)
+        {
+            FileStream stream = backend.OpenFile(path, prot == FileMapProtect.ReadWrite, options, ReportFallback);
             FileMap map;
             try
             {
-                if (!File.Exists(path))
-                    stream = File.Create(path, 8, options);
-                else
-                    stream = new FileStream(path, FileMode.Open, (prot == FileMapProtect.ReadWrite) ? FileAccess.ReadWrite : FileAccess.Read, FileShare.Read, 8, options);
-            }
-            catch //File is currently in use, but we can copy it to a temp location and read that
-            {
-                string tempPath = Path.GetTempFileName();
-                Trace.WriteLine($"File at {path} is in use; creating temporary copy at {tempPath}.");
-                File.Copy(path, tempPath, true);
-                stream = new FileStream(tempPath, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 8, options | FileOptions.DeleteOnClose);
-            }
-            try
-            {
-                map = FromStreamInternal(stream, prot, offset, length);
+                map = FromStreamInternal(stream, prot, offset, length, backend);
             }
             catch (Exception)
             {
                 stream.Dispose();
                 throw;
             }
-            map._path = path; //In case we're using a temp file
+            map._path = path;
             return map;
         }
         public static FileMap? FromTempFile(long length)
             => FromTempFile(length, out _);
         public static FileMap? FromTempFile(long length, out string path)
         {
-            FileStream stream = new FileStream(path = Path.GetTempFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 8, FileOptions.RandomAccess | FileOptions.DeleteOnClose);
+            RuntimeAssetReadServices.EnsureHostFileAccess("Temporary file mapping");
+            IFileMappingBackend backend = FileMappingServices.Required;
+            FileStream stream = backend.OpenTemporaryFile(out path);
             try
             {
-                return FromStreamInternal(stream, FileMapProtect.ReadWrite, 0, length);
+                return FromStreamInternal(stream, FileMapProtect.ReadWrite, 0, length, backend);
             }
             catch (Exception ex)
             {
@@ -87,6 +91,8 @@ namespace XREngine
             => FromStream(stream, prot, 0, 0);
         public static FileMap FromStream(FileStream stream, FileMapProtect prot, long offset, long length)
         {
+            RuntimeAssetReadServices.EnsureHostFileAccess("File stream mapping");
+            IFileMappingBackend backend = FileMappingServices.Required;
             //FileStream newStream = new FileStream(stream.Name, FileMode.Open, prot == FileMapProtect.Read ? FileAccess.Read : FileAccess.ReadWrite, FileShare.Read, 8, FileOptions.RandomAccess);
             //try { return FromStreamInternal(newStream, prot, offset, length); }
             //catch (Exception x) { newStream.Dispose(); throw x; }
@@ -96,10 +102,16 @@ namespace XREngine
             else
                 length = length.ClampMax(stream.Length);
 
-            return new ProviderFileMap(FileMappingServices.Required.Map(stream, prot == FileMapProtect.ReadWrite, offset, length), stream, ownsStream: false);
+            return new ProviderFileMap(backend.Map(stream, prot == FileMapProtect.ReadWrite, offset, length), stream, ownsStream: false);
         }
 
         public static FileMap FromStreamInternal(FileStream stream, FileMapProtect prot, long offset, long length)
+        {
+            RuntimeAssetReadServices.EnsureHostFileAccess("File stream mapping");
+            return FromStreamInternal(stream, prot, offset, length, FileMappingServices.Required);
+        }
+
+        private static FileMap FromStreamInternal(FileStream stream, FileMapProtect prot, long offset, long length, IFileMappingBackend backend)
         {
             if (length == 0)
                 length = stream.Length;
@@ -108,7 +120,7 @@ namespace XREngine
 
             length = length.ClampMin(stream.Length);
 
-            return new ProviderFileMap(FileMappingServices.Required.Map(stream, prot == FileMapProtect.ReadWrite, offset, length), stream, ownsStream: true);
+            return new ProviderFileMap(backend.Map(stream, prot == FileMapProtect.ReadWrite, offset, length), stream, ownsStream: true);
         }
     }
 }

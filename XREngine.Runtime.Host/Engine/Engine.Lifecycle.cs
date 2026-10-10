@@ -232,6 +232,10 @@ namespace XREngine
         /// </summary>
         public static void BlockWithoutRendering()
         {
+            if (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser())
+                throw new InvalidOperationException(
+                    "BlockWithoutRendering requires threaded engine loops; a caller-thread host must drive StepFrame.");
+
             Debug.Out("Blocking without local rendering.");
             while (IsEngineStillActive())
             {

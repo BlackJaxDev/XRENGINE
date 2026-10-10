@@ -22,6 +22,8 @@
   href: vr-development.md
 - name: Finalized Game Builds And Asset Cooking
   href: finalized-game-builds.md
+- name: Browser Game Builds And Static Publishing
+  href: browser-game-builds.md
 - name: Shader Editor
   href: editor/shader-editor.md
 - name: Prefab Workflow

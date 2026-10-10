@@ -23,6 +23,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     public const string LegacyProjectGuid = "FAE04EC0-301F-11D3-BF4B-00C04F79EFBC";
     public const string ModernProjectGuid = "9A19103F-16F7-4668-BE54-9A1E7A4F7556";
     public const string TargetFramework = "net10.0-windows7.0";
+    public const string GameTargetFramework = "net10.0";
 
     public const string Config_Debug = "Debug";
     public const string Config_Release = "Release";
@@ -177,8 +178,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string[] platforms = [Platform_AnyCPU, Platform_x64];
 
         // Get the engine assembly references so the game code can access engine types
-        string[] engineAssemblies = GetEngineAssemblyPaths();
-        (string name, string version)[] enginePackages = GetEngineRuntimePackageReferences();
+        string[] engineAssemblies = GetPortableEngineAssemblyPaths();
+        (string name, string version)[] enginePackages = GetEngineRuntimePackageReferences(portableOnly: true);
 
         CreateCSProj(sourceRootFolder, dllProjPath, projectName, false, true, true, true, false, true, true, builds, platforms,
             packageReferences: enginePackages,
@@ -253,20 +254,20 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             new XAttribute("Sdk", "Microsoft.NET.Sdk"),
             new XElement("PropertyGroup",
                 new XElement("OutputType", executable ? "Exe" : "Library"),
-                new XElement("TargetFramework", TargetFramework),
+                new XElement("TargetFramework", executable ? TargetFramework : GameTargetFramework),
                 new XElement("RootNamespace", rootNamespace),
                 new XElement("AssemblyName", assemblyName ?? Path.GetFileNameWithoutExtension(projectFilePath)),
                 new XElement("ImplicitUsings", implicitUsings ? "enable" : "disable"),
                 new XElement("EnableDefaultCompileItems", "false"),
                 new XElement("CopyLocalLockFileAssemblies", "true"),
                 new XElement("AllowUnsafeBlocks", allowUnsafeBlocks ? "true" : "false"),
-                new XElement("PublishAot", aot ? "true" : "false"),
+                new XElement("PublishAot", executable && aot ? "true" : "false"),
                 new XElement("LangVersion", languageVersion), //https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/configure-language-version
                 new XElement("Nullable", nullableEnable ? "enable" : "disable"),
                 new XElement("Platforms", string.Join(";", platforms)),
-                new XElement("PublishSingleFile", publishSingleFile ? "true" : "false"), //https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview?tabs=cli
-                new XElement("SelfContained", selfContained ? "true" : "false"),
-                new XElement("RuntimeIdentifier", "win-x64"),
+                new XElement("PublishSingleFile", executable && publishSingleFile ? "true" : "false"), //https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview?tabs=cli
+                new XElement("SelfContained", executable && selfContained ? "true" : "false"),
+                executable ? new XElement("RuntimeIdentifier", "win-x64") : null,
                 new XElement("BaseOutputPath", "Build"),
                 new XElement("ServerGarbageCollection", "false"),
                 new XElement("ConcurrentGarbageCollection", "true"),
@@ -280,8 +281,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             {
                 content.Add(new XElement("PropertyGroup",
                     new XAttribute("Condition", $" '$(Configuration)|$(Platform)' == '{build}|{platform}' "),
-                    new XElement("IsTrimmable", "True"),
-                    new XElement("IsAotCompatible", "True"),
+                    new XElement("IsTrimmable", executable && aot ? "True" : "False"),
+                    new XElement("IsAotCompatible", executable && aot ? "True" : "False"),
                     new XElement("Optimize", "False"),
                     new XElement("DebugType", "embedded")
                 ));
@@ -289,6 +290,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         
         content.Add(new XElement("ItemGroup",
             Directory.GetFiles(sourceRootFolder, "*.cs", SearchOption.AllDirectories)
+                .Where(file => !Path.GetRelativePath(sourceRootFolder, file).Replace('\\', '/').Split('/').Contains("Editor", StringComparer.OrdinalIgnoreCase))
                 .Select(file => new XElement("Compile", new XAttribute("Include", file)))
         ));
 
@@ -474,6 +476,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         {
             string[] candidatePaths =
             [
+                Path.Combine(buildRoot, config, platform, GameTargetFramework, dllName),
+                Path.Combine(buildRoot, config, GameTargetFramework, dllName),
                 Path.Combine(buildRoot, config, platform, TargetFramework, dllName),
                 Path.Combine(buildRoot, platform, config, TargetFramework, dllName),
                 Path.Combine(buildRoot, config, TargetFramework, dllName),
@@ -502,7 +506,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             }
         }
 
-        return Path.Combine(primaryBuildRoot, config, platform, TargetFramework, dllName);
+        return Path.Combine(primaryBuildRoot, config, platform, GameTargetFramework, dllName);
     }
 
     #endregion
@@ -582,7 +586,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             settings.PublishLauncherAsNativeAot ? [] : GetEngineRuntimePackageReferences(),
             rendererBackendSelection,
             bootstrapProjectPath,
-            includeGameProject: gameProjectPath);
+            includeGameProject: gameProjectPath,
+            includeDesktopHostProject: ResolveDesktopHostProject());
 
         if (settings.PublishLauncherAsNativeAot)
         {
@@ -801,12 +806,21 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         return [.. validPaths];
     }
 
-    private static (string name, string version)[] GetEngineRuntimePackageReferences()
+    private static string[] GetPortableEngineAssemblyPaths()
+        => [.. GetEngineAssemblyPaths().Where(path => IsPortableEngineLibrary(Path.GetFileNameWithoutExtension(path)))];
+
+    private static bool IsPortableEngineLibrary(string name)
+        => name is "XREngine.Data" or "XREngine.Extensions" or "XREngine.Animation" or "XREngine.Audio"
+            or "XREngine.Input" or "XREngine.Modeling" or "XREngine.Runtime.Core" or "XREngine.Runtime.Host"
+            or "XREngine.Runtime.Rendering" or "XREngine.Runtime.AudioIntegration" or "XREngine.Runtime.InputIntegration"
+            or "XREngine.Runtime.AnimationIntegration" or "XREngine.Runtime.ModelingIntegration";
+
+    private static (string name, string version)[] GetEngineRuntimePackageReferences(bool portableOnly = false)
     {
         string? depsPath = ResolveEditorDependencyManifestPath();
         return depsPath is null
             ? []
-            : ReadEnginePackageReferencesFromDeps(depsPath);
+            : ReadEnginePackageReferencesFromDeps(depsPath, portableOnly);
     }
 
     private static string? ResolveEditorDependencyManifestPath()
@@ -822,7 +836,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             .FirstOrDefault();
     }
 
-    internal static (string name, string version)[] ReadEnginePackageReferencesFromDeps(string depsJsonPath)
+    internal static (string name, string version)[] ReadEnginePackageReferencesFromDeps(string depsJsonPath, bool portableOnly = false)
     {
         if (!File.Exists(depsJsonPath))
             return [];
@@ -858,7 +872,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
 
         Dictionary<string, string> enginePackageReferences = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> visitedLibraries = new(StringComparer.OrdinalIgnoreCase);
-        Queue<string> libraryQueue = new(targetLibraries.Keys.Where(IsRuntimeEngineLibrary));
+        Queue<string> libraryQueue = new(targetLibraries.Keys.Where(key => IsRuntimeEngineLibrary(key)
+            && (!portableOnly || IsPortableEngineLibrary(key.Split('/')[0]))));
 
         while (libraryQueue.TryDequeue(out string? libraryKey))
         {
@@ -881,7 +896,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     enginePackageReferences[dependency.Name] = packageVersion;
                     EnqueueLibrary(dependency.Name, packageVersion);
                 }
-                else if (IsRuntimeEngineLibrary($"{dependency.Name}/{dependencyVersion}"))
+                else if (IsRuntimeEngineLibrary($"{dependency.Name}/{dependencyVersion}")
+                    && (!portableOnly || IsPortableEngineLibrary(dependency.Name)))
                 {
                     EnqueueLibrary(dependency.Name, dependencyVersion);
                 }
@@ -935,7 +951,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         IReadOnlyCollection<(string name, string version)> packageReferences,
         string rendererBackendSelection,
         string? bootstrapProjectPath,
-        string? includeGameProject)
+        string? includeGameProject,
+        string? includeDesktopHostProject = null)
     {
         string projectDirectory = Path.GetDirectoryName(projectFilePath) ?? AppContext.BaseDirectory;
         Directory.CreateDirectory(projectDirectory);
@@ -1008,6 +1025,11 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 new XAttribute("Include", relativeGameProjectPath)));
         }
 
+        if (!string.IsNullOrWhiteSpace(includeDesktopHostProject))
+            projectReferences.Add(new XElement("ProjectReference", new XAttribute("Include",
+                Path.GetRelativePath(projectDirectory, includeDesktopHostProject)),
+                new XAttribute("AdditionalProperties", $"XREngineGameProjectReference={includeGameProject}")));
+
         if (projectReferences.Count > 0)
             project.Root?.Add(new XElement("ItemGroup", projectReferences));
 
@@ -1067,7 +1089,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string[] targets,
         IReadOnlyDictionary<string, string?>? extraProperties,
         out string? log,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool singleNode = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var startInfo = new DiagnosticsProcessStartInfo("dotnet")
@@ -1092,6 +1115,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         startInfo.ArgumentList.Add(projectFilePath);
         startInfo.ArgumentList.Add("/restore");
         startInfo.ArgumentList.Add("/nologo");
+        if (singleNode)
+            startInfo.ArgumentList.Add("/m:1");
         startInfo.ArgumentList.Add($"/t:{string.Join(";", targets)}");
         startInfo.ArgumentList.Add($"/p:Configuration={configuration}");
         startInfo.ArgumentList.Add($"/p:Platform={platform}");
@@ -1255,6 +1280,13 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("#else");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);");
         sb.AppendLine("#endif");
+        string? desktopRegistration = Engine.CurrentProject?.DesktopHostRegistrationType;
+        if (!string.IsNullOrWhiteSpace(desktopRegistration))
+        {
+            if (ResolveDesktopHostProject() is null || !System.Text.RegularExpressions.Regex.IsMatch(desktopRegistration, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$"))
+                throw new InvalidOperationException("Desktop host registration requires a valid host project and fully qualified type name.");
+            sb.AppendLine($"        global::{desktopRegistration}.Register();");
+        }
         if (!string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
         {
             string bootstrapTypeName = gameLaunchBootstrapTypeName.Replace('+', '.');
@@ -1262,6 +1294,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             sb.AppendLine("        using IDisposable applicationServices = RuntimeApplicationBootstrap.Install(");
             sb.AppendLine("            gameBootstrap.ApplicationProfile");
             sb.AppendLine("            ?? throw new InvalidOperationException(\"The game launch bootstrap returned no application profile.\"));");
+            sb.AppendLine("        gameBootstrap.InitializeRegistrations();");
         }
         else
         {

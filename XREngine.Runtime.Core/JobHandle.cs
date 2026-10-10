@@ -25,10 +25,42 @@ namespace XREngine
         public Job? Job => _job;
 
         public void Wait(CancellationToken cancellationToken = default)
-            => _completion?.Wait(cancellationToken);
+        {
+            if (_job?.UsesCallerThreadExecutor == true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ObserveCallerThreadCompletion();
+                return;
+            }
+
+            _completion?.Wait(cancellationToken);
+        }
 
         public bool Wait(TimeSpan timeout)
-            => _completion?.Wait(timeout) ?? true;
+        {
+            if (_job?.UsesCallerThreadExecutor == true)
+            {
+                ObserveCallerThreadCompletion();
+                return true;
+            }
+
+            return _completion?.Wait(timeout) ?? true;
+        }
+
+        private void ObserveCallerThreadCompletion()
+        {
+            if (_completion is null)
+                return;
+            if (!_completion.IsCompleted)
+            {
+                throw new NotSupportedException(
+                    "A caller-thread job cannot be synchronously waited on. Await WaitAsync while the host continues pumping jobs.");
+            }
+
+            // Completion has been observed, so retrieving a terminal result
+            // cannot block the host thread or prevent scheduler progress.
+            _completion.GetAwaiter().GetResult();
+        }
 
         public Task WaitAsync(CancellationToken cancellationToken = default)
             => _completion?.WaitAsync(cancellationToken) ?? Task.CompletedTask;

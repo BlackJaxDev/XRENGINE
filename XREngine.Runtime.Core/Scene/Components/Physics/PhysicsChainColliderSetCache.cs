@@ -19,6 +19,9 @@ internal sealed class PhysicsChainColliderSetCache
 
     public int UniqueSetCount { get; private set; }
 
+    internal static void ReleaseWorld(PhysicsChainWorld world)
+        => WorldCaches.Remove(world);
+
     public static PhysicsChainColliderSetCache ForWorld(PhysicsChainWorld world)
     {
         ArgumentNullException.ThrowIfNull(world);

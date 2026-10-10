@@ -4,7 +4,6 @@ XREngine.Data	K4os.Compression.LZ4	1.3.8	Managed LZ4 data compression.
 XREngine.Data	LZMA-SDK	22.1.1	Managed legacy LZMA archive decode and encode.
 XREngine.Data	MemoryPack	1.21.4	Generated managed serialization.
 XREngine.Data	NVorbis	0.10.5	Managed Vorbis decode for audio data.
-XREngine.Data	SharpZipLib	1.4.2	Managed archive extraction.
 XREngine.Data	System.IO.Hashing	10.0.10	Managed asset hash calculation.
 XREngine.Data	YamlDotNet	18.1.0	Managed asset YAML serialization.
 XREngine.Data	ZstdSharp.Port	0.8.8	Managed Zstandard compression.
@@ -24,3 +23,4 @@ XREngine.Runtime.Rendering	Silk.NET.Maths	2.23.0	Managed window extent and resiz
 XREngine.Runtime.Host	Newtonsoft.Json	13.0.4	Managed startup settings and snapshot JSON; interpreter metadata review only.
 XREngine.Runtime.Host	MemoryPack	1.21.4	Generated managed snapshot serialization.
 XREngine.Runtime.Host	YamlDotNet	18.1.0	Managed settings and snapshot YAML serialization; interpreter metadata review only.
+XREngine.Runtime.Physics.Jolt	JoltPhysicsSharp	2.22.0	Desktop-only condition retains approved package supply; browser uses reviewed managed-source project

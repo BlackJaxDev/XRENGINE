@@ -5,6 +5,8 @@ namespace XREngine.Components.Scene.Mesh;
 
 public partial class RenderableMesh
 {
+    internal IRenderCommandMesh MaterialOutlineCommand => _materialOutlineCommand;
+
     private readonly RenderCommandMesh3D _materialOutlineCommand = new(0)
     {
         Enabled = false,

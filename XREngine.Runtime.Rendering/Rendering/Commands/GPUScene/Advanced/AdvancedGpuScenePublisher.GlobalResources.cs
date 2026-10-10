@@ -266,6 +266,7 @@ public sealed partial class AdvancedGpuScenePublisher
         for (int probeIndex = 0; probeIndex < _publishedProbeCount; ++probeIndex)
             if (_publishedProbeSeenStamps[probeIndex] != _publishedProbeSeenGeneration)
                 probeReleaseCount += 2;
+        if (!TryPreflightAuthoredDecals(capture.AuthoredDecals.Rows, out reason)) return false;
         int materialAcquireCount = _resourceAcquireCount;
         EnsureGlobalResourceTransitionCapacity(
             checked(materialAcquireCount + shadowAcquireCount + probeAcquireCount),
@@ -367,6 +368,7 @@ public sealed partial class AdvancedGpuScenePublisher
 
     private void ApplyPreflightedGlobalResources()
     {
+        ApplyPreflightedAuthoredDecals();
         AdvancedGlobalResourceDatabase resources = Database.Resources;
         ApplyPreflightedWorldAmbient();
         for (int lightIndex = 0; lightIndex < _plannedLightCount; ++lightIndex)

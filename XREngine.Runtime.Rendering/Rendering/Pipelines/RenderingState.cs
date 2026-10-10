@@ -59,6 +59,8 @@ public sealed partial class XRRenderPipelineInstance
         /// May be null if rendering directly to a framebuffer.
         /// </summary>
         public XRViewport? WindowViewport { get; private set; }
+        /// <summary>The world selected by this render invocation, which may override the viewport's world.</summary>
+        public IRuntimeRenderWorld? RenderingWorld { get; private set; }
         /// <summary>
         /// The scene being rendered.
         /// </summary>
@@ -144,6 +146,7 @@ public sealed partial class XRRenderPipelineInstance
         /// The logical view set remains unchanged for history-ledger ownership.
         /// </summary>
         internal RenderFrameViewSet? TemporalAuthoringViewSet { get; set; }
+        RenderFrameViewSet? IRuntimeRenderCommandExecutionState.TemporalAuthoringViewSet => TemporalAuthoringViewSet;
         /// <summary>
         /// Frame-owned publication of stable render-side scene buffers and logical views.
         /// </summary>
@@ -256,6 +259,7 @@ public sealed partial class XRRenderPipelineInstance
             RenderOutputRequest viewHistoryOutputRequest = default)
             => PushMainAttributesWithFrozenDesktopHistory(
                 viewport,
+                viewport?.World,
                 scene,
                 camera,
                 stereoRightEyeCamera,
@@ -276,6 +280,7 @@ public sealed partial class XRRenderPipelineInstance
 
         internal StateObject PushMainAttributesWithFrozenDesktopHistory(
             XRViewport? viewport,
+            IRuntimeRenderWorld? renderingWorld,
             VisualScene? scene,
             XRCamera? camera,
             XRCamera? stereoRightEyeCamera,
@@ -294,6 +299,7 @@ public sealed partial class XRRenderPipelineInstance
             RenderFrameViewDescriptor? frozenDesktopView = null,
             RenderFrameViewHistoryCandidateToken frozenHistoryCandidate = default)
         {
+            IRuntimeRenderWorld? previousRenderingWorld = RenderingWorld;
             WindowViewport = viewport;
             Scene = scene;
             SceneCamera = camera;
@@ -321,9 +327,11 @@ public sealed partial class XRRenderPipelineInstance
             int sceneDepth = _renderingScenes.Count;
             int cameraDepth = _renderingCameras.Count;
             int renderAreaDepth = _renderRegionStack.Count;
-            int mainAreaDepth = _mainAttributeRenderAreaPushed.Count;
+            int cropAreaDepth = _cropRegionStack.Count;
+            int mainAreaDepth = _mainAttributeRenderAreaDepths.Count;
             try
             {
+                RenderingWorld = renderingWorld;
                 RenderFrameViewSet? capturedViews = camera is null
                     ? null
                     : stereoPass && RenderFrameViewSetPublication.TryGetLatest(
@@ -363,18 +371,21 @@ public sealed partial class XRRenderPipelineInstance
                     _renderingScenes.Push(Scene);
 
                 if (SceneCamera is not null)
-                    _renderingCameras.Push(SceneCamera);
+                    _renderingCameras.Push((SceneCamera, null));
 
                 // Visibility collection must capture logical view state without touching the
                 // renderer's global viewport/scissor tracker. Deferred Vulkan recording can
                 // run while collection is building the next frame, so mutating that tracker
                 // here would let a collection viewport leak into an unrelated mesh draw.
-                _mainAttributeRenderAreaPushed.Push(applyRenderArea && PushInitialMainRenderArea(viewport, target));
+                if (applyRenderArea)
+                    PushInitialMainRenderArea(viewport, target);
+                _mainAttributeRenderAreaDepths.Push((renderAreaDepth, cropAreaDepth, previousRenderingWorld));
 
                 return StateObject.New(PopMainAttributesAction, this);
             }
             catch
             {
+                RenderingWorld = previousRenderingWorld;
                 // Capture can mint a resolved candidate before snapshot acquisition
                 // or native viewport setup fails. It has not transferred to a
                 // backend reservation yet, so this scope still owns settlement.
@@ -387,16 +398,23 @@ public sealed partial class XRRenderPipelineInstance
                 while (_renderingViewports.Count > viewportDepth) _renderingViewports.Pop();
                 while (_renderingScenes.Count > sceneDepth) _renderingScenes.Pop();
                 while (_renderingCameras.Count > cameraDepth) _renderingCameras.Pop();
-                while (_mainAttributeRenderAreaPushed.Count > mainAreaDepth) _mainAttributeRenderAreaPushed.Pop();
+                while (_mainAttributeRenderAreaDepths.Count > mainAreaDepth) _mainAttributeRenderAreaDepths.Pop();
                 while (_renderRegionStack.Count > renderAreaDepth) PopRenderArea();
+                while (_cropRegionStack.Count > cropAreaDepth) PopCropArea();
                 throw;
             }
         }
 
         public void PopMainAttributes()
         {
-            if (_mainAttributeRenderAreaPushed.Count > 0 && _mainAttributeRenderAreaPushed.Pop())
-                PopRenderArea();
+            if (_mainAttributeRenderAreaDepths.TryPop(out var areaDepths))
+            {
+                RenderingWorld = areaDepths.PreviousWorld;
+                // Atomic backends can abort before queued pop commands execute.
+                // Release only this invocation's regions, retaining any enclosing scope.
+                while (_renderRegionStack.Count > areaDepths.Render) PopRenderArea();
+                while (_cropRegionStack.Count > areaDepths.Crop) PopCropArea();
+            }
 
             if (WindowViewport is not null)
                 _renderingViewports.Pop();
@@ -445,7 +463,7 @@ public sealed partial class XRRenderPipelineInstance
             LastVisibilityContentPolicy = ViewBatchContentPolicy.Exact;
         }
 
-        private readonly Stack<bool> _mainAttributeRenderAreaPushed = new();
+        private readonly Stack<(int Render, int Crop, IRuntimeRenderWorld? PreviousWorld)> _mainAttributeRenderAreaDepths = new();
 
         private bool PushInitialMainRenderArea(XRViewport? viewport, XRFrameBuffer? target)
         {
@@ -480,7 +498,7 @@ public sealed partial class XRRenderPipelineInstance
                 BoundingRectangle targetRegion = CreateFrameBufferRenderArea(target);
                 if (targetRegion.Width > 0 && targetRegion.Height > 0)
                 {
-                    PushRenderArea(targetRegion);
+                    PushRenderAreaState(targetRegion);
                     return true;
                 }
             }
@@ -495,7 +513,7 @@ public sealed partial class XRRenderPipelineInstance
             if (viewportRegion.Width <= 0 || viewportRegion.Height <= 0)
                 return false;
 
-            PushRenderArea(viewportRegion);
+            PushRenderAreaState(viewportRegion);
             return true;
         }
 
@@ -508,7 +526,7 @@ public sealed partial class XRRenderPipelineInstance
                     $"Region={region.X},{region.Y},{region.Width}x{region.Height}.");
             }
 
-            PushRenderArea(region);
+            PushRenderAreaState(region);
         }
 
         private static BoundingRectangle CreateFrameBufferRenderArea(XRFrameBuffer target)
@@ -705,16 +723,25 @@ public sealed partial class XRRenderPipelineInstance
         }
 
         public XRCamera? RenderingCamera
-            => _renderingCameras.TryPeek(out var c) ? c : null;
+            => _renderingCameras.TryPeek(out var entry) ? entry.Camera : null;
+        RenderFrameViewDescriptor? IRuntimeRenderCommandExecutionState.ScopedFrameView
+            => _renderingCameras.TryPeek(out var entry) ? entry.View : null;
         public bool HasRenderingCameraScope => _renderingCameras.Count > 0;
-        private readonly Stack<XRCamera?> _renderingCameras = new();
+        private readonly Stack<(XRCamera? Camera, RenderFrameViewDescriptor? View)> _renderingCameras = new();
         public StateObject PushRenderingCamera(XRCamera? camera)
         {
             PushRenderingCameraState(camera);
             return StateObject.New(PopRenderingCameraAction, this);
         }
         internal void PushRenderingCameraState(XRCamera? camera)
-            => _renderingCameras.Push(camera);
+        {
+            RenderFrameViewDescriptor? view = camera is not null &&
+                RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.WebGPU
+                ? RenderFrameViewSetCapture.CaptureScopedView(this, camera,
+                    (uint)Math.Max(1, CurrentRenderRegion.Width), (uint)Math.Max(1, CurrentRenderRegion.Height))
+                : null;
+            _renderingCameras.Push((camera, view));
+        }
         public void PopRenderingCamera()
             => _renderingCameras.Pop();
 

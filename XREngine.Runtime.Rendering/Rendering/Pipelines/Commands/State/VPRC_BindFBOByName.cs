@@ -9,10 +9,22 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_BindFBOByName : ViewportStateRenderCommand<VPRC_UnbindFBO>
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            requirements.RequireOperation("framebuffer");
+            if (ClearColor || ClearDepth) requirements.RequireOperation("attachment-clear");
+            if (ClearStencil) requirements.RequireOperation("stencil");
+            if (!Write) requirements.RequireOperation("framebuffer-read");
+        }
+
         public string? FrameBufferName { get; set; }
+        [System.ComponentModel.DefaultValue(true)]
         public bool Write { get; set; } = true;
+        [System.ComponentModel.DefaultValue(true)]
         public bool ClearColor { get; set; } = true;
+        [System.ComponentModel.DefaultValue(true)]
         public bool ClearDepth { get; set; } = true;
+        [System.ComponentModel.DefaultValue(true)]
         public bool ClearStencil { get; set; } = true;
 
         /// <summary>
@@ -32,6 +44,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// overriding <see cref="ClearDepth"/>.
         /// </summary>
         public Func<bool>? DynamicClearDepth { get; set; }
+
+        /// <summary>Describes the depth load operation for one immutable resource profile.</summary>
+        public Func<RenderGraphDescribeContext, bool>? DescribeClearDepth { get; set; }
 
         private sealed class TopologicalPassOrderCacheEntry
         {
@@ -222,7 +237,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             base.DescribeRenderPass(context);
             if (FrameBufferName is not null)
-                context.PushRenderTarget(FrameBufferName, Write, ClearColor, ClearDepth, ClearStencil);
+                context.PushRenderTarget(FrameBufferName, Write, ClearColor,
+                    DescribeClearDepth?.Invoke(context) ?? ClearDepth, ClearStencil);
         }
     }
 }

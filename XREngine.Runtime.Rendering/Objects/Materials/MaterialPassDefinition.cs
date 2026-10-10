@@ -25,6 +25,10 @@ public sealed record MaterialPassDefinition
     public string? VertexShaderPath { get; init; }
     public string? FragmentShaderPath { get; init; }
     public string[] VariantMacros { get; init; } = [];
+    /// <summary>Explicit modeled shader behavior installed by an exact target cook; default retains authored desktop stages.</summary>
+    public EngineMaterialSemanticIdentity ShaderBehavior { get; init; }
+    /// <summary>Exact whole-program companion for this pass in its owning cooked content catalog.</summary>
+    public string? CookedArtifactIdentity { get; init; }
     public RenderingParameters RenderOptions { get; init; } = new();
     public EMaterialPassCoverageRules CoverageRules { get; init; } = EMaterialPassCoverageRules.All;
     public float PolygonOffsetFactor { get; init; }

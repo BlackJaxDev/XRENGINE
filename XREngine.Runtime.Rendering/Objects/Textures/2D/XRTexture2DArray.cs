@@ -1,5 +1,6 @@
 using XREngine.Imaging;
 using MemoryPack;
+using XREngine.Core.Files;
 using System.Numerics;
 using XREngine.Data;
 using XREngine.Data.Rendering;
@@ -26,7 +27,12 @@ namespace XREngine.Rendering
 
         public XRTexture2DArray(params XRTexture2D[] textures)
         {
-            Textures = textures;
+            try { Textures = textures; }
+            catch
+            {
+                AbortFailedConstruction();
+                throw;
+            }
         }
         public XRTexture2DArray(uint count, uint width, uint height, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData = false)
         {
@@ -257,22 +263,67 @@ namespace XREngine.Rendering
 
         public override void Reload(string path)
             => Load3rdParty(path);
+
+        public override Task ReloadAsync(string path)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.ReloadAsync(path);
+        }
+
+        public override Task<bool> Load3rdPartyAsync(string filePath)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Load3rdPartyAsync(filePath);
+        }
+
+        public override Task<bool> Load3rdPartyAsync(string filePath, AssetImportContext context)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Load3rdPartyAsync(filePath, context);
+        }
+
+        public override Task<bool> Import3rdPartyAsync(string filePath, object? importOptions)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Import3rdPartyAsync(filePath, importOptions);
+        }
+
         public override bool Load3rdParty(string filePath)
         {
-            IReadOnlyList<RuntimeImage> frames = RuntimeImageCodecs.Require().DecodeFrames(File.ReadAllBytes(filePath));
-            Textures = new XRTexture2D[frames.Count];
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+            read.EnsureHostFileAccess("Texture array import");
+            byte[] bytes = read.ReadAllBytes(filePath);
+            IReadOnlyList<RuntimeImage> frames = RuntimeImageCodecs.Require().DecodeFrames(bytes);
+            XRTexture2D[]? textures = null;
             try
             {
+                textures = new XRTexture2D[frames.Count];
                 for (int i = 0; i < frames.Count; i++)
-                    Textures[i] = new(frames[i]);
+                    textures[i] = new(frames[i]);
+                using IDisposable publication = read.BeginPublication();
+                read.EnsureCurrent();
+                AutoGenerateMipmaps = true;
+                Textures = textures;
+                return true;
+            }
+            catch
+            {
+                if (textures is not null)
+                {
+                    foreach (XRTexture2D? texture in textures)
+                    {
+                        if (texture is not null)
+                            texture.DiscardUnpublishedImportedImage();
+                    }
+                }
+                throw;
             }
             finally
             {
                 for (int i = 0; i < frames.Count; i++)
                     frames[i].Dispose();
             }
-            AutoGenerateMipmaps = true;
-            return true;
         }
 
         public delegate void DelAttachToFBO_OVRMultiView(XRFrameBuffer target, EFrameBufferAttachment attachment, int mipLevel, int offset, uint numViews);

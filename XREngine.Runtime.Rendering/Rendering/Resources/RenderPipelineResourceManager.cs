@@ -64,6 +64,7 @@ public sealed class RenderPipelineResourceManager
                     if (!specCompleted)
                         return true;
 
+                    generation.TransferMaterializingResourceOwnership(spec.Name);
                     generation.MaterializedSpecCount++;
                     materializedThisSlice++;
 
@@ -81,6 +82,12 @@ public sealed class RenderPipelineResourceManager
 
             generation.MarkReady();
             completed = true;
+            return true;
+        }
+        catch (RenderResourcePreparationPendingException)
+        {
+            // Receipt-driven backends resume this exact specification and its
+            // retained owners on the next slice. Pending is never a rollback.
             return true;
         }
         catch (Exception ex) when (IsExpectedBackendImageAllocationDeferral(ex))
@@ -243,7 +250,8 @@ public sealed class RenderPipelineResourceManager
         TextureResourceDescriptor descriptor = spec.ToDescriptor();
         generation.Registry.RegisterTextureDescriptor(descriptor);
 
-        if (generation.Registry.TryGetTexture(spec.Name, out _))
+        XRTexture? texture = generation.GetMaterializingResource<XRTexture>(spec.Name);
+        if (texture is null && generation.Registry.TryGetTexture(spec.Name, out _))
             return;
 
         if (spec.Factory is null)
@@ -253,7 +261,7 @@ public sealed class RenderPipelineResourceManager
             return;
         }
 
-        XRTexture texture = spec.Factory();
+        texture ??= generation.RetainMaterializingResource(spec.Name, spec.Factory());
         texture.Name = spec.Name;
         if (string.IsNullOrWhiteSpace(texture.SamplerName))
             texture.SamplerName = spec.Name;
@@ -272,7 +280,8 @@ public sealed class RenderPipelineResourceManager
         if (!generation.Registry.TryGetTexture(spec.SourceTextureName, out XRTexture? sourceTexture) || sourceTexture is null)
             throw new InvalidOperationException($"Texture view '{spec.Name}' is missing source texture '{spec.SourceTextureName}'.");
 
-        if (generation.Registry.TryGetTexture(spec.Name, out _))
+        XRTexture? view = generation.GetMaterializingResource<XRTexture>(spec.Name);
+        if (view is null && generation.Registry.TryGetTexture(spec.Name, out _))
             return;
 
         if (spec.Factory is null)
@@ -282,7 +291,7 @@ public sealed class RenderPipelineResourceManager
             return;
         }
 
-        XRTexture view = spec.Factory();
+        view ??= generation.RetainMaterializingResource(spec.Name, spec.Factory());
         view.Name = spec.Name;
         if (string.IsNullOrWhiteSpace(view.SamplerName))
             view.SamplerName = spec.Name;
@@ -310,7 +319,8 @@ public sealed class RenderPipelineResourceManager
         RenderBufferResourceDescriptor descriptor = spec.ToDescriptor();
         generation.Registry.RegisterRenderBufferDescriptor(descriptor);
 
-        if (generation.Registry.TryGetRenderBuffer(spec.Name, out _))
+        XRRenderBuffer? renderBuffer = generation.GetMaterializingResource<XRRenderBuffer>(spec.Name);
+        if (renderBuffer is null && generation.Registry.TryGetRenderBuffer(spec.Name, out _))
             return;
 
         if (spec.Factory is null)
@@ -320,7 +330,7 @@ public sealed class RenderPipelineResourceManager
             return;
         }
 
-        XRRenderBuffer renderBuffer = spec.Factory();
+        renderBuffer ??= generation.RetainMaterializingResource(spec.Name, spec.Factory());
         renderBuffer.Name = spec.Name;
         instance.SetRenderBuffer(renderBuffer, descriptor);
     }
@@ -333,7 +343,8 @@ public sealed class RenderPipelineResourceManager
         BufferResourceDescriptor descriptor = spec.ToDescriptor();
         generation.Registry.RegisterBufferDescriptor(descriptor);
 
-        if (generation.Registry.TryGetBuffer(spec.Name, out _))
+        XRDataBuffer? buffer = generation.GetMaterializingResource<XRDataBuffer>(spec.Name);
+        if (buffer is null && generation.Registry.TryGetBuffer(spec.Name, out _))
             return;
 
         if (spec.Factory is null)
@@ -343,7 +354,7 @@ public sealed class RenderPipelineResourceManager
             return;
         }
 
-        XRDataBuffer buffer = spec.Factory();
+        buffer ??= generation.RetainMaterializingResource(spec.Name, spec.Factory());
         buffer.AttributeName = spec.Name;
         instance.SetBuffer(buffer, descriptor);
     }
@@ -356,13 +367,13 @@ public sealed class RenderPipelineResourceManager
         FrameBufferResourceDescriptor descriptor = spec.ToDescriptor();
         generation.Registry.RegisterFrameBufferDescriptor(descriptor);
 
-        if (generation.Registry.TryGetFrameBuffer(spec.Name, out _))
+        XRFrameBuffer? frameBuffer = generation.GetMaterializingResource<XRFrameBuffer>(spec.Name);
+        if (frameBuffer is null && generation.Registry.TryGetFrameBuffer(spec.Name, out _))
             return true;
 
         ValidateFrameBufferAttachmentDependencies(generation, spec);
 
-        XRFrameBuffer? frameBuffer;
-        if (spec.IncrementalFactory is not null)
+        if (frameBuffer is null && spec.IncrementalFactory is not null)
         {
             IIncrementalFrameBufferFactory incrementalFactory = generation.GetOrCreateIncrementalFrameBufferFactory(
                 spec.Name,
@@ -370,15 +381,16 @@ public sealed class RenderPipelineResourceManager
             if (!incrementalFactory.MoveNext(out frameBuffer))
                 return false;
 
-            generation.TransferIncrementalFrameBufferFactoryOwnership(spec.Name);
             if (frameBuffer is null)
                 throw new InvalidOperationException($"Incremental framebuffer factory '{spec.Name}' completed without a framebuffer.");
+            generation.RetainMaterializingResource(spec.Name, frameBuffer);
+            generation.TransferIncrementalFrameBufferFactoryOwnership(spec.Name);
         }
-        else if (spec.Factory is not null)
+        else if (frameBuffer is null && spec.Factory is not null)
         {
-            frameBuffer = spec.Factory();
+            frameBuffer = generation.RetainMaterializingResource(spec.Name, spec.Factory());
         }
-        else
+        else if (frameBuffer is null)
         {
             if (spec.Required && !CanCommitWithoutInstance(generation, spec))
                 throw new InvalidOperationException($"Framebuffer '{spec.Name}' has no factory and no concrete instance.");
@@ -386,6 +398,8 @@ public sealed class RenderPipelineResourceManager
         }
 
         frameBuffer.Name = spec.Name;
+        if (frameBuffer is XRQuadFrameBuffer quad)
+            quad.PrepareForInitialRendering();
         ValidateFrameBufferInstance(generation, spec, frameBuffer);
         instance.SetFBO(frameBuffer, descriptor);
         return true;
@@ -403,11 +417,11 @@ public sealed class RenderPipelineResourceManager
             Array.Empty<FrameBufferAttachmentDescriptor>());
         generation.Registry.RegisterFrameBufferDescriptor(descriptor);
 
-        if (generation.Registry.TryGetFrameBuffer(spec.Name, out _))
+        XRFrameBuffer? frameBuffer = generation.GetMaterializingResource<XRFrameBuffer>(spec.Name);
+        if (frameBuffer is null && generation.Registry.TryGetFrameBuffer(spec.Name, out _))
             return true;
 
-        XRFrameBuffer? frameBuffer;
-        if (spec.IncrementalFactory is not null)
+        if (frameBuffer is null && spec.IncrementalFactory is not null)
         {
             IIncrementalFrameBufferFactory incrementalFactory = generation.GetOrCreateIncrementalFrameBufferFactory(
                 spec.Name,
@@ -415,25 +429,27 @@ public sealed class RenderPipelineResourceManager
             if (!incrementalFactory.MoveNext(out frameBuffer))
                 return false;
 
-            generation.TransferIncrementalFrameBufferFactoryOwnership(spec.Name);
             if (frameBuffer is null)
                 throw new InvalidOperationException($"Incremental quad material factory '{spec.Name}' completed without a framebuffer.");
+            generation.RetainMaterializingResource(spec.Name, frameBuffer);
+            generation.TransferIncrementalFrameBufferFactoryOwnership(spec.Name);
         }
-        else if (spec.Factory is not null)
+        else if (frameBuffer is null && spec.Factory is not null)
         {
-            frameBuffer = spec.Factory();
+            frameBuffer = generation.RetainMaterializingResource(spec.Name, spec.Factory());
         }
-        else
+        else if (frameBuffer is null)
         {
             if (spec.Required)
                 throw new InvalidOperationException($"Quad material '{spec.Name}' has no factory.");
             return true;
         }
 
-        if (frameBuffer is not XRQuadFrameBuffer)
+        if (frameBuffer is not XRQuadFrameBuffer quad)
             throw new InvalidOperationException($"Quad material '{spec.Name}' factory must produce an XRQuadFrameBuffer.");
 
         frameBuffer.Name = spec.Name;
+        quad.PrepareForInitialRendering();
         instance.SetFBO(frameBuffer, descriptor);
         return true;
     }

@@ -47,6 +47,32 @@ namespace XREngine.Rendering.UI
 
         public UIBoundableTransform BoundableTransform => TransformAs<UIBoundableTransform>(true)!;
 
+        /// <summary>Control semantics available to platform accessibility services.</summary>
+        public virtual EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.None;
+
+        private string? _accessibilityLabel;
+        /// <summary>Optional name used in place of the component or node name.</summary>
+        public string? AccessibilityLabel
+        {
+            get => _accessibilityLabel;
+            set => SetField(ref _accessibilityLabel, value);
+        }
+
+        /// <summary>The name presented by a platform accessibility service.</summary>
+        public virtual string AccessibilityName => AccessibilityLabel is { Length: > 0 } label
+            ? label : Name ?? SceneNode?.Name ?? "Engine control";
+
+        /// <summary>Whether the control should be omitted from accessibility traversal.</summary>
+        public bool AccessibilityHidden
+        {
+            get => _accessibilityHidden;
+            set => SetField(ref _accessibilityHidden, value);
+        }
+        private bool _accessibilityHidden;
+
+        /// <summary>Activates a control through its native accessibility proxy.</summary>
+        public virtual bool AccessibilityActivate() => false;
+
         public event Action<UIInteractableComponent>? GotFocus;
         public event Action<UIInteractableComponent>? LostFocus;
         public event DelMouseMove? MouseMove;

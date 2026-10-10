@@ -15,6 +15,9 @@ namespace XREngine.Rendering.Info
 {
     public class RenderInfo3D : RenderInfo, IOctreeItem, IRuntimeRenderInfo3DRegistrationItem
     {
+        private IRuntimeRenderInfo3DRegistrationTarget? _registeredWorldInstance;
+        private bool _reconcilingWorldRegistration;
+
         public override ITreeNode? TreeNode => OctreeNode;
 
         /// <summary>Gets whether frozen draw flags can replace custom CPU collection policy.</summary>
@@ -257,24 +260,14 @@ namespace XREngine.Rendering.Info
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
-            base.OnPropertyChanged(propName, prev, field);
+            try { base.OnPropertyChanged(propName, prev, field); }
+            finally
+            {
+                if (propName is nameof(WorldInstance) or nameof(IsVisible))
+                    ReconcileWorldRegistration(disposing: false);
+            }
             switch (propName)
             {
-                case nameof(WorldInstance):
-                    if (IsVisible)
-                    {
-                        if (prev is IRuntimeRenderInfo3DRegistrationTarget prevInstance)
-                            prevInstance.RemoveRenderable3D(this);
-                        if (field is IRuntimeRenderInfo3DRegistrationTarget newInstance)
-                            newInstance.AddRenderable3D(this);
-                    }
-                    break;
-                case (nameof(IsVisible)):
-                    if (IsVisible)
-                        WorldInstance?.AddRenderable3D(this);
-                    else
-                        WorldInstance?.RemoveRenderable3D(this);
-                    break;
                 case nameof(CullingOffsetMatrix):
                 case nameof(LocalCullingVolume):
                     TryQueueOctreeMove();
@@ -285,6 +278,48 @@ namespace XREngine.Rendering.Info
                 case nameof(ReceivesShadows):
                     InvalidateRenderCommandsForOwnerState();
                     break;
+            }
+        }
+
+        protected override void ReleaseWorldRegistration()
+        {
+            ReconcileWorldRegistration(disposing: true);
+            ClearWorldRegistrationField();
+        }
+
+        private void ReconcileWorldRegistration(bool disposing)
+        {
+            if (_reconcilingWorldRegistration)
+                return;
+            _reconcilingWorldRegistration = true;
+            try
+            {
+                for (int attempt = 0; attempt < 16; attempt++)
+                {
+                    IRuntimeRenderInfo3DRegistrationTarget? desired =
+                        !disposing && !IsDisposalRequested && IsVisible ? WorldInstance : null;
+                    IRuntimeRenderInfo3DRegistrationTarget? registered = _registeredWorldInstance;
+                    if (ReferenceEquals(registered, desired))
+                        return;
+                    if (registered is not null)
+                    {
+                        registered.RemoveRenderable3D(this);
+                        _registeredWorldInstance = null;
+                        continue;
+                    }
+                    if (desired is not null)
+                    {
+                        // An add callback may publish and then throw. Retain the
+                        // attempted target so terminal disposal can retry removal.
+                        _registeredWorldInstance = desired;
+                        desired.AddRenderable3D(this);
+                    }
+                }
+                throw new InvalidOperationException("Render info world registration did not settle.");
+            }
+            finally
+            {
+                _reconcilingWorldRegistration = false;
             }
         }
 

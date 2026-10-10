@@ -8,6 +8,26 @@ namespace XREngine.Rendering;
 /// </summary>
 public static class RenderFrameViewSetCapture
 {
+    [ThreadStatic]
+    private static float? s_elapsedTimeOverride;
+
+    internal static float ResolveElapsedTime(float elapsedTime) => s_elapsedTimeOverride ?? elapsedTime;
+
+    /// <summary>Freezes shared view uniforms for a multi-frame scene capture without changing the engine clock.</summary>
+    public static ElapsedTimeScope PushElapsedTime(float? elapsedTime) => new(elapsedTime);
+
+    public readonly struct ElapsedTimeScope : IDisposable
+    {
+        private readonly float? _previous;
+        internal ElapsedTimeScope(float? elapsedTime)
+        {
+            if (elapsedTime.HasValue && !float.IsFinite(elapsedTime.Value))
+                throw new ArgumentOutOfRangeException(nameof(elapsedTime));
+            _previous = s_elapsedTimeOverride;
+            s_elapsedTimeOverride = elapsedTime;
+        }
+        public void Dispose() => s_elapsedTimeOverride = _previous;
+    }
     [InlineArray(RenderFrameViewSet.MaxViewCount)]
     private struct FrameViewBuffer
     {
@@ -16,6 +36,56 @@ public static class RenderFrameViewSetCapture
     public const ulong MonoHistoryKey = 0x5845525F4D4F4E4FUL;
     public const ulong LeftEyeHistoryKey = 0x5845525F4C454654UL;
     public const ulong RightEyeHistoryKey = 0x5845525F52474854UL;
+
+    /// <summary>Freezes a pass's projection choice and uniforms without rereading a captured camera.</summary>
+    public static RenderFrameViewSelection SelectForDraw(
+        IRuntimeRenderCommandExecutionState? state,
+        XRCamera camera,
+        bool useUnjitteredProjection,
+        Vector2 viewportSize,
+        float elapsedTime,
+        bool requireCapturedView = true)
+    {
+        if (!float.IsFinite(viewportSize.X) || !float.IsFinite(viewportSize.Y) ||
+            viewportSize.X <= 0 || viewportSize.Y <= 0)
+            throw new NotSupportedException("RenderFrameView.InvalidViewport: a frozen draw requires positive finite dimensions.");
+        RenderFrameViewDescriptor? selected = FindCapturedPassView(state, camera);
+        if (!selected.HasValue)
+        {
+            if (requireCapturedView)
+                throw new NotSupportedException("RenderFrameView.CapturedCameraMissing: the draw camera has no matching immutable frame view.");
+            // Direct UI and capture camera scopes may have no scene view. Capture
+            // them at draw entry, before material or renderer callbacks can run.
+            selected = CaptureView(camera, EVrOutputViewKind.DesktopEditor, 0,
+                checked((uint)viewportSize.X), checked((uint)viewportSize.Y), MonoHistoryKey);
+        }
+        return new(selected.Value, useUnjitteredProjection, viewportSize, ResolveElapsedTime(elapsedTime), state?.ShadowPass == true);
+    }
+
+    internal static RenderFrameViewDescriptor CaptureScopedView(
+        IRuntimeRenderCommandExecutionState state, XRCamera camera, uint width, uint height)
+        => FindCapturedView(state, camera) ??
+            CaptureView(camera, EVrOutputViewKind.DesktopEditor, 0, width, height, MonoHistoryKey);
+
+    internal static RenderFrameViewDescriptor? FindCapturedPassView(IRuntimeRenderCommandExecutionState? state, XRCamera camera)
+        => state?.ScopedFrameView is { } scoped && scoped.SourceCameraIdentity == camera.RenderIdentity
+            ? scoped : FindCapturedView(state, camera);
+
+    private static RenderFrameViewDescriptor? FindCapturedView(IRuntimeRenderCommandExecutionState? state, XRCamera camera)
+    {
+        RenderFrameViewDescriptor? selected = null;
+        if ((state?.TemporalAuthoringViewSet ?? state?.FrameViewSet) is not { } views)
+            return null;
+        for (int i = 0; i < views.ViewCount; i++)
+        {
+            RenderFrameViewDescriptor view = views.GetView(i);
+            if (view.SourceCameraIdentity != camera.RenderIdentity) continue;
+            if (selected.HasValue)
+                throw new NotSupportedException("RenderFrameView.AmbiguousCamera: multiple captured views require explicit view selection.");
+            selected = view;
+        }
+        return selected;
+    }
 
     public static RenderFrameViewSet Capture(
         IRuntimeRenderCommandExecutionState state)
@@ -123,6 +193,8 @@ public static class RenderFrameViewSetCapture
         {
             SourceCameraIdentity = (camera as XRCamera)?.RenderIdentity ?? 0UL,
             CullingLayerMask = camera.CullingLayerMask,
+            CameraOrthographicSize = camera is XRCamera { Parameters: XROrthographicCameraParameters orthographic }
+                ? new Vector2(orthographic.Width, orthographic.Height) : null,
         };
         return current;
     }

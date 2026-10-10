@@ -17,7 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Runtime.Automation\XREngine.Runtime.Automation.csproj" />
-    <ProjectReference Include="..\Samples\MonkeyBallVR\MonkeyBallVR.csproj" />
+    <ProjectReference Include="..\Samples\RollingBall\RollingBall.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Imaging.Magick\XREngine.Runtime.Imaging.Magick.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.MeshProcessing.Meshoptimizer\XREngine.Runtime.MeshProcessing.Meshoptimizer.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj" />

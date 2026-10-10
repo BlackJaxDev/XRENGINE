@@ -196,7 +196,7 @@ public abstract partial class BaseNetworkingManager
     }
 
     /// <summary>
-    /// Decodes exactly one complete state-change FRK frame without touching peer,
+    /// Decodes exactly one complete state-change frame without touching peer,
     /// reliability, acknowledgement, or application state. Managed transports use
     /// this before committing their outer replay counter. For a compressed frame the returned
     /// payload points into the shared decompression scratch and is valid only until the receive
@@ -206,13 +206,31 @@ public abstract partial class BaseNetworkingManager
     {
         type = EStateChangeType.Invalid;
         payload = default;
+        return TryDecodeRealtimeFrame(frame, _decompBuffer, out EBroadcastType broadcastType, out _, out ReadOnlySpan<byte> body)
+            && broadcastType == EBroadcastType.StateChange
+            && StateChangeFrame.TryRead(body, out type, out payload, out _);
+    }
+
+    /// <summary>Validates one complete frame before peer, acknowledgement, or replay state changes.</summary>
+    protected bool TryDecodeRealtimeFrame(ReadOnlyMemory<byte> frame, byte[] decompBuffer,
+        out EBroadcastType broadcastType, out Guid ownerId, out ReadOnlySpan<byte> body, IPEndPoint? sender = null)
+    {
+        broadcastType = default;
+        ownerId = default;
+        body = default;
         ReadOnlySpan<byte> span = frame.Span;
+        if (RealtimeWireProtocol.IsIncompatible(span))
+        {
+            RecordWireProtocolMismatch();
+            return false;
+        }
         if (span.Length < HeaderLen || !span[..3].SequenceEqual(Protocol))
             return false;
 
         byte flags = span[3];
         bool compressed = (flags & 1) != 0;
-        if ((EBroadcastType)((flags >> 1) & 0b111) != EBroadcastType.StateChange)
+        broadcastType = (EBroadcastType)((flags >> 1) & 0b111);
+        if ((flags & 0b1111_0000) != 0 || broadcastType > EBroadcastType.Transform)
             return false;
 
         int wireLength = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(span[12..]);
@@ -222,7 +240,6 @@ public abstract partial class BaseNetworkingManager
             return false;
         }
 
-        ReadOnlySpan<byte> body;
         if (compressed)
         {
             if (!MemoryMarshal.TryGetArray(frame, out ArraySegment<byte> segment) || segment.Array is null)
@@ -232,25 +249,38 @@ public abstract partial class BaseNetworkingManager
             try
             {
                 lock (_decompressionStateSync)
-                    decodedLength = Compression.Decompress(segment.Array, segment.Offset + HeaderLen, wireLength, _decompBuffer, 0, ref _decoder, ref _decompStreamIn, ref _decompStreamOut);
+                    decodedLength = Compression.Decompress(segment.Array, segment.Offset + HeaderLen, wireLength, decompBuffer, 0, ref _decoder, ref _decompStreamIn, ref _decompStreamOut);
             }
-            catch
+            catch (Exception ex)
             {
+                Debug.NetworkingWarning("[Net] Dropped malformed compressed realtime frame from {0}: {1}", sender?.ToString() ?? "<unknown>", ex.Message);
                 return false;
             }
 
-            if (decodedLength < GuidLen || decodedLength > _decompBuffer.Length || new Guid(_decompBuffer.AsSpan(0, GuidLen)) != Guid.Empty)
+            if (decodedLength < GuidLen || decodedLength > decompBuffer.Length)
+            {
+                Debug.NetworkingWarning("[Net] Dropped invalid decompressed realtime frame from {0}: {1} bytes.", sender?.ToString() ?? "<unknown>", decodedLength);
                 return false;
-            body = _decompBuffer.AsSpan(GuidLen, decodedLength - GuidLen);
+            }
+            ownerId = new Guid(decompBuffer.AsSpan(0, GuidLen));
+            body = decompBuffer.AsSpan(GuidLen, decodedLength - GuidLen);
         }
         else
         {
-            if (new Guid(span.Slice(HeaderLen, GuidLen)) != Guid.Empty)
-                return false;
+            ownerId = new Guid(span.Slice(HeaderLen, GuidLen));
             body = span.Slice(HeaderLen + GuidLen, wireLength);
         }
 
-        return StateChangeFrame.TryRead(body, out type, out payload, out _);
+        if (broadcastType != EBroadcastType.StateChange)
+            return true;
+        if (ownerId != Guid.Empty)
+            return false;
+        if (!StateChangeFrame.TryRead(body, out _, out _, out EStateChangeFrameError error))
+        {
+            RecordStateChangeFrameRejection(error, body, sender);
+            return false;
+        }
+        return true;
     }
 
     /// <summary>Reads a control payload and counts a decoder failure.</summary>

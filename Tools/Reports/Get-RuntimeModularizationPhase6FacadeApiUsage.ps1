@@ -25,7 +25,7 @@ $consumers = [ordered]@{
     "XREngine.VRClient" = "XREngine.VRClient/XREngine.VRClient.csproj"
     "XREngine.UnitTests" = "XREngine.UnitTests/XREngine.UnitTests.csproj"
     "XREngine.Benchmarks" = "XREngine.Benchmarks/XREngine.Benchmarks.csproj"
-    "Samples/MonkeyBallVR" = "Samples/MonkeyBallVR/MonkeyBallVR.csproj"
+    "Samples/RollingBall" = "Samples/RollingBall/RollingBall.csproj"
 }
 
 if (-not ("FacadeApiMetadataReader" -as [type])) {

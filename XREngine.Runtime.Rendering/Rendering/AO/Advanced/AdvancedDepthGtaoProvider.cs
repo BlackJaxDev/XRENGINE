@@ -3,8 +3,9 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering;
 
 /// <summary>
-/// Built-in Vulkan Advanced-pipeline GTAO implementation. It derives its
-/// normal from final visibility depth and writes the frozen R8 AO target.
+/// Built-in Advanced depth-derived GTAO contract. Backends derive normals from
+/// final visibility depth and preserve R8 normalized logical visibility in
+/// the output's declared physical storage encoding.
 /// </summary>
 public sealed class AdvancedDepthGtaoProvider : IAdvancedAmbientOcclusionProvider
 {

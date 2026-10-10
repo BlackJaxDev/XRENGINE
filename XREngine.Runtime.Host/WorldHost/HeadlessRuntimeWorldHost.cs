@@ -9,6 +9,7 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
     private bool _physicsInitialized;
     private bool _timeCallbacksLinked;
     private bool _disposed;
+    private bool _endingPlay;
     private XRWorld? _subscribedWorld;
 
     public HeadlessRuntimeWorldHost(AbstractPhysicsScene physicsScene)
@@ -29,6 +30,7 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
         CoreWorld.RetargetWorld(targetWorld, () =>
         {
             afterTargetAssigned?.Invoke();
+            EnsurePhysicsInitialized();
             ApplyPhysicsSettings(targetWorld.Settings);
             SubscribeToWorldSettings(targetWorld);
         });
@@ -43,9 +45,8 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
         await CoreWorld.BeginPlayAsync(
             beforeNodeActivation: () =>
             {
+                EnsurePhysicsInitialized();
                 ApplyPhysicsSettings(TargetWorld.Settings);
-                Engine.InvokePhysicsThreadTask(CoreWorld.PhysicsScene.Initialize);
-                _physicsInitialized = true;
                 return Task.CompletedTask;
             },
             afterNodeActivation: () =>
@@ -78,7 +79,7 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
 
     public void EndPlay()
     {
-        if (_disposed || !CoreWorld.IsPlaySessionActive)
+        if (_disposed || _endingPlay || CoreWorld.PlayState == RuntimeWorldPlayState.Stopped)
             return;
 
         EndPlaySession();
@@ -86,8 +87,19 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
 
     private void EndPlaySession()
     {
-        UnlinkTimeCallbacks();
-        CoreWorld.EndPlay(afterNodeDeactivation: TearDownPhysics);
+        if (_endingPlay)
+            return;
+
+        _endingPlay = true;
+        try
+        {
+            UnlinkTimeCallbacks();
+            CoreWorld.EndPlay(afterNodeDeactivation: TearDownPhysics);
+        }
+        finally
+        {
+            _endingPlay = false;
+        }
     }
 
     public void Retarget(XRWorld targetWorld, Action? afterTargetAssigned = null)
@@ -97,6 +109,7 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
         CoreWorld.RetargetWorld(targetWorld, () =>
         {
             afterTargetAssigned?.Invoke();
+            EnsurePhysicsInitialized();
             ApplyPhysicsSettings(targetWorld.Settings);
             SubscribeToWorldSettings(targetWorld);
         });
@@ -135,6 +148,16 @@ internal sealed class HeadlessRuntimeWorldHost : IDisposable
 
     private void ProcessDirtyTransforms()
         => CoreWorld.ProcessDirtyTransforms(Engine.EffectiveSettings.RecalcChildMatricesLoopType);
+
+    /// <summary>Prepares native resources before world assignment can activate components.</summary>
+    private void EnsurePhysicsInitialized()
+    {
+        if (_physicsInitialized)
+            return;
+
+        Engine.InvokePhysicsThreadTask(CoreWorld.PhysicsScene.Initialize);
+        _physicsInitialized = true;
+    }
 
     private void TearDownPhysics()
     {

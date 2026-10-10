@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Numerics;
+using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 
 namespace XREngine.Data.Trees
@@ -8,9 +9,18 @@ namespace XREngine.Data.Trees
     /// A 3D space partitioning tree that recursively divides aabbs into 4 smaller axis-aligned rectangles depending on the items they contain.
     /// </summary>
     /// <typeparam name="T">The item type to use. Must be a class deriving from I2DRenderable.</typeparam>
-    public class Quadtree<T> : QuadtreeBase, I2DRenderTree<T> where T : class, IQuadtreeItem
+    public class Quadtree<T> : QuadtreeBase, I2DRenderTree<T>, IDisposable where T : class, IQuadtreeItem
     {
         internal QuadtreeNode<T> _head;
+        private readonly object _lifetimeGate = new();
+        private volatile bool _disposed;
+        private bool _storageReleased;
+        private bool _releaseInProgress;
+        private bool _swapInProgress;
+        private bool _releaseAfterSwap;
+        private readonly List<QuadtreeNode<T>> _retiredNodes = [];
+
+        public bool IsDisposed => _disposed;
 
         public BoundingRectangleF Bounds => _head.Bounds;
 
@@ -23,9 +33,73 @@ namespace XREngine.Data.Trees
             => Remake(_head.Bounds);
         public void Remake(BoundingRectangleF newBounds)
         {
-            if (_head.Bounds == newBounds)
-                return;
-            _remakeRequested = newBounds;
+            lock (_lifetimeGate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_swapInProgress)
+                    throw new InvalidOperationException("A quadtree cannot request a remake during a swap.");
+                if (_head.Bounds == newBounds)
+                    return;
+                _remakeRequested = newBounds;
+            }
+        }
+
+        /// <summary>
+        /// Requests terminal release of owned node/list storage without destroying
+        /// scene items. An active swap completes before its storage is released.
+        /// </summary>
+        public void Dispose()
+        {
+            bool release;
+            lock (_lifetimeGate)
+            {
+                _disposed = true;
+                release = TryClaimTerminalRelease();
+            }
+            if (release)
+                ReleaseStorage();
+        }
+
+        private bool TryClaimTerminalRelease()
+        {
+            if (_storageReleased || _releaseInProgress)
+                return false;
+            if (_swapInProgress)
+            {
+                _releaseAfterSwap = true;
+                return false;
+            }
+            _releaseInProgress = true;
+            while (AddedItems.TryDequeue(out _)) { }
+            while (RemovedItems.TryDequeue(out _)) { }
+            while (MovedItems.TryDequeue(out _)) { }
+            _remakeRequested = null;
+            return true;
+        }
+
+        private void ReleaseStorage()
+        {
+            bool released = false;
+            try
+            {
+                List<Exception>? failures = null;
+                try { _head.ReleaseStorage(); }
+                catch (Exception ex) { (failures ??= []).Add(ex); }
+                try { ReleaseRetiredNodes(); }
+                catch (Exception ex) { (failures ??= []).Add(ex); }
+                if (failures is not null)
+                    throw new AggregateException("Failed to release quadtree storage.", failures);
+                released = true;
+            }
+            finally
+            {
+                lock (_lifetimeGate)
+                {
+                    if (released)
+                        _storageReleased = true;
+                    _releaseInProgress = false;
+                }
+            }
         }
 
         internal ConcurrentQueue<T> AddedItems { get; } = new ConcurrentQueue<T>();
@@ -39,21 +113,47 @@ namespace XREngine.Data.Trees
         /// </summary>
         public void Swap()
         {
-            if (IRenderTree.ProfilingHook is not null)
+            lock (_lifetimeGate)
             {
-                using IDisposable profile = IRenderTree.ProfilingHook("Quadtree Swap");
-                SwapInternal();
+                if (_swapInProgress)
+                    throw new InvalidOperationException("A quadtree cannot run concurrent or recursive swaps.");
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                _swapInProgress = true;
             }
-            else
-                SwapInternal();
+            try
+            {
+                if (IRenderTree.ProfilingHook is not null)
+                {
+                    using IDisposable profile = IRenderTree.ProfilingHook("Quadtree Swap");
+                    SwapInternal();
+                }
+                else
+                    SwapInternal();
+            }
+            finally
+            {
+                bool releaseAfterSwap;
+                lock (_lifetimeGate)
+                {
+                    _swapInProgress = false;
+                    releaseAfterSwap = _releaseAfterSwap && TryClaimTerminalRelease();
+                    _releaseAfterSwap = false;
+                }
+                if (releaseAfterSwap)
+                    ReleaseStorage();
+            }
         }
 
         private void SwapInternal()
         {
+            if (XRObjectBase.CurrentObjectCachePublicationScope is null)
+                ReleaseRetiredNodes();
             ConsumeMoveItemQueue();
             ConsumeRemoveItemQueue();
             ConsumeAddItemQueue();
             RemakeTree();
+            if (XRObjectBase.CurrentObjectCachePublicationScope is null)
+                ReleaseRetiredNodes();
         }
 
         private void RemakeTree()
@@ -75,13 +175,37 @@ namespace XREngine.Data.Trees
             List<T> renderables = [];
             _head.CollectAll(renderables);
 
+            QuadtreeNode<T> previous = _head;
             _head = new QuadtreeNode<T>(_remakeRequested!.Value, 0, 0, null, this);
+            _retiredNodes.Add(previous);
 
             foreach (T item in renderables)
                 if (!_head.AddHereOrSmaller(item))
                     _head.AddHere(item);
 
             _remakeRequested = null;
+        }
+
+        internal void RetireNode(QuadtreeNode<T> node)
+            => _retiredNodes.Add(node);
+
+        private void ReleaseRetiredNodes()
+        {
+            List<Exception>? failures = null;
+            for (int index = _retiredNodes.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    _retiredNodes[index].ReleaseStorage();
+                    _retiredNodes.RemoveAt(index);
+                }
+                catch (Exception ex)
+                {
+                    (failures ??= []).Add(ex);
+                }
+            }
+            if (failures is not null)
+                throw new AggregateException("Failed to retire replaced quadtree storage.", failures);
         }
 
         private void ConsumeAddItemQueue()
@@ -150,16 +274,32 @@ namespace XREngine.Data.Trees
 
         public void Add(T value)
         {
-            AddedItems.Enqueue(value);
+            lock (_lifetimeGate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                AddedItems.Enqueue(value);
+            }
         }
         public void AddRange(IEnumerable<T> value)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             foreach (T item in value)
                 Add(item);
         }
         public void Remove(T value)
         {
-            RemovedItems.Enqueue(value);
+            lock (_lifetimeGate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                RemovedItems.Enqueue(value);
+            }
+        }
+
+        internal void QueueMoved(T item)
+        {
+            lock (_lifetimeGate)
+                if (!_disposed)
+                    MovedItems.Enqueue(item);
         }
 
         //public List<T> FindAll(float radius, Vector2 point, EContainment containment)
@@ -190,6 +330,13 @@ namespace XREngine.Data.Trees
         {
             list.Clear();
             _head.FindAllIntersecting(point, list, predicate);
+        }
+
+        /// <summary>Collects point hits without allocating. False means storage overflow; partial hits must not be used.</summary>
+        public bool TryFindAllIntersecting(Vector2 point, Span<T?> destination, out int count)
+        {
+            count = 0;
+            return _head.TryFindAllIntersecting(point, destination, ref count);
         }
 
         public void FindAllIntersectingSorted(Vector2 point, SortedSet<T> sortedSet, Predicate<T>? predicate = null)

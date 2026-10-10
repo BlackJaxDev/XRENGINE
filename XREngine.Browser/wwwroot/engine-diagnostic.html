@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>XRENGINE engine diagnostic</title>
+  <script type="module" src="./engine-diagnostic.js"></script>
+  <style>
+    body { margin: 3rem auto; padding: 0 1rem; max-width: 46rem; background: #10151d; color: #e4edf4; font: 16px/1.5 system-ui, sans-serif; }
+    input[type="text"] { min-width: min(32rem, 100%); padding: .6rem; }
+    button { padding: .6rem 1rem; }
+    canvas { display: block; width: 100%; height: 18rem; background: #080d14; outline: 1px solid #526478; touch-action: none; }
+    canvas:focus-visible { outline: 2px solid #90c9ef; }
+    [data-state="failed"] { color: #ffb5b5; }
+    [data-state="running"] { color: #a8ebc0; }
+  </style>
+</head>
+<body>
+  <h1>XRENGINE engine diagnostic</h1>
+  <p>This page exercises the shared engine world and gameplay lifecycle. World rendering is still being integrated.</p>
+  <form id="world-form">
+    <label for="manifest-url">Engine asset manifest</label><br>
+    <input id="manifest-url" type="text" required placeholder="./content/engine-assets.json">
+    <button type="submit">Start world</button>
+    <button id="stop" type="button" disabled>Stop</button>
+    <button id="enable-audio" type="button">Enable audio</button>
+  </form>
+  <p id="status" role="status" data-state="loading">Loading the .NET runtime…</p>
+  <canvas id="input-surface" tabindex="0" aria-label="Engine input surface">World rendering is still being integrated.</canvas>
+  <p>Focus the surface for keyboard, pointer, and touch input. The first touch acts as the primary pointer.</p>
+  <label><input id="gamepad" type="checkbox"> Enable standard gamepad while focused <span role="status"></span></label>
+  <p id="audio-status" role="status">Audio awaits a user gesture.</p>
+</body>
+</html>

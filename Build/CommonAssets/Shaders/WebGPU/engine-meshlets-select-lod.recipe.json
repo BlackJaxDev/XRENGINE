@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 3,
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "matrixLayout": "column-major",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "pipeline": {},
+  "name": "engine-meshlets-select-lod",
+  "pass": "select-lod",
+  "pipelineArtifact": {
+    "scope": "meshlets",
+    "pass": "select-lod"
+  },
+  "source": "engine-meshlets-select-lod.wgsl",
+  "entryPoints": {
+    "compute": "meshletsSelectLod"
+  },
+  "workgroupSize": [
+    1,
+    1,
+    1
+  ],
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 2,
+    "maxUniformBufferBindingSize": 96,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 1,
+    "maxStorageBufferBindingSize": 4,
+    "maxComputeWorkgroupSizeX": 1,
+    "maxComputeWorkgroupSizeY": 1,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 1
+  },
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "SelectedLod",
+        "physicalName": "selectedLod",
+        "group": 0,
+        "binding": 0,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 1,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 96,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "boundsSphere",
+            "provider": "BoundsSphere",
+            "offset": 0,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "cameraPosition",
+            "provider": "CameraPosition",
+            "offset": 16,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "projectionAndViewport",
+            "provider": "ProjectionAndViewport",
+            "offset": 32,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "lod0MeshId",
+            "provider": "Lod0MeshId",
+            "offset": 48,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "lod1MeshId",
+            "provider": "Lod1MeshId",
+            "offset": 52,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "lod2MeshId",
+            "provider": "Lod2MeshId",
+            "offset": 56,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "lod3MeshId",
+            "provider": "Lod3MeshId",
+            "offset": 60,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "lod0MinRadius",
+            "provider": "Lod0MinRadius",
+            "offset": 64,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "lod1MinRadius",
+            "provider": "Lod1MinRadius",
+            "offset": 68,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "lod2MinRadius",
+            "provider": "Lod2MinRadius",
+            "offset": 72,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "lod3MinRadius",
+            "provider": "Lod3MinRadius",
+            "offset": 76,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "lodCount",
+            "provider": "LodCount",
+            "offset": 80,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "currentMeshId",
+            "provider": "CurrentMeshId",
+            "offset": 84,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "currentLod",
+            "provider": "CurrentLod",
+            "offset": 88,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "flags",
+            "provider": "Flags",
+            "offset": 92,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  }
+}

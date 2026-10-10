@@ -7,7 +7,7 @@ namespace XREngine.Networking;
 /// <summary>Cryptographic derivation primitives for the managed UDP transport.</summary>
 public static class ManagedUdpAuthentication
 {
-    private static readonly byte[] RootLabel = "XRE/MUDP/1/root\0"u8.ToArray();
+    private static readonly byte[] RootLabel = "XRE/MUDP/2/root\0"u8.ToArray();
 
     public static byte[] DeriveRootKey(string admissionSecret, ManagedAdmissionIdentity identity)
     {

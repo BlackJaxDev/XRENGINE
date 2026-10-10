@@ -1,0 +1,112 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <RootNamespace>RollingBall</RootNamespace>
+    <AssemblyName>RollingBall</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <IsPackable>false</IsPackable>
+    <Configurations>Development Debug;Development Release;Published Release</Configurations>
+    <Platforms>AnyCPU</Platforms>
+
+    <RepositoryRoot>$(MSBuildProjectDirectory)\..\..</RepositoryRoot>
+    <EditorProjectPath>$(RepositoryRoot)\XREngine.Editor\XREngine.Editor.csproj</EditorProjectPath>
+    <SampleGameProjectName>RollingBall</SampleGameProjectName>
+    <SampleGameProjectRoot>$(MSBuildProjectDirectory)</SampleGameProjectRoot>
+    <SampleGameProjectFile>$(SampleGameProjectRoot)\$(SampleGameProjectName).xrproj</SampleGameProjectFile>
+    <EditorAutomationPlatform>AnyCPU</EditorAutomationPlatform>
+
+    <EditorBuildConfiguration Condition="'$(EditorBuildConfiguration)' == '' and '$(Configuration)' == 'Release'">Release</EditorBuildConfiguration>
+    <EditorBuildConfiguration Condition="'$(EditorBuildConfiguration)' == ''">Debug</EditorBuildConfiguration>
+    <GameBuildConfiguration Condition="'$(GameBuildConfiguration)' == ''">Development</GameBuildConfiguration>
+    <GameBuildPlatform Condition="'$(GameBuildPlatform)' == ''">Windows64</GameBuildPlatform>
+    <GameOutputSubfolder Condition="'$(GameOutputSubfolder)' == ''">Game</GameOutputSubfolder>
+    <GameLauncherName Condition="'$(GameLauncherName)' == ''">Game.exe</GameLauncherName>
+    <GamePublishNativeAot Condition="'$(GamePublishNativeAot)' == ''">false</GamePublishNativeAot>
+    <GameDefineConstants Condition="'$(GameDefineConstants)' == ''"></GameDefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Development Debug'">
+    <EditorBuildConfiguration>Debug</EditorBuildConfiguration>
+    <GameBuildConfiguration>Development</GameBuildConfiguration>
+    <GameOutputSubfolder>Game</GameOutputSubfolder>
+    <GamePublishNativeAot>false</GamePublishNativeAot>
+    <GameDefineConstants></GameDefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Development Release'">
+    <EditorBuildConfiguration>Release</EditorBuildConfiguration>
+    <GameBuildConfiguration>Development</GameBuildConfiguration>
+    <GameOutputSubfolder>Game</GameOutputSubfolder>
+    <GamePublishNativeAot>false</GamePublishNativeAot>
+    <GameDefineConstants></GameDefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Published Release'">
+    <EditorBuildConfiguration>Release</EditorBuildConfiguration>
+    <GameBuildConfiguration>Release</GameBuildConfiguration>
+    <GameOutputSubfolder>Publish</GameOutputSubfolder>
+    <GamePublishNativeAot>true</GamePublishNativeAot>
+    <GameDefineConstants>XRE_PUBLISHED</GameDefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Assets\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\XREngine.Data\XREngine.Data.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
+    <ProjectReference Include="..\..\XREngine.Extensions\XREngine.Extensions.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
+    <ProjectReference Include="..\..\XREngine.Input\XREngine.Input.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
+    <ProjectReference Include="..\..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
+    <ProjectReference Include="..\..\XREngine.Runtime.Host\XREngine.Runtime.Host.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
+    <ProjectReference Include="..\..\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
+    <ProjectReference Include="..\..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
+  </ItemGroup>
+
+  <Target Name="ShowResolvedBuildProfile" BeforeTargets="Build;BuildEditorAutomation;CompileGameManagedCode;BuildGameLauncher">
+    <Message
+      Importance="High"
+      Text="XR Build Profile: VS=$(Configuration)|$(Platform), Editor=$(EditorBuildConfiguration)|$(EditorAutomationPlatform), Game=$(GameBuildConfiguration)|$(GameBuildPlatform), Output=$(GameOutputSubfolder), Launcher=$(GameLauncherName), NativeAOT=$(GamePublishNativeAot)" />
+  </Target>
+
+  <Target Name="BuildEditorAutomation">
+    <Message Text="Building editor automation host ($(EditorBuildConfiguration)|$(EditorAutomationPlatform))..." Importance="High" />
+    <Exec
+      WorkingDirectory="$(RepositoryRoot)"
+      Command="dotnet build &quot;$(EditorProjectPath)&quot; -c $(EditorBuildConfiguration) -p:Platform=$(EditorAutomationPlatform)" />
+  </Target>
+
+  <Target Name="GenerateGameProject" DependsOnTargets="BuildEditorAutomation">
+    <Message
+      Text="XR project already exists at $(SampleGameProjectFile); skipping initialization."
+      Importance="High"
+      Condition="Exists('$(SampleGameProjectFile)')" />
+    <Message
+      Text="Generating XR project at $(SampleGameProjectRoot)..."
+      Importance="High"
+      Condition="!Exists('$(SampleGameProjectFile)')" />
+    <Exec
+      Condition="!Exists('$(SampleGameProjectFile)')"
+      WorkingDirectory="$(RepositoryRoot)"
+      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(EditorBuildConfiguration) -p:Platform=$(EditorAutomationPlatform) -- --init-project &quot;$(SampleGameProjectRoot)&quot; --project-name &quot;$(SampleGameProjectName)&quot;" />
+  </Target>
+
+  <Target Name="CompileGameManagedCode" DependsOnTargets="GenerateGameProject">
+    <Message Text="Compiling managed game code ($(GameBuildConfiguration)|$(GameBuildPlatform))..." Importance="High" />
+    <Exec
+      WorkingDirectory="$(RepositoryRoot)"
+      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(EditorBuildConfiguration) -p:Platform=$(EditorAutomationPlatform) -- --build-project-code &quot;$(SampleGameProjectFile)&quot; --build-configuration &quot;$(GameBuildConfiguration)&quot; --build-platform &quot;$(GameBuildPlatform)&quot;" />
+  </Target>
+
+  <Target Name="BuildGameLauncher" DependsOnTargets="GenerateGameProject">
+    <Message Text="Cooking game executable from $(SampleGameProjectFile)..." Importance="High" />
+    <Exec
+      WorkingDirectory="$(RepositoryRoot)"
+      Command="dotnet run --no-build --project &quot;$(EditorProjectPath)&quot; -c $(EditorBuildConfiguration) -p:Platform=$(EditorAutomationPlatform) -- --build-project &quot;$(SampleGameProjectFile)&quot; --build-configuration &quot;$(GameBuildConfiguration)&quot; --build-platform &quot;$(GameBuildPlatform)&quot; --output-subfolder &quot;$(GameOutputSubfolder)&quot; --launcher-name &quot;$(GameLauncherName)&quot; --publish-native-aot &quot;$(GamePublishNativeAot)&quot; --define-constants &quot;$(GameDefineConstants)&quot;" />
+  </Target>
+
+  <Target Name="CookGameExe" DependsOnTargets="BuildGameLauncher" />
+</Project>

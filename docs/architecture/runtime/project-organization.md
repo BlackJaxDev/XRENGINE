@@ -24,9 +24,229 @@ These projects target `net10.0` and compile their full source set for desktop an
 | `XREngine.Runtime.InputIntegration` | Player, pawn, and scene integration for input. |
 | `XREngine.Runtime.ModelingIntegration` | Runtime scene integration for modeling. |
 
-`XREngine.Runtime.Rendering.WebGPU` and `XREngine.Browser` also belong to the compile closure. They provide the browser renderer and host; their presence does not imply that the browser host can run every engine world or desktop feature. Browser gameplay integration is tracked separately from compilation.
+`XREngine.Runtime.Rendering.WebGPU`, `XREngine.Runtime.Platform.Browser`, and `XREngine.Browser` also belong to the compile closure. They provide the browser renderer, canvas platform leaf, and reusable browser runtime. `XREngine.Browser.Standalone` is the diagnostic executable. Their presence does not imply that the browser host can run every engine world or desktop feature. Browser gameplay integration is tracked separately from compilation.
+
+### Browser library and launchers
+
+`XREngine.Browser` is a class library. It owns JavaScript exports and engine registration. It has no game reference or generated game source. The standalone executable and each generated `XREngine.BrowserSite` executable call `BrowserRuntime.Initialize` once from `Main`. JavaScript binds exports from `XREngine.Browser`, then runs the launcher entry point.
+
+Initialization installs engine services and stores the game callbacks. World startup calls game registration after engine asset services are ready. World stop retains these process-level callbacks. A duplicate call to `Initialize` fails. A failed initialization requires a page reload because registration is not transactional.
+
+Both executables import `XREngine.Browser/XREngine.Browser.Host.targets`. This file links the shared web files into `wwwroot`, supplies the reviewed Jolt archives, and applies the portable source and native asset guards. The generated launcher compiles only `Program.g.cs` and SDK-generated assembly files. Its game reference must match the exact authored project. Packaged publishing references prebuilt engine DLLs; the game and launcher remain the only application compilation inputs.
+
+Publish the standalone diagnostics with:
+
+```powershell
+dotnet publish XREngine.Browser.Standalone/XREngine.Browser.Standalone.csproj -c Release -p:XREngineJoltBrowser=true
+```
+
+Prepare the pinned Jolt managed source and native archives before this command. Set `JoltBrowserManagedSourceDirectory` and `JoltBrowserArchiveDirectory` when those inputs are outside their default locations.
+
+`XREngine.Runtime.Execution.Threads` is a separate `net10.0` implementation leaf.
+It owns the general, auxiliary, transform, and profiler statistics worker loops, thread creation,
+wake signals, and joins. It references Core and uses BCL threading. It has no
+Host, Desktop, renderer, native-library, or external package dependency. It is excluded from
+the browser compile closure. Core retains `JobManager`, scheduler state, queue
+policy, topology, metrics, the public domain factory contract, and the internal
+transform and profiler factory seams. One Core friend-assembly declaration lets the moved
+code use existing internal dispatch, worker-context, and transform evaluation
+methods. The physical render-lane implementation remains in Core and is
+separate open placement work.
+
+Native hosts register `ThreadedWorkerBackend.EnsureRegistered()` before asking
+for threaded jobs or parallel transform propagation. A standalone native DEBUG
+host must register it before the first `Engine` access because the eager
+`Engine.Profiler` initializer starts the statistics worker. In Release, register
+before you enable frame logging. An absent profiler provider reports
+`Execution.ProfilerWorkerUnavailable` and can make the first `Engine` type
+initialization fail. Later registration cannot repair that failed initialization.
+The registration installs the built-in domain, transform, and profiler factories
+only in empty slots; it creates no
+worker or scheduler. Constructors capture one factory for their general and
+auxiliary domains. Each `TransformHierarchyStore` owns its returned transform
+pool under its pass gate. A missing factory produces an explicit failure when
+parallel work needs it. Implicit `RuntimeWorkScheduler.Jobs` creation remains
+available after registration. Sequential and caller-thread transform work does
+not request a pool. Browser hosts keep their sequential transform policy and
+reject frame logging. The `XRE_PUBLISHED` profiler stub creates no worker.
+Native zero-general-worker scheduling still has two auxiliary lanes.
+
+`Engine.CodeProfiler` owns the cycle data and callbacks. Each cycle drains
+completed scopes, reads the timestamp, updates a due snapshot, checks the render
+stall, and returns an idle delay only when it processed no scope. The native
+worker owns the below-normal background thread, cancellation, sleep, join, and
+disposal. It checks cancellation at the loop boundary and sleeps without
+interruption. Its exception callback uses the host logger. A logger exception
+leaves the worker. Stopping with a join keeps the host cleanup order.
+
+Desktop composition registers the worker leaf. Bootstrap also exposes
+`RuntimeApplicationBootstrap.PrepareWorkerServices()` for callers that need only
+workers before full Desktop setup. The shared RenderBench scope and NUnit setup
+use that entry point. The normal `XREngine.Benchmarks` executable registers the
+worker leaf before CLI dispatch. Its `VulkanPerformanceToolOnly` build excludes
+that registration and the engine project references. SoftwareVulkan and the
+standalone browser smoke publisher and browser metadata cooker
+reference and register the worker leaf directly. The publisher keeps its
+`net10.0` target and its local file adapters. Browser, Core, Host, and RollingBall
+have no project reference to this leaf; ShaderCooker has no worker dependency.
+These registrations preserve custom domain providers and any transform or profiler factory
+already installed by a Core friend assembly. They do not initialize windows,
+apply QoS, or change desktop/VR clocks.
+Full Desktop bootstrap registers workers before other backend registration.
+Replacing an existing asset source can invoke cancellation callbacks during
+DirectStorage registration; those callbacks must already have worker support.
+
+`XREngine.Runtime.Diagnostics.Native` is a `net10.0` implementation leaf that
+references only Core. It owns native log files, run directories, root discovery,
+retention, and the three render-thread dispatch paths used by `Debug`. Core
+keeps message formatting, filtering, category preferences, console entries,
+writer dictionaries, and their lock. The native leaf uses the existing text
+encoding, shared-read file mode, auto-flush, local timestamps, and three-run
+retention policy. Browser category and auxiliary output use their direct
+console paths without a native provider.
+Directory creation keeps the prior best-effort fallback: when both preferred
+and fallback creation fail, a later file open reports the filesystem error.
+
+Native applications must register `NativeDebugBackendRegistration.EnsureRegistered()`
+before they call `Debug` logging or `Debug.EnsureLogRunDirectory()`. An external
+Core host without a registered backend receives an `InvalidOperationException`
+that names `IRuntimeDebugLogBackend`. Auxiliary file failures remain best effort;
+the missing-provider error occurs before auxiliary work is dispatched. Desktop
+composition registers native logging before other backend callbacks. Bootstrap
+exposes `RuntimeApplicationBootstrap.PrepareLoggingServices()` for early setup.
+Registration keeps a custom provider, creates no files or threads, and emits no
+log entry. An active log run and its open writers keep their provider when the
+registered provider changes. Each new operation requires the current provider
+and captures it for queued work. If provider A owns an active run and B replaces
+it, new work can dispatch through B while the open files stay with A. Removing
+the current provider rejects new native operations, but it does not close the
+active writers or cancel work that was already queued.
+
+The job manager owns each created domain before either starts. Startup failure
+requests cancellation and signals both domains before joining them. A clean
+rollback rethrows the startup exception; a failed cleanup reports an aggregate
+with that startup exception first. Shutdown attempts both domains even when a
+custom domain throws. Domain joins and manager completion waits share the
+remaining cooperative wait budget. Existing domain/render startup cleanup has
+its own bounds, so total constructor failure time is not a fixed two seconds.
+An incomplete or faulted domain prevents manager synchronization disposal in
+that call. A later clean shutdown can finish disposal. Normal shutdown returns
+false for incomplete work and reports collected errors after cleanup attempts.
+
+`Engine.ProfileCapture` stays in the shared Host project. It selects speed profile paths, labels, output data, and retention count. The optional `IRuntimeProfileCaptureFileOutput` contract stays in Rendering. The desktop platform leaf implements it through the existing diagnostic capture file output service. That leaf creates directories, applies the retention policy, and writes profile text with `Encoding.UTF8`. The Host still checks host-file admission and obtains the log run directory before it requests profile output. A host without the service or this capability reports a capture-start directory error; later profile writes keep their catch-all behavior.
+
+`GLSubmitTracer` keeps level selection and line formatting in shared Rendering.
+Its optional `IRuntimeGLSubmitTraceFileOutput` host capability opens the log and
+returns an exclusive `IRuntimeOwnedTextLog` lease. Desktop owns directory and
+file creation, the write-through stream, and the BOM-free UTF-8 writer. The
+factory closes partial resources if opening fails. The lease attempts both writer
+and stream disposal.
+Replacing the installed output provider does not replace an active log. The
+tracer releases that log when tracing closes.
+
+The tracer serializes provider calls and writer use under its state lock.
+Providers must not wait for another thread to enter the tracer. A callback's
+level request waits until the active transition or line finishes. The last
+request runs next. At most four transitions run per request; continued callback
+changes leave tracing off.
+Recursive trace writes are ignored. Hosts must install the optional capability
+before first use, or call `SetLevel` after installation. Missing capability and
+open failures leave tracing off; environment activation does not retry itself.
+The normal desktop entry points already register this service before preferences
+or renderer setup. This requirement affects custom and unregistered hosts that
+use this optional trace; it does not add a browser output implementation.
+
+Authored asset metadata uses the optional `IAssetMetadataFileBackend` capability
+on the installed `IAssetFileSystem`. Core retains metadata YAML, GUID and path
+rules, importer selection, and locks. The Desktop leaf owns physical file
+operations and the shared-read GUID scan, including its bounded retry waits.
+The standalone smoke publisher supplies the same capability on its existing
+local file adapter. Each admitted metadata operation retains one provider for
+file operations and discovery. Each asset ensure still rechecks host-file
+admission. This is not an atomic lease against source or provider replacement.
+
+Custom native file-system providers must implement this capability to use
+direct metadata maintenance. A missing capability fails explicitly before file
+operations. Metadata ID lookup keeps its warning and false result when this
+fallback is unavailable. Browser, catalog, and caller-thread restrictions remain;
+this interface does not add synchronous metadata access to those modes.
+
+Direct authored YAML reads and the bounded asset-header scans use the optional
+`IRuntimeHostFileReadBackend` capability on the installed file discovery
+provider. Runtime.Core keeps YAML parsing, type resolution, and prefab load
+ordering. The Desktop leaf and smoke publisher provide file existence probes,
+read streams, and lazy line reads. YAML streams use `FileShare.ReadWrite`;
+native line reads retain `File.ReadLines`: UTF-8 by default, BOM detection,
+`FileShare.Read`, lazy enumeration, and disposal. Callers dispose streams from
+`OpenRead`. Each direct sequence captures one provider before it schedules work,
+and uses that provider for its related probes and reads. Provider replacement
+does not retarget queued I/O. Capture checks only capability; each caller keeps
+its operation owner's host-file admission rules. The converter retains its
+existing catalog branch and admission behavior. This capture is not an atomic
+lease against provider or asset-source replacement. Custom native hosts need
+the capability for these direct reads; a missing capability fails with
+`AssetSource.HostFileReadUnavailable`. Codec-only loads and packaged assets do
+not need it. This capability does not change metadata, cache, or writer APIs.
+
+Archive stale-path checks capture this provider at the first source entry and
+use it for source existence checks and whole-file byte reads. Custom hosts that
+use these checks with nonempty archives need this read capability, even if they
+already provide file mapping. A missing source stays stale without a byte read.
+The archive check keeps its existing host-file admission rule. Provider capture
+does not give an atomic lease on source files.
+
+`ShaderSourceResolver` and `UberShaderVariantBuilder` use captured host services
+for file reads, existence checks, timestamps, and directory discovery.
+`IShaderSourceFileBackend` owns file operations; `IAssetFileSystem` owns discovery.
+Desktop composition installs both. The standalone browser smoke publisher
+installs its local shader file adapter before project loading. External hosts
+that implement the shader file interface must implement its synchronous file
+and metadata operations, register both providers, and rebuild. The resolver
+does not fall back to physical files when these services are absent.
+
+Resolver and shader caches retain provider identity and installation generation,
+including entries with no file dependencies. Provider replacement, including
+reinstallation of the same instance, retires previous entries. Cache gates only
+compare retained values and installation identity; provider capability and
+metadata callbacks execute outside those gates. Each resolved, optimized, and
+UI entry retains the dependency snapshot and source key that produced it.
+Browser and catalog admission rules still reject host-file resolution before
+provider access. Plain text and registered in-memory snippets remain available.
+The Vulkan native frontend captures its shader file backend before compilation
+and reads dependency metadata through that provider in the Vulkan leaf. Shared
+`XRShader` receives the prepared dependency records and the original source path
+and include roots. A missing dependency or a replaced provider fails the compile
+request. Empty dependency lists still replace older index entries. The final
+source and installation checks reject changes observed before registration;
+they do not promise atomic retirement across the independent dependency-index
+lock. This source boundary does not establish live browser shader reload support.
 
 ### Dependency direction
+
+`PhysicsChainCpuWorkScheduler` keeps range claiming, handle storage, metrics, and
+execution/disposal admission in Core. A captured `IPhysicsChainCpuWorkerGroup`
+owns its physical workers. Desktop worker registration
+(`DesktopWorkerBackend.EnsureRegistered`) installs the group factory if the host
+has not installed one. Desktop owns thread creation, wake events, completion
+waiting, and thread joins. Each parallel run wakes all workers, runs the same
+range callback on the caller, then waits for worker completion. The callback
+receives a stable worker index: worker `i` passes `i`, and the caller passes the
+fixed worker count. The scheduler maps each index to its own counter slot.
+Provider replacement affects only later scheduler construction. Existing
+schedulers dispose their own captured group. The owner serializes runs and
+disposal. Desktop construction closes partially started workers if startup
+fails. The scheduler catches and records exceptions for each counter slot, and
+the run rethrows the first one after all workers finish. Desktop workers signal
+completion in a `finally` block, so a callback exception cannot stop the run. A
+rejected custom group is disposed when its fixed count cannot be read or does
+not match the request.
+
+Browser, caller-thread, and zero-worker construction do not access that factory.
+Their existing inline execution remains. Native standalone callers that request
+positive workers must register Desktop services or supply a group factory with
+the requested fixed worker count. An absent or invalid group fails explicitly.
+The shared public scheduler signature and namespace remain unchanged. This
+separation does not change desktop/VR clocks or the other job-domain workers.
 
 - `XREngine.Runtime.Core` references only `XREngine.Data` and `XREngine.Extensions`. It has no rendering, feature-library, integration, Bootstrap, Editor, or application dependency.
 - `XREngine.Runtime.Rendering` references Core, Data, and Extensions, and stays backend-neutral. The OpenGL, Vulkan, and WebGPU renderer projects are one-way leaves of Rendering.
@@ -56,6 +276,7 @@ Most desktop modules currently use Windows-targeted project configurations. Some
 | `XREngine.Input.Silk` | Silk input device wrappers. |
 | `XREngine.Input.XInput` | Windows XInput devices. |
 | `XREngine.Runtime.Platform.Desktop` | Window creation/event pumping, native handles, input acquisition, filesystem discovery/watching/mapping, platform paths, clipboard, processes, development assembly loading, and the native-callable renderer and ImGui viewport callback entry points. |
+| `XREngine.Runtime.Platform.Browser` | Browser canvas presentation target and production page-owned surface, visibility, and frame-cadence host. Its canvas script is linked at the existing published player URL. Neutral surface contracts remain in Rendering so the WebGPU renderer does not depend on this platform leaf. |
 | `XREngine.Runtime.XR.OpenVR` | OpenVR devices, actions, compositor, and render models. |
 | `XREngine.Runtime.XR.OpenXR` | Renderer-neutral OpenXR instance/session, action, pose, swapchain, and frame lifecycle. |
 | `XREngine.Runtime.Rendering.OpenGL` | OpenGL objects, renderer-specific UI/XR bridges, and native ReSTIR execution. |
@@ -70,6 +291,7 @@ Most desktop modules currently use Windows-targeted project configurations. Some
 | `XREngine.Runtime.IO.DirectStorage` | DirectStorage asset I/O and GDeflate codec implementation. |
 | `XREngine.Runtime.Diagnostics.Desktop` | WMI/device inventory and native CUDA, nvCOMP, and NVIDIA diagnostics/compression capabilities. |
 | `XREngine.Runtime.Net.Sockets` | TCP/UDP/TLS transports, socket gateways, profiler transport, and socket-based capture components. |
+| `XREngine.Runtime.Net.WebSockets` | Portable asynchronous browser realtime transport; managed admission and replication remain in Core. |
 | `XREngine.Runtime.Net.Osc` | OSC/VMC transport and tracking components. |
 | `XREngine.Runtime.MeshProcessing.Meshoptimizer` | Native meshoptimizer processing. |
 
@@ -91,7 +313,7 @@ Image consumers exchange neutral buffers with dimensions, format, stride, origin
 | `XREngine.Editor` | Editor executable, authoring services, ImGui integration, model import, tooling, and unit-world bootstrap. |
 | `XREngine.Server` | Dedicated server executable using desktop bootstrap with headless renderer selection. |
 | `XREngine.VRClient` | OpenVR companion executable with its own runtime lifetime and interprocess frame/input exchange. |
-| `XREngine.Browser` | Browser composition and canvas host; independent of desktop Bootstrap. |
+| `XREngine.Browser` | Browser composition and authored-world session; installs the browser platform and WebGPU leaves independently of desktop Bootstrap. |
 | `XREngine.Runtime.ModelAssetPipeline` | Aggregate authoring/import adapter constructing scenes, meshes, materials, skinning, and animation. Owns Assimp-based import and consumes FBX/glTF support projects. |
 | `XREngine.Fbx` | Managed FBX parser/writer and import data model. |
 | `XREngine.Gltf` | glTF support with the native FastGltfBridge; outside the portable compile closure. |

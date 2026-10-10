@@ -23,9 +23,82 @@ public sealed class CameraPostProcessStateCollection
     private Dictionary<Guid, PipelinePostProcessState> _pipelines = new();
     [NonSerialized]
     private Dictionary<Guid, PipelinePostProcessState> _publishedPipelines = new();
+    private PipelinePostProcessState? _defaultState;
 
+    [YamlIgnore]
     public IReadOnlyDictionary<Guid, PipelinePostProcessState> Pipelines
         => Volatile.Read(ref _publishedPipelines);
+
+    /// <summary>Serializable snapshot of explicit pipeline settings.</summary>
+    [YamlMember(Alias = "Pipelines")]
+    public Dictionary<Guid, PipelinePostProcessState> SerializedPipelines
+    {
+        get
+        {
+            lock (_pipelinesSync)
+                return new(_pipelines);
+        }
+        set
+        {
+            lock (_pipelinesSync)
+            {
+                _pipelines = value is null ? new() : new(value);
+                PublishPipelinesNoLock();
+            }
+        }
+    }
+
+    /// <summary>Saved settings for an unassigned camera, independent of transient factory pipeline IDs.</summary>
+    public PipelinePostProcessState? DefaultState
+    {
+        get => Volatile.Read(ref _defaultState);
+        set
+        {
+            lock (_pipelinesSync)
+                Volatile.Write(ref _defaultState, value);
+        }
+    }
+
+    public PipelinePostProcessState GetOrCreateDefaultState(RenderPipeline pipeline)
+    {
+        ArgumentNullException.ThrowIfNull(pipeline);
+        PipelinePostProcessState? published = DefaultState;
+        if (published is not null && published.IsBoundTo(pipeline))
+            return published;
+
+        lock (_pipelinesSync)
+        {
+            PipelinePostProcessState? state = _defaultState;
+            if (state is null)
+            {
+                if (_pipelines.Remove(pipeline.ID, out PipelinePostProcessState? legacy))
+                {
+                    state = legacy;
+                    PublishPipelinesNoLock();
+                }
+                state ??= new();
+            }
+            if (!state.IsBoundTo(pipeline))
+                state.BindToPipeline(pipeline);
+            Volatile.Write(ref _defaultState, state);
+            return state;
+        }
+    }
+
+    /// <summary>Transfers the cached factory object's settings when that same object becomes authored.</summary>
+    internal void PromoteDefaultState(RenderPipeline pipeline)
+    {
+        lock (_pipelinesSync)
+        {
+            if (_defaultState is not { } state)
+                return;
+            if (!state.IsBoundTo(pipeline))
+                state.BindToPipeline(pipeline);
+            _pipelines[pipeline.ID] = state;
+            Volatile.Write(ref _defaultState, null);
+            PublishPipelinesNoLock();
+        }
+    }
 
     public PipelinePostProcessState GetOrCreateState(RenderPipeline pipeline)
     {
@@ -58,7 +131,15 @@ public sealed class CameraPostProcessStateCollection
     }
 
     public bool TryGetState(Guid pipelineId, out PipelinePostProcessState? state)
-        => Volatile.Read(ref _publishedPipelines).TryGetValue(pipelineId, out state);
+    {
+        if (Volatile.Read(ref _publishedPipelines).TryGetValue(pipelineId, out state))
+            return true;
+        state = DefaultState;
+        if (state?.PipelineId == pipelineId)
+            return true;
+        state = null;
+        return false;
+    }
 
     public void SetState(Guid pipelineId, PipelinePostProcessState replacement)
     {
@@ -101,6 +182,27 @@ public sealed class PipelinePostProcessState
 {
     private readonly object _stagesSync = new();
     private Dictionary<string, PostProcessStageState> _stages = new(StringComparer.OrdinalIgnoreCase);
+    private ulong _schemaVersion;
+    private static long _nextChangeVersion;
+
+    internal static ulong NextChangeVersion()
+        => unchecked((ulong)Interlocked.Increment(ref _nextChangeVersion));
+
+    /// <summary>Allocation-free change stamp for output admission caches.</summary>
+    [YamlIgnore]
+    public ulong ChangeVersion
+    {
+        get
+        {
+            lock (_stagesSync)
+            {
+                ulong version = _schemaVersion;
+                foreach (PostProcessStageState stage in _stages.Values)
+                    version = Math.Max(version, stage.ChangeVersion);
+                return version;
+            }
+        }
+    }
 
     public Guid PipelineId { get; private set; }
     public string PipelineName { get; private set; } = string.Empty;
@@ -111,7 +213,27 @@ public sealed class PipelinePostProcessState
     [YamlIgnore]
     public RenderPipelinePostProcessSchema Schema => Volatile.Read(ref _schema);
 
+    [YamlIgnore]
     public IReadOnlyDictionary<string, PostProcessStageState> Stages => _stages;
+
+    [YamlMember(Alias = "Stages")]
+    public Dictionary<string, PostProcessStageState> SerializedStages
+    {
+        get
+        {
+            lock (_stagesSync)
+                return new(_stages, StringComparer.OrdinalIgnoreCase);
+        }
+        set
+        {
+            lock (_stagesSync)
+            {
+                _stages = value is null ? new(StringComparer.OrdinalIgnoreCase) : new(value, StringComparer.OrdinalIgnoreCase);
+                Volatile.Write(ref _schema, RenderPipelinePostProcessSchema.Empty);
+                _schemaVersion = NextChangeVersion();
+            }
+        }
+    }
 
     public void BindToPipeline(RenderPipeline pipeline)
     {
@@ -119,11 +241,21 @@ public sealed class PipelinePostProcessState
 
         lock (_stagesSync)
         {
-            RenderPipelinePostProcessSchema schema = pipeline.PostProcessSchema ?? RenderPipelinePostProcessSchema.Empty;
             PipelineId = pipeline.ID;
             PipelineName = pipeline.DebugName;
+            BindToSchema(pipeline.PostProcessSchema ?? RenderPipelinePostProcessSchema.Empty);
+        }
+    }
+
+    /// <summary>Binds a detached target state without constructing a runtime pipeline.</summary>
+    internal void BindToSchema(RenderPipelinePostProcessSchema schema)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        lock (_stagesSync)
+        {
             SynchronizeStages(schema);
             Volatile.Write(ref _schema, schema);
+            _schemaVersion = NextChangeVersion();
         }
     }
 
@@ -222,6 +354,9 @@ public sealed class PostProcessStageState : IDisposable
     private IXRNotifyPropertyChanged? _backingNotifier;
     private string? _suppressedBackingPropertyName;
 
+    [YamlIgnore]
+    public ulong ChangeVersion { get; private set; }
+
     public string StageKey { get; private set; } = string.Empty;
 
     [YamlIgnore]
@@ -230,7 +365,27 @@ public sealed class PostProcessStageState : IDisposable
     [YamlIgnore]
     public object? BackingInstance { get; private set; }
 
+    [YamlIgnore]
     public IReadOnlyDictionary<string, object?> Values => _values;
+
+    [YamlMember(Alias = "Values")]
+    public Dictionary<string, object?> SerializedValues
+    {
+        get
+        {
+            lock (_backingSync)
+                return new(_values, StringComparer.OrdinalIgnoreCase);
+        }
+        set
+        {
+            TeardownBacking();
+            lock (_backingSync)
+            {
+                _values = value is null ? new(StringComparer.OrdinalIgnoreCase) : new(value, StringComparer.OrdinalIgnoreCase);
+                ChangeVersion = PipelinePostProcessState.NextChangeVersion();
+            }
+        }
+    }
 
     internal void AttachDescriptor(PostProcessStageDescriptor descriptor)
     {
@@ -273,8 +428,12 @@ public sealed class PostProcessStageState : IDisposable
 
     public void SetValue<T>(string parameterName, T value)
     {
-        _values[parameterName] = value;
+        object? boxed = value;
+        bool changed = !_values.TryGetValue(parameterName, out object? previous) || !Equals(previous, boxed);
+        _values[parameterName] = boxed;
         PushValueToBacking(parameterName, value);
+        if (changed)
+            ChangeVersion = PipelinePostProcessState.NextChangeVersion();
     }
 
     private void EnsureParameters(PostProcessStageDescriptor descriptor)
@@ -353,6 +512,7 @@ public sealed class PostProcessStageState : IDisposable
             if (parameter is null || !_values.TryGetValue(parameter, out var raw) || !TryCoerce(raw, property.ValueType, out var coerced))
                 continue;
 
+            _values[parameter] = coerced;
             _suppressedBackingPropertyName = parameter;
             try
             {
@@ -407,6 +567,7 @@ public sealed class PostProcessStageState : IDisposable
         lock (_backingSync)
         {
             _values[args.PropertyName] = value;
+            ChangeVersion = PipelinePostProcessState.NextChangeVersion();
         }
     }
 
@@ -426,10 +587,15 @@ public sealed class PostProcessStageState : IDisposable
         {
             if (targetType.IsEnum)
             {
+                if (value is string enumName && Enum.TryParse(targetType, enumName, true, out result))
+                    return true;
                 var underlying = Convert.ToInt32(value, CultureInfo.InvariantCulture);
                 result = Enum.ToObject(targetType, underlying);
                 return true;
             }
+
+            if (value is string vectorText && TryParseVectorValue(vectorText, targetType, out result))
+                return true;
 
             if (targetType == typeof(float))
             {
@@ -513,6 +679,34 @@ public sealed class PostProcessStageState : IDisposable
             result = null;
             return false;
         }
+    }
+
+    private static bool TryParseVectorValue(string text, Type targetType, out object? result)
+    {
+        result = null;
+        int count = targetType == typeof(Vector2) ? 2
+            : targetType == typeof(Vector3) || targetType == typeof(ColorF3) ? 3
+            : targetType == typeof(Vector4) || targetType == typeof(ColorF4) ? 4 : 0;
+        if (count == 0)
+            return false;
+        string[] components = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (components.Length != count)
+            return false;
+        Span<float> values = stackalloc float[4];
+        for (int i = 0; i < count; i++)
+            if (!float.TryParse(components[i], NumberStyles.Float, CultureInfo.InvariantCulture, out values[i]))
+                return false;
+        if (targetType == typeof(Vector2))
+            result = new Vector2(values[0], values[1]);
+        else if (targetType == typeof(Vector3))
+            result = new Vector3(values[0], values[1], values[2]);
+        else if (targetType == typeof(Vector4))
+            result = new Vector4(values[0], values[1], values[2], values[3]);
+        else if (targetType == typeof(ColorF3))
+            result = new ColorF3(values[0], values[1], values[2]);
+        else
+            result = new ColorF4(values[0], values[1], values[2], values[3]);
+        return true;
     }
 
     private void TeardownBacking()

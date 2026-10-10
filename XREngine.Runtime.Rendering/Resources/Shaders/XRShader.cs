@@ -26,9 +26,23 @@ namespace XREngine.Rendering
         private string? _optimizedSourceCachePath;
         private string? _optimizedSourceCacheText;
         private ShaderSourceFileDependency[]? _resolvedSourceDependencies;
+        private ShaderSourceDirectoryDependency[]? _resolvedSourceDirectoryDependencies;
+        private ShaderSourceProviderOwner _resolvedSourceOwner;
+        private ShaderSourceFileDependency[]? _optimizedSourceDependencies;
+        private ShaderSourceDirectoryDependency[]? _optimizedSourceDirectoryDependencies;
+        private ShaderSourceProviderOwner _optimizedSourceOwner;
+        private ShaderSourceFileDependency[]? _uiManifestDependencies;
+        private ShaderSourceDirectoryDependency[]? _uiManifestDirectoryDependencies;
+        private ShaderSourceProviderOwner _uiManifestOwner;
+        private long _resolvedSourceSnippetVersion;
+        private bool _resolvedSourceHostFileAccess;
         private ShaderUiManifest? _uiManifestCache;
         private string? _uiManifestCachePath;
         private string? _uiManifestCacheText;
+        private long _uiManifestSnippetVersion;
+        private bool _uiManifestHostFileAccess;
+        private long _optimizedSourceSnippetVersion;
+        private bool _optimizedSourceHostFileAccess;
         private long _sourceRevision;
         private long _sourceIdentityRevision;
         private volatile bool _destroyed;
@@ -79,9 +93,9 @@ namespace XREngine.Rendering
             set => SetField(ref _generatedUberVariantHash, value);
         }
 
-        public XRShader() { }
-        public XRShader(EShaderType type) => Type = type;
-        public XRShader(EShaderType type, TextFile source)
+        public XRShader() => _source.TextChanged += OnSourceTextChanged;
+        public XRShader(EShaderType type) : this() => Type = type;
+        public XRShader(EShaderType type, TextFile source) : this()
         {
             Type = type;
             Source = source;
@@ -139,6 +153,7 @@ namespace XREngine.Rendering
 
         public override void Reload(string filePath)
         {
+            RequireHostSourceImport();
             XRShader? loaded = RuntimeShaderServices.Current?.LoadAsset<XRShader>(filePath);
             if (loaded is null)
             {
@@ -157,6 +172,7 @@ namespace XREngine.Rendering
         }
         public override bool Load3rdParty(string filePath)
         {
+            RequireHostSourceImport();
             ResolveFrontendFromPath(filePath);
             TextFile file = new(filePath);
             file.LoadText(filePath);
@@ -179,6 +195,7 @@ namespace XREngine.Rendering
         }
         public override async Task<bool> Load3rdPartyAsync(string filePath)
         {
+            RequireHostSourceImport();
             ResolveFrontendFromPath(filePath);
             TextFile file = new(filePath);
             await file.LoadTextAsync(filePath);
@@ -186,6 +203,30 @@ namespace XREngine.Rendering
             IsGeneratedUberVariant = false;
             GeneratedUberVariantHash = 0;
             return true;
+        }
+
+        public override Task<bool> Load3rdPartyAsync(string filePath, AssetImportContext context)
+        {
+            RequireHostSourceImport();
+            return base.Load3rdPartyAsync(filePath, context);
+        }
+
+        public override Task<bool> Import3rdPartyAsync(string filePath, object? importOptions)
+        {
+            RequireHostSourceImport();
+            return base.Import3rdPartyAsync(filePath, importOptions);
+        }
+
+        public override Task ReloadAsync(string path)
+        {
+            RequireHostSourceImport();
+            return base.ReloadAsync(path);
+        }
+
+        private static void RequireHostSourceImport()
+        {
+            if (!ShaderSourceResolver.CanAccessHostShaderFiles)
+                throw new NotSupportedException("ShaderSource.HostFileImportUnavailable: importing or reloading shader source requires host files; preload a cooked shader artifact through the owning asset catalog on this runtime.");
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
@@ -211,6 +252,10 @@ namespace XREngine.Rendering
                 case nameof(SourceLanguage):
                 case nameof(EntryPoint):
                 case nameof(SlangOptions):
+                    CookedArtifact = null;
+                    goto case nameof(CookedArtifact);
+                case nameof(CookedArtifact):
+                case nameof(CookedArtifactIdentity):
                     InvalidateResolvedSourceCache();
                     Interlocked.Increment(ref _sourceRevision);
                     MarkDirty();
@@ -253,6 +298,7 @@ namespace XREngine.Rendering
 
         private void OnSourceTextChanged()
         {
+            CookedArtifact = null;
             InvalidateResolvedSourceCache();
             Interlocked.Increment(ref _sourceRevision);
 
@@ -262,10 +308,14 @@ namespace XREngine.Rendering
         }
 
         internal void NotifySourceDependencyChanged(string reason)
+            => NotifySourceDependencyChanged(reason, RuntimeShaderServices.Current);
+
+        internal void NotifySourceDependencyChanged(string reason, IRuntimeShaderServices? sourceOwner)
         {
+            CookedArtifact = null;
             InvalidateResolvedSourceCache();
             Interlocked.Increment(ref _sourceRevision);
-            RuntimeShaderServices.Current?.LogWarning(
+            sourceOwner?.LogWarning(
                 $"Shader dependency changed for '{Name ?? FilePath ?? "UnnamedShader"}': {reason}");
             SourceChanged?.Invoke(this);
         }
@@ -292,6 +342,11 @@ namespace XREngine.Rendering
                 _optimizedSourceCachePath = null;
                 _optimizedSourceCacheText = null;
                 _resolvedSourceDependencies = null;
+                _resolvedSourceDirectoryDependencies = null;
+                _optimizedSourceDependencies = null;
+                _optimizedSourceDirectoryDependencies = null;
+                _uiManifestDependencies = null;
+                _uiManifestDirectoryDependencies = null;
                 _uiManifestCache = null;
                 _uiManifestCachePath = null;
                 _uiManifestCacheText = null;
@@ -302,7 +357,12 @@ namespace XREngine.Rendering
 
         public ShaderUiManifest GetUiManifest(bool logFailures = true)
         {
-            TryGetUiManifest(out ShaderUiManifest manifest, logFailures);
+            if (!TryGetUiManifest(out ShaderUiManifest manifest, logFailures) &&
+                !ShaderSourceResolver.CanAccessHostShaderFiles)
+            {
+                _ = GetResolvedShaderSource();
+                throw new NotSupportedException("ShaderSource.UiManifestUnavailable: this runtime cannot resolve the shader source from host files.");
+            }
             return manifest;
         }
 
@@ -310,29 +370,69 @@ namespace XREngine.Rendering
         {
             string sourceText = Source?.Text ?? string.Empty;
             string? sourcePath = Source?.FilePath;
+            long snippetVersion = ShaderSourceResolver.RegisteredSnippetVersion;
+            ShaderSourceProviderOwner owner = ShaderSourceResolver.CaptureOwner();
+            bool hostFileAccess = owner.HostFileAccess;
 
+            ShaderUiManifest? cachedManifest = null;
+            ShaderSourceFileDependency[]? cachedDependencies = null;
+            ShaderSourceDirectoryDependency[]? cachedDirectoryDependencies = null;
+            ShaderSourceProviderOwner cachedOwner = default;
             lock (_resolvedSourceCacheLock)
             {
                 if (_uiManifestCache is not null &&
                     string.Equals(_uiManifestCacheText, sourceText, StringComparison.Ordinal) &&
                     string.Equals(_uiManifestCachePath, sourcePath, StringComparison.Ordinal) &&
-                    ShaderSourceResolver.AreDependenciesCurrent(_resolvedSourceDependencies))
+                    _uiManifestSnippetVersion == snippetVersion &&
+                    _uiManifestHostFileAccess == hostFileAccess &&
+                    _uiManifestOwner.Equals(owner))
                 {
-                    manifest = _uiManifestCache;
-                    return true;
+                    cachedManifest = _uiManifestCache;
+                    cachedDependencies = _uiManifestDependencies;
+                    cachedDirectoryDependencies = _uiManifestDirectoryDependencies;
+                    cachedOwner = _uiManifestOwner;
+                }
+            }
+            if (cachedManifest is not null &&
+                ShaderSourceResolver.AreDependenciesCurrent(cachedDependencies, cachedDirectoryDependencies, cachedOwner))
+            {
+                lock (_resolvedSourceCacheLock)
+                {
+                    if (ReferenceEquals(_uiManifestCache, cachedManifest) &&
+                        ReferenceEquals(_uiManifestDependencies, cachedDependencies) &&
+                        ReferenceEquals(_uiManifestDirectoryDependencies, cachedDirectoryDependencies) &&
+                        _uiManifestOwner.Equals(cachedOwner) &&
+                        string.Equals(_uiManifestCacheText, sourceText, StringComparison.Ordinal) &&
+                        string.Equals(_uiManifestCachePath, sourcePath, StringComparison.Ordinal) &&
+                        _uiManifestSnippetVersion == snippetVersion &&
+                        _uiManifestHostFileAccess == hostFileAccess)
+                    {
+                        manifest = cachedManifest;
+                        return true;
+                    }
                 }
             }
 
-            bool resolved = TryGetResolvedSource(out string resolvedSource, annotateIncludes: false, logFailures: logFailures);
-            manifest = ShaderUiManifestParser.Parse(resolvedSource, sourcePath);
+            bool resolved = TryGetResolvedShaderSourceCore(out ResolvedShaderSource resolvedPayload,
+                annotateIncludes: false, logFailures: logFailures, out _, out ShaderSourceProviderOwner resolvedOwner);
+            manifest = ShaderUiManifestParser.Parse(resolvedPayload.ResolvedSource, resolvedPayload.OriginalPath);
 
-            if (resolved)
+            if (resolved && owner.Equals(resolvedOwner) &&
+                string.Equals(resolvedPayload.OriginalSource, sourceText, StringComparison.Ordinal) &&
+                string.Equals(resolvedPayload.OriginalPath, sourcePath, StringComparison.Ordinal) &&
+                snippetVersion == ShaderSourceResolver.RegisteredSnippetVersion &&
+                ShaderSourceResolver.IsOwnerCurrent(owner))
             {
                 lock (_resolvedSourceCacheLock)
                 {
                     _uiManifestCache = manifest;
                     _uiManifestCacheText = sourceText;
                     _uiManifestCachePath = sourcePath;
+                    _uiManifestSnippetVersion = snippetVersion;
+                    _uiManifestHostFileAccess = hostFileAccess;
+                    _uiManifestOwner = owner;
+                    _uiManifestDependencies = resolvedPayload.FileDependencies;
+                    _uiManifestDirectoryDependencies = resolvedPayload.SearchRootDependencies;
                 }
             }
 
@@ -340,10 +440,7 @@ namespace XREngine.Rendering
         }
 
         public string GetResolvedSource(bool annotateIncludes = false)
-        {
-            TryGetResolvedSource(out string resolvedSource, annotateIncludes, logFailures: true);
-            return resolvedSource;
-        }
+            => GetResolvedShaderSource(annotateIncludes).ResolvedSource;
 
         public bool TryGetResolvedSource(out string resolvedSource, bool annotateIncludes = false, bool logFailures = true)
         {
@@ -354,14 +451,26 @@ namespace XREngine.Rendering
 
         public ResolvedShaderSource GetResolvedShaderSource(bool annotateIncludes = false)
         {
-            TryGetResolvedShaderSource(out ResolvedShaderSource resolvedSource, annotateIncludes, logFailures: true);
+            if (!TryGetResolvedShaderSourceCore(out ResolvedShaderSource resolvedSource, annotateIncludes, logFailures: true,
+                    out Exception? failure, out _) &&
+                !ShaderSourceResolver.CanAccessHostShaderFiles)
+                throw failure ?? new NotSupportedException("ShaderSource.ResolutionUnavailable: this runtime cannot resolve the shader source from host files.");
             return resolvedSource;
         }
 
         public bool TryGetResolvedShaderSource(out ResolvedShaderSource resolvedSource, bool annotateIncludes = false, bool logFailures = true)
+            => TryGetResolvedShaderSourceCore(out resolvedSource, annotateIncludes, logFailures, out _, out _);
+
+        private bool TryGetResolvedShaderSourceCore(out ResolvedShaderSource resolvedSource, bool annotateIncludes,
+            bool logFailures, out Exception? failure, out ShaderSourceProviderOwner resolvedOwner)
         {
+            failure = null;
             string sourceText = Source?.Text ?? string.Empty;
             string? sourcePath = Source?.FilePath;
+            long snippetVersion = ShaderSourceResolver.RegisteredSnippetVersion;
+            ShaderSourceProviderOwner owner = ShaderSourceResolver.CaptureOwner();
+            resolvedOwner = owner;
+            bool hostFileAccess = owner.HostFileAccess;
 
             // Native frontends own their include/import graph. Editor source views must
             // neither rewrite it as GLSL nor replace compiler-discovered dependencies.
@@ -373,15 +482,42 @@ namespace XREngine.Rendering
 
             if (!annotateIncludes)
             {
+                ResolvedShaderSource? cachedPayload = null;
+                ShaderSourceFileDependency[]? cachedDependencies = null;
+                ShaderSourceDirectoryDependency[]? cachedDirectoryDependencies = null;
+                ShaderSourceProviderOwner cachedOwner = default;
                 lock (_resolvedSourceCacheLock)
                 {
                     if (_resolvedSourcePayloadCache is not null &&
                         string.Equals(_resolvedSourceCacheText, sourceText, StringComparison.Ordinal) &&
                         string.Equals(_resolvedSourceCachePath, sourcePath, StringComparison.Ordinal) &&
-                        ShaderSourceResolver.AreDependenciesCurrent(_resolvedSourceDependencies))
+                        _resolvedSourceSnippetVersion == snippetVersion &&
+                        _resolvedSourceHostFileAccess == hostFileAccess &&
+                        _resolvedSourceOwner.Equals(owner))
                     {
-                        resolvedSource = _resolvedSourcePayloadCache;
-                        return true;
+                        cachedPayload = _resolvedSourcePayloadCache;
+                        cachedDependencies = _resolvedSourceDependencies;
+                        cachedDirectoryDependencies = _resolvedSourceDirectoryDependencies;
+                        cachedOwner = _resolvedSourceOwner;
+                    }
+                }
+                if (cachedPayload is not null &&
+                    ShaderSourceResolver.AreDependenciesCurrent(cachedDependencies, cachedDirectoryDependencies, cachedOwner))
+                {
+                    lock (_resolvedSourceCacheLock)
+                    {
+                        if (ReferenceEquals(_resolvedSourcePayloadCache, cachedPayload) &&
+                            ReferenceEquals(_resolvedSourceDependencies, cachedDependencies) &&
+                            ReferenceEquals(_resolvedSourceDirectoryDependencies, cachedDirectoryDependencies) &&
+                            _resolvedSourceOwner.Equals(cachedOwner) &&
+                            string.Equals(_resolvedSourceCacheText, sourceText, StringComparison.Ordinal) &&
+                            string.Equals(_resolvedSourceCachePath, sourcePath, StringComparison.Ordinal) &&
+                            _resolvedSourceSnippetVersion == snippetVersion &&
+                            _resolvedSourceHostFileAccess == hostFileAccess)
+                        {
+                            resolvedSource = cachedPayload;
+                            return true;
+                        }
                     }
                 }
             }
@@ -391,7 +527,9 @@ namespace XREngine.Rendering
                 ResolvedShaderSource resolvedPayload = ShaderSourceResolver.ResolveSourcePayload(
                     sourceText,
                     sourcePath,
+                    out ShaderSourceProviderOwner sourceOwner,
                     annotateIncludes: annotateIncludes);
+                resolvedOwner = sourceOwner;
                 if (_resolvedSourceTransform is not null)
                 {
                     string transformed = _resolvedSourceTransform(resolvedPayload.ResolvedSource);
@@ -403,11 +541,15 @@ namespace XREngine.Rendering
                         transformed,
                         resolvedPayload.ResolvedPaths,
                         resolvedPayload.FileDependencies,
-                        ShaderSourceMacroSummary.Scan(transformed));
+                        ShaderSourceMacroSummary.Scan(transformed))
+                    {
+                        SearchRootDependencies = resolvedPayload.SearchRootDependencies,
+                    };
                 }
                 resolvedSource = resolvedPayload;
 
-                if (!annotateIncludes)
+                if (!annotateIncludes && snippetVersion == ShaderSourceResolver.RegisteredSnippetVersion &&
+                    owner.Equals(sourceOwner) && ShaderSourceResolver.IsOwnerCurrent(owner))
                 {
                     lock (_resolvedSourceCacheLock)
                     {
@@ -416,6 +558,10 @@ namespace XREngine.Rendering
                         _resolvedSourceCacheText = sourceText;
                         _resolvedSourceCachePath = sourcePath;
                         _resolvedSourceDependencies = resolvedPayload.FileDependencies;
+                        _resolvedSourceDirectoryDependencies = resolvedPayload.SearchRootDependencies;
+                        _resolvedSourceSnippetVersion = snippetVersion;
+                        _resolvedSourceHostFileAccess = hostFileAccess;
+                        _resolvedSourceOwner = owner;
                     }
 
                     ShaderSourceDependencyIndex.Update(this, sourcePath, resolvedPayload.FileDependencies);
@@ -425,6 +571,7 @@ namespace XREngine.Rendering
             }
             catch (Exception ex)
             {
+                failure = ex;
                 if (logFailures)
                     RuntimeShaderServices.Current?.LogWarning($"Failed to resolve shader source for '{Name ?? FilePath ?? "UnnamedShader"}': {ex.Message}");
 
@@ -441,7 +588,12 @@ namespace XREngine.Rendering
 
         public string GetOptimizedSource(bool annotateIncludes = false)
         {
-            TryGetOptimizedSource(out string optimizedSource, annotateIncludes, logFailures: true);
+            if (!TryGetOptimizedSource(out string optimizedSource, annotateIncludes, logFailures: true) &&
+                !ShaderSourceResolver.CanAccessHostShaderFiles)
+            {
+                _ = GetResolvedShaderSource(annotateIncludes);
+                throw new NotSupportedException("ShaderSource.OptimizationUnavailable: this runtime cannot optimize the shader source.");
+            }
             return optimizedSource;
         }
 
@@ -458,36 +610,77 @@ namespace XREngine.Rendering
                 return true;
             }
             string? sourcePath = Source?.FilePath;
+            long snippetVersion = ShaderSourceResolver.RegisteredSnippetVersion;
+            ShaderSourceProviderOwner owner = ShaderSourceResolver.CaptureOwner();
+            bool hostFileAccess = owner.HostFileAccess;
             bool useDefaultCache = !annotateIncludes && options is null;
 
             if (useDefaultCache)
             {
+                string? cachedSource = null;
+                ShaderSourceFileDependency[]? cachedDependencies = null;
+                ShaderSourceDirectoryDependency[]? cachedDirectoryDependencies = null;
+                ShaderSourceProviderOwner cachedOwner = default;
                 lock (_resolvedSourceCacheLock)
                 {
                     if (_optimizedSourceCache is not null &&
                         string.Equals(_optimizedSourceCacheText, sourceText, StringComparison.Ordinal) &&
                         string.Equals(_optimizedSourceCachePath, sourcePath, StringComparison.Ordinal) &&
-                        ShaderSourceResolver.AreDependenciesCurrent(_resolvedSourceDependencies))
+                        _optimizedSourceSnippetVersion == snippetVersion &&
+                        _optimizedSourceHostFileAccess == hostFileAccess &&
+                        _optimizedSourceOwner.Equals(owner))
                     {
-                        optimizedSource = _optimizedSourceCache;
-                        return true;
+                        cachedSource = _optimizedSourceCache;
+                        cachedDependencies = _optimizedSourceDependencies;
+                        cachedDirectoryDependencies = _optimizedSourceDirectoryDependencies;
+                        cachedOwner = _optimizedSourceOwner;
+                    }
+                }
+                if (cachedSource is not null &&
+                    ShaderSourceResolver.AreDependenciesCurrent(cachedDependencies, cachedDirectoryDependencies, cachedOwner))
+                {
+                    lock (_resolvedSourceCacheLock)
+                    {
+                        if (ReferenceEquals(_optimizedSourceCache, cachedSource) &&
+                            ReferenceEquals(_optimizedSourceDependencies, cachedDependencies) &&
+                            ReferenceEquals(_optimizedSourceDirectoryDependencies, cachedDirectoryDependencies) &&
+                            _optimizedSourceOwner.Equals(cachedOwner) &&
+                            string.Equals(_optimizedSourceCacheText, sourceText, StringComparison.Ordinal) &&
+                            string.Equals(_optimizedSourceCachePath, sourcePath, StringComparison.Ordinal) &&
+                            _optimizedSourceSnippetVersion == snippetVersion &&
+                            _optimizedSourceHostFileAccess == hostFileAccess)
+                        {
+                            optimizedSource = cachedSource;
+                            return true;
+                        }
                     }
                 }
             }
 
-            bool resolved = TryGetResolvedSource(out string resolvedSource, annotateIncludes, logFailures);
+            bool resolved = TryGetResolvedShaderSourceCore(out ResolvedShaderSource resolvedPayload,
+                annotateIncludes, logFailures, out _, out ShaderSourceProviderOwner resolvedOwner);
+            string resolvedSource = resolvedPayload.ResolvedSource;
             try
             {
                 ResolvedShaderSourceOptimizationResult result = ResolvedShaderSourceOptimizer.Optimize(resolvedSource, options);
                 optimizedSource = result.Source;
 
-                if (useDefaultCache && resolved)
+                if (useDefaultCache && resolved && owner.Equals(resolvedOwner) &&
+                    string.Equals(resolvedPayload.OriginalSource, sourceText, StringComparison.Ordinal) &&
+                    string.Equals(resolvedPayload.OriginalPath, sourcePath, StringComparison.Ordinal) &&
+                    snippetVersion == ShaderSourceResolver.RegisteredSnippetVersion &&
+                    ShaderSourceResolver.IsOwnerCurrent(owner))
                 {
                     lock (_resolvedSourceCacheLock)
                     {
                         _optimizedSourceCache = optimizedSource;
                         _optimizedSourceCacheText = sourceText;
                         _optimizedSourceCachePath = sourcePath;
+                        _optimizedSourceSnippetVersion = snippetVersion;
+                        _optimizedSourceHostFileAccess = hostFileAccess;
+                        _optimizedSourceOwner = owner;
+                        _optimizedSourceDependencies = resolvedPayload.FileDependencies;
+                        _optimizedSourceDirectoryDependencies = resolvedPayload.SearchRootDependencies;
                     }
                 }
 

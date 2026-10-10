@@ -218,6 +218,13 @@ namespace XREngine.Rendering.UI
             Children.PostAnythingAdded += OnChildAdded;
             Children.PostAnythingRemoved += OnChildRemoved;
         }
+
+        protected override void OnDestroying()
+        {
+            try { base.OnDestroying(); }
+            finally { DebugRenderInfo2D?.Dispose(); }
+        }
+
         ~UITransform()
         {
             Children.PostAnythingAdded -= OnChildAdded;
@@ -449,7 +456,7 @@ namespace XREngine.Rendering.UI
         /// <param name="targetChild">The UI component whose space you wish to convert the coordinate to.</param>
         /// <returns></returns>
         public static Vector2 ConvertUICoordinate(Vector2 coordinate, UITransform parent, UITransform targetChild)
-            => Vector2.Transform(coordinate, targetChild.InverseWorldMatrix * parent.WorldMatrix);
+            => Vector2.Transform(coordinate, parent.WorldMatrix * targetChild.InverseWorldMatrix);
         /// <summary>
         /// Converts a screen-space coordinate
         /// to a local-space coordinate of a UI component.
@@ -596,7 +603,8 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         public Vector2 CanvasToLocal(Vector2 canvasPoint)
         {
-            Matrix4x4 canvasToLocal = InverseWorldMatrix * (ParentCanvas?.WorldMatrix ?? Matrix4x4.Identity);
+            // System.Numerics applies the left matrix first for row vectors.
+            Matrix4x4 canvasToLocal = (ParentCanvas?.WorldMatrix ?? Matrix4x4.Identity) * InverseWorldMatrix;
             return Vector2.Transform(canvasPoint, canvasToLocal);
         }
         /// <summary>

@@ -1,19 +1,28 @@
 using XREngine.Rendering;
+using XREngine.Runtime.Platform.Browser;
 
 namespace XREngine.Browser;
 
 /// <summary>Installs the WebGPU renderer module for all browser canvas sessions.</summary>
 internal static class BrowserRendererComposition
 {
+    private static readonly BrowserBufferSpillStorage BufferSpillStorage = new();
     private static readonly RendererBackendCatalog Catalog = new();
     private static readonly IDisposable Registration = Catalog.Register(
         BrowserStaticRegistrations.CreateRendererModule(BrowserStaticRegistrations.WebGpuModuleId));
+
+    static BrowserRendererComposition()
+    {
+        XRBufferSpillStorageServices.Current = BufferSpillStorage;
+    }
 
     internal static void Initialize()
     {
         BrowserStaticRegistrations.Initialize();
         _ = Registration;
     }
+
+    internal static IRendererBackendCatalog BackendCatalog => Catalog;
 
     /// <summary>Creates a canvas renderer through the shared backend catalog.</summary>
     internal static IBrowserRendererHost CreateRequired(BrowserCanvasRenderTarget target)

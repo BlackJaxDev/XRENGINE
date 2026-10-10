@@ -1,0 +1,11 @@
+# Network File Transfer Host I/O
+
+`BaseNetworkingManager.SendFileAsync` and `ReceiveFileAsync` now get physical file metadata and streams through `IHostFileTransferBackend`. The Core assembly keeps the transfer loop, transport calls, and wire header. `DesktopHostFileTransferBackend` retains `FileInfo.Length`, `File.OpenRead`, and `File.OpenWrite` behavior. `DesktopPlatformBackend.Register` installs the file backend for the normal desktop and server composition.
+
+Both path entry points check browser, caller-thread, and asset-source admission before they select a file backend or start transport work. They check admission again immediately before opening a file after transport awaits. Each operation uses the backend selected before its first await. If a host does not install the file backend, a path transfer reports `NetworkFileTransfer.HostFileUnavailable`. The stream entry points remain available through an installed transport.
+
+External native hosts that bypass `DesktopPlatformBackend.Register` must set `HostFileTransferServices.Current = new DesktopHostFileTransferBackend()` before they call either path entry point. This installs file transfer without registering desktop window or input services. They must also install a transport backend. No in-repository C# caller invokes either path entry point; the two method definitions are the complete current caller search result.
+
+The send path still writes the `BitConverter.GetBytes(long)` eight-byte length before opening the source file. The receive path still reads exactly eight bytes before opening the destination. Buffer size, progress reports, file-open defaults, disposal, and await order are unchanged.
+
+Validation: narrow Core and Desktop builds passed with zero warnings and zero errors after the final stream-type refinement. The initial restore used the existing local package cache as its only source; final builds used `--no-restore`. An exact source comparison of `BaseNetworkingManager` passed after normalizing only the new backend calls, declarations, and stream local type to their former file operations. `git diff --check` passed. The wider browser host-file I/O inventory and live browser acceptance remain open. This extraction does not qualify TCP file transfers in a browser host or change WebSocket framing.

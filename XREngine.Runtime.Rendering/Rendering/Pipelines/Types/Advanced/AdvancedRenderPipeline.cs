@@ -1,4 +1,5 @@
 using XREngine.Extensions;
+using YamlDotNet.Serialization;
 using System;
 using System.Collections;
 using System.ComponentModel;
@@ -63,6 +64,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     [Category("Forward Pre-Pass")]
     [DisplayName("Forward Depth Pre-Pass")]
     [Description("Renders forward opaque and masked geometry into depth+normal pre-pass targets before ambient occlusion and lighting.")]
+    [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
     public bool ForwardDepthPrePassEnabled
     {
         get => _forwardDepthPrePassEnabled;
@@ -74,6 +76,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     [Category("Forward Pre-Pass")]
     [DisplayName("Share GBuffer Targets")]
     [Description("When enabled, the forward pre-pass writes directly into the main GBuffer depth and normal textures instead of only using dedicated forward pre-pass targets.")]
+    [DefaultValue(true)]
     public bool ForwardPrePassSharesGBufferTargets
     {
         get => _forwardPrePassSharesGBufferTargets;
@@ -95,6 +98,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     [Category("Debug")]
     [DisplayName("Deferred Debug View")]
     [Description("Overrides DeferredLightCombine output for diagnostics. Disabled = normal shaded output; other modes show raw deferred inputs.")]
+    [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
     public DeferredDebugViewMode DeferredDebugView
     {
         get => _deferredDebugView;
@@ -122,8 +126,10 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         new AdvancedGlobalIlluminationHostAdapter(isMinimalOutput: false));
 
     /// <summary>Immutable registry-resolved GI selection for the native stage family.</summary>
+    [YamlIgnore]
     public GlobalIlluminationPlan GlobalIlluminationPlan => _globalIlluminationPlan;
 
+    [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
     public EGlobalIlluminationMode GlobalIlluminationMode
     {
         get => _globalIlluminationMode;
@@ -147,8 +153,11 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             new AdvancedGlobalIlluminationHostAdapter(UsesMinimalVisibilityOutput));
 
     // Light probe debug accessors (for editor/state panels)
+    [YamlIgnore]
     public XRTexture2DArray? ProbeIrradianceArray => CurrentProbeResources?.IrradianceArray;
+    [YamlIgnore]
     public XRTexture2DArray? ProbePrefilterArray => CurrentProbeResources?.PrefilterArray;
+    [YamlIgnore]
     public int ProbeCount => CurrentProbeResources?.PositionBuffer is { } positions
         ? (int)positions.ElementCount
         : 0;
@@ -804,6 +813,9 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         if (fragmentShaders.Count != 1)
             return true;
 
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            return fragmentShaders[0].CookedArtifact?.Identity != GetRequiredWebPipelineArtifact("advanced::final-post-process").Identity;
+
         XRShader expectedShader = XRShader.EngineShader(
             Path.Combine(SceneShaderPath, FinalPostProcessShaderName()),
             EShaderType.Fragment);
@@ -919,6 +931,9 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         var fragmentShaders = material.FragmentShaders;
         if (fragmentShaders.Count != 1)
             return true;
+
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            return fragmentShaders[0].CookedArtifact?.Identity != GetRequiredWebPipelineArtifact("advanced::post-process").Identity;
 
         XRShader expectedShader = CreateAdvancedPostProcessShader(PostProcessShaderName());
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
@@ -1414,6 +1429,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     /// When true the deferred GBuffer renders into an MSAA FBO and deferred lighting
     /// runs with per-sample shading so geometric edges in the deferred path get anti-aliased.
     /// </summary>
+    [DefaultValue(true)]
     public bool EnableDeferredMsaa { get; set; } = true;
 
     private string BrightPassShaderName() =>
@@ -1444,7 +1460,16 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     /// <summary>
     /// Affects how textures and FBOs are created for single-pass stereo rendering.
     /// </summary>
-    public bool Stereo { get; }
+    private bool _stereo;
+    public bool Stereo
+    {
+        get => _stereo;
+        private set
+        {
+            if (SetField(ref _stereo, value) && CommandChain.Count != 0)
+                RebuildCommandChain();
+        }
+    }
 
     internal override bool UsesStereoResources(XRRenderPipelineInstance instance, XRViewport? viewport)
         => Stereo;
@@ -1459,6 +1484,9 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         // Stage execution order comes from the command chain. This collection
         // also holds authored material passes, whose sorted-alpha bucket must
         // preserve painter's order instead of the scene's collection order.
+        passes[(int)EDefaultRenderPass.PreRender] = null;
+        if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+            passes[(int)EDefaultRenderPass.DeferredDecals] = new FarToNearRenderCommandSorter();
         passes[(int)EDefaultRenderPass.TransparentForward] = new FarToNearRenderCommandSorter();
         passes[(int)EDefaultRenderPass.PostBloomForward] = new FarToNearRenderCommandSorter();
         passes[(int)EDefaultRenderPass.PostMotionBlurForward] = new FarToNearRenderCommandSorter();
@@ -1944,6 +1972,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     private const uint LightProbeGridIndexBufferBinding = 24u;
     private bool _useProbeGridAcceleration = true;
 
+    [DefaultValue(true)]
     public bool UseProbeGridAcceleration
     {
         get => _useProbeGridAcceleration;

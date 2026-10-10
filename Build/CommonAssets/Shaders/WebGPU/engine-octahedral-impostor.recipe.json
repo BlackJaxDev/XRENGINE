@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-octahedral-impostor",
+  "pass": "forward-impostor",
+  "source": "OctahedralImpostor.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "impostorVertex",
+    "fragment": "impostorFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 2,
+    "maxVertexBuffers": 2,
+    "maxVertexBufferArrayStride": 20,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 2,
+    "maxUniformBufferBindingSize": 128,
+    "maxDynamicUniformBuffersPerPipelineLayout": 2,
+    "maxUniformBuffersPerShaderStage": 2,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxSamplersPerShaderStage": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.octahedral-impostor.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 20,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          },
+          {
+            "location": 4,
+            "offset": 12,
+            "format": "float32x2",
+            "semantic": "uv0"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "View",
+        "physicalName": "impostorView_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "vertex",
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 128,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "viewProjection_0",
+            "provider": "ViewProjection",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "inverseView_0",
+            "provider": "InverseViewMatrix",
+            "offset": 64,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "Object",
+        "physicalName": "impostorObject_0",
+        "group": 0,
+        "binding": 1,
+        "kind": "uniform",
+        "visibility": [
+          "vertex",
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 64,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "modelMatrix_0",
+            "provider": "ModelMatrix",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "ImposterViews",
+        "physicalName": "impostorViews_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-array-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "ImposterViews",
+        "physicalName": "impostorSampler_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "materialVariant": {
+    "semantic": "OctahedralImpostor",
+    "semanticVersion": 1,
+    "vertexProfile": "position-uv4-billboard-v1",
+    "outputProfile": "linear-hdr-rgba-v1"
+  }
+}

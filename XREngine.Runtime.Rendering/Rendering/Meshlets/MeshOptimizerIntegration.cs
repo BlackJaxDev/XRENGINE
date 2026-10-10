@@ -136,6 +136,7 @@ public static class MeshOptimizerIntegration
         MeshOptimizerMeshlet[] meshoptMeshlets = new MeshOptimizerMeshlet[CheckedMeshletCount(maxMeshlets)];
         uint[] meshletVertices = new uint[CheckedScratchElementCount(maxMeshlets, settings.MaxVertices, "meshletVertices")];
         byte[] meshletTriangles = new byte[CheckedTriangleScratchByteCount(maxMeshlets, settings.MaxTriangles)];
+        float[] positionArray = GetPositionArray(mesh);
 
         // Count at the only real meshoptimizer builder entry. Import and
         // cache-repair callers must not infer this from payload outcomes.
@@ -147,7 +148,7 @@ public static class MeshOptimizerIntegration
             meshletVertices,
             meshletTriangles,
             sourceIndices,
-            GetPositionArray(mesh),
+            positionArray,
             (nuint)mesh.VertexCount,
             settings.MaxVertices,
             minTriangles,
@@ -215,7 +216,6 @@ public static class MeshOptimizerIntegration
         int encodedByteCount = 0;
         Meshlet[] results = new Meshlet[finalMeshletCount];
         CpuMeshletDescriptor[] descriptors = new CpuMeshletDescriptor[finalMeshletCount];
-        float[] positionArray = GetPositionArray(mesh);
         for (int i = 0; i < finalMeshletCount; i++)
         {
             MeshOptimizerMeshlet meshlet = meshoptMeshlets[i];
@@ -729,7 +729,7 @@ public static class MeshOptimizerIntegration
     private static float[] GetPositionArray(XRMesh mesh)
     {
         int vertexCount = Math.Max(0, mesh.VertexCount);
-        float[] positions = new float[vertexCount * 3];
+        float[] positions = new float[checked(vertexCount * 3)];
         for (int i = 0; i < vertexCount; i++)
         {
             Vector3 position = mesh.GetPosition((uint)i);

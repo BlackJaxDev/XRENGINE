@@ -1,9 +1,13 @@
 <Project>
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Browser'">
+  <PropertyGroup>
+    <JoltBrowserManagedSourceDirectory Condition="'$(JoltBrowserManagedSourceDirectory)' == ''">$(MSBuildThisFileDirectory)Build/Dependencies/JoltBrowser/managed/staged</JoltBrowserManagedSourceDirectory>
+    <JoltBrowserArchiveDirectory Condition="'$(JoltBrowserArchiveDirectory)' == ''">$(MSBuildThisFileDirectory)Build/Dependencies/JoltBrowser/native/archives</JoltBrowserArchiveDirectory>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Browser' or '$(MSBuildProjectName)' == 'XREngine.Browser.Standalone' or '$(MSBuildProjectName)' == 'XREngine.BrowserSite'">
     <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Extensions' or '$(MSBuildProjectName)' == 'XREngine.Data' or '$(MSBuildProjectName)' == 'XREngine.Audio' or '$(MSBuildProjectName)' == 'XREngine.Animation' or '$(MSBuildProjectName)' == 'XREngine.Input' or '$(MSBuildProjectName)' == 'XREngine.Modeling' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Core' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Rendering' or '$(MSBuildProjectName)' == 'XREngine.Runtime.AudioIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.AnimationIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.InputIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.ModelingIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Rendering.WebGPU' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Host' or '$(MSBuildProjectName)' == 'XREngine.Browser'">
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Extensions' or '$(MSBuildProjectName)' == 'XREngine.Data' or '$(MSBuildProjectName)' == 'XREngine.Audio' or '$(MSBuildProjectName)' == 'XREngine.Animation' or '$(MSBuildProjectName)' == 'XREngine.Input' or '$(MSBuildProjectName)' == 'XREngine.Modeling' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Core' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Rendering' or '$(MSBuildProjectName)' == 'XREngine.Runtime.AudioIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.AnimationIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.InputIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.ModelingIntegration' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Rendering.WebGPU' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Platform.Browser' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Host' or '$(MSBuildProjectName)' == 'XREngine.Browser' or '$(MSBuildProjectName)' == 'XREngine.Audio.WebAudio' or '$(MSBuildProjectName)' == 'XREngine.Runtime.Net.WebSockets' or ('$(MSBuildProjectName)' == 'XREngine.Runtime.Physics.Jolt' and ('$(RuntimeIdentifier)' == 'browser-wasm' or '$(XREngineJoltBrowser)' == 'true'))">
     <XREnginePortableProject>true</XREnginePortableProject>
   </PropertyGroup>
 

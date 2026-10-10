@@ -104,6 +104,18 @@ generation becomes active, the legacy integer `ResourceGeneration` stamp
 increments, and the old generation is retired. On failure, the pending
 generation is disposed and the active generation keeps rendering.
 
+A backend that completes physical creation through asynchronous receipts throws
+`RenderResourcePreparationPendingException` to yield preparation. This preserves
+the pending generation, its current specification, and its incremental factory
+or completed factory result. The next bounded slice retries those same owners;
+pending does not arm failure backoff or replace the active generation. A completed
+factory result remains generation-owned until validation and publication succeed,
+and cancellation or supersession destroys unpublished resources along with the
+other pending ownership. Fullscreen helper construction retains its logical
+renderer when physical preparation is pending, so retry uses the same version.
+Backend transaction preparation and commit likewise leave the generation pending
+on this exception; all other failures keep their existing failure behavior.
+
 Each generation also carries two stable ownership identities:
 
 - `ResourceGenerationKey.PipelineRevision` is local to the pipeline instance and
@@ -193,10 +205,9 @@ replacement generation commits.
 
 Resize-sized generation requests are debounced for 125 ms and capped at 300 ms
 of coalescing so interactive window and scene-panel drags do not rebuild every
-intermediate size. Initial generation is prepared immediately so the first frame
-has a complete registry. Replacement generations are materialized incrementally
-on the render thread, currently up to four declared specs or roughly 2 ms per
-slice, and commit only after the final slice validates required resources and
+intermediate size. Initial and replacement generations are both materialized
+incrementally on the render thread, currently up to four declared specs or
+roughly 2 ms per slice, and commit only after the final slice validates required resources and
 FBO completeness. This avoids black-frame registry gaps while preserving the
 active generation during longer replacement builds.
 

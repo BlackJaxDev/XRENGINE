@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using XREngine.Core.Files;
 using XREngine.Data.Geometry;
 
 namespace XREngine.Rendering
@@ -9,7 +10,7 @@ namespace XREngine.Rendering
     /// Objects appear the same size regardless of distance.
     /// </summary>
     [CameraParameterEditor("Orthographic", SortOrder = 1, Description = "Orthographic projection for 2D/UI or isometric rendering.")]
-    public class XROrthographicCameraParameters : XRCameraParameters
+    public class XROrthographicCameraParameters : XRCameraParameters, IPostCookedBinaryDeserialize
     {
         private Vector2 _originPercentages = Vector2.Zero;
         private Vector2 _origin;
@@ -51,7 +52,10 @@ namespace XREngine.Rendering
             {
                 // Capture aspect ratio before changing width
                 float currentAspect = AspectRatio;
-                if (SetField(ref _width, value) && _inheritAspectRatio && currentAspect > 0)
+                // Cooked restoration assigns both dimensions independently before
+                // its saved aspect policy is necessarily available.
+                if (SetField(ref _width, value) && !ArePropertyNotificationsSuppressed &&
+                    _inheritAspectRatio && currentAspect > 0)
                 {
                     // Maintain the aspect ratio by updating height
                     _height = value / currentAspect;
@@ -71,7 +75,8 @@ namespace XREngine.Rendering
             {
                 // Capture aspect ratio before changing height
                 float currentAspect = AspectRatio;
-                if (SetField(ref _height, value) && _inheritAspectRatio && currentAspect > 0)
+                if (SetField(ref _height, value) && !ArePropertyNotificationsSuppressed &&
+                    _inheritAspectRatio && currentAspect > 0)
                 {
                     // Maintain the aspect ratio by updating width
                     _width = value * currentAspect;
@@ -162,6 +167,10 @@ namespace XREngine.Rendering
             _origin = new Vector2(_orthoLeft, _orthoBottom) + _originPercentages * new Vector2(Width, Height);
             ForceInvalidateProjection();
         }
+
+        /// <summary>Rebuilds derived planes and projection caches from the restored lens dimensions.</summary>
+        void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
+            => Resized();
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {

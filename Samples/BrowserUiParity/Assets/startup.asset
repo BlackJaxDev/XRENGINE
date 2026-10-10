@@ -1,0 +1,25 @@
+__type: XREngine.GameStartupSettings
+Name: Browser UI Parity Startup
+ID: 49b8b564-5d32-43f9-b13d-c0b2bf5d72a2
+LogOutputToFile: true
+NetworkingType: Local
+TargetUpdatesPerSecond: 60
+TargetFramesPerSecond: 60
+FixedFramesPerSecond: 60
+RunVRInPlace: false
+DefaultUserSettings:
+  VSync: Off
+  GlobalIlluminationMode: None
+  AntiAliasingModeOverride:
+    HasOverride: true
+    Value: None
+  GPURenderDispatchOverride:
+    HasOverride: true
+    Value: false
+BuildSettings:
+  Configuration: Release
+  Platform: BrowserWebGPU
+  OutputSubfolder: BrowserWebGPU
+  CleanOutputDirectory: true
+  CookContent: true
+  BuildManagedAssemblies: true

@@ -111,7 +111,7 @@ public sealed class RealtimeTlsGateway : IDisposable
                     }, handshake.Token).ConfigureAwait(false);
                 }
                 if (tls.NegotiatedApplicationProtocol != SocketTlsProtocols.Realtime)
-                    throw new AuthenticationException("Realtime TLS protocol negotiation failed.");
+                    throw new AuthenticationException(RealtimeWireProtocol.UpdateRequiredMessage);
                 using var udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
                 udp.Connect(_worker);
                 Task ingress = ForwardToWorkerAsync(tls, udp, lifetime.Token);

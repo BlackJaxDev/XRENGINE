@@ -129,6 +129,12 @@
   items:
     - name: Engine API
       href: runtime/engine-api.md
+    - name: Browser Game Build User Guide
+      href: ../user-guide/browser-game-builds.md
+    - name: Browser Static Hosting
+      href: runtime/browser-static-hosting.md
+    - name: Browser UI Font Cooking
+      href: runtime/browser-ui-fonts.md
     - name: Job System
       href: runtime/job-system.md
     - name: Native Dependencies

@@ -44,7 +44,7 @@ for the current design.
 │    ← reads CookedAssetBlob from archive                  │
 │    ← CookedAssetTypeReference.Resolve() resolves type    │
 │    ← runtime format dispatch chooses registry-backed     │
-│       RuntimeBinaryV1 or generic BinaryV1 hydrate path   │
+│       RuntimeBinaryV1; non-AOT generic BinaryV1/V2       │
 │                                                          │
 │  CookedBinarySerializer (MemoryPack path)                │
 │    └─ XRAssetMemoryPackAdapter.Deserialize()             │
@@ -116,6 +116,37 @@ The build pipeline selects that format only for types registered in `PublishedCo
 `AnimationClip`, `BlendTree1D`, `BlendTree2D`, `BlendTreeDirect`, and `AnimStateMachine`).
 Published AOT runtime validates those types against `AotRuntimeMetadata.PublishedRuntimeAssetTypeNames`
 before dispatching to the registered runtime serializer.
+
+Generic editor/dev cooks now use `BinaryV2`. Reference definitions and uses in
+the payload retain one object for repeated references in an authored graph,
+including inline pipeline assets shared by cameras. The reader still accepts
+legacy `BinaryV1` for ordinary desktop compatibility, but those older bytes
+cannot recover aliases already duplicated during cooking. Browser world/scene
+cook audits and runtime catalog reads require the new generic format and report
+that such an older derived cache must be recooked. Explicit registered
+`RuntimeBinaryV1` serializers retain their own formats and reference contracts;
+this version change does not rewrite source YAML or existing user cache files.
+
+Within a generic payload, a reference definition writes a marker and 32-bit
+index before the original value marker; a later use writes a reference marker
+and that index. Indices follow object identity in traversal order, never asset
+IDs. Reflected objects and collections register before reading their children,
+so supported cycles resolve. Opaque custom serializers and MemoryPack envelopes
+remain independent payload scopes and own any identity inside them.
+
+Browser content cooking uses the same registered serializer for payload bytes. A serializer owner can also
+register a dependency declaration that lists the separate `.asset` files referenced by those bytes.
+Declarations must use the same portable `game://`, `engine://`, `/game/`, or `/engine/` identity
+that the serializer places in its payload. The cooker does not rewrite serializer-owned bytes.
+An explicitly empty declaration means the serializer embeds its complete graph; an absent declaration
+means browser cooking fails instead of silently omitting dependencies. The browser cooker resolves each
+declaration under the game or engine asset root, recursively cooks it under a `/game/` or `/engine/`
+catalog identity, and rejects missing files, unsupported asset types, cycles, and dependencies outside
+those roots. The dependency declaration is catalog metadata and does not change the cooked payload format.
+The canonical generic cooked serializer embeds object-valued members; browser cooking admits the exact
+base `XRWorld` through that path and separately declares its skybox file setting. Game-defined world
+serializers must declare any external file references they emit. Path-valued references in world payloads
+must already be portable, since packaging cannot rewrite a serializer-owned payload safely.
 
 The current policy boundary is deliberate: only assets with explicit bounded payloads are registered.
 Custom handlers that still depend on open-ended reflection or unrestricted runtime type activation remain on the generic
@@ -225,24 +256,63 @@ Core/Files/
 └── XRAsset.MemoryPack.cs           # Inner MemoryPack envelope for XRAsset
 ```
 
+## Runtime catalog object ownership
+
+A bound runtime catalog owns the engine objects materialized by its synchronous
+asset-deserialization transactions. Each transaction retains the exact allocation
+ledger from `ObjectCachePublicationScope`, including nested render-object batches
+and constructor defaults that deserialization later replaces. Successful publication
+transfers that ledger to an `ObjectCacheOwnership` lease. Ownership commits omit
+fully destroyed temporary allocations; ordinary publication remains strict and rejects
+destroyed members. A destruction exception for an enlisted object aborts its owning
+transaction, including exceptions from a terminal destruction observer. A failed, duplicate, cancelled,
+or stale load aborts its unpublished batch; a post-publication failure releases its
+whole lease rather than only the asset root.
+
+External dependencies are loaded before the referring asset's transaction and remain
+shared for the source's lifetime. References to objects or assets cached before the
+source loaded them are borrowed. Source teardown removes only its own cached roots
+and destroys only its recorded allocations after world teardown; it does not make
+`RuntimeWorld.Dispose` recursively destroy reusable authored worlds, and global
+object discovery remains a strong registry.
+
+Publication scopes are synchronous and thread-affine. Ordinary nested scopes join
+their parent's batch. An independent scope owns a separate batch and restores the
+enclosing scope on completion. Process-lifetime lazy factories, such as shared UI
+quad geometry and the render window registry, use independent publication without
+transferring an ownership lease, so the first requesting catalog cannot claim them.
+A factory that publishes shared state must establish that independent lifetime
+boundary rather than attach process resources to a transient construction batch.
+
+Browser startup also owns its newly constructed settings projections, world-host
+objects, and viewport allocations through bounded synchronous batches. Shutdown
+first quiesces gameplay and rendering, restores borrowed engine settings, and then
+releases these session batches. Destruction is immediate at the stopped ownership
+boundary, including draining queued child destruction. Failed owned destruction
+retains its ledger and source/session services for a later stop retry; a replacement
+source cannot be admitted while that ownership remains.
+
 ## 6. Shared Values
 
-By default the cooked format writes every occurrence of an object in full, so
-an object reachable twice reads back as two objects. A serialization that sets
+Generic BinaryV2 serialization without a sharing callback preserves object
+identity with graph definitions and references (markers 62/63 with fixed-width
+identities). Supported cyclic references are registered before their contents
+are read. A serialization that sets
 `CookedBinarySerializationCallbacks.ShareReference` writes each selected
-value once: its first complete occurrence as a `SharedDefinition` (marker 62,
+value once: its first complete occurrence as a `SharedDefinition` (marker 64,
 a 7-bit identity, then the value in its own encoding) and later occurrences as
-a `SharedReference` (marker 63 and the identity). An occurrence met while the
+a `SharedReference` (marker 65 and the identity). An occurrence met while the
 value itself is still being written, a cycle, is written by value as before.
 The size pass and the schema inspector make the same decisions as the writer,
 and the reader registers each definition after reading it; a reference to an
 unknown identity fails the read, and a definition met where its occurrence is
 skipped is still read in full. The option applies to `Serialize`,
 `CalculateSize` and `Deserialize` alike; custom serializers write and size
-their payloads through callback-free entry points and never share. Cooked
+their payloads through independent callback-free scopes. They do not use the
+enclosing snapshot's selected-sharing table. Cooked
 assets on disk do not use it; play-mode snapshots do.
 
-## 7. Open Items
+## Open Items
 
 - **Index-based resolution caching.** `AotRuntimeMetadataStore.ResolveType(int)`
   calls `Type.GetType()` on every invocation. If config blob loading ever

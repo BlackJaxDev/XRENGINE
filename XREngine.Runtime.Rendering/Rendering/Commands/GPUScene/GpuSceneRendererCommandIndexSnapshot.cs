@@ -39,35 +39,24 @@ internal sealed class GpuSceneRendererCommandIndexSnapshot
         destination.PublicationGeneration = PublicationGeneration;
     }
 
-    internal void Append(XRMeshRenderer renderer, List<uint> commandIndices)
-        => Append(renderer, commandIndices, null);
-
     /// <summary>
-    /// Appends command indices for one renderer. <paramref name="materials"/>
-    /// is null or holds one drawn material for each index.
+    /// Appends one command index for one renderer with the material that its
+    /// published draw uses. A null material means that the capture had no
+    /// material. Indices of one renderer keep their append order.
     /// </summary>
-    internal void Append(XRMeshRenderer renderer, List<uint> commandIndices, List<XRMaterial?>? materials)
+    internal void Append(XRMeshRenderer renderer, uint commandIndex, XRMaterial? material)
     {
-        if (commandIndices.Count == 0)
-            return;
-        if (materials is not null && materials.Count != commandIndices.Count)
-            throw new ArgumentException("Each command index requires one material entry.", nameof(materials));
-
-        int first = _indices.Count;
-        for (int index = 0; index < commandIndices.Count; ++index)
-        {
-            int next = index + 1 < commandIndices.Count ? _indices.Count + 1 : -1;
-            _indices.Add((commandIndices[index],
-                PhysicsChainDrawMaterialSnapshot.Capture(materials?[index]), next));
-        }
+        int added = _indices.Count;
+        _indices.Add((commandIndex, PhysicsChainDrawMaterialSnapshot.Capture(material), -1));
 
         if (_ranges.TryGetValue(renderer, out var range))
         {
             var tail = _indices[range.Last];
-            _indices[range.Last] = (tail.CommandIndex, tail.Material, first);
-            first = range.First;
+            _indices[range.Last] = (tail.CommandIndex, tail.Material, added);
+            _ranges[renderer] = (range.First, added);
+            return;
         }
-        _ranges[renderer] = (first, _indices.Count - 1);
+        _ranges[renderer] = (added, added);
     }
 
     /// <summary>Copies the captured indices for one renderer into reusable storage.</summary>

@@ -11,10 +11,10 @@ param(
     [ValidateSet('warn', 'error')]
     [string]$Mode = 'error',
 
-    # World asset to load before entering play mode. Defaults to the MonkeyBall sample world.
-    [string]$WorldAssetPath = 'Samples/MonkeyBallVR/Assets/Worlds/MonkeyBallWorld.asset',
+    # World asset to load before entering play mode. Defaults to the Rolling Ball sample world.
+    [string]$WorldAssetPath = 'Samples/RollingBall/Assets/Worlds/RollingBallWorld.asset',
 
-    [string]$ProjectPath = 'Samples/MonkeyBallVR/MonkeyBallVR.xrproj',
+    [string]$ProjectPath = 'Samples/RollingBall/RollingBall.xrproj',
 
     # Seconds to remain in play mode before exiting and collecting logs.
     [ValidateRange(1, 3600)][int]$PlaySeconds = 10,
@@ -31,7 +31,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Enters MonkeyBall play mode in an isolated editor session with development parity
+# Enters Rolling Ball play mode in an isolated editor session with development parity
 # diagnostics enabled, then archives the session log. In error mode a reflective
 # fallback on the player path throws AotParityViolationException inside the editor,
 # which the log records; the smoke reports whether any such line appeared.

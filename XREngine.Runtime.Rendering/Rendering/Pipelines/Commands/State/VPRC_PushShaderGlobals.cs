@@ -5,6 +5,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_PushShaderGlobals : ViewportStateRenderCommand<VPRC_PopShaderGlobals>
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+            => requirements.RequireOperation("program-bindings");
+
         private readonly XRRenderPipelineInstance.RenderingState.ScopedShaderGlobals _runtimeGlobals = new();
 
         public Dictionary<string, bool> BoolUniforms { get; } = [];

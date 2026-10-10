@@ -13,6 +13,6 @@ public readonly record struct ManagedUdpEnvelopeHeader(
     public const int UnsignedHeaderLength = 80;
     public const int TagLength = 32;
     public const int TotalHeaderLength = UnsignedHeaderLength + TagLength;
-    public const byte Version = 1;
+    public const byte Version = RealtimeWireProtocol.Version;
 }
 

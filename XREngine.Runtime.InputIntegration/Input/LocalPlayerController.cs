@@ -7,7 +7,7 @@ using YamlDotNet.Serialization;
 namespace XREngine.Runtime.InputIntegration
 {
     //TODO: handle sending controller input packets to the server
-    public class LocalPlayerController : PlayerController<LocalInputInterface>
+    public partial class LocalPlayerController : PlayerController<LocalInputInterface>
     {
         /// <inheritdoc />
         public override bool IsLocal => true;
@@ -22,6 +22,7 @@ namespace XREngine.Runtime.InputIntegration
         private readonly WindowSnapshotKeyboard _snapshotKeyboard = new(0);
         private readonly WindowSnapshotMouse _snapshotMouse = new(0);
         private readonly WindowSnapshotGamepad _snapshotGamepad = new(0);
+        private uint _snapshotInputRevision;
 
         private IRuntimeLocalPlayerViewport? _viewport = null;
         [YamlIgnore]
@@ -76,11 +77,33 @@ namespace XREngine.Runtime.InputIntegration
 
         protected override bool OnPropertyChanging<T2>(string? propName, T2 field, T2 @new)
         {
+            if (propName is nameof(Viewport) or nameof(ControlledPawn) or nameof(Input) or nameof(LocalPlayerIndex))
+            {
+                ++_snapshotInputRevision;
+                if (propName == nameof(Viewport))
+                {
+                    _snapshotKeyboard.SetInputSource(null);
+                    _snapshotMouse.SetInputSource(null);
+                }
+                _snapshotKeyboard.DiscardTransientInput();
+                _snapshotMouse.DiscardTransientInput();
+                CancelVirtualInput();
+                MarkContactOwnershipBoundary();
+            }
+            else if (propName == nameof(FocusedUIComponent) && @new is not null)
+            {
+                ++_snapshotInputRevision;
+                _snapshotKeyboard.DiscardCapturedInput();
+                _snapshotMouse.DiscardCapturedInput();
+                CancelVirtualControls();
+            }
             return base.OnPropertyChanging(propName, field, @new);
         }
         protected override void OnPropertyChanged<T2>(string? propName, T2 prev, T2 field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            if (propName is nameof(Viewport) or nameof(ControlledPawn) or nameof(Input) or nameof(LocalPlayerIndex))
+                MarkContactOwnershipBoundary();
             switch (propName)
             {
                 case nameof(Viewport):
@@ -136,7 +159,8 @@ namespace XREngine.Runtime.InputIntegration
                 return;
             }
 
-            ConsumeLatestInputSnapshot();
+            if (!ConsumeLatestInputSnapshot())
+                return;
             bool keyboardAndMousePlayer = _index == ELocalPlayerIndex.One;
             _snapshotMouse.SetCaptureRequest(captured => _viewport?.RequestMouseCapture(captured));
 
@@ -151,15 +175,33 @@ namespace XREngine.Runtime.InputIntegration
                 gamepad: _snapshotGamepad);
         }
 
-        private void ConsumeLatestInputSnapshot()
+        private bool ConsumeLatestInputSnapshot()
         {
             if (_viewport is null || _index != ELocalPlayerIndex.One)
-                return;
+                return true;
 
-            WindowInputSnapshot snapshot = _viewport.ConsumeInputSnapshot();
+            uint revision = _snapshotInputRevision;
+            IRuntimeLocalPlayerViewport viewport = _viewport;
+            IRuntimePointerContactSource? source = viewport as IRuntimePointerContactSource;
+            ulong generation = source?.PointerContactGeneration ?? 0;
+            _snapshotKeyboard.SetInputSource(source);
+            _snapshotMouse.SetInputSource(source);
+            WindowInputSnapshot snapshot = viewport.ConsumeInputSnapshot();
+            _latestInputSnapshot = snapshot;
             _snapshotGamepad.ApplySnapshot(snapshot);
-            _snapshotKeyboard.ApplySnapshot(snapshot);
+            if (!_snapshotKeyboard.ApplySnapshot(snapshot) || revision != _snapshotInputRevision ||
+                !ReferenceEquals(viewport, _viewport) ||
+                source is not null && generation != source.PointerContactGeneration)
+            {
+                if (source is not null && generation != source.PointerContactGeneration)
+                {
+                    _snapshotKeyboard.DiscardCapturedInput();
+                    _snapshotMouse.DiscardCapturedInput();
+                }
+                return false;
+            }
             _snapshotMouse.ApplySnapshot(snapshot);
+            return true;
         }
 
         /// <summary>
@@ -183,15 +225,23 @@ namespace XREngine.Runtime.InputIntegration
             if (Input is not LocalInputInterface localInput)
                 return;
 
-            ConsumeLatestInputSnapshot();
+            uint revision = _snapshotInputRevision;
+            if (!ConsumeLatestInputSnapshot() || revision != _snapshotInputRevision || !ReferenceEquals(Input, localInput))
+                return;
+
+            UpdateVirtualInput(isUIInputCaptured);
+            if (revision != _snapshotInputRevision || !ReferenceEquals(Input, localInput))
+                return;
 
             if (isUIInputCaptured)
             {
+                localInput.DiscardCapturedInput();
                 localInput.ClearMouseScrollBuffer();
                 return;
             }
 
             localInput.TickStates(delta);
+            TouchMouseCancellationPending = false;
         }
 
         /// <inheritdoc />
@@ -206,6 +256,11 @@ namespace XREngine.Runtime.InputIntegration
 
         protected override void OnDestroying()
         {
+            ++_snapshotInputRevision;
+            _snapshotKeyboard.SetInputSource(null);
+            _snapshotMouse.SetInputSource(null);
+            _snapshotKeyboard.DiscardTransientInput();
+            _snapshotMouse.DiscardTransientInput();
             base.OnDestroying();
             RuntimeVrInputServices.ActionsChanged -= OnActionsChanged;
             _snapshotMouse.SetCaptureRequest(null);

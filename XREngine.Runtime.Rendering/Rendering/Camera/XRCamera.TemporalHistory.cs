@@ -91,11 +91,15 @@ public partial class XRCamera
     /// authored reset. Smooth movement must preserve this epoch.
     /// </summary>
     public void InvalidateTemporalHistory()
+        => InvalidateTemporalHistory(publishNotifications: true);
+
+    /// <summary>Allows repeatedly slow frames to discard history without allocating property events.</summary>
+    internal void InvalidateTemporalHistory(bool publishNotifications)
     {
         lock (_temporalHistorySync)
         {
             ulong next = _temporalHistoryEpoch == ulong.MaxValue ? 1UL : _temporalHistoryEpoch + 1UL;
-            SetField(ref _temporalHistoryEpoch, next, nameof(TemporalHistoryEpoch));
+            SetField(ref _temporalHistoryEpoch, next, publishNotifications, nameof(TemporalHistoryEpoch));
             _hasPreviousViewProjectionMatrix = false;
             _previousViewProjectionMatrixUnjittered = ViewProjectionMatrixUnjittered;
             _currentRecordedViewProjectionUnjittered = ViewProjectionMatrixUnjittered;

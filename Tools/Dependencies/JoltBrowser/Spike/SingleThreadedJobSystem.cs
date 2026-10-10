@@ -3,7 +3,8 @@ using JoltPhysicsSharp;
 
 internal sealed class SingleThreadedJobSystem : JobSystem
 {
-    private SingleThreadedJobSystem(nint handle) : base(handle) { }
+    private SingleThreadedJobSystem(nint handle) : base(handle)
+        => OwnsHandle = true;
 
     public static SingleThreadedJobSystem Create(uint maxJobs = 2048)
     {

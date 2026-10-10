@@ -33,7 +33,9 @@ Architecture: [Runtime Project Organization](../../../architecture/runtime/proje
 | Inventory failures. | Generate a machine-readable list with identity, subsystem, signature, owner, isolated result, suite-order result, and disposition. | Each root cause has one owner and one reproduction path. | Open | none |
 | Classify failures. | Classify each retained result as product regression, fixture defect, shared-state leak, stale contract, missing generated asset, excluded Vulkan issue, excluded hardware issue, or duplicate symptom. | No failure is counted twice. | Open | none |
 | Prove deterministic runs. | Run retained tests individually, in suite order, and with at least three deterministic randomized seeds. | Results, registry indices, generations, settings, and failure counts stay stable. | Open | none |
-| Verify no actionable skips. | Inspect source, asset, shader, and document contract fixture output. | Missing inputs fail with diagnostics instead of skipped or inconclusive results. | Open | none |
+| Verify no actionable skips. | Inspect source, asset, and shader contract fixture output. | Missing code or asset inputs fail with diagnostics instead of skipped or inconclusive results. Unit tests do not read Markdown. | Open | none |
+| Check documentation references. | Review changed links and referenced paths in runtime work docs outside the unit-test suite. Record broken links and repair them in the docs. | Links resolve to current files and headings; no Markdown-reading unit test is added. | Open | none |
+| Record fixture decisions. | Record reusable lane and fixture choices in the [Unit Test Project Reorganization TODO](../../todo/tests/unit-test-project-reorganization-todo.md). | The shared choices are documented without unrelated directory moves. | Open | none |
 
 ### Animation and humanoid runtime
 

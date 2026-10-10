@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
+using XREngine.Data;
 
 namespace XREngine.Rendering;
 
@@ -14,7 +15,11 @@ public static class RendererBackendModuleIdentity
     {
         ArgumentNullException.ThrowIfNull(assembly);
         string location = assembly.Location;
-        if (string.IsNullOrWhiteSpace(location) || !File.Exists(location))
+        if (string.IsNullOrWhiteSpace(location))
+            return string.Empty;
+
+        RuntimeAssetReadServices.EnsureHostFileAccess("Renderer module assembly hash");
+        if (!File.Exists(location))
             return string.Empty;
 
         using FileStream stream = File.OpenRead(location);
@@ -26,4 +31,3 @@ public static class RendererBackendModuleIdentity
 
     public static Architecture ProcessArchitecture => RuntimeInformation.ProcessArchitecture;
 }
-

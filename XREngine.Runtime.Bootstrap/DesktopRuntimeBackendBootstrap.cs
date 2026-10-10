@@ -12,6 +12,8 @@ internal static class DesktopRuntimeBackendBootstrap
         {
             if (_registered)
                 return;
+            Runtime.Platform.Desktop.DesktopLoggingBackend.EnsureRegistered();
+            Runtime.Platform.Desktop.DesktopWorkerBackend.EnsureRegistered();
             global::XREngine.Audio.NAudioBackend.Register();
             global::XREngine.Audio.OpenALBackend.Register();
             global::XREngine.Audio.SteamAudioBackend.Register();

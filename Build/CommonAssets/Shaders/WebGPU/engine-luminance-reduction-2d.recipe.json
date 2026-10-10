@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-luminance-reduction-2d",
+  "pass": "luminance-reduction-2d",
+  "source": "Assets/gpu-luminance-2d.wgsl",
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "compute": "reduce"
+  },
+  "computeArtifact": {
+    "kernel": "luminance-reduction-2d"
+  },
+  "workgroupSize": [
+    256,
+    1,
+    1
+  ],
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 4,
+    "maxUniformBufferBindingSize": 64,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 2,
+    "maxStorageBufferBindingSize": 8,
+    "maxComputeWorkgroupSizeX": 256,
+    "maxComputeWorkgroupSizeY": 1,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 256
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "Source",
+        "physicalName": "source",
+        "group": 0,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Partials",
+        "physicalName": "partials",
+        "group": 0,
+        "binding": 1,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 8,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Result",
+        "physicalName": "result",
+        "group": 0,
+        "binding": 2,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 3,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 64,
+        "dynamic": false,
+        "members": [
+          {
+            "name": "origin",
+            "provider": "Origin",
+            "offset": 0,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "extent",
+            "provider": "Extent",
+            "offset": 8,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "mip",
+            "provider": "Mip",
+            "offset": 16,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "layers",
+            "provider": "Layers",
+            "offset": 20,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "tilesX",
+            "provider": "TilesX",
+            "offset": 24,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "tilesY",
+            "provider": "TilesY",
+            "offset": 28,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "tileCount",
+            "provider": "TileCount",
+            "offset": 32,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "mode",
+            "provider": "Mode",
+            "offset": 36,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "weights",
+            "provider": "Weights",
+            "offset": 48,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          }
+        ]
+      }
+    ]
+  },
+  "pipeline": {}
+}

@@ -50,7 +50,8 @@ namespace XREngine.Components.Scene.Mesh
             }
             _boneTrackingByRenderer.Clear();
             Volatile.Write(ref _coveredShadowCasterLayerMask, 0);
-            RenderInfo.SetCommittedWorldBoundsProvider(null);
+            // Construction can fail before RenderInfo exists.
+            RenderInfo?.SetCommittedWorldBoundsProvider(null);
             Volatile.Write(ref _usesCommittedWorldBounds, 0);
             _committedBoundsRenderer = null;
         }

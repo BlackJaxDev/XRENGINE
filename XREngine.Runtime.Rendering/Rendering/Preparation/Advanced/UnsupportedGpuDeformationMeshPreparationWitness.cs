@@ -5,6 +5,7 @@ internal sealed class UnsupportedGpuDeformationMeshPreparationWitness
 {
     internal long GeometryRevision;
     internal uint TopologyGeneration;
+    internal EAdvancedDeformationMeshPreparationPolicy Policy;
     internal required XRMeshSkinningBufferState SkinningState;
     internal ulong CoreIndicesRevision;
     internal ulong CoreWeightsRevision;
@@ -19,10 +20,16 @@ internal sealed class UnsupportedGpuDeformationMeshPreparationWitness
     internal bool SpillHeadersReadable;
     internal bool SpillEntriesReadable;
 
-    internal bool Matches(XRMesh mesh, uint topologyGeneration)
+    /// <summary>
+    /// Returns true while the mesh, topology, preparation policy, and skinning
+    /// inputs are the same as when preparation failed.
+    /// </summary>
+    internal bool Matches(XRMesh mesh, uint topologyGeneration,
+        EAdvancedDeformationMeshPreparationPolicy policy)
     {
         if (GeometryRevision != mesh.GeometryRevision ||
             TopologyGeneration != topologyGeneration ||
+            Policy != policy ||
             !ReferenceEquals(SkinningState, mesh.GetSkinningBufferStateSnapshot()))
             return false;
 

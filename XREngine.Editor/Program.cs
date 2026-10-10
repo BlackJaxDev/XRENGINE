@@ -1784,6 +1784,18 @@ internal partial class Program
                 throw new ArgumentException($"Unknown build platform '{platformArg}'.");
 
             settings.Platform = platform;
+
+            if (platform == EBuildPlatform.BrowserWebGPU)
+            {
+                // A target override must not carry persisted desktop launcher options into a
+                // browser build or save temporary CLI settings back to the authored project.
+                // Explicit CLI AOT requests remain intact and fail browser validation.
+                if (!publishNativeAot.HasValue)
+                    settings.PublishLauncherAsNativeAot = false;
+                if (!validateAotCompatibility.HasValue)
+                    settings.ValidateLauncherAotCompatibility = false;
+                settings.SaveSettingsBeforeBuild = false;
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(outputSubfolderArg))

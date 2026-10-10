@@ -34,5 +34,5 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
-  <Import Project="Build/Portable/PortableRuntime.targets" />
+  <Import Project="Build/Portable/PortableRuntime.targets" Condition="'$(XREnginePortableRuntimeTargetsImported)' != 'true'" />
 </Project>

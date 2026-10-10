@@ -236,12 +236,17 @@ public partial class XRMesh
         {
             if (palette is { Length: > 0 })
             {
-                staging = new XRMesh(deferObjectCachePublication: true)
+                // The temporary owner and its metadata are detached. Replacement
+                // buffers created below still join the caller's atomic publication.
+                using (XRObjectBase.SuppressObjectCacheRegistration())
                 {
-                    VertexCount = VertexCount,
-                    UtilizedBones = palette,
-                    SkinningShaderConvention = ESkinningShaderConvention.ExplicitRowMajorRowVector,
-                };
+                    staging = new XRMesh(deferObjectCachePublication: true)
+                    {
+                        VertexCount = VertexCount,
+                        UtilizedBones = palette,
+                        SkinningShaderConvention = ESkinningShaderConvention.ExplicitRowMajorRowVector,
+                    };
+                }
                 using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
                 staging.PopulateSkinningBuffers(influences);
                 prepared = staging.CaptureSkinningBufferState();

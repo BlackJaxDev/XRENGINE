@@ -46,11 +46,16 @@ public partial class XRMesh
         {
             if (sourceVertices.Count > 0 && HasBlendshapes)
             {
-                staging = new XRMesh(deferObjectCachePublication: true)
+                // The temporary owner and its metadata are detached. Replacement
+                // buffers created below still join the caller's atomic publication.
+                using (XRObjectBase.SuppressObjectCacheRegistration())
                 {
-                    VertexCount = VertexCount,
-                    BlendshapeNames = BlendshapeNames,
-                };
+                    staging = new XRMesh(deferObjectCachePublication: true)
+                    {
+                        VertexCount = VertexCount,
+                        BlendshapeNames = BlendshapeNames,
+                    };
+                }
                 using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
                 staging.PopulateBlendshapeBuffers((vertex, destination) => ReadVertexBlendshapeDeltas(sourceVertices[vertex], destination));
                 prepared = staging.CaptureBlendshapeBufferState();

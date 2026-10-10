@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-visibility-msaa-resolve",
+  "source": "AdvancedMsaaVisibilityResolve.wgsl",
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "advancedMsaaResolveVertex",
+    "fragment": "advancedMsaaResolveFragment"
+  },
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "visibility-msaa-resolve"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 4,
+    "maxUniformBufferBindingSize": 16,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 3
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "RawVisibilityIdentity",
+        "physicalName": "rawVisibilityIdentity",
+        "group": 0,
+        "binding": 0,
+        "kind": "texture-multisampled-2d-uint",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "RawVisibilityMetadataSelection",
+        "physicalName": "rawVisibilityMetadataSelection",
+        "group": 0,
+        "binding": 1,
+        "kind": "texture-multisampled-2d-uint",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "RawVisibilityDepth",
+        "physicalName": "rawVisibilityDepth",
+        "group": 0,
+        "binding": 2,
+        "kind": "texture-depth-multisampled-2d",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 3,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "screenExtent",
+            "provider": "screenExtent",
+            "offset": 0,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "reversedDepth",
+            "provider": "reversedDepth",
+            "offset": 8,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved",
+            "provider": "reserved",
+            "offset": 12,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  },
+  "pipeline": {},
+  "pass": "visibility-msaa-resolve"
+}

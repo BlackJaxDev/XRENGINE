@@ -19,15 +19,22 @@ function pause(milliseconds, signal, frame = false) {
     });
 }
 
-function deadline(parent, label) {
+function deadline(parent, label, requestSignal = null) {
     const controller = new AbortController();
     const aborted = () => controller.abort(parent.reason);
     parent.addEventListener('abort', aborted, { once: true });
     if (parent.aborted) aborted();
+    const requestAborted = () => controller.abort(requestSignal.reason);
+    requestSignal?.addEventListener('abort', requestAborted, { once: true });
+    if (requestSignal?.aborted) requestAborted();
     const timer = setTimeout(() => controller.abort(new Error(`Cooked content ${label}: request timed out.`)), CONTENT_LIMITS.requestMilliseconds);
     return {
         signal: controller.signal,
-        close() { clearTimeout(timer); parent.removeEventListener('abort', aborted); },
+        close() {
+            clearTimeout(timer);
+            parent.removeEventListener('abort', aborted);
+            requestSignal?.removeEventListener('abort', requestAborted);
+        },
     };
 }
 
@@ -92,6 +99,45 @@ export class BrowserContentLoader {
 
     getStatistics() { return { ...this._statistics }; }
 
+    /** Shares the bounded transport with native engine asset catalogs. The caller releases returned bytes. */
+    async readVerifiedPayload(url, byteLength, expectedHash, label, requestSignal = null) {
+        if (!Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > CONTENT_LIMITS.payloadBytes
+            || !/^[a-f0-9]{64}$/.test(expectedHash))
+            throw new Error(`Cooked content ${label}: invalid payload bounds or integrity identity.`);
+        const bytes = await this._request(contentManifestUrl(url, this.manifestUrl), byteLength,
+            byteLength, label, 'force-cache', requestSignal);
+        try {
+            check(this.signal);
+            requestSignal?.throwIfAborted();
+            if (!globalThis.crypto?.subtle) throw new Error('SHA-256 verification requires a secure browser context.');
+            const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+            check(this.signal);
+            requestSignal?.throwIfAborted();
+            let hash = '';
+            for (const byte of digest) hash += byte.toString(16).padStart(2, '0');
+            if (hash !== expectedHash) throw new Error(`Cooked content ${label}: SHA-256 integrity mismatch.`);
+            return bytes;
+        } catch (error) {
+            this._release(bytes);
+            throw error;
+        }
+    }
+
+    /** Fetches a revalidated bounded UTF-8 manifest using the shared credential-free transport. */
+    async readManifest() {
+        const bytes = await this._request(this.manifestUrl, null, CONTENT_LIMITS.manifestBytes, 'manifest', 'no-cache');
+        try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
+        finally { this._release(bytes); }
+    }
+
+    releasePayload(bytes) { this._release(bytes); }
+
+    async waitForIntegrationFrame(requestSignal = null) {
+        const budget = deadline(this.signal, 'integration', requestSignal);
+        try { await pause(0, budget.signal, true); }
+        finally { budget.close(); }
+    }
+
     dispose() {
         this._controller.abort(new Error('Cooked content load was disposed.'));
         this._parent?.removeEventListener('abort', this._abortParent);
@@ -110,8 +156,8 @@ export class BrowserContentLoader {
 
     _release(bytes) { this._statistics.currentStagingBytes -= bytes._stagingAllocation ?? bytes.byteLength; }
 
-    async _request(url, expectedBytes, limit, label, cache) {
-        const budget = deadline(this.signal, label);
+    async _request(url, expectedBytes, limit, label, cache, requestSignal = null) {
+        const budget = deadline(this.signal, label, requestSignal);
         try {
             for (let attempt = 0; attempt < CONTENT_LIMITS.attempts; attempt++) {
                 check(budget.signal);

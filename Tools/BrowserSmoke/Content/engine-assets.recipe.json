@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "format": "xrengine-assets",
+  "startupWorld": "/game/EngineSmokeWorld.asset",
+  "publishedMetadata": "/engine/Metadata/AotRuntimeMetadata.bin",
+  "assets": [
+    {
+      "path": "/game/EngineSmokeWorld.asset",
+      "type": "XREngine.Scene.XRWorld, XREngine.Runtime.Core",
+      "encoding": "cooked-binary",
+      "source": "EngineSmokeWorld.bin",
+      "dependencies": []
+    },
+    {
+      "path": "/engine/Metadata/AotRuntimeMetadata.bin",
+      "type": "XREngine.AotRuntimeMetadata, XREngine.Data",
+      "encoding": "cooked-binary",
+      "source": "AotRuntimeMetadata.bin",
+      "dependencies": []
+    }
+  ]
+}

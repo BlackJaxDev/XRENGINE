@@ -7,6 +7,7 @@ using System.IO.MemoryMappedFiles;
 using System.Text;
 using System.Text.Json.Serialization;
 using XREngine.Data.Core;
+using XREngine.Data;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Core.Files
@@ -37,6 +38,7 @@ namespace XREngine.Core.Files
         #region Fields
 
         private EventList<XRAsset> _embeddedAssets = [];
+        private readonly EventList<XRAsset> _ownedEmbeddedAssets;
         private string? _serializedAssetType;
         private string? _originalPath;
         private DateTime? _originalLastWriteTimeUtc;
@@ -52,13 +54,13 @@ namespace XREngine.Core.Files
         /// Initializes a new instance of the <see cref="XRAsset"/> class.
         /// </summary>
         [MemoryPackConstructor]
-        public XRAsset() { }
+        public XRAsset() => _ownedEmbeddedAssets = _embeddedAssets;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="XRAsset"/> class with the specified name.
         /// </summary>
         /// <param name="name">The display name for this asset.</param>
-        public XRAsset(string name) => Name = name;
+        public XRAsset(string name) : this() => Name = name;
 
         #endregion
 
@@ -254,6 +256,7 @@ namespace XREngine.Core.Files
         /// </remarks>
         public void OpenForStreaming()
         {
+            RuntimeAssetReadServices.EnsureHostFileAccess("Asset memory mapping");
             if (FilePath is null)
                 throw new InvalidOperationException("Cannot open a file for streaming without a file path.");
 
@@ -322,11 +325,11 @@ namespace XREngine.Core.Files
         /// <see langword="true"/> if successful; otherwise, <see langword="false"/>.
         /// </returns>
         /// <remarks>
-        /// The default implementation runs <see cref="Load3rdParty(string)"/> on a background thread.
-        /// Override for true async implementations.
+        /// The default implementation requires host-file and background execution support.
+        /// Runtime source loaders override this method with true asynchronous reads.
         /// </remarks>
-        public virtual async Task<bool> Load3rdPartyAsync(string filePath)
-            => await Task.Run(() => Load3rdParty(filePath));
+        public virtual Task<bool> Load3rdPartyAsync(string filePath)
+            => RuntimeAssetReadServices.RunHostOperationAsync("Third-party asset import", () => Load3rdParty(filePath));
 
         /// <summary>
         /// Loads asset data from a 3rd-party file format asynchronously with an import context.
@@ -338,11 +341,11 @@ namespace XREngine.Core.Files
         /// <see langword="true"/> if successful; otherwise, <see langword="false"/>.
         /// </returns>
         /// <remarks>
-        /// The default implementation runs <see cref="Load3rdParty(string, AssetImportContext)"/> on a background thread.
-        /// Override for true async implementations.
+        /// The default implementation requires host-file and background execution support.
+        /// Runtime source loaders override this method with true asynchronous reads.
         /// </remarks>
-        public virtual async Task<bool> Load3rdPartyAsync(string filePath, AssetImportContext context)
-            => await Task.Run(() => Load3rdParty(filePath, context));
+        public virtual Task<bool> Load3rdPartyAsync(string filePath, AssetImportContext context)
+            => RuntimeAssetReadServices.RunHostOperationAsync("Third-party asset import", () => Load3rdParty(filePath, context));
 
             /// <summary>
             /// Loads asset data from a 3rd-party file format with import options and an import context.
@@ -388,8 +391,8 @@ namespace XREngine.Core.Files
         /// A task that represents the asynchronous operation, containing 
         /// <see langword="true"/> if successful; otherwise, <see langword="false"/>.
         /// </returns>
-        public virtual async Task<bool> Import3rdPartyAsync(string filePath, object? importOptions)
-            => await Task.Run(() => Import3rdParty(filePath, importOptions));
+        public virtual Task<bool> Import3rdPartyAsync(string filePath, object? importOptions)
+            => RuntimeAssetReadServices.RunHostOperationAsync("Third-party asset import", () => Import3rdParty(filePath, importOptions));
 
         #endregion
 
@@ -446,11 +449,11 @@ namespace XREngine.Core.Files
         /// <param name="path">The file path to reload from.</param>
         /// <returns>A task that represents the asynchronous reload operation.</returns>
         /// <remarks>
-        /// The default implementation runs <see cref="Reload(string)"/> on a background thread.
-        /// Override for true async implementations.
+        /// The default implementation requires host-file and background execution support.
+        /// Runtime source loaders override this method with true asynchronous reads.
         /// </remarks>
-        public virtual async Task ReloadAsync(string path)
-            => await Task.Run(() => Reload(path));
+        public virtual Task ReloadAsync(string path)
+            => RuntimeAssetReadServices.RunHostOperationAsync("Asset reload", () => { Reload(path); return true; });
 
         #endregion
 
@@ -473,6 +476,7 @@ namespace XREngine.Core.Files
         /// </remarks>
         public virtual void SerializeTo(string filePath, ISerializer defaultSerializer)
         {
+            RuntimeAssetReadServices.EnsureHostFileAccess("Asset serialization");
             EnsureDirectoryExists(filePath);
             string tempPath = CreateTempWritePath(filePath);
 
@@ -506,6 +510,7 @@ namespace XREngine.Core.Files
         /// </remarks>
         public virtual async Task SerializeToAsync(string filePath, ISerializer defaultSerializer)
         {
+            RuntimeAssetReadServices.EnsureHostFileAccess("Asset serialization");
             EnsureDirectoryExists(filePath);
             string tempPath = CreateTempWritePath(filePath);
             string yaml = defaultSerializer.Serialize(this, GetType());
@@ -537,6 +542,7 @@ namespace XREngine.Core.Files
         /// global object cache after this asset is destroyed, and a back-reference left in place
         /// would keep this asset, and everything it references, reachable for the rest of the
         /// process. They are detached rather than destroyed because other owners may still use them.
+        /// The asset destroys only its constructor-owned metadata container.
         /// </summary>
         protected override void OnDestroying()
         {
@@ -544,6 +550,9 @@ namespace XREngine.Core.Files
                 if (ReferenceEquals(embedded._sourceAsset, this))
                     embedded.SourceAsset = embedded;
             _embeddedAssets.Clear();
+            _ownedEmbeddedAssets.Destroy(now: true);
+            if (!_ownedEmbeddedAssets.IsDestroyed)
+                throw new InvalidOperationException("Asset metadata storage destruction was vetoed.");
             base.OnDestroying();
         }
 

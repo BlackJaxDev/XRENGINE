@@ -17,6 +17,8 @@ public partial class ClientNetworkingManager
 
     private void StartSelectedTransport(IPAddress serverAddress, int serverPort, int clientPort)
     {
+        if (Transport == RealtimeTransportKind.WebSocket)
+            throw new NotSupportedException("Realtime WebSocket requires the asynchronous StartWebSocketAsync entry point.");
         if (Transport == RealtimeTransportKind.NativeUdp)
         {
             StartUdpSender(serverAddress, serverPort, clientPort);
@@ -24,6 +26,9 @@ public partial class ClientNetworkingManager
         }
         if (Transport != RealtimeTransportKind.NativeTls || !IsManagedTransportRequested)
             throw new NotSupportedException("Encrypted realtime requires a managed player admission.");
+        if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+            throw new NotSupportedException(
+                "Realtime.AsyncTransportRequired: native TLS startup cannot block the caller-thread host; use the asynchronous WebSocket transport.");
         try
         {
             _tlsTunnel = RealtimeTlsClientTunnel.ConnectAsync(serverAddress, serverPort, TlsServerName ?? serverAddress.ToString(),

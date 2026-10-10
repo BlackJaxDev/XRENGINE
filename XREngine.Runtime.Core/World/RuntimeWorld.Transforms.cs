@@ -1,6 +1,7 @@
 using XREngine.Data.Runtime.AotParity;
 using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Execution;
 using XREngine.Scene.Transforms;
 
 namespace XREngine;
@@ -37,6 +38,8 @@ public sealed partial class RuntimeWorld
     public void ProcessDirtyTransforms(ELoopType loopType)
     {
         ThrowIfDisposed();
+        if (loopType != ELoopType.Sequential && (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser()))
+            throw new InvalidOperationException("Caller-thread worlds require sequential transform recalculation.");
         using var parityScope = IsPlaySessionActive
             ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
         TransformHierarchy.Process(loopType);

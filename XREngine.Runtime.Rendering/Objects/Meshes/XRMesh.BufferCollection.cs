@@ -1056,6 +1056,16 @@ namespace XREngine.Rendering
                 ThrowIfOwnerUnavailableForPublication();
             }
 
+            /// <summary>Captures binding identities and their collection revision under one owner lock.</summary>
+            internal KeyValuePair<string, XRDataBuffer>[] CaptureBindingSnapshot(out long revision)
+            {
+                lock (_mutationLock)
+                {
+                    revision = _mutationRevision;
+                    return _buffers.SnapshotEntries();
+                }
+            }
+
             private KeyValuePair<string, XRDataBuffer>[] SnapshotBuffers()
             {
                 lock (_mutationLock)

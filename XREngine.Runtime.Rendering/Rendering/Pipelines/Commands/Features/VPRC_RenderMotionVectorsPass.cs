@@ -146,7 +146,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 //Debug.Out($"[Velocity] Rendering motion vectors for pass {pass} (GPUDispatch={GPUDispatch}).");
                 if (motionStrategy != EMeshSubmissionStrategy.CpuDirect)
-                    commands.RenderGPU(pass, motionStrategy);
+                    commands.RenderGPU(pass, motionStrategy, int.MinValue,
+                        AbstractRenderer.Current is IAuthoredIndexedBackendCapability
+                            ? EAuthoredIndexedCpuReplayPolicy.MeshesOnly : EAuthoredIndexedCpuReplayPolicy.None);
                 else
                     // This auxiliary pass replays the primary visibility decision without
                     // scheduling another set of queries. Non-testable passes remain

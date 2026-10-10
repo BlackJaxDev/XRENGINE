@@ -23,6 +23,7 @@ namespace XREngine.Rendering.Models.Materials
         /// Determines if the material will update the depth value upon writing a new color fragment.
         /// </summary>
         [Description("Determines if the material will update the depth value upon writing a new color fragment.")]
+        [DefaultValue(true)]
         public bool UpdateDepth { get; set; } = true;
 
         /// <summary>

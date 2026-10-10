@@ -13,6 +13,7 @@ namespace XREngine;
 public sealed partial class RuntimeWorldLifecycle
 {
     private readonly Dictionary<ETickGroup, TickGroupQueues> _ticks = [];
+    private volatile bool _ticksReleased;
 
     public RuntimeWorldLifecycle(
         IRuntimeWorldContext worldContext,
@@ -44,13 +45,24 @@ public sealed partial class RuntimeWorldLifecycle
     public void RegisterTick(ETickGroup group, int order, WorldTick callback)
     {
         ArgumentNullException.ThrowIfNull(callback);
-        GetTickQueue(group, order).Enqueue(add: true, callback);
+        GetTickQueue(group, order)?.Enqueue(add: true, callback);
     }
 
     public void UnregisterTick(ETickGroup group, int order, WorldTick callback)
     {
         ArgumentNullException.ThrowIfNull(callback);
-        GetTickQueue(group, order).Enqueue(add: false, callback);
+        GetTickQueue(group, order)?.Enqueue(add: false, callback);
+    }
+
+    /// <summary>
+    /// Ends callback ownership without dispatching pending changes. Existing
+    /// dispatch snapshots may finish, but additions cannot reopen these queues.
+    /// </summary>
+    internal void ReleaseTicks()
+    {
+        _ticksReleased = true;
+        foreach (TickGroupQueues queues in _ticks.Values)
+            queues.Release();
     }
 
     /// <summary>
@@ -63,7 +75,7 @@ public sealed partial class RuntimeWorldLifecycle
     {
         using var parityScope = IsPlaySessionActive
             ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
-        if (!_ticks.TryGetValue(group, out TickGroupQueues? queues))
+        if (_ticksReleased || !_ticks.TryGetValue(group, out TickGroupQueues? queues))
             return;
 
         if (RuntimeWorldTickTelemetry.Enabled)
@@ -73,12 +85,12 @@ public sealed partial class RuntimeWorldLifecycle
         }
 
         TickQueue[] ordered = queues.Ordered;
-        for (int index = 0; index < ordered.Length; ++index)
+        for (int index = 0; index < ordered.Length && !_ticksReleased; ++index)
             ordered[index].Dispatch();
     }
 
     /// <summary>The same dispatch as <see cref="TickGroup"/>, timed for the tick counters.</summary>
-    private static void DispatchObserved(ETickGroup group, TickGroupQueues queues)
+    private void DispatchObserved(ETickGroup group, TickGroupQueues queues)
     {
         long started = Stopwatch.GetTimestamp();
         long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
@@ -86,7 +98,7 @@ public sealed partial class RuntimeWorldLifecycle
         long snapshotFinished = Stopwatch.GetTimestamp();
         try
         {
-            for (int index = 0; index < ordered.Length; ++index)
+            for (int index = 0; index < ordered.Length && !_ticksReleased; ++index)
                 ordered[index].Dispatch();
         }
         finally
@@ -100,10 +112,12 @@ public sealed partial class RuntimeWorldLifecycle
         }
     }
 
-    private TickQueue GetTickQueue(ETickGroup group, int order)
+    private TickQueue? GetTickQueue(ETickGroup group, int order)
     {
+        if (_ticksReleased)
+            return null;
         if (!_ticks.TryGetValue(group, out TickGroupQueues? queues))
-            _ticks[group] = queues = new TickGroupQueues(group);
+            throw new ArgumentOutOfRangeException(nameof(group));
 
         return queues.GetOrAdd(order);
     }
@@ -118,14 +132,17 @@ public sealed partial class RuntimeWorldLifecycle
     {
         private readonly SortedDictionary<int, TickQueue> _byOrder = [];
         private TickQueue[] _ordered = [];
+        private bool _released;
 
         /// <summary>The queues in ascending order value; replaced, never mutated.</summary>
         public TickQueue[] Ordered => Volatile.Read(ref _ordered);
 
-        public TickQueue GetOrAdd(int order)
+        public TickQueue? GetOrAdd(int order)
         {
             lock (_byOrder)
             {
+                if (_released)
+                    return null;
                 if (_byOrder.TryGetValue(order, out TickQueue? queue))
                     return queue;
 
@@ -135,6 +152,16 @@ public sealed partial class RuntimeWorldLifecycle
                 _byOrder.Values.CopyTo(ordered, 0);
                 Volatile.Write(ref _ordered, ordered);
                 return queue;
+            }
+        }
+
+        public void Release()
+        {
+            lock (_byOrder)
+            {
+                _released = true;
+                _byOrder.Clear();
+                Volatile.Write(ref _ordered, []);
             }
         }
     }

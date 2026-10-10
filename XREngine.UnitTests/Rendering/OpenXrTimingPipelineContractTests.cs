@@ -2117,9 +2117,9 @@ public sealed class OpenXrTimingPipelineContractTests
     }
 
     [Test]
-    public void MonkeyBallDefaults_DoNotForceCpuMeshSubmission()
+    public void RollingBallDefaults_DoNotForceCpuMeshSubmission()
     {
-        string defaults = ReadWorkspaceFile("Samples/MonkeyBallVR/Config/engine_defaults.asset");
+        string defaults = ReadWorkspaceFile("Samples/RollingBall/Config/engine_defaults.asset");
 
         defaults.ShouldNotContain("ForceMeshSubmissionStrategy: CpuDirect");
     }

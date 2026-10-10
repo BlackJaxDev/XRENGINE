@@ -103,11 +103,20 @@ internal sealed class EngineRuntimeTransformServices : IRuntimeTransformServices
 
         public void Dispose()
         {
-            if (_owner.RenderInfo is null)
+            RenderInfo3D? renderInfo = _owner.RenderInfo;
+            if (renderInfo is null)
                 return;
 
-            _owner.RenderInfo.IsVisible = false;
-            _owner.RenderInfo.WorldInstance = null;
+            try
+            {
+                renderInfo.IsVisible = false;
+                renderInfo.WorldInstance = null;
+            }
+            finally
+            {
+                renderInfo.Dispose();
+                _owner.RenderInfo = null;
+            }
         }
     }
 

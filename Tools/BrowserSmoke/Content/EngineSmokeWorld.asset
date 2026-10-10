@@ -1,0 +1,15 @@
+__assetType: XREngine.Scene.XRWorld
+Name: Engine Lifecycle Smoke
+ID: 9b9e9af8-0aef-49e9-80e9-52cc528c5394
+Scenes:
+- __assetType: XREngine.Scene.XRScene
+  Name: Lifecycle Scene
+  ID: f16a7474-7020-47a4-978d-1c95b4e38311
+  IsVisible: true
+  RootNodes:
+  - Name: Lifecycle Root
+    ID: d9782242-0ee2-4219-9c49-65b1d0bf6da4
+    Components: []
+    Transform:
+      ID: 9e9d39d3-6b72-4b14-b22a-941daf1e6cb0
+      Translation: 1 2 3

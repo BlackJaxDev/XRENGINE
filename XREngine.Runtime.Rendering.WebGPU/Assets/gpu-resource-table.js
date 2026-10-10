@@ -22,6 +22,9 @@ export class GpuResourceTable {
         const entry = this.slots[slot];
         if (!entry || entry.generation !== generation || entry.kind !== kind || entry.owner !== owner)
             throw new Error(`Invalid or obsolete ${kind} resource handle.`);
+        // Existing dependency edges retain their objects; retirement closes new handle access.
+        if (entry.value.retired)
+            throw new Error(`A retired ${kind} resource cannot be submitted, rebound or modified.`);
         return entry.value;
     }
 

@@ -25,7 +25,8 @@ namespace XREngine.Core.Files
             string OwnerName,
             Type AssetType,
             PublishedCookedAssetSerializeDelegate Serialize,
-            PublishedCookedAssetDeserializeDelegate Deserialize);
+            PublishedCookedAssetDeserializeDelegate Deserialize,
+            PublishedCookedAssetDependenciesDelegate? Dependencies);
 
         private static readonly object Sync = new();
         private static readonly Dictionary<Type, Entry> Entries = [];
@@ -37,6 +38,14 @@ namespace XREngine.Core.Files
             PublishedCookedAssetSerializeDelegate serialize,
             PublishedCookedAssetDeserializeDelegate deserialize,
             string? ownerName = null)
+            => Register(assetType, serialize, deserialize, ownerName, dependencies: null);
+
+        public static IDisposable Register(
+            Type assetType,
+            PublishedCookedAssetSerializeDelegate serialize,
+            PublishedCookedAssetDeserializeDelegate deserialize,
+            string? ownerName,
+            PublishedCookedAssetDependenciesDelegate? dependencies)
         {
             ArgumentNullException.ThrowIfNull(assetType);
             ArgumentNullException.ThrowIfNull(serialize);
@@ -52,7 +61,8 @@ namespace XREngine.Core.Files
                     : ownerName,
                 assetType,
                 serialize,
-                deserialize);
+                deserialize,
+                dependencies);
             lock (Sync)
             {
                 if (Entries.TryGetValue(assetType, out Entry? existing))
@@ -124,6 +134,24 @@ namespace XREngine.Core.Files
             return TryGetEntry(assetType, out _);
         }
 
+        /// <summary>
+        /// Returns false when the serializer owner has not declared its external-reference contract.
+        /// An explicitly empty declaration is distinct from an unknown dependency set.
+        /// </summary>
+        public static bool TryGetDependencies(object asset, out IReadOnlyList<PublishedCookedAssetDependency>? dependencies)
+        {
+            ArgumentNullException.ThrowIfNull(asset);
+            if (TryGetEntry(asset.GetType(), out Entry? entry) && entry?.Dependencies is { } describe)
+            {
+                dependencies = describe(asset) ?? throw new InvalidOperationException(
+                    $"Published cooked serializer for '{asset.GetType().FullName}' returned null dependencies.");
+                return true;
+            }
+
+            dependencies = null;
+            return false;
+        }
+
         public static string[] SnapshotRegisteredTypeNames()
         {
             lock (Sync)
@@ -139,6 +167,13 @@ namespace XREngine.Core.Files
                 names.Sort(StringComparer.Ordinal);
                 return [.. names];
             }
+        }
+
+        /// <summary>Returns registered type identities for a cooker's exact assembly-ownership boundary.</summary>
+        public static Type[] SnapshotRegisteredTypes()
+        {
+            lock (Sync)
+                return [.. Entries.Keys.OrderBy(static type => type.AssemblyQualifiedName, StringComparer.Ordinal)];
         }
 
         internal static bool TryResolveByFullName(string fullTypeName, bool ignoreCase, out Type? assetType)

@@ -103,6 +103,8 @@ namespace XREngine.Components.Capture.Lights
 
         public void InitializeStatic()
         {
+            if (this is PublishedRetainedLightProbeComponent)
+                throw new NotSupportedException("WebGPU.RetainedProbe.CaptureRequested: static environment convolution requires an admitted producer and cannot replace retained target data.");
             if (IsIblProducerQuarantined)
                 return;
             if (!RuntimeEngine.IsRenderThread)
@@ -308,6 +310,12 @@ namespace XREngine.Components.Capture.Lights
 
         private void DestroyIblResources()
         {
+            if (this is PublishedRetainedLightProbeComponent)
+            {
+                // The component still owns its immutable retained witness while
+                // inactive. Destruction releases it; reactivation must not reseal changed data.
+                return;
+            }
             if (!RuntimeEngine.IsRenderThread)
             {
                 if (!_iblDestroyQueued)
@@ -950,6 +958,7 @@ namespace XREngine.Components.Capture.Lights
         public bool TryGetActiveIblOutput(out LightProbeIblOutputGeneration generation)
         {
             generation = _activeIblOutput!;
+            generation?.ValidateRetainedData();
             return generation is not null && IblTexturesValid && CaptureVersion != 0u;
         }
 

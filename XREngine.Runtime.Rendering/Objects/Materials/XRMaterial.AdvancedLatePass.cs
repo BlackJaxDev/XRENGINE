@@ -64,6 +64,7 @@ public partial class XRMaterial
     public override void OnSettingUniforms(XRRenderProgram program)
     {
         base.OnSettingUniforms(program);
+        PublishStandardLitColorCoverage(program);
         AdvancedSceneColorContract.ApplyMaterialBinding(this, program);
     }
 }

@@ -9,21 +9,6 @@ public static class RealtimeJoinHandoff
 
     public static string CurrentProtocolVersion => RealtimeJoinHandoffContract.CurrentProtocolVersion;
 
-    public static bool TryApplyFromEnvironment(
-        GameStartupSettings settings,
-        out RealtimeJoinHandoffPayload? payload,
-        out string? source)
-    {
-        ArgumentNullException.ThrowIfNull(settings);
-
-        if (!RealtimeJoinHandoffContract.TryReadFromEnvironment(out payload, out source))
-            return false;
-
-        if (payload is not null)
-            ApplyToSettings(settings, payload);
-        return true;
-    }
-
     public static void ApplyToSettings(GameStartupSettings settings, RealtimeJoinHandoffPayload payload)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -35,7 +20,7 @@ public static class RealtimeJoinHandoff
         if (!RealtimeProtocol.IsCompatible(endpoint.WireProtocolVersion))
             throw new InvalidOperationException(RealtimeProtocol.DescribeMismatch(endpoint.WireProtocolVersion));
 
-        if (endpoint.Transport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls))
+        if (endpoint.Transport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls or RealtimeTransportKind.WebSocket))
             throw new NotSupportedException($"Realtime transport '{endpoint.Transport}' is not supported by this runtime.");
 
         if (string.IsNullOrWhiteSpace(endpoint.Host))
@@ -43,6 +28,10 @@ public static class RealtimeJoinHandoff
 
         if (endpoint.Port is <= 0 or > 65535)
             throw new InvalidOperationException("Realtime handoff endpoint port must be between 1 and 65535.");
+
+        if (endpoint.Transport == RealtimeTransportKind.WebSocket)
+            ValidateWebSocketAdmission(endpoint.Host, endpoint.Port, payload.SessionId, payload.WorkerGeneration,
+                payload.AccountId, payload.ClientId, payload.ReservationId, payload.AdmissionSecret, payload.CredentialEpoch);
 
         settings.NetworkingType = ENetworkingType.Client;
         settings.MultiplayerTransport = endpoint.Transport;
@@ -77,8 +66,13 @@ public static class RealtimeJoinHandoff
         if (settings.NetworkingType != ENetworkingType.Client)
             return;
 
-        if (settings.MultiplayerTransport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls))
+        if (settings.MultiplayerTransport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls or RealtimeTransportKind.WebSocket))
             throw new NotSupportedException($"Realtime transport '{settings.MultiplayerTransport}' is not supported by this runtime.");
+
+        if (settings.MultiplayerTransport == RealtimeTransportKind.WebSocket)
+            ValidateWebSocketAdmission(settings.ServerIP, settings.UdpServerSendPort, settings.MultiplayerSessionId,
+                settings.MultiplayerWorkerGeneration, settings.MultiplayerAccountId, settings.MultiplayerClientId,
+                settings.MultiplayerReservationId, settings.MultiplayerAdmissionSecret, settings.MultiplayerCredentialEpoch);
 
         if (!IsProtocolCompatible(settings.ExpectedMultiplayerProtocolVersion, currentProtocolVersion))
         {
@@ -147,6 +141,48 @@ public static class RealtimeJoinHandoff
     {
         return RealtimeJoinHandoffContract.IsProtocolCompatible(expectedProtocolVersion, currentProtocolVersion);
     }
+
+    /// <summary>Validates a transient browser admission against an independently verified loaded world.</summary>
+    public static Uri ValidateWebSocketClientHandoff(RealtimeJoinHandoffPayload payload,
+        WorldAssetIdentity localWorldAsset, string currentProtocolVersion)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        ArgumentNullException.ThrowIfNull(localWorldAsset);
+        if (payload.Endpoint is not { Transport: RealtimeTransportKind.WebSocket } endpoint)
+            throw new NotSupportedException("Browser realtime admission requires the WebSocket transport.");
+        if (!RealtimeProtocol.IsCompatible(endpoint.WireProtocolVersion))
+            throw new InvalidOperationException(RealtimeProtocol.DescribeMismatch(endpoint.WireProtocolVersion));
+        ValidateWebSocketAdmission(endpoint.Host, endpoint.Port, payload.SessionId, payload.WorkerGeneration,
+            payload.AccountId, payload.ClientId, payload.ReservationId, payload.AdmissionSecret, payload.CredentialEpoch);
+        if (!string.IsNullOrEmpty(payload.SessionToken))
+            throw new InvalidOperationException("Browser realtime admission does not accept legacy session tokens.");
+        if (!IsBoundedIdentity(endpoint.ProtocolVersion, 128)
+            || !IsProtocolCompatible(endpoint.ProtocolVersion, currentProtocolVersion))
+            throw new InvalidOperationException("Browser realtime admission has an incompatible build protocol.");
+        if (payload.WorldAsset is not { } expected
+            || !IsBoundedIdentity(expected.WorldId, 256) || !IsBoundedIdentity(expected.RevisionId, 256)
+            || !IsBoundedIdentity(expected.ContentHash, 256) || expected.AssetSchemaVersion < 1
+            || !IsBoundedIdentity(expected.RequiredBuildVersion, 128)
+            || !IsProtocolCompatible(expected.RequiredBuildVersion, currentProtocolVersion)
+            || !localWorldAsset.IsSameAssetAs(expected))
+            throw new InvalidOperationException("Browser realtime admission does not match the verified loaded world and build.");
+        return new UriBuilder("wss", endpoint.Host, endpoint.Port, RealtimeWebSocketProtocol.Path).Uri;
+    }
+
+    private static void ValidateWebSocketAdmission(string host, int port, Guid? session, Guid? generation,
+        string? account, string? client, string? reservation, string? admission, long credentialEpoch)
+    {
+        if (Uri.CheckHostName(host) == UriHostNameType.Unknown || port is < 1 or > 65535)
+            throw new InvalidOperationException("Realtime WebSocket handoff requires a valid advertised hostname and port.");
+        RealtimeWebSocketProtocol.ValidateEndpoint(new UriBuilder("wss", host, port, RealtimeWebSocketProtocol.Path).Uri);
+        if (session is null || session == Guid.Empty || generation is null || generation == Guid.Empty || credentialEpoch < 0
+            || !IsBoundedIdentity(account, 256) || !IsBoundedIdentity(client, 128) || !IsBoundedIdentity(reservation, 128)
+            || string.IsNullOrWhiteSpace(admission) || admission.Length > 4096)
+            throw new InvalidOperationException("Realtime WebSocket handoff requires a complete bounded managed player admission.");
+    }
+
+    private static bool IsBoundedIdentity(string? value, int maximumBytes)
+        => !string.IsNullOrWhiteSpace(value) && System.Text.Encoding.UTF8.GetByteCount(value) <= maximumBytes;
 
     public static string DescribeWorldAsset(WorldAssetIdentity? asset)
     {

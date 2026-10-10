@@ -1,0 +1,32 @@
+<Project>
+  <PropertyGroup>
+    <JoltBrowserLinkArchive>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', '$(Configuration)', '$(TargetFramework)', 'JoltNative', 'joltc.a'))</JoltBrowserLinkArchive>
+  </PropertyGroup>
+  <ItemGroup>
+    <NativeFileReference Include="$(JoltBrowserLinkArchive)" />
+    <NativeFileReference Include="$(JoltBrowserArchiveDirectory)/libJolt.a" />
+    <Content Include="$(JoltBrowserArchiveDirectory)/joltc-LICENSE.txt" Link="wwwroot/jolt-licenses/joltc-LICENSE.txt" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(JoltBrowserArchiveDirectory)/Jolt-LICENSE.txt" Link="wwwroot/jolt-licenses/Jolt-LICENSE.txt" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(JoltBrowserArchiveDirectory)/native-build-pin.json" Link="wwwroot/jolt-licenses/native-build-pin.json" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(JoltBrowserManagedSourceDirectory)/LICENSE" Link="wwwroot/jolt-licenses/JoltPhysicsSharp-LICENSE.txt" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(JoltBrowserManagedSourceDirectory)/managed-source-pin.json" Link="wwwroot/jolt-licenses/managed-source-pin.json" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="RequireJoltBrowserArchives" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(RuntimeIdentifier)' != 'browser-wasm'" Text="The Jolt browser native archive targets require browser-wasm." />
+    <Error Condition="'$(WasmEnableThreads)' == 'true'" Text="The approved browser Jolt archive requires single-threaded WebAssembly." />
+    <Error Condition="'$(WasmEnableSIMD)' == 'false'" Text="The pinned Jolt browser archives require WebAssembly SIMD." />
+    <Error Condition="'$(JoltBrowserArchiveDirectory)' == ''" Text="Set JoltBrowserArchiveDirectory to the approved browser archive output." />
+    <Error Condition="!Exists('$(JoltBrowserArchiveDirectory)/libjoltc.a') or !Exists('$(JoltBrowserArchiveDirectory)/libJolt.a')" Text="The pinned browser Jolt native archives are missing." />
+    <Error Condition="!Exists('$(JoltBrowserArchiveDirectory)/native-build-pin.json') or !Exists('$(JoltBrowserArchiveDirectory)/joltc-LICENSE.txt') or !Exists('$(JoltBrowserArchiveDirectory)/Jolt-LICENSE.txt')" Text="The pinned browser native source provenance or license notices are missing." />
+    <GetFileHash Files="$(MSBuildThisFileDirectory)../JoltBrowser.lock.json" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="JoltBrowserExpectedPin" />
+    </GetFileHash>
+    <GetFileHash Files="$(JoltBrowserArchiveDirectory)/native-build-pin.json" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="JoltBrowserArchivePin" />
+    </GetFileHash>
+    <Error Condition="'@(JoltBrowserArchivePin->'%(FileHash)')' != '@(JoltBrowserExpectedPin->'%(FileHash)')'" Text="The browser Jolt archive provenance does not match the current approved source and compiler pins; rebuild the archives." />
+    <!-- The static P/Invoke table uses the archive basename. Preserve the original
+         artifact while admitting exactly the module requested by JoltPhysicsSharp. -->
+    <Copy SourceFiles="$(JoltBrowserArchiveDirectory)/libjoltc.a" DestinationFiles="$(JoltBrowserLinkArchive)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

@@ -44,14 +44,14 @@ public sealed class PublishedLauncherGenerationTests
             "startup.asset",
             "editor_preferences.asset",
             "user_settings.asset",
-            "MonkeyBallVR.MonkeyBallGameBootstrap");
+            "RollingBall.RollingBallGameBootstrap");
 
         source.ShouldNotContain("using IDisposable startupAssetServices = RuntimeAssetBootstrap.InstallEngineAssetServices();");
         source.ShouldContain("using IDisposable applicationServices = RuntimeApplicationBootstrap.Install(");
         source.ShouldNotContain("startupAssetServices.Dispose();");
         source.ShouldNotContain("EnginePublishedCookedAssetRegistryRegistration");
         source.ShouldContain("startup = LoadRequiredPublishedAsset<GameStartupSettings>(archivePath, \"startup.asset\");");
-        source.ShouldContain("IGameLaunchBootstrap gameBootstrap = new global::MonkeyBallVR.MonkeyBallGameBootstrap();");
+        source.ShouldContain("IGameLaunchBootstrap gameBootstrap = new global::RollingBall.RollingBallGameBootstrap();");
         source.ShouldContain("gameBootstrap.ApplicationProfile");
         source.ShouldContain("IGameLaunchRuntimeSmokeBootstrap? runtimeSmokeBootstrap =");
         source.ShouldContain("runtimeSmokeBootstrap?.ConfigureRuntimeSmoke();");

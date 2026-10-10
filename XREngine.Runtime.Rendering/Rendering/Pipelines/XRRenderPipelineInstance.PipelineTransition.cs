@@ -1,4 +1,6 @@
+using System.Runtime.CompilerServices;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 
@@ -21,6 +23,15 @@ public sealed partial class XRRenderPipelineInstance
     private RenderPipeline? _applyingPipeline;
     private RenderPipeline? _fullyAppliedPipeline;
     private RenderPipeline? _legacyResourceOwnerPipeline;
+    private readonly ConditionalWeakTable<ViewportRenderCommandContainer, XRRenderPipelineInstance> _commandContainers = new();
+
+    /// <summary>Tracks the exact command containers that retain this output's execution state.</summary>
+    internal void TrackCommandContainer(ViewportRenderCommandContainer container)
+    {
+        ObjectDisposedException.ThrowIf(System.Threading.Volatile.Read(ref _terminalTeardownRequested) != 0, this);
+        // A rebuilt graph must remain collectible while this output keeps running.
+        _commandContainers.AddOrUpdate(container, this);
+    }
 
     /// <summary>
     /// Gets the instance-local revision of the applied pipeline asset. Each real reference
@@ -308,7 +319,7 @@ public sealed partial class XRRenderPipelineInstance
                     requestedPipeline?.DebugName ?? "<none>",
                     requestSerial,
                     ex.Message);
-                return false;
+                return DeclineRender($"The requested pipeline transition failed: {ex}");
             }
 
             lock (_pipelineTransitionSync)
@@ -407,7 +418,12 @@ public sealed partial class XRRenderPipelineInstance
             MeshRenderCommands.ResetForPipelineTransition(
                 pipeline.PassIndicesAndSorters,
                 pipeline.PassMetadata);
-            InvalidMaterial = pipeline.InvalidMaterial;
+            // Shader-free outputs must not import a desktop fallback shader merely to
+            // attach a viewport. Resolve the source's exact fallback only if it is used.
+            if (pipeline.IsWebOutputPrepared)
+                SetLazyInvalidMaterial(pipeline);
+            else
+                InvalidMaterial = pipeline.InvalidMaterial;
             pipeline.AddInstance(this);
         }
         else
@@ -511,6 +527,10 @@ public sealed partial class XRRenderPipelineInstance
             "ResetPipelineRuntimeState",
             ResetPipelineScopedRuntimeState,
             ref cleanupFailure);
+        foreach (var entry in _commandContainers)
+            entry.Key.ForgetInstance(this);
+        _commandContainers.Clear();
+        LastWindowViewport = null;
         _requiresManagedResourceGeneration = null;
         _classifiedResourceLayoutKey = null;
         _lastSuccessfulLayoutlessResourceKey = null;

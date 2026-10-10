@@ -140,68 +140,91 @@ namespace XREngine.Rendering
         private readonly List<XRShader> _taskShaders = [];
         private readonly List<XRShader> _computeShaders = [];
         private EventList<XRShader> _shaders;
+        private readonly EventList<XRShader> _ownedShaders;
         private EventList<XRShader>? _subscribedShaders;
+        private int _shaderSetterDepth;
 
         public XRMaterial()
         {
             _shaders = [];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(params XRShader[] shaders)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(IEnumerable<XRShader> shaders)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(ShaderVar[] parameters, params XRShader[] shaders) : base(parameters)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(ShaderVar[] parameters, IEnumerable<XRShader> shaders) : base(parameters)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(XRTexture?[] textures, params XRShader[] shaders) : base(textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(XRTexture?[] textures, IEnumerable<XRShader> shaders) : base(textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(ShaderVar[] parameters, XRTexture?[] textures, params XRShader[] shaders) : base(parameters, textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(ShaderVar[] parameters, XRTexture?[] textures, IEnumerable<XRShader> shaders) : base(parameters, textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(XRTexture?[] textures, ShaderVar[] parameters, params XRShader[] shaders) : base(parameters, textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
         public XRMaterial(XRTexture?[] textures, ShaderVar[] parameters, IEnumerable<XRShader> shaders) : base(parameters, textures)
         {
             _shaders = [.. shaders];
+            _ownedShaders = _shaders;
             PostShadersSet();
         }
 
         public EventList<XRShader> Shaders
         {
             get => _shaders;
-            set => SetField(ref _shaders, value);
+            set
+            {
+                ObjectDisposedException.ThrowIf(IsMaterialTeardownRequested, this);
+                _shaderSetterDepth++;
+                try { SetField(ref _shaders, value); }
+                finally
+                {
+                    if (--_shaderSetterDepth == 0)
+                        ReconcileShaderListHandlers();
+                }
+            }
         }
 
         public UberMaterialAuthoredState UberAuthoredState
@@ -525,28 +548,36 @@ namespace XREngine.Rendering
         /// </summary>
         public static XRMaterial? InvalidMaterial => RuntimeRenderingHostServices.Assets.InvalidMaterial;
 
-        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
-        {
-            bool change = base.OnPropertyChanging(propName, field, @new);
-            if (change)
-                switch (propName)
-                {
-                    case nameof(Shaders):
-                        PreShadersSet();
-                        break;
-                }
-            return change;
-        }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
-            InvalidateDepthNormalPrePassVariant();
-            InvalidateShadowCasterVariant();
-            InvalidateOutlinePassVariant();
+            // V2 auxiliary programs read the live source's parameters/coverage.
+            // Numeric and mode edits must not destroy stable replay pipelines.
+            // Replacing the parameter layout, shaders, or options still invalidates.
+            bool preserveCoverageVariants = (EngineSemantic.IsColorCoverage() ||
+                EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1 ||
+                EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTexturedV1 ||
+                EngineSemantic == EngineMaterialSemanticIdentity.AuthoredLitTextureAlphaV1) &&
+                propName is nameof(BindingValueVersion) or nameof(AlphaCutoff) or nameof(TransparencyMode)
+                    or nameof(TransparentTechniqueOverride) or nameof(RenderPass) or nameof(TransparentSortPriority)
+                    or nameof(Name);
+            bool preserveNativeVertexValues = propName == nameof(BindingValueVersion) &&
+                _nativeVertexPassMaterials is not null && AdvancedNativeVertexMaterialSource.IsRequested(this);
+            if (!preserveCoverageVariants && !preserveNativeVertexValues)
+            {
+                InvalidateDepthNormalPrePassVariant();
+                InvalidateShadowCasterVariant();
+            }
+            // A cooked outline reads the same live ShaderVar instances as its
+            // source. Value animation must not retire its stable program.
+            if (propName != nameof(BindingValueVersion) ||
+                _outlinePassVariant?.EngineSemantic != EngineMaterialSemanticIdentity.UberOutlineV1)
+                InvalidateOutlinePassVariant();
 
             switch (propName)
             {
                 case nameof(Shaders):
-                    PostShadersSet();
+                    InvalidateEngineSemantic();
+                    ShadersChanged();
                     break;
                 case nameof(Name):
                     ApplyShaderProgramMetadata(ShaderPipelineProgram);
@@ -745,47 +776,56 @@ namespace XREngine.Rendering
             }
         }
 
-        public void InvalidateDepthNormalPrePassVariant()
+        public void InvalidateDepthNormalPrePassVariant() => InvalidateDepthNormalPrePassVariant(now: false);
+
+        private void InvalidateDepthNormalPrePassVariant(bool now)
         {
-            _depthNormalPrePassVariant?.Destroy();
+            DestroyNativeVertexPassMaterials(now);
+            _depthNormalPrePassVariant?.Destroy(now);
             _depthNormalPrePassVariant = null;
             _depthNormalPrePassVariantResolved = false;
         }
 
-        public void InvalidateOutlinePassVariant()
+        public void InvalidateOutlinePassVariant() => InvalidateOutlinePassVariant(now: false);
+
+        private void InvalidateOutlinePassVariant(bool now)
         {
-            _outlinePassVariant?.Destroy();
+            _outlinePassVariant?.Destroy(now);
             _outlinePassVariant = null;
             _outlinePassVariantResolved = false;
         }
 
-        public void InvalidateShadowCasterVariant()
+        public void InvalidateShadowCasterVariant() => InvalidateShadowCasterVariant(now: false);
+
+        private void InvalidateShadowCasterVariant(bool now)
         {
-            _shadowCasterVariant?.Destroy();
+            DestroyNativeVertexPassMaterials(now);
+            DestroyStandardLitSpotShadowVariant(now);
+            _shadowCasterVariant?.Destroy(now);
             _shadowCasterVariant = null;
             _shadowCasterVariantResolved = false;
-            _pointShadowCasterVariant?.Destroy();
+            _pointShadowCasterVariant?.Destroy(now);
             _pointShadowCasterVariant = null;
             _pointShadowCasterVariantResolved = false;
-            _pointShadowCasterGeometryVariant?.Destroy();
+            _pointShadowCasterGeometryVariant?.Destroy(now);
             _pointShadowCasterGeometryVariant = null;
             _pointShadowCasterGeometryVariantResolved = false;
-            _pointShadowCasterAtlasVariant?.Destroy();
+            _pointShadowCasterAtlasVariant?.Destroy(now);
             _pointShadowCasterAtlasVariant = null;
             _pointShadowCasterAtlasVariantResolved = false;
-            _pointShadowCasterAtlasGeometryVariant?.Destroy();
+            _pointShadowCasterAtlasGeometryVariant?.Destroy(now);
             _pointShadowCasterAtlasGeometryVariant = null;
             _pointShadowCasterAtlasGeometryVariantResolved = false;
-            _directionalCascadeInstancedShadowCasterVariant?.Destroy();
+            _directionalCascadeInstancedShadowCasterVariant?.Destroy(now);
             _directionalCascadeInstancedShadowCasterVariant = null;
             _directionalCascadeInstancedShadowCasterVariantResolved = false;
-            _directionalCascadeGeometryShadowCasterVariant?.Destroy();
+            _directionalCascadeGeometryShadowCasterVariant?.Destroy(now);
             _directionalCascadeGeometryShadowCasterVariant = null;
             _directionalCascadeGeometryShadowCasterVariantResolved = false;
-            _directionalCascadeAtlasInstancedShadowCasterVariant?.Destroy();
+            _directionalCascadeAtlasInstancedShadowCasterVariant?.Destroy(now);
             _directionalCascadeAtlasInstancedShadowCasterVariant = null;
             _directionalCascadeAtlasInstancedShadowCasterVariantResolved = false;
-            _directionalCascadeAtlasGeometryShadowCasterVariant?.Destroy();
+            _directionalCascadeAtlasGeometryShadowCasterVariant?.Destroy(now);
             _directionalCascadeAtlasGeometryShadowCasterVariant = null;
             _directionalCascadeAtlasGeometryShadowCasterVariantResolved = false;
         }
@@ -799,14 +839,66 @@ namespace XREngine.Rendering
 
         private void PreShadersSet()
         {
-            if (_subscribedShaders is null)
+            if (_subscribedShaders is not { } subscribed)
                 return;
-            _subscribedShaders.PostModified -= ShadersChanged;
-            _subscribedShaders.PostAnythingAdded -= ShaderAdded;
-            _subscribedShaders.PostAnythingRemoved -= ShaderRemoved;
-            foreach (XRShader shader in _subscribedShaders)
+            subscribed.PostModified -= ShadersModified;
+            subscribed.PostAnythingAdded -= ShaderAdded;
+            subscribed.PostAnythingRemoved -= ShaderRemoved;
+            foreach (XRShader shader in subscribed)
                 ShaderRemoved(shader);
             SetField(ref _subscribedShaders, null, publishNotifications: false, nameof(Shaders));
+        }
+
+        /// <summary>Restores the owned shader container and its current borrowed shader subscriptions.</summary>
+        public override void Generate()
+        {
+            bool reviving = IsDestroyed;
+            base.Generate();
+            if (!reviving || IsDestroyed)
+                return;
+
+            if (_ownedShaders.IsDestroyed)
+                _ownedShaders.Generate();
+            ReviveOwnedCookedOutlineShader();
+            ReconcileShaderListHandlers();
+        }
+
+        protected override void OnDestroying()
+        {
+            BeginMaterialTeardown();
+            // These caches own their companions; the companions borrow this source's
+            // parameters and textures. Never destroy those borrowed resources here.
+            List<Exception>? failures = null;
+            void Release(Action action)
+            {
+                try { action(); }
+                catch (Exception ex) { (failures ??= []).Add(ex); }
+            }
+            Release(() => InvalidateDepthNormalPrePassVariant(now: true));
+            Release(() => InvalidateShadowCasterVariant(now: true));
+            Release(() => InvalidateOutlinePassVariant(now: true));
+            Release(() => ShaderPipelineProgram?.Destroy(now: true));
+            Release(DestroyShaderPipelineProgram);
+            Release(PreShadersSet);
+            Release(DestroyOwnedCookedOutlineShader);
+            Release(() =>
+            {
+                if (_ownedShaders.IsDestroyed)
+                    return;
+                _ownedShaders.Destroy(true);
+                if (!_ownedShaders.IsDestroyed)
+                    throw new InvalidOperationException("Material shader-list destruction was vetoed.");
+            });
+            try
+            {
+                base.OnDestroying();
+            }
+            catch (Exception ex)
+            {
+                (failures ??= []).Add(ex);
+            }
+            if (failures is not null)
+                throw new AggregateException("Material-owned storage could not be released.", failures);
         }
 
         private IReadOnlyList<XRShader> GetShaderList(EShaderType shaderType)
@@ -825,24 +917,41 @@ namespace XREngine.Rendering
 
         private void PostShadersSet()
         {
-            PreShadersSet();
-            SetField(ref _subscribedShaders, _shaders, publishNotifications: false, nameof(Shaders));
-            _shaders.PostModified += ShadersChanged;
-            _shaders.PostAnythingAdded += ShaderAdded;
-            _shaders.PostAnythingRemoved += ShaderRemoved;
+            ReconcileShaderListHandlers();
+            ShadersChanged();
+        }
 
-            foreach (var shader in _shaders)
+        private void ReconcileShaderListHandlers()
+        {
+            if (IsMaterialTeardownRequested)
+            {
+                PreShadersSet();
+                return;
+            }
+            if (ReferenceEquals(_subscribedShaders, _shaders))
+                return;
+            PreShadersSet();
+            EventList<XRShader> subscribed = _shaders;
+            SetField(ref _subscribedShaders, subscribed, publishNotifications: false, nameof(Shaders));
+            subscribed.PostModified += ShadersModified;
+            subscribed.PostAnythingAdded += ShaderAdded;
+            subscribed.PostAnythingRemoved += ShaderRemoved;
+
+            foreach (var shader in subscribed)
                 ShaderAdded(shader);
+        }
+
+        private void ShadersModified()
+        {
+            InvalidateEngineSemantic();
             ShadersChanged();
         }
 
         void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
-            => PostShadersSet();
-
-        protected override void OnDestroying()
         {
+            // Deserialization can replace list contents without a list event.
             PreShadersSet();
-            base.OnDestroying();
+            PostShadersSet();
         }
 
         private void ShaderRemoved(XRShader item)
@@ -850,6 +959,7 @@ namespace XREngine.Rendering
             if (item is null)
                 return;
             item.Reloaded -= ShaderReloaded;
+            item.SourceChanged -= AuthoredShaderSourceChanged;
         }
 
         private void ShaderAdded(XRShader item)
@@ -858,10 +968,15 @@ namespace XREngine.Rendering
                 return;
             item.Reloaded -= ShaderReloaded;
             item.Reloaded += ShaderReloaded;
+            item.SourceChanged -= AuthoredShaderSourceChanged;
+            item.SourceChanged += AuthoredShaderSourceChanged;
         }
 
         private void ShaderReloaded(XRAsset asset)
-            => ShadersChanged();
+        {
+            InvalidateEngineSemantic();
+            ShadersChanged();
+        }
 
         //[TPostDeserialize]
         internal void ShadersChanged()
@@ -914,12 +1029,13 @@ namespace XREngine.Rendering
 
             RecreateShaderPipelineProgramForCurrentSettings();
 
-            if (TryResolveMaterialShaderSources(out string[] sources))
+            if (!_preserveCookedUnlitParameters && TryResolveMaterialShaderSources(out string[] sources))
             {
                 SyncParametersToShaderUniforms(sources);
                 SyncRequiredEngineUniforms(sources);
             }
-            SyncAlphaCutoffParameter();
+            if (!_preserveCookedUnlitParameters)
+                SyncAlphaCutoffParameter();
             EnsureUberStateInitialized();
         }
 
@@ -1007,6 +1123,9 @@ namespace XREngine.Rendering
 
         private bool EnsureShaderPipelineUberSourceReady()
         {
+            if (ObserveCallerUberTerminalFailure())
+                return false;
+
             if (HasShaderPipelineRenderableUberSource())
                 return true;
 
@@ -1549,13 +1668,48 @@ namespace XREngine.Rendering
         }
 
         public static XRMaterial CreateUnlitAlphaTextureMaterialForward(XRTexture2D texture)
-            => new([texture], ShaderHelper.UnlitAlphaTextureFragForward()!) { RenderPass = (int)EDefaultRenderPass.TransparentForward };
+            => CreateUnlitTextureMaterial(texture, EngineMaterialSemanticIdentity.UnlitAlphaTextureV4,
+                "Common/UnlitAlphaTexturedForward.fs", EDefaultRenderPass.TransparentForward);
 
         public static XRMaterial CreateUnlitTextureMaterialForward(XRTexture texture)
-            => new([texture], ShaderHelper.UnlitTextureFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            => CreateUnlitTextureMaterial(texture, EngineMaterialSemanticIdentity.UnlitTextureV2,
+                "Common/UnlitTexturedForward.fs", EDefaultRenderPass.OpaqueForward);
 
         public static XRMaterial CreateUnlitTextureMaterialForward()
-            => new(ShaderHelper.UnlitTextureFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+            => CreateUnlitTextureMaterial(null, EngineMaterialSemanticIdentity.UnlitTextureV2,
+                "Common/UnlitTexturedForward.fs", EDefaultRenderPass.OpaqueForward);
+
+        /// <summary>Creates the canonical unlit texture surface whose output alpha is always one.</summary>
+        public static XRMaterial CreateUnlitOpaqueTextureMaterialForward(XRTexture2D texture)
+            => CreateUnlitTextureMaterial(texture, EngineMaterialSemanticIdentity.UnlitOpaqueTextureV3,
+                "Common/UnlitTexturedOpaqueForward.fs", EDefaultRenderPass.OpaqueForward);
+
+        /// <summary>Creates the canonical unlit array surface sampling layer zero.</summary>
+        public static XRMaterial CreateUnlitTextureArraySliceMaterialForward(XRTexture2DArray texture)
+            => CreateUnlitTextureMaterial(texture, EngineMaterialSemanticIdentity.UnlitTextureArraySliceV5,
+                "Common/UnlitTexturedArraySliceForward.fs", EDefaultRenderPass.OpaqueForward);
+
+        private static XRMaterial CreateUnlitTextureMaterial(XRTexture? texture, EngineMaterialSemanticIdentity semantic,
+            string source, EDefaultRenderPass pass)
+        {
+            XRShader DesktopFragment() => semantic == EngineMaterialSemanticIdentity.UnlitTextureV2
+                ? ShaderHelper.UnlitTextureFragForward()!
+                : semantic == EngineMaterialSemanticIdentity.UnlitAlphaTextureV4
+                    ? ShaderHelper.UnlitAlphaTextureFragForward()!
+                    : ShaderHelper.LoadEngineShader(source);
+            XRMaterial material = RuntimeEngineMaterialConstructionServices.Target switch
+            {
+                EngineMaterialConstructionTarget.DesktopGlsl => texture is null
+                    ? new(DesktopFragment())
+                    : new([texture], DesktopFragment()),
+                EngineMaterialConstructionTarget.WebGpuCooked => texture is null ? new() : new([texture]),
+                _ => throw new InvalidOperationException("Unsupported built-in material construction target."),
+            };
+            material.RenderPass = (int)pass;
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                material.EngineSemantic = semantic;
+            return material;
+        }
 
         private static ShaderVar[] CreateDeferredLitDefaults(ColorF4 color, float specular = 0.2f, float roughness = 0.0f, float metallic = 0.0f, float emission = 0.0f)
             =>
@@ -1570,6 +1724,8 @@ namespace XREngine.Rendering
 
         public static XRMaterial CreateLitTextureMaterial(bool deferred = true)
         {
+            if (deferred)
+                return CreateStandardLitTextureMaterial(CreateDeferredLitDefaults(ColorF4.White), [], []);
             XRShader fragmentShader = (deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!;
             XRMaterial material = deferred
                 ? new(CreateDeferredLitDefaults(ColorF4.White), fragmentShader)
@@ -1584,6 +1740,9 @@ namespace XREngine.Rendering
 
         public static XRMaterial CreateLitTextureMaterial(XRTexture2D texture, bool deferred = true)
         {
+            if (deferred)
+                return CreateStandardLitTextureMaterial(CreateDeferredLitDefaults(ColorF4.White), [texture],
+                    [CreateStandardSurfaceBinding(Materials.EMaterialTextureSemantic.BaseColor, texture)]);
             XRShader fragmentShader = (deferred ? ShaderHelper.LitTextureFragDeferred() : ShaderHelper.LitTextureFragForward())!;
             XRMaterial material = deferred
                 ? new(CreateDeferredLitDefaults(ColorF4.White), [texture], fragmentShader)
@@ -1648,16 +1807,23 @@ namespace XREngine.Rendering
 
         public static XRMaterial CreateColorMaterialDeferred(ColorF4 color)
         {
-            XRMaterial material = new(CreateDeferredLitDefaults(color), ShaderHelper.LitColorFragDeferred()!)
-            {
-                RenderPass = (int)EDefaultRenderPass.OpaqueDeferred
-            };
-
-            return material;
+            return CreateStandardLitColorMaterial(CreateDeferredLitDefaults(color), deferred: true);
         }
 
         public static XRMaterial CreateUnlitColorMaterialForward(ColorF4 color)
-            => new([new ShaderVector4(color, "MatColor")], ShaderHelper.UnlitColorFragForward()!) { RenderPass = (int)EDefaultRenderPass.OpaqueForward };
+        {
+            ShaderVar[] parameters = [new ShaderVector4(color, "MatColor")];
+            XRMaterial material = RuntimeEngineMaterialConstructionServices.Target switch
+            {
+                EngineMaterialConstructionTarget.DesktopGlsl => new(parameters, ShaderHelper.UnlitColorFragForward()!),
+                EngineMaterialConstructionTarget.WebGpuCooked => new(parameters),
+                _ => throw new InvalidOperationException("Unsupported built-in material construction target."),
+            };
+            material.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                material.EngineSemantic = EngineMaterialSemanticIdentity.UnlitColorV1;
+            return material;
+        }
 
         /// <summary>
         /// Stencil bit reserved for tagging editor gizmo pixels (e.g. transform tool, light probe preview).
@@ -1735,7 +1901,6 @@ namespace XREngine.Rendering
         /// <returns></returns>
         public static XRMaterial CreateLitColorMaterial(ColorF4 color, bool deferred = true)
         {
-            XRShader? frag = deferred ? ShaderHelper.LitColorFragDeferred() : ShaderHelper.LitColorFragForward();
             ShaderVar[] parameters = deferred ?
             [
                 new ShaderVector3((ColorF3)color, "BaseColor"),
@@ -1751,10 +1916,25 @@ namespace XREngine.Rendering
                 new ShaderFloat(32.0f, "MatShininess"),
             ];
 
-            XRMaterial material = new(parameters, frag!);
+            return CreateStandardLitColorMaterial(parameters, deferred);
+        }
+
+        private static XRMaterial CreateStandardLitColorMaterial(ShaderVar[] parameters, bool deferred)
+        {
+            // Cooked targets resolve the explicit semantic at draw time. No desktop shader
+            // source is loaded, and no substitute shader is attached to the material.
+            XRMaterial material = RuntimeEngineMaterialConstructionServices.Target switch
+            {
+                EngineMaterialConstructionTarget.DesktopGlsl => new(parameters,
+                    (deferred ? ShaderHelper.LitColorFragDeferred() : ShaderHelper.LitColorFragForward())!),
+                EngineMaterialConstructionTarget.WebGpuCooked => new(parameters),
+                _ => throw new InvalidOperationException("Unsupported built-in material construction target."),
+            };
             material.RenderPass = deferred
                 ? (int)EDefaultRenderPass.OpaqueDeferred
                 : (int)EDefaultRenderPass.OpaqueForward;
+
+            material.EngineSemantic = EngineMaterialSemanticIdentity.StandardLitColorV1;
 
             return material;
         }

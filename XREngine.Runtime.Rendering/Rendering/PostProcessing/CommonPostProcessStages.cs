@@ -64,16 +64,19 @@ public static class CommonPostProcessStages
     public const float DefaultTemporalDepthDiscontinuityScale = 140.0f;
     public const float DefaultTemporalConfidencePower = 0.55f;
 
-    public static void AddStandardPipelineSchema(RenderPipelinePostProcessSchemaBuilder builder)
+    public static void AddStandardPipelineSchema(RenderPipelinePostProcessSchemaBuilder builder,
+        bool defaultAutoExposure = true)
     {
-        AddStandardStages(builder);
+        AddStandardStages(builder, defaultAutoExposure);
         AddStandardCategories(builder);
     }
 
-    public static void AddStandardStages(RenderPipelinePostProcessSchemaBuilder builder)
+    public static void AddStandardStages(RenderPipelinePostProcessSchemaBuilder builder,
+        bool defaultAutoExposure = true)
     {
         DescribeTonemappingStage(builder.Stage(StageKeys.Tonemapping, "Tonemapping").BackedBy<TonemappingSettings>());
-        DescribeColorGradingStage(builder.Stage(StageKeys.ColorGrading, "Color Grading").BackedBy<ColorGradingSettings>());
+        DescribeColorGradingStage(builder.Stage(StageKeys.ColorGrading, "Color Grading").BackedBy<ColorGradingSettings>(),
+            defaultAutoExposure);
         DescribeVignetteStage(builder.Stage(StageKeys.Vignette, "Vignette").BackedBy<VignetteSettings>());
         DescribeBloomStage(builder.Stage(StageKeys.Bloom, "Bloom").BackedBy<BloomSettings>());
         DescribeAmbientOcclusionStage(builder.Stage(StageKeys.AmbientOcclusion, "Ambient Occlusion").BackedBy<AmbientOcclusionSettings>());
@@ -147,7 +150,8 @@ public static class CommonPostProcessStages
             visibilityCondition: IsMobius);
     }
 
-    public static void DescribeColorGradingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
+    public static void DescribeColorGradingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage,
+        bool defaultAutoExposure = true)
     {
         stage.AddParameter(
             nameof(ColorGradingSettings.Tint),
@@ -169,7 +173,7 @@ public static class CommonPostProcessStages
         stage.AddParameter(
             nameof(ColorGradingSettings.AutoExposure),
             PostProcessParameterKind.Bool,
-            true,
+            defaultAutoExposure,
             displayName: "Auto Exposure");
 
         bool IsAutoExposure(object o) => ((ColorGradingSettings)o).AutoExposure;

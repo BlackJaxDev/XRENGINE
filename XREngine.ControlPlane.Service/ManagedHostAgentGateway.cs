@@ -47,7 +47,7 @@ internal static class ManagedHostAgentGateway
             if (options.PublicApi is not null && path.EndsWith("/handoff", StringComparison.Ordinal) && response.IsSuccessStatusCode)
             {
                 ManagedClientLaunch? launch = await response.Content.ReadFromJsonAsync(XreControlPlaneJsonContext.Default.ManagedClientLaunch, context.RequestAborted);
-                if (launch?.Handoff.Endpoint?.Transport != RealtimeTransportKind.NativeTls || launch.AdmissionCredential?.Signature is null)
+                if (launch?.Handoff.Endpoint?.Transport is not (RealtimeTransportKind.NativeTls or RealtimeTransportKind.WebSocket) || launch.AdmissionCredential?.Signature is null)
                     return Results.Problem(statusCode: 503, title: "Protected admission unavailable");
                 launch.PackageRootPath = string.Empty;
                 launch.CacheRootPath = string.Empty;

@@ -1,0 +1,596 @@
+﻿__assetType: XREngine.Scene.XRWorld
+Scenes:
+- __assetType: XREngine.Scene.XRScene
+  IsVisible: true
+  RootNodes:
+  - Transform:
+      ID: 5de46269-f186-4def-9cae-a7af93cf319a
+    ID: ef01bf99-747d-46c2-b17a-417a7f341cf8
+    Name: Rendering Inspection
+    ChildNodes:
+    - Components:
+      - &o0
+        __type: XREngine.Components.CameraComponent
+        RenderPipelineSource:
+          __type: XREngine.Rendering.AdvancedRenderPipeline
+          __assetType: XREngine.Rendering.AdvancedRenderPipeline
+          ClassificationTileWidth: 16
+          ClassificationTileHeight: 16
+          ForwardDepthPrePassEnabled: true
+          DeferredDebugView: Disabled
+          GlobalIlluminationMode: None
+          FroxelDepthSlices: 24
+          EnableBuiltInAmbientOcclusion: true
+          AmbientOcclusionProvider:
+            __type: XREngine.Rendering.AdvancedDepthGtaoProvider
+          IsDesktopDefault: true
+          ID: 38b14bb6-7024-4702-9cc4-3b12fa3802e4
+        PostProcessStates:
+          Pipelines:
+            38b14bb6-7024-4702-9cc4-3b12fa3802e4:
+              __type: XREngine.Rendering.PostProcessing.PipelinePostProcessState
+              PipelineId: 38b14bb6-7024-4702-9cc4-3b12fa3802e4
+              PipelineName: AdvancedRenderPipeline
+              Stages:
+                tonemapping:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: tonemapping
+                  Values:
+                    Tonemapping: Mobius
+                    MobiusTransition: 0.6
+                colorGrading:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: colorGrading
+                  Values:
+                    Tint: 1 1 1
+                    ExposureMode: Artist
+                    AutoExposure: false
+                    Exposure: 1
+                    PhysicalApertureFNumber: 2.8
+                    PhysicalShutterSpeedSeconds: 0.016666668
+                    PhysicalISO: 100
+                    PhysicalExposureCompensationEV: 0
+                    PhysicalExposureScale: 1
+                    AutoExposureBias: 0
+                    AutoExposureScale: 1
+                    MinExposure: 0.0001
+                    MaxExposure: 100
+                    ExposureDividend: 0.1
+                    ExposureTransitionSpeed: 0.5
+                    AutoExposureMetering: CenterWeighted
+                    AutoExposureMeteringTargetSize: 16
+                    AutoExposureLuminanceWeights: 0.299 0.587 0.114
+                    AutoExposureIgnoreTopPercent: 0.02
+                    AutoExposureCenterWeightStrength: 1
+                    AutoExposureCenterWeightPower: 2
+                    Contrast: 1
+                    Gamma: 2.2
+                    Hue: 1
+                    Saturation: 1
+                    Brightness: 1
+                vignette:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: vignette
+                  Values:
+                    Enabled: false
+                    Color: 0 0 0
+                    Intensity: 0.35
+                    Power: 2
+                bloom:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: bloom
+                  Values:
+                    Enabled: false
+                    Intensity: 0.53
+                    Threshold: 0.138
+                    SoftKnee: 0.5
+                    Radius: 1.495
+                    Scatter: 0.919
+                    Strength: 0.5805
+                    StartMip: 1
+                    EndMip: 4
+                    Lod0Weight: 0
+                    Lod1Weight: 1
+                    Lod2Weight: 0.649
+                    Lod3Weight: 0.397
+                    Lod4Weight: 0.102
+                    DebugBloomOnly: false
+                ambientOcclusion:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: ambientOcclusion
+                  Values:
+                    Enabled: true
+                    Type: GroundTruthAmbientOcclusion
+                    Radius: 2.2
+                    Power: 1.35
+                    Bias: 0.06
+                    Prototype.Intensity: 1
+                    MultiView.SecondaryRadius: 1.6
+                    MultiView.Blend: 0.6
+                    MultiView.Spread: 0.5
+                    MultiView.DepthPhi: 4
+                    MultiView.NormalPhi: 64
+                    HorizonBased.DirectionCount: 8
+                    HorizonBased.StepsPerDirection: 4
+                    HorizonBased.TangentBias: 0.1
+                    HorizonBasedPlus.DetailAO: 0
+                    HorizonBasedPlus.BlurEnabled: true
+                    HorizonBasedPlus.BlurRadius: 8
+                    HorizonBasedPlus.BlurSharpness: 4
+                    HorizonBasedPlus.UseInputNormals: true
+                    HorizonBasedPlus.MetersToViewSpaceUnits: 1
+                    GroundTruth.SliceCount: 3
+                    GroundTruth.StepsPerSlice: 4
+                    GroundTruth.FalloffStartRatio: 0.4
+                    GroundTruth.DenoiseEnabled: true
+                    GroundTruth.DenoiseRadius: 5
+                    GroundTruth.DenoiseSharpness: 10
+                    GroundTruth.UseInputNormals: true
+                    GroundTruth.UseVisibilityBitmask: true
+                    GroundTruth.VisibilityBitmaskThickness: 0.12
+                    GroundTruth.ThicknessHeuristic: 1
+                    GroundTruth.MultiBounceEnabled: true
+                    GroundTruth.SpecularOcclusionEnabled: true
+                    GroundTruth.Resolution: Half
+                    GroundTruth.UseNormalWeightedBlur: true
+                    Voxel.VoxelGridResolution: 128
+                    Voxel.CoverageExtent: 24
+                    Voxel.VoxelOpacityScale: 1
+                    Voxel.TemporalReuseEnabled: true
+                    Voxel.CombineWithScreenSpaceDetail: true
+                    Voxel.DetailBlend: 0.35
+                    SpatialHash.SamplesPerPixel: 3.06
+                    SpatialHash.CellSize: 0.141
+                    SpatialHash.Steps: 6
+                    SpatialHash.Thickness: 1.917
+                    SpatialHash.JitterScale: 1
+                    SpatialHash.TemporalReuseEnabled: true
+                    SpatialHash.TemporalBlendFactor: 0.789
+                    SpatialHash.TemporalClamp: 0.499
+                    SpatialHash.TemporalDepthRejectThreshold: 0.01
+                    SpatialHash.TemporalMotionRejectionScale: 0.2
+                temporalAntiAliasing:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: temporalAntiAliasing
+                  Values:
+                    FeedbackMin: 0.16
+                    FeedbackMax: 0.96
+                    VarianceGamma: 1
+                    CatmullRadius: 1
+                    DepthRejectThreshold: 0.0075
+                    ReactiveTransparencyRange: 0.4 0.85
+                    ReactiveVelocityScale: 0.55
+                    ReactiveLumaThreshold: 0.35
+                    DepthDiscontinuityScale: 140
+                    ConfidencePower: 0.55
+                    DebugViewMode: 0
+                motionBlur:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: motionBlur
+                  Values:
+                    Enabled: false
+                    ShutterScale: 0.75
+                    MaxSamples: 12
+                    MaxBlurPixels: 12
+                    VelocityThreshold: 0.002
+                    DepthRejectThreshold: 0.002
+                    SampleFalloff: 2
+                depthOfField:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: depthOfField
+                  Values:
+                    Enabled: false
+                    Mode: Artist
+                    FocusDistance: 5
+                    FocusRange: 1.5
+                    FocusTargetOffset: 0 0 0
+                    PhysicalCircleOfConfusionMm: 0.03
+                    Aperture: 2.8
+                    MaxCoCRadius: 6
+                    BokehRadius: 1.25
+                    NearBlur: true
+                lensDistortion:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: lensDistortion
+                  Values:
+                    ControlMode: Artist
+                    Mode: None
+                    Intensity: 0
+                    PaniniDistance: 1
+                    PaniniCropToFit: 1
+                    BrownConradyK1: 0
+                    BrownConradyK2: 0
+                    BrownConradyK3: 0
+                    BrownConradyP1: 0
+                    BrownConradyP2: 0
+                chromaticAberration:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: chromaticAberration
+                  Values:
+                    Enabled: false
+                    Intensity: 0
+                fog:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: fog
+                  Values:
+                    DepthFogIntensity: 0
+                    DepthFogStartDistance: 100
+                    DepthFogEndDistance: 10000
+                    DepthFogColor: 0.5 0.5 0.5
+                atmosphericScattering:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: atmosphericScattering
+                  Values:
+                    Enabled: true
+                    RenderSky: true
+                    AerialPerspective: true
+                    Quality: Balanced
+                    ViewSamples: 8
+                    OpticalDepthSamples: 0
+                    MaxDistance: 200000
+                    JitterStrength: 0.5
+                    TemporalEnabled: true
+                    DebugMode: Off
+                volumetricFog:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: volumetricFog
+                  Values:
+                    Enabled: false
+                    Intensity: 1
+                    MaxDistance: 150
+                    StepSize: 1
+                    JitterStrength: 0.5
+                    DebugMode: Off
+                gpuBvhDebug:
+                  __type: XREngine.Rendering.PostProcessing.PostProcessStageState
+                  StageKey: gpuBvhDebug
+                  Values:
+                    FullOverdrawEnabled: false
+                    FullOverdrawSaturationCount: 8
+                    FullOverdrawOverlayOpacity: 1
+                    MeshletDebugDisplayEnabled: false
+                    Enabled: false
+                    Filter: All
+                    MaxNodes: 16384
+                    LineWidth: 0.0015
+                    LeafColor: 0.2 1 0.4 1
+                    InternalColor: 1 0.65 0.1 0.55
+        AntiAliasingModeOverride: None
+        CameraParameters:
+          __type: XREngine.Rendering.XRPerspectiveCameraParameters
+          VerticalFieldOfView: 48
+          HorizontalFieldOfView: 48
+          AspectRatio: 1
+          InheritAspectRatio: true
+          NearZ: 0.1
+          FarZ: 100
+        InternalResolutionScale: 1
+        ManualInternalWidth: 1920
+        ManualInternalHeight: 1080
+        CullWithFrustum: true
+        ID: affcb0fb-30a4-4c02-98fd-91526e97acf3
+      - __type: AdvancedRenderingParity.AdvancedRenderingParityPawnComponent
+        CameraComponent: *o0
+        ID: 4717d3f8-f401-4c4d-b750-19622d20e082
+      Transform:
+        ID: ac81db5c-4f7a-4371-a9c8-540fbb50f502
+        Translation: 0 0 6.5
+      ID: e51f249e-3b4a-4e49-a7fd-bb8a9919b4ed
+      Name: Inspection Camera
+    - Components:
+      - __type: XREngine.Components.Lights.DirectionalLightComponent
+        CascadeCount: 4
+        CascadeOverlapPercent: 0.1
+        CascadeShadowRenderMode: Auto
+        CascadePercentages:
+        - 0.1
+        - 0.2
+        - 0.3
+        - 0.4
+        CascadeBiasOverrides:
+        - &o1 {}
+        - *o1
+        - *o1
+        - *o1
+        Scale: 1 1 1
+        CascadedShadowDistance: 200
+        MeshCenterAdjustMatrix: 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1
+        CastsShadows: false
+        ShadowMapStorageFormat: Depth24
+        ShadowMomentMinVariance: 2E-05
+        ShadowMomentLightBleedReduction: 0.2
+        ShadowMomentPositiveExponent: 5
+        ShadowMomentNegativeExponent: 5
+        ShadowExponentBase: 0.035
+        ShadowExponent: 1.221
+        ShadowMinBias: 1E-05
+        ShadowMaxBias: 0.004
+        ShadowDepthBiasTexels: 1
+        ShadowSlopeBiasTexels: 2
+        ShadowNormalBiasTexels: 1
+        ShadowMapResolutionWidth: 2048
+        ShadowMapResolutionHeight: 2048
+        Color: 1 0.939999998 0.839999974
+        DiffuseIntensity: 2.2
+        Samples: 8
+        FilterSamples: 8
+        BlockerSamples: 8
+        VogelTapCount: 5
+        FilterRadius: 0.0012
+        BlockerSearchRadius: 0.01
+        MinPenumbra: 0.001
+        MaxPenumbra: 0.015
+        SoftShadowMode: ContactHardeningPcss
+        LightSourceRadius: 1.2
+        ContactShadowDistance: 1
+        ContactShadowSamples: 16
+        ContactShadowThickness: 2
+        ContactShadowFadeStart: 10
+        ContactShadowFadeEnd: 40
+        ContactShadowJitterStrength: 1
+        ID: ca38568d-3621-4cc6-8481-e0a6b59779ff
+      Transform:
+        ID: 5e308a5c-9e73-4bb9-bc87-168102731baa
+        Rotation: -0.1714489 -0.1714489 -0.030313643 0.9696864
+      ID: c11e8868-0d09-46ed-bffb-b4a46393cac0
+      Name: Warm Directional Light
+    - Components:
+      - __type: XREngine.Components.Capture.Lights.Types.PointLightComponent
+        ShadowRenderMode: InstancedLayered
+        ShadowNearPlaneDistance: 0.1
+        Radius: 9
+        Brightness: 1
+        MeshCenterAdjustMatrix: 9 0 0 0 0 9 0 0 0 0 9 0 0 0 0 1
+        CastsShadows: false
+        ShadowMomentMinVariance: 2E-05
+        ShadowMomentLightBleedReduction: 0.2
+        ShadowMomentPositiveExponent: 5
+        ShadowMomentNegativeExponent: 5
+        ShadowExponentBase: 0.035
+        ShadowExponent: 1.221
+        ShadowMinBias: 1E-05
+        ShadowMaxBias: 0.004
+        ShadowDepthBiasTexels: 1
+        ShadowSlopeBiasTexels: 2
+        ShadowNormalBiasTexels: 1
+        ShadowMapResolutionWidth: 1024
+        ShadowMapResolutionHeight: 1024
+        Color: 0.349999994 0.649999976 1
+        DiffuseIntensity: 6
+        Samples: 4
+        FilterSamples: 4
+        BlockerSamples: 4
+        VogelTapCount: 5
+        FilterRadius: 0.0012
+        BlockerSearchRadius: 0.0012
+        MinPenumbra: 0.0002
+        MaxPenumbra: 0.0048
+        SoftShadowMode: FixedPoisson
+        UseLightRadiusForContactHardening: true
+        LightSourceRadius: 0.01
+        ContactShadowDistance: 0.1
+        ContactShadowSamples: 4
+        ContactShadowThickness: 0.25
+        ContactShadowFadeStart: 10
+        ContactShadowFadeEnd: 40
+        ContactShadowJitterStrength: 1
+        ID: ef7b6a8d-0792-4dd6-b995-7e988832a877
+      Transform:
+        ID: c147f38e-6601-4607-b29e-59b752eba632
+        Translation: 2 1.5 3
+      ID: 3042b574-03aa-4104-9482-6a350e25ad29
+      Name: Cool Point Light
+    - Components:
+      - __type: XREngine.Components.Scene.Mesh.ModelComponent
+        Model:
+          __assetType: XREngine.Rendering.Models.Model
+          Meshes:
+          - __assetType: XREngine.Rendering.Models.SubMesh
+            LODs:
+            - &o0
+              Material:
+                __assetType: XREngine.Rendering.XRMaterial
+                Shaders:
+                - __assetType: XREngine.Rendering.XRShader
+                  Source: Shaders/Common/TexturedNormalMetallicRoughnessDeferred.fs
+                  EntryPoint: main
+                  SlangOptions: {}
+                  OriginalLastWriteTimeUtc: 2026-10-01T16:31:28.8938633Z
+                  ID: e2958347-0d9e-4e6e-a3cf-290c9376a81a
+                  Name: TexturedNormalMetallicRoughnessDeferred
+                UberAuthoredState: {}
+                PassSet:
+                  SourceRenderQueue: -1
+                  ForwardAddPolicy: FoldedIntoForwardPlusBase
+                AlphaCutoff: 0.5
+                SurfaceTextureBindings:
+                - Texture:
+                    ID: c55b561c-7c97-4d95-979a-d80abdf44856
+                    Path: game://Textures/BaseColor.asset
+                  IsSrgb: true
+                  WrapU: ClampToEdge
+                  WrapV: ClampToEdge
+                  UvScaleOffset: 1 1 0 0
+                - Semantic: Normal
+                  Texture:
+                    ID: 9d469349-56a9-417c-8901-4d868719a262
+                    Path: game://Textures/Normal.asset
+                  WrapU: ClampToEdge
+                  WrapV: ClampToEdge
+                  UvScaleOffset: 1 1 0 0
+                - Semantic: Metallic
+                  Texture:
+                    ID: 26feecc1-1c23-4406-a86f-4ec83e8e1dd8
+                    Path: game://Textures/Metallic.asset
+                  WrapU: ClampToEdge
+                  WrapV: ClampToEdge
+                  UvScaleOffset: 1 1 0 0
+                - Semantic: Roughness
+                  Texture:
+                    ID: 722246f2-5113-4546-b13c-6257f24cef11
+                    Path: game://Textures/Roughness.asset
+                  WrapU: ClampToEdge
+                  WrapV: ClampToEdge
+                  UvScaleOffset: 1 1 0 0
+                TransmissionColor: 1 1 1
+                RenderPass: 1
+                RenderOptions:
+                  __assetType: XREngine.Rendering.Models.Materials.RenderingParameters
+                  WriteRed: true
+                  WriteGreen: true
+                  WriteBlue: true
+                  WriteAlpha: true
+                  AlphaToCoverage: Disabled
+                  Winding: CounterClockwise
+                  CullMode: Back
+                  DepthTest:
+                    Enabled: Enabled
+                    UpdateDepth: true
+                    Function: Lequal
+                  StencilTest:
+                    FrontFace:
+                      BothFailOp: Keep
+                      StencilPassDepthFailOp: Keep
+                      BothPassOp: Keep
+                    BackFace:
+                      BothFailOp: Keep
+                      StencilPassDepthFailOp: Keep
+                      BothPassOp: Keep
+                  ID: 4882de35-01e1-4c1b-9516-59607f2f1fdb
+                Parameters:
+                - __type: XREngine.Rendering.Models.Materials.ShaderVector3
+                  Color: {}
+                  Value: 1 1 1
+                  Name: BaseColor
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Value: 1
+                  Name: Opacity
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Value: 1
+                  Name: Specular
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Value: 0.9
+                  Name: Roughness
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Value: 0.85
+                  Name: Metallic
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Name: Emission
+                - __type: XREngine.Rendering.Models.Materials.ShaderInt
+                  Name: NormalMapMode
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Name: HeightMapScale
+                Textures:
+                - ID: c55b561c-7c97-4d95-979a-d80abdf44856
+                  Path: game://Textures/BaseColor.asset
+                - ID: 9d469349-56a9-417c-8901-4d868719a262
+                  Path: game://Textures/Normal.asset
+                - ID: 26feecc1-1c23-4406-a86f-4ec83e8e1dd8
+                  Path: game://Textures/Metallic.asset
+                - ID: 722246f2-5113-4546-b13c-6257f24cef11
+                  Path: game://Textures/Roughness.asset
+                ID: 567bd906-0f69-425b-b2cc-147a21fa72df
+                Name: Mapped Checker Surface
+                EngineSemantic:
+                  Semantic: StandardLitTexture
+                  Version: 1
+              Mesh:
+                __assetType: XREngine.Rendering.XRMesh
+                ID: 56f211b4-9743-4823-a5d7-5811788e65b7
+                Format: CookedBinary
+                Version: 1
+                Payload:
+                  Length: 606
+                  Encoding: ZstdHex
+                  Bytes: 28B52FFD605E014D0800740A196C5852456E67696E652E52656E646572696E672E58524D6573682C20756E74696D2C2056657273696F6E3D312E302C2043756C747572653D6E65757472616C2C205075626C69634B6579546F6B656E3D6E756C6C0FB411F25643972348A5D75811788E65B70E13537461746963204D61707065642050616E656C00000006000000040000009A99F9BF000080BF0000403F0101010000000203020550BF24FF7F0160000030002D20708272653C0D104601FA6650EEE01786222EFF8C4106C805345C044200F217738465A1F873D6658E5E3C0F5D90E1831DC339400013683470C1D5558C86CD19DF614721CA7766764DB90CC8E0C6C05B450ECD9DC1424454E19B189D6FD509
+              MinProjectedScreenRadiusPixels: .nan
+              StableSortKey: manual:Static Mapped Panel:Mapped Checker Surface:00000000
+            CookedBinaryLODs:
+            - *o0
+            MeshOptimizer:
+              UseModelImportDefaults: true
+              Meshlets:
+                MaxVertices: 64
+                MinTriangles: 32
+                MaxTriangles: 124
+                ConeWeight: 0.25
+                SplitFactor: 2
+                FillWeight: 0.5
+                OptimizeMeshlets: true
+                ComputeBounds: true
+                EncodeVertexReferences: true
+              Lods:
+                Mode: SimplifyWithAttributes
+                AdditionalLodCount: 2
+                FirstLodIndexRatio: 0.5
+                LodRatioScale: 0.5
+                TargetError: 0.01
+                FirstLodDistance: 20
+                LodDistanceScale: 2
+                ReusePreviousLodAsSource: true
+                Options: Prune
+                UseNormals: true
+                NormalWeight: 0.5
+                UseTangents: true
+                TangentWeight: 0.25
+                UseTexCoords: true
+                TexCoordWeight: 1
+                ColorWeight: 1
+            Bounds:
+              Min: -1.95 -1 0
+              Max: -0.75 1 0
+            UseGpuMeshBvh: true
+            RealtimeGpuMeshBvhForSkinnedMeshes: true
+            ID: 1ad216cd-a15b-4d58-9e15-6406011217a7
+            Name: Static Reference Surface
+          ID: 43202099-ed41-41ec-a5e6-f0d023801c0c
+        UseSkinnedMotionVectors: true
+        MeshLayer: -1
+        ID: c06279be-d06c-4da8-aaf5-5698c9bb542d
+      Transform:
+        ID: 6ffbc6c3-53ca-4349-8c86-08d13ee4e59c
+      ID: db623703-99db-4df1-9aef-527358e30784
+      Name: Static Reference
+  ID: c6d487aa-4b46-4ab0-8967-c331e3e73e6e
+  Name: Advanced Static PBR Surface
+DefaultGameMode:
+  __type: AdvancedRenderingParity.AdvancedRenderingParityGameMode
+  __assetType: AdvancedRenderingParity.AdvancedRenderingParityGameMode
+  FixtureMarker: advanced-static-pbr-v1
+  ID: 48930f60-062f-4656-a2b6-3132b8f4c7c4
+  Name: Authored Rendering Game Mode
+Settings:
+  __assetType: XREngine.Scene.WorldSettings
+  Gravity: 0 -9.81 0
+  PhysicsResetMinYDist: 100
+  PhysicsTimestep: 0.016666668
+  PhysicsSubsteps: 1
+  DefaultAngularDamping: 0.05
+  DefaultFriction: 0.5
+  EnableContinuousCollision: true
+  TimeDilation: 1
+  Bounds:
+    Min: -2500 -2500 -2500
+    Max: 2500 2500 2500
+  SkyboxIntensity: 1
+  RenderSkybox: false
+  ClearColor: 0.0149999997 0.0250000004 0.0500000007 1
+  AmbientLightColor: 0.0599999987 0.0700000003 0.0900000036
+  AmbientLightIntensity: 0.5
+  EnvironmentLightingIntensity: 1
+  ReflectionIntensity: 1
+  LightProbeResolution: 256
+  AutoCaptureLightProbes: false
+  FogColor: 0.5 0.5 0.5
+  FogDensity: 0.01
+  FogStartDistance: 10
+  FogEndDistance: 1000
+  FogHeightFalloff: 0.2
+  SpeedOfSound: 343
+  DopplerFactor: 1
+  DefaultAudioAttenuation: 1
+  MasterVolume: 1
+  PreviewWorldBounds: true
+  ID: a866b4a0-31b9-4bc2-ad40-60f3683b3b06
+ID: e6bf1d4f-4392-4555-9183-39cc2d070574
+Name: Advanced Rendering Parity World

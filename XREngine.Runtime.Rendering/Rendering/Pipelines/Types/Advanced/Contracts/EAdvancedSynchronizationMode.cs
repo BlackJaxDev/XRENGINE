@@ -9,4 +9,6 @@ public enum EAdvancedSynchronizationMode
     OpenGlMemoryBarrier,
     VulkanLegacyBarriers,
     VulkanSynchronization2,
+    /// <summary>Ordered WebGPU compute/render passes and copies provide cross-domain visibility.</summary>
+    WebGpuPassBoundaries,
 }

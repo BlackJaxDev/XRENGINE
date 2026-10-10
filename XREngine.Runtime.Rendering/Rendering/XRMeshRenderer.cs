@@ -307,7 +307,13 @@ namespace XREngine.Rendering
             get
             {
                 lock (_generatedVertexShaderVersionsLock)
-                    return new Dictionary<int, BaseVersion>(_generatedVertexShaderVersions);
+                {
+                    Dictionary<int, BaseVersion> published = new(_generatedVertexShaderVersions.Count);
+                    foreach (var pair in _generatedVertexShaderVersions)
+                        if (Volatile.Read(ref _pendingVertexShaderVersionPublications[pair.Key]) is null)
+                            published.Add(pair.Key, pair.Value);
+                    return published;
+                }
             }
         }
 
@@ -483,6 +489,7 @@ namespace XREngine.Rendering
         public XRMeshRenderer(XRMesh? mesh, XRMaterial? material)
             : base(deferObjectCachePublication: true)
         {
+            _ownedSubmeshes = _submeshes;
             try
             {
                 using (RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication())
@@ -505,6 +512,7 @@ namespace XREngine.Rendering
         public XRMeshRenderer(IEnumerable<(XRMesh mesh, XRMaterial material)> submeshes)
             : base(deferObjectCachePublication: true)
         {
+            _ownedSubmeshes = _submeshes;
             try
             {
                 using (RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication())
@@ -526,11 +534,14 @@ namespace XREngine.Rendering
         /// <summary>
         /// Creates an unpublished renderer used solely to prepare replacement buffers. The asset
         /// cache deferral keeps the staging owner detached; only child buffers created while the
-        /// caller's render-publication scope is open join that transaction.
+        /// caller's render-publication scope is open join that transaction. Callers suppress
+        /// registration during construction so the temporary owner's metadata containers do not
+        /// join an enclosing batch that will outlive their failed-construction cleanup.
         /// </summary>
         private XRMeshRenderer(bool detachedStagingRenderer)
             : base(deferObjectCachePublication: true)
         {
+            _ownedSubmeshes = _submeshes;
         }
 
         private void AbortRendererConstruction()
@@ -566,15 +577,6 @@ namespace XREngine.Rendering
                 PendingVersionPublication? pendingToWaitFor = null;
                 lock (creationGate)
                 {
-                    lock (_generatedVertexShaderVersionsLock)
-                    {
-                        if (_generatedVertexShaderVersions.TryGetValue(versionKey, out BaseVersion? existing))
-                        {
-                            existing.ProgramPriority = ResolveProgramPriority(versionKey);
-                            return existing;
-                        }
-                    }
-
                     RenderObjectPublicationScope? activePublication =
                         GenericRenderObject.CurrentDeferredPublicationScope;
                     object? activeBatchIdentity = activePublication?.BatchIdentity;
@@ -596,35 +598,43 @@ namespace XREngine.Rendering
                     }
                     else
                     {
+                        lock (_generatedVertexShaderVersionsLock)
+                        {
+                            if (_generatedVertexShaderVersions.TryGetValue(versionKey, out BaseVersion? existing))
+                            {
+                                existing.ProgramPriority = ResolveProgramPriority(versionKey);
+                                return existing;
+                            }
+                        }
+
                         return CreateVersionForPublication(
                             versionKey,
-                            activeBatchIdentity,
                             creationGate);
                     }
                 }
 
+                if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+                    throw new RenderResourcePreparationPendingException(
+                        $"Mesh renderer shader version {versionKey} is pending publication on the caller thread; retry after the owner publishes it.");
                 pendingToWaitFor!.Completion.Wait();
             }
         }
 
         private BaseVersion CreateVersionForPublication(
             int versionKey,
-            object? activeBatchIdentity,
             object creationGate)
         {
             PendingVersionPublication? pending = null;
-            if (activeBatchIdentity is not null)
-            {
-                pending = new PendingVersionPublication(
-                    activeBatchIdentity,
-                    Environment.CurrentManagedThreadId);
-                _pendingVertexShaderVersionPublications[versionKey] = pending;
-            }
-
             bool lifetimeLeaseHeld = false;
             try
             {
                 using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+                // The map is installed before cache publication so rollback can restore it.
+                // Keep even a new root's version private until the root commits or aborts.
+                pending = new PendingVersionPublication(
+                    publication.BatchIdentity,
+                    Environment.CurrentManagedThreadId);
+                Volatile.Write(ref _pendingVertexShaderVersionPublications[versionKey], pending);
                 BaseVersion created = versionKey switch
                 {
                     0 => new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, ResolveShaderPipelinesAllowedForVersion(versionKey)),
@@ -712,7 +722,7 @@ namespace XREngine.Rendering
             lock (creationGate)
             {
                 if (ReferenceEquals(_pendingVertexShaderVersionPublications[versionKey], pending))
-                    _pendingVertexShaderVersionPublications[versionKey] = null;
+                    Volatile.Write(ref _pendingVertexShaderVersionPublications[versionKey], null);
                 pending.Completion.Set();
             }
         }
@@ -845,6 +855,8 @@ namespace XREngine.Rendering
 
         internal bool HasSettingUniformsHandlers => _settingUniforms is not null;
 
+        internal bool HasOnlySettingUniformsHandler(DelSetUniforms handler) => _settingUniforms == handler;
+
         /// <summary>
         /// Typed, generation-owned numeric binding publishers eligible for
         /// immutable backend capture and frequency-scoped reuse.
@@ -905,6 +917,10 @@ namespace XREngine.Rendering
         }
 
         private EventList<SubMesh> _submeshes = [];
+        private readonly EventList<SubMesh> _ownedSubmeshes;
+        private EventList<SubMesh>? _subscribedSubmeshes;
+        private int _submeshSetterDepth;
+        private bool _submeshTeardownRequested;
         /// <summary>
         /// Represents multiple submeshes, each with their own mesh and material.
         /// Use for the optimized case multiple meshes with multiple materials.
@@ -912,7 +928,17 @@ namespace XREngine.Rendering
         public EventList<SubMesh> Submeshes
         {
             get => _submeshes;
-            set => SetField(ref _submeshes, value);
+            set
+            {
+                ObjectDisposedException.ThrowIf(_submeshTeardownRequested, this);
+                _submeshSetterDepth++;
+                try { SetField(ref _submeshes, value); }
+                finally
+                {
+                    if (--_submeshSetterDepth == 0)
+                        ReconcileSubmeshHandlers();
+                }
+            }
         }
 
         [MemoryPackIgnore]
@@ -1277,33 +1303,28 @@ namespace XREngine.Rendering
 
         #endregion
 
-        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        private void ReconcileSubmeshHandlers()
         {
-            base.OnPropertyChanged(propName, prev, field);
-            switch (propName)
+            if (_submeshTeardownRequested)
             {
-                case nameof(Submeshes):
-                    //Link added and removed events
-                    Submeshes.PostAnythingAdded += Submeshes_PostAnythingAdded;
-                    Submeshes.PostAnythingRemoved += Submeshes_PostAnythingRemoved;
-                    break;
+                DetachSubmeshHandlers();
+                return;
             }
+            if (ReferenceEquals(_subscribedSubmeshes, _submeshes))
+                return;
+            DetachSubmeshHandlers();
+            _subscribedSubmeshes = _submeshes;
+            _subscribedSubmeshes.PostAnythingAdded += Submeshes_PostAnythingAdded;
+            _subscribedSubmeshes.PostAnythingRemoved += Submeshes_PostAnythingRemoved;
         }
-        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+
+        private void DetachSubmeshHandlers()
         {
-            bool change = base.OnPropertyChanging(propName, field, @new);
-            if (change)
-            {
-                switch (propName)
-                {
-                    case nameof(Submeshes):
-                        //Unlink added and removed events
-                        Submeshes.PostAnythingAdded -= Submeshes_PostAnythingAdded;
-                        Submeshes.PostAnythingRemoved -= Submeshes_PostAnythingRemoved;
-                        break;
-                }
-            }
-            return change;
+            if (_subscribedSubmeshes is not { } subscribed)
+                return;
+            subscribed.PostAnythingAdded -= Submeshes_PostAnythingAdded;
+            subscribed.PostAnythingRemoved -= Submeshes_PostAnythingRemoved;
+            _subscribedSubmeshes = null;
         }
 
         private void Submeshes_PostAnythingRemoved(SubMesh item)
@@ -1634,6 +1655,20 @@ namespace XREngine.Rendering
                 _optimizeMeshDeformToVec4);
         }
 
+        /// <summary>Restores owned submesh storage and current list callbacks after explicit revival.</summary>
+        public override void Generate()
+        {
+            bool reviving = IsDestroyed;
+            base.Generate();
+            if (!reviving || IsDestroyed)
+                return;
+
+            if (_ownedSubmeshes.IsDestroyed)
+                _ownedSubmeshes.Generate();
+            _submeshTeardownRequested = false;
+            ReconcileSubmeshHandlers();
+        }
+
         public override void Destroy(bool now = false)
         {
             if (!now || IsDestroyed)
@@ -1666,9 +1701,12 @@ namespace XREngine.Rendering
 
         protected override void OnDestroying()
         {
+            _submeshTeardownRequested = true;
             try
             {
                 RuntimeEngine.Rendering.SettingsChanged -= RefreshGpuCoverageForSettings;
+                DetachSubmeshHandlers();
+                DestroyDeformationInputs();
                 ResetDrivableBuffers();
                 IndirectDrawBuffer?.Dispose();
                 IndirectDrawBuffer = null;
@@ -1684,7 +1722,19 @@ namespace XREngine.Rendering
             }
             finally
             {
-                base.OnDestroying();
+                try
+                {
+                    if (!_ownedSubmeshes.IsDestroyed)
+                    {
+                        _ownedSubmeshes.Destroy(true);
+                        if (!_ownedSubmeshes.IsDestroyed)
+                            throw new InvalidOperationException("Mesh renderer submesh-list destruction was vetoed.");
+                    }
+                }
+                finally
+                {
+                    base.OnDestroying();
+                }
             }
         }
 
@@ -1786,10 +1836,14 @@ namespace XREngine.Rendering
             XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
                 targetBuffers.CapturePreparationTicket(BlendshapeBufferState.CollectionKeys);
             int expectedSettingsRevision = CurrentSettingsRevision;
-            XRMeshRenderer staging = new(detachedStagingRenderer: true)
+            XRMeshRenderer staging;
+            using (XRObjectBase.SuppressObjectCacheRegistration())
             {
-                _mesh = sourceMesh,
-            };
+                staging = new(detachedStagingRenderer: true)
+                {
+                    _mesh = sourceMesh,
+                };
+            }
             BlendshapeBufferState prepared;
             try
             {
@@ -3151,10 +3205,14 @@ namespace XREngine.Rendering
             XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
                 targetBuffers.CapturePreparationTicket(BoneBufferState.CollectionKeys);
             int expectedSettingsRevision = CurrentSettingsRevision;
-            XRMeshRenderer staging = new(detachedStagingRenderer: true)
+            XRMeshRenderer staging;
+            using (XRObjectBase.SuppressObjectCacheRegistration())
             {
-                _mesh = sourceMesh,
-            };
+                staging = new(detachedStagingRenderer: true)
+                {
+                    _mesh = sourceMesh,
+                };
+            }
             BoneBufferState prepared;
             try
             {
@@ -3318,7 +3376,7 @@ namespace XREngine.Rendering
                 BoneMatricesBuffer.Set(boneIndex, currentMatrix);
                 Matrix4x4 adjustedInvBind = rootBindMtx * invBindWorldMtx;
                 BoneInvBindMatricesBuffer.Set(boneIndex, adjustedInvBind);
-                SkinPaletteBuffer.Set(boneIndex, SkinPaletteMatrix.FromRowVectorMatrix(adjustedInvBind * currentMatrix));
+                SkinPaletteBuffer.Set(boneIndex, ComposeSkinPalette(mesh, invBindWorldMtx, currentMatrix));
                 MarkBoneMatrixDirty(boneIndex, currentMatrix);
             }
 
@@ -3480,7 +3538,7 @@ namespace XREngine.Rendering
             }
         }
 
-        private static Matrix4x4 GetCurrentBoneMatrix(TransformBase transform)
+        internal static Matrix4x4 GetCurrentBoneMatrix(TransformBase transform)
         {
             // Imported skeletons can be skinned before the first render snapshot is published.
             Matrix4x4 renderMatrix = transform.RenderMatrix;
@@ -3673,6 +3731,8 @@ namespace XREngine.Rendering
         /// </summary>
         internal void ResetSkinPaletteSeedState()
         {
+            SetField(ref _deformationPoseSettled, false, publishNotifications: false);
+            SetField(ref _hasDeformationSeedFrame, false, publishNotifications: false);
             _skinPaletteSeededOnce = false;
             _lastSkinPaletteSeedPoseHash = 0;
             SkinPaletteReseedCount = 0;
@@ -3915,6 +3975,24 @@ namespace XREngine.Rendering
                 Debug.Out($"    InvBind  T=({invBind.M41:F3},{invBind.M42:F3},{invBind.M43:F3})");
                 Debug.Out($"    Delta    T=({deltaT.X:F3},{deltaT.Y:F3},{deltaT.Z:F3}) rotTrace={traceRot:F3}");
                 logged++;
+            }
+        }
+
+        /// <summary>Captures sorted GPU-owned indices from the current local palette.</summary>
+        internal int CaptureGpuDrivenBoneIndices(XRDataBuffer palette, Span<uint> destination)
+        {
+            ValidateResourcePublicationLease();
+            lock (_dirtyBoneSyncRoot)
+            {
+                if (!ReferenceEquals(palette, SkinPaletteBuffer) ||
+                    _gpuDrivenBoneRefCounts is not { } counts || counts.Length > destination.Length)
+                    throw new InvalidOperationException("AggregateDeformation.MixedPaletteOwnershipChanged: the local palette and its bone ownership must belong to the same preparation capture.");
+
+                int written = 0;
+                for (int index = 0; index < counts.Length; ++index)
+                    if (counts[index] > 0)
+                        destination[written++] = checked((uint)index);
+                return written;
             }
         }
 
@@ -4186,6 +4264,9 @@ namespace XREngine.Rendering
             => MathF.Abs(weight) > _blendshapeActiveWeightThreshold;
 
         private bool IsBlendshapeAllowedByLod(int blendshapeIndex)
+            => Mesh is { } mesh && IsBlendshapeAllowedByLod(mesh, blendshapeIndex);
+
+        internal bool IsBlendshapeAllowedByLod(XRMesh mesh, int blendshapeIndex)
         {
             if (_blendshapeLodProfile is null || !_blendshapeLodProfile.TryGetTier(_activeBlendshapeLodTier, out BlendshapeLodTier tier))
                 return true;
@@ -4203,7 +4284,7 @@ namespace XREngine.Rendering
                         return true;
             }
 
-            string[]? names = Mesh?.BlendshapeNames;
+            string[]? names = mesh.BlendshapeNames;
             if (names is null || (uint)blendshapeIndex >= (uint)names.Length)
                 return false;
 
@@ -4307,14 +4388,18 @@ namespace XREngine.Rendering
             XRMesh.BufferCollection targetBuffers = Buffers;
             XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
                 targetBuffers.CapturePreparationTicket(MeshDeformBufferState.CollectionKeys);
-            XRMeshRenderer staging = new(detachedStagingRenderer: true)
+            XRMeshRenderer staging;
+            using (XRObjectBase.SuppressObjectCacheRegistration())
             {
-                _mesh = targetMesh,
-                _deformMeshRenderer = deformer,
-                _meshDeformInfluences = influences,
-                _maxMeshDeformInfluences = maxInfluences,
-                _optimizeMeshDeformToVec4 = optimizeToVec4,
-            };
+                staging = new(detachedStagingRenderer: true)
+                {
+                    _mesh = targetMesh,
+                    _deformMeshRenderer = deformer,
+                    _meshDeformInfluences = influences,
+                    _maxMeshDeformInfluences = maxInfluences,
+                    _optimizeMeshDeformToVec4 = optimizeToVec4,
+                };
+            }
             MeshDeformBufferState prepared;
             try
             {

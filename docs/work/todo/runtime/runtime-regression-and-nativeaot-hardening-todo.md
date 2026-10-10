@@ -4,6 +4,7 @@ Last Updated: 2026-10-06
 Status: Active
 Architecture: [Runtime Project Organization](../../../architecture/runtime/project-organization.md), [AOT Final Game Builds](../../../developer-guides/runtime/aot-final-game-builds.md), [Cooked Asset Serialization](../../../architecture/assets/cooked-asset-aot-and-io.md), [Hot-Path Memory Control](../../../developer-guides/runtime/hot-path-memory.md)
 Validation: [Runtime And AOT Validation](../../testing/runtime/runtime-and-aot-validation.md)
+Handoff evidence: [2026-10-03 branch stopping point](../../progress/runtime/runtime-hardening-branch-handoff-2026-10-07.md)
 
 ## Current State
 The runtime has repaired many scene restoration, active-world inspection, material restoration, capture, snapshot, networking, root-motion, softbody, and NativeAOT groundwork defects. Several edits from the latest handoff are present but not accepted. The main open code areas are deterministic regression ownership, humanoid and animation correctness, shared rendering contracts, cooked asset diagnostics, public API boundaries, generated NativeAOT metadata, trim warnings, and representative AOT smoke content.
@@ -14,10 +15,9 @@ The runtime has repaired many scene restoration, active-world inspection, materi
 - [ ] Create one owned engine test scope for each runtime lane. Files or types: `XREngine.UnitTests`, runtime service fixtures. Done when each lane installs and disposes only its required services.
 - [ ] Reset static and shared state between fixtures. Files or types: application leases, asset services, cooked registries, renderer modules, texture-streaming providers, scheduler services, project preferences, editor automation, material counters, shadow-atlas counters, pipeline-resource counters, generation counters, world state, and play-mode state. Done when repeated tests do not depend on previous fixture order.
 - [ ] Add early diagnostics for missing scheduler or provider composition. Files or types: unit-test fixture services and runtime service resolution. Done when failures name the fixture and required composition profile.
-- [ ] Replace filename-fallback repository reads with one canonical path resolver. Files or types: source-contract and document-contract tests. Done when deleted or ambiguous paths fail with a clear diagnostic.
-- [ ] Make source, shader, asset, and document contract fixtures fail when required inputs are absent. Files or types: unit-test contract helpers. Done when no actionable test becomes skipped or inconclusive because a path is missing.
+- [ ] Replace filename-fallback source and asset reads with one canonical path resolver. Files or types: source and asset contract tests. Done when deleted or ambiguous required paths fail with a clear diagnostic.
+- [ ] Make source, shader, and asset contract fixtures fail when required inputs are absent. Files or types: unit-test contract helpers. Done when no actionable test becomes skipped or inconclusive because a required code or asset path is missing.
 - [ ] Remove dependence on previous fixture registration order and mutable global state. Files or types: material slots, shadow generations, settings mutations, registry indices, and environment overrides. Done when randomized runs keep stable results.
-- [ ] Record reusable lane or fixture decisions in the Unit Test Project Reorganization TODO. Files or types: runtime test fixture docs. Done when shared fixture choices are documented without performing unrelated directory moves.
 
 ### Animation And Humanoid Correctness
 - [ ] Write the imported-humanoid coordinate contract. Files or types: humanoid import and animation docs or runtime contract types. Done when body axes, side selection, mirrored limbs, handedness, bind transforms, and basis conversion have one canonical rule.
@@ -52,7 +52,7 @@ The runtime has repaired many scene restoration, active-world inspection, materi
 - [ ] Repair moved checklist, document, and generated shader references that are part of supported acceptance. Files or types: runtime docs and generated shader references. Done when links and references resolve to current files.
 
 ### NativeAOT Player Graph
-- [ ] Inventory the NativeAOT player graph. Files or types: MonkeyBall publish graph, assemblies, packages, native libraries, content roots, registrations, and reflection roots. Done when every player-rooted item has a runtime reason.
+- [ ] Inventory the NativeAOT player graph. Files or types: RollingBall publish graph, assemblies, packages, native libraries, content roots, registrations, and reflection roots. Done when every player-rooted item has a runtime reason.
 - [ ] Remove authoring-only surfaces from the final player graph. Files or types: YAML authoring, source import, editor cache, project tooling, and development diagnostics. Done when final players prefer cooked runtime assets.
 - [ ] Split optional provider implementations that root unused dynamic code. Files or types: STT, TTS, speech vendor, media, and provider assemblies. Done when optional providers do not enter the selected player graph unless selected.
 - [ ] Propagate selected renderer and application properties through generated project references and publish invocation. Files or types: generated projects and publish scripts. Done when selected settings reach each build edge.

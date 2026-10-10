@@ -6,6 +6,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_ResolveMultisample : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+            => requirements.RequireOperation(ResolveDepth || ResolveStencil ? "depth-resolve" : "color-resolve");
+
         private readonly XRFrameBuffer _sourceFbo = new();
         private readonly XRFrameBuffer _destinationFbo = new();
 
@@ -15,7 +18,9 @@ namespace XREngine.Rendering.Pipelines.Commands
         public int SourceLayerIndex { get; set; }
         public int DestinationMipLevel { get; set; }
         public int DestinationLayerIndex { get; set; }
+        [System.ComponentModel.DefaultValue(EReadBufferMode.ColorAttachment0)]
         public EReadBufferMode ReadBuffer { get; set; } = EReadBufferMode.ColorAttachment0;
+        [System.ComponentModel.DefaultValue(true)]
         public bool ResolveColor { get; set; } = true;
         public bool ResolveDepth { get; set; }
         public bool ResolveStencil { get; set; }

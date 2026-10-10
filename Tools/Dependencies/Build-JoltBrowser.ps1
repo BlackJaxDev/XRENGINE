@@ -12,30 +12,35 @@ $nativePin = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'JoltBrowser.lock
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $outputRoot = [IO.Path]::GetFullPath($OutputDirectory)
 $validationRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot 'Build/_AgentValidation'))
-if (-not $outputRoot.StartsWith($validationRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Browser native build output must be inside a reserved Build/_AgentValidation task run.'
+$dependencyRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot 'Build/Dependencies/JoltBrowser'))
+$pathComparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+if (-not $outputRoot.StartsWith($validationRoot + [IO.Path]::DirectorySeparatorChar, $pathComparison) -and
+    -not $outputRoot.StartsWith($dependencyRoot + [IO.Path]::DirectorySeparatorChar, $pathComparison)) {
+    throw 'Browser native build output must be inside Build/Dependencies/JoltBrowser or a reserved Build/_AgentValidation task run.'
 }
 if ([string]::IsNullOrWhiteSpace($DotNetRoot)) {
     $DotNetRoot = Split-Path -Parent (Get-Command dotnet -ErrorAction Stop).Source
 }
 $packsRoot = Join-Path $DotNetRoot 'packs'
-$packSuffix = "$($nativePin.emscriptenVersion).{0}.win-x64/$($nativePin.sdkPackVersion)/tools"
+$hostArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant()
+$hostOs = if ($IsWindows) { 'win' } elseif ($IsLinux) { 'linux' } elseif ($IsMacOS) { 'osx' } else { throw 'Unsupported native build host operating system.' }
+$hostRuntime = "$hostOs-$hostArchitecture"
+$packSuffix = "$($nativePin.emscriptenVersion).{0}.$hostRuntime/$($nativePin.sdkPackVersion)/tools"
 $sdkRoot = Join-Path $packsRoot ('Microsoft.NET.Runtime.Emscripten.' + ($packSuffix -f 'Sdk'))
-$pythonRoot = Join-Path $packsRoot ('Microsoft.NET.Runtime.Emscripten.' + ($packSuffix -f 'Python'))
 $nodeRoot = Join-Path $packsRoot ('Microsoft.NET.Runtime.Emscripten.' + ($packSuffix -f 'Node'))
 $cacheRoot = Join-Path $packsRoot ('Microsoft.NET.Runtime.Emscripten.' + ($packSuffix -f 'Cache') + '/emscripten/cache')
-$python = Join-Path $pythonRoot 'python.exe'
+if ($IsWindows) {
+    $pythonRoot = Join-Path $packsRoot ('Microsoft.NET.Runtime.Emscripten.' + ($packSuffix -f 'Python'))
+    $python = Join-Path $pythonRoot 'python.exe'
+}
+else {
+    # Unix .NET Emscripten packs use the host Python interpreter, matching the
+    # WebAssembly SDK invocation. No Python package is installed by this script.
+    $pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
+    $python = if ($null -ne $pythonCommand) { $pythonCommand.Source } else { '' }
+}
 $emcmake = Join-Path $sdkRoot 'emscripten/emcmake.py'
-$node = Join-Path $nodeRoot 'bin/node.exe'
-foreach ($requiredTool in @($python, $emcmake, $node)) {
-    if (-not (Test-Path -LiteralPath $requiredTool -PathType Leaf)) {
-        throw "Required .NET-pinned WebAssembly tool is absent: $requiredTool. Install the matching supported workload separately."
-    }
-}
-if (-not (Test-Path -LiteralPath (Join-Path $cacheRoot 'sysroot_install.stamp') -PathType Leaf)) {
-    throw 'The pinned Emscripten cache is incomplete; its sysroot installation stamp is absent.'
-}
-$null = Get-Command cmake, ninja, git -ErrorAction Stop
+$node = Join-Path $nodeRoot $(if ($IsWindows) { 'bin/node.exe' } else { 'bin/node' })
 
 if ($PlanOnly) {
     [pscustomobject]@{
@@ -43,6 +48,9 @@ if ($PlanOnly) {
         JoltCommit = $nativePin.joltCommit
         Emscripten = $nativePin.emscriptenVersion
         SdkPack = $nativePin.sdkPackVersion
+        HostRuntime = $hostRuntime
+        EmscriptenToolsAvailable = (Test-Path -LiteralPath $emcmake -PathType Leaf) -and (Test-Path -LiteralPath $node -PathType Leaf)
+        ToolchainUsesPython = $true
         DesktopSupply = $nativePin.desktopSupply
         NativeLicense = $nativePin.license
         SingleThreaded = $true
@@ -50,6 +58,19 @@ if ($PlanOnly) {
     }
     return
 }
+
+if ([string]::IsNullOrWhiteSpace($python)) {
+    throw 'Emscripten requires a host Python 3 interpreter on Unix. Install the supported toolchain prerequisite separately.'
+}
+foreach ($requiredTool in @($python, $emcmake, $node)) {
+    if (-not (Test-Path -LiteralPath $requiredTool -PathType Leaf)) {
+        throw "Required WebAssembly tool is absent: $requiredTool. Install the matching supported workload separately."
+    }
+}
+if (-not (Test-Path -LiteralPath (Join-Path $cacheRoot 'sysroot_install.stamp') -PathType Leaf)) {
+    throw 'The pinned Emscripten cache is incomplete; its sysroot installation stamp is absent.'
+}
+$null = Get-Command cmake, ninja, git -ErrorAction Stop
 
 function Invoke-CheckedNativeCommand {
     param([string]$Executable, [string[]]$Arguments)
@@ -60,8 +81,9 @@ function Invoke-CheckedNativeCommand {
 function Get-PinnedNativeSource {
     param([string]$Url, [string]$Commit, [string]$Destination)
     if (-not (Test-Path -LiteralPath $Destination)) {
-        Invoke-CheckedNativeCommand git @('clone', '--no-checkout', '--filter=blob:none', $Url, $Destination)
-        Invoke-CheckedNativeCommand git @('-C', $Destination, 'checkout', '--detach', $Commit)
+        # Keep pinned native source bytes stable across hosts with different Git line-ending defaults.
+        Invoke-CheckedNativeCommand git @('-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'clone', '--no-checkout', '--filter=blob:none', $Url, $Destination)
+        Invoke-CheckedNativeCommand git @('-C', $Destination, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'checkout', '--detach', $Commit)
     }
     $actualCommit = (& git -C $Destination rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $Commit) { throw 'Native source checkout does not match the committed pin.' }
@@ -105,7 +127,7 @@ try {
     foreach ($archive in $archives) { Copy-Item -LiteralPath $archive.FullName -Destination (Join-Path $archiveOutput $archive.Name) }
     Copy-Item -LiteralPath (Join-Path $joltCSource 'LICENSE') -Destination (Join-Path $archiveOutput 'joltc-LICENSE.txt')
     Copy-Item -LiteralPath (Join-Path $joltSource 'LICENSE') -Destination (Join-Path $archiveOutput 'Jolt-LICENSE.txt')
-    $nativePin | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $archiveOutput 'native-build-pin.json')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'JoltBrowser.lock.json') -Destination (Join-Path $archiveOutput 'native-build-pin.json')
     Write-Output $archiveOutput
 }
 finally {

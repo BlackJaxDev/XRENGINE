@@ -2,7 +2,7 @@ using System.Net;
 
 namespace XREngine.Networking;
 
-/// <summary>Creates explicitly installed native network transports and local interface inventory.</summary>
+/// <summary>Creates explicitly installed platform transports; unsupported native operations fail explicitly.</summary>
 public interface INetworkTransportBackend
 {
     IDatagramTransport CreateDatagram(string diagnosticContext);

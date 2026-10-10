@@ -1,0 +1,707 @@
+{
+  "schemaVersion": 3,
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "defines": [
+    "XR_ADV_UBER_BASE_SCHEMA_VERSION=1",
+    "XR_ADV_SCENE_DIRECTORY_TABLE_COUNT=36"
+  ],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "matrixLayout": "column-major",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "pipeline": {},
+  "name": "engine-advanced-uber-visibility",
+  "pass": "uber-visibility",
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "uber-visibility"
+  },
+  "source": "AdvancedUberBaseRaster.slang",
+  "entryPoints": {
+    "vertex": "advancedUberVertex",
+    "fragment": "advancedUberVisibility"
+  },
+  "semanticSchemaIdentity": "xrengine.engine.uber-native-raster.v2",
+  "requiredLimits": {
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 7,
+    "maxUniformBufferBindingSize": 352,
+    "maxDynamicUniformBuffersPerPipelineLayout": 2,
+    "maxUniformBuffersPerShaderStage": 2,
+    "maxStorageBuffersPerShaderStage": 4,
+    "maxStorageBufferBindingSize": 4,
+    "maxSampledTexturesPerShaderStage": 3,
+    "maxSamplersPerShaderStage": 3
+  },
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "SceneArena",
+        "physicalName": "SceneArena_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "read-only-storage",
+        "visibility": [
+          "vertex",
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "GeometryArena",
+        "physicalName": "GeometryArena_0",
+        "group": 0,
+        "binding": 1,
+        "kind": "read-only-storage",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Payloads",
+        "physicalName": "Payloads_0",
+        "group": 0,
+        "binding": 2,
+        "kind": "read-only-storage",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Triangles",
+        "physicalName": "Triangles_0",
+        "group": 0,
+        "binding": 3,
+        "kind": "read-only-storage",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "Parameters_0",
+        "group": 0,
+        "binding": 4,
+        "kind": "uniform",
+        "visibility": [
+          "vertex",
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 256,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "viewProjection_0",
+            "provider": "ViewProjection",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "viewProjectionUnjittered_0",
+            "provider": "ViewProjectionUnjittered",
+            "offset": 64,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "previousViewProjectionUnjittered_0",
+            "provider": "PreviousViewProjectionUnjittered",
+            "offset": 128,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "triangleBase_0",
+            "provider": "TriangleBase",
+            "offset": 192,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "viewIndex_0",
+            "provider": "ViewIndex",
+            "offset": 196,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "viewFlags_0",
+            "provider": "ViewFlags",
+            "offset": 200,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "origin_0",
+            "provider": "Origin",
+            "offset": 204,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "baseColorWord_0",
+            "provider": "BaseColorWord",
+            "offset": 208,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "alphaCutoffWord_0",
+            "provider": "AlphaCutoffWord",
+            "offset": 212,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "pipelineFlags_0",
+            "provider": "PipelineFlags",
+            "offset": 216,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "masked_0",
+            "provider": "Masked",
+            "offset": 220,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "directPayloadIndex_0",
+            "provider": "DirectPayloadIndex",
+            "offset": 224,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "direct_0",
+            "provider": "Direct",
+            "offset": 228,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "exportSample_0",
+            "provider": "ExportSample",
+            "offset": 232,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "renderTimeBits_0",
+            "provider": "RenderTimeBits",
+            "offset": 236,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "cameraPosition_0",
+            "provider": "CameraPosition",
+            "offset": 240,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "uberFeatures_0",
+            "provider": "UberFeatures",
+            "offset": 252,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      },
+      {
+        "name": "_MainTex",
+        "physicalName": "_MainTex_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_MainTex",
+        "physicalName": "_MainTexSampler_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_BumpMap",
+        "physicalName": "_BumpMap_0",
+        "group": 1,
+        "binding": 2,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_BumpMap",
+        "physicalName": "_BumpMapSampler_0",
+        "group": 1,
+        "binding": 3,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_AlphaMask",
+        "physicalName": "_AlphaMask_0",
+        "group": 1,
+        "binding": 4,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "_AlphaMask",
+        "physicalName": "_AlphaMaskSampler_0",
+        "group": 1,
+        "binding": 5,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "UberMaterial",
+        "physicalName": "UberMaterial_0",
+        "group": 1,
+        "binding": 14,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "Material",
+        "bytes": 352,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "_Color_0",
+            "provider": "_Color",
+            "offset": 0,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_MainTex_ST_0",
+            "provider": "_MainTex_ST",
+            "offset": 16,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_MainTexPan_0",
+            "provider": "_MainTexPan",
+            "offset": 32,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_MainTexUV_0",
+            "provider": "_MainTexUV",
+            "offset": 40,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_MainVertexColoringEnabled_0",
+            "provider": "_MainVertexColoringEnabled",
+            "offset": 44,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_MainVertexColoringLinearSpace_0",
+            "provider": "_MainVertexColoringLinearSpace",
+            "offset": 48,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_MainVertexColoring_0",
+            "provider": "_MainVertexColoring",
+            "offset": 52,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_MainUseVertexColorAlpha_0",
+            "provider": "_MainUseVertexColorAlpha",
+            "offset": 56,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_AlphaMod_0",
+            "provider": "_AlphaMod",
+            "offset": 60,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_AlphaMask_ST_0",
+            "provider": "_AlphaMask_ST",
+            "offset": 64,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_AlphaMaskPan_0",
+            "provider": "_AlphaMaskPan",
+            "offset": 80,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_AlphaMaskUV_0",
+            "provider": "_AlphaMaskUV",
+            "offset": 88,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_MainAlphaMaskMode_0",
+            "provider": "_MainAlphaMaskMode",
+            "offset": 92,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_AlphaMaskBlendStrength_0",
+            "provider": "_AlphaMaskBlendStrength",
+            "offset": 96,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_AlphaMaskValue_0",
+            "provider": "_AlphaMaskValue",
+            "offset": 100,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_AlphaMaskInvert_0",
+            "provider": "_AlphaMaskInvert",
+            "offset": 104,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_Cutoff_0",
+            "provider": "_Cutoff",
+            "offset": 108,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_Mode_0",
+            "provider": "_Mode",
+            "offset": 112,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_AlphaForceOpaque_0",
+            "provider": "_AlphaForceOpaque",
+            "offset": 116,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "U_SpecularSmoothness_0",
+            "provider": "_SpecularSmoothness",
+            "offset": 120,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "U_SpecularStrength_0",
+            "provider": "_SpecularStrength",
+            "offset": 124,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_BumpMap_ST_0",
+            "provider": "_BumpMap_ST",
+            "offset": 128,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_BumpMapPan_0",
+            "provider": "_BumpMapPan",
+            "offset": 144,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_BumpMapUV_0",
+            "provider": "_BumpMapUV",
+            "offset": 152,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_BumpScale_0",
+            "provider": "_BumpScale",
+            "offset": 156,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "NormalMapMode_0",
+            "provider": "NormalMapMode",
+            "offset": 160,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "HeightMapScale_0",
+            "provider": "HeightMapScale",
+            "offset": 164,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_PBRMetallicMapInvert_0",
+            "provider": "_PBRMetallicMapInvert",
+            "offset": 168,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_PBRMetallicMultiplier_0",
+            "provider": "_PBRMetallicMultiplier",
+            "offset": 172,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_PBRMetallicMaps_ST_0",
+            "provider": "_PBRMetallicMaps_ST",
+            "offset": 176,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_PBRMetallicMapsPan_0",
+            "provider": "_PBRMetallicMapsPan",
+            "offset": 192,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_PBRMetallicMapsUV_0",
+            "provider": "_PBRMetallicMapsUV",
+            "offset": 200,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_PBRMetallicMapsMetallicChannel_0",
+            "provider": "_PBRMetallicMapsMetallicChannel",
+            "offset": 204,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_PBRSmoothnessMaps_ST_0",
+            "provider": "_PBRSmoothnessMaps_ST",
+            "offset": 208,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_PBRSmoothnessMapsPan_0",
+            "provider": "_PBRSmoothnessMapsPan",
+            "offset": 224,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_PBRSmoothnessMapsUV_0",
+            "provider": "_PBRSmoothnessMapsUV",
+            "offset": 232,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_PBRSmoothnessMapsChannel_0",
+            "provider": "_PBRSmoothnessMapsChannel",
+            "offset": 236,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_PBRSmoothnessMapInvert_0",
+            "provider": "_PBRSmoothnessMapInvert",
+            "offset": 240,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_PBRRoughnessMultiplier_0",
+            "provider": "_PBRRoughnessMultiplier",
+            "offset": 244,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "U_SpecularType_0",
+            "provider": "_SpecularType",
+            "offset": 248,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "U_StylizedSpecular_0",
+            "provider": "_StylizedSpecular",
+            "offset": 252,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "U_SpecularMap_ST_0",
+            "provider": "_SpecularMap_ST",
+            "offset": 256,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "U_SpecularTint_0",
+            "provider": "_SpecularTint",
+            "offset": 272,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_EmissionMap_ST_0",
+            "provider": "_EmissionMap_ST",
+            "offset": 288,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_EmissionMapPan_0",
+            "provider": "_EmissionMapPan",
+            "offset": 304,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_EmissionMapUV_0",
+            "provider": "_EmissionMapUV",
+            "offset": 312,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_EmissionStrength_0",
+            "provider": "_EmissionStrength",
+            "offset": 316,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_EmissionColor_0",
+            "provider": "_EmissionColor",
+            "offset": 320,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_EmissionScrollingSpeed_0",
+            "provider": "_EmissionScrollingSpeed",
+            "offset": 336,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_EmissionScrollingEnabled_0",
+            "provider": "_EmissionScrollingEnabled",
+            "offset": 344,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_EmissionScrollingVertexColor_0",
+            "provider": "_EmissionScrollingVertexColor",
+            "offset": 348,
+            "bytes": 4,
+            "type": "f32"
+          }
+        ]
+      }
+    ]
+  }
+}

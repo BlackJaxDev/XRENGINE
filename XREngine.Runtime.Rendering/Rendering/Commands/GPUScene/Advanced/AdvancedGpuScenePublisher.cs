@@ -156,6 +156,9 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             }
             finally
             {
+                // Boundary sizing can retain source payloads when a later stage
+                // rejects. Only copied arena bytes belong to a publication.
+                Array.Clear(_stagedGeometry, 0, Math.Min(_stagedGeometry.Length, _plannedCommandCount));
                 System.Threading.Volatile.Write(ref _publishInProgress, 0);
             }
         }
@@ -167,6 +170,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // Release the prior frame's references even if this boundary rejects early.
         Array.Clear(_plannedCommands, 0, _plannedCommandCount);
         Array.Clear(_plannedDeformationSources, 0, _legacyMappingCount);
+        Array.Clear(_plannedDecals, 0, _plannedDecalCount);
+        _plannedDecalCount = 0;
         _plannedCommandCount = 0;
         _topologyDeltaCount = 0;
         _contentDeltaCount = 0;
@@ -190,7 +195,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         }
 
         int capturedGlobalResourceCount = globalResources.FrameId == frameId
-            ? Math.Max(globalResources.Lights.Length, globalResources.Probes.Length)
+            ? Math.Max(Math.Max(globalResources.Lights.Length, globalResources.Probes.Length), globalResources.AuthoredDecals.Count)
             : 0;
         bool hasBoundaryCapacity;
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.BoundaryCapacity"))
@@ -380,7 +385,24 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                             plan.MaterialBindingValueVersion,
                             plan.MaterialBindingResourceVersion,
                             plan.MaterialShaderStateRevision,
-                            plan.MaterialUberStateRevision));
+                            plan.MaterialUberStateRevision))
+                    {
+                        BrowserBasisSource = (_plannedMaterialRequests[plan.MaterialPlanIndex].EngineSurface.SurfaceKind == AdvancedEngineSurfaceRecord.AuthoredTexturedKind ||
+                            _plannedMaterialRequests[plan.MaterialPlanIndex].UberBaseSurface.SchemaVersion != 0)
+                            ? AdvancedBrowserGeometryBasisSource.Capture(plan.Mesh, plan.MeshGeometryRevision) : null,
+                        BrowserUberAttributesSource = _plannedMaterialRequests[plan.MaterialPlanIndex].UberBaseSurface.SchemaVersion != 0
+                            ? AdvancedBrowserUberAttributeSource.Capture(plan.Mesh, plan.MeshGeometryRevision) : null,
+                        BrowserUberAttributesProducerRejection = plan.Renderer is { } attributeRenderer &&
+                            (attributeRenderer.HasSettingUniformsHandlers || attributeRenderer.HasRenderDataPreparation || attributeRenderer.BindingPublishers.Count != 0 ||
+                             attributeRenderer.Buffers.ContainsKey("TexCoord0") || attributeRenderer.Buffers.ContainsKey("TexCoord1") ||
+                             attributeRenderer.Buffers.ContainsKey("TexCoord2") || attributeRenderer.Buffers.ContainsKey("TexCoord3") ||
+                             attributeRenderer.Buffers.ContainsKey("Color0"))
+                            ? "WebGPU.Advanced.UberAttributeOverrideUnsupported: renderer callbacks, publishers or UV/color overrides require their own frozen source companion." : null,
+                        BrowserBasisProducerRejection = plan.Renderer is { } basisRenderer &&
+                            (basisRenderer.Buffers.ContainsKey("Normal") || basisRenderer.Buffers.ContainsKey("Tangent"))
+                            ? "WebGPU.Advanced.AuthoredBasisExternalStreamMetadataMissing: renderer normal/tangent overrides require a frozen basis-validity companion from that producer."
+                            : null,
+                    };
                 }
 
                 TombstoneMissingRegistrations();
@@ -1160,6 +1182,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         out XRMeshRenderer? capturedRenderer,
         out XRMesh? mesh,
         out XRMaterial? material,
+        out RenderingParameters? renderOptions,
         out int sourcePrimitiveCount)
     {
         AdvancedMeshRenderSnapshot snapshot = source is RenderCommandMesh3D mesh3D
@@ -1192,6 +1215,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             material = null;
         }
         material = snapshot.MaterialOverride ?? material;
+        renderOptions = snapshot.RenderOptionsOverride ?? material?.RenderOptions;
     }
 
     private bool CanAddRegistration(AdvancedGpuSceneDatabase tables)
@@ -1323,6 +1347,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     ? EAdvancedInstanceVisibilityFlags.ReceivesShadows : EAdvancedInstanceVisibilityFlags.None),
             LayerMask = command.LayerMask,
             RenderPassMask = command.RenderPassMask,
+            Reserved0 = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked
+                ? command.RenderPass : 0u,
         };
 
     private static AdvancedDeformationRecord CreateDeformation(
@@ -1390,14 +1416,19 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     private static AdvancedRenderStateRecord CreateRenderState(
         XRMesh? mesh,
+        RenderingParameters? renderOptions,
         in DrawMetadata command)
         => new()
         {
             StateClass = command.StateClassID,
             PrimitiveTopology = checked((uint)(mesh?.Type ?? EPrimitiveType.Triangles)),
             CoverageMode = (command.Flags & (uint)GPUIndirectRenderFlags.Transparent) != 0u ? 1u : 0u,
-            CullMode = (command.Flags & (uint)GPUIndirectRenderFlags.DoubleSided) != 0u ? 0u : 1u,
-            Flags = StructuralDrawFlags(command.Flags),
+            CullMode = checked((uint)(renderOptions?.CullMode ?? ECullMode.Back)),
+            // Existing GPU draw flags occupy the low 24 bits. Native admission
+            // retains the actual command override's unsupported raster features.
+            // StructuralDrawFlags removes PrimaryDisabled (bit 24), so that draw
+            // flag cannot alias a raster-state flag in the high byte.
+            Flags = StructuralDrawFlags(command.Flags) | (uint)WebGpuAdvancedRasterStateContract.Capture(renderOptions),
         };
 
     private static AdvancedEditorIdentityRecord CreateEditorIdentity(
@@ -1538,6 +1569,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     MaterialBindingLayouts.ProjectiveMirror.Textures.Count))));
         uint materialConstantWords = checked(capacity * maximumConstantWords);
         uint materialTextureBindings = checked(capacity * maximumTextureBindings);
+        uint materialResourceReferences = checked(capacity * (maximumTextureBindings + AdvancedEngineSurfaceRecord.RoleCount));
 
         return new(
             new AdvancedGpuSceneCapacityProfile(
@@ -1562,8 +1594,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             materialLayoutMemberCapacity,
             materialConstantWords,
             materialTextureBindings,
-            materialTextureBindings,
-            materialTextureBindings,
+            materialResourceReferences,
+            materialResourceReferences,
             capacity,
             capacity,
             capacity,

@@ -109,6 +109,30 @@ gameplay/editor possession binds snapshot-backed keyboard and mouse adapters
 instead of native input devices. Cursor capture requests flow back through the
 viewport/window wrapper, preserving native window-thread ownership.
 
+Snapshot-backed keyboard and mouse mappings replay ordered down/up transitions
+before reconciling the final held mask. A complete press/release between updates
+therefore emits both mapped events. Transitions consume no simulation time;
+only unchanged channels accrue the frame delta toward a held event. A snapshot
+sequence is applied once, and each adapter retains at most 512 pending edges in
+reusable storage. Overflow abandons the whole batch rather than losing a release.
+
+Mapping changes, pawn/viewport ownership changes, UI capture, and input-source
+cancellation retire buffered edges. Abandoned held channels become neutral
+without invoking replacement mappings and remain suppressed until their next
+up. Device dispatch revisions stop remaining raw, button, cursor, and wheel
+callbacks when a callback changes ownership or resets the source. A nested newer
+snapshot from the same owner supersedes the old batch and retains its fresh edges
+for the next tick. Physical mouse-button transitions select the physical cursor
+even when their final held mask is empty; touch remains a separate left-button
+contribution. Gamepad and virtual-control source ledgers retain their existing
+dispatch policy.
+
+UI capture and a reset generation from the same source retain channels already
+accepted by that consumer. Their hold timers do not advance while captured, and
+their ordinary release remains deliverable afterward. This prevents a pawn's
+state-change consumer from retaining a previously delivered true value forever.
+Never-delivered held channels stay suppressed until up.
+
 Use `IRuntimeRenderingHostServices.EnqueueWindowThreadTask` or
 `InvokeWindowThreadTask<T>` for native window operations that require the window
 owner. Use `EnqueueRenderThreadTask` or `InvokeRenderThreadTask<T>` for

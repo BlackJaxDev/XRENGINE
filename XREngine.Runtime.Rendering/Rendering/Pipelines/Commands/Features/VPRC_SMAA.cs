@@ -4,6 +4,7 @@ using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -15,6 +16,25 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public sealed class VPRC_SMAA : ViewportRenderCommand
 {
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
+    {
+        requirements.RequireOperation("fullscreen-quad");
+        requirements.RequireOperation("framebuffer");
+        if (requirements.Backend != RendererBackendId.WebGPU)
+            return;
+        bool advanced = ParentPipeline is AdvancedRenderPipeline;
+        requirements.RequireRasterProgram(advanced ? "advanced::smaa-edge" : "smaa-edge");
+        requirements.RequireRasterProgram(advanced ? "advanced::smaa-blend" : "smaa-blend");
+        requirements.RequireRasterProgram(advanced ? "advanced::smaa-neighborhood" : "smaa-neighborhood");
+        requirements.SupportedAntiAliasingModes.Add(EAntiAliasingMode.Smaa);
+        if (Stereo || requirements.OutputProfile.Stereo || requirements.OutputProfile.ViewCount != 1)
+            requirements.Diagnostics.Add("The cooked SMAA chain requires a mono output.");
+        if (string.IsNullOrWhiteSpace(SourceTextureName) && string.IsNullOrWhiteSpace(SourceFBOName))
+            requirements.Diagnostics.Add("The cooked SMAA chain requires an explicit source texture or framebuffer.");
+        if (string.IsNullOrWhiteSpace(OutputTextureName))
+            requirements.Diagnostics.Add("The cooked SMAA chain requires a declared output texture and its edge/blend intermediates.");
+    }
+
     private const string EdgeDetectionShaderCode = """
 #version 450
 #ifdef XRE_STEREO
@@ -258,6 +278,19 @@ void main()
     private XRQuadFrameBuffer? _blendQuad;
     private XRQuadFrameBuffer? _neighborhoodQuad;
     private XRTexture? _resolvedSourceTexture;
+    private bool _webResources;
+    private string? _cachedOutputTextureName;
+    private string? _cachedOutputFboName;
+    private string? _cachedSourceName;
+    private string _outputFboName = string.Empty;
+    private string _edgeTextureName = string.Empty;
+    private string _blendTextureName = string.Empty;
+    private string _edgeFboName = string.Empty;
+    private string _blendFboName = string.Empty;
+    private string _edgePassName = string.Empty;
+    private string _blendPassName = string.Empty;
+    private string _neighborhoodPassName = string.Empty;
+    private string _profilingName = nameof(VPRC_SMAA);
 
     public string? SourceTextureName { get; set; }
     public string? SourceFBOName { get; set; }
@@ -269,43 +302,77 @@ void main()
     public bool Stereo { get; set; }
 
     private string ResolvedOutputFboName
-        => string.IsNullOrWhiteSpace(OutputFBOName) ? $"{OutputTextureName}FBO" : OutputFBOName!;
-    private string ResolvedEdgeTextureName => $"{ResolvedOutputFboName}_EdgeTexture";
-    private string ResolvedBlendTextureName => $"{ResolvedOutputFboName}_BlendTexture";
-    private string ResolvedEdgeFboName => $"{ResolvedOutputFboName}_EdgeFBO";
-    private string ResolvedBlendFboName => $"{ResolvedOutputFboName}_BlendFBO";
+    {
+        get { EnsureResourceNames(); return _outputFboName; }
+    }
+    private string ResolvedEdgeTextureName { get { EnsureResourceNames(); return _edgeTextureName; } }
+    private string ResolvedBlendTextureName { get { EnsureResourceNames(); return _blendTextureName; } }
+    private string ResolvedEdgeFboName { get { EnsureResourceNames(); return _edgeFboName; } }
+    private string ResolvedBlendFboName { get { EnsureResourceNames(); return _blendFboName; } }
 
     public override string GpuProfilingName
-        => string.IsNullOrWhiteSpace(SourceTextureName) && string.IsNullOrWhiteSpace(SourceFBOName)
-            ? nameof(VPRC_SMAA)
-            : $"{nameof(VPRC_SMAA)}:{SourceTextureName ?? SourceFBOName}";
+    {
+        get { EnsureResourceNames(); return _profilingName; }
+    }
 
     internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
+    {
+        if (!WebPipelineRasterProgram.IsActive)
+            EnsureResources(instance);
+    }
+
+    private void EnsureResources(XRRenderPipelineInstance instance)
     {
         if (_edgeQuad is not null && _blendQuad is not null && _neighborhoodQuad is not null)
             return;
 
-        _edgeMaterial = new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, ResolveShaderCode(EdgeDetectionShaderCode, Stereo)))
-        {
-            RenderOptions = CreateRenderOptions()
-        };
-        _blendMaterial = new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, ResolveShaderCode(BlendWeightShaderCode, Stereo)))
-        {
-            RenderOptions = CreateRenderOptions()
-        };
-        _neighborhoodMaterial = new(Array.Empty<XRTexture?>(), new XRShader(EShaderType.Fragment, ResolveShaderCode(NeighborhoodBlendShaderCode, Stereo)))
-        {
-            RenderOptions = CreateRenderOptions()
-        };
+        _webResources = WebPipelineRasterProgram.IsActive;
+        if (_webResources && Stereo)
+            throw new NotSupportedException("WebGPU.SMAA.StereoUnsupported: the cooked SMAA chain requires mono sources and destinations.");
 
-        _edgeQuad = new XRQuadFrameBuffer(_edgeMaterial);
-        _blendQuad = new XRQuadFrameBuffer(_blendMaterial);
-        _neighborhoodQuad = new XRQuadFrameBuffer(_neighborhoodMaterial);
-
-        _edgeQuad.SettingUniforms += Edge_SettingUniforms;
-        _blendQuad.SettingUniforms += Blend_SettingUniforms;
-        _neighborhoodQuad.SettingUniforms += Neighborhood_SettingUniforms;
+        try
+        {
+            _edgeQuad = CreatePassQuad(instance, "smaa-edge", EdgeDetectionShaderCode, out _edgeMaterial);
+            _blendQuad = CreatePassQuad(instance, "smaa-blend", BlendWeightShaderCode, out _blendMaterial);
+            _neighborhoodQuad = CreatePassQuad(instance, "smaa-neighborhood", NeighborhoodBlendShaderCode, out _neighborhoodMaterial);
+            _edgeQuad.SettingUniforms += Edge_SettingUniforms;
+            _blendQuad.SettingUniforms += Blend_SettingUniforms;
+            _neighborhoodQuad.SettingUniforms += Neighborhood_SettingUniforms;
+        }
+        catch
+        {
+            ReleaseContainerResources(instance);
+            throw;
+        }
     }
+
+    private XRQuadFrameBuffer CreatePassQuad(XRRenderPipelineInstance instance, string pass, string shaderCode, out XRMaterial material)
+    {
+        XRShader[] shaders = CreatePassShaders(instance, pass, shaderCode);
+        material = new(Array.Empty<XRTexture?>(), shaders) { RenderOptions = CreateRenderOptions() };
+        try
+        {
+            XRQuadFrameBuffer quad = new(material, deriveRenderTargetsFromMaterial: !_webResources, prepareForInitialRendering: !_webResources);
+            if (_webResources)
+                WebPipelineRasterProgram.OwnMaterial(quad);
+            return quad;
+        }
+        catch
+        {
+            material.Destroy(true);
+            if (_webResources)
+                foreach (XRShader shader in shaders)
+                    shader.Destroy(true);
+            throw;
+        }
+    }
+
+    private XRShader[] CreatePassShaders(XRRenderPipelineInstance instance, string pass, string shaderCode)
+        => _webResources
+            ? WebPipelineRasterProgram.CreateShaders(
+                instance.Pipeline ?? throw new InvalidOperationException("WebGPU.SMAA.PipelineMissing: the selected SMAA chain requires an owning pipeline."),
+                instance.Pipeline is AdvancedRenderPipeline ? $"advanced::{pass}" : pass)
+            : [new XRShader(EShaderType.Fragment, ResolveShaderCode(shaderCode, Stereo))];
 
     internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
     {
@@ -332,23 +399,37 @@ void main()
             _neighborhoodQuad = null;
         }
 
-        _edgeMaterial?.Destroy();
+        if (!_webResources)
+        {
+            _edgeMaterial?.Destroy();
+            _blendMaterial?.Destroy();
+            _neighborhoodMaterial?.Destroy();
+        }
         _edgeMaterial = null;
-        _blendMaterial?.Destroy();
         _blendMaterial = null;
-        _neighborhoodMaterial?.Destroy();
         _neighborhoodMaterial = null;
+        _webResources = false;
     }
 
     protected override void Execute()
     {
         XRRenderPipelineInstance instance = ActivePipelineInstance;
+        if (WebPipelineRasterProgram.IsActive)
+            EnsureResources(instance);
         if (_edgeQuad is null ||
             _blendQuad is null ||
-            _neighborhoodQuad is null ||
-            !VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? sourceTexture, out _) ||
-            sourceTexture is null)
+            _neighborhoodQuad is null)
             return;
+        if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? sourceTexture, out string failure) ||
+            sourceTexture is null)
+        {
+            if (_webResources)
+                throw new InvalidOperationException($"WebGPU.SMAA.SourceMissing: {failure}");
+            return;
+        }
+
+        if (_webResources && !CanRunShaderChain(sourceTexture))
+            throw new NotSupportedException("WebGPU.SMAA.SourceUnsupported: the cooked SMAA chain requires a two-dimensional color texture.");
 
         (uint targetWidth, uint targetHeight) = ResolveTargetSize(instance, sourceTexture);
         BindDeclaredResources(instance, sourceTexture, targetWidth, targetHeight);
@@ -427,6 +508,19 @@ void main()
         if (source is null)
             return;
 
+        string? sourceName = !string.IsNullOrWhiteSpace(SourceTextureName) ? SourceTextureName : SourceFBOName;
+        if (WebPipelineRasterProgram.IsActive && context.ResourceLayout is not null &&
+            (sourceName is not null && !context.HasResource(sourceName) ||
+                !context.HasResource(OutputTextureName) || !context.HasResource(ResolvedOutputFboName) ||
+                !context.HasResource(ResolvedEdgeTextureName) || !context.HasResource(ResolvedEdgeFboName) ||
+                !context.HasResource(ResolvedBlendTextureName) || !context.HasResource(ResolvedBlendFboName)))
+        {
+            context.ReserveSyntheticPassIndex(BuildEdgePassName());
+            context.ReserveSyntheticPassIndex(BuildBlendPassName());
+            context.ReserveSyntheticPassIndex(BuildNeighborhoodPassName());
+            return;
+        }
+
         context.GetOrCreateSyntheticPass(BuildEdgePassName())
             .WithStage(ERenderGraphPassStage.Graphics)
             .SampleTexture(source)
@@ -445,13 +539,45 @@ void main()
     }
 
     private string BuildEdgePassName()
-        => $"SmaaEdge_{GetSourceDisplayName()}_to_{ResolvedEdgeFboName}";
+    {
+        EnsureResourceNames();
+        return _edgePassName;
+    }
 
     private string BuildBlendPassName()
-        => $"SmaaBlend_{ResolvedEdgeTextureName}_to_{ResolvedBlendFboName}";
+    {
+        EnsureResourceNames();
+        return _blendPassName;
+    }
 
     private string BuildNeighborhoodPassName()
-        => $"SmaaNeighborhood_{GetSourceDisplayName()}_to_{OutputTextureName}";
+    {
+        EnsureResourceNames();
+        return _neighborhoodPassName;
+    }
+
+    private void EnsureResourceNames()
+    {
+        string source = GetSourceDisplayName();
+        if (_cachedOutputTextureName == OutputTextureName &&
+            _cachedOutputFboName == OutputFBOName && _cachedSourceName == source)
+            return;
+
+        _cachedOutputTextureName = OutputTextureName;
+        _cachedOutputFboName = OutputFBOName;
+        _cachedSourceName = source;
+        _outputFboName = string.IsNullOrWhiteSpace(OutputFBOName) ? $"{OutputTextureName}FBO" : OutputFBOName;
+        _edgeTextureName = $"{_outputFboName}_EdgeTexture";
+        _blendTextureName = $"{_outputFboName}_BlendTexture";
+        _edgeFboName = $"{_outputFboName}_EdgeFBO";
+        _blendFboName = $"{_outputFboName}_BlendFBO";
+        _edgePassName = $"SmaaEdge_{source}_to_{_edgeFboName}";
+        _blendPassName = $"SmaaBlend_{_edgeTextureName}_to_{_blendFboName}";
+        _neighborhoodPassName = $"SmaaNeighborhood_{source}_to_{OutputTextureName}";
+        _profilingName = string.IsNullOrWhiteSpace(SourceTextureName) && string.IsNullOrWhiteSpace(SourceFBOName)
+            ? nameof(VPRC_SMAA)
+            : $"{nameof(VPRC_SMAA)}:{SourceTextureName ?? SourceFBOName}";
+    }
 
     private bool TryResolvePassIndex(string passName, out int passIndex)
     {
@@ -466,6 +592,8 @@ void main()
             return true;
 
         passIndex = int.MinValue;
+        if (_webResources)
+            throw new InvalidOperationException($"WebGPU.SMAA.PassMissing: selected pass '{passName}' is absent from the render graph.");
         Debug.RenderingWarningEvery(
             $"Smaa.MissingRenderGraphPass.{passName}",
             TimeSpan.FromSeconds(2),
@@ -505,6 +633,8 @@ void main()
             sourcePixelFormat,
             sourcePixelType))
         {
+            if (_webResources)
+                throw new InvalidOperationException("WebGPU.SMAA.TargetsInvalid: the selected SMAA pass requires its exact declared edge, blend, and output targets.");
             Debug.RenderingWarning(
                 $"SMAA skipped because its declared resource set is missing or incompatible: output='{ResolvedOutputFboName}', size={width}x{height}.");
             ReleaseRenderTargets(instance);
@@ -602,17 +732,22 @@ void main()
     {
         // Populate the material texture arrays so the rendering backend sets up
         // texture units even though SettingUniforms refreshes the samplers per frame.
-        if (_edgeMaterial is not null)
+        if (_edgeMaterial is not null &&
+            (_edgeMaterial.Textures.Count != 1 || !ReferenceEquals(_edgeMaterial.Textures[0], sourceTexture)))
         {
             _edgeMaterial.Textures.Clear();
             _edgeMaterial.Textures.Add(sourceTexture);
         }
-        if (_blendMaterial is not null && _edgeTexture is not null)
+        if (_blendMaterial is not null && _edgeTexture is not null &&
+            (_blendMaterial.Textures.Count != 1 || !ReferenceEquals(_blendMaterial.Textures[0], _edgeTexture)))
         {
             _blendMaterial.Textures.Clear();
             _blendMaterial.Textures.Add(_edgeTexture);
         }
-        if (_neighborhoodMaterial is not null && _blendTexture is not null)
+        if (_neighborhoodMaterial is not null && _blendTexture is not null &&
+            (_neighborhoodMaterial.Textures.Count != 2 ||
+                !ReferenceEquals(_neighborhoodMaterial.Textures[0], sourceTexture) ||
+                !ReferenceEquals(_neighborhoodMaterial.Textures[1], _blendTexture)))
         {
             _neighborhoodMaterial.Textures.Clear();
             _neighborhoodMaterial.Textures.Add(sourceTexture);
@@ -734,6 +869,8 @@ void main()
 
     private void Edge_SettingUniforms(XRRenderProgram program)
     {
+        if (_webResources)
+            WebPipelineRasterProgram.PublishRenderArea(program);
         XRTexture? sourceTexture = _resolvedSourceTexture;
         if (sourceTexture is null)
         {
@@ -756,6 +893,8 @@ void main()
 
     private void Blend_SettingUniforms(XRRenderProgram program)
     {
+        if (_webResources)
+            WebPipelineRasterProgram.PublishRenderArea(program);
         if (_edgeTexture is null)
             return;
 
@@ -770,6 +909,8 @@ void main()
 
     private void Neighborhood_SettingUniforms(XRRenderProgram program)
     {
+        if (_webResources)
+            WebPipelineRasterProgram.PublishRenderArea(program);
         XRTexture? sourceTexture = _resolvedSourceTexture;
         if (_blendTexture is null)
             return;

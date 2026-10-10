@@ -430,8 +430,8 @@ Build/Game/
 imgui.ini
 Build/Dependencies/NvComp/
 Samples/Build/Engine/
-Samples/MonkeyBallVR/Build/
-Samples/MonkeyBallVR/Intermediate/
+Samples/RollingBall/Build/
+Samples/RollingBall/Intermediate/
 Build/CommonAssets/Textures/Samples/
 XREngine.Audio/runtimes/win-x64/native/phonon.dll
 *.zip
@@ -465,8 +465,62 @@ Build/McpRuns/
 Build/Deps/Monado/
 Build/Submodules/Build/_AgentValidation/
 Assets/
+!Samples/RollingBall/Assets/
+Samples/RollingBall/Assets/*
+!Samples/RollingBall/Assets/Shaders/
+Samples/RollingBall/Assets/Shaders/*
+!Samples/RollingBall/Assets/Shaders/WebGPU/
+!Samples/RollingBall/Assets/Shaders/WebGPU/**
+!Samples/RollingBall/Assets/Scripts/
+Samples/RollingBall/Assets/Scripts/*
+!Samples/RollingBall/Assets/Scripts/IRollingBallPlatformHost.cs
+!Samples/RollingBall/Assets/Scripts/RollingBallHostRegistration.cs
 !XREngine.Runtime.Core/Assets/
 !XREngine.Runtime.Core/Assets/**
+!XREngine.Runtime.Rendering.WebGPU/Assets/
+!XREngine.Runtime.Rendering.WebGPU/Assets/**
 !docs/**/assets/
 Build/RenderBench/
 *.code-workspace
+
+# Local browser qualification tooling dependencies and transient reports.
+Tools/BrowserSmoke/node_modules/
+Tools/BrowserSmoke/test-results/
+Tools/BrowserSmoke/playwright-report/
+# Browser audio executor is authored source, not a generated asset folder.
+!XREngine.Audio.WebAudio/Assets/
+!XREngine.Audio.WebAudio/Assets/**
+# Browser canvas host is authored source, not a generated asset folder.
+!XREngine.Runtime.Platform.Browser/Assets/
+!XREngine.Runtime.Platform.Browser/Assets/**
+
+# The rendering sample's saved world and game sources are authored inputs.
+!Samples/RenderingParity/Assets/
+Samples/RenderingParity/Assets/*
+!Samples/RenderingParity/Assets/Scripts/
+!Samples/RenderingParity/Assets/Scripts/**
+!Samples/RenderingParity/Assets/Worlds/
+!Samples/RenderingParity/Assets/Worlds/**
+!Samples/RenderingParity/Assets/startup.asset
+
+# The Advanced rendering sample keeps authored source while excluding cooked shaders.
+Samples/AdvancedRenderingParity/Build/
+!Samples/AdvancedRenderingParity/Assets/
+Samples/AdvancedRenderingParity/Assets/*
+!Samples/AdvancedRenderingParity/Assets/Scripts/
+!Samples/AdvancedRenderingParity/Assets/Scripts/**
+!Samples/AdvancedRenderingParity/Assets/Worlds/
+!Samples/AdvancedRenderingParity/Assets/Worlds/**
+!Samples/AdvancedRenderingParity/Assets/Textures/
+!Samples/AdvancedRenderingParity/Assets/Textures/**
+!Samples/AdvancedRenderingParity/Assets/startup.asset
+
+# Authored browser UI parity sample; retain only its source inputs.
+Samples/BrowserUiParity/Build/
+!Samples/BrowserUiParity/Assets/
+Samples/BrowserUiParity/Assets/*
+!Samples/BrowserUiParity/Assets/Scripts/
+!Samples/BrowserUiParity/Assets/Scripts/**
+!Samples/BrowserUiParity/Assets/Worlds/
+!Samples/BrowserUiParity/Assets/Worlds/**
+!Samples/BrowserUiParity/Assets/startup.asset

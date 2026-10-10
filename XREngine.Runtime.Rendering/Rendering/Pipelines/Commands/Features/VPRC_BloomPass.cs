@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using System.Threading;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -23,6 +24,21 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_BloomPass : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            if (requirements.Backend != RendererBackendId.WebGPU)
+            {
+                base.DescribeRequirements(requirements);
+                return;
+            }
+            requirements.RequireOperation("fullscreen-quad");
+            if (Stereo)
+                requirements.Diagnostics.Add("WebGPU bloom requires a mono texture chain.");
+            requirements.RequireRasterProgram("bloom-copy");
+            requirements.RequireRasterProgram("bloom-downsample");
+            requirements.RequireRasterProgram("bloom-upsample");
+        }
+
         private enum EBloomBindingPublication
         {
             Copy,
@@ -38,7 +54,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         private sealed class BloomBindingPublisher(
             VPRC_BloomPass owner,
-            EBloomBindingPublication publication) : IRenderResourceBindingPublisher
+            EBloomBindingPublication publication,
+            XRTexture? sourceTexture = null) : IRenderResourceBindingPublisher
         {
             private readonly object _generationSync = new();
             private BloomSettings? _lastSettings;
@@ -119,6 +136,11 @@ namespace XREngine.Rendering.Pipelines.Commands
                 XRRenderProgram vertexProgram,
                 XRRenderProgram materialProgram)
             {
+                if (WebPipelineRasterProgram.IsActive)
+                {
+                    owner.PublishWebBloomUniforms(materialProgram, publication, sourceTexture);
+                    return;
+                }
                 switch (publication)
                 {
                     case EBloomBindingPublication.Copy:
@@ -162,12 +184,16 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private static void LogGuardFailure(string location, string reason)
-            => Debug.RenderingEvery(
+        {
+            if (WebPipelineRasterProgram.IsActive)
+                throw new InvalidOperationException($"WebGPU.Bloom.ResourceInvalid: {location}: {reason}");
+            Debug.RenderingEvery(
                 $"ResilienceGuard.Bloom.{location}",
                 TimeSpan.FromSeconds(1),
                 "[Bloom][RESILIENCE GUARD TRIGGERED] {0}: {1}",
                 location,
                 reason);
+        }
 
         private string GetDownsampleShaderName() =>
             Stereo ? "BloomDownsampleStereo.fs" : "BloomDownsample.fs";
@@ -286,9 +312,24 @@ namespace XREngine.Rendering.Pipelines.Commands
         private readonly Dictionary<int, XRTexture> _bloomSourceMipViews = [];
 
         private const int BloomMaxMipmapLevel = 4;
+        private string? _cachedProfilingName;
+        private string? _cachedProfilingInput;
+        private string? _cachedProfilingOutput;
+        private bool _cachedProfilingStereo;
 
         public override string GpuProfilingName
-            => $"{base.GpuProfilingName}[{InputFBOName}->{BloomOutputTextureName}; {(Stereo ? "stereo" : "mono")}]";
+        {
+            get
+            {
+                if (_cachedProfilingName is not null && _cachedProfilingInput == InputFBOName &&
+                    _cachedProfilingOutput == BloomOutputTextureName && _cachedProfilingStereo == Stereo)
+                    return _cachedProfilingName;
+                _cachedProfilingInput = InputFBOName;
+                _cachedProfilingOutput = BloomOutputTextureName;
+                _cachedProfilingStereo = Stereo;
+                return _cachedProfilingName = $"{base.GpuProfilingName}[{InputFBOName}->{BloomOutputTextureName}; {(Stereo ? "stereo" : "mono")}]";
+            }
+        }
 
         private XRTexture CreateBloomTexture(uint width, uint height, int maxMipLevel,
             EPixelInternalFormat internalFormat, ESizedInternalFormat sizedInternalFormat,
@@ -508,9 +549,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             var frameBuffer = new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = name };
+            if (WebPipelineRasterProgram.IsActive)
+                WebPipelineRasterProgram.OwnMaterial(frameBuffer);
             frameBuffer.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, targetMip, -1));
             frameBuffer.FullScreenMesh.BindingPublishers.Add(
-                new BloomBindingPublisher(this, bindingPublication));
+                new BloomBindingPublisher(this, bindingPublication, material.Textures[0]));
             ValidateBloomWriteFboContract(frameBuffer, outputTexture, targetMip);
             return frameBuffer;
         }
@@ -538,7 +581,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     new ShaderBool(false, "DebugSolidOutput"),
                 ],
                 [GetOrCreateBloomSourceMipView(outputTexture, sourceMip)],
-                XRShader.EngineShader(downsampleShader, EShaderType.Fragment))
+                ResolveBloomShaders("bloom-downsample", downsampleShader))
             {
                 RenderOptions = NoDepthTestParams()
             };
@@ -546,7 +589,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRMaterial CreateCopyMaterial(XRTexture sourceTexture, string copyShader)
             => new(
                 new XRTexture?[] { sourceTexture },
-                XRShader.EngineShader(copyShader, EShaderType.Fragment))
+                ResolveBloomShaders("bloom-copy", copyShader))
             {
                 RenderOptions = NoDepthTestParams()
             };
@@ -559,10 +602,52 @@ namespace XREngine.Rendering.Pipelines.Commands
                     new ShaderFloat(0.7f, "Scatter"),
                 ],
                 [GetOrCreateBloomSourceMipView(outputTexture, sourceMip)],
-                XRShader.EngineShader(upsampleShader, EShaderType.Fragment))
+                ResolveBloomShaders("bloom-upsample", upsampleShader))
             {
                 RenderOptions = UpsampleBlendParams()
             };
+
+        private XRShader[] ResolveBloomShaders(string bindingKey, string desktopPath)
+            => WebPipelineRasterProgram.IsActive
+                ? WebPipelineRasterProgram.CreateShaders(ParentPipeline ?? ActivePipelineInstance.Pipeline
+                    ?? throw new InvalidOperationException("WebGPU.Bloom.PipelineMissing."), bindingKey)
+                : [XRShader.EngineShader(desktopPath, EShaderType.Fragment)];
+
+        private void PublishWebBloomUniforms(XRRenderProgram program, EBloomBindingPublication publication, XRTexture? source)
+        {
+            XRRenderPipelineInstance instance = ActivePipelineInstance;
+            var area = instance.RenderState.CurrentRenderRegion;
+            program.Uniform("BloomOutputArea", new Vector4(area.X, area.Y, Math.Max(1, area.Width), Math.Max(1, area.Height)));
+            source = publication == EBloomBindingPublication.Copy ? _bloomCopySourceTexture : source;
+            if (source is null)
+                throw new InvalidOperationException("WebGPU.Bloom.SourceMissing: the selected pass requires its exact source mip.");
+            program.Sampler(BloomSourceSamplerName, source, 0);
+            if (publication == EBloomBindingPublication.Copy)
+                return;
+            Vector3 dimensions = source.WidthHeightDepth;
+            if (source is XRTextureViewBase view)
+            {
+                Vector3 parentSize = view.GetViewedTexture().WidthHeightDepth;
+                int level = (int)Math.Min(view.MinLevel, 31u);
+                dimensions = new Vector3(Math.Max(1u, (uint)parentSize.X >> level),
+                    Math.Max(1u, (uint)parentSize.Y >> level), 1.0f);
+            }
+            float inverseWidth = 1.0f / Math.Max(1.0f, dimensions.X);
+            float inverseHeight = 1.0f / Math.Max(1.0f, dimensions.Y);
+            BloomSettings? settings = ResolveBloomSettings(instance);
+            if (publication == EBloomBindingPublication.Upsample)
+            {
+                program.Uniform("BloomUpsampleSourceTexel", new Vector4(inverseWidth, inverseHeight,
+                    settings?.Radius ?? 1.0f, settings?.Scatter ?? 0.7f));
+                return;
+            }
+            bool first = publication == EBloomBindingPublication.FirstDownsample;
+            program.Uniform("BloomSourceTexelThreshold", new Vector4(inverseWidth, inverseHeight,
+                settings?.Threshold ?? 0.138f, settings?.SoftKnee ?? 0.5f));
+            program.Uniform("BloomDownsampleControls", new Vector4(settings?.Intensity ?? 0.530f,
+                first ? 1.0f : 0.0f, first ? 1.0f : 0.0f, BloomDebugSolidOutput ? 1.0f : 0.0f));
+            program.Uniform("BloomLuminance", new Vector4(RuntimeEngine.Rendering.Settings.DefaultLuminance, 0.0f));
+        }
 
         protected override void Execute()
         {
@@ -577,7 +662,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            var inputFBO = instance.GetFBO<XRQuadFrameBuffer>(InputFBOName);
+            var inputFBO = instance.GetFBO<XRFrameBuffer>(InputFBOName);
             if (inputFBO is null)
             {
                 LogGuardFailure(nameof(Execute), $"Input FBO '{InputFBOName}' not found; bloom pass skipped.");
@@ -1103,18 +1188,30 @@ namespace XREngine.Rendering.Pipelines.Commands
             base.DescribeRenderPass(context);
 
             string bloomTexture = MakeTextureResource(BloomOutputTextureName);
-
-            var copy = context.GetOrCreateSyntheticPass(BloomCopyPassName, ERenderGraphPassStage.Graphics);
-            copy.SampleTexture(MakeFboColorResource(InputFBOName));
-            copy.UseColorAttachmentMip(
-                bloomTexture,
-                0u,
-                ERenderGraphAccess.Write,
-                ERenderPassLoadOp.DontCare,
-                ERenderPassStoreOp.Store);
+            bool declared = context.ResourceLayout is null || context.HasResource(BloomOutputTextureName);
+            int maxMip = context.ResourceProfile is { } profile
+                ? ResolveBloomMaxMip(profile.InternalWidth, profile.InternalHeight) : BloomMaxMipmapLevel;
+            if (declared)
+            {
+                var copy = context.GetOrCreateSyntheticPass(BloomCopyPassName, ERenderGraphPassStage.Graphics);
+                copy.SampleTexture(MakeFboColorResource(InputFBOName));
+                copy.UseColorAttachmentMip(
+                    bloomTexture,
+                    0u,
+                    ERenderGraphAccess.Write,
+                    ERenderPassLoadOp.DontCare,
+                    ERenderPassStoreOp.Store);
+            }
+            else
+                context.ReserveSyntheticPassIndex(BloomCopyPassName);
 
             for (int targetMipLevel = 1; targetMipLevel <= BloomMaxMipmapLevel; targetMipLevel++)
             {
+                if (!declared || targetMipLevel > maxMip)
+                {
+                    context.ReserveSyntheticPassIndex(GetDownsamplePassName(targetMipLevel));
+                    continue;
+                }
                 var downsample = context.GetOrCreateSyntheticPass(GetDownsamplePassName(targetMipLevel), ERenderGraphPassStage.Graphics);
                 downsample.SampleTextureMip(bloomTexture, (uint)(targetMipLevel - 1));
                 downsample.UseColorAttachmentMip(
@@ -1127,6 +1224,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             for (int sourceMipLevel = BloomMaxMipmapLevel; sourceMipLevel >= 2; sourceMipLevel--)
             {
+                if (!declared || sourceMipLevel > maxMip)
+                {
+                    context.ReserveSyntheticPassIndex(GetUpsamplePassName(sourceMipLevel));
+                    continue;
+                }
                 var upsample = context.GetOrCreateSyntheticPass(GetUpsamplePassName(sourceMipLevel), ERenderGraphPassStage.Graphics);
                 int targetMipLevel = sourceMipLevel - 1;
                 upsample.SampleTextureMip(bloomTexture, (uint)sourceMipLevel);

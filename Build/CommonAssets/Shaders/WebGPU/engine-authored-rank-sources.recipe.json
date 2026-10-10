@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 3,
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "matrixLayout": "column-major",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "pipeline": {},
+  "name": "engine-authored-rank-sources",
+  "pass": "rank-sources",
+  "pipelineArtifact": {
+    "scope": "authored-indexed",
+    "pass": "rank-sources"
+  },
+  "source": "engine-authored-rank-sources.wgsl",
+  "entryPoints": {
+    "compute": "authoredRankSources"
+  },
+  "workgroupSize": [
+    64,
+    1,
+    1
+  ],
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 3,
+    "maxUniformBufferBindingSize": 32,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 2,
+    "maxStorageBufferBindingSize": 4,
+    "maxComputeWorkgroupSizeX": 64,
+    "maxComputeWorkgroupSizeY": 1,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 64
+  },
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "Sources",
+        "physicalName": "sources",
+        "group": 0,
+        "binding": 0,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Ranks",
+        "physicalName": "ranks",
+        "group": 0,
+        "binding": 1,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 2,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 32,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "cameraPosition",
+            "provider": "CameraPosition",
+            "offset": 0,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "sourceCount",
+            "provider": "SourceCount",
+            "offset": 16,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "sortPolicy",
+            "provider": "SortPolicy",
+            "offset": 20,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "usePriority",
+            "provider": "UsePriority",
+            "offset": 24,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved",
+            "provider": "Reserved",
+            "offset": 28,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  }
+}

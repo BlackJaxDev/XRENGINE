@@ -10,6 +10,8 @@ namespace XREngine.Rendering;
 /// </summary>
 internal sealed class PendingGpuDeformationMeshPreparation
 {
+    internal const int CanonicalMorphCount = -2;
+    internal const int CanonicalMorphPack = -1;
     internal const int Count = 0;
     internal const int Pack = 1;
     internal const int Vertices = 2;
@@ -20,6 +22,7 @@ internal sealed class PendingGpuDeformationMeshPreparation
     internal required XRMesh Mesh;
     internal required uint TopologyGeneration;
     internal required long GeometryRevision;
+    internal required AdvancedGpuDeformationInputWitness InputWitness;
     internal required int VertexCount;
     internal required string[] Names;
     internal int ActiveBlendshapeCount;
@@ -43,6 +46,11 @@ internal sealed class PendingGpuDeformationMeshPreparation
     internal AdvancedBlendshapeSparseRecord[] RecordsScratch = [];
     internal Vector4[] DeltasScratch = [];
     internal XRMeshSkinningBufferState? SkinningState;
+    internal XRMeshBlendshapeBufferState? CanonicalMorphs;
+    internal ulong MorphRangesRevision;
+    internal ulong MorphRecordsRevision;
+    internal ulong MorphDeltasRevision;
+    internal ulong MorphMetadataRevision;
     internal ulong CoreIndicesRevision;
     internal ulong CoreWeightsRevision;
     internal ulong SpillHeadersRevision;

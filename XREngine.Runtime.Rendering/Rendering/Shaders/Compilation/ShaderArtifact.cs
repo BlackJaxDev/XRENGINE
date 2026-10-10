@@ -8,10 +8,15 @@ namespace XREngine.Rendering.Shaders.Compilation;
 public sealed record ShaderArtifact
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+    private readonly byte[] _bytes;
 
     public ShaderArtifact(ShaderCompileTarget target, byte[] bytes)
+        : this(target, (ReadOnlySpan<byte>)(bytes ?? throw new ArgumentNullException(nameof(bytes))))
     {
-        ArgumentNullException.ThrowIfNull(bytes);
+    }
+
+    public ShaderArtifact(ShaderCompileTarget target, ReadOnlySpan<byte> bytes)
+    {
         if (target is not (ShaderCompileTarget.Vulkan14Spirv16 or ShaderCompileTarget.WebGPUWgsl))
             throw new ArgumentOutOfRangeException(nameof(target), target, "Unsupported shader artifact target.");
 
@@ -19,18 +24,18 @@ public sealed record ShaderArtifact
             _ = StrictUtf8.GetCharCount(bytes);
 
         Target = target;
-        Bytes = bytes;
+        _bytes = bytes.ToArray();
     }
 
     /// <summary>The target and format of <see cref="Bytes"/>.</summary>
     public ShaderCompileTarget Target { get; }
 
-    /// <summary>The payload bytes; WGSL uses UTF-8 encoding.</summary>
-    public byte[] Bytes { get; }
+    /// <summary>The privately owned immutable payload; WGSL uses UTF-8 encoding. Reading does not allocate.</summary>
+    public ReadOnlySpan<byte> Bytes => _bytes;
 
-    /// <summary>Reads a Vulkan artifact as SPIR-V, rejecting other targets.</summary>
+    /// <summary>Copies a Vulkan artifact for legacy mutable-array callers, rejecting other targets.</summary>
     public byte[] SpirV => Target == ShaderCompileTarget.Vulkan14Spirv16
-        ? Bytes
+        ? _bytes.ToArray()
         : throw new InvalidOperationException($"Shader artifact target '{Target}' is not SPIR-V.");
 
     /// <summary>Reads a WGSL artifact as UTF-8 source, rejecting other targets.</summary>

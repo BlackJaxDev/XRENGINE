@@ -10,6 +10,12 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public sealed class VPRC_OcclusionQuery : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            base.DescribeRequirements(requirements);
+            requirements.Include(Body);
+        }
+
         private readonly AsyncOcclusionQueryManager _queryManager = new();
         private XRRenderQuery? _pendingQuery;
         private bool _lastResultAvailable;
@@ -26,8 +32,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             get => _body;
             set
             {
-                _body = value;
+                if (!SetField(ref _body, value)) return;
                 AttachPipeline(_body);
+                ParentPipeline?.NotifyCommandChainStructureChanged();
             }
         }
 

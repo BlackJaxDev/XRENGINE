@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-unlit-alpha-texture-depth",
+  "pass": "depth",
+  "source": "UnlitAlphaTextureDepth.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "unlitVertex",
+    "fragment": "unlitDepthFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 3,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 32,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 3,
+    "maxUniformBufferBindingSize": 128,
+    "maxDynamicUniformBuffersPerPipelineLayout": 3,
+    "maxUniformBuffersPerShaderStage": 4,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxSamplersPerShaderStage": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.unlit-alpha-texture.v4",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 32,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          },
+          {
+            "location": 1,
+            "offset": 12,
+            "format": "float32x3",
+            "semantic": "normal"
+          },
+          {
+            "location": 2,
+            "offset": 24,
+            "format": "float32x2",
+            "semantic": "uv0"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "View",
+        "physicalName": "view_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 64,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "viewProjection_0",
+            "provider": "ViewProjection",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "Object",
+        "physicalName": "object_0",
+        "group": 0,
+        "binding": 1,
+        "kind": "uniform",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 128,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "modelMatrix_0",
+            "provider": "ModelMatrix",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "normalMatrix_0",
+            "provider": "NormalMatrix",
+            "offset": 64,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "UnlitMaterial",
+        "physicalName": "material_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "alphaControls_0",
+            "provider": "UnlitAlphaControls",
+            "offset": 0,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "Texture0",
+        "physicalName": "texture0_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Texture0",
+        "physicalName": "texture0Sampler_0",
+        "group": 1,
+        "binding": 2,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "materialVariant": {
+    "semantic": "Unlit",
+    "semanticVersion": 4,
+    "vertexProfile": "position-normal-uv-v1",
+    "outputProfile": "depth-normal-v1"
+  }
+}

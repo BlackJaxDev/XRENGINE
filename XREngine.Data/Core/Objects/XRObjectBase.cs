@@ -53,6 +53,14 @@ namespace XREngine.Data.Core
         public static ObjectCachePublicationScope BeginDeferredObjectCachePublication()
             => new(CurrentObjectCachePublicationScope);
 
+        /// <summary>
+        /// Starts an independently owned synchronous construction transaction. Nested
+        /// ordinary publication scopes join this batch; any enclosing batch does not own it.
+        /// Shared process-lifetime factories complete without taking an ownership lease.
+        /// </summary>
+        public static ObjectCachePublicationScope BeginIndependentObjectCachePublication()
+            => new(CurrentObjectCachePublicationScope, independentBatch: true);
+
         public static void DestroyAllObjects()
         {
             foreach (var obj in ObjectsCacheInternal.Values)
@@ -198,7 +206,7 @@ namespace XREngine.Data.Core
             _constructorObjectCachePublicationDeferred = false;
         }
 
-        internal static void PublishDeferredObjectCacheBatch(IReadOnlyList<XRObjectBase> objects)
+        internal static void PublishDeferredObjectCacheBatch(IReadOnlyList<XRObjectBase> objects, bool allowDestroyedMembers = false)
         {
             lock (ObjectCacheMutationLock)
                 for (int index = 0; index < objects.Count; index++)
@@ -206,6 +214,8 @@ namespace XREngine.Data.Core
                     XRObjectBase value = objects[index];
                     if (value.IsDestroyed)
                     {
+                        if (allowDestroyedMembers)
+                            continue;
                         throw new InvalidOperationException(
                             $"Object-cache publication batch contains destroyed member '{value.GetType().FullName}'.");
                     }
@@ -398,21 +408,29 @@ namespace XREngine.Data.Core
             }
 
             ClearDestroyQueuedFlag();
-            if (!(Destroying?.InvokeAllMatch(this) ?? true))
-                return;
-
-            OnDestroying();
-            lock (ObjectCacheMutationLock)
+            try
             {
-                if (_isRegisteredInObjectCache)
-                {
-                    ObjectsCacheInternal.Remove(ID, out _);
-                    _isRegisteredInObjectCache = false;
-                }
-                IsDestroyed = true;
-            }
+                if (!(Destroying?.InvokeAllMatch(this) ?? true))
+                    return;
 
-            Destroyed?.Invoke(this);
+                OnDestroying();
+                lock (ObjectCacheMutationLock)
+                {
+                    if (_isRegisteredInObjectCache)
+                    {
+                        ObjectsCacheInternal.Remove(ID, out _);
+                        _isRegisteredInObjectCache = false;
+                    }
+                    IsDestroyed = true;
+                }
+
+                Destroyed?.Invoke(this);
+            }
+            catch
+            {
+                CurrentObjectCachePublicationScope?.RecordDestructionFailure(this);
+                throw;
+            }
         }
 
         private void ClearDestroyQueuedFlag()

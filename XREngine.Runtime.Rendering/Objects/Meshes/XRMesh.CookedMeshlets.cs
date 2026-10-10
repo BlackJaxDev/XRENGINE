@@ -159,7 +159,12 @@ public partial class XRMesh
         // Version 3 differs from the current layout only by the skipped vertex
         // stream, so its payloads stay runtime compatible without a recook.
         if (payloadVersion == MeshletPayload.LastPayloadVersionWithVertexStream)
+        {
+            if (!MeshletPayloadUtility.IsLegacyVertexStreamRuntimeCompatible(runtimeCompatibilityToken))
+                throw new InvalidDataException("Legacy meshlet payload does not match the portable shader profile.");
             payloadVersion = MeshletPayload.CurrentPayloadVersion;
+            runtimeCompatibilityToken = MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(meshletSettings);
+        }
 
         MeshletPayload payload = new()
         {

@@ -1,8 +1,7 @@
 using XREngine.Imaging;
 using System;
-using System.IO;
-using System.Security.Cryptography;
 using System.Text.Json;
+using XREngine.Data;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands;
@@ -14,6 +13,8 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public sealed class VPRC_CaptureFrame : ViewportRenderCommand
 {
+    private static readonly Func<RenderedOutputCaptureMetrics, string, string, DateTimeOffset, string> s_serializeMetrics = SerializeCaptureMetrics;
+
     public string? SourceTextureName { get; set; }
     public string? SourceFBOName { get; set; }
     public string? DestinationBufferName { get; set; }
@@ -92,6 +93,14 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
             return;
         }
 
+        bool fileOutputDue = (standardCaptureDue && !string.IsNullOrWhiteSpace(OutputFilePath)) || temporalCaptureDue;
+        IRuntimeDiagnosticCaptureFileOutput? fileOutput = null;
+        if (fileOutputDue)
+        {
+            RuntimeAssetReadServices.EnsureHostFileAccess("Frame capture output");
+            fileOutput = RuntimeDiagnosticCaptureFileOutput.Require();
+        }
+
         XRRenderPipelineInstance instance = ActivePipelineInstance;
         if (!VPRCSourceTextureHelpers.TryResolveColorTexture(instance, SourceTextureName, SourceFBOName, out XRTexture? texture, out string failure) ||
             texture is null)
@@ -118,7 +127,7 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
                 rgbaFloats,
                 width,
                 height);
-            WriteCapture(OutputFilePath!, rgbaFloats, width, height, metrics);
+            WriteCapture(fileOutput!, OutputFilePath!, rgbaFloats, width, height, metrics);
             wroteStandardFile = true;
         }
 
@@ -145,7 +154,7 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
             temporalMetrics.VelocityOracle = temporalDefinition.VelocityOracle.ToString();
             temporalMetrics.TemporalSequenceFrame = temporalSequenceFrame;
             temporalMetrics.RenderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
-            WriteCapture(temporalPath, rgbaFloats, width, height, temporalMetrics);
+            WriteCapture(fileOutput!, temporalPath, rgbaFloats, width, height, temporalMetrics);
             _temporalScenarioCaptureMask |= 1UL << temporalSampleIndex;
         }
 
@@ -197,27 +206,29 @@ public sealed class VPRC_CaptureFrame : ViewportRenderCommand
     }
 
     private void WriteCapture(
+        IRuntimeDiagnosticCaptureFileOutput fileOutput,
         string outputFilePath,
         float[] rgbaFloats,
         int width,
         int height,
         RenderedOutputCaptureMetrics metrics)
     {
-        string filePath = Path.GetFullPath(outputFilePath);
-        string? directory = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrWhiteSpace(directory))
-            Directory.CreateDirectory(directory);
-
         using RuntimeImage image = CreateImage(rgbaFloats, width, height,
             FlipVertically ? RuntimeImageOrigin.BottomLeft : RuntimeImageOrigin.TopLeft);
-        File.WriteAllBytes(filePath, RuntimeImageCodecs.Require().EncodePng(image));
-        using (FileStream captureStream = File.OpenRead(filePath))
-            metrics.CaptureSha256 = Convert.ToHexString(SHA256.HashData(captureStream));
+        byte[] pngBytes = RuntimeImageCodecs.Require().EncodePng(image);
+        fileOutput.WritePngAndMetrics(outputFilePath, pngBytes, metrics, s_serializeMetrics);
+    }
+
+    private static string SerializeCaptureMetrics(
+        RenderedOutputCaptureMetrics metrics,
+        string filePath,
+        string sha256,
+        DateTimeOffset capturedAtUtc)
+    {
+        metrics.CaptureSha256 = sha256;
         metrics.CapturePath = filePath;
-        metrics.CapturedAtUtc = DateTimeOffset.UtcNow;
-        File.WriteAllText(
-            filePath + ".metrics.json",
-            JsonSerializer.Serialize(metrics, new JsonSerializerOptions { WriteIndented = true }));
+        metrics.CapturedAtUtc = capturedAtUtc;
+        return JsonSerializer.Serialize(metrics, new JsonSerializerOptions { WriteIndented = true });
     }
 
     private static RuntimeImage CreateImage(float[] rgbaFloats, int width, int height, RuntimeImageOrigin origin)

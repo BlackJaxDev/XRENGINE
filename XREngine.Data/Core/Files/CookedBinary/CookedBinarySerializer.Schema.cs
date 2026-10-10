@@ -114,6 +114,7 @@ public static partial class CookedBinarySerializer
     {
         private readonly CookedBinarySerializationCallbacks? _callbacks = callbacks;
         private readonly bool _includeValues = includeValues;
+        private readonly Dictionary<object, int> _referenceIds = new(ReferenceEqualityComparer.Instance);
         private readonly CookedBinarySharedValueTracker? _sharedValues =
             callbacks?.ShareReference is null ? null : new CookedBinarySharedValueTracker();
 
@@ -163,11 +164,36 @@ public static partial class CookedBinarySerializer
         [RequiresDynamicCode(ReflectionWarningMessage)]
         private CookedBinarySchemaNode BuildModuleValueNode(string name, Type? declaredType, object serializedValue, Type runtimeType, bool allowCustom)
         {
+            var node = NewNode(name, "value", declaredType?.FullName ?? declaredType?.Name);
+            int definitionId = -1;
+            if (_callbacks?.ShareReference is null && IsGraphReferenceCandidate(serializedValue, runtimeType))
+            {
+                if (_referenceIds.TryGetValue(serializedValue, out int existingId))
+                {
+                    node.Marker = CookedBinaryTypeMarker.Reference.ToString();
+                    AddFixedLeaf(node, "marker", "marker", 1, node.Marker);
+                    AddFixedLeaf(node, "referenceId", "index", sizeof(int), existingId.ToString(CultureInfo.InvariantCulture));
+                    return FinalizeNode(node);
+                }
+
+                definitionId = _referenceIds.Count;
+                _referenceIds.Add(serializedValue, definitionId);
+            }
+
             foreach (var module in SerializationModules)
             {
                 var builtNode = module.TryBuildValueSchema(this, name, declaredType, serializedValue, runtimeType, allowCustom);
                 if (builtNode is not null)
-                    return builtNode;
+                {
+                    if (definitionId < 0)
+                        return builtNode;
+
+                    node.Marker = CookedBinaryTypeMarker.ReferenceDefinition.ToString();
+                    AddFixedLeaf(node, "marker", "marker", 1, node.Marker);
+                    AddFixedLeaf(node, "referenceId", "index", sizeof(int), definitionId.ToString(CultureInfo.InvariantCulture));
+                    node.MutableChildren.Add(builtNode);
+                    return FinalizeNode(node);
+                }
             }
 
             throw new NotSupportedException($"No cooked binary schema module handled '{runtimeType.FullName ?? runtimeType.Name}'.");
@@ -411,14 +437,14 @@ public static partial class CookedBinarySerializer
             AddFixedLeaf(node, "payload", "customPayload", size: payloadSize, valueDisplay: $"{payloadSize} bytes", notes: note);
         }
 
-        internal void AddExpandedCustomModelValueNode(CookedBinarySchemaNode node, Type runtimeType, object model, Type modelType, string note)
+        internal void AddExpandedCustomModelValueNode(CookedBinarySchemaNode node, Type runtimeType, object model, Type modelType, long actualPayloadSize, string note)
         {
             AddFixedLeaf(node, "marker", "marker", size: 1, valueDisplay: node.Marker);
             AddStringLeaf(node, "runtimeType", runtimeType.AssemblyQualifiedName ?? runtimeType.FullName ?? runtimeType.Name);
 
-            var payloadNode = ExecuteWithMemoryPackSuppressed(
-                () => BuildValueNode("payload", modelType, model, allowCustom: true));
-            long actualPayloadSize = CalculateSize(model);
+            var payloadBuilder = new CookedBinarySchemaBuilder(callbacks: null, includeValues: true);
+            CookedBinarySchemaNode payloadNode = ExecuteWithMemoryPackSuppressed(
+                () => payloadBuilder.BuildValueNode("payload", modelType, model, allowCustom: true));
             payloadNode.Size = actualPayloadSize;
             payloadNode.SizeDescription = $"{actualPayloadSize} byte{(actualPayloadSize == 1 ? string.Empty : "s")}";
             payloadNode.Notes = string.IsNullOrWhiteSpace(payloadNode.Notes)

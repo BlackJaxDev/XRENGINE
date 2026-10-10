@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-depth-of-field",
+  "pass": "depth-of-field",
+  "source": "AdvancedDepthOfField.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "outputVertex",
+    "fragment": "outputFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 3,
+    "maxUniformBufferBindingSize": 80,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 2,
+    "maxSamplersPerShaderStage": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.depth-of-field.v2",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 12,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "OutputUniforms",
+        "physicalName": "outputUniforms_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 80,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "ScreenWidth_0",
+            "provider": "ScreenWidth",
+            "offset": 0,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ScreenHeight_0",
+            "provider": "ScreenHeight",
+            "offset": 4,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ScreenOrigin_0",
+            "provider": "ScreenOrigin",
+            "offset": 8,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "TexelSize_0",
+            "provider": "TexelSize",
+            "offset": 16,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "DoFMode_0",
+            "provider": "DoFMode",
+            "offset": 24,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "FocusDepth_0",
+            "provider": "FocusDepth",
+            "offset": 28,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "FocusRangeDepth_0",
+            "provider": "FocusRangeDepth",
+            "offset": 32,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "Aperture_0",
+            "provider": "Aperture",
+            "offset": 36,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "MaxCoC_0",
+            "provider": "MaxCoC",
+            "offset": 40,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "BokehRadius_0",
+            "provider": "BokehRadius",
+            "offset": 44,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "NearBlur_0",
+            "provider": "NearBlur",
+            "offset": 48,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "CameraNearZ_0",
+            "provider": "CameraNearZ",
+            "offset": 52,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "CameraFarZ_0",
+            "provider": "CameraFarZ",
+            "offset": 56,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "DoFPhysicalFocalLengthMm_0",
+            "provider": "DoFPhysicalFocalLengthMm",
+            "offset": 60,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "DoFPhysicalFocusDistanceMm_0",
+            "provider": "DoFPhysicalFocusDistanceMm",
+            "offset": 64,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "DoFPhysicalCoCRefMm_0",
+            "provider": "DoFPhysicalCoCRefMm",
+            "offset": 68,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "DoFPhysicalPixelsPerMm_0",
+            "provider": "DoFPhysicalPixelsPerMm",
+            "offset": 72,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "DepthMode_0",
+            "provider": "DepthMode",
+            "offset": 76,
+            "bytes": 4,
+            "type": "i32"
+          }
+        ]
+      },
+      {
+        "name": "ColorSource",
+        "physicalName": "ColorSource_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "ColorSource",
+        "physicalName": "ColorSourceSampler_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "DepthView",
+        "physicalName": "DepthView_0",
+        "group": 1,
+        "binding": 2,
+        "kind": "texture-depth-2d",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "depth-of-field"
+  }
+}

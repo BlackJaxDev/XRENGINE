@@ -73,6 +73,7 @@ namespace XREngine.Input.Devices
 
         public override void TryUnregisterInput()
         {
+            DiscardTransientInput();
             if (Gamepad is null &&
                 Keyboard is null &&
                 Mouse is null &&
@@ -232,10 +233,25 @@ namespace XREngine.Input.Devices
         /// <param name="delta"></param>
         public void TickStates(float delta)
         {
+            BaseKeyboard? keyboard = Keyboard;
+            BaseMouse? mouse = Mouse;
+            ulong keyboardRevision = keyboard?.InputDispatchRevision ?? 0;
+            ulong mouseRevision = mouse?.InputDispatchRevision ?? 0;
             Gamepad?.TickStates(delta);
-            Keyboard?.TickStates(delta);
-            Mouse?.TickStates(delta);
+            if (!IsCurrent())
+                return;
+            keyboard?.TickStates(delta);
+            if (!IsCurrent())
+                return;
+            mouse?.TickStates(delta);
+            if (!IsCurrent())
+                return;
             RuntimeVrInputServices.Update(delta);
+
+            bool IsCurrent()
+                => ReferenceEquals(Keyboard, keyboard) && ReferenceEquals(Mouse, mouse) &&
+                    (keyboard is null || keyboard.InputDispatchRevision == keyboardRevision) &&
+                    (mouse is null || mouse.InputDispatchRevision == mouseRevision);
         }
 
         /// <summary>
@@ -244,6 +260,19 @@ namespace XREngine.Input.Devices
         /// </summary>
         public void ClearMouseScrollBuffer()
             => Mouse?.ClearScrollBuffer();
+
+        /// <summary>Prevents buffered edges from crossing a mapping or UI-capture boundary.</summary>
+        public void DiscardTransientInput()
+        {
+            Keyboard?.DiscardTransientInput();
+            Mouse?.DiscardTransientInput();
+        }
+
+        public void DiscardCapturedInput()
+        {
+            Keyboard?.DiscardCapturedInput();
+            Mouse?.DiscardCapturedInput();
+        }
 
         private readonly Dictionary<object, RuntimeVrPoseChanged> _runtimePoseCallbacks = [];
         private readonly Dictionary<(string Category, string Name, bool LeftHand, Delegate Callback), RuntimeVrSkeletonSummaryChanged> _runtimeSkeletonSummaryCallbacks = [];

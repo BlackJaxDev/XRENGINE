@@ -5,6 +5,7 @@ using System.Diagnostics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.UI;
@@ -63,6 +64,7 @@ public sealed class UIBatchCollector : IDisposable
         public Matrix4x4 WorldMatrix;
         public Vector4 Color;
         public Vector4 UIXYWH;
+        public Vector4 UV;
     }
 
     /// <summary>
@@ -85,6 +87,7 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     private sealed class TextBatchData
     {
+        public BoundingRectangle? CropRegion;
         public XRTexture2D? Atlas;
         public int AtlasType;
         public float DistanceRange;
@@ -98,6 +101,7 @@ public sealed class UIBatchCollector : IDisposable
 
         public void Clear()
         {
+            CropRegion = null;
             Atlas = null;
             AtlasType = TextAtlasBitmap;
             DistanceRange = 0.0f;
@@ -116,9 +120,18 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     private sealed class MaterialQuadBatchData
     {
+        public BoundingRectangle? CropRegion;
+        public XRTexture2D? Texture;
+        public bool ImageSrgb;
         public readonly List<MaterialQuadEntry> Entries = [];
 
-        public void Clear() => Entries.Clear();
+        public void Clear()
+        {
+            CropRegion = null;
+            Texture = null;
+            ImageSrgb = false;
+            Entries.Clear();
+        }
     }
 
     private sealed class BatchPool<T> where T : class, new()
@@ -162,6 +175,9 @@ public sealed class UIBatchCollector : IDisposable
     private sealed class CollectPassState
     {
         public EBatchMarkerKind? ActiveKind;
+        public BoundingRectangle? ActiveCropRegion;
+        public XRTexture2D? ActiveMaterialTexture;
+        public bool ActiveMaterialImageSrgb;
         public XRTexture2D? ActiveTextAtlas;
         public int ActiveTextAtlasType;
         public float ActiveTextDistanceRange;
@@ -173,6 +189,9 @@ public sealed class UIBatchCollector : IDisposable
         public void Reset()
         {
             ActiveKind = null;
+            ActiveCropRegion = null;
+            ActiveMaterialTexture = null;
+            ActiveMaterialImageSrgb = false;
             ActiveTextAtlas = null;
             ActiveTextAtlasType = TextAtlasBitmap;
             ActiveTextDistanceRange = 0.0f;
@@ -280,6 +299,10 @@ public sealed class UIBatchCollector : IDisposable
     private XRDataBuffer<Vector4>? _matQuadTransformBuf;  // binding 0: 4 × vec4 per instance (mat4 rows)
     private XRDataBuffer<Vector4>? _matQuadColorBuf;      // binding 1: vec4 per instance
     private XRDataBuffer<Vector4>? _matQuadBoundsBuf;     // binding 2: vec4 per instance
+    private XRDataBuffer<Vector4>? _matQuadUvBuf;         // textured binding 3: UV rectangle per instance
+    private readonly Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> _materialTextureMeshes = [];
+    private readonly List<(XRTexture2D Texture, bool Srgb)> _staleMaterialTextures = [];
+    private const int MaxMaterialTextureMeshes = 64;
     private uint _matQuadCapacity;
     private bool _matQuadNeedsPush;
 
@@ -300,15 +323,26 @@ public sealed class UIBatchCollector : IDisposable
 
         public void Dispose()
         {
+            XRMeshRenderer? meshRenderer = Mesh;
+            XRMesh? mesh = meshRenderer?.Mesh;
+            XRMaterial? material = meshRenderer?.Material;
             GlyphTransformsBuf?.Destroy();
             GlyphTexCoordsBuf?.Destroy();
             TextInstanceBuf?.Destroy();
             GlyphTextIndexBuf?.Destroy();
-            Mesh?.Destroy();
+            meshRenderer?.Destroy();
+            mesh?.Destroy();
+            material?.Destroy();
+            GlyphTransformsBuf = null;
+            GlyphTexCoordsBuf = null;
+            TextInstanceBuf = null;
+            GlyphTextIndexBuf = null;
+            Mesh = null;
         }
     }
 
     private readonly Dictionary<XRTexture2D, TextGPUResources> _textGPU = [];
+    private bool _disposed;
 
     #endregion
 
@@ -353,13 +387,20 @@ public sealed class UIBatchCollector : IDisposable
         RenderCommandCollection passes,
         in Matrix4x4 worldMatrix,
         in Vector4 color,
-        in Vector4 uixywh)
+        in Vector4 uixywh,
+        BoundingRectangle? cropRegion = null,
+        XRTexture2D? texture = null,
+        Vector4 uv = default,
+        bool imageSrgb = false)
     {
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectMaterialGroups, renderPass);
 
         MaterialQuadBatchData batch;
-        if (state.ActiveKind == EBatchMarkerKind.Material && groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
+        if (state.ActiveKind == EBatchMarkerKind.Material && state.ActiveCropRegion == cropRegion &&
+            ReferenceEquals(state.ActiveMaterialTexture, texture) &&
+            state.ActiveMaterialImageSrgb == imageSrgb &&
+            groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
             batch = existingBatch;
         }
@@ -367,7 +408,13 @@ public sealed class UIBatchCollector : IDisposable
         {
             batch = groups.Acquire(out int groupIndex);
             batch.Clear();
+            batch.CropRegion = cropRegion;
+            batch.Texture = texture;
+            batch.ImageSrgb = imageSrgb;
             state.ActiveKind = EBatchMarkerKind.Material;
+            state.ActiveCropRegion = cropRegion;
+            state.ActiveMaterialTexture = texture;
+            state.ActiveMaterialImageSrgb = imageSrgb;
             state.ActiveTextAtlas = null;
             state.ActiveGroupIndex = groupIndex;
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Material, groupIndex));
@@ -377,7 +424,8 @@ public sealed class UIBatchCollector : IDisposable
         {
             WorldMatrix = worldMatrix,
             Color = color,
-            UIXYWH = uixywh
+            UIXYWH = uixywh,
+            UV = uv
         });
     }
 
@@ -408,13 +456,14 @@ public sealed class UIBatchCollector : IDisposable
         float distanceRangeMiddle,
         float msdfFillBias,
         int debugMode,
-        List<(Vector4 transform, Vector4 uvs)> glyphs)
+        List<(Vector4 transform, Vector4 uvs)> glyphs,
+        BoundingRectangle? cropRegion = null)
     {
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectTextGroups, renderPass);
 
         TextBatchData batch;
-        if (TextBatchMatches(state, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode) &&
+        if (TextBatchMatches(state, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode, cropRegion) &&
             groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
             batch = existingBatch;
@@ -423,6 +472,7 @@ public sealed class UIBatchCollector : IDisposable
         {
             batch = groups.Acquire(out int groupIndex);
             batch.Clear();
+            batch.CropRegion = cropRegion;
             batch.Atlas = fontAtlas;
             batch.AtlasType = atlasType;
             batch.DistanceRange = distanceRange;
@@ -430,6 +480,7 @@ public sealed class UIBatchCollector : IDisposable
             batch.MsdfFillBias = msdfFillBias;
             batch.DebugMode = debugMode;
             state.ActiveKind = EBatchMarkerKind.Text;
+            state.ActiveCropRegion = cropRegion;
             state.ActiveTextAtlas = fontAtlas;
             state.ActiveTextAtlasType = atlasType;
             state.ActiveTextDistanceRange = distanceRange;
@@ -587,12 +638,14 @@ public sealed class UIBatchCollector : IDisposable
             return;
 
         // Create the batched material
-        XRShader vertexShader = XRShader.EngineShader(
-            Path.Combine("Common", "UIQuadBatched.vs"), EShaderType.Vertex);
-        XRShader fragmentShader = XRShader.EngineShader(
-            Path.Combine("Common", "UIQuadBatched.fs"), EShaderType.Fragment);
+        bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+        XRShader[] shaders = webGpu ? [] :
+        [
+            XRShader.EngineShader(Path.Combine("Common", "UIQuadBatched.vs"), EShaderType.Vertex),
+            XRShader.EngineShader(Path.Combine("Common", "UIQuadBatched.fs"), EShaderType.Fragment)
+        ];
 
-        var material = new XRMaterial(Array.Empty<ShaderVar>(), [vertexShader, fragmentShader])
+        var material = new XRMaterial(Array.Empty<ShaderVar>(), shaders)
         {
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
             RenderOptions = new RenderingParameters
@@ -601,7 +654,8 @@ public sealed class UIBatchCollector : IDisposable
                 DepthTest = new DepthTest
                 {
                     Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always
+                    Function = EComparison.Always,
+                    UpdateDepth = !webGpu
                 },
                 StencilTest = new StencilTest
                 {
@@ -610,6 +664,8 @@ public sealed class UIBatchCollector : IDisposable
                 BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
             }
         };
+        if (webGpu)
+            material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedV2;
 
         _matQuadMesh = new XRMeshRenderer(
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
@@ -669,11 +725,92 @@ public sealed class UIBatchCollector : IDisposable
             DisposeOnPush = false
         };
         mesh.Buffers["QuadBoundsBuffer"] = _matQuadBoundsBuf;
+
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU)
+        {
+            _matQuadUvBuf = new XRDataBuffer<Vector4>(
+                "QuadUvBuffer", EBufferTarget.ShaderStorageBuffer, _matQuadCapacity)
+            {
+                Usage = EBufferUsage.StreamDraw,
+                BindingIndexOverride = 3,
+                DisposeOnPush = false
+            };
+        }
     }
 
-    private void UploadMaterialQuadData(List<MaterialQuadEntry> entries)
+    private XRMeshRenderer EnsureMaterialTextureMesh(XRTexture2D texture, bool srgb)
+    {
+        var key = (texture, srgb);
+        if (_materialTextureMeshes.TryGetValue(key, out XRMeshRenderer? existing))
+            return existing;
+
+        // Old image materials are retired on the render thread. They borrow the
+        // image resource, so replacement must not destroy the authored texture.
+        _staleMaterialTextures.Clear();
+        foreach (var cached in _materialTextureMeshes.Keys)
+            if (!IsCurrentMaterialTexture(cached))
+                _staleMaterialTextures.Add(cached);
+        foreach (var stale in _staleMaterialTextures)
+        {
+            XRMeshRenderer retired = _materialTextureMeshes[stale];
+            XRMaterial? retiredMaterial = retired.Material;
+            retired.Destroy();
+            retiredMaterial?.Destroy();
+            _materialTextureMeshes.Remove(stale);
+        }
+        if (_materialTextureMeshes.Count >= MaxMaterialTextureMeshes)
+            throw new NotSupportedException("WebGPU.UI.ImageTextureBudgetExceeded: at most 64 distinct image and color-space bindings may be visible in one frame.");
+
+        EnsureMaterialQuadMesh();
+        XRMaterial material = new(Array.Empty<ShaderVar>(), [texture], Array.Empty<XRShader>())
+        {
+            Name = "UIBatchMaterialTexture",
+            SurfaceTextureBindings = [new(EMaterialTextureSemantic.BaseColor, texture, IsSrgb: srgb)],
+            RenderPass = (int)EDefaultRenderPass.TransparentForward,
+            RenderOptions = new RenderingParameters
+            {
+                CullMode = ECullMode.None,
+                DepthTest = new DepthTest
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false
+                },
+                StencilTest = new StencilTest { Enabled = ERenderParamUsage.Disabled },
+                BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
+            }
+        };
+        material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV2;
+        XRMeshRenderer mesh = new(_matQuadMesh!.Mesh!, material)
+        {
+            Name = "UIBatchMaterialTextureRenderer",
+            GenerationPriority = EMeshGenerationPriority.RenderPipeline,
+            CaptureUniformsOnRender = true
+        };
+        mesh.Buffers["QuadTransformBuffer"] = _matQuadTransformBuf!;
+        mesh.Buffers["QuadColorBuffer"] = _matQuadColorBuf!;
+        mesh.Buffers["QuadBoundsBuffer"] = _matQuadBoundsBuf!;
+        mesh.Buffers["QuadUvBuffer"] = _matQuadUvBuf!;
+        DisableShaderPipelines(mesh);
+        mesh.EnsureRenderPipelineVersionsCreated();
+        _materialTextureMeshes.Add(key, mesh);
+        return mesh;
+    }
+
+    private bool IsCurrentMaterialTexture((XRTexture2D Texture, bool Srgb) key)
+    {
+        foreach (BatchPool<MaterialQuadBatchData> groups in _renderMaterialGroups.Values)
+            for (int index = 0; index < groups.Count; index++)
+                if (ReferenceEquals(groups[index].Texture, key.Texture) && groups[index].ImageSrgb == key.Srgb)
+                    return true;
+        return false;
+    }
+
+    private void UploadMaterialQuadData(List<MaterialQuadEntry> entries, bool textured)
     {
         uint count = (uint)entries.Count;
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU && count > 65536)
+            throw new NotSupportedException("WebGPU.UI.QuadCapacityExceeded: one screen UI quad group admits at most 65536 instances.");
 
         // Resize if needed
         if (count > _matQuadCapacity)
@@ -682,6 +819,7 @@ public sealed class UIBatchCollector : IDisposable
             _matQuadTransformBuf!.Resize(_matQuadCapacity * 4);
             _matQuadColorBuf!.Resize(_matQuadCapacity);
             _matQuadBoundsBuf!.Resize(_matQuadCapacity);
+            _matQuadUvBuf?.Resize(_matQuadCapacity);
             _matQuadNeedsPush = true;
         }
 
@@ -692,9 +830,12 @@ public sealed class UIBatchCollector : IDisposable
         XRBufferWriter<Vector4> transformWriter = _matQuadTransformBuf!.Alloc<Vector4>(transformElementCount);
         XRBufferWriter<Vector4> colorWriter = _matQuadColorBuf!.Alloc<Vector4>(instanceElementCount);
         XRBufferWriter<Vector4> boundsWriter = _matQuadBoundsBuf!.Alloc<Vector4>(instanceElementCount);
+        XRBufferWriter<Vector4> uvWriter = textured
+            ? _matQuadUvBuf!.Alloc<Vector4>(instanceElementCount) : default;
         Span<Vector4> transforms = transformWriter.Span;
         Span<Vector4> colors = colorWriter.Span;
         Span<Vector4> bounds = boundsWriter.Span;
+        Span<Vector4> uvs = textured ? uvWriter.Span : default;
         int transformIndex = 0;
 
         for (int i = 0; i < entries.Count; i++)
@@ -705,11 +846,15 @@ public sealed class UIBatchCollector : IDisposable
             WriteMatrix4x4(transforms, ref transformIndex, in e.WorldMatrix);
             colors[i] = e.Color;
             bounds[i] = e.UIXYWH;
+            if (textured)
+                uvs[i] = e.UV;
         }
 
         transformWriter.Commit();
         colorWriter.Commit();
         boundsWriter.Commit();
+        if (textured)
+            uvWriter.Commit();
         _matQuadNeedsPush = false;
     }
 
@@ -724,14 +869,14 @@ public sealed class UIBatchCollector : IDisposable
 
         gpu = new TextGPUResources();
 
-        XRShader vertexShader = XRShader.EngineShader(
-            Path.Combine("Common", "UITextBatched.vs"), EShaderType.Vertex);
-        XRShader stereoMv2VertexShader = XRShader.EngineShader(
-            Path.Combine("Common", "UITextBatchedStereoMV2.vs"), EShaderType.Vertex);
-        XRShader stereoNvVertexShader = XRShader.EngineShader(
-            Path.Combine("Common", "UITextBatchedStereoNV.vs"), EShaderType.Vertex);
-        XRShader fragmentShader = XRShader.EngineShader(
-            Path.Combine("Common", "UITextBatched.fs"), EShaderType.Fragment);
+        bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+        XRShader[] shaders = webGpu ? [] :
+        [
+            XRShader.EngineShader(Path.Combine("Common", "UITextBatched.vs"), EShaderType.Vertex),
+            XRShader.EngineShader(Path.Combine("Common", "UITextBatchedStereoMV2.vs"), EShaderType.Vertex),
+            XRShader.EngineShader(Path.Combine("Common", "UITextBatchedStereoNV.vs"), EShaderType.Vertex),
+            XRShader.EngineShader(Path.Combine("Common", "UITextBatched.fs"), EShaderType.Fragment)
+        ];
 
         ShaderVar[] parameters =
         [
@@ -744,7 +889,7 @@ public sealed class UIBatchCollector : IDisposable
             new ShaderInt(TextRenderLayerCombined, TextRenderLayerVertexUniformName),
         ];
 
-        var material = new XRMaterial(parameters, [fontAtlas], [vertexShader, stereoMv2VertexShader, stereoNvVertexShader, fragmentShader])
+        var material = new XRMaterial(parameters, [fontAtlas], shaders)
         {
             Name = "UIBatchTextMaterial",
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
@@ -754,7 +899,8 @@ public sealed class UIBatchCollector : IDisposable
                 DepthTest = new DepthTest
                 {
                     Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always
+                    Function = EComparison.Always,
+                    UpdateDepth = !webGpu
                 },
                 StencilTest = new StencilTest
                 {
@@ -763,6 +909,8 @@ public sealed class UIBatchCollector : IDisposable
                 BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
             }
         };
+        if (webGpu)
+            material.EngineSemantic = EngineMaterialSemanticIdentity.UITextBatchedBitmapV2;
 
         gpu.Mesh = new XRMeshRenderer(
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
@@ -921,16 +1069,17 @@ public sealed class UIBatchCollector : IDisposable
             using (profiler.StartScope($"UIBatchMaterialUpload[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batch.Entries.Count}]"))
             {
                 EnsureMaterialQuadMesh();
-                UploadMaterialQuadData(batch.Entries);
+                UploadMaterialQuadData(batch.Entries, batch.Texture is not null);
             }
         }
         else
         {
             EnsureMaterialQuadMesh();
-            UploadMaterialQuadData(batch.Entries);
+            UploadMaterialQuadData(batch.Entries, batch.Texture is not null);
         }
 
-        XRMeshRenderer materialQuadMesh = _matQuadMesh!;
+        XRMeshRenderer materialQuadMesh = batch.Texture is { } texture
+            ? EnsureMaterialTextureMesh(texture, batch.ImageSrgb) : _matQuadMesh!;
 
         var version = GetImmediateRenderVersion(materialQuadMesh);
         bool prepared;
@@ -983,10 +1132,10 @@ public sealed class UIBatchCollector : IDisposable
                 projectedQuad);
         }
 
-        if (_matQuadMesh!.Material is { } material && material.RenderPass != renderPass)
+        if (materialQuadMesh.Material is { } material && material.RenderPass != renderPass)
             material.RenderPass = renderPass;
 
-        DisableBatchCropping();
+        ApplyBatchCropping(batch.CropRegion);
         try
         {
             if (profileGpu)
@@ -1015,6 +1164,10 @@ public sealed class UIBatchCollector : IDisposable
         {
             return;
         }
+
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU &&
+            (batchData.AtlasType != TextAtlasBitmap || batchData.DebugMode != 0))
+            throw new NotSupportedException("WebGPU.UI.TextProfileUnsupported: screen text requires a bitmap atlas and normal shading.");
 
         using var sample = RuntimeEngine.Profiler.Start();
 
@@ -1149,7 +1302,7 @@ public sealed class UIBatchCollector : IDisposable
 
         MaybeLogTextPrepareSummary();
 
-        DisableBatchCropping();
+        ApplyBatchCropping(batchData.CropRegion);
         try
         {
             if (profileGpu)
@@ -1227,6 +1380,9 @@ public sealed class UIBatchCollector : IDisposable
     {
         uint totalGlyphs = (uint)batchData.TotalGlyphs;
         uint textCount = (uint)batchData.Entries.Count;
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU &&
+            (totalGlyphs > 65536 || textCount > 65536))
+            throw new NotSupportedException("WebGPU.UI.TextCapacityExceeded: one bitmap text group admits at most 65536 glyphs and text entries.");
 
         // Resize if needed
         bool resized = false;
@@ -1315,6 +1471,32 @@ public sealed class UIBatchCollector : IDisposable
     private static void DisableBatchCropping()
         => AbstractRenderer.Current?.SetCroppingEnabled(false);
 
+    private static void ApplyBatchCropping(BoundingRectangle? cropRegion)
+    {
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null) return;
+        renderer.SetCroppingEnabled(cropRegion.HasValue);
+        if (cropRegion is { } region)
+            renderer.CropRenderArea(region);
+    }
+
+    /// <summary>The shared screen batch has one authored straight-alpha raster profile.</summary>
+    internal static bool HasWebGpuRasterProfile(RenderingParameters parameters)
+    {
+        BlendMode? blend = parameters.BlendModeAllDrawBuffers;
+        return parameters.CullMode == ECullMode.None &&
+            parameters.DepthTest.IsDisabled && parameters.StencilTest.IsDisabled &&
+            parameters.AlphaToCoverage != ERenderParamUsage.Enabled &&
+            parameters.BlendModesPerDrawBuffer is not { Count: > 0 } &&
+            parameters.WriteRed && parameters.WriteGreen && parameters.WriteBlue && parameters.WriteAlpha &&
+            blend is { IsEnabled: true, RgbSrcFactor: EBlendingFactor.SrcAlpha,
+                RgbDstFactor: EBlendingFactor.OneMinusSrcAlpha,
+                AlphaSrcFactor: EBlendingFactor.SrcAlpha,
+                AlphaDstFactor: EBlendingFactor.OneMinusSrcAlpha,
+                RgbEquation: EBlendEquationMode.FuncAdd,
+                AlphaEquation: EBlendEquationMode.FuncAdd };
+    }
+
     private static string GetRenderPassDisplayName(int renderPass)
         => Enum.IsDefined(typeof(EDefaultRenderPass), renderPass)
             ? ((EDefaultRenderPass)renderPass).ToString()
@@ -1357,8 +1539,10 @@ public sealed class UIBatchCollector : IDisposable
         float distanceRange,
         float distanceRangeMiddle,
         float msdfFillBias,
-        int debugMode)
+        int debugMode,
+        BoundingRectangle? cropRegion)
         => state.ActiveKind == EBatchMarkerKind.Text &&
+           state.ActiveCropRegion == cropRegion &&
            ReferenceEquals(state.ActiveTextAtlas, fontAtlas) &&
            state.ActiveTextAtlasType == atlasType &&
            state.ActiveTextDistanceRange.Equals(distanceRange) &&
@@ -1392,10 +1576,32 @@ public sealed class UIBatchCollector : IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+        Clear();
+        XRMeshRenderer? meshRenderer = _matQuadMesh;
+        XRMesh? mesh = meshRenderer?.Mesh;
+        XRMaterial? material = meshRenderer?.Material;
         _matQuadTransformBuf?.Destroy();
         _matQuadColorBuf?.Destroy();
         _matQuadBoundsBuf?.Destroy();
-        _matQuadMesh?.Destroy();
+        _matQuadUvBuf?.Destroy();
+        foreach (XRMeshRenderer texturedMesh in _materialTextureMeshes.Values)
+        {
+            XRMaterial? texturedMaterial = texturedMesh.Material;
+            texturedMesh.Destroy();
+            texturedMaterial?.Destroy();
+        }
+        _materialTextureMeshes.Clear();
+        _staleMaterialTextures.Clear();
+        meshRenderer?.Destroy();
+        mesh?.Destroy();
+        material?.Destroy();
+        _matQuadTransformBuf = null;
+        _matQuadColorBuf = null;
+        _matQuadBoundsBuf = null;
+        _matQuadUvBuf = null;
+        _matQuadMesh = null;
 
         foreach (var gpu in _textGPU.Values)
             gpu.Dispose();

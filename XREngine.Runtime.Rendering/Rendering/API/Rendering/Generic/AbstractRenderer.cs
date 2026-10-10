@@ -73,6 +73,11 @@ namespace XREngine.Rendering
         public virtual RendererBackendId BackendId => default;
         public long BackendGeneration { get; }
         public virtual bool IsBackendReplacementFrameReady => true;
+        /// <summary>
+        /// Whether a render-command exception must abort the complete frame rather than
+        /// submit an incomplete output after the command container continues.
+        /// </summary>
+        public virtual bool RequiresAtomicFrameAuthoring => false;
         internal virtual bool AdvancedPickingSourceRequiresSubmissionAcceptance => false;
         private int _acceptsBackendWork = 1;
         private long _nextOutputCompletionReceiptId;
@@ -309,7 +314,7 @@ namespace XREngine.Rendering
             RenderFrame(delta);
         }
 
-        public void Dispose()
+        public virtual void Dispose()
         {
             //UnlinkWindow();
             //_viewports.Clear();
@@ -471,7 +476,21 @@ namespace XREngine.Rendering
         public BoundingRectangle CurrentRenderArea
             => _renderAreaStack.Count > 0
             ? _renderAreaStack.Peek()
-            : new BoundingRectangle(0, 0, XRWindow.RenderWindowSize.X, XRWindow.RenderWindowSize.Y);
+            : ResolveFullRenderArea();
+
+        private BoundingRectangle ResolveFullRenderArea()
+        {
+            if (!HasDesktopWindowServices)
+            {
+                RenderTargetOutputProperties? output = PresentationTarget.OutputProperties;
+                return output is { } properties
+                    ? new BoundingRectangle(0, 0, checked((int)properties.Width), checked((int)properties.Height))
+                    : BoundingRectangle.Empty;
+            }
+
+            var size = XRWindow.RenderWindowSize;
+            return new BoundingRectangle(0, 0, size.X, size.Y);
+        }
 
         public abstract void CropRenderArea(BoundingRectangle region);
         public abstract void SetRenderArea(BoundingRectangle region);
@@ -486,9 +505,9 @@ namespace XREngine.Rendering
 
         public virtual void ClearRenderArea()
         {
-            var size = XRWindow.RenderWindowSize;
-            if (size.X > 0 && size.Y > 0)
-                SetRenderArea(new BoundingRectangle(0, 0, size.X, size.Y));
+            BoundingRectangle area = ResolveFullRenderArea();
+            if (area.Width > 0 && area.Height > 0)
+                SetRenderArea(area);
         }
         public abstract void SetCroppingEnabled(bool enabled);
         public virtual bool SetIndexedViewportScissors(
@@ -1100,6 +1119,14 @@ namespace XREngine.Rendering
         public virtual bool UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings, float deltaTime, bool generateMipmapsNow)
             => throw new NotSupportedException();
 
+        /// <summary>
+        /// Updates exposure with an explicitly selected cooked pipeline program.
+        /// Backends with built-in exposure programs preserve their existing implementation.
+        /// </summary>
+        public virtual bool UpdateAutoExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, ColorGradingSettings settings,
+            float deltaTime, bool generateMipmapsNow, string? gpuProgramBinding)
+            => UpdateAutoExposureGpu(sourceTex, exposureTex, settings, deltaTime, generateMipmapsNow);
+
         public void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
             => CalcDotLuminanceFrontAsync(region, withTransparency, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
@@ -1144,6 +1171,13 @@ namespace XREngine.Rendering
         public abstract void AllowDepthWrite(bool allow);
         public abstract void DepthFunc(EComparison always);
 
+        /// <summary>Returns an active immutable pass convention when the backend owns an explicit view scope.</summary>
+        public virtual bool TryGetFrozenViewDepthMode(out XRCamera.EDepthMode depthMode)
+        {
+            depthMode = XRCamera.EDepthMode.Normal;
+            return false;
+        }
+
         public abstract void EnableStencilTest(bool enable);
         public abstract void StencilFunc(EComparison function, int reference, uint mask);
         public abstract void StencilOp(EStencilOp sfail, EStencilOp dpfail, EStencilOp dppass);
@@ -1165,6 +1199,9 @@ namespace XREngine.Rendering
         public abstract void DisableSampleShading();
 
         public abstract void DispatchCompute(XRRenderProgram program, int numGroupsX, int numGroupsY, int numGroupsZ);
+
+        /// <summary>Clears recorder-owned transient bindings around a complete compute publication attempt.</summary>
+        public virtual void ResetComputeProgramBindings(XRRenderProgram program) { }
 
         /// <summary>
         /// Attempts to accept a compute dispatch into the renderer's ordered command stream.

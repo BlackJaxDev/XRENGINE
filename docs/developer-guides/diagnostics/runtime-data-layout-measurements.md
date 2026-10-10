@@ -18,7 +18,7 @@ qualify the published asset reader.
 {
   "version": 1,
   "monkeyBall": {
-    "identity": "monkeyball-world@<content-revision>",
+    "identity": "rollingball-world@<content-revision>",
     "archive": "<cooked-game-archive>",
     "entry": "<world-entry>"
   },
@@ -28,6 +28,9 @@ qualify the published asset reader.
   }
 }
 ```
+
+Keep the `monkeyBall` manifest field for version-1 fixture compatibility. It
+selects the Rolling Ball world asset.
 
 The report `runtime-data-layout.json` includes runtime, OS, processor count,
 GC mode, manifest hash, and fixture content hashes. Failures are included in the
@@ -41,7 +44,7 @@ The networking lane requires no manifest and no graphics device. The transform
 lane requires Vulkan and uses the production submission path; it does not
 silently substitute a CPU renderer.
 
-Asset measurements load MonkeyBall once and load/unload the avatar twenty times
+Asset measurements load the Rolling Ball world once and load/unload the avatar twenty times
 per repeat. Each repeat reopens archives once; churn cycles share that mapping.
 The report separates load/unload wall time, total managed allocation, collection
 counts, archive opens, native pool usage, and last-GC LOH/heap sizes. The imported

@@ -219,6 +219,9 @@ public static class RuntimeVrInputServices
         }
     }
 
+    /// <summary>Whether no application VR input provider has been installed.</summary>
+    public static bool IsDefaultProvider => ReferenceEquals(Current, Default);
+
     public static bool HasActions
         => Current is IRuntimeVrActionSetServices actionSet && actionSet.HasActions;
 

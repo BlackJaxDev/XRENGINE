@@ -69,7 +69,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                 using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(renderPass);
                 using var cameraScope = pipeline.RenderState.PushRenderingCamera(camera);
                 if (meshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
-                    collection.RenderGPU(renderPass, meshSubmissionStrategy);
+                    collection.RenderGPU(renderPass, meshSubmissionStrategy, int.MinValue,
+                        AbstractRenderer.Current is IAuthoredIndexedBackendCapability
+                            ? EAuthoredIndexedCpuReplayPolicy.MeshesAndNonMesh : EAuthoredIndexedCpuReplayPolicy.None);
                 else
                     collection.RenderCPU(renderPass, false, camera);
             }

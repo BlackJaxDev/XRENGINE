@@ -8,6 +8,16 @@ namespace XREngine
 {
     public partial class AssetManager
     {
+        private bool IsCurrentHostWatcherSource(IRuntimeAssetSource? source, int epoch)
+            => SupportsSynchronousAssetWork
+                && ReferenceEquals(_watcherSourceAtSubscription, source)
+                && _watcherEpochAtSubscription == epoch
+                && ReferenceEquals(_runtimeAssetSource, source)
+                && RuntimeSourceEpoch == epoch;
+
+        private bool IsCurrentHostWatcherSource()
+            => IsCurrentHostWatcherSource(_runtimeAssetSource, RuntimeSourceEpoch);
+
         public event Action<AssetFileChangeEventArgs>? EngineFileCreated;
         public event Action<AssetFileChangeEventArgs>? EngineFileChanged;
         public event Action<AssetFileChangeEventArgs>? EngineFileDeleted;
@@ -20,7 +30,7 @@ namespace XREngine
 
         void OnEngineFileCreated(object sender, AssetFileChangeEventArgs args)
         {
-            if (ShouldIgnoreWatcherEvent(args.FullPath))
+            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
 
             OnFileCreated(args);
@@ -28,7 +38,7 @@ namespace XREngine
         }
         void OnGameFileCreated(object sender, AssetFileChangeEventArgs args)
         {
-            if (ShouldIgnoreWatcherEvent(args.FullPath))
+            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
 
             OnFileCreated(args);
@@ -43,25 +53,33 @@ namespace XREngine
 
         async void OnEngineFileChanged(object sender, AssetFileChangeEventArgs args)
         {
-            if (ShouldIgnoreWatcherEvent(args.FullPath))
+            IRuntimeAssetSource? source = _runtimeAssetSource;
+            int epoch = RuntimeSourceEpoch;
+            if (!IsCurrentHostWatcherSource(source, epoch) || ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
 
-            await OnFileChanged(args);
+            await OnFileChanged(args, source, epoch);
+            if (!IsCurrentHostWatcherSource(source, epoch))
+                return;
             EngineFileChanged?.Invoke(args);
         }
         async void OnGameFileChanged(object sender, AssetFileChangeEventArgs args)
         {
-            if (ShouldIgnoreWatcherEvent(args.FullPath))
+            IRuntimeAssetSource? source = _runtimeAssetSource;
+            int epoch = RuntimeSourceEpoch;
+            if (!IsCurrentHostWatcherSource(source, epoch) || ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
 
-            await OnFileChanged(args);
+            await OnFileChanged(args, source, epoch);
+            if (!IsCurrentHostWatcherSource(source, epoch))
+                return;
             HandleMetadataChanged(args.FullPath);
             RuntimeAssetAuthoringServices.Current.QueueAutoImport(args.FullPath, "changed");
             GameFileChanged?.Invoke(args);
         }
-        private async Task OnFileChanged(AssetFileChangeEventArgs args)
+        private async Task OnFileChanged(AssetFileChangeEventArgs args, IRuntimeAssetSource? source, int epoch)
         {
-            if (ShouldIgnoreWatcherEvent(args.FullPath))
+            if (!IsCurrentHostWatcherSource(source, epoch) || ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
             
             LogFileWatcherEvent(args.FullPath, $"File '{args.FullPath}' was changed.");
@@ -72,7 +90,7 @@ namespace XREngine
 
         void OnEngineFileDeleted(object sender, AssetFileChangeEventArgs args)
         {
-            if (ShouldIgnoreWatcherEvent(args.FullPath))
+            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
 
             OnFileDeleted(args);
@@ -80,7 +98,7 @@ namespace XREngine
         }
         void OnGameFileDeleted(object sender, AssetFileChangeEventArgs args)
         {
-            if (ShouldIgnoreWatcherEvent(args.FullPath))
+            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherEvent(args.FullPath))
                 return;
 
             OnFileDeleted(args);
@@ -115,7 +133,7 @@ namespace XREngine
 
         void OnGameFileRenamed(object sender, AssetFileRenameEventArgs args)
         {
-            if (ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath))
+            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath))
                 return;
 
             OnFileRenamed(args);
@@ -126,7 +144,7 @@ namespace XREngine
         }
         void OnEngineFileRenamed(object sender, AssetFileRenameEventArgs args)
         {
-            if (ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath))
+            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath))
                 return;
 
             OnFileRenamed(args);
@@ -135,6 +153,8 @@ namespace XREngine
 
         private void OnFileRenamed(AssetFileRenameEventArgs args)
         {
+            if (!IsCurrentHostWatcherSource())
+                return;
             LogFileWatcherEvent(args.FullPath, $"File '{args.OldFullPath}' was renamed to '{args.FullPath}'.");
 
             if (LoadedAssetsByPathInternal.TryGetValue(args.OldFullPath, out var asset))

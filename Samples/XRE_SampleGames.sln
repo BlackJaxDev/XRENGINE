@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.4.33213.308
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MonkeyBallVR", "MonkeyBallVR/MonkeyBallVR.csproj", "{49DD2345-D1D4-B210-69F0-60AE26CA580E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RollingBall", "RollingBall/RollingBall.csproj", "{49DD2345-D1D4-B210-69F0-60AE26CA580E}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

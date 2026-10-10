@@ -13,6 +13,7 @@ namespace XREngine
     /// </summary>
     public static partial class Engine
     {
+        private static Func<RemoteJobRequest, Task<RemoteJobResponse?>>? _remoteAssetRequestHandler;
         #region VR Initialization
 
         /// <summary>
@@ -164,7 +165,8 @@ namespace XREngine
             if (Networking is BaseNetworkingManager net)
             {
                 Jobs.RemoteTransport = new RemoteJobNetworkingTransport(net);
-                net.RemoteJobRequestReceived += HandleRemoteJobRequestAsync;
+                _remoteAssetRequestHandler = request => HandleRemoteJobRequestAsync(request, net);
+                net.RemoteJobRequestReceived += _remoteAssetRequestHandler;
             }
             else
             {
@@ -192,7 +194,9 @@ namespace XREngine
             if (Networking is not BaseNetworkingManager net)
                 return;
 
-            net.RemoteJobRequestReceived -= HandleRemoteJobRequestAsync;
+            if (_remoteAssetRequestHandler is { } handler)
+                net.RemoteJobRequestReceived -= handler;
+            _remoteAssetRequestHandler = null;
 
             try
             {
@@ -247,20 +251,20 @@ namespace XREngine
         /// <summary>
         /// Handles incoming remote job requests from the network.
         /// </summary>
-        private static Task<RemoteJobResponse?> HandleRemoteJobRequestAsync(RemoteJobRequest request)
-            => HandleRemoteJobRequestInternalAsync(request);
+        private static Task<RemoteJobResponse?> HandleRemoteJobRequestAsync(RemoteJobRequest request, BaseNetworkingManager networkOwner)
+            => HandleRemoteJobRequestInternalAsync(request, networkOwner);
 
         /// <summary>
         /// Internal implementation for processing remote job requests.
         /// </summary>
-        private static async Task<RemoteJobResponse?> HandleRemoteJobRequestInternalAsync(RemoteJobRequest request)
+        private static async Task<RemoteJobResponse?> HandleRemoteJobRequestInternalAsync(RemoteJobRequest request, BaseNetworkingManager networkOwner)
         {
             if (request is null)
                 return null;
 
             return request.Operation switch
             {
-                RemoteJobRequest.Operations.AssetLoad => await HandleRemoteAssetLoadAsync(request).ConfigureAwait(false),
+                RemoteJobRequest.Operations.AssetLoad => await HandleRemoteAssetLoadAsync(request, networkOwner).ConfigureAwait(false),
                 _ => RemoteJobResponse.FromError(request.JobId, $"Unsupported remote job operation '{request.Operation}'."),
             };
         }
@@ -268,8 +272,10 @@ namespace XREngine
         /// <summary>
         /// Handles remote asset load requests by resolving the asset and returning its bytes.
         /// </summary>
-        private static async Task<RemoteJobResponse?> HandleRemoteAssetLoadAsync(RemoteJobRequest request)
+        private static async Task<RemoteJobResponse?> HandleRemoteAssetLoadAsync(RemoteJobRequest request, BaseNetworkingManager networkOwner)
         {
+            AssetManager owner = Assets;
+            string? localPeerId = networkOwner.LocalPeerId;
             string? path = null;
             request.Metadata?.TryGetValue("path", out path);
             Guid assetId = Guid.Empty;
@@ -278,55 +284,17 @@ namespace XREngine
 
             try
             {
-                byte[]? payload = null;
-                string? resolvedPath = null;
-
                 if (request.TransferMode == RemoteJobTransferMode.PushDataToRemote && request.Payload is { Length: > 0 })
-                {
-                    payload = request.Payload;
-                }
-                else if (assetId != Guid.Empty)
-                {
-                    if (Assets.TryGetAssetByID(assetId, out var existing) && !string.IsNullOrWhiteSpace(existing.FilePath) && File.Exists(existing.FilePath))
-                    {
-                        resolvedPath = existing.FilePath;
-                        payload = await File.ReadAllBytesAsync(existing.FilePath).ConfigureAwait(false);
-                    }
-                    else if (Assets.TryResolveAssetPathById(assetId, out var resolvedByMeta) && !string.IsNullOrWhiteSpace(resolvedByMeta) && File.Exists(resolvedByMeta))
-                    {
-                        resolvedPath = resolvedByMeta;
-                        payload = await File.ReadAllBytesAsync(resolvedByMeta).ConfigureAwait(false);
-                    }
-                }
-                else if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
-                {
-                    resolvedPath = path;
-                    payload = await File.ReadAllBytesAsync(path).ConfigureAwait(false);
-                }
+                    return BuildRemoteAssetResponse(request, request.Payload, null, localPeerId);
 
-                if (payload is null)
+                RemoteJobResponse? response = await owner.ServeRemoteAssetAsync(assetId, path,
+                    (payload, resolvedPath) => BuildRemoteAssetResponse(request, payload, resolvedPath, localPeerId))
+                    .ConfigureAwait(false);
+                if (response is null)
                     return RemoteJobResponse.FromError(request.JobId, assetId != Guid.Empty
                         ? $"Asset not found for remote load with id '{assetId}'."
                         : $"Asset not found for remote load at '{path}'.");
-
-                IReadOnlyDictionary<string, string>? responseMetadata = null;
-                if (!string.IsNullOrWhiteSpace(resolvedPath))
-                {
-                    responseMetadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        ["path"] = resolvedPath,
-                    };
-                }
-
-                return new RemoteJobResponse
-                {
-                    JobId = request.JobId,
-                    Success = true,
-                    Payload = payload,
-                    Metadata = responseMetadata,
-                    SenderId = Networking is BaseNetworkingManager net ? net.LocalPeerId : null,
-                    TargetId = request.SenderId,
-                };
+                return response;
             }
             catch (Exception ex)
             {
@@ -335,10 +303,27 @@ namespace XREngine
                     JobId = request.JobId,
                     Success = false,
                     Error = ex.Message,
-                    SenderId = Networking is BaseNetworkingManager net ? net.LocalPeerId : null,
+                    SenderId = localPeerId,
                     TargetId = request.SenderId,
                 };
             }
+        }
+
+        private static RemoteJobResponse BuildRemoteAssetResponse(
+            RemoteJobRequest request, byte[] payload, string? resolvedPath, string? localPeerId)
+        {
+            IReadOnlyDictionary<string, string>? responseMetadata = string.IsNullOrWhiteSpace(resolvedPath)
+                ? null
+                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["path"] = resolvedPath };
+            return new RemoteJobResponse
+            {
+                JobId = request.JobId,
+                Success = true,
+                Payload = payload,
+                Metadata = responseMetadata,
+                SenderId = localPeerId,
+                TargetId = request.SenderId,
+            };
         }
 
         #endregion

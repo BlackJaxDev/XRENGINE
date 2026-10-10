@@ -22,6 +22,7 @@ namespace XREngine.Input.Devices
 
         public void RegisterKeyPressed(EKey key, DelButtonState func, bool unregister)
         {
+            OnInputRegistrationChanged();
             if (unregister)
             {
                 int keyIndex = (int)key;
@@ -41,7 +42,10 @@ namespace XREngine.Input.Devices
         }
 
         public void RegisterKeyEvent(EKey key, EButtonInputType type, Action func, bool unregister)
-            => RegisterButtonEvent(unregister ? _buttonStates[(int)key] : FindOrCacheKey(key), type, func, unregister);
+        {
+            OnInputRegistrationChanged();
+            RegisterButtonEvent(unregister ? _buttonStates[(int)key] : FindOrCacheKey(key), type, func, unregister);
+        }
 
         private readonly List<DelKeystroke> _keystrokeRegistrations = [];
         private readonly List<Action<char>> _keyCharacterRegistrations = [];
@@ -50,6 +54,7 @@ namespace XREngine.Input.Devices
 
         public void RegisterKeystroke(DelKeystroke func, bool unregister)
         {
+            OnInputRegistrationChanged();
             if (unregister)
                 _keystrokeRegistrations.Remove(func);
             else
@@ -58,6 +63,7 @@ namespace XREngine.Input.Devices
 
         public void RegisterKeyCharacter(Action<char> action, bool unregister)
         {
+            OnInputRegistrationChanged();
             if (unregister)
                 _keyCharacterRegistrations.Remove(action);
             else
@@ -66,14 +72,16 @@ namespace XREngine.Input.Devices
 
         protected void Keystroke(EKey key, bool pressed)
         {
-            foreach (var keystroke in _keystrokeRegistrations)
-                keystroke(key, pressed);
+            ulong revision = InputDispatchRevision;
+            for (int i = 0; i < _keystrokeRegistrations.Count && revision == InputDispatchRevision; i++)
+                _keystrokeRegistrations[i](key, pressed);
         }
 
         protected void KeyCharacter(char character)
         {
-            foreach (var keyCharacter in _keyCharacterRegistrations)
-                keyCharacter(character);
+            ulong revision = InputDispatchRevision;
+            for (int i = 0; i < _keyCharacterRegistrations.Count && revision == InputDispatchRevision; i++)
+                _keyCharacterRegistrations[i](character);
         }
 
         public bool GetKeyState(EKey key, EButtonInputType type)
@@ -83,6 +91,6 @@ namespace XREngine.Input.Devices
         public bool Released(EKey key)
             => GetKeyState(key, EButtonInputType.Released);
         protected void TickKeyState(EKey key, bool isPressed, float delta)
-            => _buttonStates[(int)key]?.Tick(isPressed, delta);
+            => _buttonStates[(int)key]?.Tick(isPressed, delta, this, InputDispatchRevision);
     }
 }

@@ -9,4 +9,6 @@ public enum EAdvancedIndirectSubmissionMode
     MultiDrawIndirect,
     MultiDrawIndirectCount,
     MeshTasksIndirectCount,
+    /// <summary>GPU triangle compaction and zero-first-instance vertex-pulled indirect draws.</summary>
+    GpuVertexPullIndirect,
 }

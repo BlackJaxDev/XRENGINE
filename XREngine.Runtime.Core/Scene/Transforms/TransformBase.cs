@@ -13,6 +13,7 @@ using XREngine.Components.Scene.Transforms;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Transforms;
+using XREngine.Execution;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Scene.Transforms
@@ -112,7 +113,10 @@ namespace XREngine.Scene.Transforms
         private static Type[] ResolveTransformTypes()
         {
             if (!XRRuntimeEnvironment.IsPublishedBuild)
+            {
+                AotRuntimeMetadataStore.NoteBrowserDevelopmentTypeDiscovery(nameof(TransformBase));
                 return GetAllTransformTypes();
+            }
 
             AotRuntimeMetadata metadata = AotRuntimeMetadataStore.RequireMetadata();
             if (metadata.TransformTypes is null || metadata.TransformTypes.Length == 0)
@@ -252,6 +256,17 @@ namespace XREngine.Scene.Transforms
         [MemoryPackIgnore]
         public Guid EffectiveSerializedReferenceId
             => SerializedReferenceId != Guid.Empty ? SerializedReferenceId : ID;
+
+        // YAML owns its reference-only representation. The generic cooked member
+        // stream instead needs this inherited nonpublic bridge so both scene-owned
+        // transforms and detached carriers retain the same authored identity without
+        // changing their independent runtime/object-cache IDs.
+        internal const string CookedReferenceIdentityMemberName = nameof(CookedBinarySerializedReferenceId);
+        protected Guid CookedBinarySerializedReferenceId
+        {
+            get => EffectiveSerializedReferenceId;
+            set => SerializedReferenceId = value;
+        }
 
         public bool MatchesSerializedReferenceId(Guid id)
             => id != Guid.Empty && EffectiveSerializedReferenceId == id;
@@ -804,6 +819,9 @@ namespace XREngine.Scene.Transforms
 
         void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
         {
+            if (SerializedReferenceId == Guid.Empty)
+                throw new InvalidDataException("CookedTransform.ReferenceIdentityMissing: generic transform cache lacks its serialized reference identity; recook content with the matching engine build.");
+
             // Deserialization may replace the EventList while property notifications are suppressed.
             // Re-attach invariants that are normally installed via property change callbacks.
             _children ??= new EventList<TransformBase>() { ThreadSafe = true };
@@ -1140,7 +1158,12 @@ namespace XREngine.Scene.Transforms
         /// If false, they will be marked as dirty and recalculated at the end of the update.
         /// </summary>
         public virtual Task RecalculateMatrixHierarchy(bool forceWorldRecalc, bool setRenderMatrixNow, ELoopType childRecalcType)
-            => RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow)
+        {
+            if (childRecalcType != ELoopType.Sequential &&
+                (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser()))
+                throw new InvalidOperationException("Caller-thread transform hierarchies require sequential recalculation.");
+
+            return RecalculateMatrices(forceWorldRecalc, setRenderMatrixNow)
                 ? childRecalcType switch
                 {
                     ELoopType.Asynchronous => ChildrenRecalcAsync(setRenderMatrixNow),
@@ -1148,6 +1171,7 @@ namespace XREngine.Scene.Transforms
                     _ => ChildrenRecalcSequential(setRenderMatrixNow),
                 }
                 : Task.CompletedTask;
+        }
 
         /// <summary>
         /// Updates a hierarchy on its owning thread without task waits or worker
@@ -1216,6 +1240,11 @@ namespace XREngine.Scene.Transforms
 
         public Task SetRenderMatrix(Matrix4x4 matrix, bool recalcAllChildRenderMatrices = true)
         {
+            if (recalcAllChildRenderMatrices && (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser()))
+            {
+                SetRenderMatrixHierarchyImmediate(matrix);
+                return Task.CompletedTask;
+            }
             SetRenderMatrixImmediate(matrix);
 
             if (recalcAllChildRenderMatrices)
@@ -1229,6 +1258,29 @@ namespace XREngine.Scene.Transforms
         {
             PublishRenderState(matrix);
             NotifyMatrixChange(16);
+        }
+
+        /// <summary>Publishes the render matrix and every descendant on the owning caller thread.</summary>
+        public void SetRenderMatrixHierarchyImmediate(Matrix4x4 matrix)
+        {
+            SetRenderMatrixImmediate(matrix);
+            var children = RentChildrenCopy(out int count);
+            Matrix4x4 parentRenderMatrix = RenderMatrix;
+            AffineMatrix4x3 parentRenderAffine = default;
+            bool canUseAffine = IsGuaranteedAffine && AffineMatrix4x3.TryFromMatrix4x4(parentRenderMatrix, out parentRenderAffine);
+            try
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    TransformBase child = children[i];
+                    child.SetRenderMatrixHierarchyImmediate(
+                        ComposeChildRenderMatrix(child, parentRenderMatrix, canUseAffine, parentRenderAffine));
+                }
+            }
+            finally
+            {
+                ReturnChildrenCopy(children);
+            }
         }
 
         private void PublishRenderState(Matrix4x4 matrix) => WriteMatrix(2, matrix);
@@ -1558,6 +1610,11 @@ namespace XREngine.Scene.Transforms
         }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            // World observers can activate components and mark this transform dirty.
+            // Bind its matrix storage before those observers run.
+            if (propName == nameof(World))
+                UpdateHierarchyStore();
+
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
@@ -1580,7 +1637,6 @@ namespace XREngine.Scene.Transforms
                         World = w;
                     break;
                 case nameof(World):
-                    UpdateHierarchyStore();
                     _debugHandle?.UpdateWorld(World);
                     MarkWorldModified();
                     if (SceneNode is not null)

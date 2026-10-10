@@ -11,7 +11,13 @@ Bootstrap. `XREngine.Runtime.Net.Osc` owns OSC/VMC transport components. Type
 namespaces remain stable even when implementation files live in these separate
 projects. See [Runtime Project Organization](../../architecture/runtime/project-organization.md).
 
-Current runtime support is direct client/server UDP. Peer-to-peer networking with dynamic connection-host switching is a planned feature tracked in [Peer-To-Peer Host Switching Implementation](../../work/design/networking/peer-to-peer-host-switching.md).
+Native runtime support includes direct client/server UDP and managed encrypted TLS ingress. Peer-to-peer networking with dynamic connection-host switching is a planned feature tracked in [Peer-To-Peer Host Switching Implementation](../../work/design/networking/peer-to-peer-host-switching.md).
+
+The portable [browser realtime transport](browser-realtime.md) carries the same
+managed admission and replication datagrams over WebSocket through a matching
+encrypted server gateway. Its asynchronous client composition, origin and
+credential policy, bounded queues, and remaining live-acceptance requirements
+are documented separately; the desktop synchronous bootstrap does not start it.
 
 For local-dev orchestration and tests, `XREngine.ControlPlane` provides an in-process control-plane DLL that can create/list/join instances, issue opaque session tokens, track basic host capacity, verify local world package manifests, and generate server/client launch environment variables. See [XRENGINE Control Plane](control-plane.md).
 

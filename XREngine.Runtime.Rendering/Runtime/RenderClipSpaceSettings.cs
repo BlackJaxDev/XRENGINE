@@ -36,6 +36,11 @@ public static class RenderClipSpacePolicy
 {
     public static ERenderClipSpaceYDirection FramebufferTextureYDirection(RuntimeGraphicsApiKind backend)
     {
+        // WebGPU's positive-height viewport always maps positive NDC Y toward
+        // texture row zero, independently of the authored projection convention.
+        if (backend == RuntimeGraphicsApiKind.WebGPU)
+            return ERenderClipSpaceYDirection.YDown;
+
         ERenderClipSpaceYDirection clipY = RuntimeEngine.Rendering.Settings.ClipSpaceYDirection;
         if (backend != RuntimeGraphicsApiKind.Vulkan)
             return clipY;

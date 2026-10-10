@@ -1,0 +1,220 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-gtao-blur-horizontal",
+  "pass": "gtao-blur-horizontal",
+  "source": "GTAOBlur.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "gtaoBlurVertex",
+    "fragment": "gtaoBlurFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 4,
+    "maxBindingsPerBindGroup": 2,
+    "maxUniformBufferBindingSize": 64,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 3,
+    "maxSamplersPerShaderStage": 2
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 12,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "GTAO",
+        "physicalName": "gtaoBlur_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 64,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "outputSize_0",
+            "provider": "OutputSize",
+            "offset": 0,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "depthSize_0",
+            "provider": "DepthSize",
+            "offset": 8,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "texelSize_0",
+            "provider": "TexelSize",
+            "offset": 16,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "blurDirection_0",
+            "provider": "BlurDirection",
+            "offset": 24,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "denoiseRadius_0",
+            "provider": "DenoiseRadius",
+            "offset": 32,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "denoiseSharpness_0",
+            "provider": "DenoiseSharpness",
+            "offset": 36,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "denoiseEnabled_0",
+            "provider": "DenoiseEnabled",
+            "offset": 40,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "useInputNormals_0",
+            "provider": "UseInputNormals",
+            "offset": 44,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "useNormalWeightedBlur_0",
+            "provider": "UseNormalWeightedBlur",
+            "offset": 48,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "depthMode_0",
+            "provider": "DepthMode",
+            "offset": 52,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "outputOrigin_0",
+            "provider": "OutputOrigin",
+            "offset": 56,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          }
+        ]
+      },
+      {
+        "name": "GTAOInputTexture",
+        "physicalName": "gtaoInputTexture_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "GTAOInputTexture",
+        "physicalName": "gtaoInputSampler_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "DepthView",
+        "physicalName": "depthView_0",
+        "group": 2,
+        "binding": 0,
+        "kind": "texture-depth-2d",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Normal",
+        "physicalName": "normalTexture_0",
+        "group": 3,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Normal",
+        "physicalName": "normalSampler_0",
+        "group": 3,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": { "pass": "gtao-blur-horizontal" }
+}

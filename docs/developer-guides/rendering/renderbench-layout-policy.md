@@ -38,6 +38,13 @@ The original `gpu-lighting-pass.jsonc` remains the one-pass control.
 
 Example paired invocation (write evidence below the current task run):
 
+Reuse an existing active validation run when possible. If the directory limit
+requires pruning, `Limit-AgentValidation.ps1` requires `-InactiveTaskRuns` with
+exact run names confirmed inactive with their owners. A missing process manifest
+does not establish inactivity; the command refuses to guess which task is safe
+to remove. Do not select another worker's shared outputs merely because no
+editor process is running.
+
 ```powershell
 pwsh Tools/Limit-AgentValidation.ps1 -ReserveTaskRun
 $run = Join-Path 'Build/_AgentValidation' "$(Get-Date -Format yyyyMMdd-HHmmss)-layout-policy"

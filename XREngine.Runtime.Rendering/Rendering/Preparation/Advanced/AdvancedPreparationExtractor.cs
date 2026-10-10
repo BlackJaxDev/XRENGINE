@@ -662,7 +662,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         {
             AdvancedDrawSubmissionRecord submission =
                 publication.Submission.Records[commandIndex];
-            if ((submission.Flags & (uint)GPUIndirectRenderFlags.Skinned) == 0u)
+            if (!RequiresAggregateDeformation(submission.Flags))
                 continue;
             AdvancedManagedDeformationSourceRow source =
                 publication.Submission.DeformationSources[commandIndex];
@@ -717,6 +717,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         bool commandChanged = false;
         XRMeshRenderer? renderer = deformationSource.Renderer;
         XRMesh? mesh = deformationSource.Mesh;
+        bool skinned = RequiresAggregateDeformation(command.Flags);
 
         EAdvancedVisibilityPreparationFlags visibilityFlags =
             commandChanged
@@ -752,6 +753,18 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             AabbMin = canonicalGeometry.BoundsMin,
             AabbMax = canonicalGeometry.BoundsMax,
         };
+        if (skinned && _gpuDeformation.UsesPackedAggregateInputs)
+        {
+            if (!publication.Draws.TryGet(draw, out AdvancedDrawRecord canonicalDraw) ||
+                !publication.Instances.TryGet(canonicalDraw.Instance, out AdvancedInstanceRecord instance))
+                throw new InvalidOperationException("Aggregate visibility requires the exact canonical instance bounds.");
+            // Geometry is immutable bind-pose topology. Animated bounds belong to the current instance publication.
+            commandBounds.BoundingSphere = instance.BoundsSphere;
+            commandBounds.AabbMin = instance.BoundsMin;
+            commandBounds.AabbMax = instance.BoundsMax;
+            if (mesh is { HasBlendshapes: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+                visibilityFlags |= EAdvancedVisibilityPreparationFlags.Uncertain | EAdvancedVisibilityPreparationFlags.ConservativeVisible;
+        }
         _visibilityCandidates[commandIndex] =
             new AdvancedVisibilityCandidate(
                 draw,
@@ -767,8 +780,6 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             hasCanonicalGeometry,
             in canonicalGeometry,
             command.SkinID);
-        bool skinned =
-            (command.Flags & (uint)GPUIndirectRenderFlags.Skinned) != 0u;
         if (skinned && (renderer is null || mesh is not { VertexCount: > 0 }))
             throw new InvalidOperationException(
                 $"Advanced draw {draw} requires a captured primitive mesh and renderer for deformation.");
@@ -917,6 +928,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         AdvancedGpuHandle meshHandle = geometry;
         AdvancedGpuHandle poseHandle = deformation;
         AdvancedGpuHandle outputHandle = deformation;
+        if (_gpuDeformation.UsesPackedAggregateInputs)
+            _gpuDeformation.SetJobControls(poseHandle, renderer);
 
         uint topologyGeneration = ComputeTopologyGeneration(
             mesh,
@@ -975,7 +988,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         // culling; its conservative contribution is refined by visibility later.
         float contribution = 1.0f;
         _boneTierScratch[0] = new AdvancedBoneLodTier(
-            renderer.ActiveSkinPaletteCount,
+            gpuPoseSlice.BoneCount,
             EAdvancedAnimationBoneRequirement.RuntimeRequired |
             EAdvancedAnimationBoneRequirement.IkTarget |
             EAdvancedAnimationBoneRequirement.Attachment |
@@ -985,18 +998,19 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 poseHandle,
                 contribution,
                 newlyVisible,
-                renderer.ActiveSkinPaletteCount,
+                gpuPoseSlice.BoneCount,
                 frameId);
 
         EAdvancedDeformationFeatureFlags features =
-            EAdvancedDeformationFeatureFlags.Skinning |
             EAdvancedDeformationFeatureFlags.Velocity |
             EAdvancedDeformationFeatureFlags.PrecomposedPalette;
+        if (!_gpuDeformation.UsesPackedAggregateInputs || mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning)
+            features |= EAdvancedDeformationFeatureFlags.Skinning;
         if (mesh.HasNormals)
             features |= EAdvancedDeformationFeatureFlags.Normals;
         if (mesh.HasTangents)
             features |= EAdvancedDeformationFeatureFlags.Tangents;
-        if (mesh.HasSpillInfluences)
+        if ((features & EAdvancedDeformationFeatureFlags.Skinning) != 0 && mesh.HasSpillInfluences)
             features |= EAdvancedDeformationFeatureFlags.SpillInfluences;
         if (gpuPoseSlice.ActiveBlendshapeCount != 0u &&
             gpuMeshSlice.BlendshapeCount != 0u)
@@ -1011,8 +1025,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             features |= EAdvancedDeformationFeatureFlags.VelocityInvalid;
 
         uint poseGeneration = FoldGeneration(
-            renderer.SkinnedOutputVersion,
-            renderer.BlendshapeWeightsVersion,
+            gpuPoseSlice.PoseVersion,
+            gpuPoseSlice.BlendshapeVersion,
             schedule.BoneTier);
         ulong vertexLayoutId = AdvancedDeformedVertex.CanonicalLayoutId;
         AdvancedDeformationJobRecord job = new()
@@ -1068,6 +1082,12 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             _deformedArena.InvalidateOwnerHistory(slice.Owner);
         return added;
     }
+
+    private bool RequiresAggregateDeformation(uint flags)
+        => _gpuDeformation.UsesPackedAggregateInputs
+            ? ((flags & (uint)GPUIndirectRenderFlags.Skinned) != 0 && RuntimeEngine.Rendering.Settings.AllowSkinning) ||
+              ((flags & (uint)GPUIndirectRenderFlags.BlendShapes) != 0 && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+            : (flags & (uint)GPUIndirectRenderFlags.Skinned) != 0;
 
     private void ApplyDeformationAdmissionVerdicts()
     {

@@ -18,4 +18,11 @@ public enum EAdvancedShadowRecordFlags : uint
     ReversedDepth = 1u << 7,
     /// <summary>Moment storage linearizes perspective depth into the rendered near/far range.</summary>
     LinearizedPerspectiveMoments = 1u << 8,
+    /// <summary>Standalone browser depth with the fixed eight-blocker/eight-filter PCSS payload.</summary>
+    BrowserStandalonePcss = 1u << 9,
+    /// <summary>
+    /// Frozen browser producer candidate. The frame stamp identifies its capture;
+    /// the native consumer must validate the matching production or authorized reuse receipt.
+    /// </summary>
+    BrowserStandaloneCandidate = 1u << 10,
 }

@@ -1,0 +1,2 @@
+#define XRE_STANDARD_LIT_TEXTURE 1
+#include "StandardLitColorDirectionalShadow.slang"

@@ -1,0 +1,247 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-authored-textured-depth-normal-f6",
+  "pass": "depth-normal",
+  "source": "AuthoredTexturedDepthNormal.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "depthNormalVertex",
+    "fragment": "depthNormalFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 5,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 52,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 10,
+    "maxUniformBufferBindingSize": 128,
+    "maxDynamicUniformBuffersPerPipelineLayout": 3,
+    "maxUniformBuffersPerShaderStage": 2,
+    "maxSampledTexturesPerShaderStage": 3,
+    "maxSamplersPerShaderStage": 3
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.authored-lit-textured.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 52,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          },
+          {
+            "location": 1,
+            "offset": 12,
+            "format": "float32x3",
+            "semantic": "normal"
+          },
+          {
+            "location": 2,
+            "offset": 24,
+            "format": "float32x2",
+            "semantic": "uv0"
+          },
+          {
+            "location": 3,
+            "offset": 32,
+            "format": "float32x4",
+            "semantic": "tangent-or-zero"
+          },
+          {
+            "location": 4,
+            "offset": 48,
+            "format": "float32",
+            "semantic": "tangent-presence"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "View",
+        "physicalName": "view_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 64,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "viewProjection_0",
+            "provider": "ViewProjection",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "Object",
+        "physicalName": "object_0",
+        "group": 0,
+        "binding": 1,
+        "kind": "uniform",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 128,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "modelMatrix_0",
+            "provider": "ModelMatrix",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "normalMatrix_0",
+            "provider": "NormalMatrix",
+            "offset": 64,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "AuthoredTexturedBaseColorTexture",
+        "physicalName": "baseColorTexture_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AuthoredTexturedBaseColorTexture",
+        "physicalName": "baseColorSampler_0",
+        "group": 1,
+        "binding": 2,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AuthoredTexturedNormalTexture",
+        "physicalName": "normalTexture_0",
+        "group": 1,
+        "binding": 3,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AuthoredTexturedNormalTexture",
+        "physicalName": "normalSampler_0",
+        "group": 1,
+        "binding": 4,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AuthoredTexturedOpacityTexture",
+        "physicalName": "opacityTexture_0",
+        "group": 1,
+        "binding": 7,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AuthoredTexturedOpacityTexture",
+        "physicalName": "opacitySampler_0",
+        "group": 1,
+        "binding": 8,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AuthoredTexturedControls",
+        "physicalName": "authoredControls_0",
+        "group": 1,
+        "binding": 9,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "textureFlagsCutoffNormalModeHeightScale_0",
+            "provider": "AuthoredTexturedControls",
+            "offset": 0,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          }
+        ]
+      }
+    ]
+  },
+  "pipeline": {},
+  "materialVariant": {
+    "semantic": "AuthoredLitTextured",
+    "semanticVersion": 1,
+    "vertexProfile": "position-normal-optional-tangent-uv-v1",
+    "outputProfile": "normal-rgba16f-f6-v1"
+  }
+}

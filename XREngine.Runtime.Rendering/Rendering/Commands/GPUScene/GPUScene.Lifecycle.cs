@@ -35,10 +35,12 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void Initialize()
         {
+            ResetMeshSubmissionPublications();
             if (_advancedScenePublisherDisposed)
             {
                 _advancedScenePublisher = new AdvancedGpuScenePublisher();
                 _advancedScenePublisherDisposed = false;
+                _advancedGlobalResources.AuthoredDecals.Release();
                 _advancedGlobalResources = default;
                 Interlocked.Exchange(ref _advancedPublicationRequested, 0);
             }
@@ -68,6 +70,10 @@ namespace XREngine.Rendering.Commands
             _lodTableBuffer = MakeLodTableBuffer();
             _lodRequestBuffer?.Destroy();
             _lodRequestBuffer = MakeLodRequestBuffer();
+            _lodTransitionBuffer?.Destroy();
+            _lodTransitionBuffer = null;
+            Interlocked.Exchange(ref _lodTransitionGpuWritePending, 0);
+            _lodTransitionCpuDirtyIndices.Clear();
             _lodStreamingLastDrainFrameId = 0;
             _lodStreamingHasDrained = false;
             _lodStreamingFailedRequests.Clear();
@@ -143,9 +149,17 @@ namespace XREngine.Rendering.Commands
         public void Destroy()
         {
             _destroyed = true;
+            ResetMeshSubmissionPublications();
             if (!_advancedScenePublisherDisposed)
             {
-                _advancedScenePublisher.Dispose();
+                try { _advancedScenePublisher.Dispose(); }
+                finally
+                {
+                    _advancedGlobalResources.AuthoredDecals.Release();
+                    _advancedGlobalResources = default;
+                    _hasAdvancedGlobalResourceCapture = false;
+                    Interlocked.Exchange(ref _advancedAuthoredDecalsRequested, 0);
+                }
                 _advancedScenePublisherDisposed = true;
             }
             UnsubscribeAllMeshletPayloadChanges();
@@ -195,6 +209,10 @@ namespace XREngine.Rendering.Commands
             _lodTableBuffer = null;
             _lodRequestBuffer?.Destroy();
             _lodRequestBuffer = null;
+            _lodTransitionBuffer?.Destroy();
+            _lodTransitionBuffer = null;
+            Interlocked.Exchange(ref _lodTransitionGpuWritePending, 0);
+            _lodTransitionCpuDirtyIndices.Clear();
             _lodStreamingLastDrainFrameId = 0;
             _lodStreamingHasDrained = false;
             _lodStreamingFailedRequests.Clear();

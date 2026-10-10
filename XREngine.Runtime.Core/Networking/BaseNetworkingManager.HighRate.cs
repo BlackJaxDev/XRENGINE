@@ -202,7 +202,7 @@ public abstract partial class BaseNetworkingManager
     }
 
     /// <summary>
-    /// Writes an uncompressed state-change FRK frame with zeroed sequence fields. The sequence and
+    /// Writes an uncompressed state-change frame with zeroed sequence fields. The sequence and
     /// acknowledgement are stamped when the frame is transmitted.
     /// </summary>
     private static int ComposeHighRateFrame(Span<byte> frame, EStateChangeType type, ReadOnlySpan<byte> payload)
@@ -217,16 +217,29 @@ public abstract partial class BaseNetworkingManager
 
     private void EnqueueHighRate(UdpPeerState peer, ReadOnlySpan<byte> frame)
     {
+        bool overflow = false;
         lock (peer.Sync)
         {
             // One-time allocation per peer. Peers that only ever receive never pay for a ring.
             RealtimePacketSendRing ring = peer.HighRateRing ??= new RealtimePacketSendRing(HighRateRingCapacity, HighRateSlotBytes);
             peer.HighRateSendTicks ??= new long[HighRateRttWindow];
             peer.HighRateSendSequences ??= new ushort[HighRateRttWindow];
-            if (ring.Count == ring.Capacity)
-                Interlocked.Increment(ref _highRateQueueDrops);
-            ring.TryEnqueue(frame, RealtimePacketDropPolicy.DropOldest);
+            bool replacing = ring.Count == ring.Capacity;
+            int previousBytes = replacing && ring.TryPeek(out ReadOnlyMemory<byte> oldest) ? oldest.Length : 0;
+            overflow = UseBoundedRealtimeQueues
+                && ((!replacing && QueuedPacketCount_NoLock(peer) >= RealtimeWebSocketProtocol.MaximumQueuedDatagrams)
+                    || peer.PendingBytes - previousBytes + frame.Length > RealtimeWebSocketProtocol.MaximumQueuedBytes);
+            if (!overflow)
+            {
+                if (replacing)
+                    Interlocked.Increment(ref _highRateQueueDrops);
+                if (ring.TryEnqueue(frame, RealtimePacketDropPolicy.DropOldest) && UseBoundedRealtimeQueues)
+                    peer.PendingBytes += frame.Length - previousBytes;
+            }
         }
+
+        if (overflow)
+            OnRealtimeQueueOverflow();
     }
 
     /// <summary>Transmits queued high-rate frames for one peer and returns how many were sent.</summary>
@@ -246,6 +259,9 @@ public abstract partial class BaseNetworkingManager
             {
                 if (!ring.TryDequeue(out ReadOnlyMemory<byte> packet))
                     break;
+
+                if (UseBoundedRealtimeQueues)
+                    peer.PendingBytes -= packet.Length;
 
                 packet.Span.CopyTo(inner);
                 innerLength = packet.Length;

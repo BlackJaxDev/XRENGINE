@@ -68,7 +68,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="Headless/**/*.cs;SoftwareVulkan/**/*.cs" />
+    <Compile Remove="Headless/**/*.cs;SoftwareVulkan/**/*.cs;ProfilerStartupProbe/**/*.cs" />
     <!-- Unity reference-exporter sources are fixture inputs compiled by Unity. -->
     <Compile Remove="TestData\HumanoidConformance\unity-project\**\*.cs" />
     <!-- Untracked WIP test file using xUnit (Fact) instead of NUnit; excluded until ready -->
@@ -82,17 +82,19 @@
   <ItemGroup>
     <!-- Compile the sample's real gameplay types into the test assembly so
          cooked-world and input regressions do not depend on generated build output. -->
-    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\IMonkeyBallGameInputTarget.cs" Link="Games\MonkeyBallVR\IMonkeyBallGameInputTarget.cs" />
-    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallAction.cs" Link="Games\MonkeyBallVR\MonkeyBallAction.cs" />
-    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallActionSet.cs" Link="Games\MonkeyBallVR\MonkeyBallActionSet.cs" />
-    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallGameComponent.cs" Link="Games\MonkeyBallVR\MonkeyBallGameComponent.cs" />
-    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallGlobalUsings.cs" Link="Games\MonkeyBallVR\MonkeyBallGlobalUsings.cs" />
-    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallPawnComponent.cs" Link="Games\MonkeyBallVR\MonkeyBallPawnComponent.cs" />
-    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallRoundState.cs" Link="Games\MonkeyBallVR\MonkeyBallRoundState.cs" />
-    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallRuntimeDiagnostics.cs" Link="Games\MonkeyBallVR\MonkeyBallRuntimeDiagnostics.cs" />
-    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallRuntimeValidation.cs" Link="Games\MonkeyBallVR\MonkeyBallRuntimeValidation.cs" />
-    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallWorldAsset.cs" Link="Games\MonkeyBallVR\MonkeyBallWorldAsset.cs" />
-    <Compile Include="..\Samples\MonkeyBallVR\Assets\Scripts\MonkeyBallWorldCookedSerializer.cs" Link="Games\MonkeyBallVR\MonkeyBallWorldCookedSerializer.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\IRollingBallGameInputTarget.cs" Link="Games\RollingBall\IRollingBallGameInputTarget.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\IRollingBallPlatformHost.cs" Link="Games\RollingBall\IRollingBallPlatformHost.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallAction.cs" Link="Games\RollingBall\RollingBallAction.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallActionSet.cs" Link="Games\RollingBall\RollingBallActionSet.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallGameComponent.cs" Link="Games\RollingBall\RollingBallGameComponent.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallGlobalUsings.cs" Link="Games\RollingBall\RollingBallGlobalUsings.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallHostRegistration.cs" Link="Games\RollingBall\RollingBallHostRegistration.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallPawnComponent.cs" Link="Games\RollingBall\RollingBallPawnComponent.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallRoundState.cs" Link="Games\RollingBall\RollingBallRoundState.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallRuntimeDiagnostics.cs" Link="Games\RollingBall\RollingBallRuntimeDiagnostics.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallRuntimeValidation.cs" Link="Games\RollingBall\RollingBallRuntimeValidation.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallWorldAsset.cs" Link="Games\RollingBall\RollingBallWorldAsset.cs" />
+    <Compile Include="..\Samples\RollingBall\Assets\Scripts\RollingBallWorldCookedSerializer.cs" Link="Games\RollingBall\RollingBallWorldCookedSerializer.cs" />
   </ItemGroup>
 
 

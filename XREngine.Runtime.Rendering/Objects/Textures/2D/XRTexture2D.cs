@@ -44,6 +44,13 @@ namespace XREngine.Rendering
         {
             Load3rdParty(path);
         }
+
+        public override Task ReloadAsync(string path)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.ReloadAsync(path);
+        }
+
         public override bool Load3rdParty(string filePath)
         {
             string authorityPath = ResolveTextureStreamingAuthorityPathInternal(filePath, out string? originalSourcePath);
@@ -53,8 +60,21 @@ namespace XREngine.Rendering
         public override bool Load3rdParty(string filePath, AssetImportContext context)
             => Load3rdPartyCore(filePath);
 
+        public override Task<bool> Load3rdPartyAsync(string filePath)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Load3rdPartyAsync(filePath);
+        }
+
+        public override Task<bool> Load3rdPartyAsync(string filePath, AssetImportContext context)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Load3rdPartyAsync(filePath, context);
+        }
+
         private bool Load3rdPartyCore(string filePath, string? originalSourcePath = null)
         {
+            RuntimeTextureSourceAccess.RequireHostFiles();
             FilePath = string.IsNullOrWhiteSpace(filePath) ? filePath : Path.GetFullPath(filePath);
             if (!string.IsNullOrWhiteSpace(originalSourcePath))
                 OriginalPath ??= Path.GetFullPath(originalSourcePath);
@@ -118,6 +138,12 @@ namespace XREngine.Rendering
             }
 
             return true;
+        }
+
+        public override Task<bool> Import3rdPartyAsync(string filePath, object? importOptions)
+        {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            return base.Import3rdPartyAsync(filePath, importOptions);
         }
 
         /// <summary>
@@ -197,6 +223,7 @@ namespace XREngine.Rendering
             if (string.IsNullOrWhiteSpace(filePath))
                 throw new ArgumentException("File path must be provided.", nameof(filePath));
 
+            RuntimeTextureSourceAccess.RequireHostFiles();
             XRTexture2D target = texture ?? new XRTexture2D();
             ApplyTextureStreamingAuthorityPath(target, filePath);
             if (string.IsNullOrWhiteSpace(target.Name))
@@ -274,6 +301,7 @@ namespace XREngine.Rendering
             if (string.IsNullOrWhiteSpace(filePath))
                 throw new ArgumentException("File path must be provided.", nameof(filePath));
 
+            RuntimeTextureSourceAccess.RequireHostFiles();
             XRTexture2D target = texture ?? new XRTexture2D();
             ApplyTextureStreamingAuthorityPath(target, filePath);
             if (string.IsNullOrWhiteSpace(target.Name))
@@ -894,6 +922,7 @@ namespace XREngine.Rendering
 
         private static bool LooksLikeTextureAssetFile(string filePath)
         {
+            RuntimeTextureSourceAccess.RequireHostFiles();
             try
             {
                 using FileStream stream = new(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -1011,24 +1040,47 @@ namespace XREngine.Rendering
 
         private static void LoadPreviewFrom3rdParty(string filePath, XRTexture2D target, uint maxPreviewSize)
         {
+            RuntimeTextureSourceAccess.RequireHostFiles();
+            using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+            read.EnsureHostFileAccess("Texture preview import");
+            Mipmap2D? mip = null;
+            bool loaded = false;
             try
             {
-                using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(filePath));
+                byte[] bytes = read.ReadAllBytes(filePath);
+                using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(bytes);
                 using RuntimeImage previewImage = ResizePreviewIfNeeded(sourceImage, maxPreviewSize);
-                target.Mipmaps = [new Mipmap2D(previewImage)];
+                mip = new Mipmap2D(previewImage);
+                using IDisposable publication = read.BeginPublication();
+                target.Mipmaps = [mip];
                 target.AutoGenerateMipmaps = false;
                 target.Resizable = true;
                 target.SizedInternalFormat = DeriveESizedInternalFormat(target.Mipmaps[0].InternalFormat);
+                loaded = true;
             }
-            catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or NotSupportedException)
+            catch (Exception ex) when (
+                (ex is InvalidDataException or InvalidOperationException or NotSupportedException)
+                && !IsAssetSourceReadAdmissionFailure(ex))
             {
+                using IDisposable publication = read.BeginPublication();
                 Debug.TexturesWarning($"Failed to load preview image '{filePath}': {ex.Message}. Using placeholder preview instead.");
                 AssignPlaceholderPreview(target);
             }
+            finally
+            {
+                if (!loaded && mip is not null)
+                    mip.Data?.Dispose();
+            }
         }
+
+        private static bool IsAssetSourceReadAdmissionFailure(Exception error)
+            => error is NotSupportedException notSupported
+                && (notSupported.Message.StartsWith("AssetSource.AsyncReadRequired:", StringComparison.Ordinal)
+                    || notSupported.Message.StartsWith("AssetSource.HostFileUnavailable:", StringComparison.Ordinal));
 
         private static bool TryLoadPreviewFromTextureAsset(string filePath, XRTexture2D target, uint maxPreviewSize)
         {
+            RuntimeTextureSourceAccess.RequireHostFiles();
             try
             {
                 using XREngine.Core.Files.CookedPayloadOwner assetBytes = RuntimeRenderingHostServices.Assets.ReadAllBytesOwned(filePath);
@@ -1184,12 +1236,21 @@ namespace XREngine.Rendering
                 {
                     uint mipWidth = Math.Max(1u, image.Width >> i);
                     uint mipHeight = Math.Max(1u, image.Height >> i);
-                    RuntimeImage resized = RuntimeImageCodecs.Require().Resize(workingImage, mipWidth, mipHeight, RuntimeImageResizeMode.Standard);
-                    if (!ReferenceEquals(workingImage, image))
-                        workingImage.Dispose();
-                    workingImage = resized;
+                    RuntimeImage previousImage = workingImage;
+                    workingImage = RuntimeImageCodecs.Require().Resize(previousImage, mipWidth, mipHeight, RuntimeImageResizeMode.Standard);
+                    if (!ReferenceEquals(previousImage, image))
+                        previousImage.Dispose();
                     mips[i] = new Mipmap2D(workingImage);
                 }
+            }
+            catch
+            {
+                foreach (Mipmap2D? mip in mips)
+                {
+                    if (mip is not null)
+                        mip.Data?.Dispose();
+                }
+                throw;
             }
             finally
             {
@@ -1252,9 +1313,36 @@ namespace XREngine.Rendering
         private static RuntimeImage GetFillerBitmap()
         {
             string? path = RuntimeRenderingHostServices.Assets.TextureFallbackPath;
-            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path) && RuntimeImageCodecs.Current is { } codec)
-                return codec.Decode(File.ReadAllBytes(path));
+            if (RuntimeTextureSourceAccess.CanAccessHostFiles &&
+                !string.IsNullOrWhiteSpace(path) && RuntimeImageCodecs.Current is { } codec)
+            {
+                using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+                read.EnsureHostFileAccess("Texture fallback import");
+                if (read.Exists(path))
+                {
+                    byte[] bytes = read.ReadAllBytes(path);
+                    RuntimeImage image = codec.Decode(bytes);
+                    try
+                    {
+                        using IDisposable publication = read.BeginPublication();
+                        return image;
+                    }
+                    catch
+                    {
+                        image.Dispose();
+                        throw;
+                    }
+                }
 
+                using IDisposable missingPublication = read.BeginPublication();
+                return CreateProceduralFillerBitmap();
+            }
+
+            return CreateProceduralFillerBitmap();
+        }
+
+        private static RuntimeImage CreateProceduralFillerBitmap()
+        {
             const int squareExtent = 4;
             const int dim = squareExtent * 2;
             byte[] pixels = new byte[dim * dim * 4];
@@ -1452,27 +1540,57 @@ namespace XREngine.Rendering
 
         public XRTexture2D(params string[] mipMapPaths)
         {
-            List<Mipmap2D> mips = [];
-            for (int i = 0; i < mipMapPaths.Length; ++i)
+            if (mipMapPaths.Length != 0)
             {
-                string path = mipMapPaths[i];
-                if (path.StartsWith("file://"))
-                    path = path[7..];
-                try
+                try { RuntimeTextureSourceAccess.RequireHostFiles(); }
+                catch
                 {
-                    using RuntimeImage image = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(path));
-                    mips.Add(new Mipmap2D(image));
-                }
-                catch (Exception e)
-                {
-                    Debug.TexturesWarning($"Failed to load texture from path: {path}{Environment.NewLine}{e.Message}");
+                    AbortFailedConstruction();
+                    throw;
                 }
             }
-            Mipmaps = [.. mips];
-            // Derive the sized format from the first mipmap so non-resizable textures
-            // don't fall back to the default Rgba32f.
-            if (Mipmaps.Length > 0)
-                _sizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
+            List<Mipmap2D> mips = [];
+            try
+            {
+                using RuntimeAssetReadLease? read = mipMapPaths.Length > 0 ? RuntimeAssetReadServices.Capture() : null;
+                if (read is not null)
+                    read.EnsureHostFileAccess("Texture mip import");
+                for (int i = 0; i < mipMapPaths.Length; ++i)
+                {
+                    string path = mipMapPaths[i];
+                    if (path.StartsWith("file://"))
+                        path = path[7..];
+                    try
+                    {
+                        using RuntimeImage image = RuntimeImageCodecs.Require().Decode(read!.ReadAllBytes(path));
+                        mips.Add(new Mipmap2D(image));
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception e) when (!IsAssetSourceReadAdmissionFailure(e))
+                    {
+                        Debug.TexturesWarning($"Failed to load texture from path: {path}{Environment.NewLine}{e.Message}");
+                    }
+                }
+                if (read is not null)
+                {
+                    using IDisposable publication = read.BeginPublication();
+                    Mipmaps = [.. mips];
+                    if (Mipmaps.Length > 0)
+                        _sizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
+                }
+                else
+                    Mipmaps = [];
+            }
+            catch
+            {
+                foreach (Mipmap2D mip in mips)
+                    mip.Data?.Dispose();
+                AbortFailedConstruction();
+                throw;
+            }
         }
         public XRTexture2D(uint width, uint height, EPixelInternalFormat internalFormat, EPixelFormat format, EPixelType type, bool allocateData = false)
         {
@@ -1515,11 +1633,33 @@ namespace XREngine.Rendering
         }
         public XRTexture2D(RuntimeImage? image)
         {
-            Mipmaps = [new Mipmap2D(image)];
-            // Derive the sized format from the mipmap's internal format so that
-            // non-resizable textures don't fall back to the default Rgba32f.
-            if (Mipmaps.Length > 0)
-                _sizedInternalFormat = DeriveESizedInternalFormat(Mipmaps[0].InternalFormat);
+            Mipmap2D? mip = null;
+            try
+            {
+                mip = new Mipmap2D(image);
+                Mipmaps = [mip];
+                // Derive the sized format from the mipmap's internal format so that
+                // non-resizable textures don't fall back to the default Rgba32f.
+                _sizedInternalFormat = DeriveESizedInternalFormat(mip.InternalFormat);
+            }
+            catch
+            {
+                try { mip?.Data?.Dispose(); }
+                finally { AbortFailedConstruction(); }
+                throw;
+            }
+        }
+        internal void DiscardUnpublishedImportedImage()
+        {
+            try
+            {
+                foreach (Mipmap2D mip in Mipmaps)
+                    mip.Data?.Dispose();
+            }
+            finally
+            {
+                AbortFailedConstruction();
+            }
         }
         private Mipmap2D[] _mipmaps = [];
         public Mipmap2D[] Mipmaps

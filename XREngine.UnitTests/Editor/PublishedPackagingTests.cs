@@ -71,11 +71,11 @@ public sealed class PublishedPackagingTests
             ProjectBuilder.CopyLauncherArtifactsForTests(
                 sourceExePath,
                 destinationDirectory,
-                "MonkeyBallVR.exe",
+                "RollingBall.exe",
                 includePdb: false,
                 isNativeAot: true);
 
-            File.ReadAllText(Path.Combine(destinationDirectory, "MonkeyBallVR.exe")).ShouldBe("native executable");
+            File.ReadAllText(Path.Combine(destinationDirectory, "RollingBall.exe")).ShouldBe("native executable");
             File.Exists(Path.Combine(destinationDirectory, "GeneratedLauncher.exe")).ShouldBeFalse();
             File.Exists(Path.Combine(destinationDirectory, "runtime-native.dll")).ShouldBeTrue();
             File.Exists(Path.Combine(destinationDirectory, "lib", "x64", "nested-native.dll")).ShouldBeTrue();

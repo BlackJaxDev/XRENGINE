@@ -1,0 +1,246 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-skybox-octahedral",
+  "pass": "background",
+  "source": "SkyboxOctahedral.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "skyVertex",
+    "fragment": "skyFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 3,
+    "maxUniformBufferBindingSize": 144,
+    "maxDynamicUniformBuffersPerPipelineLayout": 2,
+    "maxUniformBuffersPerShaderStage": 2,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxSamplersPerShaderStage": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.skybox.v2",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "materialVariant": {
+    "semantic": "SkyboxOctahedral",
+    "semanticVersion": 1,
+    "vertexProfile": "fullscreen-sky-v1",
+    "outputProfile": "linear-hdr-v1"
+  },
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 12,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "View",
+        "physicalName": "view_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 144,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "inverseView_0",
+            "provider": "InverseViewMatrix",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "inverseProjection_0",
+            "provider": "InverseProjMatrix",
+            "offset": 64,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "depthRange_0",
+            "provider": "CameraDepthRange",
+            "offset": 128,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "SkyMaterial",
+        "physicalName": "sky_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "vertex",
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "View",
+        "bytes": 80,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "intensity_0",
+            "provider": "SkyboxIntensity",
+            "offset": 0,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "rotation_0",
+            "provider": "SkyboxRotation",
+            "offset": 4,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "timeOfDay_0",
+            "provider": "SkyTimeOfDay",
+            "offset": 8,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "cloudCoverage_0",
+            "provider": "SkyCloudCoverage",
+            "offset": 12,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "topColor_0",
+            "provider": "SkyboxTopColor",
+            "offset": 16,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "cloudScale_0",
+            "provider": "SkyCloudScale",
+            "offset": 28,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "bottomColor_0",
+            "provider": "SkyboxBottomColor",
+            "offset": 32,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "cloudSpeed_0",
+            "provider": "SkyCloudSpeed",
+            "offset": 44,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "cloudSharpness_0",
+            "provider": "SkyCloudSharpness",
+            "offset": 48,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "starIntensity_0",
+            "provider": "SkyStarIntensity",
+            "offset": 52,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "horizonHaze_0",
+            "provider": "SkyHorizonHaze",
+            "offset": 56,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "sunDiscSize_0",
+            "provider": "SkySunDiscSize",
+            "offset": 60,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "moonDiscSize_0",
+            "provider": "SkyMoonDiscSize",
+            "offset": 64,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "cameraTwinkle_0",
+            "provider": "SkyCameraTwinkle",
+            "offset": 68,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "twinklePhase_0",
+            "provider": "SkyTwinklePhase",
+            "offset": 72,
+            "bytes": 4,
+            "type": "f32"
+          }
+        ]
+      },
+      {
+        "name": "Texture0",
+        "physicalName": "skyTexture_0",
+        "binding": 1,
+        "kind": "texture-2d-float",
+        "group": 1,
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Texture0",
+        "physicalName": "skySampler_0",
+        "binding": 2,
+        "kind": "filtering-sampler",
+        "group": 1,
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {}
+}

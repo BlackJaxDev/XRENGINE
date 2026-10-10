@@ -9,6 +9,7 @@ namespace XREngine.Rendering;
 internal sealed class ImportedGpuDeformationMeshPayload
 {
     internal required long GeometryRevision { get; init; }
+    internal required AdvancedGpuDeformationInputWitness InputWitness { get; init; }
     internal required int VertexCount { get; init; }
     internal required string[] Names { get; init; }
     internal required int ActiveBlendshapeCount { get; init; }

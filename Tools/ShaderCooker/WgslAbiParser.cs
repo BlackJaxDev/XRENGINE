@@ -1,6 +1,8 @@
+using XREngine.Rendering.Shaders.Compilation;
+
 namespace XREngine.Tools.ShaderCooker;
 
-internal sealed class WgslAbiParser
+internal sealed partial class WgslAbiParser
 {
     private readonly string _source;
     private readonly string _context;
@@ -11,9 +13,11 @@ internal sealed class WgslAbiParser
     private int _index;
     private bool _vertex;
     private bool _fragment;
+    private int _luminanceScratchDeclarations;
 
-    internal WgslAbiParser(string source, string context)
+    internal WgslAbiParser(string source, string context, ShaderProgramArtifact? expected = null)
     {
+        _expected = expected;
         _source = source;
         _context = context;
         Lex();
@@ -26,7 +30,22 @@ internal sealed class WgslAbiParser
             List<WgslAbiAttribute> attributes = Attributes();
             if (Take("struct")) { StructureDeclaration(attributes); continue; }
             if (Take("alias")) { AliasDeclaration(attributes); continue; }
-            if (Take("var")) { ResourceDeclaration(attributes); continue; }
+            if (Take("var"))
+            {
+                if ((_expected?.Pass == WebComputeArtifactCatalog.LuminanceReductionKernel ||
+                     _expected?.Pass == WebComputeArtifactCatalog.LuminanceReduction2DKernel) &&
+                    _index + 1 < _tokens.Count && _tokens[_index].Text == "<" &&
+                    _tokens[_index + 1].Text == "workgroup")
+                    LuminanceScratchDeclaration(attributes);
+                else if (_expected is not null && _index + 1 < _tokens.Count &&
+                    _tokens[_index].Text == "<" && _tokens[_index + 1].Text == "workgroup")
+                    WorkgroupDeclaration(attributes);
+                else if (_expected is not null && _index + 1 < _tokens.Count &&
+                    _tokens[_index].Text == "<" && _tokens[_index + 1].Text == "private")
+                    PrivateDeclaration(attributes);
+                else ResourceDeclaration(attributes);
+                continue;
+            }
             if (Take("fn")) { FunctionDeclaration(attributes); continue; }
             if (attributes.Count != 0) Fail(attributes[0].Offset, "unsupported attributed declaration");
             // Other module declarations (enable, diagnostic, const, override) cannot declare a resource.
@@ -37,6 +56,7 @@ internal sealed class WgslAbiParser
             }
         }
 
+        if (_expected is not null) { ValidateEngineLayout(); return; }
         if (!_vertex || !_fragment) Fail(0, "@vertex vertexMain and @fragment fragmentMain are required");
         if (_bindings.Count != 4) Fail(0, "exactly four global resource bindings are required");
         Check(0, 0, "uniform", "mat4x4<f32>", 64, 16);
@@ -99,10 +119,10 @@ internal sealed class WgslAbiParser
         if (Take("<"))
         {
             address = Identifier().Text;
-            // Access modes and other address-space qualifiers are outside this profile.
+            if (_expected is not null && Take(",")) address += "," + Identifier().Text;
             Expect(">");
         }
-        Identifier();
+        WgslAbiToken resourceName = Identifier();
         Expect(":");
         string type = TypeUntil(";");
         Expect(";");
@@ -111,14 +131,32 @@ internal sealed class WgslAbiParser
         int group = Literal(attributes.Single(a => a.Name == "group"));
         int binding = Literal(attributes.Single(a => a.Name == "binding"));
         string kind = address == "uniform" ? "uniform" : address == "" && type.StartsWith("texture_", StringComparison.Ordinal) ? "texture" :
-            address == "" && type == "sampler" ? "sampler" : "unsupported";
+            address == "" && type is "sampler" or "sampler_comparison" ? "sampler" :
+            _expected is not null && address is "storage,read" or "storage,read_write" ? address : "unsupported";
         if (kind == "unsupported") Fail(offset, "unsupported global resource address space or type");
+        _bindingNames[(group, binding)] = resourceName.Text;
         if (!_bindings.TryAdd((group, binding), (kind, type, offset))) Fail(offset, "duplicate resource binding");
+    }
+
+    private void LuminanceScratchDeclaration(List<WgslAbiAttribute> attributes)
+    {
+        if (attributes.Count != 0 || ++_luminanceScratchDeclarations != 1)
+            Fail(Current.Offset, "luminance reduction permits one unbound workgroup scratch array");
+        Expect("<");
+        Expect("workgroup");
+        Expect(">");
+        WgslAbiToken name = Identifier();
+        Expect(":");
+        string type = TypeUntil(";");
+        Expect(";");
+        if (name.Text != "sums" || type != "array<vec2f,256>")
+            Fail(name.Offset, "luminance scratch must be exactly 256 vec2f elements");
     }
 
     private void FunctionDeclaration(List<WgslAbiAttribute> attributes)
     {
         WgslAbiToken name = Identifier();
+        if (_expected is not null) { EngineFunctionDeclaration(name, attributes); return; }
         bool vertex = attributes.Any(a => a.Name == "vertex" && a.Argument is null);
         bool fragment = attributes.Any(a => a.Name == "fragment" && a.Argument is null);
         if (attributes.Any(a => a.Name == "compute")) Fail(name.Offset, "compute entry points are outside the selected profile");
@@ -146,6 +184,8 @@ internal sealed class WgslAbiParser
         if (type is "vec2f" or "vec2<f32>" or "vec2<i32>" or "vec2<u32>") return new WgslAbiShape(8, 8, CanonicalVector(type), 0, 0);
         if (type is "vec3f" or "vec3<f32>" or "vec3<i32>" or "vec3<u32>") return new WgslAbiShape(16, 12, CanonicalVector(type), 0, 0);
         if (type is "vec4f" or "vec4<f32>" or "vec4<i32>" or "vec4<u32>") return new WgslAbiShape(16, 16, CanonicalVector(type), 0, 0);
+        if (type is "array<vec4<f32>,i32(4)>" or "array<vec4<f32>,4>" or "array<vec4<f32>,4u>")
+            return new WgslAbiShape(16, 64, "mat4x4<f32>", 0, 16);
         if (type is "mat4x4f" or "mat4x4<f32>") return new WgslAbiShape(16, 64, "mat4x4<f32>", 0, 16);
         if (!_structs.TryGetValue(type, out WgslAbiStructure? structure)) Fail(offset, $"unsupported or unknown uniform type '{type}'");
         if (visiting.Count >= 64) Fail(offset, "uniform type nesting limit exceeded");

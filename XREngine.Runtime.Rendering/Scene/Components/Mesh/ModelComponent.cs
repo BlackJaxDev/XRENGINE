@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using XREngine.Components;
 using XREngine.Data.Geometry;
+using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Scene;
@@ -23,7 +24,15 @@ namespace XREngine.Components.Scene.Mesh
         private readonly ConcurrentDictionary<SubMesh, RenderableMesh> _meshLinks = new();
         private readonly List<RenderableMesh> _batchedRenderableAdds = [];
         private int _pendingModelMeshAddRangeCount;
-        private bool _pendingRuntimeMeshRebuild;
+        private volatile bool _pendingRuntimeMeshRebuild;
+        private readonly object _runtimeMeshRebuildGate = new();
+        private readonly List<RenderableMesh> _pendingRuntimeMeshRetirements = [];
+        private int _runtimeMeshRebuildInProgress;
+        private volatile bool _runtimeMeshRebuildRequested;
+        private long _runtimeMeshRebuildGeneration;
+        private Model? _subscribedModel;
+        private volatile bool _runtimeMeshTeardown;
+        private bool RuntimeMeshBuildInProgress => Volatile.Read(ref _runtimeMeshRebuildInProgress) != 0;
 
         private static readonly AsyncLocal<int> RuntimeMeshBuildSuppressionDepth = new();
 
@@ -152,6 +161,9 @@ namespace XREngine.Components.Scene.Mesh
         }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            if (propName == nameof(World))
+                RebuildRuntimeMeshesForResolvedWorld();
+
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
@@ -189,57 +201,265 @@ namespace XREngine.Components.Scene.Mesh
             && SceneNode is not null
             && !SceneNode.IsTransformNull;
 
+        private void RebuildRuntimeMeshesForResolvedWorld()
+        {
+            if (World is null || Model is null || !CanBuildRuntimeMeshes())
+                return;
+
+            bool rebuild = _pendingRuntimeMeshRebuild;
+            for (int index = 0; !rebuild && index < Meshes.Count; index++)
+                rebuild = Meshes[index].RequiresSceneTransformRebind();
+            if (!rebuild)
+                return;
+
+            // YAML model members can be read before their owning parent hierarchy.
+            // World attachment resolves those carriers once, before registration;
+            // an already-bound instance keeps its renderer and shared geometry.
+            _pendingRuntimeMeshRebuild = false;
+            OnModelChanged();
+        }
+
         private void OnModelChanged()
         {
-            using var t = RuntimeEngine.Profiler.Start("ModelComponent.ModelChanged");
-            long start = Stopwatch.GetTimestamp();
+            Interlocked.Increment(ref _runtimeMeshRebuildGeneration);
+            _runtimeMeshRebuildRequested = true;
+            // A callback already holding a wrapper's lifetime gate must not wait
+            // for the publication gate while retirement waits for that wrapper.
+            // The owning cold transaction observes this request before publishing.
+            if (_runtimeMeshTeardown || Interlocked.CompareExchange(ref _runtimeMeshRebuildInProgress, 1, 0) != 0)
+                return;
+            bool ownsAdmission = true;
+            lock (_runtimeMeshRebuildGate)
+            {
+                using var profile = RuntimeEngine.Profiler.Start("ModelComponent.ModelChanged");
+                long start = Stopwatch.GetTimestamp();
+                try
+                {
+                    // Structural callbacks may replace the model during retirement,
+                    // binding or registration. Coalesce those requests at this cold
+                    // boundary instead of publishing a stale outer construction.
+                    for (int attempt = 0; attempt < 8; attempt++)
+                    {
+                        _runtimeMeshRebuildRequested = false;
+                        long generation = _runtimeMeshRebuildGeneration;
+                        Model? model = Model;
+                        SubMesh[] sources = model is null ? [] : [.. model.Meshes];
+                        if (_subscribedModel is not null)
+                            UnsubscribeModelMeshEvents(_subscribedModel);
 
-            Model? model = Model;
-            int modelMeshCount = model?.Meshes.Count ?? 0;
+                        RetainCurrentRuntimeMeshesForRetirement();
+                        RetirePendingRuntimeMeshes();
+                        if (!IsCurrentModelBuild(model, generation, sources))
+                            continue;
 
-            if (model is not null)
-                UnsubscribeModelMeshEvents(model);
+                        List<(SubMesh Source, RenderableMesh Runtime)> prepared = new(sources.Length);
+                        try
+                        {
+                            foreach (SubMesh source in sources)
+                            {
+                                RenderableMesh renderable = CreateRenderableMesh(source);
+                                prepared.Add((source, renderable));
+                                if (!IsCurrentModelBuild(model, generation, sources))
+                                    break;
+                            }
+                        }
+                        catch (Exception constructionFailure)
+                        {
+                            RetainPreparedRuntimeMeshes(prepared);
+                            try { RetirePendingRuntimeMeshes(); }
+                            catch (Exception cleanupFailure)
+                            { constructionFailure.Data["RenderableMeshCleanupFailures"] = cleanupFailure; }
+                            _pendingRuntimeMeshRebuild = true;
+                            throw;
+                        }
 
-            // Dispose any remaining renderable meshes not already cleaned up in
-            // OnPropertyChanging. This unsubscribes bone transform events and destroys
-            // GPU buffers, preventing leaked subscriptions and stale SSBO references.
-            RenderableMesh[] oldMeshes = Meshes.Count == 0 ? [] : Meshes.ToArray();
-            ClearMeshesWithoutEvents();
-            foreach (RenderableMesh mesh in oldMeshes)
-                mesh.Dispose();
+                        if (!IsCurrentModelBuild(model, generation, sources))
+                        {
+                            RetainPreparedRuntimeMeshes(prepared);
+                            RetirePendingRuntimeMeshes();
+                            continue;
+                        }
+
+                        try
+                        {
+                            List<RenderableMesh> renderables = new(prepared.Count);
+                            foreach (var item in prepared)
+                                renderables.Add(item.Runtime);
+                            AddMeshesWithoutEvents(renderables);
+                            if (!IsCurrentModelBuild(model, generation, sources))
+                            {
+                                RetainCurrentRuntimeMeshesForRetirement();
+                                RetirePendingRuntimeMeshes();
+                                continue;
+                            }
+                            foreach (var item in prepared)
+                                _meshLinks.TryAdd(item.Source, item.Runtime);
+                            if (model is not null)
+                                SubscribeModelMeshEvents(model);
+                            ApplyDefaultBlendShapeWeights();
+                            ModelChanged?.Invoke();
+                        }
+                        catch (Exception publicationFailure)
+                        {
+                            RetainPreparedRuntimeMeshes(prepared);
+                            RetainCurrentRuntimeMeshesForRetirement();
+                            try { RetirePendingRuntimeMeshes(); }
+                            catch (Exception cleanupFailure)
+                            { publicationFailure.Data["RenderableMeshCleanupFailures"] = cleanupFailure; }
+                            _pendingRuntimeMeshRebuild = true;
+                            throw;
+                        }
+                        if (IsCurrentModelBuild(model, generation, sources))
+                        {
+                            _pendingRuntimeMeshRebuild = false;
+                            ModelRenderDiagnostics.LogComponentPublished(this, "ModelChanged", sources.Length, RenderedObjects.Length, start);
+                            WarnIfSlowModelPublish("ModelChanged", start, sources.Length, RenderedObjects.Length);
+                            // Release admission before checking for a last-moment
+                            // request. Either this owner reclaims it within the same
+                            // finite budget or the requesting caller becomes owner.
+                            Interlocked.Exchange(ref _runtimeMeshRebuildInProgress, 0);
+                            ownsAdmission = false;
+                            if (IsCurrentModelBuild(model, generation, sources) ||
+                                Interlocked.CompareExchange(ref _runtimeMeshRebuildInProgress, 1, 0) != 0)
+                                return;
+                            ownsAdmission = true;
+                        }
+                    }
+
+                    RetainCurrentRuntimeMeshesForRetirement();
+                    RetirePendingRuntimeMeshes();
+                    _pendingRuntimeMeshRebuild = true;
+                    throw new InvalidOperationException("ModelComponent.RuntimeMeshPublicationUnstable: structural callbacks changed the model repeatedly; retry at a cold world/model boundary.");
+                }
+                catch (Exception publicationFailure)
+                {
+                    _pendingRuntimeMeshRebuild = true;
+                    try { RestoreAuthoritativeModelSubscriptionsAfterFailure(); }
+                    catch (Exception subscriptionFailure)
+                    { publicationFailure.Data["ModelSubscriptionRecoveryFailure"] = subscriptionFailure; }
+                    throw;
+                }
+                finally
+                {
+                    if (ownsAdmission)
+                        Interlocked.Exchange(ref _runtimeMeshRebuildInProgress, 0);
+                }
+            }
+        }
+
+        private bool IsCurrentModelBuild(Model? model, long generation, SubMesh[] sources)
+        {
+            if (_runtimeMeshTeardown || !ReferenceEquals(Model, model) || _runtimeMeshRebuildGeneration != generation || _runtimeMeshRebuildRequested)
+                return false;
+            if (model is null)
+                return sources.Length == 0;
+            if (model.Meshes.Count != sources.Length)
+                return false;
+            for (int index = 0; index < sources.Length; index++)
+                if (!ReferenceEquals(model.Meshes[index], sources[index]))
+                    return false;
+            return true;
+        }
+
+        private void RestoreAuthoritativeModelSubscriptionsAfterFailure()
+        {
+            // Failed construction has no renderers to publish, but source edits
+            // remain a legitimate cold retry boundary for the authoritative model.
+            for (int attempt = 0; attempt < 8; attempt++)
+            {
+                Model? model = Model;
+                long generation = Interlocked.Read(ref _runtimeMeshRebuildGeneration);
+                if (_subscribedModel is not null && (_runtimeMeshTeardown || !ReferenceEquals(_subscribedModel, model)))
+                    UnsubscribeModelMeshEvents(_subscribedModel);
+                if (_runtimeMeshTeardown)
+                    return;
+                if (model is not null)
+                    SubscribeModelMeshEvents(model);
+                if (ReferenceEquals(Model, model) && generation == Interlocked.Read(ref _runtimeMeshRebuildGeneration))
+                    return;
+            }
+            if (_subscribedModel is not null)
+                UnsubscribeModelMeshEvents(_subscribedModel);
+            throw new InvalidOperationException("ModelComponent.SubscriptionRecoveryUnstable: authoritative model changed repeatedly while restoring cold retry observers.");
+        }
+
+        private void RetainRuntimeMeshRetirement(RenderableMesh mesh)
+        {
+            lock (_runtimeMeshRebuildGate)
+                if (!_pendingRuntimeMeshRetirements.Contains(mesh))
+                {
+                    _pendingRuntimeMeshRetirements.Add(mesh);
+                    _pendingRuntimeMeshRebuild = true;
+                }
+        }
+
+        private void RetainPreparedRuntimeMeshes(List<(SubMesh Source, RenderableMesh Runtime)> prepared)
+        {
+            foreach (var item in prepared)
+                RetainRuntimeMeshRetirement(item.Runtime);
+        }
+
+        private void RetainCurrentRuntimeMeshesForRetirement()
+        {
+            for (int index = 0; index < Meshes.Count; index++)
+                RetainRuntimeMeshRetirement(Meshes[index]);
+            foreach (var pair in _meshLinks)
+                RetainRuntimeMeshRetirement(pair.Value);
+            foreach (RenderableMesh mesh in _pendingRuntimeMeshRetirements)
+                mesh.RequestRetirement();
+            // Each wrapper now owns its former target identity, including an
+            // unregister interrupted after the public WorldInstance value changed.
+            using (XRBase.SuppressPropertyNotifications())
+                ClearMeshesWithoutEvents();
             _meshLinks.Clear();
             ResetPendingModelMeshAddRange();
+        }
 
-            if (model is null)
+        private void RetirePendingRuntimeMeshes()
+        {
+            List<Exception>? failures = null;
+            for (int index = _pendingRuntimeMeshRetirements.Count - 1; index >= 0; index--)
             {
-                ModelChanged?.Invoke();
-                return;
+                RenderableMesh mesh = _pendingRuntimeMeshRetirements[index];
+                try { mesh.Dispose(); }
+                catch (Exception failure) { (failures ??= []).Add(failure); }
+                if (mesh.IsFullyRetired)
+                    _pendingRuntimeMeshRetirements.RemoveAt(index);
             }
+            if (failures is not null)
+                throw new AggregateException("ModelComponent.RuntimeMeshRetirementIncomplete: pending runtime ownership is retained for retry.", failures);
+        }
 
-            List<RenderableMesh> renderableMeshes = new(model.Meshes.Count);
-            foreach (SubMesh mesh in model.Meshes)
+        /// <summary>
+        /// Removes model subscriptions and disposes the owned renderable meshes.
+        /// Retains incomplete runtime ownership so destruction can be retried.
+        /// </summary>
+        protected override void OnDestroying()
+        {
+            _runtimeMeshTeardown = true;
+            Interlocked.Increment(ref _runtimeMeshRebuildGeneration);
+            if (Interlocked.CompareExchange(ref _runtimeMeshRebuildInProgress, 1, 0) != 0)
+                throw new InvalidOperationException("ModelComponent.TeardownPendingPublication: retry destruction after the active cold publication retires its staged ownership.");
+            lock (_runtimeMeshRebuildGate)
             {
-                RenderableMesh rendMesh = CreateRenderableMesh(mesh);
-                renderableMeshes.Add(rendMesh);
-                _meshLinks.TryAdd(mesh, rendMesh);
+                try
+                {
+                    Model? subscribedModel = _subscribedModel;
+                    if (subscribedModel is not null)
+                        UnsubscribeModelMeshEvents(subscribedModel);
+                    if (Model is { } model && !ReferenceEquals(model, subscribedModel))
+                        UnsubscribeModelMeshEvents(model);
+                    RetainCurrentRuntimeMeshesForRetirement();
+                    List<Exception>? failures = null;
+                    try { RetirePendingRuntimeMeshes(); }
+                    catch (Exception failure) { (failures ??= []).Add(failure); }
+                    try { base.OnDestroying(); }
+                    catch (Exception failure) { (failures ??= []).Add(failure); }
+                    if (failures is not null)
+                        throw new AggregateException("ModelComponent.RuntimeMeshTeardownIncomplete: pending runtime ownership is retained for retry.", failures);
+                }
+                finally { Interlocked.Exchange(ref _runtimeMeshRebuildInProgress, 0); }
             }
-
-            AddMeshesWithoutEvents(renderableMeshes);
-            SubscribeModelMeshEvents(model);
-            ApplyDefaultBlendShapeWeights();
-
-            ModelChanged?.Invoke();
-            ModelRenderDiagnostics.LogComponentPublished(
-                this,
-                "ModelChanged",
-                modelMeshCount,
-                RenderedObjects.Length,
-                start);
-            WarnIfSlowModelPublish(
-                "ModelChanged",
-                start,
-                modelMeshCount,
-                RenderedObjects.Length);
         }
 
         protected override void OwningSceneNodePostDeserialize()
@@ -271,72 +491,111 @@ namespace XREngine.Components.Scene.Mesh
             ModelRenderDiagnostics.LogComponentActivated(this);
         }
 
-        /// <summary>
-        /// Disposes the renderable meshes, which own this component's renderers and runtime
-        /// meshes; nothing else releases them once the component is destroyed.
-        /// </summary>
-        protected override void OnDestroying()
-        {
-            if (Model is { } model)
-                UnsubscribeModelMeshEvents(model);
-
-            RenderableMesh[] meshes = Meshes.Count == 0 ? [] : Meshes.ToArray();
-            ClearMeshesWithoutEvents();
-            foreach (RenderableMesh mesh in meshes)
-                mesh.Dispose();
-            _meshLinks.Clear();
-
-            base.OnDestroying();
-        }
-
         private void AddMesh(SubMesh item)
         {
-            RenderableMesh mesh = CreateRenderableMesh(item);
-
-            if (_pendingModelMeshAddRangeCount > 0)
+            if (_runtimeMeshTeardown)
+                return;
+            if (_pendingRuntimeMeshRebuild || Interlocked.CompareExchange(ref _runtimeMeshRebuildInProgress, 1, 0) != 0)
             {
-                if (Meshes.Add(mesh, reportAdded: false, reportModified: false))
+                OnModelChanged();
+                return;
+            }
+            lock (_runtimeMeshRebuildGate)
+            {
+                long generation = _runtimeMeshRebuildGeneration;
+                Exception? failure = null;
+                RenderableMesh? pending = null;
+                try
                 {
+                    if (_runtimeMeshTeardown || Model is not { } model || !model.Meshes.Contains(item) || _meshLinks.ContainsKey(item))
+                        return;
+                    RenderableMesh mesh = CreateRenderableMesh(item);
+                    pending = mesh;
+                    if (!ReferenceEquals(Model, model) || generation != _runtimeMeshRebuildGeneration || !model.Meshes.Contains(item))
+                    {
+                        RetainRuntimeMeshRetirement(mesh);
+                        RetirePendingRuntimeMeshes();
+                        return;
+                    }
+
+                    if (_pendingModelMeshAddRangeCount > 0)
+                    {
+                        if (Meshes.Add(mesh, reportAdded: false, reportModified: false))
+                        {
+                            _meshLinks.TryAdd(item, mesh);
+                            _batchedRenderableAdds.Add(mesh);
+                        }
+                        else
+                        {
+                            mesh.Dispose();
+                        }
+
+                        _pendingModelMeshAddRangeCount--;
+                        if (_pendingModelMeshAddRangeCount == 0)
+                            CompleteModelMeshAddRange();
+                        return;
+                    }
+
+                    if (!Meshes.Add(mesh))
+                    {
+                        mesh.Dispose();
+                        return;
+                    }
+
                     _meshLinks.TryAdd(item, mesh);
-                    _batchedRenderableAdds.Add(mesh);
+                    ModelChanged?.Invoke();
                 }
-                else
+                catch (Exception operationFailure)
                 {
-                    mesh.Dispose();
+                    failure = operationFailure;
+                    if (pending is not null)
+                        RetainRuntimeMeshRetirement(pending);
+                    RetainCurrentRuntimeMeshesForRetirement();
+                    try { RetirePendingRuntimeMeshes(); }
+                    catch (Exception cleanupFailure) { operationFailure.Data["RenderableMeshCleanupFailures"] = cleanupFailure; }
+                    _pendingRuntimeMeshRebuild = true;
+                    try { RestoreAuthoritativeModelSubscriptionsAfterFailure(); }
+                    catch (Exception subscriptionFailure) { operationFailure.Data["ModelSubscriptionRecoveryFailure"] = subscriptionFailure; }
+                    throw;
                 }
-
-                _pendingModelMeshAddRangeCount--;
-                if (_pendingModelMeshAddRangeCount == 0)
-                    CompleteModelMeshAddRange();
-                return;
+                finally
+                {
+                    Interlocked.Exchange(ref _runtimeMeshRebuildInProgress, 0);
+                    if ((_runtimeMeshRebuildRequested || generation != Interlocked.Read(ref _runtimeMeshRebuildGeneration)) && failure is null)
+                        OnModelChanged();
+                }
             }
-
-            if (!Meshes.Add(mesh))
-            {
-                mesh.Dispose();
-                return;
-            }
-
-            _meshLinks.TryAdd(item, mesh);
-            ModelChanged?.Invoke();
         }
 
         private RenderableMesh CreateRenderableMesh(SubMesh item)
-            => new(item, this)
+            => new(item, this, RetainRuntimeMeshRetirement)
             {
                 //RootTransform = item.RootTransform
             };
 
         private void BeginModelMeshAddRange(IEnumerable<SubMesh> items)
         {
-            int count = CountItems(items);
-            if (count <= 1)
+            if (RuntimeMeshBuildInProgress || _runtimeMeshTeardown)
                 return;
+            if (!Monitor.TryEnter(_runtimeMeshRebuildGate))
+            {
+                OnModelChanged();
+                return;
+            }
+            try
+            {
+                if (_runtimeMeshTeardown || RuntimeMeshBuildInProgress || !ReferenceEquals(Model, _subscribedModel))
+                    return;
+                int count = CountItems(items);
+                if (count <= 1)
+                    return;
 
-            if (_pendingModelMeshAddRangeCount == 0)
-                _batchedRenderableAdds.Clear();
+                if (_pendingModelMeshAddRangeCount == 0)
+                    _batchedRenderableAdds.Clear();
 
-            _pendingModelMeshAddRangeCount += count;
+                _pendingModelMeshAddRangeCount += count;
+            }
+            finally { Monitor.Exit(_runtimeMeshRebuildGate); }
         }
 
         private void CompleteModelMeshAddRange()
@@ -371,6 +630,7 @@ namespace XREngine.Components.Scene.Mesh
 
         private void SubscribeModelMeshEvents(Model model)
         {
+            _subscribedModel = model;
             model.Meshes.PostAddedRange -= BeginModelMeshAddRange;
             model.Meshes.PostAnythingAdded -= AddMesh;
             model.Meshes.PostAnythingRemoved -= RemoveMesh;
@@ -382,6 +642,8 @@ namespace XREngine.Components.Scene.Mesh
 
         private void UnsubscribeModelMeshEvents(Model model)
         {
+            if (ReferenceEquals(_subscribedModel, model))
+                _subscribedModel = null;
             model.Meshes.PostAddedRange -= BeginModelMeshAddRange;
             model.Meshes.PostAnythingAdded -= AddMesh;
             model.Meshes.PostAnythingRemoved -= RemoveMesh;
@@ -418,11 +680,45 @@ namespace XREngine.Components.Scene.Mesh
         }
         private void RemoveMesh(SubMesh item)
         {
-            if (_meshLinks.TryRemove(item, out RenderableMesh? mesh))
+            if (_runtimeMeshTeardown)
+                return;
+            if (_pendingRuntimeMeshRebuild || Interlocked.CompareExchange(ref _runtimeMeshRebuildInProgress, 1, 0) != 0)
             {
-                Meshes.Remove(mesh);
-                mesh.Dispose();
-                ModelChanged?.Invoke();
+                OnModelChanged();
+                return;
+            }
+            lock (_runtimeMeshRebuildGate)
+            {
+                long generation = Interlocked.Read(ref _runtimeMeshRebuildGeneration);
+                Exception? failure = null;
+                try
+                {
+                    if (_runtimeMeshTeardown || Model?.Meshes.Contains(item) == true || !_meshLinks.TryRemove(item, out RenderableMesh? mesh))
+                        return;
+                    RetainRuntimeMeshRetirement(mesh);
+                    mesh.RequestRetirement();
+                    Meshes.Remove(mesh);
+                    RetirePendingRuntimeMeshes();
+                    if (generation == Interlocked.Read(ref _runtimeMeshRebuildGeneration) && !_runtimeMeshRebuildRequested)
+                        _pendingRuntimeMeshRebuild = false;
+                    ModelChanged?.Invoke();
+                }
+                catch (Exception removalFailure)
+                {
+                    failure = removalFailure;
+                    try { RetirePendingRuntimeMeshes(); }
+                    catch (Exception cleanupFailure) { removalFailure.Data["RenderableMeshCleanupFailures"] = cleanupFailure; }
+                    _pendingRuntimeMeshRebuild = true;
+                    try { RestoreAuthoritativeModelSubscriptionsAfterFailure(); }
+                    catch (Exception subscriptionFailure) { removalFailure.Data["ModelSubscriptionRecoveryFailure"] = subscriptionFailure; }
+                    throw;
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _runtimeMeshRebuildInProgress, 0);
+                    if ((_runtimeMeshRebuildRequested || generation != Interlocked.Read(ref _runtimeMeshRebuildGeneration)) && failure is null)
+                        OnModelChanged();
+                }
             }
         }
 

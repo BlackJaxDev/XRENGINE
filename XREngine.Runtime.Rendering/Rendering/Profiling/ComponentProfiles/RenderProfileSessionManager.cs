@@ -144,11 +144,55 @@ public sealed class RenderProfileSessionManager
             lock (_sync)
             {
                 Transition(RenderProfileState.Created, RenderProfileState.Preparing);
-                _lifecycleTask = Task.Factory.StartNew(
-                    RunLifecycle,
-                    CancellationToken.None,
-                    TaskCreationOptions.LongRunning,
-                    TaskScheduler.Default);
+                _lifecycleTask = OperatingSystem.IsBrowser()
+                    ? RunBrowserPreparationAsync()
+                    : Task.Factory.StartNew(
+                        RunLifecycle,
+                        CancellationToken.None,
+                        TaskCreationOptions.LongRunning,
+                        TaskScheduler.Default);
+            }
+        }
+
+        private async Task RunBrowserPreparationAsync()
+        {
+            try
+            {
+                RenderProfilePreparation preparation = await executor.PrepareAsync(recipe, _cancellation.Token).ConfigureAwait(false);
+                if (preparation.UnsupportedRequirements is { Count: > 0 })
+                    throw new NotSupportedException(string.Join("; ", preparation.UnsupportedRequirements));
+                lock (_sync)
+                {
+                    _preparation = preparation;
+                    Transition(RenderProfileState.Preparing, RenderProfileState.Stabilizing);
+                }
+                await executor.StabilizeAsync(recipe, _cancellation.Token).ConfigureAwait(false);
+                lock (_sync)
+                    Transition(RenderProfileState.Stabilizing, RenderProfileState.Created);
+                _ready.TrySetResult();
+
+                // Browser preparation owns cleanup until cancellation or timeout.
+                // ArmCore reports the unsupported capture-thread requirement.
+                await Task.Delay(Timeout.Infinite, _cancellation.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
+            {
+                string? cleanupError = await TryCancelExecutorAsync().ConfigureAwait(false);
+                lock (_sync)
+                    SetTerminal(cleanupError is null && _cancelRequested ? RenderProfileState.Cancelled : RenderProfileState.Failed,
+                        cleanupError is not null ? $"Render-profile cleanup failed: {cleanupError}" :
+                        _cancelRequested ? null : $"Render-profile session '{id}' timed out after {recipe.TimeoutSeconds} seconds.");
+            }
+            catch (Exception ex)
+            {
+                string? cleanupError = await TryCancelExecutorAsync().ConfigureAwait(false);
+                lock (_sync)
+                    SetTerminal(RenderProfileState.Failed,
+                        cleanupError is null ? ex.Message : $"{ex.Message}; cleanup failed: {cleanupError}");
+            }
+            finally
+            {
+                _ready.TrySetResult();
             }
         }
 
@@ -251,6 +295,9 @@ public sealed class RenderProfileSessionManager
 
         private void ArmCore(long? requestedFrameId)
         {
+            if (OperatingSystem.IsBrowser())
+                throw new PlatformNotSupportedException(
+                    "Render-profile capture requires a dedicated desktop capture thread; browser frame profiling needs a caller-thread capture implementation.");
             lock (_sync)
             {
                 if (_state != RenderProfileState.Created || _arming)
@@ -339,6 +386,19 @@ public sealed class RenderProfileSessionManager
             try
             {
                 executor.CancelAsync(CancellationToken.None).GetAwaiter().GetResult();
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
+        }
+
+        private async Task<string?> TryCancelExecutorAsync()
+        {
+            try
+            {
+                await executor.CancelAsync(CancellationToken.None).ConfigureAwait(false);
                 return null;
             }
             catch (Exception ex)

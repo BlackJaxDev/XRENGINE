@@ -48,7 +48,8 @@ namespace XREngine.Components.Lights
             using (c.AddUsing<VPRC_PushShadowOutputFBORenderArea>())
             {
                 // FBO clears honor depth/stencil write masks, so restore them before the bind auto-clear.
-                c.Add<VPRC_StencilMask>().Set(~0u);
+                if (RuntimeEngineMaterialConstructionServices.Target != EngineMaterialConstructionTarget.WebGpuCooked)
+                    c.Add<VPRC_StencilMask>().Set(~0u);
                 c.Add<VPRC_DepthTest>().Enable = true;
                 c.Add<VPRC_DepthWrite>().Allow = true;
 
@@ -186,7 +187,7 @@ namespace XREngine.Components.Lights
                 return;
             }
 
-            instance.RenderState.PushRenderArea((int)fbo.Width, (int)fbo.Height);
+            instance.RenderState.PushRenderAreaState(new BoundingRectangle(0, 0, (int)fbo.Width, (int)fbo.Height));
         }
     }
 }

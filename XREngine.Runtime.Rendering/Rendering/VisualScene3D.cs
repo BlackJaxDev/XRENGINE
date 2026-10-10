@@ -24,6 +24,9 @@ namespace XREngine.Scene
     public partial class VisualScene3D : VisualScene
     {
         internal static Action<VisualScene3D>? SwapBuffersHook { get; set; }
+        private RenderInfo.DelSwapBuffersCallback? _renderableSwapHandler;
+        internal RenderInfo.DelSwapBuffersCallback RenderableSwapHandler
+            => _renderableSwapHandler ??= OnRenderableSwapBuffers;
 
         [YamlIgnore]
         public Octree<RenderInfo3D> RenderTree { get; } = new Octree<RenderInfo3D>(new AABB());
@@ -54,7 +57,10 @@ namespace XREngine.Scene
             _useGpuBvhActive = VulkanFeatureProfile.ResolveGpuBvhUsage(strategy);
             GPUCommands.UseGpuBvh = _useGpuBvhActive;
             GPUCommands.UseInternalBvh = _useGpuBvhActive;
-            BvhRaycasts.WarmShaders();
+            // GPU BVH raycast shaders are OpenGL-only; browser CPU-direct scenes must not
+            // load GLSL merely by constructing their shared visual scene.
+            if (!OperatingSystem.IsBrowser())
+                BvhRaycasts.WarmShaders();
         }
 
         /// <summary>
@@ -162,13 +168,14 @@ namespace XREngine.Scene
             bool modelDiagActive = ModelRenderDiagnostics.HasActiveTrace;
             int commandsBefore = modelDiagActive ? commands.GetUpdatingCommandCount() : 0;
 
-            if (IsGpuCulling)
+            if (IsGpuCulling || commands.RequiresFullResidentAuthoredCollection)
             {
                 using var gpuSample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 visibleRenderables = CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors, modelDiagActive, allowGpuCollection);
             }
             else
             {
+                commands.InvalidateFullResidentMeshOrderCollection();
                 I3DRenderTree<RenderInfo3D> cpuTree = ActiveCpuRenderTree;
                 int cpuCommandsBefore = commands.GetUpdatingCommandCount();
                 long collectStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -682,28 +689,43 @@ namespace XREngine.Scene
                 ? collectionVolume
                 : null;
 
-            // Iterate by index to avoid per-frame ToArray() allocation.
-            // _renderables is only mutated in PreCollectVisible (same thread), so direct iteration is safe.
-            for (int i = 0; i < _renderables.Count; i++)
+            commands.BeginFullResidentMeshOrderCollection(GPUCommands, camera, allowRenderVolume is null && !modelDiagActive);
+            bool orderCollectionCompleted = false;
+            try
             {
-                var renderable = _renderables[i];
-                if (IsCollectedByCanonicalGpu(renderable, allowGpuCollection))
-                    continue;
-                bool allowed = renderable.AllowRender(
-                    _gpuBoundsEligibleSet.Contains(renderable) ? null : allowRenderVolume,
-                    commands, camera, false, collectMirrors);
-                if (!allowed)
+                // Iterate by index to avoid per-frame ToArray() allocation.
+                // _renderables is only mutated in PreCollectVisible (same thread), so direct iteration is safe.
+                bool skippedCanonicalGpuSource = false;
+                for (int i = 0; i < _renderables.Count; i++)
                 {
+                    var renderable = _renderables[i];
+                    if (IsCollectedByCanonicalGpu(renderable, allowGpuCollection))
+                    {
+                        skippedCanonicalGpuSource = true;
+                        continue;
+                    }
+                    bool allowed = renderable.AllowRender(
+                        _gpuBoundsEligibleSet.Contains(renderable) ? null : allowRenderVolume,
+                        commands, camera, false, collectMirrors);
+                    if (!allowed)
+                    {
+                        if (modelDiagActive)
+                            ModelRenderDiagnostics.LogRejected(renderable, collectionVolume, commands, camera, containsOnly: false, collectMirrors);
+                        continue;
+                    }
+
+                    visibleRenderables++;
                     if (modelDiagActive)
-                        ModelRenderDiagnostics.LogRejected(renderable, collectionVolume, commands, camera, containsOnly: false, collectMirrors);
-                    continue;
+                        ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
+                    renderable.CollectCommands(commands, camera);
                 }
 
-                visibleRenderables++;
-                if (modelDiagActive)
-                    ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
-                renderable.CollectCommands(commands, camera);
+                // Canonical GPU collection supplies the skipped sources, so this CPU pass cannot prove a complete source order.
+                if (skippedCanonicalGpuSource)
+                    commands.InvalidateFullResidentMeshOrderCollection();
+                orderCollectionCompleted = true;
             }
+            finally { commands.EndFullResidentMeshOrderCollection(orderCollectionCompleted); }
 
             return visibleRenderables;
         }

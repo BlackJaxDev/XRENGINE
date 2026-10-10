@@ -13,11 +13,11 @@ Desktop launchers compose shared `net10.0` projects with explicit backend module
 Use the validation script from the repository root:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Publish-MonkeyBallVR.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Publish-RollingBall.ps1
 ```
 
-The matching VS Code task is `Publish-VRMonkeyBall-NativeAOT-Package`. This
-creates the validated `Samples/MonkeyBallVR/Build/Packages/MonkeyBallVR-win-x64.zip`
+The matching VS Code task is `Publish-RollingBall-NativeAOT-Package`. This
+creates the validated `Samples/RollingBall/Build/Packages/RollingBall-win-x64.zip`
 release artifact. For another project, call `Tools/Publish-AotFinalGame.ps1`
 directly with its `.xrproj`.
 
@@ -77,7 +77,7 @@ game state, and calls `CompleteRuntimeSmoke()` after the engine loop exits. On
 success, the launcher prints `AOT runtime smoke passed.`. A bootstrap without
 the interface returns after the archive smoke.
 
-MonkeyBall VR implements this gate in `MonkeyBallRuntimeValidation`. The gate
+The Rolling Ball sample (`Samples/RollingBall`) implements this gate in `RollingBallRuntimeValidation`. The gate
 observes the cooked runtime state and does not substitute simulation or
 rendering. It sets a nonzero exit code unless all of these become valid within
 at least 300 normal ticks:
@@ -96,12 +96,14 @@ Opt-in diagnostics for an interactive packaged run:
 
 | Variable | Effect |
 |---|---|
-| `XRE_MONKEYBALL_DIAGNOSTICS_PATH` | Enables `MonkeyBallRuntimeDiagnostics` and writes lifecycle, input, physics, camera, and shadow counters to this file. |
+| `XRE_MONKEYBALL_DIAGNOSTICS_PATH` | Enables `RollingBallRuntimeDiagnostics` and writes lifecycle, input, physics, camera, and shadow counters to this file. |
 | `XRE_MONKEYBALL_DIAGNOSTICS_VALIDATE` | Runs the same acceptance gate without `--aot-smoke`. |
 
-MonkeyBall rules that the gate enforces:
+The variable names keep the `MONKEYBALL` prefix from the sample's earlier name, so existing scripts continue to work.
 
-- `MonkeyBallWorld.asset` is the only world source. There is no hardcoded
+Rolling Ball rules that the gate enforces:
+
+- `RollingBallWorld.asset` is the only world source. There is no hardcoded
   runtime world.
 - A missing native course body is an error. There is no transform-only physics
   fallback.
@@ -111,7 +113,7 @@ MonkeyBall rules that the gate enforces:
   late update from the presented ball pose.
 
 Manual release sign-off uses the
-[MonkeyBall VR Release Matrix](../../work/testing/xr/monkeyball-vr-release-matrix.md).
+[Rolling Ball Release Matrix](../../work/testing/xr/rolling-ball-release-matrix.md).
 
 ## Build Settings
 
@@ -130,7 +132,7 @@ The headless NativeAOT build command disables `CopyGameAssemblies` and
 and its native DLLs, license files, and subdirectories are copied beside the
 renamed launcher. Analyzer logs and PDBs are excluded from release output.
 
-Published AOT launchers reject legacy `BinaryV1` cooked assets at runtime. Runtime-loadable assets must be registered with `PublishedCookedAssetRegistry` so they cook as `RuntimeBinaryV1`, and any runtime type lookup must resolve through `AotRuntimeMetadata.bin` or an explicit generated registry.
+Published AOT launchers reject generic `BinaryV1` and `BinaryV2` cooked assets at runtime. Runtime-loadable assets must be registered with `PublishedCookedAssetRegistry` so they cook as `RuntimeBinaryV1`, and any runtime type lookup must resolve through `AotRuntimeMetadata.bin` or an explicit generated registry.
 
 ## Development Parity Diagnostics
 
@@ -162,7 +164,7 @@ generated contract that removes the fallback. Fix gaps by adding the
 registration; do not add an allowlist.
 
 `Tools/Run-AotParitySmoke.ps1` starts an isolated MCP editor session with
-`XRE_AOT_PARITY=error`, loads the MonkeyBall world, enters play mode, exits,
+`XRE_AOT_PARITY=error`, loads the Rolling Ball world, enters play mode, exits,
 and archives the session log with a summary of any parity lines.
 Use `-PlayCycles 3 -PlaySeconds 15` to exercise repeated enter/exit transitions
 in the same editor process. The summary records both requested and completed

@@ -1,0 +1,8 @@
+__type: XREngine.XRProject
+ProjectName: AdvancedRenderingParity
+ProjectVersion: 1.0.0
+EngineVersion: 1.0.0
+ID: 135e36dc-600c-469d-9567-d5c8f4d0970e
+Name: Advanced Rendering Parity
+StartupScenePath: Worlds/AdvancedRenderingParityWorld.asset
+BrowserShaderArtifactManifestPath: Assets/Shaders/WebGPU/manifest.json

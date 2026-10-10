@@ -576,22 +576,31 @@ namespace XREngine.Rendering.Commands
                 return _gpuCopiedAabbRenderers.Contains(renderer);
         }
 
+        /// <summary>
+        /// True when the renderer of the accepted command capture produces this
+        /// slot's AABB on the GPU. The live command can select another renderer
+        /// before its scene update runs, so ownership never reads the live mesh.
+        /// </summary>
         private bool IsCommandOwnedByGpuAabb(uint commandIndex)
         {
             if (_gpuAabbRenderers.Count == 0)
                 return false;
             if (!_commandIndexLookup.TryGetValue(commandIndex, out var entry))
                 return false;
-            var renderer = entry.command?.Mesh;
+            XRMeshRenderer? renderer = entry.snapshot.Renderer;
             return renderer is not null && _gpuAabbRenderers.Contains(renderer);
         }
 
+        /// <summary>
+        /// True when the renderer of the accepted command capture copies this
+        /// slot's bounds directly on the GPU.
+        /// </summary>
         private bool IsCommandOwnedByGpuCopiedAabb(uint commandIndex)
         {
             if (_gpuCopiedAabbRenderers.Count == 0
                 || !_commandIndexLookup.TryGetValue(commandIndex, out var entry))
                 return false;
-            XRMeshRenderer? renderer = entry.command?.Mesh;
+            XRMeshRenderer? renderer = entry.snapshot.Renderer;
             return renderer is not null && _gpuCopiedAabbRenderers.Contains(renderer);
         }
 
@@ -708,13 +717,15 @@ namespace XREngine.Rendering.Commands
         }
 
         private readonly GpuSceneRendererCommandIndexSnapshot _publishedRendererCommandIndices = new();
-        private readonly List<XRMaterial?> _publishedRouteMaterialScratch = [];
         private long _rendererCommandMaterialPublicationGeneration;
 
         /// <summary>
         /// Publishes renderer routes with the material of each published draw.
-        /// The material comes from the draw metadata, so it includes command
-        /// overrides. Call this under the scene lock at command-buffer swap.
+        /// Each slot routes through the renderer of its accepted command capture,
+        /// because the live command can select a replacement renderer before its
+        /// scene update runs. The material comes from the draw metadata, so it
+        /// includes command overrides. Call this under the scene lock at
+        /// command-buffer swap.
         /// </summary>
         private void PublishRendererCommandIndices()
         {
@@ -722,26 +733,23 @@ namespace XREngine.Rendering.Commands
             XRDataBuffer metadata = UpdatingDrawMetadataBuffer;
             foreach (KeyValuePair<IRenderCommandMesh, List<uint>> entry in _commandIndicesPerMeshCommand)
             {
-                if (entry.Key.Mesh is not { } renderer)
-                    continue;
-
-                _publishedRouteMaterialScratch.Clear();
                 List<uint> indices = entry.Value;
                 for (int index = 0; index < indices.Count; ++index)
                 {
                     uint commandIndex = indices[index];
+                    if (!_commandIndexLookup.TryGetValue(commandIndex, out var lookup)
+                        || lookup.snapshot.Renderer is not { } renderer)
+                        continue;
+
                     XRMaterial? material = null;
                     if (commandIndex < metadata.ElementCount
                         && _idToMaterial.TryGetValue(
                             metadata.GetDataRawAtIndex<DrawMetadata>(commandIndex).MaterialID,
                             out XRMaterial? drawnMaterial))
                         material = drawnMaterial;
-                    _publishedRouteMaterialScratch.Add(material);
+                    _publishedRendererCommandIndices.Append(renderer, commandIndex, material);
                 }
-
-                _publishedRendererCommandIndices.Append(renderer, indices, _publishedRouteMaterialScratch);
             }
-            _publishedRouteMaterialScratch.Clear();
             _rendererCommandMaterialPublicationGeneration = checked(
                 _rendererCommandMaterialPublicationGeneration + 1);
             _publishedRendererCommandIndices.SetPublicationGeneration(
@@ -765,8 +773,9 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// Fills <paramref name="output"/> with every active GPU command index that
-        /// belongs to <paramref name="renderer"/>. Returns true if at least one was found.
+        /// Fills <paramref name="output"/> with every active GPU command index whose
+        /// accepted command capture uses <paramref name="renderer"/>. Returns true if
+        /// at least one was found.
         /// </summary>
         public bool TryGetCommandIndicesForRenderer(XRMeshRenderer renderer, List<uint> output)
         {
@@ -774,19 +783,20 @@ namespace XREngine.Rendering.Commands
             if (renderer is null || output is null || _commandIndicesPerMeshCommand.Count == 0)
                 return false;
 
-            bool any = false;
+            // Match the renderer of each accepted command capture, not the live
+            // command mesh, so these slots agree with GPU AABB ownership.
             foreach (var kvp in _commandIndicesPerMeshCommand)
             {
-                if (!ReferenceEquals(kvp.Key.Mesh, renderer))
-                    continue;
-
                 var list = kvp.Value;
                 for (int i = 0; i < list.Count; i++)
-                    output.Add(list[i]);
-
-                any |= list.Count > 0;
+                {
+                    uint commandIndex = list[i];
+                    if (_commandIndexLookup.TryGetValue(commandIndex, out var entry)
+                        && ReferenceEquals(entry.snapshot.Renderer, renderer))
+                        output.Add(commandIndex);
+                }
             }
-            return any;
+            return output.Count > 0;
         }
 
         /// <summary>
@@ -810,19 +820,14 @@ namespace XREngine.Rendering.Commands
                 if (!_commandIndexLookup.TryGetValue(commandIndex, out var entry))
                     continue;
 
-                IRenderCommandMesh command = entry.command;
-                (XRMesh? mesh, XRMaterial? material)[]? subMeshes = command.Mesh?.GetMeshes();
-                if (subMeshes is null || (uint)entry.subMeshIndex >= (uint)subMeshes.Length)
+                // Use the accepted capture that published this slot, not the
+                // live command state.
+                if (entry.snapshot.Renderer is not { } acceptedRenderer
+                    || !acceptedRenderer.TryGetMesh(entry.subMeshIndex, out XRMesh? mesh, out _)
+                    || mesh is null)
                     continue;
 
-                XRMesh? mesh = subMeshes[entry.subMeshIndex].mesh;
-                if (mesh is null)
-                    continue;
-
-                Matrix4x4 modelMatrix = command.WorldMatrixIsModelMatrix
-                    ? command.WorldMatrix
-                    : Matrix4x4.Identity;
-                WriteTightCommandAabb(commandIndex, renderInfo, mesh.Bounds, modelMatrix);
+                WriteTightCommandAabb(commandIndex, renderInfo, mesh.Bounds, entry.snapshot.ModelMatrix);
             }
         }
 

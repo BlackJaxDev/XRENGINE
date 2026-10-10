@@ -12,6 +12,7 @@ public sealed class AssetManagerAssetSerializationServices(AssetManager assets) 
     private readonly AssetManager _assets = assets ?? throw new ArgumentNullException(nameof(assets));
 
     public string AssetExtension => AssetManager.AssetExtension;
+    public bool SupportsHostProjectDirectories => _assets.SupportsSynchronousAssetWork;
     public string? GameAssetsPath => _assets.GameAssetsPath;
     public string? EngineAssetsPath => _assets.EngineAssetsPath;
     public string? CurrentDeserializationPath => AssetDeserializationContext.CurrentFilePath;

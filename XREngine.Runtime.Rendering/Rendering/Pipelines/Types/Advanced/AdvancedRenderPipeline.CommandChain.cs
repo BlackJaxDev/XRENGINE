@@ -32,7 +32,9 @@ public partial class AdvancedRenderPipeline
         // consumes geometry.
         if (IsOpenXrEyeProfile)
             commands.Add<VPRC_AcquireAdvancedPreparation>();
-        if (!UsesMinimalVisibilityOutput)
+        // Canvas and other nested producers must run before native/late scene consumers.
+        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PreRender, false);
+        if (!UsesMinimalVisibilityOutput && !Shaders.Compilation.WebPipelineRasterProgram.IsActive)
             commands.Add<VPRC_PrecomputeBRDF>();
         IReadOnlyList<AdvancedRenderStageDescriptor> stages =
             AdvancedRenderPipelineFrameContract.OrderedStages;
@@ -57,8 +59,12 @@ public partial class AdvancedRenderPipeline
     {
         commands.Add<VPRC_Annotation>().Label = descriptor.GpuLabel;
         commands.Add<VPRC_GPUTimerBegin>().Label = descriptor.GpuLabel;
-        var stageCommand = commands.Add<VPRC_AdvancedRenderStage>();
-        stageCommand.SetStage(descriptor.Stage);
+        var stageCommand = new VPRC_AdvancedRenderStage
+        {
+            Stage = descriptor.Stage,
+            EnableAuthoredDecals = descriptor.Stage == EAdvancedRenderStage.NativeOpaqueShading,
+        };
+        commands.Add(stageCommand);
         stageCommand.GlobalIlluminationPlan = GlobalIlluminationPlan;
 
         // The stage command retains the stable backend-facing frame-contract identity.

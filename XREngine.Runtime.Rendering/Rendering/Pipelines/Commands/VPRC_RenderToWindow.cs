@@ -4,6 +4,8 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
+using XREngine.Rendering.Shaders.Compilation;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -14,12 +16,32 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public sealed class VPRC_RenderToWindow : ViewportRenderCommand
 {
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
+    {
+        requirements.RequireOperation("fullscreen-quad");
+        requirements.RequireOperation("framebuffer");
+        requirements.RequireOperation("render-area");
+        if (requirements.Backend != RendererBackendId.WebGPU)
+            return;
+        bool linearCopy = requirements.OutputProfile.ExternalTargetKind == RenderPipelineExternalTargetKind.CallerProvidedFrameBuffer;
+        requirements.RequireRasterProgram(linearCopy ? "advanced::scene-copy" : "advanced::present");
+        if (requirements.OutputProfile.Stereo || requirements.OutputProfile.ViewCount != 1)
+            requirements.Diagnostics.Add("Cooked presentation requires a mono output.");
+        // The cooked program requires a single-sample source. Its actual binding
+        // enforces that contract independently of the scene's configured AA mode.
+        if (!linearCopy && requirements.OutputProfile.OutputHDR)
+            requirements.Diagnostics.Add("The cooked canvas presentation operation requires SDR output.");
+        if (string.IsNullOrWhiteSpace(SourceTextureName) && string.IsNullOrWhiteSpace(SourceFBOName))
+            requirements.Diagnostics.Add("Cooked presentation requires an explicit source texture or framebuffer.");
+    }
+
     private readonly record struct PresentBindingState(
         XRTexture? SourceTexture,
         XRFrameBuffer? SourceFrameBuffer,
         AbstractRenderer? Renderer,
         RenderTextureSamplingState SamplingState,
         bool FlipSourceYOnVulkan,
+        bool WebLinearCopy,
         int PipelineResourceGeneration,
         bool PublishesWindowSource);
 
@@ -63,7 +85,10 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
             XRRenderProgram materialProgram)
         {
             PresentBindingState state = GetBindingState(out _);
-            materialProgram.Uniform("FlipSourceYOnVulkan", state.FlipSourceYOnVulkan);
+            if (state.Renderer?.BackendId == RendererBackendId.WebGPU)
+                WebPipelineRasterProgram.PublishRenderArea(materialProgram);
+            else
+                materialProgram.Uniform("FlipSourceYOnVulkan", state.FlipSourceYOnVulkan);
         }
 
         public void PublishResources(
@@ -84,7 +109,7 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
                 return;
             }
 
-            materialProgram.Sampler("SourceTexture", sourceTexture, 0);
+            materialProgram.Sampler(state.WebLinearCopy ? "HDRSceneTex" : "SourceTexture", sourceTexture, 0);
         }
 
         public ulong CaptureDeferredPublication()
@@ -193,6 +218,7 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
                 renderer,
                 owner.ResolvePresentSourceSamplingState(sourceTexture, renderer),
                 owner.FlipSourceYOnVulkan,
+                owner._webLinearCopy,
                 ActivePipelineInstance.ResourceGeneration,
                 owner._publishesWindowSource);
         }
@@ -312,6 +338,9 @@ void main()
     private XRQuadFrameBuffer? _arrayMirrorQuad;
     private XRMaterial? _stereoMaterial;
     private XRQuadFrameBuffer? _stereoQuad;
+    private XRQuadFrameBuffer? _webPresentQuad;
+    private XRQuadFrameBuffer? _webLinearQuad;
+    private bool _webLinearCopy;
     private XRTexture? _resolvedSourceTexture;
     private XRFrameBuffer? _resolvedSourceFrameBuffer;
     private AbstractRenderer? _resolvedSourceRenderer;
@@ -333,6 +362,8 @@ void main()
 
     internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
     {
+        if (WebPipelineRasterProgram.IsActive)
+            return;
         bool stereoGeneration = instance.CurrentResourceBuildContext?.Key.Stereo
             ?? instance.ActiveGeneration?.Key.Stereo
             ?? false;
@@ -350,6 +381,11 @@ void main()
 
     internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
     {
+        _webPresentQuad?.Destroy();
+        _webPresentQuad = null;
+        _webLinearQuad?.Destroy();
+        _webLinearQuad = null;
+        _webLinearCopy = false;
         if (_quad is not null)
         {
             _quad.Destroy();
@@ -380,7 +416,8 @@ void main()
 
     protected override void Execute()
     {
-        if (_quad is null)
+        bool web = WebPipelineRasterProgram.IsActive;
+        if (!web && _quad is null)
         {
             XRRenderPipelineInstance activeInstance = ActivePipelineInstance;
             Debug.RenderingWarningEvery(
@@ -507,6 +544,8 @@ void main()
         }
 
         bool sourceIsStereoArray = IsStereoArrayTexture(sourceTexture);
+        if (web && (sourceTexture is not (XRTexture2D or XRTexture2DView) || instance.RenderState.StereoPass))
+            throw new NotSupportedException("WebGPU.RenderToWindow.SourceUnsupported: cooked presentation requires a mono two-dimensional color source.");
         bool useStereoPresent = sourceIsStereoArray && HasLayeredPresentDestination(instance, finalOutput);
         if (sourceIsStereoArray &&
             (useStereoPresent && _stereoQuad is null || !useStereoPresent && _arrayMirrorQuad is null))
@@ -521,9 +560,11 @@ void main()
                 instance.ResourceGeneration);
             return;
         }
-        XRQuadFrameBuffer quad = sourceIsStereoArray
-            ? useStereoPresent ? _stereoQuad! : _arrayMirrorQuad!
-            : _quad;
+        XRQuadFrameBuffer quad = web
+            ? GetWebPresentQuad(instance, useBoundOutputFbo)
+            : sourceIsStereoArray
+                ? useStereoPresent ? _stereoQuad! : _arrayMirrorQuad!
+                : _quad!;
         if (instance.RenderState.StereoPass && !sourceIsStereoArray)
         {
             Debug.RenderingWarningEvery(
@@ -596,6 +637,7 @@ void main()
             _resolvedSourceRenderer = renderer;
             _resolvedSourceSamplingState = sourceSamplingState;
             _publishesWindowSource = !isLeaseBackedOutputTarget && !useBoundOutputFbo;
+            _webLinearCopy = web && useBoundOutputFbo;
             // SourceTexture is published by PresentBindingPublisher while the
             // draw snapshot is captured. Eager quad preflight runs before that
             // publication and would reject the draw for its not-yet-bound source.
@@ -608,6 +650,7 @@ void main()
             _resolvedSourceRenderer = null;
             _resolvedSourceSamplingState = default;
             _publishesWindowSource = false;
+            _webLinearCopy = false;
         }
     }
 
@@ -624,7 +667,16 @@ void main()
         if (source is null)
             return;
 
-        context.GetOrCreateSyntheticPass(BuildRenderGraphPassName())
+        string passName = BuildRenderGraphPassName();
+        string? sourceName = !string.IsNullOrWhiteSpace(SourceTextureName) ? SourceTextureName : SourceFBOName;
+        if (WebPipelineRasterProgram.IsActive && context.ResourceLayout is not null &&
+            sourceName is not null && !context.HasResource(sourceName))
+        {
+            context.ReserveSyntheticPassIndex(passName);
+            return;
+        }
+
+        context.GetOrCreateSyntheticPass(passName)
             .WithStage(ERenderGraphPassStage.Graphics)
             .KeepSecondaryDynamic(ERenderPassSecondaryCachePolicy.OutputSensitive)
             .SampleTexture(source)
@@ -780,6 +832,43 @@ void main()
                 }
             }
         };
+
+    private XRQuadFrameBuffer GetWebPresentQuad(XRRenderPipelineInstance instance, bool linearCopy)
+    {
+        XRQuadFrameBuffer? quad = linearCopy ? _webLinearQuad : _webPresentQuad;
+        if (quad is not null)
+            return quad;
+        RenderPipeline pipeline = instance.Pipeline
+            ?? throw new InvalidOperationException("WebGPU.RenderToWindow.PipelineMissing: cooked presentation requires an owning pipeline.");
+        XRShader[] shaders = WebPipelineRasterProgram.CreateShaders(
+            pipeline, linearCopy ? "advanced::scene-copy" : "advanced::present");
+        XRMaterial material = new(Array.Empty<XRTexture?>(), shaders)
+        {
+            RenderOptions = new RenderingParameters
+            {
+                DepthTest = { Enabled = ERenderParamUsage.Disabled, Function = EComparison.Always, UpdateDepth = false },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
+            },
+        };
+        try
+        {
+            quad = CreatePresentQuad(material, useMultiview: false);
+            WebPipelineRasterProgram.OwnMaterial(quad);
+        }
+        catch
+        {
+            quad?.Destroy(true);
+            material.Destroy(true);
+            foreach (XRShader shader in shaders)
+                shader.Destroy(true);
+            throw;
+        }
+        if (linearCopy)
+            _webLinearQuad = quad;
+        else
+            _webPresentQuad = quad;
+        return quad;
+    }
 
     private XRQuadFrameBuffer CreatePresentQuad(XRMaterial material, bool useMultiview)
     {

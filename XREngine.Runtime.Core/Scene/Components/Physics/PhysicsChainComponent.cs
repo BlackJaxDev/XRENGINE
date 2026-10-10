@@ -8,6 +8,7 @@ using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
+using XREngine.Execution;
 using XREngine.Scene.Transforms;
 using XREngine.Timers;
 using YamlDotNet.Serialization;
@@ -1296,10 +1297,13 @@ public partial class PhysicsChainComponent : XRComponent
             // Activation-time setup can run before the hierarchy has produced valid
             // world-space child transforms. Force a hierarchy recalc before we sample
             // WorldTranslation so the initial chain rest pose matches the authored pose.
-            pt.Root.RecalculateMatrixHierarchy(
-                forceWorldRecalc: true,
-                setRenderMatrixNow: false,
-                childRecalcType: PhysicsChainWorld.RequiresSequentialHierarchyEvaluation ? ELoopType.Sequential : ELoopType.Parallel).Wait();
+            if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread)
+                pt.Root.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: false);
+            else
+                pt.Root.RecalculateMatrixHierarchy(
+                    forceWorldRecalc: true,
+                    setRenderMatrixNow: false,
+                    childRecalcType: PhysicsChainWorld.RequiresSequentialHierarchyEvaluation ? ELoopType.Sequential : ELoopType.Parallel).Wait();
             AppendParticles(pt, pt.Root, -1, 0.0f);
 
             if (pt.Particles.Count == 0)
