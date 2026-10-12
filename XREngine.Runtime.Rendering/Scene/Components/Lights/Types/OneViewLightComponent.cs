@@ -26,6 +26,14 @@ namespace XREngine.Components.Capture.Lights.Types
 
         protected XRViewport? PrimaryShadowViewportOrNull => _primaryShadowViewport;
 
+        internal override BrowserShadowCasterState GetBrowserShadowCasterState()
+            => GetBrowserShadowViewportCasterState(_primaryShadowViewport);
+
+        internal override ulong GetBrowserShadowProjectionSignature()
+            => ShadowCamera is { } camera
+                ? MixBrowserShadowMatrix(14695981039346656037UL, camera.ViewProjectionMatrix)
+                : 0;
+
         protected OneViewLightComponent()
         {
         }
@@ -39,6 +47,7 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             uint width = ShadowMapResolutionWidth > 0 ? ShadowMapResolutionWidth : DefaultResolution;
             uint height = ShadowMapResolutionHeight > 0 ? ShadowMapResolutionHeight : DefaultResolution;
+            (width, height) = GetEffectiveShadowMapResolution(width, height);
             return new XRViewport(null, width, height)
             {
                 RenderPipeline = new ShadowRenderPipeline(),
@@ -50,10 +59,11 @@ namespace XREngine.Components.Capture.Lights.Types
             };
         }
 
-        public override void SetShadowMapResolution(uint width, uint height)
+        protected override void ResizeShadowMapResources(uint width, uint height)
         {
-            base.SetShadowMapResolution(width, height);
-            _primaryShadowViewport?.Resize(width, height);
+            base.ResizeShadowMapResources(width, height);
+            (uint resourceWidth, uint resourceHeight) = GetEffectiveShadowMapResolution(width, height);
+            _primaryShadowViewport?.Resize(resourceWidth, resourceHeight);
         }
 
         protected abstract XRCameraParameters GetCameraParameters();
@@ -83,7 +93,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private void EnsurePrimaryShadowViewportReady()
         {
-            if (!IsActiveInHierarchy)
+            if (!IsActiveInHierarchy || !CastsShadows)
                 return;
 
             XRViewport viewport = _primaryShadowViewport ??= CreateShadowViewport();
@@ -93,7 +103,11 @@ namespace XREngine.Components.Capture.Lights.Types
 
             XRCamera cam = new(GetShadowCameraParentTransform(), GetCameraParameters())
             {
-                CullingMask = DefaultLayers.EverythingExceptGizmos
+                CullingMask = DefaultLayers.EverythingExceptGizmos,
+                // The shadow viewport owns the pass contract. Do not lazily allocate
+                // an unrelated scene-color pipeline while querying camera settings.
+                RenderPipeline = viewport.RenderPipeline
+                    ?? throw new InvalidOperationException("ShadowCamera.PipelineMissing: the primary viewport requires its shadow pipeline."),
             };
             var colorStage = cam.GetPostProcessStageState<ColorGradingSettings>();
             if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
@@ -216,7 +230,8 @@ namespace XREngine.Components.Capture.Lights.Types
             if (viewport.RenderPipeline is ShadowRenderPipeline shadowPipeline)
                 shadowPipeline.ClearColor = GetShadowMapClearColor();
 
-            viewport.Render(ShadowMap, null, null, true, ShadowMap.Material);
+            if (!viewport.TryRender(ShadowMap, null, null, true, ShadowMap.Material))
+                RejectBrowserShadowRender();
         }
 
         protected virtual ColorF4 GetShadowMapClearColor()

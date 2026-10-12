@@ -180,6 +180,7 @@ internal sealed partial class ManagedServerWorker : IDisposable
 
     public void Dispose()
     {
+        _webSocketGateway?.Dispose();
         _tlsGateway?.Dispose();
         _tlsCertificate?.Dispose();
         _stop.Cancel();
@@ -285,11 +286,11 @@ internal sealed partial class ManagedServerWorker : IDisposable
             SimulatedInputCount = simulation.SimulatedInputCount,
             RejectedInputCount = simulation.RejectedInputCount,
             AuthoritativeTransformBytes = simulation.AuthoritativeTransformBytes,
-            EncryptedIngressListening = _tlsGateway?.IsListening ?? false,
-            EncryptedConnections = _tlsGateway?.ConnectionCount ?? 0,
-            RejectedEncryptedConnections = _tlsGateway?.RejectedConnections ?? 0,
-            EncryptedReceivedBytes = _tlsGateway?.ReceivedBytes ?? 0,
-            EncryptedSentBytes = _tlsGateway?.SentBytes ?? 0,
+            EncryptedIngressListening = _webSocketGateway?.IsListening ?? _tlsGateway?.IsListening ?? false,
+            EncryptedConnections = _webSocketGateway?.ConnectionCount ?? _tlsGateway?.ConnectionCount ?? 0,
+            RejectedEncryptedConnections = _webSocketGateway?.RejectedConnections ?? _tlsGateway?.RejectedConnections ?? 0,
+            EncryptedReceivedBytes = _webSocketGateway?.ReceivedBytes ?? _tlsGateway?.ReceivedBytes ?? 0,
+            EncryptedSentBytes = _webSocketGateway?.SentBytes ?? _tlsGateway?.SentBytes ?? 0,
         };
     }
 

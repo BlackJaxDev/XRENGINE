@@ -21,7 +21,7 @@ namespace XREngine.Components.Capture.Lights.Types
     [Category("Lighting")]
     [DisplayName("Spot Light")]
     [Description("Emits a cone-shaped local light with optional perspective shadows.")]
-    public class SpotLightComponent : OneViewLightComponent
+    public partial class SpotLightComponent : OneViewLightComponent
     {
         private float _outerCutoff;
         private float _innerCutoff;
@@ -203,6 +203,8 @@ namespace XREngine.Components.Capture.Lights.Types
         {
             get
             {
+                if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked && !UseShadowAtlas)
+                    return false;
                 if (!RuntimeEngine.Rendering.Settings.UseSpotShadowAtlas)
                     return false;
 
@@ -291,12 +293,15 @@ namespace XREngine.Components.Capture.Lights.Types
             // to avoid overwriting material texture units.
         }
 
-        public override void SetShadowMapResolution(uint width, uint height)
+        protected override void ResizeShadowMapResources(uint width, uint height)
         {
-            base.SetShadowMapResolution(width, height);
+            base.ResizeShadowMapResources(width, height);
 
             if (ShadowCamera?.Parameters is XRPerspectiveCameraParameters p)
-                p.AspectRatio = width / height;
+            {
+                (uint resourceWidth, uint resourceHeight) = GetEffectiveShadowMapResolution(width, height);
+                p.AspectRatio = (float)resourceWidth / resourceHeight;
+            }
         }
 
         protected override void SetShadowMapUniforms(XRMaterialBase material, XRRenderProgram program)
@@ -317,6 +322,8 @@ namespace XREngine.Components.Capture.Lights.Types
 
         public override XRMaterial GetShadowMapMaterial(uint width, uint height, EDepthPrecision precision = EDepthPrecision.Int24)
         {
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                return CreateCookedShadowMaterial(width, height);
             ShadowMapFormatSelection selection = ResolveShadowMapFormat(preferredStorageFormat: ShadowMapStorageFormat);
             ShadowMapTextureFormat shadowFormat = GetShadowMapTextureFormat(selection.Format.StorageFormat);
             bool momentEncoding = selection.Encoding != EShadowMapEncoding.Depth;

@@ -8,9 +8,11 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.PostProcessing;
 
-public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeline)
+public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline? pipeline)
 {
-    private readonly RenderPipeline _pipeline = pipeline;
+    private readonly RenderPipeline? _pipeline = pipeline;
+
+    internal RenderPipelinePostProcessSchemaBuilder() : this(null) { }
     private readonly Dictionary<string, StageDefinition> _stages = new(StringComparer.Ordinal);
     private readonly Dictionary<string, CategoryDefinition> _categories = new(StringComparer.Ordinal);
 
@@ -66,7 +68,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[{_pipeline.DebugName}] Failed to build post-process stage '{stage.Key}': {ex.Message}");
+                Debug.LogWarning($"[{_pipeline?.DebugName ?? "PostProcessing"}] Failed to build post-process stage '{stage.Key}': {ex.Message}");
             }
         }
 

@@ -71,6 +71,7 @@ namespace XREngine.Rendering.Commands
         private GpuSceneOwnerSnapshot _renderGpuSceneOwner;
         private bool _renderBasePassEnabled = true;
         private bool _renderShadowPassEnabled = true;
+        private GpuMeshSubmissionLodTransforms? _renderLodTransforms;
         private AABB? _renderWorldCullingVolumeOverride;
         private Matrix4x4 _renderPrevWorldMatrix = Matrix4x4.Identity;
         private bool _renderHasPrevWorldMatrix;
@@ -707,22 +708,35 @@ namespace XREngine.Rendering.Commands
         }
 
         internal override float CaptureSortDistance(IRuntimeRenderCamera? camera)
+            => CaptureSortDistance(camera, out _, out _);
+
+        /// <summary>Captures the same bound or fallback point used by this command's CPU sort distance.</summary>
+        internal float CaptureSortDistance(IRuntimeRenderCamera? camera, out AABB? sortBounds, out Vector3 fallbackPosition)
         {
+            sortBounds = null;
+            fallbackPosition = default;
             if (camera is null)
                 return base.CaptureSortDistance(camera);
 
-            return CullingVolume is AABB bounds && bounds.IsValid
-                ? CalculateRenderDistance(bounds, camera)
-                : Vector3.DistanceSquared(camera.Transform.RenderTranslation, _renderWorldMatrix.Translation);
+            if (CullingVolume is AABB bounds && bounds.IsValid)
+            {
+                sortBounds = bounds;
+                return CalculateRenderDistance(bounds, camera);
+            }
+            fallbackPosition = _renderWorldMatrix.Translation;
+            return Vector3.DistanceSquared(camera.Transform.RenderTranslation, fallbackPosition);
         }
 
         public override void SwapBuffers()
         {
             ulong swapFrameId = RuntimeRenderingHostServices.FrameTiming.SwapFrameId;
+            Matrix4x4? componentWorld = GetLodComponentWorldMatrix();
             // A second collection may reach this command during the same swap boundary.
             // Keep the moving snapshot until the next frame unless a real mutation arrived.
             if (_temporalSettlementPending && !base._dirty &&
-                swapFrameId != 0UL && swapFrameId == _temporalSettlementFrameId)
+                swapFrameId != 0UL && swapFrameId == _temporalSettlementFrameId &&
+                _renderLodTransforms?.CurrentComponentWorld == componentWorld &&
+                (componentWorld is null || _renderLodTransforms?.SkinningEnabled == RuntimeEngine.Rendering.Settings.AllowSkinning))
                 return;
 
             if (System.Threading.Interlocked.CompareExchange(
@@ -730,7 +744,7 @@ namespace XREngine.Rendering.Commands
                 throw new InvalidOperationException("A mesh command swap is already in progress.");
             try
             {
-                SwapBuffersCore(swapFrameId);
+                SwapBuffersCore(swapFrameId, componentWorld);
             }
             finally
             {
@@ -738,7 +752,7 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void SwapBuffersCore(ulong swapFrameId)
+        private void SwapBuffersCore(ulong swapFrameId, Matrix4x4? componentWorld)
         {
             long capturedVersion = BeginSwapBuffers();
             _renderMesh = Mesh;
@@ -763,6 +777,19 @@ namespace XREngine.Rendering.Commands
             _renderGpuCommandIndex = GPUCommandIndex;
             _renderCanonicalDrawIdentitySnapshot = _canonicalDrawIdentitySnapshot;
             bool settleModelHistory = false;
+            if (componentWorld is { } currentComponentWorld)
+            {
+                GpuMeshSubmissionLodTransforms? prior = _renderLodTransforms;
+                bool sameFrame = swapFrameId != 0UL && _lastSubmittedSwapFrameId == swapFrameId;
+                Matrix4x4 previousComponentWorld = prior is { } history
+                    ? sameFrame ? history.PreviousComponentWorld : history.CurrentComponentWorld : currentComponentWorld;
+                bool skinningEnabled = RuntimeEngine.Rendering.Settings.AllowSkinning;
+                bool previousSkinningEnabled = prior is { } settingsHistory
+                    ? sameFrame ? settingsHistory.PreviousSkinningEnabled : settingsHistory.SkinningEnabled : skinningEnabled;
+                _renderLodTransforms = new(currentComponentWorld, previousComponentWorld, skinningEnabled, previousSkinningEnabled);
+                settleModelHistory = currentComponentWorld != previousComponentWorld || skinningEnabled != previousSkinningEnabled;
+            }
+            else _renderLodTransforms = null;
             bool hadPreviousModelMatrix = _lastSubmittedModelMatrixValid;
             if (_renderWorldMatrixIsModelMatrix)
             {
@@ -771,7 +798,7 @@ namespace XREngine.Rendering.Commands
                         ? _previousModelMatrixForSwapFrame
                         : _lastSubmittedModelMatrix
                     : _renderWorldMatrix;
-                settleModelHistory = !hadPreviousModelMatrix ||
+                settleModelHistory |= !hadPreviousModelMatrix ||
                     _renderPrevWorldMatrix != _renderWorldMatrix;
                 _renderHasPrevWorldMatrix = true;
                 _renderModelHistoryReason = hadPreviousModelMatrix
@@ -875,7 +902,23 @@ namespace XREngine.Rendering.Commands
             => new(_renderMesh, _renderWorldMatrix, _renderWorldMatrixIsModelMatrix,
                 _renderMaterialOverride, _renderInstances, _renderPass,
                 _renderForceCpuRendering, _renderEditorHighlightBits, StableQueryKey,
-                _renderGpuSceneOwner, _renderBasePassEnabled, _renderShadowPassEnabled);
+                _renderGpuSceneOwner, _renderBasePassEnabled, _renderShadowPassEnabled,
+                _renderRenderOptionsOverride, _renderWorldCullingVolumeOverride.HasValue, _renderLodTransforms);
+
+        private Matrix4x4? GetLodComponentWorldMatrix()
+        {
+            var owner = (OwnerRenderInfo as XREngine.Rendering.Info.RenderInfo3D)?.OwnerRenderableMesh;
+            return owner?.IsPrimaryMeshCommand(this) == true ? owner.GetLodComponentWorldMatrix() : null;
+        }
+
+        internal GpuMeshSubmissionLodTransforms? GetLodTransformsForLiveCapture()
+        {
+            if (GetLodComponentWorldMatrix() is not { } world) return null;
+            bool skinningEnabled = RuntimeEngine.Rendering.Settings.AllowSkinning;
+            // GPUScene supplies the previous component image from its last
+            // publication, just as it does for the live source model matrix.
+            return new(world, world, skinningEnabled, skinningEnabled);
+        }
 
         internal void ApplyLateRenderThreadWorldMatrix(Matrix4x4 worldMatrix)
         {

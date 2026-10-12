@@ -1,0 +1,669 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-standard-lit-color",
+  "pass": "opaque-forward",
+  "source": "StandardLitColor.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "standardLitVertex",
+    "fragment": "standardLitFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 2,
+    "maxVertexBuffers": 2,
+    "maxVertexBufferArrayStride": 24,
+    "maxBindGroups": 3,
+    "maxBindingsPerBindGroup": 3,
+    "maxUniformBufferBindingSize": 1072,
+    "maxDynamicUniformBuffersPerPipelineLayout": 4,
+    "maxUniformBuffersPerShaderStage": 3,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxSamplersPerShaderStage": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "materialVariant": {
+    "semantic": "StandardLitColor",
+    "semanticVersion": 1,
+    "vertexProfile": "static-position-normal-v1",
+    "outputProfile": "linear-hdr-v1"
+  },
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 24,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          },
+          {
+            "location": 1,
+            "offset": 12,
+            "format": "float32x3",
+            "semantic": "normal"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "View",
+        "physicalName": "view_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "vertex",
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 80,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "viewProjection_0",
+            "provider": "ViewProjection",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "cameraPosition_0",
+            "provider": "CameraPosition",
+            "offset": 64,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "Object",
+        "physicalName": "object_0",
+        "group": 0,
+        "binding": 1,
+        "kind": "uniform",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 128,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "modelMatrix_0",
+            "provider": "ModelMatrix",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "normalMatrix_0",
+            "provider": "NormalMatrix",
+            "offset": 64,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "StandardLitMaterial",
+        "physicalName": "material_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 32,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "baseColorOpacity_0",
+            "provider": "StandardLitBaseColorOpacity",
+            "offset": 0,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "roughnessMetallicSpecularEmission_0",
+            "provider": "StandardLitRoughnessMetallicSpecularEmission",
+            "offset": 16,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "ForwardLighting",
+        "physicalName": "lighting_0",
+        "group": 2,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 1072,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "lightCounts_0",
+            "provider": "ForwardLightCounts",
+            "offset": 0,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "globalAmbient_0",
+            "provider": "GlobalAmbient",
+            "offset": 16,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "directional0Direction_0",
+            "provider": "ForwardDirectional0Direction",
+            "offset": 32,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "directional0ColorIntensity_0",
+            "provider": "ForwardDirectional0ColorIntensity",
+            "offset": 48,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "directional1Direction_0",
+            "provider": "ForwardDirectional1Direction",
+            "offset": 64,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "directional1ColorIntensity_0",
+            "provider": "ForwardDirectional1ColorIntensity",
+            "offset": 80,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "directional2Direction_0",
+            "provider": "ForwardDirectional2Direction",
+            "offset": 96,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "directional2ColorIntensity_0",
+            "provider": "ForwardDirectional2ColorIntensity",
+            "offset": 112,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "directional3Direction_0",
+            "provider": "ForwardDirectional3Direction",
+            "offset": 128,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "directional3ColorIntensity_0",
+            "provider": "ForwardDirectional3ColorIntensity",
+            "offset": 144,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point0PositionRadius_0",
+            "provider": "ForwardPoint0PositionRadius",
+            "offset": 160,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point0ColorIntensity_0",
+            "provider": "ForwardPoint0ColorIntensity",
+            "offset": 176,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point0Brightness_0",
+            "provider": "ForwardPoint0Brightness",
+            "offset": 192,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point1PositionRadius_0",
+            "provider": "ForwardPoint1PositionRadius",
+            "offset": 208,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point1ColorIntensity_0",
+            "provider": "ForwardPoint1ColorIntensity",
+            "offset": 224,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point1Brightness_0",
+            "provider": "ForwardPoint1Brightness",
+            "offset": 240,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point2PositionRadius_0",
+            "provider": "ForwardPoint2PositionRadius",
+            "offset": 256,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point2ColorIntensity_0",
+            "provider": "ForwardPoint2ColorIntensity",
+            "offset": 272,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point2Brightness_0",
+            "provider": "ForwardPoint2Brightness",
+            "offset": 288,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point3PositionRadius_0",
+            "provider": "ForwardPoint3PositionRadius",
+            "offset": 304,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point3ColorIntensity_0",
+            "provider": "ForwardPoint3ColorIntensity",
+            "offset": 320,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point3Brightness_0",
+            "provider": "ForwardPoint3Brightness",
+            "offset": 336,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point4PositionRadius_0",
+            "provider": "ForwardPoint4PositionRadius",
+            "offset": 352,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point4ColorIntensity_0",
+            "provider": "ForwardPoint4ColorIntensity",
+            "offset": 368,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point4Brightness_0",
+            "provider": "ForwardPoint4Brightness",
+            "offset": 384,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point5PositionRadius_0",
+            "provider": "ForwardPoint5PositionRadius",
+            "offset": 400,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point5ColorIntensity_0",
+            "provider": "ForwardPoint5ColorIntensity",
+            "offset": 416,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point5Brightness_0",
+            "provider": "ForwardPoint5Brightness",
+            "offset": 432,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point6PositionRadius_0",
+            "provider": "ForwardPoint6PositionRadius",
+            "offset": 448,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point6ColorIntensity_0",
+            "provider": "ForwardPoint6ColorIntensity",
+            "offset": 464,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point6Brightness_0",
+            "provider": "ForwardPoint6Brightness",
+            "offset": 480,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point7PositionRadius_0",
+            "provider": "ForwardPoint7PositionRadius",
+            "offset": 496,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point7ColorIntensity_0",
+            "provider": "ForwardPoint7ColorIntensity",
+            "offset": 512,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "point7Brightness_0",
+            "provider": "ForwardPoint7Brightness",
+            "offset": 528,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot0PositionRadius_0",
+            "provider": "ForwardSpot0PositionRadius",
+            "offset": 544,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot0ColorIntensity_0",
+            "provider": "ForwardSpot0ColorIntensity",
+            "offset": 560,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot0DirectionExponent_0",
+            "provider": "ForwardSpot0DirectionExponent",
+            "offset": 576,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot0CutoffsBrightness_0",
+            "provider": "ForwardSpot0CutoffsBrightness",
+            "offset": 592,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot1PositionRadius_0",
+            "provider": "ForwardSpot1PositionRadius",
+            "offset": 608,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot1ColorIntensity_0",
+            "provider": "ForwardSpot1ColorIntensity",
+            "offset": 624,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot1DirectionExponent_0",
+            "provider": "ForwardSpot1DirectionExponent",
+            "offset": 640,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot1CutoffsBrightness_0",
+            "provider": "ForwardSpot1CutoffsBrightness",
+            "offset": 656,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot2PositionRadius_0",
+            "provider": "ForwardSpot2PositionRadius",
+            "offset": 672,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot2ColorIntensity_0",
+            "provider": "ForwardSpot2ColorIntensity",
+            "offset": 688,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot2DirectionExponent_0",
+            "provider": "ForwardSpot2DirectionExponent",
+            "offset": 704,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot2CutoffsBrightness_0",
+            "provider": "ForwardSpot2CutoffsBrightness",
+            "offset": 720,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot3PositionRadius_0",
+            "provider": "ForwardSpot3PositionRadius",
+            "offset": 736,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot3ColorIntensity_0",
+            "provider": "ForwardSpot3ColorIntensity",
+            "offset": 752,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot3DirectionExponent_0",
+            "provider": "ForwardSpot3DirectionExponent",
+            "offset": 768,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot3CutoffsBrightness_0",
+            "provider": "ForwardSpot3CutoffsBrightness",
+            "offset": 784,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot4PositionRadius_0",
+            "provider": "ForwardSpot4PositionRadius",
+            "offset": 800,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot4ColorIntensity_0",
+            "provider": "ForwardSpot4ColorIntensity",
+            "offset": 816,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot4DirectionExponent_0",
+            "provider": "ForwardSpot4DirectionExponent",
+            "offset": 832,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot4CutoffsBrightness_0",
+            "provider": "ForwardSpot4CutoffsBrightness",
+            "offset": 848,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot5PositionRadius_0",
+            "provider": "ForwardSpot5PositionRadius",
+            "offset": 864,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot5ColorIntensity_0",
+            "provider": "ForwardSpot5ColorIntensity",
+            "offset": 880,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot5DirectionExponent_0",
+            "provider": "ForwardSpot5DirectionExponent",
+            "offset": 896,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot5CutoffsBrightness_0",
+            "provider": "ForwardSpot5CutoffsBrightness",
+            "offset": 912,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot6PositionRadius_0",
+            "provider": "ForwardSpot6PositionRadius",
+            "offset": 928,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot6ColorIntensity_0",
+            "provider": "ForwardSpot6ColorIntensity",
+            "offset": 944,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot6DirectionExponent_0",
+            "provider": "ForwardSpot6DirectionExponent",
+            "offset": 960,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot6CutoffsBrightness_0",
+            "provider": "ForwardSpot6CutoffsBrightness",
+            "offset": 976,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot7PositionRadius_0",
+            "provider": "ForwardSpot7PositionRadius",
+            "offset": 992,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot7ColorIntensity_0",
+            "provider": "ForwardSpot7ColorIntensity",
+            "offset": 1008,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot7DirectionExponent_0",
+            "provider": "ForwardSpot7DirectionExponent",
+            "offset": 1024,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "spot7CutoffsBrightness_0",
+            "provider": "ForwardSpot7CutoffsBrightness",
+            "offset": 1040,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "ambientOcclusionControls_0",
+            "provider": "AmbientOcclusionControls",
+            "offset": 1056,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "AmbientOcclusionTexture",
+        "physicalName": "ambientOcclusionTexture_0",
+        "group": 2,
+        "binding": 1,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AmbientOcclusionTexture",
+        "physicalName": "ambientOcclusionSampler_0",
+        "group": 2,
+        "binding": 2,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {}
+}

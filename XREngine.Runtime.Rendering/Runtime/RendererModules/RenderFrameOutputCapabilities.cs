@@ -12,4 +12,6 @@ public enum RenderFrameOutputCapabilities
     DesktopOverlays = 1 << 1,
     ExternallyOwnedImages = 1 << 2,
     HiddenAreaMask = 1 << 3,
+    /// <summary>The final attachment's sample count does not override the scene's authored internal AA samples.</summary>
+    IndependentSceneSamples = 1 << 4,
 }

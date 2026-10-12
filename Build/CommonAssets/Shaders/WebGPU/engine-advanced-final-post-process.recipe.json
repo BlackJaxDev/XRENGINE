@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-final-post-process",
+  "pass": "final-post-process",
+  "source": "AdvancedFinalPostProcess.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "outputVertex",
+    "fragment": "outputFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 2,
+    "maxUniformBufferBindingSize": 80,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxSamplersPerShaderStage": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 12,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "OutputUniforms",
+        "physicalName": "outputUniforms_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 80,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "ScreenWidth_0",
+            "provider": "ScreenWidth",
+            "offset": 0,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ScreenHeight_0",
+            "provider": "ScreenHeight",
+            "offset": 4,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ScreenOrigin_0",
+            "provider": "ScreenOrigin",
+            "offset": 8,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "LensDistortionMode_0",
+            "provider": "LensDistortionMode",
+            "offset": 16,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "LensDistortionIntensity_0",
+            "provider": "LensDistortionIntensity",
+            "offset": 20,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "LensDistortionCenter_0",
+            "provider": "LensDistortionCenter",
+            "offset": 24,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "PaniniDistance_0",
+            "provider": "PaniniDistance",
+            "offset": 32,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "PaniniCrop_0",
+            "provider": "PaniniCrop",
+            "offset": 36,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "PaniniViewExtents_0",
+            "provider": "PaniniViewExtents",
+            "offset": 40,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "BrownConradyRadial_0",
+            "provider": "BrownConradyRadial",
+            "offset": 48,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "BrownConradyTangential_0",
+            "provider": "BrownConradyTangential",
+            "offset": 64,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          }
+        ]
+      },
+      {
+        "name": "PostProcessOutputTexture",
+        "physicalName": "PostProcessOutputTexture_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "PostProcessOutputTexture",
+        "physicalName": "PostProcessOutputTextureSampler_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "final-post-process"
+  }
+}

@@ -1,6 +1,7 @@
 using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Execution;
+using XREngine.Runtime.Bootstrap;
 
 namespace XREngine.RenderBench;
 
@@ -17,6 +18,7 @@ internal sealed class RenderBenchWorkSchedulerScope : IDisposable
 
     public static RenderBenchWorkSchedulerScope EnsureInstalled()
     {
+        RuntimeApplicationBootstrap.PrepareWorkerServices();
         if (Engine.WorkScheduler is not null)
             return new RenderBenchWorkSchedulerScope(ownsScheduler: false);
 

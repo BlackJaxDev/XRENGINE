@@ -399,6 +399,8 @@ public sealed class MeshletPayload
 
 public static class MeshletPayloadUtility
 {
+    private static readonly ulong s_runtimeCompatibilityToken = CreateRuntimeCompatibilityToken(MeshletPayload.CurrentPayloadVersion);
+    private static readonly ulong s_legacyVertexStreamRuntimeCompatibilityToken = CreateRuntimeCompatibilityToken(MeshletPayload.LastPayloadVersionWithVertexStream);
     private const int SourceMeshHashVersion = 3;
     private const int MeshletSettingsHashVersion = 1;
     private const int LodSettingsHashVersion = 1;
@@ -537,9 +539,16 @@ public static class MeshletPayloadUtility
     }
 
     public static ulong ComputeRuntimeCompatibilityToken(MeshletGenerationSettingsSnapshot settings)
+        => s_runtimeCompatibilityToken;
+
+    /// <summary>Checks the exact portable layout token before removing the legacy vertex stream.</summary>
+    internal static bool IsLegacyVertexStreamRuntimeCompatible(ulong token)
+        => token == s_legacyVertexStreamRuntimeCompatibilityToken;
+
+    private static ulong CreateRuntimeCompatibilityToken(int payloadVersion)
     {
         XxHash64 hash = new();
-        AppendInt32(hash, MeshletPayload.CurrentPayloadVersion);
+        AppendInt32(hash, payloadVersion);
         AppendInt32(hash, 1); // portable descriptor layout
         AppendInt32(hash, 1); // local-triangle byte packing
         AppendInt32(hash, 1); // uint32 vertex-reference stream encoding

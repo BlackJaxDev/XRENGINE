@@ -10,4 +10,8 @@ public static class FreeTypeFontBackend
         FontCharacterEnumeratorRegistry.Current = new FreeTypeFontCharacterEnumerator();
         FontDistanceFieldAtlasGeneratorRegistry.Current = new MsdfAtlasGenFontAtlasGenerator();
     }
+
+    /// <summary>Explicitly selects FreeType bitmap cooking without changing desktop startup's Skia choice.</summary>
+    public static void RegisterBitmapRasterizerForCooking(CancellationToken cancellationToken = default)
+        => FontBitmapRasterizerRegistry.Current = new FreeTypeFontBitmapRasterizer(cancellationToken);
 }

@@ -21,14 +21,31 @@ public class CustomRenderPipeline : RenderPipeline
     public ViewportRenderCommandContainer? Commands
     {
         get => _commands;
-        set => SetField(ref _commands, value);
+        set
+        {
+            if (SetField(ref _commands, value))
+                RefreshAuthoredCommands();
+        }
     }
 
     private Dictionary<int, IComparer<RenderCommand>?>? _renderPasses = [];
     public Dictionary<int, IComparer<RenderCommand>?>? RenderPasses
     {
         get => _renderPasses;
-        set => SetField(ref _renderPasses, value);
+        set
+        {
+            if (SetField(ref _renderPasses, value))
+                RefreshAuthoredCommands();
+        }
+    }
+
+    private void RefreshAuthoredCommands()
+    {
+        PassIndicesAndSorters = GetPassIndicesAndSorters();
+        if (Instances.Count == 0)
+            InitializeCommandChain();
+        else
+            RebuildCommandChain();
     }
 
     /// <summary>
@@ -57,6 +74,15 @@ public class CustomRenderPipeline : RenderPipeline
 
     protected override ViewportRenderCommandContainer GenerateCommandChain()
         => _commands ?? [];
+
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
+    {
+        // Serialized authoring properties can arrive after the base constructor built
+        // an empty chain. Publication inspects the authored graph without rebinding it.
+        requirements.Include(Commands ?? CommandChain);
+        if (CustomInvalidMaterial is { } material)
+            requirements.RequireMaterial(material);
+    }
     protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
         => _renderPasses ?? [];
 }

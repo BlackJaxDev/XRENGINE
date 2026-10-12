@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-unlit-texture-array-slice",
+  "shadingModel": "unlit",
+  "surface": "opaque",
+  "baseColor": "texture-array-slice",
+  "semanticVersion": 5
+}

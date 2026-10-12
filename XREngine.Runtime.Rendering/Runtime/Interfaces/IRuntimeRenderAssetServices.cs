@@ -22,6 +22,8 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IRuntimeRenderAssetServices
 {
+    /// <summary>Whether host-file texture import and cache work can run synchronously on this asset owner.</summary>
+    bool SupportsSynchronousTextureSourceWork => true;
 
     /// <summary>
     /// Gets the root that contains engine-owned runtime assets.

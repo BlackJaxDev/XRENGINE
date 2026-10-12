@@ -11,6 +11,7 @@ public partial class GPUScene
     // accidentally reusing an older world-swap capture.
     private bool _hasAdvancedGlobalResourceCapture;
     private int _advancedPublicationRequested;
+    private int _advancedAuthoredDecalsRequested;
 
     /// <summary>
     /// Canonical renderer-neutral scene authority dual-published with the legacy
@@ -80,7 +81,10 @@ public partial class GPUScene
         => _advancedScenePublisher.DirtyOwnerRanges;
 
     public AdvancedGlobalResourceCapture AdvancedGlobalResources
-        => _advancedGlobalResources;
+        => _advancedGlobalResources with { AuthoredDecals = default };
+
+    internal bool AdvancedAuthoredDecalsRequested
+        => System.Threading.Volatile.Read(ref _advancedAuthoredDecalsRequested) != 0;
 
     /// <summary>
     /// Gets whether a pipeline that consumes the canonical resident scene has
@@ -96,8 +100,13 @@ public partial class GPUScene
     internal void RequestAdvancedResidentPublication()
         => System.Threading.Interlocked.Exchange(ref _advancedPublicationRequested, 1);
 
+    internal void RequestAdvancedAuthoredDecalPublication()
+        => System.Threading.Interlocked.Exchange(ref _advancedAuthoredDecalsRequested, 1);
+
     public void SetAdvancedGlobalResources(in AdvancedGlobalResourceCapture capture)
     {
+        if (_advancedGlobalResources.AuthoredDecals != capture.AuthoredDecals)
+            _advancedGlobalResources.AuthoredDecals.Release();
         _advancedGlobalResources = capture;
         _hasAdvancedGlobalResourceCapture = true;
     }
@@ -194,9 +203,14 @@ public partial class GPUScene
             globalResources = AdvancedGlobalResourceCapture.Empty(frameId);
         }
 
-        _advancedScenePublisher.Publish(
-            this,
-            frameId,
-            in globalResources);
+        try
+        {
+            _advancedScenePublisher.Publish(this, frameId, in globalResources);
+        }
+        finally
+        {
+            System.Threading.Interlocked.Exchange(ref _advancedAuthoredDecalsRequested, 0);
+            if (_advancedScenePublisher.PublicationRejected) _hasAdvancedGlobalResourceCapture = true;
+        }
     }
 }

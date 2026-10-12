@@ -20,6 +20,41 @@ public enum EMeshRenderingPathIntent
 [RenderPipelineScriptCommand]
 public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 {
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
+    {
+        DescribeSubmissionRequirements(requirements, MeshSubmissionStrategy, PathIntent == EMeshRenderingPathIntent.Meshlet);
+        requirements.RequireRasterScenePass(RenderPass);
+        if (_readWriteTextureNames.Count > 0) requirements.RequireOperation("storage-images");
+    }
+
+    /// <summary>Declares the exact operation and cooked producer closure for a shared raster strategy.</summary>
+    internal static void DescribeSubmissionRequirements(RenderPipelineRequirements requirements,
+        EMeshSubmissionStrategy strategy, bool meshletPath = false)
+    {
+        bool meshlets = meshletPath || strategy.IsAnyMeshletStrategy();
+        requirements.RequireOperation(meshlets
+            ? "gpu-meshlet-meshes" : strategy == EMeshSubmissionStrategy.CpuDirect
+                ? "cpu-direct-meshes" : "gpu-driven-meshes");
+        if (requirements.Backend == RendererBackendId.WebGPU && meshlets)
+        {
+            requirements.RequireComputeProgram("meshlets::cull-expand");
+            requirements.RequireComputeProgram("meshlets::finalize-indexed");
+            requirements.RequireComputeProgram("meshlets::refit-bounds");
+            requirements.RequireComputeProgram("meshlets::select-lod");
+        }
+        else if (requirements.Backend == RendererBackendId.WebGPU && strategy != EMeshSubmissionStrategy.CpuDirect)
+        {
+            requirements.RequireComputeProgram("indirect::cull-primitive");
+            requirements.RequireComputeProgram("meshlets::select-lod");
+        }
+        if (requirements.Backend == RendererBackendId.WebGPU &&
+            (meshlets || strategy != EMeshSubmissionStrategy.CpuDirect))
+        {
+            requirements.RequireComputeProgram("authored-indexed::rank-sources");
+            requirements.RequireComputeProgram("authored-indexed::mask-ranked-arguments");
+        }
+    }
+
     public VPRC_RenderMeshesPassShared()
     {
     }
@@ -40,7 +75,21 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     public EMeshSubmissionStrategy MeshSubmissionStrategy
     {
         get => _meshSubmissionStrategy;
-        set => SetField(ref _meshSubmissionStrategy, value);
+        set
+        {
+            if (SetField(ref _meshSubmissionStrategy, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
+    }
+
+    private bool _preserveMeshSubmissionStrategy;
+    /// <summary>Keeps this command's authored strategy when an output overrides scene geometry submission.</summary>
+    public bool PreserveMeshSubmissionStrategy
+    {
+        get => _preserveMeshSubmissionStrategy;
+        set
+        {
+            if (SetField(ref _preserveMeshSubmissionStrategy, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
     }
 
     public bool GPUDispatch
@@ -55,7 +104,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     public int RenderPass
     {
         get => _renderPass;
-        set => SetField(ref _renderPass, value);
+        set
+        {
+            if (SetField(ref _renderPass, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
     }
 
     private string? _renderGraphPassName;
@@ -76,6 +128,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     private int _resolvedRenderGraphPassIndex = int.MinValue;
     private IReadOnlyList<string> _sampledTextureNames = [];
+    private IReadOnlyList<string> _sampledTextureNamesWhenDeclared = [];
     private IReadOnlyList<string> _readWriteBufferNames = [];
     private IReadOnlyList<string> _readWriteTextureNames = [];
 
@@ -93,6 +146,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     public void SetSampledTextures(params string[] textureNames)
         => _sampledTextureNames = textureNames;
 
+    /// <summary>Declares samples owned only by resource profiles that materialize them.</summary>
+    public void SetSampledTexturesWhenDeclared(params string[] textureNames)
+        => _sampledTextureNamesWhenDeclared = textureNames;
+
     /// <summary>
     /// Declares storage buffers read and written by material shaders in this pass.
     /// </summary>
@@ -109,7 +166,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     public EMeshRenderingPathIntent PathIntent
     {
         get => _pathIntent;
-        set => SetField(ref _pathIntent, value);
+        set
+        {
+            if (SetField(ref _pathIntent, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
     }
 
     private bool _enforceAdvancedLatePassEligibility;
@@ -190,6 +250,8 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
                 "Advanced late-pass eligibility requires CPU-direct filtered submission; GPU indirect replay has no per-draw late-lane receipt.");
             return false;
         }
+        if (meshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect && AbstractRenderer.Current is IAuthoredIndexedBackendCapability)
+            return true;
         if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy() &&
             MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
         {
@@ -216,7 +278,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         if (IsMeshletRequested(meshSubmissionStrategy))
         {
             AbstractRenderer? renderer = AbstractRenderer.Current;
-            if (renderer?.SupportsMeshletDispatch() == true)
+            if (renderer is IAuthoredIndexedBackendCapability || renderer?.SupportsMeshletDispatch() == true)
             {
                 VPRC_RenderMeshesPassMeshlet.Execute(this, meshSubmissionStrategy);
                 return;
@@ -262,6 +324,8 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     private EMeshSubmissionStrategy ResolveEffectiveMeshSubmissionStrategy()
     {
+        if (PreserveMeshSubmissionStrategy)
+            return MeshSubmissionStrategy;
         XRViewport? viewport = ResolveActiveViewport();
         return viewport?.MeshSubmissionStrategyOverride ?? MeshSubmissionStrategy;
     }
@@ -314,7 +378,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         AbstractRenderer? renderer,
         EMeshSubmissionStrategy requestedStrategy)
     {
-        if (renderer?.SupportsMeshletDispatch() == true)
+        if (renderer is IAuthoredIndexedBackendCapability || renderer?.SupportsMeshletDispatch() == true)
         {
             return requestedStrategy.IsAnyMeshletStrategy()
                 ? requestedStrategy
@@ -361,6 +425,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
         for (int i = 0; i < _sampledTextureNames.Count; i++)
             builder.SampleTexture(MakeTextureResource(_sampledTextureNames[i]));
+
+        for (int i = 0; i < _sampledTextureNamesWhenDeclared.Count; i++)
+            if (context.ResourceLayout is null || context.HasResource(_sampledTextureNamesWhenDeclared[i]))
+                builder.SampleTexture(MakeTextureResource(_sampledTextureNamesWhenDeclared[i]));
 
         for (int i = 0; i < _readWriteBufferNames.Count; i++)
             builder.ReadWriteBuffer(_readWriteBufferNames[i]);

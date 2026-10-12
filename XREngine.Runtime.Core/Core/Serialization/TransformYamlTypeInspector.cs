@@ -19,7 +19,14 @@ public sealed class TransformYamlTypeInspector(ITypeInspector inner, bool applyR
     {
         bool interceptSerializedId = typeof(XREngine.Scene.Transforms.TransformBase).IsAssignableFrom(type);
         foreach (IPropertyDescriptor descriptor in _inner.GetProperties(type, container))
+        {
+            // Non-flat YAML includes nonpublic properties. This one inherited
+            // bridge belongs only to the derived cooked cache, not authored YAML.
+            if (interceptSerializedId && string.Equals(descriptor.Name,
+                XREngine.Scene.Transforms.TransformBase.CookedReferenceIdentityMemberName, StringComparison.Ordinal))
+                continue;
             yield return Wrap(descriptor, interceptSerializedId);
+        }
     }
 
     public IPropertyDescriptor GetProperty(Type type, object? container, string name, bool ignoreUnmatched, bool caseInsensitivePropertyMatching)
@@ -29,6 +36,9 @@ public sealed class TransformYamlTypeInspector(ITypeInspector inner, bool applyR
             : StringComparison.Ordinal;
 
         bool interceptSerializedId = typeof(XREngine.Scene.Transforms.TransformBase).IsAssignableFrom(type);
+        if (interceptSerializedId && string.Equals(name,
+            XREngine.Scene.Transforms.TransformBase.CookedReferenceIdentityMemberName, comparison))
+            return null!;
         IPropertyDescriptor? descriptor = null;
         foreach (IPropertyDescriptor candidate in _inner.GetProperties(type, container))
         {

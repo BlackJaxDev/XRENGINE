@@ -143,7 +143,8 @@ public partial class AdvancedRenderPipeline
             ((ulong)classificationFeatures << 32) |
             shadingFeatureMask |
             latePassFeatureMask |
-            profileFeatureMask;
+            profileFeatureMask |
+            BuildAdvancedWebOutputFeatureMask(instance, viewport);
     }
 
     internal override RenderPipelineResourceVariant BuildResourceVariantForGenerationKey(
@@ -166,7 +167,8 @@ public partial class AdvancedRenderPipeline
         DeclareAttributeReconstructionResources(builder);
         DeclareClassificationResources(builder);
         DeclareNativeShadingResources(builder);
-        DeclareBrdfLookupResource(builder);
+        if (!Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            DeclareBrdfLookupResource(builder);
         DeclareForwardProbeImports(builder);
         // Every native shaded output can contain authored background. Share only
         // its canonical HDR/depth framebuffer with late work and raw HDR export;
@@ -240,10 +242,15 @@ public partial class AdvancedRenderPipeline
     private void DeclareForwardPassOutputResource(
         RenderPipelineResourceLayoutBuilder builder,
         RenderResourceSizePolicy internalSize)
-        => builder.FrameBuffer(ForwardPassFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
+    {
+        var framebuffer = builder.FrameBuffer(ForwardPassFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
-            .Color(0, HDRSceneTextureName).DepthStencil(AdvancedVisibilityResourceNames.DepthStencil)
-            .IncrementalFactory(CreateForwardPassFBOIncrementally).Add();
+            .Color(0, HDRSceneTextureName).DepthStencil(AdvancedVisibilityResourceNames.DepthStencil);
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            framebuffer.Factory(CreateAdvancedWebForwardFbo).Add();
+        else
+            framebuffer.IncrementalFactory(CreateForwardPassFBOIncrementally).Add();
+    }
 
     /// <summary>
     /// Declares Advanced's host-owned material surfaces, then gives the selected
@@ -313,11 +320,17 @@ public partial class AdvancedRenderPipeline
         builder.QuadMaterial(SceneCopyFBOName).Lifetime(RenderResourceLifetime.Transient)
             .DependsOn(HDRSceneTextureName).Factory(CreateSceneCopyFBO).Add();
 
-        DeclareAdvancedExactTransparencyResources(builder, internalSize, layers);
+        if (!Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            DeclareAdvancedExactTransparencyResources(builder, internalSize, layers);
     }
 
     private void DeclareAdvancedPostExecutionResources(RenderPipelineResourceLayoutBuilder builder)
     {
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+        {
+            DeclareAdvancedWebPostResources(builder);
+            return;
+        }
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
         RenderResourceSizePolicy windowSize = RenderResourceSizePolicy.Window();
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
@@ -537,10 +550,19 @@ public partial class AdvancedRenderPipeline
     }
 
     private void DeclareAdvancedBloomFrameBuffer(RenderPipelineResourceLayoutBuilder builder, string name, RenderResourceSizePolicy size, int mipLevel)
-        => builder.FrameBuffer(name).Size(size).Lifetime(RenderResourceLifetime.Persistent)
+    {
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+        {
+            int maxMip = Math.Min(4, XRTexture.GetSmallestMipmapLevel(Math.Max(1u, builder.Profile.InternalWidth), Math.Max(1u, builder.Profile.InternalHeight)));
+            bool upsample = name is VPRC_BloomPass.BloomUS1FBOName or VPRC_BloomPass.BloomUS2FBOName or VPRC_BloomPass.BloomUS3FBOName;
+            if (mipLevel > maxMip || upsample && mipLevel >= maxMip)
+                return;
+        }
+        builder.FrameBuffer(name).Size(size).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, BloomBlurTextureName, mipLevel)
             .Factory(() => (_advancedBloomProvider ?? throw new InvalidOperationException("Advanced bloom provider was not created before resource realization."))
                 .CreateDeclaredFrameBuffer(TryCurrentPipeline!, name)).Add();
+    }
 
     private void DeclareAdvancedPostEffects(RenderPipelineResourceLayoutBuilder builder, RenderResourceSizePolicy internalSize)
     {
@@ -597,6 +619,11 @@ public partial class AdvancedRenderPipeline
                 RenderPipelineResourceUsage.TransferDestination)
             .Factory(() => CreateLatePostColor(name, width, height, layers, mips,
                 internalFormat, pixelFormat, pixelType, sizedFormat));
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            texture.RequiresStorageUsage(false)
+                .Format(internalFormat, pixelFormat, pixelType).SizedFormat(sizedFormat)
+                .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment |
+                    RenderPipelineResourceUsage.TransferSource | RenderPipelineResourceUsage.TransferDestination);
         if (history)
             texture.History(RenderResourceHistoryPolicy.SeedFromCurrentFrame);
         if (mips > 1u)
@@ -654,7 +681,7 @@ public partial class AdvancedRenderPipeline
         // The shared DoF shader also serves Default; preserve its existing sampler ABI.
         result.SamplerName = name == DepthOfFieldTextureName ? "ColorSource" : name;
         result.AutoGenerateMipmaps = false;
-        result.RequiresStorageUsage = true;
+        result.RequiresStorageUsage = !Shaders.Compilation.WebPipelineRasterProgram.IsActive || name == AutoExposureTextureName;
         return result;
     }
 

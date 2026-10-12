@@ -1,11 +1,13 @@
-<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsPackable>false</IsPackable>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <!-- Qualify the interpreter first. Trimming and AOT require their own
          registration/serialization validation rather than inheriting desktop assumptions. -->
     <PublishTrimmed>false</PublishTrimmed>
@@ -21,10 +23,21 @@
     <ProjectReference Include="../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
     <ProjectReference Include="../XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" />
+    <ProjectReference Include="../XREngine.Runtime.Platform.Browser/XREngine.Runtime.Platform.Browser.csproj" />
     <ProjectReference Include="../XREngine.Runtime.Rendering.WebGPU/XREngine.Runtime.Rendering.WebGPU.csproj" />
     <ProjectReference Include="../XREngine.Animation/XREngine.Animation.csproj" />
+    <ProjectReference Include="../XREngine.Audio.WebAudio/XREngine.Audio.WebAudio.csproj" />
+    <ProjectReference Include="../XREngine.Runtime.Physics.Jolt/XREngine.Runtime.Physics.Jolt.csproj"
+                      AdditionalProperties="XREngineJoltBrowser=true" />
+    <ProjectReference Include="../XREngine.Runtime.Net.WebSockets/XREngine.Runtime.Net.WebSockets.csproj" />
   </ItemGroup>
 
-  <Import Project="../XREngine.Runtime.Rendering.WebGPU/BrowserAssets.props" />
+  <Target Name="ValidateBrowserNativeSourceSelection" BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(XREngineJoltBrowser)' != 'true'" Text="BrowserBuild.SourceBindingRequired: pass -p:XREngineJoltBrowser=true to restore and publish the reviewed browser physics source instead of the desktop NuGet binding." />
+  </Target>
+  <Target Name="ValidateBrowserLibraryBoundary" BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error Condition="'$(XREngineBrowserGameProject)' != '' or '$(XREngineBrowserGameRegistrationSource)' != ''" Text="BrowserBuild.GameInEngineLibrary: game composition belongs in the browser launcher, not the engine library." />
+  </Target>
+
   <Import Project="../Build/Registration/FactoryRegistrations.targets" />
 </Project>

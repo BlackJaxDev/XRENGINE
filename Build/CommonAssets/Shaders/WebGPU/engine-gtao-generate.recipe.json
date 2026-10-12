@@ -1,0 +1,225 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-gtao-generate",
+  "pass": "gtao-generate",
+  "source": "GTAOGen.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "gtaoVertex",
+    "fragment": "gtaoFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 3,
+    "maxBindingsPerBindGroup": 2,
+    "maxUniformBufferBindingSize": 256,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 2,
+    "maxSamplersPerShaderStage": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 12,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "GTAO",
+        "physicalName": "gtao_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 256,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "viewMatrix_0",
+            "provider": "ViewMatrix",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "inverseProjMatrix_0",
+            "provider": "InverseProjMatrix",
+            "offset": 64,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "projMatrix_0",
+            "provider": "ProjMatrix",
+            "offset": 128,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "outputSize_0",
+            "provider": "OutputSize",
+            "offset": 192,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "depthSize_0",
+            "provider": "DepthSize",
+            "offset": 200,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "radius_0",
+            "provider": "Radius",
+            "offset": 208,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "bias_0",
+            "provider": "Bias",
+            "offset": 212,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "falloffStartRatio_0",
+            "provider": "FalloffStartRatio",
+            "offset": 216,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "thicknessHeuristic_0",
+            "provider": "ThicknessHeuristic",
+            "offset": 220,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "visibilityBitmaskThickness_0",
+            "provider": "VisibilityBitmaskThickness",
+            "offset": 224,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "sliceCount_0",
+            "provider": "SliceCount",
+            "offset": 228,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "stepsPerSlice_0",
+            "provider": "StepsPerSlice",
+            "offset": 232,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "useInputNormals_0",
+            "provider": "UseInputNormals",
+            "offset": 236,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "useVisibilityBitmask_0",
+            "provider": "UseVisibilityBitmask",
+            "offset": 240,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "depthMode_0",
+            "provider": "DepthMode",
+            "offset": 244,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "outputOrigin_0",
+            "provider": "OutputOrigin",
+            "offset": 248,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          }
+        ]
+      },
+      {
+        "name": "DepthView",
+        "physicalName": "depthView_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-depth-2d",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Normal",
+        "physicalName": "normalTexture_0",
+        "group": 2,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Normal",
+        "physicalName": "normalSampler_0",
+        "group": 2,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": { "pass": "gtao-generate" }
+}

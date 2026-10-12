@@ -6,6 +6,12 @@ namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline
 {
+    private const ulong WebAmbientOcclusionDisabledFeatureBit = 1UL << 41;
+
+    internal bool UsesWebAmbientOcclusion
+        => RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality.EnableGtao &&
+           EnableBuiltInAmbientOcclusion && AmbientOcclusionProvider is not null;
+
     private EAdvancedShadingDebugView _shadingDebugView;
     private uint _froxelDepthSlices = AdvancedFroxelGridDimensions.DefaultDepthSlices;
 
@@ -54,8 +60,8 @@ public partial class AdvancedRenderPipeline
     private bool _enableBuiltInAmbientOcclusion = true;
 
     /// <summary>
-    /// Enables the built-in depth-derived GTAO dispatch. Disabling it keeps the
-    /// native AO target explicitly neutral rather than leaving it unwritten.
+    /// Enables the built-in depth-derived GTAO dispatch. Disabled browser outputs
+    /// use the shared neutral binding; desktop outputs retain their neutral target.
     /// </summary>
     public bool EnableBuiltInAmbientOcclusion
     {
@@ -64,6 +70,8 @@ public partial class AdvancedRenderPipeline
         {
             if (!SetField(ref _enableBuiltInAmbientOcclusion, value))
                 return;
+            if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+                RebuildCommandChain();
             InvalidateNativeShadingResourceProfile();
         }
     }
@@ -78,6 +86,8 @@ public partial class AdvancedRenderPipeline
         {
             if (!SetField(ref _ambientOcclusionProvider, value))
                 return;
+            if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+                RebuildCommandChain();
             InvalidateNativeShadingResourceProfile();
         }
     }
@@ -89,6 +99,8 @@ public partial class AdvancedRenderPipeline
 
     private void DeclareNativeShadingResources(RenderPipelineResourceLayoutBuilder builder)
     {
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            DeclareAdvancedWebNeutralResource(builder);
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
         uint froxelCapacity = checked(
@@ -243,6 +255,7 @@ public partial class AdvancedRenderPipeline
                 ESizedInternalFormat.R8)
             .Layers(layers)
             .StereoCompatible(layers > 1u)
+            .When(static profile => (profile.FeatureMask & WebAmbientOcclusionDisabledFeatureBit) == 0)
             .DependsOn(
                 AdvancedVisibilityResourceNames.DepthStencil)
             .DebugLabel("Advanced ambient occlusion")

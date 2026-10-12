@@ -6,7 +6,7 @@ namespace XREngine.Rendering;
 /// <summary>
 /// Cross-backend packing helpers for the canonical deformation vertex.
 /// </summary>
-public static class AdvancedPackedVertexCodec
+public static partial class AdvancedPackedVertexCodec
 {
     /// <summary>Source vertex contains an authored second texture-coordinate set.</summary>
     public const uint HasTexCoord1Flag = 1u << 0;
@@ -70,14 +70,7 @@ public static class AdvancedPackedVertexCodec
     public static bool HasReadableAttributes(XRMesh mesh)
     {
         ArgumentNullException.ThrowIfNull(mesh);
-        uint vertexCount = (uint)Math.Max(0, mesh.VertexCount);
-        if (vertexCount == 0u)
-            return false;
-        if (mesh.Interleaved)
-            return mesh.InterleavedVertexBuffer is { ClientSideSource: not null } interleaved &&
-                   interleaved.ElementCount >= vertexCount;
-        return mesh.PositionsBuffer is { ClientSideSource: not null } positions &&
-               positions.ElementCount >= vertexCount;
+        return CanReadMesh(mesh);
     }
 
     public static AdvancedDeformedVertex Pack(

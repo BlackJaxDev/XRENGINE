@@ -63,7 +63,7 @@ public partial class VisualScene3D
     {
         visibleRenderables = 0;
         if (_cpuSceneCullingStructureActive != ECpuSceneCullingStructure.Bvh ||
-            IsGpuCulling ||
+            IsGpuCulling || commands.RequiresFullResidentAuthoredCollection ||
             commands.IsOwnedByShadowPipeline ||
             state.ShadowPass ||
             state.CapturePolicy.IsCapture ||
@@ -107,6 +107,7 @@ public partial class VisualScene3D
         if (!entry.Valid)
             return false;
 
+        commands.InvalidateFullResidentMeshOrderCollection();
         state.PublishVisibilityBatchDiagnostics(entry.SplitDecision, entry.ContentPolicy);
         ulong requestedViewMask = ResolveRequestedViewMask(viewSet, camera, collectionVolume is not null);
         bool modelDiagActive = ModelRenderDiagnostics.HasActiveTrace;

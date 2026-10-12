@@ -27,6 +27,19 @@ namespace XREngine.Rendering.UI
             RenderInfo2D.PreCollectCommandsCallback = ShouldRender2D;
         }
 
+        protected override void OnDestroying()
+        {
+            try
+            {
+                base.OnDestroying();
+            }
+            finally
+            {
+                try { RenderInfo3D.Dispose(); }
+                finally { RenderInfo2D.Dispose(); }
+            }
+        }
+
         //TODO: register callback on canvas to set RenderInfo3D/2D Visible property so no quadtree/octree culling is done if the canvas is not visible
 
         private static int _shouldRender3DDiagCount = 0;
@@ -104,6 +117,10 @@ namespace XREngine.Rendering.UI
 
             var canvasComp = canvas.SceneNode?.GetComponent<UICanvasComponent>();
 
+            // Resolve on collection so ancestor motion and clip toggles affect descendants
+            // without subscribing every child to every ancestor's property changes.
+            RenderCommand2D.WorldCropRegion = UIClipRegion.ResolveCrop(tfm, ClipToBounds);
+
             // Determine if this item should use the 2D render path:
             // - Screen-space: always yes
             // - Non-screen with offscreen FBO: yes (rendering to canvas's internal FBO)
@@ -134,6 +151,10 @@ namespace XREngine.Rendering.UI
             }
 
             canvasComp?.BatchCollector?.BreakBatchRun(RenderPass);
+
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
+                AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU)
+                throw new NotSupportedException($"WebGPU.UI.UnbatchedUnsupported: '{GetType().Name}' requires an admitted screen-space batch profile; individual UI draws are unsupported.");
 
             if (diagLog)
             {
@@ -174,11 +195,17 @@ namespace XREngine.Rendering.UI
             tfm.UpdateRenderInfoBounds(RenderInfo2D, RenderInfo3D);
             var mtx = GetRenderWorldMatrix(tfm);
             RenderCommand3D.WorldMatrix = mtx;
-            RenderCommand2D.WorldMatrix = mtx;
+            RenderCommand2D.WorldMatrix = GetRenderCanvasMatrix(tfm);
         }
 
         protected virtual Matrix4x4 GetRenderWorldMatrix(UIBoundableTransform tfm)
             => tfm.RenderMatrix;
+
+        /// <summary>
+        /// Maps the same authored mesh into the local 2D target before the canvas is placed in the scene.
+        /// </summary>
+        protected Matrix4x4 GetRenderCanvasMatrix(UIBoundableTransform tfm)
+            => GetRenderWorldMatrix(tfm) * (tfm.ParentCanvas?.InverseRenderMatrix ?? Matrix4x4.Identity);
 
         /// <summary>
         /// The material used to render this UI component.
@@ -285,21 +312,18 @@ namespace XREngine.Rendering.UI
                     }
                     break;
                 case nameof(ClipToBounds):
-                    //Toggle setting the region here
-                    RenderCommand2D.WorldCropRegion = ClipToBounds ? BoundableTransform.AxisAlignedRegion.AsBoundingRectangle() : null;
+                    RenderCommand2D.WorldCropRegion = UIClipRegion.ResolveCrop(BoundableTransform, ClipToBounds);
                     break;
                 case nameof(UIBoundableTransform.AxisAlignedRegion):
-                    //But only update the crop region if we're clipping to bounds
-                    if (ClipToBounds)
-                        RenderCommand2D.WorldCropRegion = BoundableTransform.AxisAlignedRegion.AsBoundingRectangle();
+                    RenderCommand2D.WorldCropRegion = UIClipRegion.ResolveCrop(BoundableTransform, ClipToBounds);
                     break;
             }
         }
 
         private bool _clipToBounds = false;
         /// <summary>
-        /// If true, this UI component will be scissor-tested (cropped) to its bounds.
-        /// Any pixels outside of the bounds will not be rendered, which is useful for things like text or scrolling regions.
+        /// If true, this UI component and descendants will be scissor-tested to its bounds.
+        /// The effective rectangular crop intersects all clipping ancestors.
         /// </summary>
         public bool ClipToBounds
         {

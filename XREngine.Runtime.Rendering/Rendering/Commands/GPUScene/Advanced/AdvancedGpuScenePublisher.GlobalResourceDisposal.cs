@@ -17,9 +17,10 @@ public sealed partial class AdvancedGpuScenePublisher
         _orderedRegistrationIdentitiesValid = false;
         ClearSourceGroupReferences();
 
-        if (_publishedLightCount == 0 && _publishedProbeCount == 0 &&
+        if (_publishedLightCount == 0 && _publishedProbeCount == 0 && _publishedDecalCount == 0 &&
             !_publishedAmbientHandle.IsValid)
         {
+            Array.Clear(_plannedDecals);
             Database.ReleasePublicationSnapshotsForDisposal();
             return;
         }
@@ -29,7 +30,7 @@ public sealed partial class AdvancedGpuScenePublisher
             shadowCount += _publishedLightShadowCounts[index];
 
         int probeBindingCount = checked(_publishedProbeCount * 2);
-        EnsureGlobalResourceTransitionCapacity(0, checked(shadowCount + probeBindingCount));
+        EnsureGlobalResourceTransitionCapacity(0, checked(shadowCount + probeBindingCount + _publishedDecalCount));
         int releaseCursor = 0;
         for (int index = 0; index < _publishedLightCount; ++index)
         {
@@ -47,11 +48,14 @@ public sealed partial class AdvancedGpuScenePublisher
             releaseCursor += probeBindingCount;
         }
 
+        _publishedDecalBindings.AsSpan(0, _publishedDecalCount).CopyTo(_resourceReleaseBindings.AsSpan(releaseCursor));
+        releaseCursor += _publishedDecalCount;
         AdvancedGlobalResourceDatabase resources = Database.Resources;
         string reason = string.Empty;
         if (!resources.Lights.CanApply(0, 0, _publishedLightCount) ||
             !resources.Shadows.CanApply(0, 0, shadowCount) ||
             !resources.Probes.CanApply(0, 0, _publishedProbeCount) ||
+            !resources.Decals.CanApply(0, 0, _publishedDecalCount) ||
             !TryPreflightWorldAmbient(null, out reason) ||
             !_resourcePublisher.TryPreflightTransition(
                 ReadOnlySpan<AdvancedGpuResourceBindingSource>.Empty,
@@ -77,6 +81,9 @@ public sealed partial class AdvancedGpuScenePublisher
         for (int index = 0; index < _publishedProbeCount; ++index)
             if (!resources.RemoveProbe(_publishedProbeHandles[index]))
                 throw new InvalidOperationException("A retained global probe could not be retired during disposal.");
+        for (int index = 0; index < _publishedDecalCount; ++index)
+            if (!resources.RemoveDecal(_publishedDecalHandles[index]))
+                throw new InvalidOperationException("A retained authored decal could not be retired during disposal.");
 
         _resourcePublisher.ApplyPreflightedAcquisitions(
             ReadOnlySpan<AdvancedGpuResourceBindingSource>.Empty,
@@ -89,6 +96,11 @@ public sealed partial class AdvancedGpuScenePublisher
         Array.Clear(_publishedProbeHandles);
         Array.Clear(_publishedProbeBindings);
         _publishedProbeCount = 0;
+        Array.Clear(_plannedDecals);
+        Array.Clear(_publishedDecals);
+        Array.Clear(_publishedDecalBindings);
+        Array.Clear(_publishedDecalHandles);
+        _publishedDecalCount = 0;
         Database.ReleasePublicationSnapshotsForDisposal();
     }
 }

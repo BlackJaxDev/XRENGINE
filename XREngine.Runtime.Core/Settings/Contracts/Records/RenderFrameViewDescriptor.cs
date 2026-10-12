@@ -36,8 +36,14 @@ public readonly record struct RenderFrameViewDescriptor(
     /// </summary>
     public ulong SourceCameraIdentity { get; init; }
 
-    /// <summary>Gets the camera layer mask frozen with this view.</summary>
+    /// <summary>
+    /// Gets the camera layer mask frozen with this view before draw callbacks execute.
+    /// Every producer with a source camera must set this value; the all-layers default applies only to views without a camera.
+    /// </summary>
     public uint CullingLayerMask { get; init; } = uint.MaxValue;
+
+    /// <summary>Authored orthographic screen dimensions, or null for a pixel-sized perspective view.</summary>
+    public Vector2? CameraOrthographicSize { get; init; }
 
     public bool HasParent => ParentViewId != InvalidViewId;
     public bool IsStereoEye => Kind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye;

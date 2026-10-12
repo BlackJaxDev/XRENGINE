@@ -7,5 +7,7 @@ Organize by subsystem under this directory, for example `investigations/renderin
 Subsystem indexes distinguish actionable investigations from archived evidence.
 For rendering, use [Rendering Investigations](rendering/README.md).
 
+Runtime input: [Browser snapshot transient input edges](runtime/browser-snapshot-transient-edges-2026-10-02.md).
+
 - [Windows CI Build Preparation](platform/windows-ci-build-preparation-2026-10-05.md): workload provisioning, native symbols, and Visual Studio discovery; hosted-runner confirmation pending.
 - [Skinned GPU Chain Benchmark](physics/skinned-gpu-chain-benchmark-2026-10-06.md): 2,000-chain frame-rate measurements, per-chain CPU cost evidence, fixed defects, rejected experiments, and open faults.

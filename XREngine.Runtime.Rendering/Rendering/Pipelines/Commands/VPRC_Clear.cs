@@ -5,6 +5,12 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_Clear : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            requirements.RequireOperation("attachment-clear");
+            if (Stencil) requirements.RequireOperation("stencil");
+        }
+
         public bool Color { get; set; }
         public bool Depth { get; set; }
         public bool Stencil { get; set; }

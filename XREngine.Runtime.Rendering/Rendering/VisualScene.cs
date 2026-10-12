@@ -70,7 +70,7 @@ namespace XREngine.Scene
             GPUCommands.Initialize();
         }
 
-        public void Destroy()
+        public virtual void Destroy()
         {
             GPUCommands.Destroy();
         }

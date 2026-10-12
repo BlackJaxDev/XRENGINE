@@ -162,6 +162,41 @@ pipeline factory. Every request carries an explicit output purpose:
 - offscreen-capture requests use the standard capability policy and are not
   redirected by desktop debug or RVC settings.
 
+Caller-thread hosts install their purpose-aware recipe in both the central
+runtime factory and the lazy camera factory for the same scoped lifetime.
+
+Browser output uses the same authored pipeline asset and command graph. An
+explicit Advanced source or Required factory request is preserved through
+asynchronous device startup; its physical output is admitted only when the
+installed cooked programs and concrete WebGPU resource operations qualify.
+The unconfigured browser factory still selects Default. The implemented
+Advanced browser family is mono and includes canonical native visibility and
+shading, bounded skin/morph deformation and per-sample x4 MSAA. Each selected
+operation must satisfy its concrete program, resource and deformation contract;
+exact generated local material vertex functions have retained current/previous
+geometry and matching raster auxiliary companions. Unknown displacement and
+other unavailable profiles retain named failures; the
+[material vertex contract](../../work/progress/rendering/browser-native-material-vertices-2026-10-03.md)
+records the admitted inputs and the generic deformation source-equivalence limit.
+Physical browser evidence currently covers bounded static materials
+and directional shadows; deformation and MSAA still need their own rendered
+acceptance. See [native-family admission](../../work/progress/rendering/browser-advanced-admission-2026-10-02.md)
+and [the recovered integration](../../work/progress/rendering/browser-advanced-static-integration-2026-10-03.md)
+for implementation and runtime evidence boundaries.
+Explicit game calls to `RuntimeEngine.Rendering.NewRenderPipeline(...)` must
+therefore resolve the same host recipe as an unconfigured camera. Browser hosts
+bind cooked WebGPU programs through the authored pipeline's shared operation
+contracts. The default-source factory rejects stereo and XR requests explicitly,
+while mono offscreen capture uses the same authored operation admission and
+Required Advanced requests preserve the Advanced source. Browser scene capture
+owns a private output/scene publication and accepted asynchronous texture-layer
+readback; its [capture ownership contract](../../work/progress/platform/browser-hlod-impostor-capture-boundary-2026-10-03.md)
+records the memory and physical-validation boundaries. Scoped
+recipes see every request before desktop offscreen selection. Teardown and
+startup rollback skip disposed installations, including out-of-order scopes,
+and preserve newer factories without restoring an expired callback. With no
+scope installed, the existing desktop selection policy remains unchanged.
+
 OpenXR does not clone the desktop pipeline type. It synchronizes compatible
 visual-feature configuration while keeping eye pipeline instances, temporal
 histories, and output topology independent. The standard and RVC pipelines
@@ -174,6 +209,36 @@ passes, temporal/post-processing, and final output. Vulkan dispatches
 `Advanced/Shading/ShadeNativeOpaque.comp` to reconstruct admitted surfaces,
 evaluate material lighting, and write HDR scene color; the Advanced command
 chain consumes that output through post-processing and presentation.
+
+WebGPU native stages enter the same immutable view scope as authored mesh draws.
+Visibility preparation freezes the request's selected view, target extent and
+elapsed time in its output's current recording reservation; every native stage
+reuses that selection after validating the exact frame, publication, view and
+resource identities. Scene captures retain their accepted elapsed-time override
+across retries. Recording completion or rejection retires the selection with
+the request, and stage exit restores any enclosing view even on pending work or
+exceptions. The source view rectangle and depth convention remain unchanged;
+the pass-local viewport uses the native target's extent.
+
+Advanced WebGPU honors the explicit browser GTAO quality gate. Disabling GTAO,
+the built-in AO setting, or the AO provider removes its native stage, full-size
+AO target, and required GTAO program. Native shading reuses the declared 1×1
+post-process neutral binding and supplies AO = 1 without fetching that texture.
+The resource-generation key and frozen native stage order preserve the selected
+AO family; desktop backends retain their existing neutral-output behavior.
+All native, surface-export, depth-comparison, and MSAA shading recipes declare
+`XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION=1`. Runtime validation rejects older
+recipes before binding the neutral texture, despite the unchanged 160-byte
+uniform layout and sampler ABI. The existing flags word uses bit 4 to enable
+the full-size AO fetch. This source contract still requires browser cook and
+live-output validation for the selected device.
+
+Browser native shading uses the existing `Environments` table at binding 14
+with 128-byte rows for world ambient. Bit 32 in the unchanged 160-byte native
+shade parameters suppresses world ambient for the selected view. The authored
+decal flag remains bit 16. Native and surface-export mono and x4 recipes declare
+`XR_ADV_WORLD_AMBIENT_SCHEMA_VERSION=1`; reject older cooked programs and recook
+them before use. This adds no binding or table layout.
 
 The September 4–8 [Advanced acceptance records](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md)
 include bounded shaded-output, AO/IBL, temporal, post-processing, and OpenGL
@@ -315,10 +380,10 @@ quadrature and can still alias spatial patterns in row-major storage.
 
 ### Checklist for new textures
 
-- [ ] Does this texture need mipmaps? → Set `Resizable = false`, `AutoGenerateMipmaps = true`.
-- [ ] If `UseDetailPreservingComputeMipmaps` is enabled, confirm the texture path is an eligible OpenGL 2D format; unsupported formats still fall back to `glGenerateTextureMipmap`.
-- [ ] Is there parity between the stereo and non-stereo creation paths?
-- [ ] After creation, does `SmallestMipmapLevel` return the expected value?
+- For a texture that needs mipmaps, set `Resizable = false` and `AutoGenerateMipmaps = true`.
+- With `UseDetailPreservingComputeMipmaps`, confirm that the texture is an eligible OpenGL 2D format. Unsupported formats fall back to `glGenerateTextureMipmap`.
+- Use the same creation rules for stereo and non-stereo paths.
+- Confirm that `SmallestMipmapLevel` returns the expected value after creation.
 
 ---
 
@@ -381,6 +446,13 @@ The constructor used `Average` metering (biased by bright sky), `ExposureDividen
 ### Fix
 
 Aligned constructor defaults. Added `ColorGradingSettingsTests.Defaults_MatchPipelineSchemaDefaults` regression test.
+
+The browser-hosted default pipeline deliberately supplies manual exposure only
+for missing camera values, since its cooked output has no automatic-exposure
+producer. This schema choice uses the process's browser target rather than the
+ambient renderer: a shared pipeline's cached schema must remain stable across
+physical outputs. Stored or authored camera values remain authoritative and
+unsupported automatic-exposure selections report an explicit rejection.
 
 ---
 
@@ -1165,7 +1237,12 @@ shadow set.
 GPU-produced bone palettes have no current CPU mirror. Aggregate deformation
 must copy their ranges on the GPU after CPU-authored palette uploads and before
 skinning. Accepted copies keep the output slot fenced, even if a later dispatch
-fails. Adjacent ranges can share one copy command.
+fails. Adjacent ranges can share one copy command. For mixed local palettes,
+seed CPU-owned rows into the aggregate scratch buffer, then overlay only
+GPU-owned contiguous runs with ordered GPU copies. Exact-order shared submeshes
+use the same ownership. Do not upload a CPU image across GPU-owned gaps or
+read the GPU-owned rows back. Prepare copy-range storage before the frame and
+bound it by the admitted palette capacity.
 
 The GPU scene owns the command records used for removal. Mesh disposal can
 clear the producer's command list before queued scene removal runs. Removal

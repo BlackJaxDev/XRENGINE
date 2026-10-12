@@ -394,133 +394,18 @@ internal static partial class ProjectBuilder
 
     private static AotRuntimeMetadata BuildAotRuntimeMetadata(string configuration, string platform)
     {
-        List<Assembly> assemblies = [.. AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic)];
-        DynamicGameAssemblyScope? gameAssemblyScope = TryLoadBuiltGameAssembly(configuration, platform);
-        if (gameAssemblyScope?.Assembly is not null)
-            assemblies.Add(gameAssemblyScope.Assembly);
-
-        try
-        {
-            Type[] allTypes = [.. EnumerateLoadableTypes(assemblies)
-                .Concat(NetworkingAotContractRegistry.ContractTypes)
-                .Where(t => t.AssemblyQualifiedName is not null)
-                .DistinctBy(t => t.AssemblyQualifiedName, StringComparer.Ordinal)];
-
-            AotRuntimeMetadata metadata = new()
-            {
-                KnownTypeAssemblyQualifiedNames = [.. allTypes
-                    .Select(t => t.AssemblyQualifiedName!)
-                    .OrderBy(x => x, StringComparer.Ordinal)],
-                PublishedRuntimeAssetTypeNames = PublishedCookedAssetRegistry.SnapshotRegisteredTypeNames(),
-                TransformTypes = [.. allTypes
-                    .Where(t => !t.IsAbstract && t.IsSubclassOf(typeof(TransformBase)))
-                    .Select(t => new AotTransformTypeInfo
-                    {
-                        AssemblyQualifiedName = t.AssemblyQualifiedName!,
-                        FriendlyName = FriendlyTransformName(t),
-                    })
-                    .OrderBy(x => x.AssemblyQualifiedName, StringComparer.Ordinal)],
-                TypeRedirects = [.. allTypes
-                    .SelectMany(BuildRedirectInfos)
-                    .OrderBy(x => x.LegacyTypeName, StringComparer.Ordinal)
-                    .ThenBy(x => x.FullName, StringComparer.Ordinal)],
-                WorldObjectReplications = [.. allTypes
-                    .Where(t => !t.IsAbstract && typeof(RuntimeWorldObjectBase).IsAssignableFrom(t))
-                    .Select(BuildReplicationInfo)
-                    .Where(x => x is not null)
-                    .Cast<AotWorldObjectReplicationInfo>()
-                    .OrderBy(x => x.AssemblyQualifiedName, StringComparer.Ordinal)],
-                YamlTypeConverterTypeNames = [.. allTypes
-                    .Where(t => !t.IsAbstract && !t.IsInterface)
-                    .Where(t => typeof(IYamlTypeConverter).IsAssignableFrom(t))
-                    .Where(t => t.GetCustomAttribute<YamlTypeConverterAttribute>() is not null)
-                    .Select(t => t.AssemblyQualifiedName!)
-                    .OrderBy(x => x, StringComparer.Ordinal)]
-            };
-
-            return metadata;
-        }
-        finally
-        {
-            gameAssemblyScope?.Dispose();
-        }
+        List<Assembly> assemblies = [.. AppDomain.CurrentDomain.GetAssemblies().Where(static assembly => !assembly.IsDynamic)];
+        using DynamicGameAssemblyScope? gameAssembly = TryLoadBuiltGameAssembly(configuration, platform);
+        if (gameAssembly?.Assembly is { } game)
+            assemblies.Add(game);
+        return XREngine.Publishing.AotRuntimeMetadataBuilder.Build(assemblies);
     }
 
     private static IEnumerable<Type> EnumerateLoadableTypes(IEnumerable<Assembly> assemblies)
     {
-        foreach (Assembly assembly in assemblies.DistinctBy(a => a.FullName, StringComparer.Ordinal))
-        {
-            foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
-                yield return type;
-        }
-    }
-
-    private static IEnumerable<AotTypeRedirectInfo> BuildRedirectInfos(Type type)
-    {
-        XRTypeRedirectAttribute[] attrs = type.GetCustomAttributes<XRTypeRedirectAttribute>(inherit: false).ToArray();
-        if (attrs.Length == 0)
-            yield break;
-
-        string fullName = type.FullName ?? type.Name;
-        string? assemblyQualifiedName = type.AssemblyQualifiedName;
-
-        foreach (XRTypeRedirectAttribute attr in attrs)
-        {
-            foreach (string legacyName in attr.LegacyTypeNames ?? [])
-            {
-                if (string.IsNullOrWhiteSpace(legacyName))
-                    continue;
-
-                yield return new AotTypeRedirectInfo
-                {
-                    LegacyTypeName = legacyName.Trim(),
-                    FullName = fullName,
-                    AssemblyQualifiedName = assemblyQualifiedName,
-                };
-            }
-        }
-    }
-
-    private static AotWorldObjectReplicationInfo? BuildReplicationInfo(Type type)
-    {
-        const BindingFlags replicableFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-        List<string> onChange = [];
-        List<string> onTick = [];
-        HashSet<string> compressed = new(StringComparer.Ordinal);
-
-        foreach (PropertyInfo property in type.GetProperties(replicableFlags))
-        {
-            if (property.GetCustomAttribute<ReplicateOnChangeAttribute>(true) is ReplicateOnChangeAttribute changeAttr)
-            {
-                onChange.Add(property.Name);
-                if (changeAttr.Compress)
-                    compressed.Add(property.Name);
-            }
-
-            if (property.GetCustomAttribute<ReplicateOnTickAttribute>(true) is ReplicateOnTickAttribute tickAttr)
-            {
-                onTick.Add(property.Name);
-                if (tickAttr.Compress)
-                    compressed.Add(property.Name);
-            }
-        }
-
-        if (onChange.Count == 0 && onTick.Count == 0)
-            return null;
-
-        return new AotWorldObjectReplicationInfo
-        {
-            AssemblyQualifiedName = type.AssemblyQualifiedName!,
-            ReplicateOnChangeProperties = [.. onChange.OrderBy(x => x, StringComparer.Ordinal)],
-            ReplicateOnTickProperties = [.. onTick.OrderBy(x => x, StringComparer.Ordinal)],
-            CompressedPropertyNames = [.. compressed.OrderBy(x => x, StringComparer.Ordinal)],
-        };
-    }
-
-    private static string FriendlyTransformName(Type type)
-    {
-        DisplayNameAttribute? name = type.GetCustomAttribute<DisplayNameAttribute>();
-        return $"{name?.DisplayName ?? type.Name} ({type.Assembly.GetName().Name})";
+        foreach (Assembly assembly in assemblies.DistinctBy(static item => item.FullName, StringComparer.Ordinal))
+        foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
+            yield return type;
     }
 
     private static DynamicGameAssemblyScope? TryLoadBuiltGameAssembly(string configuration, string platform)
@@ -728,13 +613,17 @@ internal static partial class ProjectBuilder
         return archivePath;
     }
 
-    private static string? ResolveGameLaunchBootstrapTypeName(string configuration, string platform)
+    internal static string? ResolveGameLaunchBootstrapTypeName(string configuration, string platform)
     {
         using DynamicGameAssemblyScope? gameAssemblyScope = TryLoadBuiltGameAssembly(configuration, platform);
         if (gameAssemblyScope?.Assembly is null)
             return null;
+        return ResolveGameLaunchBootstrapTypeName(gameAssemblyScope.Assembly);
+    }
 
-        Type[] bootstrapTypes = [.. EnumerateLoadableTypes([gameAssemblyScope.Assembly])
+    internal static string? ResolveGameLaunchBootstrapTypeName(Assembly gameAssembly)
+    {
+        Type[] bootstrapTypes = [.. EnumerateLoadableTypes([gameAssembly])
             .Where(static type =>
                 type is { IsAbstract: false, IsInterface: false } &&
                 typeof(IGameLaunchBootstrap).IsAssignableFrom(type))];
@@ -1170,10 +1059,11 @@ internal static partial class ProjectBuilder
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static void WriteCookedAsset(object data, string destination, AotRuntimeMetadata? aotMetadata = null)
+    private static void WriteCookedAsset(object data, string destination, AotRuntimeMetadata? aotMetadata = null,
+        CookedBinarySerializationCallbacks? callbacks = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-        var blob = CreateCookedBlob(data, aotMetadata);
+        var blob = CreateCookedBlob(data, aotMetadata, callbacks);
         WriteCookedBlob(destination, blob);
     }
 
@@ -1289,7 +1179,8 @@ internal static partial class ProjectBuilder
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static CookedAssetBlob CreateCookedBlob(object instance, AotRuntimeMetadata? aotMetadata = null)
+    private static CookedAssetBlob CreateCookedBlob(object instance, AotRuntimeMetadata? aotMetadata = null,
+        CookedBinarySerializationCallbacks? callbacks = null)
     {
         ArgumentNullException.ThrowIfNull(instance);
         Type runtimeType = instance.GetType();
@@ -1298,8 +1189,12 @@ internal static partial class ProjectBuilder
         if (PublishedCookedAssetRegistry.TrySerialize(instance, out byte[] runtimePayload))
             return new CookedAssetBlob(typeName, CookedAssetFormat.RuntimeBinaryV1, runtimePayload);
 
-        byte[] payload = CookedBinarySerializer.Serialize(instance);
-        return new CookedAssetBlob(typeName, CookedAssetFormat.BinaryV1, payload);
+        // A nested MemoryPack asset envelope starts an independent serialization and
+        // would hide its materials from this explicit platform projection. Registered
+        // serializers above remain authoritative and retain their original format.
+        byte[] payload = callbacks is null ? CookedBinarySerializer.Serialize(instance)
+            : CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(instance, callbacks));
+        return new CookedAssetBlob(typeName, CookedAssetFormat.BinaryV2, payload);
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]

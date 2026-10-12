@@ -14,6 +14,9 @@ public sealed class AdvancedMaterialDatabase
     private AdvancedMaterialLayoutMember[] _layoutMembers;
     private uint[] _constantWords;
     private AdvancedMaterialTextureBinding[] _textureBindings;
+    private AdvancedEngineSurfaceRecord[] _engineSurfaces;
+    private AdvancedUberBaseSurfaceRecord[] _uberBaseSurfaces;
+    private AdvancedNativeVertexMaterial[] _nativeVertices;
     private AdvancedGpuHandle[] _materialLayoutHandles;
     private readonly uint _maximumConstantWordsPerMaterial;
     private readonly uint _maximumTextureBindingsPerMaterial;
@@ -56,6 +59,9 @@ public sealed class AdvancedMaterialDatabase
         _constantWords = new uint[checked((int)Math.Max(constantWordCapacity, fixedConstantCapacity))];
         _textureBindings = new AdvancedMaterialTextureBinding[checked((int)Math.Max(textureBindingCapacity, fixedTextureCapacity))];
         _materialLayoutHandles = new AdvancedGpuHandle[checked((int)materialCapacity + 1)];
+        _engineSurfaces = new AdvancedEngineSurfaceRecord[_materialLayoutHandles.Length];
+        _uberBaseSurfaces = new AdvancedUberBaseSurfaceRecord[_materialLayoutHandles.Length];
+        _nativeVertices = new AdvancedNativeVertexMaterial[_materialLayoutHandles.Length];
     }
 
     public AdvancedGpuRecordTable<AdvancedMaterialRecord> Materials => _materials;
@@ -64,6 +70,8 @@ public sealed class AdvancedMaterialDatabase
     public ReadOnlySpan<AdvancedMaterialLayoutMember> LayoutMembers => _layoutMembers.AsSpan(0, checked((int)_layoutMemberCount));
     public ReadOnlySpan<uint> ConstantWords => _constantWords.AsSpan(0, checked((int)_constantWordCount));
     public ReadOnlySpan<AdvancedMaterialTextureBinding> TextureBindings => _textureBindings.AsSpan(0, checked((int)_textureBindingCount));
+    public ReadOnlySpan<AdvancedEngineSurfaceRecord> EngineSurfaces => _engineSurfaces;
+    public ReadOnlySpan<AdvancedUberBaseSurfaceRecord> UberBaseSurfaces => _uberBaseSurfaces;
     public uint MaximumConstantWordsPerMaterial => _maximumConstantWordsPerMaterial;
     public uint MaximumTextureBindingsPerMaterial => _maximumTextureBindingsPerMaterial;
     public uint LayoutMemberCount => _layoutMemberCount;
@@ -78,13 +86,16 @@ public sealed class AdvancedMaterialDatabase
             _materialLayoutHandles.Length,
             _layoutMembers.Length,
             _constantWords.Length,
-            _textureBindings.Length);
+            _textureBindings.Length,
+            _engineSurfaces.Length);
 
     internal bool CanSealPublication(AdvancedMaterialPublicationSnapshot snapshot)
         => snapshot.LayoutHandleCapacity >= _materialLayoutHandles.Length &&
            snapshot.LayoutMemberCapacity >= _layoutMembers.Length &&
            snapshot.ConstantWordCapacity >= _constantWords.Length &&
-           snapshot.TextureBindingCapacity >= _textureBindings.Length;
+           snapshot.TextureBindingCapacity >= _textureBindings.Length &&
+           snapshot.EngineSurfaceCapacity >= _engineSurfaces.Length &&
+           snapshot.UberBaseSurfaceCapacity >= _uberBaseSurfaces.Length;
 
     /// <summary>Copies canonical material payload state into a retained publication image without allocating.</summary>
     public bool TrySealPublication(ulong publicationSequence, AdvancedMaterialPublicationSnapshot snapshot)
@@ -102,6 +113,9 @@ public sealed class AdvancedMaterialDatabase
             // cannot truncate the GPU-visible range below a valid logical slot.
             _constantWords,
             _textureBindings,
+            _engineSurfaces,
+            _uberBaseSurfaces,
+            _nativeVertices,
             _materials.Generations,
             _kernels.Generations,
             _layouts.Generations);
@@ -300,7 +314,9 @@ public sealed class AdvancedMaterialDatabase
         ReadOnlySpan<AdvancedMaterialValueDescriptor> values,
         ReadOnlySpan<uint> constantWords,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
-        out AdvancedGpuHandle handle)
+        out AdvancedGpuHandle handle,
+        AdvancedEngineSurfaceRecord engineSurface = default,
+        AdvancedUberBaseSurfaceRecord uberSurface = default)
     {
         handle = AdvancedGpuHandle.Invalid;
         if (_materials.Count >= _materials.Capacity ||
@@ -328,6 +344,8 @@ public sealed class AdvancedMaterialDatabase
 
         _materialLayoutHandles[checked((int)handle.Index)] = layoutHandle;
         WriteMaterialPayload(handle.Index, constantWords, textureBindings);
+        WriteEngineSurface(handle, engineSurface);
+        WriteUberBaseSurface(handle, uberSurface);
         MarkMaterialDirty(handle);
         IncrementGeneration(ref _materialGeneration);
         return true;
@@ -347,7 +365,9 @@ public sealed class AdvancedMaterialDatabase
         ReadOnlySpan<uint> constantWords,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
         out AdvancedMaterialVariantHandles handles,
-        out EAdvancedMaterialVariantCreationFailure failure)
+        out EAdvancedMaterialVariantCreationFailure failure,
+        AdvancedEngineSurfaceRecord engineSurface = default,
+        AdvancedUberBaseSurfaceRecord uberSurface = default)
     {
         handles = default;
         failure = EAdvancedMaterialVariantCreationFailure.None;
@@ -436,7 +456,9 @@ public sealed class AdvancedMaterialDatabase
                 values,
                 constantWords,
                 textureBindings,
-                out AdvancedGpuHandle materialHandle))
+                out AdvancedGpuHandle materialHandle,
+                engineSurface,
+                uberSurface))
         {
             throw new InvalidOperationException("Preflighted material insertion failed.");
         }
@@ -469,7 +491,9 @@ public sealed class AdvancedMaterialDatabase
         in AdvancedMaterialRecord source,
         ReadOnlySpan<AdvancedMaterialValueDescriptor> values,
         ReadOnlySpan<uint> constantWords,
-        ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings)
+        ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
+        AdvancedEngineSurfaceRecord engineSurface = default,
+        AdvancedUberBaseSurfaceRecord uberSurface = default)
     {
         if (!_materials.TryGet(materialHandle, out AdvancedMaterialRecord previous))
             return false;
@@ -492,12 +516,16 @@ public sealed class AdvancedMaterialDatabase
         EAdvancedGpuMutationDomain mutationDomain = ResolveMaterialMutationDomain(
             in previous,
             in record,
-            textureBindings);
+            textureBindings,
+            engineSurface,
+            uberSurface);
         if (!_materials.TryReplace(materialHandle, record, mutationDomain))
             return false;
 
         _materialLayoutHandles[checked((int)materialHandle.Index)] = layoutHandle;
         WriteMaterialPayload(materialHandle.Index, constantWords, textureBindings);
+        WriteEngineSurface(materialHandle, engineSurface);
+        WriteUberBaseSurface(materialHandle, uberSurface);
         MarkMaterialDirty(materialHandle);
         IncrementGeneration(ref _materialGeneration);
         return true;
@@ -515,6 +543,9 @@ public sealed class AdvancedMaterialDatabase
         // Old publications own copied payloads. This publication must not retain
         // bindings from a tombstoned row after its texture/sampler owners retire.
         WriteMaterialPayload(materialHandle.Index, [], []);
+        _engineSurfaces[checked((int)materialHandle.Index)] = default;
+        _uberBaseSurfaces[checked((int)materialHandle.Index)] = default;
+        _nativeVertices[checked((int)materialHandle.Index)] = default;
         MarkMaterialDirty(denseIndex);
         IncrementGeneration(ref _materialGeneration);
         return true;
@@ -668,6 +699,9 @@ public sealed class AdvancedMaterialDatabase
             Array.Resize(
                 ref _materialLayoutHandles,
                 checked((int)materialCapacity + 1));
+            Array.Resize(ref _engineSurfaces, _materialLayoutHandles.Length);
+            Array.Resize(ref _uberBaseSurfaces, _materialLayoutHandles.Length);
+            Array.Resize(ref _nativeVertices, _materialLayoutHandles.Length);
         }
         uint requiredConstantCapacity = checked((materialCapacity + 1u) * _maximumConstantWordsPerMaterial);
         uint requiredTextureCapacity = checked((materialCapacity + 1u) * _maximumTextureBindingsPerMaterial);
@@ -756,7 +790,9 @@ public sealed class AdvancedMaterialDatabase
     private EAdvancedGpuMutationDomain ResolveMaterialMutationDomain(
         in AdvancedMaterialRecord previous,
         in AdvancedMaterialRecord replacement,
-        ReadOnlySpan<AdvancedMaterialTextureBinding> replacementBindings)
+        ReadOnlySpan<AdvancedMaterialTextureBinding> replacementBindings,
+        in AdvancedEngineSurfaceRecord engineSurface,
+        in AdvancedUberBaseSurfaceRecord uberSurface)
     {
         if (previous.ShadingKernelId != replacement.ShadingKernelId ||
             previous.ShadingKernelGeneration != replacement.ShadingKernelGeneration ||
@@ -765,18 +801,78 @@ public sealed class AdvancedMaterialDatabase
             previous.CoverageMode != replacement.CoverageMode ||
             previous.RequiredAttributeMask != replacement.RequiredAttributeMask ||
             previous.FeatureFlags != replacement.FeatureFlags ||
-            previous.EligibilityFlags != replacement.EligibilityFlags)
+            previous.EligibilityFlags != replacement.EligibilityFlags ||
+            previous.SourceContract != replacement.SourceContract ||
+            !_engineSurfaces[checked((int)previous.StableRowId)].HasSameLayout(in engineSurface) ||
+            !_uberBaseSurfaces[checked((int)previous.StableRowId)].HasSameLayout(in uberSurface))
         {
             return EAdvancedGpuMutationDomain.LayoutTopology;
         }
 
         if (!TryGetTextureBindings(previous, out ReadOnlySpan<AdvancedMaterialTextureBinding> previousBindings) ||
-            !TextureBindingsEqual(previousBindings, replacementBindings))
+            !TextureBindingsEqual(previousBindings, replacementBindings) ||
+            !_engineSurfaces[checked((int)previous.StableRowId)].HasSameBindings(in engineSurface) ||
+            !_uberBaseSurfaces[checked((int)previous.StableRowId)].HasSameBindings(in uberSurface))
         {
             return EAdvancedGpuMutationDomain.ResourceBinding;
         }
 
         return EAdvancedGpuMutationDomain.Content;
+    }
+
+    /// <summary>Returns the immutable companion for a current logical material, including an empty legacy companion.</summary>
+    public bool TryGetEngineSurface(AdvancedGpuHandle material, out AdvancedEngineSurfaceRecord surface)
+    {
+        if (!_materials.IsCurrent(material) || material.Index >= (uint)_engineSurfaces.Length)
+        {
+            surface = default;
+            return false;
+        }
+        surface = _engineSurfaces[checked((int)material.Index)];
+        return surface.SchemaVersion == 0 || surface.Generation == material.Generation;
+    }
+
+    /// <summary>Returns a current Uber companion, including an empty companion for other material families.</summary>
+    public bool TryGetUberBaseSurface(AdvancedGpuHandle material, out AdvancedUberBaseSurfaceRecord surface)
+    {
+        if (!_materials.IsCurrent(material) || material.Index >= (uint)_uberBaseSurfaces.Length)
+        {
+            surface = default;
+            return false;
+        }
+        surface = _uberBaseSurfaces[checked((int)material.Index)];
+        return surface.SchemaVersion == 0 || surface.Generation == material.Generation;
+    }
+
+    /// <summary>Returns the exact retained local-vertex program and material values.</summary>
+    public bool TryGetNativeVertex(AdvancedGpuHandle material, out AdvancedNativeVertexMaterial vertex)
+    {
+        if (!_materials.IsCurrent(material) || material.Index >= (uint)_nativeVertices.Length)
+        {
+            vertex = default;
+            return false;
+        }
+        vertex = _nativeVertices[checked((int)material.Index)];
+        return true;
+    }
+
+    internal void SetNativeVertex(AdvancedGpuHandle material, in AdvancedNativeVertexMaterial vertex)
+    {
+        if (!_materials.IsCurrent(material))
+            throw new InvalidOperationException("A native vertex companion requires a current canonical material.");
+        _nativeVertices[checked((int)material.Index)] = vertex;
+    }
+
+    private void WriteEngineSurface(AdvancedGpuHandle material, AdvancedEngineSurfaceRecord surface)
+    {
+        surface.Generation = surface.SchemaVersion == 0 ? 0u : material.Generation;
+        _engineSurfaces[checked((int)material.Index)] = surface;
+    }
+
+    private void WriteUberBaseSurface(AdvancedGpuHandle material, AdvancedUberBaseSurfaceRecord surface)
+    {
+        surface.Generation = surface.SchemaVersion == 0 ? 0u : material.Generation;
+        _uberBaseSurfaces[checked((int)material.Index)] = surface;
     }
 
     private ReadOnlySpan<AdvancedMaterialLayoutMember> GetLayoutMembers(

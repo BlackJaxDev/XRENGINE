@@ -139,7 +139,7 @@ public partial class ClientNetworkingManager
                 return TryHandleManagedChallenge_NoLock(datagram.Span, header, payload);
 
             if (_managedHandshakeState == ManagedClientHandshakeState.Commit && header.Kind == ManagedUdpMessageKind.Accept)
-                return TryHandleManagedAccept_NoLock(datagram.Span, header, payload, sender, out innerDatagram);
+                return TryHandleManagedAccept_NoLock(datagram, header, payload, sender, out innerDatagram);
 
             ManagedUdpAssociation? association = _managedAssociation;
             if (_managedHandshakeState != ManagedClientHandshakeState.Established
@@ -173,7 +173,8 @@ public partial class ClientNetworkingManager
                     return false;
                 }
             }
-            else if (!IsInnerFrk(payload))
+            else if (!TryDecodeRealtimeFrame(datagram.Slice(ManagedUdpEnvelopeHeader.UnsignedHeaderLength, payload.Length),
+                _decompBuffer, out _, out _, out _, sender))
             {
                 RecordUnauthorizedRejection();
                 return false;
@@ -243,13 +244,12 @@ public partial class ClientNetworkingManager
         return false;
     }
 
-    private bool TryHandleManagedAccept_NoLock(ReadOnlySpan<byte> datagram, ManagedUdpEnvelopeHeader header, ReadOnlySpan<byte> payload, IPEndPoint sender, out ReadOnlyMemory<byte> innerDatagram)
+    private bool TryHandleManagedAccept_NoLock(ReadOnlyMemory<byte> datagram, ManagedUdpEnvelopeHeader header, ReadOnlySpan<byte> payload, IPEndPoint sender, out ReadOnlyMemory<byte> innerDatagram)
     {
         innerDatagram = default;
         if (_managedRootKey is null || _managedHello is null || _managedClientNonce is null || _managedServerNonce is null
             || header.SessionId != _managedIdentity.SessionId || header.Generation != _managedIdentity.Generation
-            || header.CredentialEpoch != _managedIdentity.CredentialEpoch || header.AssociationId != _managedAssociationId || header.Counter != 1
-            || !IsInnerFrk(payload))
+            || header.CredentialEpoch != _managedIdentity.CredentialEpoch || header.AssociationId != _managedAssociationId || header.Counter != 1)
         {
             RecordUnauthorizedRejection();
             return false;
@@ -260,11 +260,20 @@ public partial class ClientNetworkingManager
         byte[] sendKey = ManagedUdpAuthentication.DeriveTrafficKey(_managedRootKey, transcriptHash, ManagedUdpDirection.ClientToServer);
         byte[] receiveKey = ManagedUdpAuthentication.DeriveTrafficKey(_managedRootKey, transcriptHash, ManagedUdpDirection.ServerToClient);
         CryptographicOperations.ZeroMemory(transcriptHash);
-        if (!ManagedUdpEnvelope.Verify(datagram, receiveKey))
+        if (!ManagedUdpEnvelope.Verify(datagram.Span, receiveKey))
         {
             CryptographicOperations.ZeroMemory(sendKey);
             CryptographicOperations.ZeroMemory(receiveKey);
             RecordBadMacRejection();
+            return false;
+        }
+
+        ReadOnlyMemory<byte> acceptedFrame = datagram.Slice(ManagedUdpEnvelopeHeader.UnsignedHeaderLength, payload.Length);
+        if (!TryDecodeRealtimeFrame(acceptedFrame, _decompBuffer, out _, out _, out _, sender))
+        {
+            CryptographicOperations.ZeroMemory(sendKey);
+            CryptographicOperations.ZeroMemory(receiveKey);
+            RecordUnauthorizedRejection();
             return false;
         }
 
@@ -279,7 +288,7 @@ public partial class ClientNetworkingManager
         _managedHandshakeState = ManagedClientHandshakeState.Established;
         _managedLastAuthenticatedServerUtc = DateTime.UtcNow;
         ZeroHandshakeKeys_NoLock();
-        innerDatagram = payload.ToArray();
+        innerDatagram = acceptedFrame;
         return true;
     }
 
@@ -404,6 +413,10 @@ public partial class ClientNetworkingManager
 
     private void HandleManagedTerminalCleanup(string reason)
     {
+        // A queued callback from a retired manager must never clear a new
+        // connection's local-player assignment or replication ownership.
+        if (IsReplicationDisposed)
+            return;
         Debug.NetworkingWarning("[Client] Managed UDP session ended: {0}", reason);
         foreach (IPawnController? player in RuntimeNetworkingHostServices.Current.LocalPlayers)
             if (player?.PlayerInfo is { } playerInfo)
@@ -423,8 +436,5 @@ public partial class ClientNetworkingManager
         if (ServerIP is { } serverEndpoint)
             UnregisterUdpPeer(serverEndpoint);
     }
-    private static bool IsInnerFrk(ReadOnlySpan<byte> bytes)
-        => bytes.Length >= 3 && bytes[0] == 0x46 && bytes[1] == 0x52 && bytes[2] == 0x4B;
-
     private enum ManagedClientHandshakeState : byte { None, Hello, Commit, Established, Failed }
 }

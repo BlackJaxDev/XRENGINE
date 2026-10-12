@@ -84,6 +84,11 @@ owners remain ordered because those evaluators can depend on other roots. The
 asynchronous setting deliberately means joined parallel work for this bulk API;
 existing explicit hierarchy methods retain their task-returning API.
 
+The store owns the worker pool. The native Threads leaf supplies its physical
+threads and barriers through a separate transform factory. Native hosts register
+that factory before parallel work; sequential and browser work do not create a
+pool.
+
 Matrix callbacks are collected while the bulk pass runs and dispatched after
 all descendants finish. Subscriber counts update only on event subscription
 changes. Inverse notifications calculate inverses only when subscribed. Render

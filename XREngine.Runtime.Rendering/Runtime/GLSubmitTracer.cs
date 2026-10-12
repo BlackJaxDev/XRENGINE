@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 
 namespace XREngine.Rendering;
 
@@ -26,9 +25,12 @@ namespace XREngine.Rendering;
 public static class GLSubmitTracer
 {
     private static readonly object _stateLock = new();
-    private static FileStream? _stream;
-    private static StreamWriter? _writer;
+    private static IRuntimeOwnedTextLog? _log;
+    private static TextWriter? _writer;
     private static volatile int _level;
+    private static bool _changingLevel;
+    private static int _pendingLevel = -1;
+    private static bool _tracing;
 
     /// <summary>True when basic submit tracing is enabled (storage allocations, full uploads,
     /// destroys). Cheap volatile read; callers must gate string formatting on this.</summary>
@@ -59,6 +61,9 @@ public static class GLSubmitTracer
     /// Sets the active trace level. Opens the per-line WriteThrough log file when
     /// transitioning to an active level, and closes it when transitioning back to 0.
     /// Safe to call from any thread; idempotent for unchanged levels.
+    /// A host callback can request a new level during a transition or trace line.
+    /// The last such request runs after the current operation. Repeated callback
+    /// changes stop after four transitions and leave tracing off.
     /// </summary>
     public static void SetLevel(int level)
     {
@@ -69,30 +74,65 @@ public static class GLSubmitTracer
 
         lock (_stateLock)
         {
-            if (level == _level)
+            // A host callback can reenter SetLevel while it opens or closes a log.
+            // Apply its last request after the current transition owns its lease.
+            if (_changingLevel || _tracing)
+            {
+                _pendingLevel = level;
                 return;
+            }
 
-            if (level > 0 && _writer is null)
+            _changingLevel = true;
+            try
             {
-                if (!TryOpenLog())
+                int requestedLevel = level;
+                for (int transitions = 0; transitions < 4; transitions++)
                 {
-                    _level = 0;
-                    return;
-                }
-                try { _writer!.WriteLine($"# XRENGINE GL submit trace level={level} pid={Environment.ProcessId} started={DateTime.Now:O}"); } catch { }
-            }
-            else if (level == 0 && _writer is not null)
-            {
-                try { _writer.WriteLine($"# XRENGINE GL submit trace stopped={DateTime.Now:O}"); } catch { }
-                CloseLog();
-            }
-            else if (_writer is not null)
-            {
-                try { _writer.WriteLine($"# XRENGINE GL submit trace level changed to {level} at {DateTime.Now:O}"); } catch { }
-            }
+                    _pendingLevel = -1;
+                    ApplyLevel(requestedLevel);
+                    if (_pendingLevel < 0 || _pendingLevel == _level)
+                        return;
 
-            _level = level;
+                    requestedLevel = _pendingLevel;
+                }
+
+                // A provider that keeps changing the level cannot keep a lease open.
+                CloseLog();
+                _level = 0;
+            }
+            finally
+            {
+                _pendingLevel = -1;
+                _changingLevel = false;
+            }
         }
+    }
+
+    private static void ApplyLevel(int level)
+    {
+        if (level == _level)
+            return;
+
+        if (level > 0 && _writer is null)
+        {
+            if (!TryOpenLog())
+            {
+                _level = 0;
+                return;
+            }
+            try { _writer!.WriteLine($"# XRENGINE GL submit trace level={level} pid={Environment.ProcessId} started={DateTime.Now:O}"); } catch { }
+        }
+        else if (level == 0 && _writer is not null)
+        {
+            try { _writer.WriteLine($"# XRENGINE GL submit trace stopped={DateTime.Now:O}"); } catch { }
+            CloseLog();
+        }
+        else if (_writer is not null)
+        {
+            try { _writer.WriteLine($"# XRENGINE GL submit trace level changed to {level} at {DateTime.Now:O}"); } catch { }
+        }
+
+        _level = level;
     }
 
     /// <summary>Write one pre-submit line. Caller must check <see cref="Enabled"/> first.</summary>
@@ -106,10 +146,11 @@ public static class GLSubmitTracer
         lock (_stateLock)
         {
             // Re-check writer under the lock: SetLevel(0) may have closed it concurrently.
-            StreamWriter? writer = _writer;
-            if (writer is null)
+            TextWriter? writer = _writer;
+            if (writer is null || _tracing)
                 return;
 
+            _tracing = true;
             try
             {
                 writer.Write('[');
@@ -124,6 +165,16 @@ public static class GLSubmitTracer
             catch
             {
                 // Swallow IO errors; tracing must never throw into hot paths.
+            }
+            finally
+            {
+                _tracing = false;
+                if (!_changingLevel && _pendingLevel >= 0)
+                {
+                    int pendingLevel = _pendingLevel;
+                    _pendingLevel = -1;
+                    SetLevel(pendingLevel);
+                }
             }
         }
     }
@@ -144,24 +195,13 @@ public static class GLSubmitTracer
     {
         try
         {
-            string logsRoot = Path.Combine(Directory.GetCurrentDirectory(), "Build", "Logs");
-            Directory.CreateDirectory(logsRoot);
-            string path = Path.Combine(logsRoot, "gl-submit-trace.log");
-
-            // WriteThrough bypasses the OS write cache so each line survives a driver
-            // fastfail without process-side flushing.
-            _stream = new FileStream(
-                path,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.Read,
-                bufferSize: 4096,
-                options: FileOptions.WriteThrough);
-            _writer = new StreamWriter(_stream, new UTF8Encoding(false))
-            {
-                AutoFlush = true,
-                NewLine = "\n",
-            };
+            IRuntimeGLSubmitTraceFileOutput output = RuntimeDiagnosticCaptureFileOutput.Current as IRuntimeGLSubmitTraceFileOutput
+                ?? throw new InvalidOperationException("GL submit trace output is unavailable on this host.");
+            IRuntimeOwnedTextLog log = output.OpenGLSubmitTraceLog()
+                ?? throw new InvalidOperationException("GL submit trace output returned no log lease.");
+            _log = log;
+            // Own the lease before invoking a provider-controlled property getter.
+            _writer = log.Writer ?? throw new InvalidOperationException("GL submit trace output has no writer.");
             return true;
         }
         catch
@@ -173,9 +213,9 @@ public static class GLSubmitTracer
 
     private static void CloseLog()
     {
-        try { _writer?.Dispose(); } catch { }
-        try { _stream?.Dispose(); } catch { }
+        IRuntimeOwnedTextLog? log = _log;
         _writer = null;
-        _stream = null;
+        _log = null;
+        try { log?.Dispose(); } catch { }
     }
 }

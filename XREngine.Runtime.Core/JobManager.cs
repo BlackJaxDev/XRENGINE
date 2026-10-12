@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace XREngine
 {
-    public class JobManager
+    public partial class JobManager
     {
         [ThreadStatic]
         private static bool _isJobWorkerThread;
@@ -120,8 +120,8 @@ namespace XREngine
         private readonly ConcurrentQueue<Job> _deferredBySlot = new();
         private readonly CancellationTokenSource _cts = new();
         private readonly int _configuredWorkerCount;
-        private Execution.EngineGeneralWorkDomain? _generalDomain;
-        private Execution.EngineJobAuxiliaryWorkDomain? _auxiliaryDomain;
+        private Execution.IEngineGeneralWorkDomain? _generalDomain;
+        private Execution.IEngineJobAuxiliaryWorkDomain? _auxiliaryDomain;
         private readonly ManualResetEventSlim _activeJobsEmpty = new(initialState: true);
         private readonly ManualResetEventSlim _submissionsEmpty = new(initialState: true);
         private readonly Queue<Job> _shutdownFinalizationQueue = new();
@@ -137,10 +137,20 @@ namespace XREngine
         private int _shutdownSynchronizationDisposed;
 
         public int WorkerCount => _generalDomain?.WorkerCount ?? _configuredWorkerCount;
+        internal Execution.IEngineGeneralWorkDomain GeneralDomain
+            => _generalDomain ?? throw new InvalidOperationException("The general worker domain is not installed.");
+        internal Execution.IEngineJobAuxiliaryWorkDomain AuxiliaryDomain
+            => _auxiliaryDomain ?? throw new InvalidOperationException("The auxiliary worker domain is not installed.");
         public IRemoteJobTransport? RemoteTransport { get; set; }
 
-        public JobManager(int? workerCount = null, int? maxQueueSize = null, int? queueWarningThreshold = null, int? workerCap = null)
-            : this(workerCount, maxQueueSize, queueWarningThreshold, workerCap, createWorkerDomains: true)
+        public JobManager(
+            int? workerCount = null,
+            int? maxQueueSize = null,
+            int? queueWarningThreshold = null,
+            int? workerCap = null,
+            JobExecutionMode executionMode = JobExecutionMode.WorkerThreads)
+            : this(workerCount, maxQueueSize, queueWarningThreshold, workerCap,
+                createWorkerDomains: executionMode == JobExecutionMode.WorkerThreads, executionMode)
         {
         }
 
@@ -149,8 +159,19 @@ namespace XREngine
             int? maxQueueSize,
             int? queueWarningThreshold,
             int? workerCap,
-            bool createWorkerDomains)
+            bool createWorkerDomains,
+            JobExecutionMode executionMode = JobExecutionMode.WorkerThreads)
         {
+            if (!Enum.IsDefined(executionMode))
+                throw new ArgumentOutOfRangeException(nameof(executionMode));
+            if (OperatingSystem.IsBrowser() && executionMode != JobExecutionMode.CallerThread)
+                throw new PlatformNotSupportedException("The browser requires explicit caller-thread job execution.");
+            Execution.IEngineWorkerDomainFactory? workerFactory = createWorkerDomains
+                ? Execution.EngineWorkerDomainServices.GetRequiredFactory()
+                : null;
+            ExecutionMode = executionMode;
+            _callerThreadId = Environment.CurrentManagedThreadId;
+
             int cap = workerCap ?? ReadWorkerCapFromEnv() ?? DefaultWorkerCap;
             int reserved = Math.Max(0, DefaultReservedThreads);
             int defaultWorkers = Math.Max(1, Environment.ProcessorCount - reserved);
@@ -158,7 +179,7 @@ namespace XREngine
 
             int count = workerCount ?? ReadWorkerCountFromEnv() ?? defaultWorkers;
             count = Math.Clamp(count, createWorkerDomains ? 1 : 0, cap);
-            _configuredWorkerCount = count;
+            _configuredWorkerCount = IsCallerThreadExecutor ? 0 : count;
 
             _maxQueueSize = maxQueueSize ?? ReadQueueLimitFromEnv() ?? DefaultQueueLimit;
             _queueWarningThreshold = queueWarningThreshold ?? ReadQueueWarningThresholdFromEnv() ?? DefaultQueueWarningThreshold;
@@ -167,46 +188,56 @@ namespace XREngine
             if (_maxQueueSize > 0 && _queueWarningThreshold > _maxQueueSize)
                 _queueWarningThreshold = _maxQueueSize;
 
-            if (_maxQueueSize > 0)
+            if (_maxQueueSize > 0 && !IsCallerThreadExecutor)
                 _queueSlots = new SemaphoreSlim(_maxQueueSize, _maxQueueSize);
 
             if (createWorkerDomains)
-            {
-                AttachGeneralDomain(new Execution.EngineGeneralWorkDomain(this, count));
-                AttachAuxiliaryDomain(new Execution.EngineJobAuxiliaryWorkDomain(this));
-            }
+                InitializeWorkerDomains(workerFactory!, count);
         }
 
-        internal void AttachGeneralDomain(Execution.EngineGeneralWorkDomain domain)
+        /// <summary>Creates both domains before it starts either domain.</summary>
+        internal void InitializeWorkerDomains(
+            Execution.IEngineWorkerDomainFactory factory,
+            int workerCount)
         {
-            ArgumentNullException.ThrowIfNull(domain);
-            if (Interlocked.CompareExchange(ref _generalDomain, domain, null) is not null)
-                throw new InvalidOperationException("The JobManager general execution domain is already installed.");
+            ArgumentNullException.ThrowIfNull(factory);
+            if (IsCallerThreadExecutor)
+                throw new InvalidOperationException("A caller-thread job executor cannot own worker domains.");
+            if (_generalDomain is not null || _auxiliaryDomain is not null)
+                throw new InvalidOperationException("The JobManager worker domains are already installed.");
 
             try
             {
-                domain.Start();
+                _generalDomain = factory.CreateGeneralDomain(this, workerCount)
+                    ?? throw new InvalidOperationException("The worker-domain factory returned no general domain.");
+                _auxiliaryDomain = factory.CreateAuxiliaryDomain(this)
+                    ?? throw new InvalidOperationException("The worker-domain factory returned no auxiliary domain.");
+                _generalDomain.Start();
+                _auxiliaryDomain.Start();
             }
-            catch
+            catch (Exception startupError)
             {
-                Shutdown(waitForWorkers: true);
-                throw;
-            }
-        }
+                bool stopped;
+                Exception? cleanupError;
+                try
+                {
+                    stopped = Shutdown(
+                        waitForWorkers: true,
+                        ShutdownTaskWaitTimeout,
+                        out cleanupError);
+                }
+                catch (Exception exception)
+                {
+                    throw new AggregateException(startupError, exception);
+                }
 
-        internal void AttachAuxiliaryDomain(Execution.EngineJobAuxiliaryWorkDomain domain)
-        {
-            ArgumentNullException.ThrowIfNull(domain);
-            if (Interlocked.CompareExchange(ref _auxiliaryDomain, domain, null) is not null)
-                throw new InvalidOperationException("The JobManager auxiliary execution domain is already installed.");
+                if (!stopped)
+                {
+                    cleanupError ??= new TimeoutException(
+                        "Worker-domain cleanup did not finish within the scheduler shutdown bound.");
+                    throw new AggregateException(startupError, cleanupError);
+                }
 
-            try
-            {
-                domain.Start();
-            }
-            catch
-            {
-                Shutdown(waitForWorkers: true);
                 throw;
             }
         }
@@ -236,16 +267,20 @@ namespace XREngine
             };
         }
 
-        public bool IsQueueBounded => _queueSlots != null;
+        public bool IsQueueBounded => _maxQueueSize > 0;
 
-        public int QueueCapacity => _queueSlots != null ? _maxQueueSize : int.MaxValue;
+        public int QueueCapacity => IsQueueBounded ? _maxQueueSize : int.MaxValue;
 
-        public int QueueSlotsAvailable => _queueSlots?.CurrentCount ?? int.MaxValue;
+        public int QueueSlotsAvailable => IsCallerThreadExecutor && IsQueueBounded
+            ? Math.Max(0, _maxQueueSize - Volatile.Read(ref _callerQueueSlotsInUse))
+            : _queueSlots?.CurrentCount ?? int.MaxValue;
 
         public int QueueSlotsInUse
         {
             get
             {
+                if (IsCallerThreadExecutor)
+                    return Volatile.Read(ref _callerQueueSlotsInUse);
                 if (_queueSlots is null)
                     return 0;
 
@@ -297,7 +332,7 @@ namespace XREngine
                     return job.Handle;
                 }
 
-                if (_queueSlots is null)
+                if (!IsQueueBounded)
                 {
                     Enqueue(job, countAgainstSlots: false);
                     return job.Handle;
@@ -306,7 +341,9 @@ namespace XREngine
                 bool acquired = false;
                 try
                 {
-                    acquired = _queueSlots.Wait(0);
+                    acquired = IsCallerThreadExecutor
+                        ? TryAcquireCallerThreadQueueSlot()
+                        : _queueSlots!.Wait(0);
                 }
                 catch (ObjectDisposedException)
                 {
@@ -357,21 +394,27 @@ namespace XREngine
             JobAffinity affinity,
             RenderThreadJobKind renderThreadKind)
         {
+            if (IsCallerThreadExecutor)
+                EnsureCallerThread();
+
             if (!job.TryStartForShutdownRejection())
                 throw new InvalidOperationException("Job has already been scheduled or completed.");
 
             ConfigureStartedJob(job, priority, affinity, renderThreadKind, CancellationToken.None);
             CancelQueuedJobForShutdown(job);
+            if (IsCallerThreadExecutor)
+                ShutdownCallerThread();
             return job.Handle;
         }
 
-        private static void ConfigureStartedJob(
+        private void ConfigureStartedJob(
             Job job,
             JobPriority priority,
             JobAffinity affinity,
             RenderThreadJobKind renderThreadKind,
             CancellationToken cancellationToken)
         {
+            job.UsesCallerThreadExecutor = IsCallerThreadExecutor;
             job.Priority = priority;
             job.Affinity = affinity;
             job.RenderThreadKind = affinity == JobAffinity.RenderThread
@@ -399,11 +442,14 @@ namespace XREngine
                 return;
             }
 
-            _auxiliaryDomain!.NotifyDeferredWorkAvailable();
+            _auxiliaryDomain?.NotifyDeferredWorkAvailable();
         }
 
         internal bool TryPromoteDeferredJob()
         {
+            if (IsCallerThreadExecutor)
+                return TryPromoteCallerThreadDeferredJob();
+
             if (!_deferredBySlot.TryDequeue(out Job? job))
                 return false;
 
@@ -415,7 +461,7 @@ namespace XREngine
 
             bool acquired = AcquireQueueSlot(_cts.Token);
             if (acquired)
-                job.UsesQueueSlot = _queueSlots is not null;
+                job.UsesQueueSlot = IsQueueBounded;
 
             if (!acquired || _cts.IsCancellationRequested)
             {
@@ -544,7 +590,7 @@ namespace XREngine
                     return;
                 }
 
-                job.UsesQueueSlot = _queueSlots is not null;
+                job.UsesQueueSlot = IsQueueBounded;
             }
 
             bool notifyGeneral = false;
@@ -594,11 +640,14 @@ namespace XREngine
             if (!notifyRemote)
                 return;
 
-            _auxiliaryDomain!.NotifyRemoteWorkAvailable();
+            _auxiliaryDomain?.NotifyRemoteWorkAvailable();
         }
 
         private bool AcquireQueueSlot(CancellationToken cancellationToken)
         {
+            if (IsCallerThreadExecutor)
+                return !cancellationToken.IsCancellationRequested && TryAcquireCallerThreadQueueSlot();
+
             if (_queueSlots is null)
                 return true;
 
@@ -791,14 +840,35 @@ namespace XREngine
         private static TimeSpan TicksToTimeSpan(long ticks)
             => TimeSpan.FromSeconds(ticks / (double)System.Diagnostics.Stopwatch.Frequency);
 
-        private static void Log(string message)
-            => LogMessage?.Invoke(message);
+        private void Log(string message)
+        {
+            try
+            {
+                LogMessage?.Invoke(message);
+            }
+            catch when (IsCallerThreadExecutor)
+            {
+                // A diagnostic callback cannot take ownership from the host pump.
+            }
+        }
 
-        private static IDisposable? StartProfilerScope(string name)
-            => ProfilerScopeFactory?.Invoke(name);
+        private IDisposable? StartProfilerScope(string name)
+        {
+            try
+            {
+                return ProfilerScopeFactory?.Invoke(name);
+            }
+            catch (Exception exception) when (IsCallerThreadExecutor)
+            {
+                Log($"Caller-thread job profiler callback faulted: {exception}");
+                return null;
+            }
+        }
 
         public bool Process()
-            => TryDispatchGeneralWork(out _);
+            => IsCallerThreadExecutor
+                ? ProcessCallerThreadJobs(maxJobs: 1) != 0
+                : TryDispatchGeneralWork(out _);
 
         internal bool TryDispatchRemoteJob()
         {
@@ -913,6 +983,11 @@ namespace XREngine
                             ReleaseAfterTerminalNotification(job);
                             return;
                         case JobStepResult.Waiting:
+                            if (IsCallerThreadExecutor)
+                            {
+                                _callerPendingJobs.Enqueue(job);
+                                return;
+                            }
                             if (job.PendingTask is { IsCompleted: false } pending)
                             {
                                 pending.ContinueWith(_ => Requeue(job), TaskContinuationOptions.ExecuteSynchronously);
@@ -970,6 +1045,12 @@ namespace XREngine
             {
                 ObserveShutdownOperation(notification);
                 RemoveActive(job);
+                return;
+            }
+
+            if (IsCallerThreadExecutor)
+            {
+                _callerPendingJobs.Enqueue(job);
                 return;
             }
 
@@ -1102,6 +1183,16 @@ namespace XREngine
         /// </param>
         public void ProcessMainThreadJobs(int maxJobs = int.MaxValue, double budgetMilliseconds = 0.0)
         {
+            using CallerThreadPumpScope callerPump = EnterCallerThreadPump();
+            if (!callerPump.CanProcess || !PrepareCallerThreadPhase(maxJobs))
+                return;
+            if (IsCallerThreadExecutor)
+            {
+                maxJobs = Math.Min(maxJobs, DefaultCallerThreadJobLimit);
+                if (budgetMilliseconds <= 0.0)
+                    budgetMilliseconds = DefaultCallerThreadBudgetMilliseconds;
+            }
+
             int snapshot = SnapshotQueuedMainThreadJobs();
             int remaining = Math.Min(Math.Max(0, maxJobs), snapshot);
 
@@ -1120,7 +1211,14 @@ namespace XREngine
                     : Math.Max(0L, dequeuedAt - queuedAt) * 1000.0 / Stopwatch.Frequency;
                 RecordWait(job, bucket);
                 string label = job.GetProfilerLabel();
-                JobDispatchObserver?.Invoke(JobAffinity.RenderThread, label, job.RenderThreadKind);
+                try
+                {
+                    JobDispatchObserver?.Invoke(JobAffinity.RenderThread, label, job.RenderThreadKind);
+                }
+                catch (Exception exception) when (IsCallerThreadExecutor)
+                {
+                    Log($"Caller-thread job dispatch observer faulted: {exception}");
+                }
                 long jobStart = Stopwatch.GetTimestamp();
                 using (StartProfilerScope($"MainThreadJobs.{job.Priority}.{label}"))
                 {
@@ -1131,12 +1229,19 @@ namespace XREngine
                 double overBudgetMilliseconds = budgetMilliseconds <= 0.0
                     ? 0.0
                     : Math.Max(0.0, (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency - budgetMilliseconds);
-                RenderThreadJobExecutionObserver?.Invoke(
-                    label,
-                    job.RenderThreadKind,
-                    durationMilliseconds,
-                    queueDelayMilliseconds,
-                    overBudgetMilliseconds);
+                try
+                {
+                    RenderThreadJobExecutionObserver?.Invoke(
+                        label,
+                        job.RenderThreadKind,
+                        durationMilliseconds,
+                        queueDelayMilliseconds,
+                        overBudgetMilliseconds);
+                }
+                catch (Exception exception) when (IsCallerThreadExecutor)
+                {
+                    Log($"Caller-thread job execution observer faulted: {exception}");
+                }
                 MaybeLogSlowRenderThreadJob(job, label, jobElapsedTicks, budgetMilliseconds);
                 processed++;
 
@@ -1148,6 +1253,12 @@ namespace XREngine
 
         public void ProcessAppThreadJobs(int maxJobs = int.MaxValue)
         {
+            using CallerThreadPumpScope callerPump = EnterCallerThreadPump();
+            if (!callerPump.CanProcess || !PrepareCallerThreadPhase(maxJobs))
+                return;
+            if (IsCallerThreadExecutor)
+                maxJobs = Math.Min(maxJobs, DefaultCallerThreadJobLimit);
+
             int snapshot = SnapshotQueuedAppThreadJobs();
             int remaining = Math.Min(Math.Max(0, maxJobs), snapshot);
 
@@ -1165,6 +1276,12 @@ namespace XREngine
 
         public void ProcessCollectVisibleSwapJobs(int maxJobs = 128)
         {
+            using CallerThreadPumpScope callerPump = EnterCallerThreadPump();
+            if (!callerPump.CanProcess || !PrepareCallerThreadPhase(maxJobs))
+                return;
+            if (IsCallerThreadExecutor)
+                maxJobs = Math.Min(Math.Min(maxJobs, DefaultCallerThreadJobLimit), SnapshotQueuedJobs(JobAffinity.CollectVisibleSwap));
+
             int processed = 0;
             while (processed < maxJobs && TryDequeueWithAging(_pendingCollectVisibleSwapByPriority, JobAffinity.CollectVisibleSwap, out var job, out var bucket))
             {
@@ -1256,22 +1373,52 @@ namespace XREngine
                 => _result.TrySetCanceled();
         }
 
+        /// <summary>
+        /// Stops admission and requests cancellation. Worker execution optionally
+        /// performs bounded joins. Caller-thread execution always performs one
+        /// bounded, nonblocking cancellation slice and must be pumped or retried
+        /// until this returns true before dependent runtime state is destroyed.
+        /// </summary>
         public bool Shutdown(bool waitForWorkers = true)
             => Shutdown(waitForWorkers, ShutdownTaskWaitTimeout);
 
         internal bool Shutdown(bool waitForWorkers, TimeSpan timeout)
         {
+            bool stopped = Shutdown(waitForWorkers, timeout, out Exception? shutdownError);
+            if (shutdownError is not null)
+                throw shutdownError;
+            return stopped;
+        }
+
+        internal bool Shutdown(bool waitForWorkers, TimeSpan timeout, out Exception? shutdownError)
+        {
+            List<Exception>? failures = null;
+            bool stopped = ShutdownCore(waitForWorkers, timeout, ref failures);
+            shutdownError = failures is null ? null : new AggregateException(failures);
+            return stopped;
+        }
+
+        private bool ShutdownCore(bool waitForWorkers, TimeSpan timeout, ref List<Exception>? failures)
+        {
+            if (IsCallerThreadExecutor)
+                return ShutdownCallerThread();
+
             long deadline = CreateShutdownDeadline(timeout);
             bool firstRequest;
             lock (_submissionSync)
                 firstRequest = Interlocked.Exchange(ref _shutdownState, 1) == 0;
-            if (!firstRequest && !waitForWorkers)
-                return false;
 
             if (firstRequest)
             {
-                Log($"JobManager shutdown requested. waitForWorkers={waitForWorkers}. {CreateShutdownSummary()}");
-                CancelOutstandingJobsForShutdown();
+                TryLogShutdownSummary($"JobManager shutdown requested. waitForWorkers={waitForWorkers}.");
+                try
+                {
+                    CancelOutstandingJobsForShutdown();
+                }
+                catch (Exception exception)
+                {
+                    RecordShutdownFailure(exception, ref failures);
+                }
 
                 try
                 {
@@ -1280,14 +1427,34 @@ namespace XREngine
                 catch (ObjectDisposedException)
                 {
                 }
+                catch (Exception exception)
+                {
+                    RecordShutdownFailure(exception, ref failures);
+                }
+            }
 
+            // Signal both domains before any bounded join.
+            try
+            {
                 _generalDomain?.Shutdown(waitForWorkers: false);
+            }
+            catch (Exception exception)
+            {
+                RecordShutdownFailure(exception, ref failures);
+            }
+
+            try
+            {
                 _auxiliaryDomain?.Shutdown(waitForWorkers: false);
+            }
+            catch (Exception exception)
+            {
+                RecordShutdownFailure(exception, ref failures);
             }
 
             if (!waitForWorkers)
             {
-                Log($"JobManager fast shutdown signaled workers and is returning without joins. {CreateShutdownSummary()}");
+                TryLogShutdownSummary("JobManager fast shutdown signaled workers and is returning without joins.");
                 return false;
             }
 
@@ -1297,52 +1464,86 @@ namespace XREngine
             try
             {
                 if (Volatile.Read(ref _shutdownSynchronizationDisposed) != 0)
-                    return true;
+                    return failures is null;
 
-                bool generalWorkersStopped = _generalDomain?.Shutdown(
-                    waitForWorkers: true,
-                    GetShutdownRemaining(deadline)) ?? true;
-                bool auxiliaryWorkersStopped = _auxiliaryDomain?.Shutdown(
-                    waitForWorkers: true,
-                    GetShutdownRemaining(deadline)) ?? true;
+                bool generalWorkersStopped = false;
+                try
+                {
+                    generalWorkersStopped = _generalDomain?.Shutdown(
+                        waitForWorkers: true,
+                        GetShutdownRemaining(deadline)) ?? true;
+                }
+                catch (Exception exception)
+                {
+                    RecordShutdownFailure(exception, ref failures);
+                }
+
+                bool auxiliaryWorkersStopped = false;
+                try
+                {
+                    auxiliaryWorkersStopped = _auxiliaryDomain?.Shutdown(
+                        waitForWorkers: true,
+                        GetShutdownRemaining(deadline)) ?? true;
+                }
+                catch (Exception exception)
+                {
+                    RecordShutdownFailure(exception, ref failures);
+                }
 
                 bool submissionsStopped = WaitForSubmissions(GetShutdownRemaining(deadline));
                 bool activeJobsStopped = WaitForActiveJobs(GetShutdownRemaining(deadline));
 
                 bool executionStopped = generalWorkersStopped && auxiliaryWorkersStopped &&
-                    submissionsStopped && activeJobsStopped;
+                    submissionsStopped && activeJobsStopped && failures is null;
                 if (!executionStopped)
                 {
                     if (!generalWorkersStopped)
-                        Log("JobManager shutdown timed out waiting for the shared general worker domain.");
+                        TryLogShutdown("JobManager shutdown timed out waiting for the shared general worker domain.");
 
                     if (!auxiliaryWorkersStopped)
-                        Log("JobManager shutdown timed out waiting for the auxiliary scheduler domain.");
+                        TryLogShutdown("JobManager shutdown timed out waiting for the auxiliary scheduler domain.");
 
                     if (!submissionsStopped)
-                        Log("JobManager shutdown timed out waiting for an admitted Schedule call.");
+                        TryLogShutdown("JobManager shutdown timed out waiting for an admitted Schedule call.");
 
                     if (!activeJobsStopped)
-                        Log("JobManager shutdown timed out waiting for active jobs or pending async continuations.");
+                        TryLogShutdown("JobManager shutdown timed out waiting for active jobs or pending async continuations.");
 
                     List<string> activeJobs = SnapshotActiveJobDescriptions();
                     if (activeJobs.Count > 0)
                     {
-                        Log("Active jobs still running during shutdown:");
+                        TryLogShutdown("Active jobs still running during shutdown:");
                         foreach (string activeJob in activeJobs)
-                            Log($"  {activeJob}");
+                            TryLogShutdown($"  {activeJob}");
                     }
 
-                    Log($"JobManager shutdown proceeding without blocking indefinitely. {CreateShutdownSummary()}");
+                    TryLogShutdownSummary("JobManager shutdown proceeding without blocking indefinitely.");
                     return false;
                 }
 
                 // Workers are terminal and admission is closed, so a final drain
                 // releases any queue entry that raced the first cancellation pass.
-                CancelOutstandingJobsForShutdown();
-                if (!WaitForShutdownFinalizations(GetShutdownRemaining(deadline)))
+                try
                 {
-                    Log("JobManager shutdown timed out waiting for queued-job cancellation notifications.");
+                    CancelOutstandingJobsForShutdown();
+                }
+                catch (Exception exception)
+                {
+                    RecordShutdownFailure(exception, ref failures);
+                    return false;
+                }
+
+                try
+                {
+                    if (!WaitForShutdownFinalizations(GetShutdownRemaining(deadline)))
+                    {
+                        TryLogShutdown("JobManager shutdown timed out waiting for queued-job cancellation notifications.");
+                        return false;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    RecordShutdownFailure(exception, ref failures);
                     return false;
                 }
 
@@ -1359,6 +1560,43 @@ namespace XREngine
             finally
             {
                 Monitor.Exit(_shutdownJoinLock);
+            }
+        }
+
+        private void RecordShutdownFailure(Exception exception, ref List<Exception>? failures)
+        {
+            (failures ??= new List<Exception>()).Add(exception);
+            try
+            {
+                Log($"JobManager shutdown faulted: {exception}");
+            }
+            catch
+            {
+                // A diagnostic failure cannot interrupt domain cleanup.
+            }
+        }
+
+        private void TryLogShutdown(string message)
+        {
+            try
+            {
+                Log(message);
+            }
+            catch
+            {
+                // A diagnostic callback cannot interrupt domain cleanup.
+            }
+        }
+
+        private void TryLogShutdownSummary(string message)
+        {
+            try
+            {
+                Log($"{message} {CreateShutdownSummary()}");
+            }
+            catch
+            {
+                // A diagnostic failure cannot interrupt domain cleanup.
             }
         }
 
@@ -1403,6 +1641,12 @@ namespace XREngine
 
         private void CancelQueuedJobForShutdown(Job job)
         {
+            if (IsCallerThreadExecutor)
+            {
+                QueueCallerThreadShutdownJob(job);
+                return;
+            }
+
             bool tracked;
             lock (_shutdownFinalizationLock)
             {
@@ -1513,6 +1757,12 @@ namespace XREngine
 
         private void CancelActiveJobForShutdown(Job job)
         {
+            if (IsCallerThreadExecutor)
+            {
+                QueueCallerThreadShutdownJob(job);
+                return;
+            }
+
             if (!job.TryClaimShutdownManagerFinalization())
                 return;
 
@@ -1593,6 +1843,13 @@ namespace XREngine
 
         private void ReleaseQueueSlot(Job job)
         {
+            if (IsCallerThreadExecutor)
+            {
+                if (job.TryClearQueueSlot())
+                    Interlocked.Decrement(ref _callerQueueSlotsInUse);
+                return;
+            }
+
             if (_queueSlots is null || !job.TryClearQueueSlot())
                 return;
 

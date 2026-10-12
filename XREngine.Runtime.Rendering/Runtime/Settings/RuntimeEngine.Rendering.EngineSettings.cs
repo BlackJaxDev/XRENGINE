@@ -10,6 +10,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Execution;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Occlusion;
@@ -28,7 +29,7 @@ public static partial class RuntimeEngine
             {
                 public EngineSettings()
                 {
-                    AttachRenderSubSettings(_execution, _openGL, _vulkan);
+                    AttachRenderSubSettings(_execution, _openGL, _vulkan, _browserWebGpuQuality);
                     TrackOverrideableSettings();
                 }
 
@@ -67,7 +68,8 @@ public static partial class RuntimeEngine
                 {
                     base.OnPropertyChanged(propName, prev, field);
 
-                    if (propName == nameof(Execution) || propName == nameof(OpenGL) || propName == nameof(Vulkan))
+                    if (propName == nameof(Execution) || propName == nameof(OpenGL) || propName == nameof(Vulkan) ||
+                        propName == nameof(BrowserWebGpuQuality))
                         RefreshRenderSubSettings(prev, field);
                 }
 
@@ -1174,7 +1176,12 @@ public static partial class RuntimeEngine
                 public bool TickGroupedItemsInParallel
                 {
                     get => _tickGroupedItemsInParallel;
-                    set => SetField(ref _tickGroupedItemsInParallel, value);
+                    set
+                    {
+                        if (value && (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser()))
+                            throw new InvalidOperationException("Caller-thread rendering settings require sequential tick groups.");
+                        SetField(ref _tickGroupedItemsInParallel, value);
+                    }
                 }
                 
                 /// <summary>
@@ -1185,7 +1192,13 @@ public static partial class RuntimeEngine
                 public ELoopType RecalcChildMatricesLoopType
                 {
                     get => _recalcChildMatricesLoopType;
-                    set => SetField(ref _recalcChildMatricesLoopType, value);
+                    set
+                    {
+                        if (value != ELoopType.Sequential &&
+                            (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser()))
+                            throw new InvalidOperationException("Caller-thread rendering settings require sequential transform hierarchies.");
+                        SetField(ref _recalcChildMatricesLoopType, value);
+                    }
                 }
 
                 /// <summary>

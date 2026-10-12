@@ -1,4 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Runtime.CompilerServices;
+using XREngine.Core.Files;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 using YamlDotNet.Serialization;
@@ -14,16 +18,26 @@ namespace XREngine
     ///   __type: Namespace.ConcreteType
     ///
     /// This keeps YAML readable and enables reliable deserialization of derived types.
+    /// Inline assets also receive reference anchors when nested converter calls would
+    /// otherwise serialize the same source separately in a standalone collection.
     /// </summary>
     public sealed class PolymorphicTypeGraphVisitor(IObjectGraphVisitor<IEmitter> nextVisitor) : IObjectGraphVisitor<IEmitter>
     {
         public const string TypeKey = "__type";
 
         private readonly IObjectGraphVisitor<IEmitter> _next = nextVisitor;
+        // Converter re-entry can create another visitor, but retains the document emitter.
+        private static readonly ConditionalWeakTable<IEmitter, InlineAssetAnchors> InlineAnchorsByEmitter = new();
+
+        private sealed class InlineAssetAnchors
+        {
+            public Dictionary<object, AnchorName> ByAsset { get; } = new(ReferenceEqualityComparer.Instance);
+            public int NextAnchor { get; set; }
+        }
 
         public bool Enter(IObjectDescriptor value, IEmitter context, ObjectSerializer serializer)
         {
-            ResetRootSerializationState();
+            ResetRootSerializationState(context);
             // This YamlDotNet version routes root-object entry through the (key,value) overload,
             // where key is null for the root.
             return _next.Enter(null, value, context, serializer);
@@ -32,9 +46,25 @@ namespace XREngine
         public bool Enter(IPropertyDescriptor? key, IObjectDescriptor value, IEmitter context, ObjectSerializer serializer)
         {
             if (key is null && DepthTrackingEventEmitter.CurrentDepth == 0)
-                ResetRootSerializationState();
+                ResetRootSerializationState(context);
 
-            return _next.Enter(key, value, context, serializer);
+            if (!_next.Enter(key, value, context, serializer))
+                return false;
+
+            if (value.Value is not XRAsset asset || TryWriteAsReference.ShouldWriteReference(asset)
+                || key is null && DepthTrackingEventEmitter.CurrentDepth == 0)
+                return true;
+
+            InlineAssetAnchors state = InlineAnchorsByEmitter.GetValue(context, static _ => new InlineAssetAnchors());
+            if (state.ByAsset.TryGetValue(asset, out AnchorName anchor))
+            {
+                context.Emit(new AnchorAlias(anchor));
+                return false;
+            }
+
+            state.ByAsset.Add(asset, new AnchorName("xrasset" +
+                state.NextAnchor++.ToString(CultureInfo.InvariantCulture)));
+            return true;
         }
 
         public bool EnterMapping(IObjectDescriptor key, IObjectDescriptor value, IEmitter context, ObjectSerializer serializer)
@@ -48,7 +78,12 @@ namespace XREngine
 
         public void VisitMappingStart(IObjectDescriptor mapping, Type keyType, Type valueType, IEmitter emitter, ObjectSerializer serializer)
         {
-            _next.VisitMappingStart(mapping, keyType, valueType, emitter, serializer);
+            InlineAssetAnchors state = InlineAnchorsByEmitter.GetValue(emitter, static _ => new InlineAssetAnchors());
+            if (mapping.Value is XRAsset asset && state.ByAsset.TryGetValue(asset, out AnchorName anchor))
+                _next.VisitMappingStart(mapping, keyType, valueType, new AssetAnchorEmitter(emitter, anchor,
+                    actual => state.ByAsset[asset] = actual), serializer);
+            else
+                _next.VisitMappingStart(mapping, keyType, valueType, emitter, serializer);
 
             Type? defaultType = YamlDefaultTypeContext.ConsumeWriteDefaultType();
 
@@ -69,10 +104,31 @@ namespace XREngine
         public void VisitSequenceEnd(IObjectDescriptor sequence, IEmitter emitter, ObjectSerializer serializer)
             => _next.VisitSequenceEnd(sequence, emitter, serializer);
 
-        private static void ResetRootSerializationState()
+        private void ResetRootSerializationState(IEmitter emitter)
         {
             YamlDefaultTypeContext.ResetWriteState();
             YamlTransformReferenceContext.ResetWriteState();
+            InlineAnchorsByEmitter.Remove(emitter);
+        }
+
+        private sealed class AssetAnchorEmitter(IEmitter inner, AnchorName preferredAnchor,
+            Action<AnchorName> recordAnchor) : IEmitter
+        {
+            private bool _anchored;
+
+            public void Emit(ParsingEvent @event)
+            {
+                if (!_anchored && @event is MappingStart start)
+                {
+                    _anchored = true;
+                    AnchorName anchor = start.Anchor.IsEmpty ? preferredAnchor : start.Anchor;
+                    recordAnchor(anchor);
+                    inner.Emit(new MappingStart(anchor, start.Tag, start.IsImplicit, start.Style, start.Start, start.End));
+                    return;
+                }
+
+                inner.Emit(@event);
+            }
         }
 
         private static bool ShouldEmitType(IObjectDescriptor descriptor, Type? defaultType)

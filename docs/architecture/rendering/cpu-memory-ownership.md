@@ -29,6 +29,12 @@ This document describes CPU-side ownership for renderer memory that can dominate
 
 `XRDataBuffer.ClientCopyPolicy` decides what happens to CPU storage after the GPU copy is current. Mesh-owned static buffers can use `ReleaseAfterUpload`. Large static copies spill to a session mapping. A spill keeps bytes available through `XRBufferSpilledDataSource`, but those pages still count as commit when the mapping is writable. Read-only spill views remain a separate decision because a missed writer would fault.
 
+The rendering assembly owns the spill queue, settle delay, write lease, and `DataSource` adapter. The application host must register `XRBufferSpillStorageServices.Current` before it uses spill mapping. The desktop bootstrap and browser renderer composition register their providers before sessions start. A standalone rendering host must register its own provider. A missing provider reports a named spill failure and retains the CPU copy. A direct `XRBufferSpilledDataSource.Map` call reports the missing provider.
+
+Each provider writes a delete-on-close session file, flushes it, and creates a copy-on-write mapping. The mapping lease owns one acquired pointer. Disposal releases that pointer and closes the view and mapping. Finalization releases the pointer and leaves the view and mapping handles to SafeHandle finalization. A provider replacement does not close existing leases.
+
+Browser mapping is supported in source: [.NET 10.0.12 includes the Unix memory-mapped file implementation for browser builds](https://github.com/dotnet/runtime/blob/v10.0.12/src/libraries/System.IO.MemoryMappedFiles/src/System.IO.MemoryMappedFiles.csproj#L89-L117), and its [Unix mapping path](https://github.com/dotnet/runtime/blob/v10.0.12/src/libraries/System.IO.MemoryMappedFiles/src/System/IO/MemoryMappedFiles/MemoryMappedView.Unix.cs) reaches Emscripten. [Emscripten 3.1.56 MEMFS uses a copy for `MAP_PRIVATE`](https://github.com/emscripten-core/emscripten/blob/3.1.56/src/library_memfs.js#L325-L355). The browser provider attempts the same file write and copy-on-write mapping as desktop. MEMFS can keep JS and WASM copies, so a browser spill does not prove lower memory use. Browser spill success and memory effects require runtime validation.
+
 GPU-produced buffers can set `GpuProduced` and avoid a client copy. Consumers that need a CPU read must request an explicit readback or reload source. This keeps missing CPU data visible.
 
 Published cooked mesh buffers still need more work. `PublishedArchiveHandle` maps archives, but `XRMesh.CookedBinary.CopyReaderToBuffer` can copy cooked bytes into new native memory after load. Direct mapping is useful only when the cooked format stores large streams in a mappable form.
@@ -89,6 +95,10 @@ Use these budget lines in memory reports:
 - Sparse texture residency is not implemented.
 - Transient render-target aliasing is not enabled.
 - Read-only spill views are not enabled.
+- Spill byte accounting still decrements for directly mapped or abandoned sources,
+  while increments occur after a successful buffer swap. This existing counter
+  limit is unchanged by the host-storage extraction. It must be resolved before
+  using that counter as proof of a memory reduction.
 
 ## Validation
 

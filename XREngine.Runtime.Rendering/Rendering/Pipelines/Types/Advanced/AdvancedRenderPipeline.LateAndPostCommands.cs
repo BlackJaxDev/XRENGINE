@@ -53,7 +53,8 @@ public partial class AdvancedRenderPipeline
             lateCommands.Add<VPRC_DepthWrite>().Allow = true;
         }
 
-        AppendExactTransparencyCommands(lateCommands);
+        if (!Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            AppendExactTransparencyCommands(lateCommands);
         AppendAdvancedParticipatingTransparentMotion(lateCommands);
         late.TrueCommands = lateCommands;
     }
@@ -129,7 +130,8 @@ public partial class AdvancedRenderPipeline
 
     private void AppendAdvancedPostProcessCommandsCore(ViewportRenderCommandContainer commands)
     {
-        if (AllowsTemporalHistory)
+        commands.Add<VPRC_Manual>().ManualAction = ValidateAdvancedWebPostProcess;
+        if (AllowsTemporalHistory && !Shaders.Compilation.WebPipelineRasterProgram.IsActive)
             AppendAdvancedTemporalAccumulation(commands);
 
         if (AllowsBloomAndDepthOfField)
@@ -152,7 +154,9 @@ public partial class AdvancedRenderPipeline
             AppendAdvancedOpenXrNeutralPostInputs(commands);
         }
 
-        commands.Add<VPRC_ExposureUpdate>().SetOptions(HDRSceneTextureName, true);
+        VPRC_ExposureUpdate exposure = commands.Add<VPRC_ExposureUpdate>();
+        exposure.SetOptions(HDRSceneTextureName, true);
+        exposure.GpuProgramBinding = "advanced::auto-exposure";
         using (commands.AddUsing<VPRC_PushViewportRenderArea>(x => x.UseInternalResolution = true))
         {
             commands.Add<VPRC_RenderQuadToFBO>()
@@ -164,7 +168,7 @@ public partial class AdvancedRenderPipeline
         }
 
         AppendAdvancedPostAntiAliasing(commands);
-        if (AllowsTemporalHistory)
+        if (AllowsTemporalHistory && !Shaders.Compilation.WebPipelineRasterProgram.IsActive)
         {
             var temporalCommit = commands.Add<VPRC_IfElse>();
             temporalCommit.Label = "AdvancedTemporalCommitActive";
@@ -204,7 +208,7 @@ public partial class AdvancedRenderPipeline
 
     private void AppendAdvancedTemporalBegin(ViewportRenderCommandContainer commands)
     {
-        if (!AllowsTemporalHistory)
+        if (!AllowsTemporalHistory || Shaders.Compilation.WebPipelineRasterProgram.IsActive)
             return;
 
         var temporal = commands.Add<VPRC_IfElse>();
@@ -227,14 +231,17 @@ public partial class AdvancedRenderPipeline
         var tsr = aaCommands.Add<VPRC_IfElse>();
         tsr.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeNeedsTsrUpscale;
         var tsrCommands = new ViewportRenderCommandContainer(this);
-        tsrCommands.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true)
-            .SetRenderGraphResources(CreateAdvancedTsrResources());
-        var captureTsrHistory = tsrCommands.Add<VPRC_TemporalAccumulationPass>();
-        captureTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.CaptureTsrHistoryColor;
-        captureTsrHistory.ConfigureTsrHistoryTargets(
-            TsrAccumulationFBOName, TsrHistoryColorFBOName, TsrUpscaleFBOName,
-            TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataFBOName);
+        if (!Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+        {
+            tsrCommands.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true)
+                .SetRenderGraphResources(CreateAdvancedTsrResources());
+            var captureTsrHistory = tsrCommands.Add<VPRC_TemporalAccumulationPass>();
+            captureTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.CaptureTsrHistoryColor;
+            captureTsrHistory.ConfigureTsrHistoryTargets(
+                TsrAccumulationFBOName, TsrHistoryColorFBOName, TsrUpscaleFBOName,
+                TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataFBOName);
+        }
         tsr.TrueCommands = tsrCommands;
         var postAaCommands = new ViewportRenderCommandContainer(this);
         var fxaa = postAaCommands.Add<VPRC_IfElse>();
@@ -324,17 +331,26 @@ public partial class AdvancedRenderPipeline
         var commands = new ViewportRenderCommandContainer(this);
         // A multiview FBO cannot be blitted on OpenGL. The scene-copy quad
         // writes the matching eye layer on both backends without attachment feedback.
-        commands.Add<VPRC_RenderQuadToFBO>()
+        VPRC_RenderQuadToFBO copy = commands.Add<VPRC_RenderQuadToFBO>();
+        copy
             .SetTargets(SceneCopyFBOName, copyFboName, matchDestinationRenderArea: true)
             .SetRenderGraphResources(CreateAdvancedSceneCopyResources());
-        commands.Add<VPRC_RenderQuadToFBO>()
+        VPRC_RenderQuadToFBO filter = commands.Add<VPRC_RenderQuadToFBO>();
+        filter
             .SetTargets(filterFboName, ForwardPassFBOName, matchDestinationRenderArea: true)
             .SetRenderGraphResources(resources);
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+        {
+            copy.RequiredDeclaredResourceName = copyFboName;
+            filter.RequiredDeclaredResourceName = filterFboName;
+        }
         return commands;
     }
 
     private void AppendAdvancedAtmosphereAndFog(ViewportRenderCommandContainer commands)
     {
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            return;
         AppendAdvancedNeutralCompositeInput(commands, AtmosphereUpscaleFBOName, "AdvancedAtmosphereNeutral");
         AppendAdvancedNeutralCompositeInput(commands, VolumetricFogUpscaleFBOName, "AdvancedVolumetricFogNeutral");
 
@@ -533,17 +549,20 @@ public partial class AdvancedRenderPipeline
     {
         var resources = new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(HDRSceneTextureName)
-            .SampleTexture(BloomBlurTextureName)
+            .SampleTextureWhenDeclared(BloomBlurTextureName)
             .SampleTexture(DepthViewTextureName)
             .SampleTexture(StencilViewTextureName)
-            .SampleTexture(AutoExposureTextureName);
+            .SampleTextureWhenDeclared(AutoExposureTextureName);
 
         if (!Stereo)
         {
             resources
-                .SampleTexture(AtmosphereColorTextureName)
-                .SampleTexture(VolumetricFogColorTextureName);
+                .SampleTextureWhenDeclared(AtmosphereColorTextureName)
+                .SampleTextureWhenDeclared(VolumetricFogColorTextureName);
         }
+
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            resources.SampleTexture(WebPostProcessNeutralTextureName);
 
         return resources.SampleTexture(AdvancedVisibilityResourceNames.Metadata);
     }

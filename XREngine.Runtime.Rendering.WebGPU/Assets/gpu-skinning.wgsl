@@ -11,6 +11,13 @@ struct Update { activeCount: u32, reserved0: u32, reserved1: u32, reserved2: u32
 struct Deformed { position: vec3f, normal: vec3f, tangent: vec3f }
 struct Weighted { value: Deformed, total: f32 }
 
+// Zero reserved words retain the original packed-payload contract. Engine draws
+// set bit 31 to supply a palette base, influence limit and exact threshold (including
+// a legitimate zero threshold) without changing the six-binding shader ABI.
+fn hasControls() -> bool { return (update.reserved0 & 0x80000000u) != 0u; }
+fn influenceLimit() -> u32 { return select(data[19], update.reserved1, hasControls()); }
+fn weightThreshold() -> f32 { return select(f(24u), bitcast<f32>(update.reserved2), hasControls()); }
+
 fn f(index: u32) -> f32 { return bitcast<f32>(data[index]); }
 fn v3(index: u32) -> vec3f { return vec3f(f(index), f(index + 1u), f(index + 2u)); }
 fn unitOrZero(value: vec3f) -> vec3f {
@@ -33,7 +40,7 @@ fn morph(source: Deformed, vertex: u32) -> Deformed {
     var accumulated = Deformed(vec3f(0.0), vec3f(0.0), vec3f(0.0));
     for (var activeIndex = 0u; activeIndex < update.activeCount; activeIndex++) {
         let record = activeMorphs[activeIndex];
-        if (abs(record.y) <= f(24u)) { continue; }
+        if (abs(record.y) <= weightThreshold()) { continue; }
         let shape = u32(record.x);
         let range = data[15] + shape * 4u;
         var low = data[range];
@@ -70,9 +77,11 @@ fn morph(source: Deformed, vertex: u32) -> Deformed {
 fn addInfluence(current: Weighted, source: Deformed, bone: u32, weight: f32) -> Weighted {
     if (weight <= 0.0 || bone >= data[3]) { return current; }
     var result = current;
-    let a = palette[bone * 3u];
-    let b = palette[bone * 3u + 1u];
-    let c = palette[bone * 3u + 2u];
+    let paletteBase = select(0u, update.reserved0 & 0x7fffffffu, hasControls());
+    let row = (paletteBase + bone) * 3u;
+    let a = palette[row];
+    let b = palette[row + 1u];
+    let c = palette[row + 2u];
     let p = vec4f(source.position, 1.0);
     result.value.position += vec3f(dot(a, p), dot(b, p), dot(c, p)) * weight;
     let ca = cross(b.xyz, c.xyz);
@@ -101,7 +110,7 @@ fn skin(@builtin(global_invocation_id) id: vec3u) {
     if ((data[5] & 4u) != 0u) {
         var weighted = Weighted(Deformed(vec3f(0.0), vec3f(0.0), vec3f(0.0)), 0.0);
         let weights = unpack4x8unorm(data[data[12] + vertex]);
-        for (var lane = 0u; lane < min(4u, data[19]); lane++) {
+        for (var lane = 0u; lane < min(4u, influenceLimit()); lane++) {
             var bone: u32;
             if (data[4] == 1u) { bone = (data[data[11] + vertex] >> (lane * 8u)) & 255u; }
             else { bone = (data[data[11] + vertex * 2u + lane / 2u] >> ((lane & 1u) * 16u)) & 65535u; }
@@ -111,7 +120,7 @@ fn skin(@builtin(global_invocation_id) id: vec3u) {
             let header = data[data[13] + vertex];
             let count = header >> 24u;
             let offset = header & 0xffffffu;
-            for (var lane = 0u; lane < count && lane + 4u < data[19]; lane++) {
+            for (var lane = 0u; lane < count && lane + 4u < influenceLimit(); lane++) {
                 let entry = data[data[14] + offset + lane];
                 weighted = addInfluence(weighted, source, entry & 65535u, f32((entry >> 16u) & 255u) / 255.0);
             }

@@ -7,6 +7,12 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_IfElse : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            requirements.Include(TrueCommands);
+            requirements.Include(FalseCommands);
+        }
+
         public string? Label { get; set; }
 
         public Func<bool>? ConditionEvaluator { get; set; }
@@ -27,8 +33,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             get => _trueCommands;
             set
             {
-                _trueCommands = value;
+                if (!SetField(ref _trueCommands, value)) return;
                 AttachPipeline(_trueCommands);
+                ParentPipeline?.NotifyCommandChainStructureChanged();
             }
         }
 
@@ -38,8 +45,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             get => _falseCommands;
             set
             {
-                _falseCommands = value;
+                if (!SetField(ref _falseCommands, value)) return;
                 AttachPipeline(_falseCommands);
+                ParentPipeline?.NotifyCommandChainStructureChanged();
             }
         }
 

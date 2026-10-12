@@ -23,7 +23,7 @@ namespace XREngine.Rendering;
 /// var in <see cref="SeedFromEnvironment"/>, expose a <c>Set</c> method, and add a
 /// corresponding property on <c>EditorDebugOptions</c> that calls the <c>Set</c> method.
 /// </summary>
-public static class RenderDiagnosticsFlags
+public static partial class RenderDiagnosticsFlags
 {
     /// <summary>BVH/HiZ overflow tracing. Seed: <c>XRE_HIZ_CULL_TRACE=1</c>.</summary>
     public static volatile bool HiZCullTrace;
@@ -444,6 +444,8 @@ public static class RenderDiagnosticsFlags
     /// <summary>Set the default deferred debug view for newly-created pipelines (0..18).</summary>
     public static void SetDeferredDebugView(int value)
     {
+        if (_deferredDebugViewWriteSuppressionDepth != 0)
+            return;
         if (value < 0) value = 0;
         else if (value > 18) value = 18;
         DeferredDebugView = value;

@@ -285,7 +285,8 @@ public static class XRAssetGraphUtility
         if (string.IsNullOrWhiteSpace(path))
             return false;
 
-        return File.Exists(path);
+        using XREngine.Data.RuntimeAssetReadLease read = XREngine.Data.RuntimeAssetReadServices.Capture();
+        return read.Exists(path);
     }
 
     private static bool IsLeafType(Type type)

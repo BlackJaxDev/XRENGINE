@@ -116,7 +116,8 @@ public sealed partial class AdvancedGpuScenePublisher
         ulong frameId,
         ReadOnlySpan<AdvancedManagedDeformationSourceRow> retainedSources)
     {
-        if (_plannedLightMutationCount != 0 ||
+        if (_plannedDecalMutationCount != 0 ||
+            _plannedLightMutationCount != 0 ||
             _plannedShadowPayloadUpdateCount != 0 ||
             _plannedAmbientMutation ||
             _plannedMaterialReleaseCount != 0 ||

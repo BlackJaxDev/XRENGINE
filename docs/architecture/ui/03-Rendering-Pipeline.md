@@ -197,7 +197,7 @@ UIComponent? FindDeepestComponent(Vector2 normalizedViewportPosition)
 UIComponent?[] FindDeepestComponents(Vector2 normalizedViewportPosition)
 ```
 
-These query the quadtree: `VisualScene2D.RenderTree.Collect()` finds items whose bounds contain the point, then filters by `CullingVolume.Contains()`, ordered by depth.
+These query the quadtree: `VisualScene2D.RenderTree.Collect()` finds items whose bounds contain the point, then filters by `CullingVolume.Contains()`, ordered by depth. Mouse and contact input additionally test transformed local bounds and the intersection of active `ClipToBounds` scissor rectangles on the element and its ancestors. Batched and unbatched 2D rendering resolve the same inherited rectangular crop.
 
 ---
 

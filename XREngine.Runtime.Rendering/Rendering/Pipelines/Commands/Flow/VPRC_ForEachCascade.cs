@@ -12,6 +12,12 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public sealed class VPRC_ForEachCascade : ViewportRenderCommand
 {
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
+    {
+        base.DescribeRequirements(requirements);
+        requirements.Include(Body);
+    }
+
     private ViewportRenderCommandContainer? _body;
 
     public string? DirectionalLightName { get; set; }
@@ -38,8 +44,9 @@ public sealed class VPRC_ForEachCascade : ViewportRenderCommand
         get => _body;
         set
         {
-            _body = value;
+            if (!SetField(ref _body, value)) return;
             AttachPipeline(_body);
+            ParentPipeline?.NotifyCommandChainStructureChanged();
         }
     }
 

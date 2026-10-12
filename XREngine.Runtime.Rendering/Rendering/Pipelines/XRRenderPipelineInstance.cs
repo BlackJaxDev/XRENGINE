@@ -381,6 +381,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             capture is null)
             return;
 
+        XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Texture capture output");
+        IRuntimeDiagnosticCaptureFileOutput fileOutput = RuntimeDiagnosticCaptureFileOutput.Require();
+
         foreach (XRTexture tex in Resources.EnumerateTextureInstances())
         {
             var whd = tex.WidthHeightDepth;
@@ -398,9 +401,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     if (channelIndex > 0)
                         name += $" [{channelIndex + 1}]";
                     string fileName = $"{name}.png";
-                    string filePath = Path.Combine(exportDirPath, fileName);
-                    Utility.EnsureDirPathExists(exportDirPath);
-                    File.WriteAllBytes(filePath, RuntimeImageCodecs.Require().EncodePng(ownedImage));
+                    fileOutput.WritePngInDirectory(exportDirPath, fileName,
+                        RuntimeImageCodecs.Require().EncodePng(ownedImage));
                 }
 
                 _ = capture.TryCaptureTexture(tex, region, ProcessImage, 0, i);
@@ -419,6 +421,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             !renderer.TryGetBackendCapability<IRenderCaptureBackendCapability>(out var capture) ||
             capture is null)
             return;
+
+        XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("Framebuffer capture output");
+        IRuntimeDiagnosticCaptureFileOutput fileOutput = RuntimeDiagnosticCaptureFileOutput.Require();
 
         foreach (XRFrameBuffer fbo in Resources.EnumerateFrameBufferInstances())
         {
@@ -440,9 +445,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     if (LayerIndex >= 0)
                         name += $"_layer{LayerIndex}";
                     string fileName = $"{name}.png";
-                    string filePath = Path.Combine(exportDirPath, fileName);
-                    Utility.EnsureDirPathExists(exportDirPath);
-                    File.WriteAllBytes(filePath, RuntimeImageCodecs.Require().EncodePng(ownedImage));
+                    fileOutput.WritePngInDirectory(exportDirPath, fileName,
+                        RuntimeImageCodecs.Require().EncodePng(ownedImage));
                 }
 
                 switch (Target)
@@ -478,7 +482,28 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <summary>
     /// Gets or sets the material to use when an invalid material is encountered during rendering.
     /// </summary>
-    public XRMaterial? InvalidMaterial { get; set; }
+    public XRMaterial? InvalidMaterial
+    {
+        get
+        {
+            if (_invalidMaterial is null && _invalidMaterialSource is { } source)
+                SetField(ref _invalidMaterial, source.InvalidMaterial, publishNotifications: false);
+            return _invalidMaterial;
+        }
+        set
+        {
+            SetField(ref _invalidMaterialSource, null, publishNotifications: false);
+            SetField(ref _invalidMaterial, value);
+        }
+    }
+    private XRMaterial? _invalidMaterial;
+    private RenderPipeline? _invalidMaterialSource;
+
+    private void SetLazyInvalidMaterial(RenderPipeline pipeline)
+    {
+        SetField(ref _invalidMaterial, null, publishNotifications: false);
+        SetField(ref _invalidMaterialSource, pipeline, publishNotifications: false);
+    }
 
     /// <summary>
     /// Renders the scene to the viewport or framebuffer.
@@ -531,6 +556,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             camera,
             stereoRightEyeCamera,
             viewport,
+            viewport?.World,
             targetFBO,
             userInterface,
             shadowPass,
@@ -552,6 +578,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         XRCamera? camera,
         XRCamera? stereoRightEyeCamera,
         XRViewport? viewport,
+        IRuntimeRenderWorld? renderingWorld,
         XRFrameBuffer? targetFBO,
         IRuntimeScreenSpaceUserInterface? userInterface,
         bool shadowPass,
@@ -578,6 +605,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 camera,
                 stereoRightEyeCamera,
                 viewport,
+                renderingWorld,
                 targetFBO,
                 userInterface,
                 shadowPass,
@@ -607,6 +635,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         XRCamera? camera,
         XRCamera? stereoRightEyeCamera,
         XRViewport? viewport,
+        IRuntimeRenderWorld? renderingWorld,
         XRFrameBuffer? targetFBO,
         IRuntimeScreenSpaceUserInterface? userInterface,
         bool shadowPass,
@@ -631,7 +660,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             SetField(ref _lastRenderDeclineReason, null, nameof(LastRenderDeclineReason));
         IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
         if (!ApplyLatestRequestedPipelineIfNeeded())
-            return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The requested pipeline transition has not completed.");
+            return ReportExactOutputPreconditionFailure(in outputCompletionRequest,
+                LastRenderDeclineReason ?? "The requested pipeline transition has not completed.");
 
         if (Pipeline is null)
         {
@@ -662,7 +692,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         using (RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(this))
         {
-            using (RenderState.PushMainAttributesWithFrozenDesktopHistory(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands, viewHistorySequenceId: viewHistorySequenceId, viewHistoryPipelineIdentity: TemporalHistoryPipelineIdentity, viewHistoryAuthoring: viewHistorySequenceId != 0UL, viewHistorySourceFrame: frozenHistoryCandidate.SourceFrame, viewHistoryOutputRequest: viewHistoryOutputRequest, frozenDesktopView: frozenDesktopView, frozenHistoryCandidate: frozenHistoryCandidate))
+            using (RenderState.PushMainAttributesWithFrozenDesktopHistory(viewport, renderingWorld, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands, viewHistorySequenceId: viewHistorySequenceId, viewHistoryPipelineIdentity: TemporalHistoryPipelineIdentity, viewHistoryAuthoring: viewHistorySequenceId != 0UL, viewHistorySourceFrame: frozenHistoryCandidate.SourceFrame, viewHistoryOutputRequest: viewHistoryOutputRequest, frozenDesktopView: frozenDesktopView, frozenHistoryCandidate: frozenHistoryCandidate))
             {
                 // Resource factories and transactional backend preparation consume the active
                 // pipeline, camera, viewport, and frame-output state. Keep that state installed,
@@ -1486,6 +1516,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         }
         catch (Exception ex)
         {
+            RegisterPendingGenerationFailure(key,
+                $"Resource layout description threw {ex.GetType().Name}: {ex.Message}");
             Debug.RenderingWarning(
                 "[RenderResources] Failed to describe pending generation. Pipeline={0} Target={1} Reason={2}",
                 ProfilerKey,
@@ -1944,6 +1976,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (pending is null)
             return false;
 
+        // Event-loop backends cannot force queue completion. Keep the existing
+        // generation and stop allocating replacements until a receipt drains.
+        if (HasNonBlockingRetirementPressure())
+            return false;
+
         if (!forceDue && !IsPendingGenerationDue())
         {
             Debug.RenderingEvery(
@@ -2132,6 +2169,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         RenderResourceGeneration? pending = PendingGeneration;
         if (pending is null || !pending.IsReady)
             return false;
+        if (HasNonBlockingRetirementPressure())
+            return false;
 
         int importedResourceRevision = PublishStagedImportedResources(pending);
 
@@ -2154,13 +2193,22 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         IRenderResourceGenerationTransaction? backendTransaction = null;
         if (backend is not null)
         {
-            ERenderResourceGenerationPreparationStatus preparationStatus =
-                backend.PrepareRenderResourceGeneration(
-                this,
-                pending,
-                viewport,
-                out backendTransaction,
-                out string? backendFailureReason);
+            ERenderResourceGenerationPreparationStatus preparationStatus;
+            string? backendFailureReason;
+            try
+            {
+                preparationStatus = backend.PrepareRenderResourceGeneration(
+                    this,
+                    pending,
+                    viewport,
+                    out backendTransaction,
+                    out backendFailureReason);
+            }
+            catch (RenderResourcePreparationPendingException)
+            {
+                backendTransaction?.Dispose();
+                return false;
+            }
             if (preparationStatus == ERenderResourceGenerationPreparationStatus.Pending)
             {
                 backendTransaction?.Dispose();
@@ -2206,6 +2254,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             try
             {
                 backendTransaction?.Commit();
+            }
+            catch (RenderResourcePreparationPendingException)
+            {
+                return false;
             }
             catch (Exception ex)
             {
@@ -2649,7 +2701,20 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// receipt permits disposal; WaitForGpu can return early during device loss.
     /// </summary>
     private static void WaitForRetirementProgress()
-        => AbstractRenderer.Current?.WaitForGpu();
+    {
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null) return;
+        if (((IRuntimeRendererHost)renderer).TryGetBackendCapability<IRenderResourceRetirementBackendCapability>(out var retirement)
+            && retirement is { RequiresBlockingRetirementProgress: false })
+            return;
+        renderer.WaitForGpu();
+    }
+
+    private bool HasNonBlockingRetirementPressure()
+        => _retiredGenerations.Count >= MaxRetiredResourceGenerations &&
+            AbstractRenderer.Current is IRuntimeRendererHost renderer &&
+            renderer.TryGetBackendCapability<IRenderResourceRetirementBackendCapability>(out var retirement) &&
+            retirement is { RequiresBlockingRetirementProgress: false };
 
     /// <summary>
     /// Prepares backend references before physical resources are retired. Vulkan

@@ -34,7 +34,7 @@ public sealed partial class WebGpuRendererHost
                 BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(36)) != output.Properties.Height)
                 throw new InvalidOperationException("Pipeline frame owner, surface generation or extent is obsolete.");
             WebGpuImports.SubmitPipelinePacket(_session, bytes);
-            _submittedFrame = true;
+            SetField(ref _submittedFrame, true);
         }
         finally { packet.EndConsume(); }
     }
