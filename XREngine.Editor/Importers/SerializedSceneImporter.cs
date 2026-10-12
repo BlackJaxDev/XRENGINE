@@ -29,6 +29,7 @@ internal static partial class SerializedSceneImporter
         var state = new ImportState(context);
         ImportedHierarchy hierarchy = ImportHierarchy(normalizedPath, state);
         context.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Converted);
+        ValidateComposedModelAnimations(state);
         return [.. hierarchy.RootEntries.Select(static entry => entry.Node)];
     }
 
@@ -113,6 +114,9 @@ internal static partial class SerializedSceneImporter
         ArgumentNullException.ThrowIfNull(cookSettings);
         ArgumentNullException.ThrowIfNull(cookOverrides);
 
+        // Bindings and geometry remain mutable until prefab composition finishes.
+        // World attachment builds renderers from the completed import state.
+        using IDisposable runtimeMeshScope = ModelComponent.EnterRuntimeMeshBuildSuppressionScope();
         string normalizedPath = Path.GetFullPath(filePath);
         var context = new SourceProjectImportContext(
             normalizedPath,
@@ -144,6 +148,7 @@ internal static partial class SerializedSceneImporter
         }
 
         context.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Converted);
+        ValidateComposedModelAnimations(state);
         AssignFinalMeshletEntityIdentities(rootNode);
         string meshletCookIdentity = ModelCacheSourceIdentityResolver.Resolve(
             normalizedPath,
@@ -1360,6 +1365,8 @@ internal static partial class SerializedSceneImporter
         public string EntryFilePath => Context.EntrySourcePath;
         public string ProjectRoot => Context.ProjectRoot;
         public HashSet<string> ActiveImports => Context.ActiveImports;
+        public List<(string Path, SceneNode Owner, SceneNode Target, SceneNode? Parent)> ModelAnimationTargets { get; } = [];
+        public List<(string Path, SceneNode Owner, SceneNode Target, string Channel)> ModelAnimationMorphTargets { get; } = [];
     }
 
     private sealed class ImportedHierarchy(string sourcePath)

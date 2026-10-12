@@ -166,9 +166,15 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
     internal bool TryUploadViews(
         Commands.BackendReadyFramePackage package,
         in RenderFrameViewSet views,
+        float renderTimeSeconds,
         out string reason)
     {
         ArgumentNullException.ThrowIfNull(package);
+        if (!float.IsFinite(renderTimeSeconds))
+        {
+            reason = "The OpenGL Advanced view table has no finite frozen render time.";
+            return false;
+        }
         if (!_lease.IsValid || package.State != Commands.EBackendReadyFramePackageState.Published)
         {
             reason = "The OpenGL Advanced view table has no retained canonical scene publication.";
@@ -186,7 +192,10 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
             RenderFrameViewDescriptor view = views.GetView(index);
             Commands.BackendReadyCanonicalViewRecord canonical = Commands.BackendReadyFramePackage.CreateCanonicalViewRecord(
                 in view, package.CanonicalScenePublication.FrameGeneration);
-            canonical = package.ApplyCanonicalViewPolicy(canonical);
+            canonical = package.ApplyCanonicalViewPolicy(canonical) with
+            {
+                RenderTimeSeconds = renderTimeSeconds,
+            };
             records[index] = AdvancedViewRecordFactory.Create(in canonical);
         }
         Upload(AdvancedGlobalResourceBindings.Views, records[..views.ViewCount]);

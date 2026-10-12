@@ -44,16 +44,6 @@ uniform float _DepthAlphaEnabled;
 //@property(name="_DepthAlphaParams", display="Depth Alpha Min/Max", mode=static, default="vec4(0.0, 1.0, 0.0, 1.0)")
 uniform vec4 _DepthAlphaParams;
 
-//@property(name="_DetailTexUV", display="Detail UV", mode=static, default="0")
-uniform int _DetailTexUV;
-//@property(name="_DetailTexBlendMode", display="Detail Blend", mode=static, default="2")
-uniform int _DetailTexBlendMode;
-//@property(name="_DetailMaskUV", display="Detail Mask UV", mode=static, default="0")
-uniform int _DetailMaskUV;
-//@property(name="_DetailMaskPan", display="Detail Mask Pan", mode=animated, default="vec2(0.0)")
-uniform vec2 _DetailMaskPan;
-//@property(name="_DetailNormalMapUV", display="Detail Normal UV", mode=static, default="0")
-uniform int _DetailNormalMapUV;
 //@property(name="_NormalCorrectStrength", display="Normal Correction", mode=static, default="0.0")
 uniform float _NormalCorrectStrength;
 //@property(name="_NormalCorrectVertexColor", display="Normal Correction Vertex Mask", mode=static, default="0")
@@ -330,6 +320,8 @@ uniform sampler2D _BacklightMask;
 //@subcategory("Repeated Matcaps And Rims")
 //@feature(id="layered-matcap-rim", name="Layered Matcap And Rim", default=off, cost=high)
 //@depends("global-masks-themes")
+//@property(name="_SourceMatcap", display="Source Matcap Stage", mode=static, default="0.0")
+uniform float _SourceMatcap;
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
 //@property(name="_Matcap0Tex", display="Matcap 0", slot=texture)
 uniform sampler2D _Matcap0Tex;
@@ -347,6 +339,22 @@ uniform sampler2D _Matcap1Mask;
 uniform sampler2D _Matcap2Mask;
 //@property(name="_Matcap3Mask", display="Matcap 3 Mask", slot=texture, semantic=mask)
 uniform sampler2D _Matcap3Mask;
+uniform vec4 _Matcap0Tex_ST;
+uniform vec4 _Matcap1Tex_ST;
+uniform vec4 _Matcap2Tex_ST;
+uniform vec4 _Matcap3Tex_ST;
+uniform vec2 _Matcap0TexPan;
+uniform vec2 _Matcap1TexPan;
+uniform vec2 _Matcap2TexPan;
+uniform vec2 _Matcap3TexPan;
+uniform vec4 _Matcap0Mask_ST;
+uniform vec4 _Matcap1Mask_ST;
+uniform vec4 _Matcap2Mask_ST;
+uniform vec4 _Matcap3Mask_ST;
+uniform vec2 _Matcap0MaskPan;
+uniform vec2 _Matcap1MaskPan;
+uniform vec2 _Matcap2MaskPan;
+uniform vec2 _Matcap3MaskPan;
 //@property(name="_MatcapSlotColor0", display="Matcap 0 Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _MatcapSlotColor0;
 //@property(name="_MatcapSlotColor1", display="Matcap 1 Color", mode=animated, default="vec4(1.0)")
@@ -387,6 +395,14 @@ uniform vec4 _MatcapSlotExtra1;
 uniform vec4 _MatcapSlotExtra2;
 //@property(name="_MatcapSlotExtra3", display="Matcap 3 Projection", mode=static, default="vec4(0.0, 0.43, 1.0, 0.0)")
 uniform vec4 _MatcapSlotExtra3;
+uniform vec4 _MatcapSlotSource0;
+uniform vec4 _MatcapSlotSource1;
+uniform vec4 _MatcapSlotSource2;
+uniform vec4 _MatcapSlotSource3;
+uniform vec4 _MatcapSlotMask0;
+uniform vec4 _MatcapSlotMask1;
+uniform vec4 _MatcapSlotMask2;
+uniform vec4 _MatcapSlotMask3;
 
 //@property(name="_Rim2Color", display="Rim 2 Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _Rim2Color;

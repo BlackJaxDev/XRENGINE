@@ -11,9 +11,15 @@ layout(location = 7) flat in uint VisibilityPrimitiveBase;
 layout(location = 8) flat in uint VisibilityMeshletIndex;
 layout(location = 9) flat in uint VisibilityMaterialDenseIndex;
 layout(location = 10) flat in uint VisibilityEditorFlags;
+layout(location = 11) in vec2 VisibilityCoverageUv1;
+layout(location = 12) in vec4 VisibilityCoverageColor;
+layout(location = 13) in vec3 VisibilityCoverageWorldPosition;
+layout(location = 14) in vec3 VisibilityCoverageLocalPosition;
+layout(location = 15) in vec2 VisibilityCoverageUv2;
+layout(location = 16) in vec2 VisibilityCoverageUv3;
 
 #define XR_ADV_VISIBILITY_COUNTER_INDEX VisibilityViewIndex
-#include "Advanced/Shading/StandardMaterial.glslinc"
+#include "Advanced/Shading/NativeUberCoverage.glslinc"
 
 layout(location = 0) out uvec2 OutVisibilityIdentity;
 layout(location = 1) out uint OutVisibilityMetadata;
@@ -33,18 +39,49 @@ void main()
 
     XRAdvancedMaterialRecord material =
         XR_ADV_LoadMaterial(VisibilityMaterialDenseIndex);
-    if (!XR_ADV_IsStandardMaterial(material))
+    bool standard = XR_ADV_IsStandardMaterial(material);
+    bool uber = XR_UBER_IsMaterial(material);
+    if (!standard && !uber)
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
         discard;
     }
-    uint flags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
-    float alpha = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD).a;
-    if ((flags & 1u) != 0u)
-        alpha *= XR_ADV_StandardTexture(material, 0u, VisibilityCoverageUv,
-            dFdx(VisibilityCoverageUv), dFdy(VisibilityCoverageUv), vec4(1.0)).a;
-    float alphaCutoff = uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_ALPHA_CUTOFF_WORD));
-    if (alpha < alphaCutoff) discard;
+    if (uber)
+    {
+        XR_UBER_Material = material;
+        XRUberCoordinates coordinates;
+        coordinates.uv0 = VisibilityCoverageUv;
+        coordinates.uv1 = VisibilityCoverageUv1;
+        coordinates.uv2 = VisibilityCoverageUv2;
+        coordinates.uv3 = VisibilityCoverageUv3;
+        coordinates.uv0Dx = dFdx(VisibilityCoverageUv);
+        coordinates.uv0Dy = dFdy(VisibilityCoverageUv);
+        coordinates.uv1Dx = dFdx(VisibilityCoverageUv1);
+        coordinates.uv1Dy = dFdy(VisibilityCoverageUv1);
+        coordinates.uv2Dx = dFdx(VisibilityCoverageUv2);
+        coordinates.uv2Dy = dFdy(VisibilityCoverageUv2);
+        coordinates.uv3Dx = dFdx(VisibilityCoverageUv3);
+        coordinates.uv3Dy = dFdy(VisibilityCoverageUv3);
+        coordinates.worldPosition = VisibilityCoverageWorldPosition;
+        coordinates.localPosition = VisibilityCoverageLocalPosition;
+        coordinates.color = VisibilityCoverageColor;
+        coordinates.frontFacing = gl_FrontFacing;
+        coordinates.time = uintBitsToFloat(
+            XR_ADV_LoadView(VisibilityViewIndex).renderTimeBits);
+        vec4 baseColor;
+        vec3 edgeEmission;
+        if (!XR_UBER_ApplyCoverage(coordinates, baseColor, edgeEmission)) discard;
+    }
+    else
+    {
+        uint flags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
+        float alpha = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD).a;
+        if ((flags & 1u) != 0u)
+            alpha *= XR_ADV_StandardTexture(material, 0u, VisibilityCoverageUv,
+                dFdx(VisibilityCoverageUv), dFdy(VisibilityCoverageUv), vec4(1.0)).a;
+        float alphaCutoff = uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_ALPHA_CUTOFF_WORD));
+        if (alpha < alphaCutoff) discard;
+    }
     uint primitive = XR_ADV_EncodeVisibilityPrimitive(
         VisibilityProducer,
         VisibilityPrimitiveBase,

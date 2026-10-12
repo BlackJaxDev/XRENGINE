@@ -318,7 +318,7 @@ struct XRAdvancedViewRecord
     uint sourceCameraIdentityLo;
     uint sourceCameraIdentityHi;
     uint cullingLayerMask;
-    uint sourceCameraIdentityPadding1;
+    uint renderTimeBits;
 };
 
 struct XRAdvancedBufferReference

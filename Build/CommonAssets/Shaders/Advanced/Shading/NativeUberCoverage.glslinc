@@ -1,0 +1,321 @@
+#ifndef XR_NATIVE_UBER_COVERAGE_GLSLINC
+#define XR_NATIVE_UBER_COVERAGE_GLSLINC
+
+#include "Advanced/Shading/NativeUberMaterial.glslinc"
+#include "Uber/source_dissolve.glsl"
+
+struct XRUberCoordinates
+{
+    vec2 uv0;
+    vec2 uv1;
+    vec2 uv2;
+    vec2 uv3;
+    vec2 uv0Dx;
+    vec2 uv0Dy;
+    vec2 uv1Dx;
+    vec2 uv1Dy;
+    vec2 uv2Dx;
+    vec2 uv2Dy;
+    vec2 uv3Dx;
+    vec2 uv3Dy;
+    vec3 worldPosition;
+    vec3 localPosition;
+    vec4 color;
+    bool frontFacing;
+    float time;
+};
+
+void XR_UBER_CoverageUv(
+    XRUberCoordinates coordinates,
+    int selector,
+    out vec2 uv,
+    out vec2 dx,
+    out vec2 dy)
+{
+    uv = selector == 1 ? coordinates.uv1 :
+        selector == 2 ? coordinates.uv2 :
+        selector == 3 ? coordinates.uv3 : coordinates.uv0;
+    dx = selector == 1 ? coordinates.uv1Dx :
+        selector == 2 ? coordinates.uv2Dx :
+        selector == 3 ? coordinates.uv3Dx : coordinates.uv0Dx;
+    dy = selector == 1 ? coordinates.uv1Dy :
+        selector == 2 ? coordinates.uv2Dy :
+        selector == 3 ? coordinates.uv3Dy : coordinates.uv0Dy;
+}
+
+vec4 XR_UBER_CoverageTexture(
+    uint slot,
+    int selector,
+    vec4 scaleOffset,
+    vec2 pan,
+    XRUberCoordinates coordinates,
+    vec4 absent)
+{
+    vec2 uv;
+    vec2 dx;
+    vec2 dy;
+    XR_UBER_CoverageUv(coordinates, selector, uv, dx, dy);
+    return XR_UBER_Sample(slot,
+        uv * scaleOffset.xy + scaleOffset.zw + pan * coordinates.time,
+        dx * scaleOffset.xy,
+        dy * scaleOffset.xy,
+        absent);
+}
+
+vec4 XR_UBER_MainCoverageTexture(XRUberCoordinates coordinates)
+{
+    vec2 uv;
+    vec2 dx;
+    vec2 dy;
+    XR_UBER_CoverageUv(coordinates, UBER_I(_MainTexUV), uv, dx, dy);
+
+    float angle = radians(UBER_F(_MainTexRotation));
+    float sine = sin(angle);
+    float cosine = cos(angle);
+    mat2 rotation = mat2(cosine, sine, -sine, cosine);
+    uv = rotation * (uv - vec2(0.5)) + vec2(0.5);
+    dx = rotation * dx;
+    dy = rotation * dy;
+
+    vec4 scaleOffset = UBER_V(_MainTex_ST);
+    vec2 pan = UBER_V(_MainTexPan).xy;
+    return XR_UBER_Sample(UBER_T(_MainTex),
+        uv * scaleOffset.xy + scaleOffset.zw + pan * coordinates.time,
+        dx * scaleOffset.xy,
+        dy * scaleOffset.xy,
+        vec4(1.0));
+}
+
+vec3 XR_UBER_AdjustBaseColor(XRUberCoordinates coordinates, vec3 color)
+{
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_COLOR_ADJUSTMENTS))
+        return color;
+
+    vec4 mask = XR_UBER_CoverageTexture(UBER_T(_MainColorAdjustTexture),
+        UBER_I(_MainColorAdjustTextureUV), UBER_V(_MainColorAdjustTexture_ST),
+        UBER_V(_MainColorAdjustTexturePan).xy, coordinates, vec4(1.0));
+    color = mix(vec3(XR_UBER_Luminance(color)), color,
+        1.0 + UBER_F(_Saturation) * mask.b);
+    color += UBER_F(_MainBrightness) * mask.g;
+    if (UBER_F(_MainHueShiftToggle) > 0.5)
+    {
+        float shift = (UBER_F(_MainHueShift) + UBER_F(_MainHueShiftSpeed) * coordinates.time) * mask.r;
+        vec3 shifted = UBER_I(_MainHueShiftColorSpace) == 0
+            ? XR_UBER_hueShiftOklab(color, shift) : XR_UBER_hueShift(color, shift);
+        color = mix(color, shifted, UBER_F(_MainHueShiftReplace));
+    }
+    return color;
+}
+
+#include "Advanced/Shading/NativeUberEffects.glslinc"
+
+bool XR_UBER_ApplyDissolve(XRUberCoordinates coordinates, inout vec4 baseColor, out vec3 edgeEmission)
+{
+    edgeEmission = vec3(0.0);
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_DISSOLVE))
+        return true;
+
+    float panTimeScale = int(UBER_F(_DissolveType)) == 5 ? 0.05 : 1.0;
+
+    vec2 noiseUv;
+    vec2 noiseDx;
+    vec2 noiseDy;
+    XR_UBER_CoverageUv(coordinates, UBER_I(_DissolveNoiseTextureUV),
+        noiseUv, noiseDx, noiseDy);
+    float noise = XR_UBER_CoverageTexture(UBER_T(_DissolveNoiseTexture),
+        UBER_I(_DissolveNoiseTextureUV), UBER_V(_DissolveNoiseTexture_ST),
+        UBER_V(_DissolveNoiseTexturePan).xy * panTimeScale,
+        coordinates, vec4(1.0)).r;
+    float detail = XR_UBER_CoverageTexture(UBER_T(_DissolveDetailNoise),
+        UBER_I(_DissolveDetailNoiseUV), UBER_V(_DissolveDetailNoise_ST),
+        UBER_V(_DissolveDetailNoisePan).xy * panTimeScale,
+        coordinates, vec4(0.0)).r;
+    float combinedNoise = noise + (detail - 0.5) * 2.0 *
+        UBER_F(_DissolveDetailStrength);
+    float mask = XR_UBER_CoverageTexture(UBER_T(_DissolveMask),
+        UBER_I(_DissolveMaskUV), UBER_V(_DissolveMask_ST),
+        UBER_V(_DissolveMaskPan).xy * panTimeScale,
+        coordinates, vec4(1.0)).r;
+    if (UBER_F(_DissolveMaskInvert) > 0.5)
+        mask = 1.0 - mask;
+
+    if (int(UBER_F(_DissolveType)) == 5)
+    {
+        vec3 result = xrSourceBasicDissolve(noise, detail, mask,
+            UBER_F(_DissolveProgress), UBER_F(_DissolveEdgeWidth),
+            UBER_F(_DissolveDetailStrength), UBER_F(_DissolveInvert),
+            UBER_V(_SourceDissolveParams), coordinates.time);
+        vec4 dissolvedColor = XR_UBER_CoverageTexture(UBER_T(_DissolveEdgeTexture),
+            UBER_I(_DissolveEdgeTextureUV), UBER_V(_DissolveEdgeTexture_ST),
+            UBER_V(_DissolveEdgeTexturePan).xy * panTimeScale, coordinates, vec4(1.0)) *
+            UBER_V(_DissolveTextureColor);
+        baseColor = mix(baseColor, dissolvedColor, result.x * 0.999999);
+        vec2 gradientUv = vec2(result.y) * UBER_V(_DissolveEdgeGradient_ST).xy +
+            UBER_V(_DissolveEdgeGradient_ST).zw;
+        vec3 edge = XR_UBER_Sample(UBER_T(_DissolveEdgeGradient), gradientUv,
+            vec2(0.0), vec2(0.0), vec4(1.0)).rgb * UBER_V(_DissolveEdgeColor).rgb;
+        baseColor.rgb = mix(baseColor.rgb, edge, result.z);
+        edgeEmission = dissolvedColor.rgb * UBER_F(_DissolveToEmissionStrength) * result.x +
+            edge * UBER_F(_DissolveEdgeEmission) * result.z;
+        return true;
+    }
+
+    vec3 start = UBER_V(_DissolveStartPoint).xyz;
+    vec3 end = UBER_V(_DissolveEndPoint).xyz;
+    vec3 direction = end - start;
+    float progress = UBER_F(_DissolveProgress);
+    int kind = int(UBER_F(_DissolveType));
+    float dissolve = 0.0;
+    if (kind == 0)
+    {
+        vec3 axis = dot(direction, direction) > 0.001
+            ? normalize(direction) : vec3(0.0, 1.0, 0.0);
+        dissolve = dot(coordinates.localPosition, axis) + 0.5;
+    }
+    else if (kind == 1)
+        dissolve = length(coordinates.worldPosition - start) /
+            max(length(direction), 0.001);
+    else if (kind == 2)
+    {
+        vec3 position = UBER_I(_DissolveCoordinateSpace) == 0
+            ? coordinates.localPosition : coordinates.worldPosition;
+        dissolve = length(direction) < 0.001 ? progress :
+            dot(position - start, normalize(direction)) / length(direction);
+    }
+    else if (kind == 3)
+    {
+        vec3 position = UBER_I(_DissolveCoordinateSpace) == 0
+            ? coordinates.localPosition : coordinates.worldPosition;
+        dissolve = length(position - start) / max(length(direction), 0.001);
+    }
+    else if (kind == 4)
+    {
+        vec2 grid = max(UBER_V(_DissolveTileGrid).xy, vec2(1.0));
+        vec2 tile = floor(fract(noiseUv) * grid);
+        dissolve = (tile.y * grid.x + tile.x) /
+            max(grid.x * grid.y - 1.0, 1.0);
+    }
+
+    dissolve = mix(dissolve, dissolve + (combinedNoise - 0.5) * 2.0,
+        UBER_F(_DissolveNoiseStrength));
+    if (UBER_F(_DissolveContinuous) > 0.5)
+        dissolve = fract(dissolve + progress);
+    dissolve *= mask;
+    if (UBER_F(_DissolveInvert) > 0.5)
+        dissolve = 1.0 - dissolve;
+    float dissolveAlpha = step(progress, dissolve);
+    if (dissolveAlpha < UBER_F(_DissolveCutoff))
+        return false;
+    float edgeWidth = UBER_F(_DissolveEdgeWidth);
+    if (edgeWidth > 0.001 && dissolve >= progress &&
+        dissolve < progress + edgeWidth)
+    {
+        float edgeFactor = 1.0 - (dissolve - progress) / edgeWidth;
+        vec2 gradientUv = vec2(edgeFactor, 0.5) *
+            UBER_V(_DissolveEdgeGradient_ST).xy +
+            UBER_V(_DissolveEdgeGradient_ST).zw;
+        vec3 gradient = XR_UBER_Sample(UBER_T(_DissolveEdgeGradient),
+            gradientUv, vec2(0.0), vec2(0.0), vec4(1.0)).rgb;
+        vec3 edgeTexture = XR_UBER_CoverageTexture(UBER_T(_DissolveEdgeTexture),
+            UBER_I(_DissolveEdgeTextureUV), UBER_V(_DissolveEdgeTexture_ST),
+            UBER_V(_DissolveEdgeTexturePan).xy,
+            coordinates, vec4(1.0)).rgb;
+        vec4 edgeColor = UBER_V(_DissolveEdgeColor);
+        vec3 edge = edgeColor.rgb * gradient * edgeTexture;
+        baseColor.rgb = mix(baseColor.rgb, edge,
+            edgeFactor * edgeColor.a);
+        edgeEmission = edge * edgeFactor * UBER_F(_DissolveEdgeEmission);
+    }
+    return true;
+}
+
+bool XR_UBER_ApplyCoverage(
+    XRUberCoordinates coordinates,
+    out vec4 baseColor,
+    out vec3 edgeEmission)
+{
+    baseColor = vec4(0.0);
+    edgeEmission = vec3(0.0);
+    int faceDiscard = UBER_I(_FaceDiscard);
+    if ((faceDiscard == 1 && coordinates.frontFacing) ||
+        (faceDiscard == 2 && !coordinates.frontFacing))
+    {
+        return false;
+    }
+    if (UBER_F(_UvTileDiscard) > 0.5 && UBER_I(_UDIMDiscardMode) == 1)
+    {
+        vec2 tile = floor(UBER_I(_UDIMDiscardUV) == 1
+            ? coordinates.uv1 : coordinates.uv0);
+        if (all(greaterThanEqual(tile, vec2(0.0))) &&
+            all(lessThan(tile, vec2(4.0))))
+        {
+            int column = int(tile.x);
+            vec4 row = tile.y < 1.0
+                ? vec4(UBER_F(_UDIMDiscardRow0_0), UBER_F(_UDIMDiscardRow0_1),
+                    UBER_F(_UDIMDiscardRow0_2), UBER_F(_UDIMDiscardRow0_3))
+                : tile.y < 2.0
+                    ? vec4(UBER_F(_UDIMDiscardRow1_0), UBER_F(_UDIMDiscardRow1_1),
+                        UBER_F(_UDIMDiscardRow1_2), UBER_F(_UDIMDiscardRow1_3))
+                    : tile.y < 3.0
+                        ? vec4(UBER_F(_UDIMDiscardRow2_0), UBER_F(_UDIMDiscardRow2_1),
+                            UBER_F(_UDIMDiscardRow2_2), UBER_F(_UDIMDiscardRow2_3))
+                        : vec4(UBER_F(_UDIMDiscardRow3_0), UBER_F(_UDIMDiscardRow3_1),
+                            UBER_F(_UDIMDiscardRow3_2), UBER_F(_UDIMDiscardRow3_3));
+            if (row[column] > 0.001)
+                return false;
+        }
+    }
+
+    vec4 mainTexture = XR_UBER_MainCoverageTexture(coordinates);
+    vec4 tint = UBER_V(_Color);
+    vec4 base = mainTexture * vec4(XR_UBER_Theme(UBER_I(_ColorThemeIndex), tint.rgb), tint.a);
+    if (UBER_F(_MainVertexColoringEnabled) > 0.5)
+    {
+        vec3 vertexColor = coordinates.color.rgb;
+        if (UBER_F(_MainVertexColoringLinearSpace) > 0.5)
+            vertexColor = XR_UBER_Linear(vertexColor);
+        base.rgb *= mix(vec3(1.0), vertexColor,
+            UBER_F(_MainVertexColoring));
+        base.a *= mix(1.0, coordinates.color.a,
+            UBER_F(_MainUseVertexColorAlpha));
+    }
+    base.rgb = XR_UBER_AdjustBaseColor(coordinates, base.rgb);
+    float alpha = base.a;
+    if (UBER_I(_AlphaSource) == 1)
+        alpha = XR_UBER_Luminance(base.rgb);
+    else if (UBER_I(_AlphaSource) == 2)
+        alpha = coordinates.color.a;
+
+    if (XR_UBER_HasFeature(XR_UBER_FEATURE_ALPHA_MASKS) &&
+        UBER_I(_MainAlphaMaskMode) > 0)
+    {
+        vec4 sampleValue = XR_UBER_CoverageTexture(UBER_T(_AlphaMask),
+            UBER_I(_AlphaMaskUV), UBER_V(_AlphaMask_ST),
+            UBER_V(_AlphaMaskPan).xy,
+            coordinates, vec4(1.0));
+        float mask = sampleValue[clamp(UBER_I(_AlphaMaskChannel), 0, 3)];
+        if (UBER_F(_AlphaMaskInvert) > 0.5)
+            mask = 1.0 - mask;
+        mask = mask * UBER_F(_AlphaMaskBlendStrength) +
+            UBER_F(_AlphaMaskValue);
+        int mode = UBER_I(_MainAlphaMaskMode);
+        if (mode == 1) alpha = mask;
+        else if (mode == 2) alpha *= mask;
+        else if (mode == 3) alpha = clamp(alpha + mask, 0.0, 1.0);
+        else if (mode == 4) alpha = clamp(alpha - mask, 0.0, 1.0);
+    }
+    alpha = clamp(alpha + UBER_F(_AlphaMod), 0.0, 1.0);
+    if (UBER_F(_AlphaForceOpaque) > 0.5)
+        alpha = 1.0;
+
+    base.a = alpha;
+    XR_UBER_ApplyDecals(coordinates, base, edgeEmission);
+    int blendMode = UBER_I(_Mode);
+    baseColor = base;
+    vec3 dissolveEmission;
+    bool keep = XR_UBER_ApplyDissolve(coordinates, baseColor, dissolveEmission);
+    edgeEmission += dissolveEmission;
+    return keep && (blendMode != 1 || baseColor.a >= UBER_F(_Cutoff));
+}
+
+#endif

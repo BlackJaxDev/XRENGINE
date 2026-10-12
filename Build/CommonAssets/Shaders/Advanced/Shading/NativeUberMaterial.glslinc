@@ -1,0 +1,73 @@
+#ifndef XR_NATIVE_UBER_MATERIAL_GLSLINC
+#define XR_NATIVE_UBER_MATERIAL_GLSLINC
+#include "Advanced/Shading/StandardMaterial.glslinc"
+
+XRAdvancedMaterialRecord XR_UBER_Material;
+
+#define UBER_F(name) uintBitsToFloat(XR_ADV_LoadMaterialConstant(XR_UBER_Material, XR_UBER_WORD ## name))
+#define UBER_I(name) int(XR_ADV_LoadMaterialConstant(XR_UBER_Material, XR_UBER_WORD ## name))
+#define UBER_V(name) XR_ADV_StandardVector(XR_UBER_Material, XR_UBER_WORD ## name)
+#define UBER_T(name) XR_UBER_TEX ## name
+
+bool XR_UBER_IsMaterial(XRAdvancedMaterialRecord material)
+{
+    return material.constantWordCount == XR_UBER_WORD_COUNT &&
+        material.constantWordOffset <= uint(XR_ADV_MaterialConstants.words.length()) &&
+        material.constantWordCount <= uint(XR_ADV_MaterialConstants.words.length()) - material.constantWordOffset &&
+        (all(equal(material.materialLayoutHash, uvec2(XR_UBER_OPAQUE_LAYOUT_LO, XR_UBER_OPAQUE_LAYOUT_HI))) ||
+         all(equal(material.materialLayoutHash, uvec2(XR_UBER_MASKED_LAYOUT_LO, XR_UBER_MASKED_LAYOUT_HI))));
+}
+
+bool XR_UBER_HasFeature(uint feature)
+{
+    return (XR_ADV_LoadMaterialConstant(XR_UBER_Material, XR_UBER_FEATURES_WORD) & feature) != 0u;
+}
+
+vec4 XR_UBER_Sample(uint slot, vec2 uv, vec2 dx, vec2 dy, vec4 absent)
+{
+    return XR_ADV_StandardTexture(XR_UBER_Material, slot, uv, dx, dy, absent);
+}
+
+vec4 XR_UBER_Cube(uint slot, vec3 direction, float lod)
+{
+    if (slot >= XR_UBER_Material.textureReferenceCount) return vec4(0.0);
+    XRAdvancedEncodedTextureReference reference;
+    XR_ADV_TryResolveTextureReference(XR_ADV_LoadMaterialTextureBinding(XR_UBER_Material, slot), reference);
+    return XR_ADV_SampleTextureCubeLod(reference, direction, lod);
+}
+
+float XR_UBER_Luminance(vec3 color) { return dot(color, vec3(0.299, 0.587, 0.114)); }
+vec3 XR_UBER_Linear(vec3 color)
+{
+    return color * (color * (color * 0.305306011 + 0.682171111) + 0.012522878);
+}
+
+vec3 XR_UBER_Blend(vec3 base, vec3 layer, int mode)
+{
+    if (mode == 1) return min(base, layer);
+    if (mode == 2) return base * layer;
+    if (mode == 5) return max(base, layer);
+    if (mode == 6) return 1.0 - (1.0 - base) * (1.0 - layer);
+    if (mode == 7) return base - layer;
+    if (mode == 8) return base + layer;
+    if (mode == 9) return mix(2.0 * base * layer, 1.0 - 2.0 * (1.0 - base) * (1.0 - layer), step(vec3(0.5), base));
+    if (mode == 20) return mix(base * layer, 1.0 - (1.0 - base) * (1.0 - layer), layer);
+    return layer;
+}
+#include "Advanced/Shading/NativeUberColor.glslinc"
+
+vec3 XR_UBER_Theme(int index, vec3 authored)
+{
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_GLOBAL_MASKS_THEMES)) return authored;
+    vec3 color, adjustment;
+    if (index == 1) { color = UBER_V(_GlobalThemeColor0).rgb; adjustment = UBER_V(_GlobalThemeAdjust0).xyz; }
+    else if (index == 2) { color = UBER_V(_GlobalThemeColor1).rgb; adjustment = UBER_V(_GlobalThemeAdjust1).xyz; }
+    else if (index == 3) { color = UBER_V(_GlobalThemeColor2).rgb; adjustment = UBER_V(_GlobalThemeAdjust2).xyz; }
+    else if (index == 4) { color = UBER_V(_GlobalThemeColor3).rgb; adjustment = UBER_V(_GlobalThemeAdjust3).xyz; }
+    else return authored;
+    vec3 hsv = XR_UBER_rgbToHsv(color);
+    hsv.x = fract(hsv.x + adjustment.x);
+    hsv.yz = clamp(hsv.yz + adjustment.yz, 0.0, 1.0);
+    return XR_UBER_hsvToRgb(hsv);
+}
+#endif

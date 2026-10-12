@@ -37,6 +37,19 @@ existing owners; it does not create a backend wrapper. GPU-only bounds output
 uses `GpuProduced` storage without a CPU mirror. Do not upload a CPU image over
 the result of that compute pass.
 
+## Small-Triangle Surface Reconstruction
+
+Visibility and surface reconstruction use different area checks. The screen
+barycentric denominator uses a pixel-space guard. The geometric normal must
+not use that guard as a world-space area threshold. Small visible triangles
+remain valid at any model scale.
+
+`ReconstructSurface.glslinc` transforms local edge differences, scales each
+edge by its largest absolute component, and rescales their cross product before
+normalization. It rejects zero and non-finite inputs. This preserves winding
+without subtracting large translated world positions. The CPU reference in
+`AdvancedReconstructionTangentSpace` uses the same method.
+
 ## Resource Generation Lifecycle
 
 The deferred light-combine descriptor declares the destination color, depth,

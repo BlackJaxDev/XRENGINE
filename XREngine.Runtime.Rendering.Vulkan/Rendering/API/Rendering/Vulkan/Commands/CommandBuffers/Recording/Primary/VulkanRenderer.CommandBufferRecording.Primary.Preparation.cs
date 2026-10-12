@@ -1776,7 +1776,8 @@ namespace XREngine.Rendering.Vulkan
                 preparation.CaptureGlobalResourcesWithAuthoringViews(
                     package,
                     framePlan.Generation,
-                    in authoringViews);
+                    in authoringViews,
+                    request.RenderTimeSeconds);
                 VulkanPreparedFrameGlobalResourceSnapshot globals =
                     preparation.GlobalResources;
                 AdvancedGpuScenePublicationReference publication =

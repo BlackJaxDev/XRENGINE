@@ -10,6 +10,10 @@ public static partial class AdvancedPackedVertexCodec
 {
     /// <summary>Source vertex contains an authored second texture-coordinate set.</summary>
     public const uint HasTexCoord1Flag = 1u << 0;
+    /// <summary>Source vertex contains an authored third texture-coordinate set.</summary>
+    public const uint HasTexCoord2Flag = 1u << 1;
+    /// <summary>Source vertex contains an authored fourth texture-coordinate set.</summary>
+    public const uint HasTexCoord3Flag = 1u << 2;
     private const float Snorm16Scale = 32767.0f;
     private const float Snorm15Scale = 16383.0f;
 
@@ -29,7 +33,11 @@ public static partial class AdvancedPackedVertexCodec
             GetOrDefault(vertex.ColorSets, 0, Vector4.One),
             GetOrDefault(vertex.ColorSets, 1, Vector4.One),
             sourceVertex,
-            vertex.TextureCoordinateSets is { Count: > 1 });
+            vertex.TextureCoordinateSets is { Count: > 1 },
+            GetOrDefault(vertex.TextureCoordinateSets, 2),
+            GetOrDefault(vertex.TextureCoordinateSets, 3),
+            vertex.TextureCoordinateSets is { Count: > 2 },
+            vertex.TextureCoordinateSets is { Count: > 3 });
     }
 
     /// <summary>
@@ -60,7 +68,11 @@ public static partial class AdvancedPackedVertexCodec
             colorCount > 0u ? mesh.GetColor(vertexIndex, 0u) : Vector4.One,
             colorCount > 1u ? mesh.GetColor(vertexIndex, 1u) : Vector4.One,
             sourceVertex,
-            texCoordCount > 1u);
+            texCoordCount > 1u,
+            texCoordCount > 2u ? mesh.GetTexCoord(vertexIndex, 2u) : Vector2.Zero,
+            texCoordCount > 3u ? mesh.GetTexCoord(vertexIndex, 3u) : Vector2.Zero,
+            texCoordCount > 2u,
+            texCoordCount > 3u);
     }
 
     /// <summary>
@@ -83,7 +95,11 @@ public static partial class AdvancedPackedVertexCodec
         Vector4 color0,
         Vector4 color1,
         uint sourceVertex,
-        bool hasTexCoord1 = false)
+        bool hasTexCoord1 = false,
+        Vector2 texCoord2 = default,
+        Vector2 texCoord3 = default,
+        bool hasTexCoord2 = false,
+        bool hasTexCoord3 = false)
         => new()
         {
             Position = position,
@@ -93,10 +109,14 @@ public static partial class AdvancedPackedVertexCodec
                 bitangentSign),
             TexCoord0Half = PackHalf2(texCoord0),
             TexCoord1Half = PackHalf2(texCoord1),
+            TexCoord2Half = PackHalf2(texCoord2),
+            TexCoord3Half = PackHalf2(texCoord3),
             Color0Rgba8 = PackRgba8(color0),
             Color1Rgba8 = PackRgba8(color1),
             SourceVertex = sourceVertex,
-            Flags = hasTexCoord1 ? HasTexCoord1Flag : 0u,
+            Flags = (hasTexCoord1 ? HasTexCoord1Flag : 0u) |
+                (hasTexCoord2 ? HasTexCoord2Flag : 0u) |
+                (hasTexCoord3 ? HasTexCoord3Flag : 0u),
         };
 
     public static uint EncodeOct(Vector3 value)

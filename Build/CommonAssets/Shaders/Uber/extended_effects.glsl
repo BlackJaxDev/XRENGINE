@@ -23,14 +23,26 @@ bool uberApplyCoverageEffects(in ToonMesh mesh)
     if (_FaceDiscard == 2 && mesh.isFrontFace < 0.0)
         return true;
 
-    if (_UvTileDiscard > 0.5)
+    if (_UvTileDiscard > 0.5 && _UDIMDiscardMode == 1)
     {
-        vec2 grid = max(_UvTileDiscardGrid, vec2(1.0));
-        vec2 cell = floor(fract(mesh.uv[0]) * grid);
-        float tile = (cell.y * grid.x + cell.x) / max(grid.x * grid.y - 1.0, 1.0);
-        if (tile < min(_UvTileDiscardRange.x, _UvTileDiscardRange.y) ||
-            tile > max(_UvTileDiscardRange.x, _UvTileDiscardRange.y))
-            return true;
+        vec2 tile = floor(mesh.uv[clamp(_UDIMDiscardUV, 0, 3)]);
+        if (all(greaterThanEqual(tile, vec2(0.0))) &&
+            all(lessThan(tile, vec2(4.0))))
+        {
+            vec4 row = tile.y < 1.0
+                ? vec4(_UDIMDiscardRow0_0, _UDIMDiscardRow0_1,
+                    _UDIMDiscardRow0_2, _UDIMDiscardRow0_3)
+                : tile.y < 2.0
+                    ? vec4(_UDIMDiscardRow1_0, _UDIMDiscardRow1_1,
+                        _UDIMDiscardRow1_2, _UDIMDiscardRow1_3)
+                    : tile.y < 3.0
+                        ? vec4(_UDIMDiscardRow2_0, _UDIMDiscardRow2_1,
+                            _UDIMDiscardRow2_2, _UDIMDiscardRow2_3)
+                        : vec4(_UDIMDiscardRow3_0, _UDIMDiscardRow3_1,
+                            _UDIMDiscardRow3_2, _UDIMDiscardRow3_3);
+            if (row[int(tile.x)] > 0.001)
+                return true;
+        }
     }
 #endif
     return false;

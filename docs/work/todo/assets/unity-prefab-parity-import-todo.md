@@ -1,6 +1,6 @@
 # Unity Prefab Parity Import TODO
 
-Last Updated: 2026-10-08
+Last Updated: 2026-10-11
 Status: Active
 Architecture: [Model Import](../../../developer-guides/assets/model-import.md), [Native FBX Import And Export](../../../developer-guides/assets/native-fbx-import-export.md)
 Validation: [Jax2031 Advanced Parity Validation](../../testing/rendering/jax2031-advanced-parity-validation.md)
@@ -9,25 +9,11 @@ Rendering work: [Unity Poiyomi Advanced Parity TODO](../rendering/unity-poiyomi-
 
 ## Current State
 
-The import entry is `jax2031 (1).prefab`, with `jax2031.fbx` as its model prefab base. Backend selection now reaches referenced model prefabs. `NativeOnly` disables fallback. Assimp root normalization lets the exact prefab complete composition with 69 model components and 67 materials. The live Vulkan output still has deformed and detached geometry and shading differences. Native parsing succeeds, but publication stops at an explicit guard because its coordinate and cluster-bind contracts are not yet compatible with Unity composition. The linked guide owns the completed backend and normalization behavior.
+The import entry is `jax2031 (1).prefab`, with `jax2031.fbx` as its model prefab base. Both explicit backends complete composition with the same 69 model node IDs. Runtime renderers and supported source FBX clips bind after prefab composition. Native FBX retains source morph channel order. Assimp uses serialized FBX skin bind frames during geometry baking. Both routes now retain the bangs and the intended body shape in viewed Vulkan captures. The active 30 renderer slots agree on 21 Unity materials and their source texture settings. Native Uber constants, shading, shared coverage, and explicit sorted alpha support are implemented. Active Mochie inputs use the source multipliers and independent direct specular and reflection masks. The linked validation document records the remaining image, deformation, streaming, and frame-time checks.
 
 ## Open Code Items
 
-### Phase 2: Model Base Coordinates And Identity
-
-- [ ] Support the remaining guarded Assimp root shapes in `SerializedSceneImporter.ModelRoots.cs` and `SerializedSceneImporter.Models.cs`. Done when: a non-identity root with one authored child, a root skin influence, or explicit root-relative bounds has a defined normalization that preserves geometry and bounds. Keep unsupported cases explicit until that contract exists.
-- [ ] Normalize native FBX hierarchy and coordinate data at the same boundary. Done when: native content-basis nodes do not change Unity object IDs, and mesh-local cluster binds remain valid after the imported skeleton is applied. Preserve current and previous deformation data.
-- [ ] Replace the inverse-world-only skeleton rebase in `SerializedSceneImporter.ModelSkeleton.cs` and `XRMesh.Skinning.cs` with a palette-preserving conversion. Done when: each new palette and bone-bind product preserves the old product, including native mesh-local cluster offsets, without changing influence order.
-- [ ] Preserve unskinned mesh data and culling bounds when applying Unity skeleton metadata. `SerializedSceneImporter.ModelSkeleton.cs` and the model mesh conversion boundary. Done when: an authored scale or basis is applied once to positions, morph vectors, normals, tangents, and bounds.
-- [ ] Define the FBX-to-Unity-to-engine axis and unit conversion for both routes. `SerializedSceneImporter.Models.cs`, `NativeFbxSceneImporter.cs`, and the Assimp model boundary. Done when: source and Unity joint landmarks agree before pose replacement, winding stays correct, and unsupported settings fail with a diagnostic.
-
-### Phase 3: Prefab Composition And Material Bindings
-
-- [ ] Correct any final material or texture binding that still depends on a stale embedded FBX path. `SerializedSceneImporter.Models.cs`, renderer override code, and `SerializedMaterialImporter`. Done when: required active slots resolve through the Unity project and preserve effective texture import metadata.
-
-### Phase 4: Native Advanced Material Execution
-
-Complete the open implementation items in the linked rendering todo. This includes native Uber data and shading, visibility and shadow coverage, and explicit late transparency support. Do not treat forward shader compilation as proof of native Advanced execution.
+- [ ] Update the expected cache hash in `ModelImportBackendResolverTests.Resolve_AutoGltf_ProducesStableNativeThenAssimpSnapshot` for Assimp implementation version 2. Keep the candidate-order and repeat-resolution assertions. Done when the existing test passes with the new version and still checks deterministic resolution. Test source work needs user clearance after live validation, as required by `AGENTS.md`.
 
 ### Phase 5: Measured Cost Reduction
 

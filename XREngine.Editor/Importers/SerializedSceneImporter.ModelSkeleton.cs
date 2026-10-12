@@ -1,6 +1,7 @@
 using System.Numerics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Scene.Prefabs;
@@ -21,6 +22,45 @@ internal static partial class SerializedSceneImporter
     {
         if (metadata.SkeletonTransforms.Count == 0)
             return;
+
+        SceneNode[] hierarchy = [.. EnumerateModelHierarchy(root)];
+        var meshes = new HashSet<XRMesh>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        var previousBindMatrices = new Dictionary<TransformBase, Matrix4x4>(
+            System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        var unskinnedPlacements = new List<(XRMesh Mesh, TransformBase Owner, Matrix4x4 World)>();
+        var boundsPlacements = new List<(SubMesh SubMesh, TransformBase Basis, Matrix4x4 World, AABB Bounds)>();
+        foreach (SceneNode node in hierarchy)
+        {
+            foreach (ModelComponent component in node.Components.OfType<ModelComponent>())
+            {
+                if (component.Model is not Model model)
+                    continue;
+
+                foreach (SubMesh subMesh in model.Meshes)
+                {
+                    if (subMesh.CullingBounds is { } bounds)
+                    {
+                        TransformBase basis = subMesh.RootBone ?? subMesh.RootTransform ?? node.Transform;
+                        boundsPlacements.Add((subMesh, basis, basis.WorldMatrix, bounds));
+                    }
+                    foreach (SubMeshLOD lod in subMesh.LODs)
+                    {
+                        if (lod.Mesh is not { } mesh)
+                            continue;
+                        if (!mesh.HasSkinning)
+                        {
+                            unskinnedPlacements.Add((mesh, node.Transform, node.Transform.WorldMatrix));
+                            continue;
+                        }
+                        if (!meshes.Add(mesh))
+                            continue;
+
+                        foreach ((TransformBase bone, _) in mesh.UtilizedBones)
+                            previousBindMatrices.TryAdd(bone, bone.BindMatrix);
+                    }
+                }
+            }
+        }
 
         var resolvedBySkeletonName = new Dictionary<string, SceneNode>(StringComparer.Ordinal);
         int appliedCount = 0;
@@ -54,38 +94,54 @@ internal static partial class SerializedSceneImporter
             .GetAwaiter()
             .GetResult();
 
-        SceneNode[] hierarchy = [.. EnumerateModelHierarchy(root)];
         for (int nodeIndex = 0; nodeIndex < hierarchy.Length; nodeIndex++)
             hierarchy[nodeIndex].Transform.SaveBindState();
 
-        var rebasedMeshes = new HashSet<XRMesh>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
-        for (int nodeIndex = 0; nodeIndex < hierarchy.Length; nodeIndex++)
+        float maximumProductError = 0.0f;
+        foreach (XRMesh mesh in meshes)
+            maximumProductError = MathF.Max(maximumProductError,
+                mesh.RebaseSkinningBindPoseToCurrentHierarchy(previousBindMatrices));
+
+        var geometryConversions = new Dictionary<XRMesh, Matrix4x4>(
+            System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        foreach ((XRMesh mesh, TransformBase owner, Matrix4x4 oldWorld) in unskinnedPlacements)
         {
-            foreach (ModelComponent component in hierarchy[nodeIndex].Components.OfType<ModelComponent>())
-            {
-                if (component.Model is not Model model)
-                    continue;
-
-                foreach (SubMesh subMesh in model.Meshes)
-                {
-                    foreach (SubMeshLOD lod in subMesh.LODs)
-                    {
-                        if (lod.Mesh is not { HasSkinning: true } mesh || !rebasedMeshes.Add(mesh))
-                            continue;
-
-                        mesh.RebaseSkinningBindPoseToCurrentHierarchy();
-                    }
-                }
-            }
+            Matrix4x4 conversion = oldWorld * InvertImportedBasis(owner.WorldMatrix, mesh.Name);
+            if (geometryConversions.TryGetValue(mesh, out Matrix4x4 existing) &&
+                !ModelMatricesMatch(existing, conversion))
+                throw new SourceVisualImportException(
+                    $"Shared mesh '{mesh.Name}' requires different geometry conversions after Unity skeleton import.");
+            geometryConversions[mesh] = conversion;
         }
+        foreach ((XRMesh mesh, Matrix4x4 conversion) in geometryConversions)
+            if (!ModelMatricesMatch(conversion, Matrix4x4.Identity))
+                mesh.TransformImportGeometry(conversion);
+
+        foreach (SceneNode node in hierarchy)
+            foreach (ModelComponent component in node.Components.OfType<ModelComponent>())
+                if (component.Model is { } model)
+                    foreach (SubMesh subMesh in model.Meshes)
+                        subMesh.Bounds = subMesh.CalculateBoundingBox();
+
+        foreach ((SubMesh subMesh, TransformBase basis, Matrix4x4 oldWorld, AABB bounds) in boundsPlacements)
+            subMesh.CullingBounds = bounds.Transformed(oldWorld * InvertImportedBasis(basis.WorldMatrix, subMesh.Name));
 
         state.Context.AddDiagnostic(
             "UNITYMODEL0005",
             SourceImportDiagnosticSeverity.Info,
             SourceImportDiagnosticCategory.ModelIdentity,
             $"Applied Unity's imported skeleton bind pose to {appliedCount} transform(s), " +
-            $"rebased {rebasedMeshes.Count} skinned mesh(es), and left {unresolvedCount} metadata transform(s) unresolved.",
+            $"rebased {meshes.Count} skinned mesh(es) with maximum bind-product error {maximumProductError:R}, " +
+            $"and left {unresolvedCount} metadata transform(s) unresolved.",
             metadata.SourceMetaPath);
+    }
+
+    private static Matrix4x4 InvertImportedBasis(Matrix4x4 basis, string? name)
+    {
+        if (!Matrix4x4.Invert(basis, out Matrix4x4 inverse) ||
+            !ModelMatricesMatch(basis * inverse, Matrix4x4.Identity))
+            throw new SourceVisualImportException($"Imported object '{name}' has a singular or non-finite basis.");
+        return inverse;
     }
 
     private static SceneNode? ResolveSkeletonNode(
