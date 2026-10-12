@@ -22,7 +22,7 @@ internal static partial class RuntimeDataLayoutScenario
         {
             using IDisposable services = RuntimeRenderingBootstrap.InstallEngineHostServices(new RuntimeApplicationProfile(
                 "RuntimeMeasurements", RuntimeAdapterProfile.All, AllowsWindows: false, AllowsVr: false, RegisterRendererBackends: false));
-            RuntimeHelpers.RunModuleConstructor(typeof(MonkeyBallVR.MonkeyBallWorldAsset).Module.ModuleHandle);
+            RuntimeHelpers.RunModuleConstructor(typeof(RollingBall.RollingBallWorldAsset).Module.ModuleHandle);
             using RenderBenchWorkSchedulerScope scheduler = RenderBenchWorkSchedulerScope.EnsureInstalled();
             RuntimeMeasurementManifest? manifest = null;
             string manifestRoot = string.Empty;
@@ -40,7 +40,7 @@ internal static partial class RuntimeDataLayoutScenario
 
             if (options.RuntimeLane is "all" or "assets")
             {
-                MeasureAssets(options, manifest?.MonkeyBall ?? throw new InvalidDataException("Missing MonkeyBall fixture."), manifestRoot, 1, report);
+                MeasureAssets(options, manifest?.MonkeyBall ?? throw new InvalidDataException("Missing Rolling Ball fixture (manifest field monkeyBall)."), manifestRoot, 1, report);
                 MeasureAssets(options, manifest?.Avatar ?? throw new InvalidDataException("Missing avatar fixture."), manifestRoot, 20, report);
             }
             if (options.RuntimeLane is "all" or "networking")

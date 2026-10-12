@@ -1550,6 +1550,9 @@ public static partial class EditorImGuiUI
                 if (ImGui.MenuItem("User Settings", null, false, Engine.UserSettings is not null))
                     OpenSettingsInInspector(Engine.UserSettings, "User Settings");
 
+                if (ImGui.MenuItem("Build Settings", null, _showBuildSettings, Engine.BuildSettings is not null))
+                    _showBuildSettings = !_showBuildSettings;
+
                 ImGui.EndMenu();
             }
 

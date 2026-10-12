@@ -79,6 +79,7 @@ namespace XREngine.Rendering.Commands
                 {
                     SetEmptyMeshletRange(meshId, 0UL);
                 }
+                RefreshMeshSubmissionPayloadAtFrameBoundary(mesh);
             }
         }
     }

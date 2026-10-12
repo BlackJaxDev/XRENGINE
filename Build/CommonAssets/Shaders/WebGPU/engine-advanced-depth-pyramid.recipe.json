@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-depth-pyramid",
+  "pass": "depth-pyramid",
+  "source": "AdvancedDepthPyramid.wgsl",
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "compute": "advancedDepthPyramid"
+  },
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "depth-pyramid"
+  },
+  "workgroupSize": [
+    256,
+    1,
+    1
+  ],
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 3,
+    "maxUniformBufferBindingSize": 16,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxStorageTexturesPerShaderStage": 1,
+    "maxComputeWorkgroupSizeX": 256,
+    "maxComputeWorkgroupSizeY": 1,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 256,
+    "maxComputeWorkgroupStorageSize": 1024
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "VisibilityDepth",
+        "physicalName": "visibilityDepth",
+        "group": 0,
+        "binding": 0,
+        "kind": "texture-depth-2d",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Output",
+        "physicalName": "currentDepthPyramid",
+        "group": 0,
+        "binding": 1,
+        "kind": "storage-texture-2d-write-r32float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 2,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "extent",
+            "provider": "Extent",
+            "offset": 0,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "reversed",
+            "provider": "ReversedDepth",
+            "offset": 8,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved",
+            "provider": "Reserved",
+            "offset": 12,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  },
+  "pipeline": {}
+}

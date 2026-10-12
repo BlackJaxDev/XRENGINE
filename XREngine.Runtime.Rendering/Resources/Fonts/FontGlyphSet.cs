@@ -681,8 +681,18 @@ namespace XREngine.Rendering
 
         private bool EnsureLayoutResourcesReady()
         {
-            if (!TryGetLayoutResourceIssue(this, out _))
+            if (!TryGetLayoutResourceIssue(this, out string? issue))
                 return true;
+
+            try
+            {
+                RuntimeAssetReadServices.EnsureHostFileAccess("Font layout recovery");
+            }
+            catch (NotSupportedException error)
+            {
+                throw new NotSupportedException(
+                    $"Font.CookedLayoutMissing: '{OriginalPath ?? FilePath ?? Name ?? ID.ToString()}' has {issue}; load a cooked font with its glyph table and bitmap atlas before layout.", error);
+            }
 
             string recoveryKey = !string.IsNullOrWhiteSpace(OriginalPath)
                 ? OriginalPath!
@@ -1037,10 +1047,7 @@ namespace XREngine.Rendering
         }
 
         public static FontGlyphSet LoadDefaultFontBitmap()
-            => LoadEngineFont(
-                RuntimeEngine.Rendering.Settings.DefaultFontFolder,
-                RuntimeEngine.Rendering.Settings.DefaultFontFileName,
-                CreateBitmapImportOptions(DefaultBitmapMipmapFontDrawSize));
+            => ResolveDefaultBitmapFont();
 
         public static FontGlyphSet LoadDefaultUIFont()
                 => LoadDefaultUIFontBitmap();
@@ -1054,10 +1061,7 @@ namespace XREngine.Rendering
             ?? LoadDefaultUIFontBitmap();
 
         public static FontGlyphSet LoadDefaultUIFontBitmap()
-            => LoadEngineFont(
-                RuntimeEngine.Rendering.Settings.DefaultFontFolder,
-                    RuntimeEngine.Rendering.Settings.DefaultFontFileName,
-                CreateBitmapImportOptions(DefaultBitmapMipmapFontDrawSize));
+            => ResolveDefaultBitmapFont();
 
         public static FontGlyphSet LoadDefaultUIFontMtsdf()
             => LoadEngineFont(
@@ -1631,6 +1635,7 @@ namespace XREngine.Rendering
             importOptions.MsdfOuterPixelPadding = importOptionsOverride.MsdfOuterPixelPadding;
             importOptions.MsdfThreadCount = importOptionsOverride.MsdfThreadCount;
             importOptions.AllowBitmapFallback = importOptionsOverride.AllowBitmapFallback;
+            importOptions.BrowserLicenseNoticePath = importOptionsOverride.BrowserLicenseNoticePath;
             return importOptions;
         }
 
@@ -1645,6 +1650,7 @@ namespace XREngine.Rendering
                 MsdfOuterPixelPadding = source.MsdfOuterPixelPadding,
                 MsdfThreadCount = source.MsdfThreadCount,
                 AllowBitmapFallback = source.AllowBitmapFallback,
+                BrowserLicenseNoticePath = source.BrowserLicenseNoticePath,
             };
 
         private static XRFontImportOptions CreateBitmapImportOptions(float drawSize)

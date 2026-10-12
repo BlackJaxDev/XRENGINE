@@ -50,6 +50,9 @@ public static class AdvancedFrameSlotContract
                 when capabilities.Synchronization ==
                      EAdvancedSynchronizationMode.OpenGlMemoryBarrier
                 => EAdvancedFrameSlotCompletionMode.OpenGlFence,
+            RuntimeGraphicsApiKind.WebGPU
+                when capabilities.Synchronization == EAdvancedSynchronizationMode.WebGpuPassBoundaries
+                => EAdvancedFrameSlotCompletionMode.WebGpuQueueCompletion,
             RuntimeGraphicsApiKind.Vulkan
                 when capabilities.SupportsTimelineSemaphores
                 => EAdvancedFrameSlotCompletionMode.VulkanTimelineSemaphore,

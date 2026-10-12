@@ -8,6 +8,7 @@ using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Execution;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering;
@@ -149,7 +150,19 @@ public partial class XRMesh
             {
                 try
                 {
-                    _ = Task.Run(GenerateBVH);
+                    if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread)
+                    {
+                        RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
+                            GenerateBVHJob(),
+                            error: ex =>
+                            {
+                                Interlocked.Exchange(ref _generatingBvh, 0);
+                                RuntimeRenderingHostServices.Diagnostics.LogException(ex);
+                            },
+                            canceled: () => Interlocked.Exchange(ref _generatingBvh, 0));
+                    }
+                    else
+                        _ = Task.Run(GenerateBVH);
                 }
                 catch
                 {
@@ -165,8 +178,7 @@ public partial class XRMesh
 
     private IEnumerable GenerateBVHJob()
     {
-        var task = Task.Run(GenerateBVH);
-        yield return task;
+        yield return (Action)GenerateBVH;
     }
 
     private bool _allowBVHGeneration = false;
@@ -178,11 +190,10 @@ public partial class XRMesh
 
     public void GenerateBVH()
     {
-        if (!AllowBVHGeneration)
-            return;
-        
         try
         {
+            if (IsDestroyed || !AllowBVHGeneration)
+                return;
             if (Triangles is null)
                 return;
 
@@ -367,6 +378,9 @@ public partial class XRMesh
 
             if (requireSynchronous)
             {
+                if ((OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread) &&
+                    !ticket!.Completion.Task.IsCompleted)
+                    throw new InvalidOperationException("Caller-thread index preparation is pending. Request preparation and observe readiness on a later frame instead of waiting for the same frame's job pump.");
                 try
                 {
                     (XRDataBuffer buffer, IndexSize completedElementSize) =
@@ -429,6 +443,23 @@ public partial class XRMesh
         return false;
     }
 
+    /// <summary>Observes prepared index ownership without starting, waiting for, or rebuilding derived geometry.</summary>
+    internal bool TryGetPreparedIndexBuffer(EPrimitiveType type, out XRDataBuffer? buffer, out IndexSize size)
+    {
+        lock (_indexBufferLock)
+        {
+            if (!IsDestroyed && _indexBufferCache.TryGetValue(type, out var current) && !current.buffer.IsDestroyed)
+            {
+                buffer = current.buffer;
+                size = current.elementSize;
+                return true;
+            }
+        }
+        buffer = null;
+        size = default;
+        return false;
+    }
+
     private IndexBufferBuildTicket GetOrStartIndexBufferBuildNoLock(EPrimitiveType type)
     {
         if (_indexBufferBuildTickets.TryGetValue(type, out IndexBufferBuildTicket? ticket))
@@ -448,7 +479,15 @@ public partial class XRMesh
 
             // The worker owns this array; neither authoring lists nor live VertexCount
             // are read during conversion. Do not retain the snapshot in the cached ticket.
-            _ = Task.Run(() => BuildIndexBufferWorker(type, ticket, indices, vertexCount));
+            if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread)
+            {
+                RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
+                    GenerateIndexBufferJob(type, ticket, indices, vertexCount),
+                    error: ticket.Fail,
+                    canceled: () => ticket.Fail(new OperationCanceledException("Index preparation was canceled before publication.")));
+            }
+            else
+                _ = Task.Run(() => BuildIndexBufferWorker(type, ticket, indices, vertexCount));
         }
         catch (Exception ex)
         {
@@ -456,6 +495,15 @@ public partial class XRMesh
             ticket.Fail(ex);
         }
         return ticket;
+    }
+
+    private IEnumerable GenerateIndexBufferJob(
+        EPrimitiveType type,
+        IndexBufferBuildTicket ticket,
+        int[] indices,
+        int vertexCount)
+    {
+        yield return (Action)(() => BuildIndexBufferWorker(type, ticket, indices, vertexCount));
     }
 
     private void RegisterIndexBufferReadyCallback(

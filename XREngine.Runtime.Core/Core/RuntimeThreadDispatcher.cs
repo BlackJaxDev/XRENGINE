@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.ExceptionServices;
+using XREngine.Execution;
 
 namespace XREngine;
 
@@ -62,6 +63,10 @@ public static class RuntimeThreadDispatcher
             action();
             return;
         }
+
+        if (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser())
+            throw new InvalidOperationException(
+                "InvokePhysics cannot wait for an off-owner physics dispatch in a caller-thread host.");
 
         ExceptionDispatchInfo? exception = null;
         using ManualResetEventSlim completed = new(false);

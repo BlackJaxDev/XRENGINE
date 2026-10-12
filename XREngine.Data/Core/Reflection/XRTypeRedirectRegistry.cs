@@ -58,6 +58,7 @@ namespace XREngine.Core
                     return;
                 }
 
+                AotRuntimeMetadataStore.NoteBrowserDevelopmentTypeDiscovery(nameof(XRTypeRedirectRegistry));
                 foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
                     foreach (Type type in XRLoadableTypeCatalog.GetTypes(asm))

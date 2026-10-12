@@ -7,6 +7,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_PopStencilState : ViewportPopStateRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+            => requirements.RequireOperation("stencil");
+
         protected override void Execute()
         {
             RuntimeEngine.Rendering.State.EnableStencilTest(false);

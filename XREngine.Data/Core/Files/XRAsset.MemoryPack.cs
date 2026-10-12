@@ -25,6 +25,7 @@ namespace XREngine.Core.Files
 
         public static XRAsset? Deserialize(ReadOnlySpan<byte> data, Type? expectedType)
         {
+            CookedMemoryPackEnvelope.Validate(data, hasFormat: false);
             XRAssetMemoryPackEnvelope? envelope = MemoryPackSerializer.Deserialize<XRAssetMemoryPackEnvelope>(data);
             if (envelope is null)
                 return null;

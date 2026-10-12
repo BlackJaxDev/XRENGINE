@@ -8,21 +8,12 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <WasmEnableThreads>false</WasmEnableThreads>
     <WasmEnableSIMD>true</WasmEnableSIMD>
-    <JoltBrowserLinkArchive>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', '$(Configuration)', '$(TargetFramework)', 'JoltNative', 'joltc.a'))</JoltBrowserLinkArchive>
+    <PublishTrimmed>false</PublishTrimmed>
+    <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="JoltPhysicsSharp" Version="2.22.0" />
-    <NativeFileReference Include="$(JoltBrowserLinkArchive)" />
-    <NativeFileReference Include="$(JoltBrowserArchiveDirectory)/libJolt.a" />
+    <ProjectReference Include="../Managed/JoltPhysicsSharp.Browser.csproj" />
   </ItemGroup>
-
-  <Target Name="RequireJoltBrowserArchives" BeforeTargets="PrepareForBuild">
-    <Error Condition="'$(JoltBrowserArchiveDirectory)' == ''" Text="Set JoltBrowserArchiveDirectory to the approved browser archive output." />
-    <Error Condition="!Exists('$(JoltBrowserArchiveDirectory)/libjoltc.a')" Text="The pinned browser joltc archive is missing." />
-    <Error Condition="!Exists('$(JoltBrowserArchiveDirectory)/libJolt.a')" Text="The pinned browser Jolt archive is missing." />
-    <!-- The SDK derives the P/Invoke module from the archive basename. The
-         managed binding requests joltc; an empty libjoltc table masks it. -->
-    <Copy SourceFiles="$(JoltBrowserArchiveDirectory)/libjoltc.a" DestinationFiles="$(JoltBrowserLinkArchive)" SkipUnchangedFiles="true" />
-  </Target>
+  <Import Project="../JoltBrowserNative.targets" />
 </Project>

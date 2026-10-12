@@ -6,6 +6,9 @@ Environment.ExitCode = VulkanPerformanceCommand.Run(args);
 using BenchmarkDotNet.Running;
 using XREngine.Benchmarks;
 using XREngine.Benchmarks.SelfIteration;
+using XREngine.Execution;
+
+ThreadedWorkerBackend.EnsureRegistered();
 
 if (args.Contains("--self-iterate", StringComparer.OrdinalIgnoreCase))
 {

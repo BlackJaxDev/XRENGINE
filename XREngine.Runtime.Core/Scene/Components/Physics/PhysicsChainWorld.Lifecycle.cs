@@ -108,14 +108,19 @@ public sealed partial class PhysicsChainWorld
 
     private void EnqueueDynamicCommand(PhysicsChainComponent component, PhysicsChainWorldDynamicCommandKind kind)
     {
-        long version = Interlocked.Increment(ref _nextCommandVersion);
-        var key = new DynamicCommandKey(component, kind);
-        _latestDynamicCommandVersion.AddOrUpdate(
-            key,
-            static (_, candidate) => candidate,
-            static (_, current, candidate) => Math.Max(current, candidate),
-            version);
-        _dynamicCommands.Enqueue(new DynamicCommand(key, version));
+        using (_commandGate.EnterScope())
+        {
+            if (IsDisposed)
+                return;
+            long version = Interlocked.Increment(ref _nextCommandVersion);
+            var key = new DynamicCommandKey(component, kind);
+            _latestDynamicCommandVersion.AddOrUpdate(
+                key,
+                static (_, candidate) => candidate,
+                static (_, current, candidate) => Math.Max(current, candidate),
+                version);
+            _dynamicCommands.Enqueue(new DynamicCommand(key, version));
+        }
     }
 
     private void DrainDynamicCommands()

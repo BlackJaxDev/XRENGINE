@@ -7,6 +7,20 @@ public static class PhysicsChainWorldReadbackExtensions
 {
     private static readonly ConditionalWeakTable<PhysicsChainWorld, PhysicsChainReadbackService> Services = [];
 
+    /// <summary>
+    /// Closes the readback service of a disposed world. The service lock
+    /// serializes this with a renderer call that is in progress. The service stays
+    /// registered, so the renderer releases in-flight staging slots and their fences
+    /// on the render thread at its next poll, and then retires the world.
+    /// </summary>
+    internal static void ReleaseWorld(PhysicsChainWorld world)
+    {
+        if (!Services.TryGetValue(world, out PhysicsChainReadbackService? service))
+            return;
+        using (service.SyncRoot.EnterScope())
+            service.Dispose();
+    }
+
     public static bool TryRequestReadback(
         this PhysicsChainWorld world,
         PhysicsChainRuntimeHandle instanceHandle,
@@ -17,6 +31,13 @@ public static class PhysicsChainWorldReadbackExtensions
         out PhysicsChainReadbackHandle handle,
         out PhysicsChainReadbackRejection rejection)
     {
+        if (world.IsDisposed)
+        {
+            handle = PhysicsChainReadbackHandle.Invalid;
+            rejection = PhysicsChainReadbackRejection.InvalidInstance;
+            return false;
+        }
+
         PhysicsChainReadbackService service = GetService(world);
         bool sourceValid = world.TryCaptureReadbackSource(instanceHandle, out PhysicsChainComponent? component,
             out long sourceGeneration, out PhysicsChainReadbackRejection sourceRejection);
@@ -205,5 +226,8 @@ public static class PhysicsChainWorldReadbackExtensions
     }
 
     private static PhysicsChainReadbackService GetService(PhysicsChainWorld world)
-        => Services.GetValue(world, static _ => new PhysicsChainReadbackService(PhysicsChainReadbackLimits.Default));
+    {
+        world.ThrowIfReadbackFromBatchWorker();
+        return Services.GetValue(world, static _ => new PhysicsChainReadbackService(PhysicsChainReadbackLimits.Default));
+    }
 }

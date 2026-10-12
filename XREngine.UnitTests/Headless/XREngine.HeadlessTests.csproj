@@ -11,6 +11,7 @@
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <ProjectReference Include="../../XREngine.Runtime.AnimationIntegration/XREngine.Runtime.AnimationIntegration.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />
+    <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../Animation/VrCalibrationCaptureTests.cs" Link="Animation/VrCalibrationCaptureTests.cs" />
@@ -20,6 +21,7 @@
     <Compile Include="../Animation/VrControllerWristPresetTests.cs" Link="Animation/VrControllerWristPresetTests.cs" />
     <!-- The narrow desktop filesystem adapter is OS-neutral BCL code; exercise it without the windowing/native desktop closure. -->
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopAssetFileSystem.cs" Link="Platform/DesktopAssetFileSystem.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopBvhDiskCache.cs" Link="Platform/DesktopBvhDiskCache.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopAssetChangeMonitor.cs" Link="Platform/DesktopAssetChangeMonitor.cs" />
     <Compile Include="../Platform/DesktopAssetFileSystemTests.cs" Link="Platform/DesktopAssetFileSystemTests.cs" />
     <Compile Include="../Animation/RecordingVrMovementComponent.cs" Link="Animation/RecordingVrMovementComponent.cs" />

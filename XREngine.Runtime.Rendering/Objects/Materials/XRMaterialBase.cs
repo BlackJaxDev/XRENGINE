@@ -13,6 +13,10 @@ namespace XREngine.Rendering
 {
     public abstract class XRMaterialBase : GenericRenderObject
     {
+        private bool _materialTeardownRequested;
+        protected void BeginMaterialTeardown() => _materialTeardownRequested = true;
+        protected bool IsMaterialTeardownRequested => _materialTeardownRequested;
+
         private int _renderPass = (int)EDefaultRenderPass.OpaqueForward;
         /// <summary>
         /// This is the render pass bucket that any meshes using this material will be put in.
@@ -38,8 +42,26 @@ namespace XREngine.Rendering
 
         public void OnSettingVertexUniforms(XRRenderProgram program)
             => SettingVertexUniforms?.Invoke(program);
+        public bool HasSettingVertexUniformHandlers => SettingVertexUniforms is not null;
         public bool HasSettingUniformsHandlers
             => SettingUniforms is not null;
+
+        /// <summary>Checks one engine-owned publisher without allocating a delegate invocation list.</summary>
+        protected bool HasOnlySettingUniformsHandler(Action<XRMaterialBase, XRRenderProgram>? handler)
+            => SettingUniforms == handler;
+
+        /// <summary>Checks a cold cook's explicitly recognized publishers without admitting arbitrary callbacks.</summary>
+        protected bool HasOnlySettingUniformsHandlers(IReadOnlySet<Action<XRMaterialBase, XRRenderProgram>> handlers,
+            Action<XRMaterialBase, XRRenderProgram>? additionalHandler = null)
+        {
+            if (SettingUniforms is null)
+                return true;
+            foreach (Delegate handler in SettingUniforms.GetInvocationList())
+                if (handler is not Action<XRMaterialBase, XRRenderProgram> typed ||
+                    typed != additionalHandler && !handlers.Contains(typed))
+                    return false;
+            return true;
+        }
 
         /// <summary>
         /// Typed, generation-owned numeric binding publishers eligible for
@@ -84,19 +106,26 @@ namespace XREngine.Rendering
             => _bindingResourceVersion;
 
         public XRMaterialBase()
-            => AttachTextureListHandlers(_textures);
+        {
+            _ownedRenderOptions = _renderOptions;
+            _ownedInitialTextures = _textures;
+            AttachTextureListHandlers(_textures);
+            _subscribedTextures = _textures;
+        }
         protected XRMaterialBase(ShaderVar[] parameters) : this()
         {
             Parameters = [.. parameters]; //Make copy
         }
         protected XRMaterialBase(XRTexture?[] textures) : this()
         {
-            Textures = [.. textures];
+            _ownedConstructorTextures = [.. textures];
+            Textures = _ownedConstructorTextures;
         }
         protected XRMaterialBase(ShaderVar[] parameters, XRTexture?[] textures) : this()
         {
             Parameters = [.. parameters]; //Make copy
-            Textures = [.. textures];
+            _ownedConstructorTextures = [.. textures];
+            Textures = _ownedConstructorTextures;
         }
 
         private XRRenderProgram? _shaderPipelineProgram;
@@ -129,13 +158,18 @@ namespace XREngine.Rendering
         }
 
         private RenderingParameters _renderOptions = new();
+        private readonly RenderingParameters _ownedRenderOptions;
         /// <summary>
         /// These are special rendering options that the API can use to set its state separately from the shaders.
         /// </summary>
         public RenderingParameters RenderOptions
         {
             get => _renderOptions ??= new();
-            set => SetField(ref _renderOptions, value ?? new());
+            set
+            {
+                ObjectDisposedException.ThrowIf(_materialTeardownRequested, this);
+                SetField(ref _renderOptions, value ?? new());
+            }
         }
 
         protected ShaderVar[] _parameters = [];
@@ -153,13 +187,27 @@ namespace XREngine.Rendering
         }
 
         protected EventList<XRTexture?> _textures = [];
+        private readonly EventList<XRTexture?> _ownedInitialTextures;
+        private EventList<XRTexture?>? _ownedConstructorTextures;
+        private EventList<XRTexture?>? _subscribedTextures;
+        private int _textureSetterDepth;
         /// <summary>
         /// These are the texture samplers that each shader in the program has requested.
         /// </summary>
         public EventList<XRTexture?> Textures
         {
             get => _textures;
-            set => SetField(ref _textures, value ?? []);
+            set
+            {
+                ObjectDisposedException.ThrowIf(_materialTeardownRequested, this);
+                _textureSetterDepth++;
+                try { SetField(ref _textures, value ?? []); }
+                finally
+                {
+                    if (--_textureSetterDepth == 0)
+                        ReconcileTextureListHandlers();
+                }
+            }
         }
 
         /// <summary>
@@ -224,6 +272,21 @@ namespace XREngine.Rendering
             textures.PostModified -= TexturesModified;
         }
 
+        private void ReconcileTextureListHandlers()
+        {
+            if (_materialTeardownRequested)
+            {
+                DetachTextureListHandlers(_subscribedTextures);
+                _subscribedTextures = null;
+                return;
+            }
+            if (ReferenceEquals(_subscribedTextures, _textures))
+                return;
+            DetachTextureListHandlers(_subscribedTextures);
+            _subscribedTextures = _textures;
+            AttachTextureListHandlers(_subscribedTextures);
+        }
+
         private void TexturesModified()
         {
             IncrementBindingLayoutVersion();
@@ -258,6 +321,16 @@ namespace XREngine.Rendering
             for (int index = 0; index < parameters.Length; index++)
                 if (parameters[index] is { } parameter)
                     parameter.ValueChanged -= ParameterValueChanged;
+        }
+
+        /// <summary>Restores value subscriptions after a cooked reflection load suppressed property callbacks.</summary>
+        protected void RestoreCookedParameterSubscriptions()
+        {
+            DetachParameterHandlers(_parameters);
+            AttachParameterHandlers(_parameters);
+            ResetNameIndexCache();
+            IncrementBindingLayoutVersion();
+            IncrementBindingValueVersion();
         }
 
         private void ParameterValueChanged(ShaderVar _)
@@ -297,13 +370,60 @@ namespace XREngine.Rendering
                     IncrementBindingValueVersion();
                     break;
                 case nameof(Textures):
-                    DetachTextureListHandlers(prev as EventList<XRTexture?>);
-                    AttachTextureListHandlers(field as EventList<XRTexture?>);
                     IncrementBindingLayoutVersion();
                     IncrementBindingValueVersion();
                     IncrementBindingResourceVersion();
                     break;
             }
+        }
+
+        /// <summary>Restores owned storage and subscriptions after a successful parent revival.</summary>
+        public override void Generate()
+        {
+            bool reviving = IsDestroyed;
+            base.Generate();
+            if (!reviving || IsDestroyed)
+                return;
+
+            if (_ownedConstructorTextures is { IsDestroyed: true })
+                _ownedConstructorTextures.Generate();
+            if (_ownedInitialTextures.IsDestroyed)
+                _ownedInitialTextures.Generate();
+            if (_ownedRenderOptions.IsDestroyed)
+                _ownedRenderOptions.Generate();
+            _materialTeardownRequested = false;
+            ReconcileTextureListHandlers();
+            DetachParameterHandlers(_parameters);
+            AttachParameterHandlers(_parameters);
+        }
+
+        protected override void OnDestroying()
+        {
+            BeginMaterialTeardown();
+            List<Exception>? failures = null;
+            try { DetachParameterHandlers(_parameters); }
+            catch (Exception ex) { (failures ??= []).Add(ex); }
+            try { ReconcileTextureListHandlers(); }
+            catch (Exception ex) { (failures ??= []).Add(ex); }
+            try { DestroyOwnedContainer(_ownedConstructorTextures); }
+            catch (Exception ex) { (failures ??= []).Add(ex); }
+            try { DestroyOwnedContainer(_ownedInitialTextures); }
+            catch (Exception ex) { (failures ??= []).Add(ex); }
+            try { DestroyOwnedContainer(_ownedRenderOptions); }
+            catch (Exception ex) { (failures ??= []).Add(ex); }
+            try { base.OnDestroying(); }
+            catch (Exception ex) { (failures ??= []).Add(ex); }
+            if (failures is not null)
+                throw new AggregateException("Material-owned storage could not be released.", failures);
+        }
+
+        private static void DestroyOwnedContainer(XRObjectBase? value)
+        {
+            if (value is null || value.IsDestroyed)
+                return;
+            value.Destroy(true);
+            if (!value.IsDestroyed)
+                throw new InvalidOperationException("Material-owned container destruction was vetoed.");
         }
 
         public void SetFloat(string name, float value)

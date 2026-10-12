@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace XREngine.Components;
 
 internal sealed partial class PhysicsChainReadbackService
@@ -313,6 +315,11 @@ internal sealed partial class PhysicsChainReadbackService
         ArgumentNullException.ThrowIfNull(world);
         if (currentFrame < 0L)
             throw new ArgumentOutOfRangeException(nameof(currentFrame));
+        if (_disposed)
+        {
+            ReleaseStagingSlotsAfterDisposal();
+            return;
+        }
 
         for (int i = 0; i < _stagingSlots.Length; ++i)
         {
@@ -562,15 +569,39 @@ internal sealed partial class PhysicsChainReadbackService
         }
     }
 
+    /// <summary>
+    /// Releases every staging slot of a disposed service on the render thread.
+    /// The staging source owns a lease, not the renderer's backing buffer, so
+    /// release does not map or wait.
+    /// </summary>
+    private void ReleaseStagingSlotsAfterDisposal()
+    {
+        ExceptionDispatchInfo? firstFault = null;
+        foreach (StagingSlot slot in _stagingSlots)
+        {
+            if (slot.State == StagingSlotState.Free)
+                continue;
+            try { ReleaseStagingSlot(slot); }
+            catch (Exception ex) { firstFault ??= ExceptionDispatchInfo.Capture(ex); }
+            slot.DeliveryScratch = [];
+        }
+        firstFault?.Throw();
+    }
+
     private static void ReleaseStagingSlot(StagingSlot slot)
     {
-        slot.Source?.Dispose();
-        if (slot.Fence is IDisposable disposableFence)
-            disposableFence.Dispose();
+        IPhysicsChainReadbackStagingSource? source = slot.Source;
+        IDisposable? fence = slot.Fence as IDisposable;
         slot.Source = null;
         slot.Fence = null;
         slot.State = StagingSlotState.Free;
         slot.Plan = null;
+        ExceptionDispatchInfo? firstFault = null;
+        try { source?.Dispose(); }
+        catch (Exception ex) { firstFault = ExceptionDispatchInfo.Capture(ex); }
+        try { fence?.Dispose(); }
+        catch (Exception ex) { firstFault ??= ExceptionDispatchInfo.Capture(ex); }
+        firstFault?.Throw();
     }
 
     private static uint NextStagingGeneration(uint generation)

@@ -700,6 +700,8 @@ public partial class AdvancedRenderPipeline
 
     private XRFrameBuffer CreateTransparentResolveFBO()
     {
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            return CreateAdvancedWebTransparentResolveFbo();
         XRTexture[] references =
         [
             GetTexture<XRTexture>(TransparentSceneCopyTextureName)!,
@@ -795,6 +797,8 @@ public partial class AdvancedRenderPipeline
 
     private XRFrameBuffer CreateSceneCopyFBO()
     {
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            return CreateAdvancedWebSceneCopyFbo();
         XRTexture[] references =
         [
             GetTexture<XRTexture>(HDRSceneTextureName)!,

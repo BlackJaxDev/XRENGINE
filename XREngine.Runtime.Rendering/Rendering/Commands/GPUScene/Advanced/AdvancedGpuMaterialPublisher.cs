@@ -324,13 +324,16 @@ public sealed class AdvancedGpuMaterialPublisher
                     request.State,
                     constantWords,
                     textureBindings,
-                    out string updateReason))
+                    out string updateReason,
+                    request.EngineSurface,
+                    request.UberBaseSurface))
             {
                 throw new InvalidOperationException(
                     $"Preflighted material payload replacement failed: {updateReason}");
             }
 
             RetainAfterPreflight(request.MaterialHandle, request.AcquireCount);
+            _database.SetNativeVertex(request.MaterialHandle, request.NativeVertex);
             return;
         }
 
@@ -342,13 +345,16 @@ public sealed class AdvancedGpuMaterialPublisher
                 constantWords,
                 textureBindings,
                 out AdvancedGpuHandle materialHandle,
-                out string acquireReason))
+                out string acquireReason,
+                request.EngineSurface,
+                request.UberBaseSurface))
         {
             throw new InvalidOperationException(
                 $"Preflighted material variant creation failed: {acquireReason}");
         }
 
         request.MaterialHandle = materialHandle;
+        _database.SetNativeVertex(materialHandle, request.NativeVertex);
         RetainAfterPreflight(materialHandle, request.AcquireCount - 1u);
     }
 
@@ -415,7 +421,8 @@ public sealed class AdvancedGpuMaterialPublisher
             current.CoverageMode == expected.CoverageMode &&
             current.RequiredAttributeMask == expected.RequiredAttributeMask &&
             current.FeatureFlags == expected.FeatureFlags &&
-            current.EligibilityFlags == expected.EligibilityFlags;
+            current.EligibilityFlags == expected.EligibilityFlags &&
+            current.SourceContract == expected.SourceContract;
     }
 
     /// <summary>Acquires a shared material variant, creating its layout, kernel, and material rows on first use.</summary>
@@ -427,7 +434,9 @@ public sealed class AdvancedGpuMaterialPublisher
         ReadOnlySpan<uint> constantWords,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
         out AdvancedGpuHandle materialHandle,
-        out string reason)
+        out string reason,
+        AdvancedEngineSurfaceRecord engineSurface = default,
+        AdvancedUberBaseSurfaceRecord uberSurface = default)
     {
         materialHandle = AdvancedGpuHandle.Invalid;
         if (!TryPreflight(material, layout, coverage, state, constantWords, textureBindings, out reason))
@@ -456,12 +465,16 @@ public sealed class AdvancedGpuMaterialPublisher
                 constantWords,
                 textureBindings,
                 out AdvancedMaterialVariantHandles handles,
-                out EAdvancedMaterialVariantCreationFailure failure))
+                out EAdvancedMaterialVariantCreationFailure failure,
+                engineSurface,
+                uberSurface))
         {
             reason = $"Canonical material variant creation failed ({(uint)failure}: {failure}).";
             return false;
         }
         materialHandle = handles.Material;
+        if (AdvancedNativeVertexMaterialSource.TryCapture(material, out AdvancedNativeVertexMaterial nativeVertex, out _))
+            _database.SetNativeVertex(materialHandle, nativeVertex);
 
         int index = _variantCount++;
         _variants[index] = new MaterialVariantEntry(material, Hash(layout.LayoutHash), coverage, state, materialHandle, 1u);
@@ -479,7 +492,9 @@ public sealed class AdvancedGpuMaterialPublisher
         EAdvancedMaterialRenderStateClass state,
         ReadOnlySpan<uint> constantWords,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
-        out string reason)
+        out string reason,
+        AdvancedEngineSurfaceRecord engineSurface = default,
+        AdvancedUberBaseSurfaceRecord uberSurface = default)
     {
         reason = string.Empty;
         int index = FindVariantByMaterial(materialHandle);
@@ -516,11 +531,13 @@ public sealed class AdvancedGpuMaterialPublisher
         }
         AdvancedMaterialRecord record =
             CreateMaterialRecord(entry.MaterialReference, layout, coverage, state, textureBindings);
-        if (!_database.TryReplaceMaterial(materialHandle, layoutHandle, kernelHandle, record, ReadOnlySpan<AdvancedMaterialValueDescriptor>.Empty, constantWords, textureBindings))
+        if (!_database.TryReplaceMaterial(materialHandle, layoutHandle, kernelHandle, record, ReadOnlySpan<AdvancedMaterialValueDescriptor>.Empty, constantWords, textureBindings, engineSurface, uberSurface))
         {
             reason = "Canonical material replacement failed validation.";
             return false;
         }
+        AdvancedNativeVertexMaterialSource.TryCapture(entry.MaterialReference, out AdvancedNativeVertexMaterial vertex, out _);
+        _database.SetNativeVertex(materialHandle, vertex);
         reason = string.Empty;
         return true;
     }
@@ -650,6 +667,8 @@ public sealed class AdvancedGpuMaterialPublisher
     {
         bool isProjectiveMirror = IsProjectiveMirrorLayout(layout);
         EAdvancedMaterialFeatureFlags features = EAdvancedMaterialFeatureFlags.None;
+        if (AdvancedNativeVertexMaterialSource.TryCapture(material, out _, out _))
+            features |= EAdvancedMaterialFeatureFlags.VertexDeformation;
         if (!isProjectiveMirror)
         {
             if (textureBindings.Length > 0 && textureBindings[0].Texture.Handle.IsValid)
@@ -695,6 +714,7 @@ public sealed class AdvancedGpuMaterialPublisher
             RequiredAttributeMask = requiredAttributes,
             FeatureFlags = features,
             EligibilityFlags = eligibility,
+            SourceContract = AdvancedMaterialSourceContract.Classify(material),
         };
     }
 

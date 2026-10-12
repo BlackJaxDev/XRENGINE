@@ -3,6 +3,8 @@ namespace XREngine.Core.Files;
 /// <summary>Application-installed asset I/O, including optional accelerated range reads.</summary>
 public interface IRuntimeAssetSource
 {
+    /// <summary>Whether reads may complete synchronously without blocking a platform event loop.</summary>
+    bool SupportsSynchronousReads => true;
     bool IsAccelerated { get; }
     string Status { get; }
     IAssetFileSystem? FileSystem { get; }

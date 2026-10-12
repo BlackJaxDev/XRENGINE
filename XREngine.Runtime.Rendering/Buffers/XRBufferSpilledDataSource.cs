@@ -1,58 +1,41 @@
-using System.IO.MemoryMappedFiles;
 using XREngine.Data;
 
 namespace XREngine.Rendering
 {
     /// <summary>
-    /// A buffer's client bytes backed by a copy-on-write view of a session spill
-    /// file. The pages are file-backed, so the OS can drop and reread them; a write
-    /// through <see cref="DataSource.Address"/> copies only the touched pages into
-    /// private memory. Disposing unmaps the view and closes the delete-on-close file.
+    /// A buffer's client bytes backed by a host-owned copy-on-write spill mapping.
     /// </summary>
     internal sealed unsafe class XRBufferSpilledDataSource : DataSource
     {
-        private MemoryMappedFile? _mapping;
-        private MemoryMappedViewAccessor? _view;
+        private IXRBufferSpillLease? _lease;
 
-        private XRBufferSpilledDataSource(byte* address, uint length, MemoryMappedFile mapping, MemoryMappedViewAccessor view)
-            : base((void*)address, length, copyInternal: false)
+        private XRBufferSpilledDataSource(IXRBufferSpillLease lease)
+            : base(lease.Address, lease.Length, copyInternal: false)
         {
-            _mapping = mapping;
-            _view = view;
+            _lease = lease;
+        }
+
+        internal static XRBufferSpilledDataSource FromLease(IXRBufferSpillLease lease)
+        {
+            try
+            {
+                return new XRBufferSpilledDataSource(lease);
+            }
+            catch
+            {
+                lease.Release(disposing: true);
+                throw;
+            }
         }
 
         /// <summary>
         /// Maps <paramref name="file"/> copy-on-write and takes ownership of it.
         /// </summary>
         public static XRBufferSpilledDataSource Map(FileStream file, uint length)
-        {
-            MemoryMappedFile mapping = MemoryMappedFile.CreateFromFile(
-                file,
-                mapName: null,
-                capacity: 0L,
-                MemoryMappedFileAccess.CopyOnWrite,
-                HandleInheritability.None,
-                leaveOpen: false);
-            MemoryMappedViewAccessor? view = null;
-            try
-            {
-                view = mapping.CreateViewAccessor(0L, length, MemoryMappedFileAccess.CopyOnWrite);
-                byte* pointer = null;
-                view.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
-                return new XRBufferSpilledDataSource(pointer + view.PointerOffset, length, mapping, view);
-            }
-            catch
-            {
-                view?.Dispose();
-                mapping.Dispose();
-                throw;
-            }
-        }
+            => FromLease(XRBufferSpillStorageServices.Required.Map(file, length));
 
         /// <summary>
-        /// The mapping belongs to this source alone, so a clone gets its own private
-        /// copy. The base class would return a second view of the mapping, which dies
-        /// with this source.
+        /// A clone owns a private copy because the mapping belongs to this source.
         /// </summary>
         public override DataSource Clone()
         {
@@ -63,25 +46,15 @@ namespace XREngine.Rendering
 
         protected override void Dispose(bool disposing)
         {
-            MemoryMappedViewAccessor? view = Interlocked.Exchange(ref _view, null);
-            MemoryMappedFile? mapping = Interlocked.Exchange(ref _mapping, null);
-            if (view is not null)
+            IXRBufferSpillLease? lease = Interlocked.Exchange(ref _lease, null);
+            if (lease is not null)
             {
                 XRBufferClientSpill.RecordReleased(Length);
-                // Readers test Address for CPU data; an unmapped view must not look valid.
+                // Readers test Address for CPU data. Clear it before release.
                 Address = null;
                 Length = 0;
-                // Also valid from the finalizer: SafeHandles finalize after ordinary
-                // finalizers, so the view handle is still alive here. Releasing the
-                // acquired pointer lets that handle unmap the view and the file
-                // handle close (deleting the spill file) even for buffers that were
-                // dropped without being disposed.
-                view.SafeMemoryMappedViewHandle.ReleasePointer();
-                if (disposing)
-                    view.Dispose();
+                lease.Release(disposing);
             }
-            if (disposing)
-                mapping?.Dispose();
             base.Dispose(disposing);
         }
     }

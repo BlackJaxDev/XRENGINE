@@ -4,9 +4,10 @@ namespace XREngine.Components;
 /// Bounded per-world request registry. GPU gather and staging passes consume
 /// pending entries later; request submission never waits for the renderer.
 /// </summary>
-internal sealed partial class PhysicsChainReadbackService
+internal sealed partial class PhysicsChainReadbackService : IDisposable
 {
     internal Lock SyncRoot { get; } = new();
+    private bool _disposed;
     private readonly PhysicsChainSlotArena<PhysicsChainReadbackRequestInfo> _requests = new();
     private readonly Dictionary<RequestKey, PhysicsChainReadbackHandle> _coalescedRequests = [];
     private readonly List<PhysicsChainReadbackHandle> _liveHandles = [];
@@ -28,6 +29,20 @@ internal sealed partial class PhysicsChainReadbackService
         _limits = limits;
     }
 
+    /// <summary>
+    /// Closes the service when its world is disposed. Requests are freed, and new
+    /// requests are rejected. In-flight staging slots keep their renderer fences;
+    /// the next <see cref="PollTransfers"/> call on the render thread releases them.
+    /// </summary>
+    public void Dispose()
+    {
+        _disposed = true;
+        foreach (PhysicsChainReadbackHandle handle in _liveHandles)
+            _requests.Free(new PhysicsChainArenaHandle(handle.Slot, handle.Generation));
+        _liveHandles.Clear();
+        _coalescedRequests.Clear();
+    }
+
     public bool TryRequest(
         PhysicsChainRuntimeHandle instanceHandle,
         PhysicsChainReadbackFields fields,
@@ -41,7 +56,9 @@ internal sealed partial class PhysicsChainReadbackService
     {
         ++_requestedCount;
         handle = PhysicsChainReadbackHandle.Invalid;
-        rejection = ValidateRequest(instanceHandle, fields, selectedElementIndices, expectedByteCount, submissionFrame);
+        rejection = _disposed
+            ? PhysicsChainReadbackRejection.InvalidInstance
+            : ValidateRequest(instanceHandle, fields, selectedElementIndices, expectedByteCount, submissionFrame);
         if (rejection != PhysicsChainReadbackRejection.None)
         {
             ++_rejectedCount;

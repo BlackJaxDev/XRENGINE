@@ -1,0 +1,38 @@
+diff --git a/src/JoltPhysicsSharp/JoltApi.cs b/src/JoltPhysicsSharp/JoltApi.cs
+--- a/src/JoltPhysicsSharp/JoltApi.cs
++++ b/src/JoltPhysicsSharp/JoltApi.cs
+@@ -962,7 +962,7 @@
+     [LibraryImport(LibName)]
+     public static partial ObjectLayer JPH_BodyCreationSettings_GetObjectLayer(nint settings);
+     [LibraryImport(LibName)]
+-    public static partial void JPH_BodyCreationSettings_SetObjectLayer(nint settings, in ObjectLayer value);
++    public static partial void JPH_BodyCreationSettings_SetObjectLayer(nint settings, JPH_ObjectLayer value);
+ 
+     [LibraryImport(LibName)]
+     public static partial void JPH_BodyCreationSettings_GetCollisionGroup(nint settings, out JPH_CollisionGroup result);
+@@ -2029,7 +2029,7 @@
+     public static partial void JPH_BodyInterface_ActivateBodies(nint handle, uint* bodyIDs, uint count);
+ 
+     [LibraryImport(LibName)]
+-    public static partial nint JPH_BodyInterface_ActivateBodiesInAABox(nint handle, in BoundingBox box, nint broadPhaseLayerFilter, nint objectLayerFilter);
++    public static partial void JPH_BodyInterface_ActivateBodiesInAABox(nint handle, in BoundingBox box, nint broadPhaseLayerFilter, nint objectLayerFilter);
+ 
+     [LibraryImport(LibName)]
+     public static partial void JPH_BodyInterface_DeactivateBody(nint handle, uint bodyId);
+@@ -2070,11 +2070,11 @@
+ 
+     [LibraryImport(LibName)]
+     [return: MarshalAs(UnmanagedType.U1)]
+-    public static partial bool JPH_BodyInterface_ApplyBuoyancyImpulse(nint handle, in BodyID bodyId, in Vector3 surfacePosition, in Vector3 surfaceNormal, float buoyancy, float linearDrag, float angularDrag, in Vector3 fluidVelocity, in Vector3 gravity, float deltaTime);
+-
+-    [LibraryImport(LibName)]
+-    [return: MarshalAs(UnmanagedType.U1)]
+-    public static partial bool JPH_BodyInterface_ApplyBuoyancyImpulse(nint handle, in BodyID bodyId, in RVector3 surfacePosition, in Vector3 surfaceNormal, float buoyancy, float linearDrag, float angularDrag, in Vector3 fluidVelocity, in Vector3 gravity, float deltaTime);
++    public static partial bool JPH_BodyInterface_ApplyBuoyancyImpulse(nint handle, uint bodyId, in Vector3 surfacePosition, in Vector3 surfaceNormal, float buoyancy, float linearDrag, float angularDrag, in Vector3 fluidVelocity, in Vector3 gravity, float deltaTime);
++
++    [LibraryImport(LibName)]
++    [return: MarshalAs(UnmanagedType.U1)]
++    public static partial bool JPH_BodyInterface_ApplyBuoyancyImpulse(nint handle, uint bodyId, in RVector3 surfacePosition, in Vector3 surfaceNormal, float buoyancy, float linearDrag, float angularDrag, in Vector3 fluidVelocity, in Vector3 gravity, float deltaTime);
+ 
+     [LibraryImport(LibName)]
+     public static partial void JPH_BodyInterface_SetLinearAndAngularVelocity(nint handle, uint bodyId, in Vector3 linearVelocity, in Vector3 angularVelocity);

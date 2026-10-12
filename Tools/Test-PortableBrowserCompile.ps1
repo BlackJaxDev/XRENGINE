@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Release'
+    [string]$Configuration = 'Release',
+    [string]$JoltBrowserManagedSourceDirectory,
+    [string]$JoltBrowserArchiveDirectory,
+    [string]$ArtifactsPath
 )
 
 Set-StrictMode -Version Latest
@@ -24,7 +27,11 @@ foreach ($project in $projects) {
     }
 
     Write-Host "Compiling $project for browser-wasm ($Configuration)."
-    & dotnet build $projectFile --configuration $Configuration --runtime browser-wasm --nologo
+    $arguments = @('build', $projectFile, '--configuration', $Configuration, '--runtime', 'browser-wasm', '--nologo', '-m:1', '-p:XREngineJoltBrowser=true')
+    if ($JoltBrowserManagedSourceDirectory) { $arguments += "-p:JoltBrowserManagedSourceDirectory=$([IO.Path]::GetFullPath($JoltBrowserManagedSourceDirectory))" }
+    if ($JoltBrowserArchiveDirectory) { $arguments += "-p:JoltBrowserArchiveDirectory=$([IO.Path]::GetFullPath($JoltBrowserArchiveDirectory))" }
+    if ($ArtifactsPath) { $arguments += @('--artifacts-path', [IO.Path]::GetFullPath($ArtifactsPath)) }
+    & dotnet @arguments
     if ($LASTEXITCODE -ne 0) {
         throw "Browser compile failed for $project (exit code $LASTEXITCODE)."
     }

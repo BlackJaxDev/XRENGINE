@@ -102,6 +102,7 @@ public partial class XRTexture2D
     /// <returns><c>true</c> if the file was written successfully.</returns>
     internal static bool WriteBinaryStreamingCacheFile(XRTexture2D texture, string cachePath, DateTime sourceLastWriteTimeUtc)
     {
+        RuntimeTextureSourceAccess.RequireHostFiles();
         try
         {
             string? dir = Path.GetDirectoryName(cachePath);
@@ -147,6 +148,7 @@ public partial class XRTexture2D
         DateTime sourceLastWriteTimeUtc,
         out XRTexture2D texture)
     {
+        RuntimeTextureSourceAccess.RequireHostFiles();
         texture = new XRTexture2D();
         if (sourceTexture is null)
             return false;
@@ -174,6 +176,7 @@ public partial class XRTexture2D
         DateTime sourceLastWriteTimeUtc,
         out XRTexture2D texture)
     {
+        RuntimeTextureSourceAccess.RequireHostFiles();
         texture = new XRTexture2D();
         if (string.IsNullOrWhiteSpace(sourceFilePath) || !File.Exists(sourceFilePath))
             return false;
@@ -520,6 +523,8 @@ public partial class XRTexture2D
 
     internal static bool IsTextureStreamingAssetUsable(string assetPath)
     {
+        if (!RuntimeTextureSourceAccess.CanAccessHostFiles)
+            return false;
         if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
             return false;
 

@@ -1,5 +1,6 @@
 using MemoryPack;
 using XREngine.Core.Files;
+using XREngine.Data;
 
 namespace XREngine.Scene
 {
@@ -51,7 +52,12 @@ namespace XREngine.Scene
 
         public override bool Load3rdParty(string filePath)
         {
-            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            if (string.IsNullOrWhiteSpace(filePath))
+                return false;
+
+            using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+            read.EnsureHostFileAccess("Third-party scene import");
+            if (!read.Exists(filePath))
                 return false;
 
             try

@@ -1,12 +1,15 @@
 using System.Globalization;
+using System.Numerics;
 using XREngine.Fbx;
 using XREngine.ControlPlane;
+using XREngine.Components;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Caching;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
+using XREngine.Scene.Transforms;
 using static XREngine.GameStartupSettings;
 
 namespace XREngine.Networking;
@@ -247,12 +250,13 @@ public static class Program
     {
         if (args.Length == 0 || !string.Equals(args[0], "--create-world-package", StringComparison.OrdinalIgnoreCase))
             return false;
-        if (args.Length != 4 || !string.Equals(args[2], "--world-name", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(args[1]) || string.IsNullOrWhiteSpace(args[3]))
-            throw new ArgumentException("Usage: --create-world-package <directory> --world-name <name>");
+        bool networkKinematic = args.Length == 5 && string.Equals(args[4], "--network-kinematic", StringComparison.OrdinalIgnoreCase);
+        if ((args.Length != 4 && !networkKinematic) || !string.Equals(args[2], "--world-name", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(args[1]) || string.IsNullOrWhiteSpace(args[3]))
+            throw new ArgumentException("Usage: --create-world-package <directory> --world-name <name> [--network-kinematic]");
 
         string directory = Path.GetFullPath(args[1]);
         Directory.CreateDirectory(directory);
-        XRWorld world = CreateManagedPackageWorld(args[3].Trim());
+        XRWorld world = CreateManagedPackageWorld(args[3].Trim(), networkKinematic);
         world.Name = args[3].Trim();
         world.FilePath = Path.Combine(directory, "World.asset");
         Engine.Assets.SaveImmediate(world);
@@ -276,10 +280,22 @@ public static class Program
     }
 
     /// <summary>Creates the small authored managed-package baseline without discovery side channels.</summary>
-    private static XRWorld CreateManagedPackageWorld(string worldName)
+    private static XRWorld CreateManagedPackageWorld(string worldName, bool networkKinematic)
     {
         var scene = new XRScene("Managed Server Scene");
-        scene.RootNodes.Add(new SceneNode("Managed Server Root"));
-        return new XRWorld(worldName, new CustomGameMode { DefaultPlayerPawnClass = null }, scene);
+        var root = new SceneNode("Managed Server Root");
+        scene.RootNodes.Add(root);
+        if (networkKinematic)
+        {
+            // The plain-transform marker anchors a nonempty replicated scene without asset dependencies.
+            SceneNode marker = root.NewChild("Network Landmark");
+            marker.SetTransform<Transform>().Translation = new Vector3(0.0f, 0.0f, -6.0f);
+            marker.AddComponent<NetworkReplicatedComponent>();
+        }
+
+        return new XRWorld(worldName, new CustomGameMode
+        {
+            DefaultPlayerPawnClass = networkKinematic ? typeof(NetworkKinematicPawnComponent) : null,
+        }, scene);
     }
 }

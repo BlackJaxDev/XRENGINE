@@ -291,6 +291,7 @@ namespace XREngine.Rendering
         /// Contains the sequence of render passes (G-buffer, lighting, post-process, etc.).
         /// </summary>
         private RenderPipeline? _renderPipeline = null;
+        private RenderPipeline? _defaultRenderPipeline;
 
         // This is deliberately independent of XRBase property notifications. Render consumers use
         // it to distinguish two different asset instances even when they expose the same metadata.
@@ -557,7 +558,11 @@ namespace XREngine.Rendering
         {
             pipeline ??= ResolveRenderContextPostProcessPipeline();
             pipeline ??= _renderPipeline ?? RenderPipeline;
-            return pipeline is null ? null : _postProcessStates.GetOrCreateState(pipeline);
+            if (pipeline is null)
+                return null;
+            return _renderPipeline is null && ReferenceEquals(pipeline, _defaultRenderPipeline)
+                ? _postProcessStates.GetOrCreateDefaultState(pipeline)
+                : _postProcessStates.GetOrCreateState(pipeline);
         }
 
         /// <summary>
@@ -774,11 +779,13 @@ namespace XREngine.Rendering
         }
 
         private void EnsureProjectionMatrices()
+            => EnsureProjectionMatrices(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend);
+
+        private void EnsureProjectionMatrices(RuntimeGraphicsApiKind projectionBackend)
         {
             XRCameraParameters parameters = Parameters;
             uint projectionVersion = parameters.ProjectionVersion;
             bool parametersChanged = !ReferenceEquals(_cachedProjectionParameters, parameters) || _cachedProjectionVersion != projectionVersion;
-            RuntimeGraphicsApiKind projectionBackend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
             ERenderClipDepthRange clipDepthRange = RuntimeEngine.Rendering.ResolveEffectiveClipDepthRange(projectionBackend);
             bool clipPolicyChanged = _cachedProjectionBackend != projectionBackend || _cachedProjectionClipDepthRange != clipDepthRange;
             if (!_projectionMatricesDirty && !parametersChanged && !clipPolicyChanged)
@@ -822,8 +829,11 @@ namespace XREngine.Rendering
         }
 
         private void EnsureViewProjectionMatrices()
+            => EnsureViewProjectionMatrices(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend);
+
+        private void EnsureViewProjectionMatrices(RuntimeGraphicsApiKind projectionBackend)
         {
-            EnsureProjectionMatrices();
+            EnsureProjectionMatrices(projectionBackend);
             if (!_viewProjectionMatricesDirty)
                 return;
 
@@ -981,6 +991,17 @@ namespace XREngine.Rendering
                 EnsureViewProjectionMatrices();
                 return _viewProjectionMatrix;
             }
+        }
+
+        /// <summary>
+        /// Captures the same view, depth policy, oblique plane and jitter used by
+        /// the selected backend before a renderer context is entered. This does
+        /// not change authored clip settings or the ambient renderer policy.
+        /// </summary>
+        public Matrix4x4 GetViewProjectionMatrix(RuntimeGraphicsApiKind backend)
+        {
+            EnsureViewProjectionMatrices(backend);
+            return _viewProjectionMatrix;
         }
 
         public Matrix4x4 ViewProjectionMatrixUnjittered
@@ -1722,8 +1743,9 @@ namespace XREngine.Rendering
             // render entry points use GetOrCreateRenderPipeline so required factory
             // installation still fails fast when rendering actually starts.
             get => _renderPipeline
+                ?? _defaultRenderPipeline
                 ?? (RuntimeRenderingHostServices.HasConcreteHost
-                    ? CreateAndAssignDefaultRenderPipeline()
+                    ? GetOrCreateDefaultRenderPipeline()
                     : null!);
             set => ReplaceRenderPipelineAsset(value ?? throw new ArgumentNullException(nameof(value)));
         }
@@ -1742,9 +1764,18 @@ namespace XREngine.Rendering
         public void ReplaceRenderPipelineAsset(RenderPipeline pipeline)
         {
             ArgumentNullException.ThrowIfNull(pipeline);
+            SetRenderPipelineSource(pipeline);
+        }
+
+        /// <summary>Assigns an authored source, or clears it to restore the host's default-source policy.</summary>
+        public void SetRenderPipelineSource(RenderPipeline? pipeline)
+        {
             if (ReferenceEquals(_renderPipeline, pipeline))
                 return;
 
+            if (pipeline is not null && ReferenceEquals(pipeline, _defaultRenderPipeline))
+                _postProcessStates.PromoteDefaultState(pipeline);
+            _defaultRenderPipeline = null;
             bool notificationsSuppressed = XRBase.ArePropertyNotificationsSuppressed;
             if (!SetField(ref _renderPipeline, pipeline, nameof(RenderPipeline)))
                 return;
@@ -1765,13 +1796,23 @@ namespace XREngine.Rendering
         /// </summary>
         internal RenderPipeline? AssignedRenderPipeline => _renderPipeline;
 
-        public RenderPipeline GetOrCreateRenderPipeline()
-            => _renderPipeline ?? CreateAndAssignDefaultRenderPipeline();
-
-        private RenderPipeline CreateAndAssignDefaultRenderPipeline()
+        /// <summary>Reads the authored pipeline without creating a host-dependent default.</summary>
+        public bool TryGetAssignedRenderPipeline(out RenderPipeline? pipeline)
         {
+            pipeline = _renderPipeline;
+            return pipeline is not null;
+        }
+
+        public RenderPipeline GetOrCreateRenderPipeline()
+            => _renderPipeline ?? GetOrCreateDefaultRenderPipeline();
+
+        private RenderPipeline GetOrCreateDefaultRenderPipeline()
+        {
+            if (_defaultRenderPipeline is not null)
+                return _defaultRenderPipeline;
             RenderPipeline pipeline = CreateDefaultRenderPipeline();
-            RenderPipeline = pipeline;
+            _defaultRenderPipeline = pipeline;
+            _pipelineAssignmentRevision++;
             return pipeline;
         }
 

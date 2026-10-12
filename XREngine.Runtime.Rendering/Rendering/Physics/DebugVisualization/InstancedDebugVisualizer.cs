@@ -132,21 +132,33 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         public uint PointCount
         {
             get => _pointCount;
-            set => SetField(ref _pointCount, value);
+            set
+            {
+                ValidateWebInstanceCount(value);
+                SetField(ref _pointCount, value);
+            }
         }
 
         private uint _lineCount = 0;
         public uint LineCount
         {
             get => _lineCount;
-            set => SetField(ref _lineCount, value);
+            set
+            {
+                ValidateWebInstanceCount(value);
+                SetField(ref _lineCount, value);
+            }
         }
 
         private uint _triangleCount = 0;
         public uint TriangleCount
         {
             get => _triangleCount;
-            set => SetField(ref _triangleCount, value);
+            set
+            {
+                ValidateWebInstanceCount(value);
+                SetField(ref _triangleCount, value);
+            }
         }
 
         private bool _useCompressedBuffers = true;
@@ -177,6 +189,7 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         private uint _triangleDirtyBytes;
 
         private const uint MinimumCapacity = 256;
+        private const uint MaximumWebInstances = 65536;
         private const int ShrinkHysteresisFrames = 600;
 
         public long BufferResizeCount { get; private set; }
@@ -615,10 +628,13 @@ namespace XREngine.Rendering.Physics.DebugVisualization
 
         public void CreateOrResizePoints(uint count)
         {
-            _debugPointsRenderer?.Material?.SetInt(0, (int)count);
+            if (!UsesWebDebugPrimitives)
+                _debugPointsRenderer?.Material?.SetInt(0, (int)count);
 
             uint previousCapacity = _pointCapacity;
             UpdateCapacity(count, ref _pointCapacity, ref _pointUnderuseFrames);
+            if (UsesWebDebugPrimitives)
+                _pointCapacity = Math.Min(_pointCapacity, MaximumWebInstances);
             if (count == 0 && _debugPointsBuffer is null)
                 return;
 
@@ -664,10 +680,13 @@ namespace XREngine.Rendering.Physics.DebugVisualization
 
         public void CreateOrResizeLines(uint count)
         {
-            _debugLinesRenderer?.Material?.SetInt(0, (int)count);
+            if (!UsesWebDebugPrimitives)
+                _debugLinesRenderer?.Material?.SetInt(0, (int)count);
 
             uint previousCapacity = _lineCapacity;
             UpdateCapacity(count, ref _lineCapacity, ref _lineUnderuseFrames);
+            if (UsesWebDebugPrimitives)
+                _lineCapacity = Math.Min(_lineCapacity, MaximumWebInstances);
             if (count == 0 && _debugLinesBuffer is null)
                 return;
 
@@ -714,10 +733,13 @@ namespace XREngine.Rendering.Physics.DebugVisualization
 
         public void CreateOrResizeTriangles(uint count)
         {
-            _debugTrianglesRenderer?.Material?.SetInt(0, (int)count);
+            if (!UsesWebDebugPrimitives)
+                _debugTrianglesRenderer?.Material?.SetInt(0, (int)count);
 
             uint previousCapacity = _triangleCapacity;
             UpdateCapacity(count, ref _triangleCapacity, ref _triangleUnderuseFrames);
+            if (UsesWebDebugPrimitives)
+                _triangleCapacity = Math.Min(_triangleCapacity, MaximumWebInstances);
             if (count == 0 && _debugTrianglesBuffer is null)
                 return;
 
@@ -800,15 +822,15 @@ namespace XREngine.Rendering.Physics.DebugVisualization
 
         private XRMeshRenderer MakePointsRenderer()
         {
-            return new XRMeshRenderer(CreateDebugMesh(), CreateDebugPointMaterial());
+            return new XRMeshRenderer(UsesWebDebugPrimitives ? CreateDebugQuadScaffold() : CreateDebugMesh(), CreateDebugPointMaterial());
         }
         private XRMeshRenderer MakeLineRenderer()
         {
-            return new XRMeshRenderer(CreateDebugMesh(), CreateDebugLineMaterial());
+            return new XRMeshRenderer(UsesWebDebugPrimitives ? CreateDebugQuadScaffold() : CreateDebugMesh(), CreateDebugLineMaterial());
         }
         private XRMeshRenderer MakeTrianglesRenderer()
         {
-            return new XRMeshRenderer(CreateDebugMesh(), CreateDebugTriangleMaterial());
+            return new XRMeshRenderer(UsesWebDebugPrimitives ? CreateDebugTriangleScaffold() : CreateDebugMesh(), CreateDebugTriangleMaterial());
         }
 
         private static void AddOrReplaceRendererBuffer(XRMeshRenderer renderer, XRDataBuffer buffer)
@@ -834,10 +856,16 @@ namespace XREngine.Rendering.Physics.DebugVisualization
             switch (propName)
             {
                 case nameof(PointSize):
-                    _debugPointsRenderer?.Material?.SetFloat(0, PointSize);
+                    if (_debugPointsRenderer?.Material?.EngineSemantic == EngineMaterialSemanticIdentity.DebugPointV1)
+                        _debugPointsRenderer?.Material?.SetVector4(0, new Vector4(PointSize, 0, 0, 0));
+                    else
+                        _debugPointsRenderer?.Material?.SetFloat(0, PointSize);
                     break;
                 case nameof(LineWidth):
-                    _debugLinesRenderer?.Material?.SetFloat(0, LineWidth);
+                    if (_debugLinesRenderer?.Material?.EngineSemantic == EngineMaterialSemanticIdentity.DebugLineV1)
+                        _debugLinesRenderer?.Material?.SetVector4(0, new Vector4(LineWidth, 0, 0, 0));
+                    else
+                        _debugLinesRenderer?.Material?.SetFloat(0, LineWidth);
                     break;
                 case nameof(PointCount):
                     CreateOrResizePoints(PointCount);
@@ -883,10 +911,57 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         private static XRMesh? CreateDebugMesh()
             => new([new Vertex(Vector3.Zero)]);
 
+        private static bool UsesWebDebugPrimitives
+            => RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
+               AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+
+        private static void ValidateWebInstanceCount(uint count)
+        {
+            if (UsesWebDebugPrimitives && count > MaximumWebInstances)
+                throw new NotSupportedException("WebGPU.Debug.InstanceCapacityExceeded: the cooked debug profile admits at most 65536 primitives per draw.");
+        }
+
+        private static XRMesh CreateDebugQuadScaffold()
+            => new XRMesh(
+                [new Vertex(new Vector3(-1, -1, 0)), new Vertex(new Vector3(1, -1, 0)),
+                 new Vertex(new Vector3(-1, 1, 0)), new Vertex(new Vector3(1, 1, 0))],
+                [0, 1, 2, 2, 1, 3]);
+
+        private static XRMesh CreateDebugTriangleScaffold()
+            => new XRMesh(
+                [new Vertex(Vector3.Zero), new Vertex(Vector3.UnitX), new Vertex(2 * Vector3.UnitX)],
+                [0, 1, 2]);
+
+        private XRMaterial CreateWebDebugMaterial(EngineMaterialSemanticIdentity semantic, ShaderVar[] parameters)
+        {
+            if (DepthTested)
+                throw new NotSupportedException("WebGPU.Debug.DepthTestedUnsupported: depth-tested primitives require a cooked depth-aware debug pass.");
+            if (!_useCompressedBuffers)
+                throw new NotSupportedException("WebGPU.Debug.UncompressedUnsupported: the cooked debug profile requires compressed instance storage.");
+            XRMaterial material = new(parameters, Array.Empty<XRShader>())
+            {
+                Name = semantic.Semantic.ToString(),
+                RenderPass = (int)EDefaultRenderPass.OnTopForward,
+            };
+            material.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions;
+            material.RenderOptions.CullMode = ECullMode.None;
+            material.RenderOptions.ExcludeFromCpuOcclusion = true;
+            material.EnableTransparency((int)EDefaultRenderPass.OnTopForward);
+            material.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            material.RenderOptions.DepthTest.UpdateDepth = false;
+            material.RenderOptions.DepthTest.Function = EComparison.Always;
+            material.RenderOptions.StencilTest.Enabled = ERenderParamUsage.Disabled;
+            material.EngineSemantic = semantic;
+            return material;
+        }
+
         private XRMaterial? CreateDebugPointMaterial()
         {
             if (!RuntimeEngine.Rendering.State.DebugInstanceRenderingAvailable)
                 return null;
+            if (UsesWebDebugPrimitives)
+                return CreateWebDebugMaterial(EngineMaterialSemanticIdentity.DebugPointV1,
+                    [new ShaderVector4(new Vector4(PointSize, 0, 0, 0), "DebugPointParameters")]);
             
             try
             {
@@ -925,6 +1000,9 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         {
             if (!RuntimeEngine.Rendering.State.DebugInstanceRenderingAvailable)
                 return null;
+            if (UsesWebDebugPrimitives)
+                return CreateWebDebugMaterial(EngineMaterialSemanticIdentity.DebugLineV1,
+                    [new ShaderVector4(new Vector4(LineWidth, 0, 0, 0), "DebugLineParameters")]);
 
             try
             {
@@ -962,6 +1040,8 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         {
             if (!RuntimeEngine.Rendering.State.DebugInstanceRenderingAvailable)
                 return null;
+            if (UsesWebDebugPrimitives)
+                return CreateWebDebugMaterial(EngineMaterialSemanticIdentity.DebugTriangleV1, []);
 
             try
             {

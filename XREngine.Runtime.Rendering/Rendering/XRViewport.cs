@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using XREngine.Components;
 using XREngine.Components.Lights;
@@ -29,7 +30,7 @@ namespace XREngine.Rendering
     /// Can either be a window or render texture.
     /// </summary>
     [RuntimeOnly]
-    public sealed class XRViewport : XRBase, IRuntimeViewportGrabSource, IRuntimeViewportHost, IRuntimeLocalPlayerViewport
+    public sealed class XRViewport : XRBase, IRuntimeViewportGrabSource, IRuntimeViewportHost, IRuntimeLocalPlayerViewport, IRuntimePointerContactSource
     {
         #region Fields
 
@@ -63,6 +64,8 @@ namespace XREngine.Rendering
         /// Used to link input handling and player-specific rendering (e.g., split-screen scenarios).
         /// </summary>
         private IPawnController? _associatedPlayer = null;
+        private IRuntimeLocalPlayerInputSource? _inputSource;
+        private ulong _pointerContactBindingSequence;
 
         /// <summary>
         /// The screen-space rectangular region where this viewport renders within the parent window.
@@ -382,10 +385,65 @@ namespace XREngine.Rendering
             => _frameViewHistoryLedger.CaptureSnapshot();
 
         WindowInputSnapshot IRuntimeLocalPlayerViewport.ConsumeInputSnapshot()
-            => Window?.ConsumeLatestWindowInputSnapshot() ?? default;
+            => _inputSource?.ConsumeInputSnapshot() ?? Window?.ConsumeLatestWindowInputSnapshot() ?? default;
+
+        object? IRuntimePointerContactSource.PointerContactOwner
+            => (_inputSource as IRuntimePointerContactSource)?.PointerContactOwner;
+
+        ulong IRuntimePointerContactSource.PointerContactSequence
+            => (_inputSource as IRuntimePointerContactSource)?.PointerContactSequence ?? 0;
+
+        ulong IRuntimePointerContactSource.PointerContactGeneration
+            => (_inputSource as IRuntimePointerContactSource)?.PointerContactGeneration ?? 0;
+
+        int IRuntimePointerContactSource.ConsumePointerContacts(Span<WindowPointerContact> destination, out ulong generation)
+        {
+            if (_inputSource is IRuntimePointerContactSource contacts)
+            {
+                int count = contacts.ConsumePointerContacts(destination, out generation);
+                int retained = 0;
+                for (int index = 0; index < count; index++)
+                    if (destination[index].Sequence > _pointerContactBindingSequence)
+                        destination[retained++] = destination[index];
+                return retained;
+            }
+            generation = 0;
+            return 0;
+        }
 
         void IRuntimeLocalPlayerViewport.RequestMouseCapture(bool captured)
-            => Window?.RequestMouseCapture(captured);
+        {
+            if (_inputSource is { } inputSource)
+                inputSource.RequestMouseCapture(captured);
+            else
+                Window?.RequestMouseCapture(captured);
+        }
+
+        /// <summary>
+        /// Binds an externally owned input source to this viewport. Without a binding,
+        /// desktop viewports continue to read input from their window.
+        /// </summary>
+        public void BindInputSource(IRuntimeLocalPlayerInputSource? inputSource)
+        {
+            if (_destroyed)
+                throw new InvalidOperationException("A destroyed viewport cannot bind an input source.");
+            if (ReferenceEquals(_inputSource, inputSource))
+                return;
+
+            try
+            {
+                if (_inputSource is { } previousSource)
+                    previousSource.RequestMouseCapture(false);
+                else if (inputSource is not null)
+                    Window?.RequestMouseCapture(false);
+            }
+            finally
+            {
+                // A failed capture release must not keep routing through a stale source.
+                SetField(ref _inputSource, inputSource);
+                _pointerContactBindingSequence = (inputSource as IRuntimePointerContactSource)?.PointerContactSequence ?? 0;
+            }
+        }
 
         /// <summary>
         /// Optional override for the world instance to render.
@@ -512,12 +570,31 @@ namespace XREngine.Rendering
                 if (_associatedPlayer == value)
                     return;
 
-                if (_associatedPlayer is not null)
+                if (_associatedPlayer is not null && ReferenceEquals(_associatedPlayer.Viewport, this))
                     _associatedPlayer.Viewport = null;
                 SetField(ref _associatedPlayer, value);
                 if (_associatedPlayer is not null)
                     _associatedPlayer.Viewport = this;
             }
+        }
+
+        /// <summary>
+        /// Associates a local player with this viewport, keeping the player's camera,
+        /// input routing, and viewport ownership on the same render viewport.
+        /// </summary>
+        public void BindLocalPlayer(IPawnController? player)
+        {
+            if (_destroyed)
+                throw new InvalidOperationException("A destroyed viewport cannot bind a player.");
+            if (player is { IsLocal: false })
+                throw new ArgumentException("Only a local player can be bound to a viewport.", nameof(player));
+
+            if (player?.Viewport is XRViewport previousViewport &&
+                !ReferenceEquals(previousViewport, this) &&
+                ReferenceEquals(previousViewport.AssociatedPlayer, player))
+                previousViewport.AssociatedPlayer = null;
+
+            AssociatedPlayer = player;
         }
 
         /// <summary>
@@ -562,6 +639,17 @@ namespace XREngine.Rendering
         /// </summary>
         [YamlIgnore]
         public XRRenderPipelineInstance RenderPipelineInstance => _renderPipeline;
+
+        /// <summary>Discards camera motion and pipeline temporal histories after a host frame-clock discontinuity.</summary>
+        public void InvalidateTemporalHistory()
+            => InvalidateTemporalHistory(publishNotifications: true);
+
+        /// <summary>Discards history with optional property notifications for repeatedly discontinuous frame clocks.</summary>
+        public void InvalidateTemporalHistory(bool publishNotifications)
+        {
+            ActiveCamera?.InvalidateTemporalHistory(publishNotifications);
+            RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(_renderPipeline, "FrameClockDiscontinuity");
+        }
 
         /// <summary>
         /// Gets the monotonic revision of the viewport's published display/internal extent tuple.
@@ -718,7 +806,7 @@ namespace XREngine.Rendering
         }
 
         private void SynchronizeRenderPipelineFromActiveCamera()
-            => RenderPipeline = ActiveCamera?.GetOrCreateRenderPipeline();
+            => _renderPipeline.RequestPipelineChange(ActiveCamera?.GetOrCreateRenderPipeline(), this);
 
         /// <summary>
         /// Completes the viewport-facing half of an applied render-thread pipeline transition.
@@ -1018,6 +1106,9 @@ namespace XREngine.Rendering
             if (_destroyed)
                 return;
 
+            Exception? inputDetachError = null;
+            try { BindInputSource(null); }
+            catch (Exception error) { inputDetachError = error; }
             _destroyed = true;
             SetSwapBuffersSubscription(false);
             SetCollectVisibleSubscription(false);
@@ -1030,6 +1121,8 @@ namespace XREngine.Rendering
             ScreenSpaceUserInterfaceOverride = null;
             Camera = null;
             Window = null;
+            if (inputDetachError is not null)
+                ExceptionDispatchInfo.Capture(inputDetachError).Throw();
         }
 
 
@@ -2420,6 +2513,7 @@ namespace XREngine.Rendering
                         camera,
                         null,
                         this,
+                        world,
                         targetFbo,
                         screenSpaceUI,
                         shadowPass,
@@ -2603,6 +2697,7 @@ namespace XREngine.Rendering
                 leftCamera,
                 rightCamera,
                 this,
+                world,
                 targetFbo,
                 screenSpaceUI,
                 false,

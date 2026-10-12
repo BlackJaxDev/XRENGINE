@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Runtime.CompilerServices;
+using XREngine.Core.Files;
 using XREngine.Networking;
 using XREngine.Scene;
 
@@ -28,12 +29,18 @@ public static class WorldAssetIdentityProvider
         if (world is not null && VerifiedIdentities.TryGetValue(world, out WorldAssetIdentity? verified))
             return Clone(verified);
 
+        bool requiresVerifiedIdentity = OperatingSystem.IsBrowser()
+            || DirectStorageIO.Source is { SupportsSynchronousReads: false } or IRuntimeAssetCatalog;
+        if (requiresVerifiedIdentity && !string.IsNullOrWhiteSpace(world?.FilePath))
+            throw new InvalidOperationException(
+                "WorldAssetIdentity.UnverifiedPackagedWorld: a non-file-backed world with a path requires an identity from its verified content package.");
+
         string worldId = GetOverride(XREngineEnvironmentVariables.WorldId)
             ?? (world?.ID.ToString("D") ?? "local-world");
         string revisionId = GetOverride(XREngineEnvironmentVariables.WorldRevision)
-            ?? ResolveRevisionId(world);
+            ?? ResolveRevisionId(world, !requiresVerifiedIdentity);
         string contentHash = GetOverride(XREngineEnvironmentVariables.WorldContentHash)
-            ?? ComputeWorldHash(world);
+            ?? ComputeWorldHash(world, !requiresVerifiedIdentity);
         string requiredBuildVersion = GetOverride(XREngineEnvironmentVariables.WorldRequiredBuildVersion)
             ?? fallbackBuildVersion;
 
@@ -61,6 +68,19 @@ public static class WorldAssetIdentityProvider
         VerifiedIdentities.Add(world, Clone(identity));
     }
 
+    /// <summary>Returns only an identity bound by a verified package loader, never a generated local-world fingerprint.</summary>
+    public static bool TryGetVerifiedIdentity(XRWorld world, out WorldAssetIdentity? identity)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        if (VerifiedIdentities.TryGetValue(world, out WorldAssetIdentity? verified))
+        {
+            identity = Clone(verified);
+            return true;
+        }
+        identity = null;
+        return false;
+    }
+
     private static WorldAssetIdentity Clone(WorldAssetIdentity source)
         => new()
         {
@@ -72,21 +92,23 @@ public static class WorldAssetIdentityProvider
             Metadata = new Dictionary<string, string>(source.Metadata, StringComparer.Ordinal),
         };
 
-    private static string ResolveRevisionId(XRWorld? world)
+    private static string ResolveRevisionId(XRWorld? world, bool allowHostFile)
     {
         if (world?.OriginalLastWriteTimeUtc is DateTime originalWrite)
             return originalWrite.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-        if (!string.IsNullOrWhiteSpace(world?.FilePath) && File.Exists(world.FilePath))
-            return File.GetLastWriteTimeUtc(world.FilePath).Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string? path = world?.FilePath;
+        if (allowHostFile && !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            return File.GetLastWriteTimeUtc(path).Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         return "local";
     }
 
-    private static string ComputeWorldHash(XRWorld? world)
+    private static string ComputeWorldHash(XRWorld? world, bool allowHostFile)
     {
-        if (!string.IsNullOrWhiteSpace(world?.FilePath) && File.Exists(world.FilePath))
-            return $"sha256:{ComputeFileSha256(world.FilePath)}";
+        string? path = world?.FilePath;
+        if (allowHostFile && !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            return $"sha256:{ComputeFileSha256(path)}";
 
         IEnumerable<string> sceneNames = world is null
             ? Array.Empty<string>()

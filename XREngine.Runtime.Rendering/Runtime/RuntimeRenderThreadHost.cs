@@ -1,4 +1,5 @@
 using XREngine.Rendering;
+using XREngine.Execution;
 
 namespace XREngine;
 
@@ -44,6 +45,10 @@ public sealed class RuntimeRenderThreadHost
 
     public void BlockForRendering(Func<bool> runUntilPredicate)
     {
+        if (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser())
+            throw new InvalidOperationException(
+                "BlockForRendering requires a threaded render host; a caller-thread host must drive StepFrame.");
+
         RuntimeRenderThreadHostMode mode = Mode;
         if (mode == RuntimeRenderThreadHostMode.SplitWindowPumpPrototype)
         {

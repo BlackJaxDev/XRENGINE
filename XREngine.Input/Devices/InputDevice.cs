@@ -41,6 +41,30 @@
             _axisStates = new AxisManager[GetAxisCount()];
         }
         public abstract void TickStates(float delta);
+
+        /// <summary>Changes whenever device mappings are registered or removed.</summary>
+        public ulong InputRegistrationRevision { get; private set; }
+
+        /// <summary>Changes when callback delivery is invalidated, including a new snapshot.</summary>
+        public virtual ulong InputDispatchRevision => _inputDispatchRevision;
+        private ulong _inputDispatchRevision;
+
+        protected void InvalidateInputDispatch()
+            => ++_inputDispatchRevision;
+
+        /// <summary>Discards transient input when its consumer loses ownership.</summary>
+        public virtual void DiscardTransientInput() { }
+
+        /// <summary>Discards captured edges while retaining state already accepted by the same consumer.</summary>
+        public virtual void DiscardCapturedInput()
+            => DiscardTransientInput();
+
+        protected void OnInputRegistrationChanged()
+        {
+            ++InputRegistrationRevision;
+            InvalidateInputDispatch();
+            DiscardTransientInput();
+        }
         /// <summary>
         /// Returns true if connected.
         /// </summary>

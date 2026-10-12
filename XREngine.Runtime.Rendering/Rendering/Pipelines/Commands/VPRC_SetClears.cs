@@ -5,6 +5,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_SetClears : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+            => requirements.RequireOperation("raster-state");
+
         public ColorF4? DefaultColor { get; set; }
         public float? DefaultDepth { get; set; }
         public int? DefaultStencil { get; set; }

@@ -125,29 +125,29 @@ public readonly record struct XRRenderProgramDescriptor(
                 builder.Append('|');
 
             XRShader shader = shaders[i];
-            string? sourceText = TryResolveShaderSource(shader);
+            string sourceIdentity = ResolveShaderIdentity(shader);
             builder.Append(shader.Type)
                 .Append(':')
                 .Append(NormalizeSegment(ResolveShaderLabel(shader)))
                 .Append(':')
-                .Append(sourceText is null ? "<unresolved>" : ComputeSha256Hex(sourceText));
+                .Append(sourceIdentity);
         }
 
         return ComputeSha256Hex(builder.ToString());
     }
 
-    private static string? TryResolveShaderSource(XRShader shader)
+    private static string ResolveShaderIdentity(XRShader shader)
     {
-        try
-        {
-            if (shader.TryGetOptimizedSource(out string optimizedSource, logFailures: false))
-                return optimizedSource;
-        }
-        catch
-        {
-        }
+        if (!ShaderSourceResolver.CanAccessHostShaderFiles && shader.CookedArtifactIdentity is { } cookedIdentity)
+            return "cooked:" + cookedIdentity;
 
-        return shader.Source?.Text;
+        if (shader.TryGetOptimizedSource(out string optimizedSource, logFailures: false))
+            return ComputeSha256Hex(optimizedSource);
+
+        if (!ShaderSourceResolver.CanAccessHostShaderFiles)
+            _ = shader.GetResolvedShaderSource();
+
+        throw new NotSupportedException($"ShaderSource.ProgramIdentityUnavailable: shader '{ResolveShaderLabel(shader)}' has neither resolved source nor a usable cooked artifact identity.");
     }
 
     private static string ResolveShaderLabel(XRShader shader)

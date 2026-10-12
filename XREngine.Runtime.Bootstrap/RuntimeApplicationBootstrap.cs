@@ -1,4 +1,5 @@
 using XREngine.Data;
+using XREngine.Runtime.Platform.Desktop;
 
 namespace XREngine.Runtime.Bootstrap;
 
@@ -10,6 +11,12 @@ public static class RuntimeApplicationBootstrap
 
     /// <summary>Installs packaged desktop providers before reading launch assets to select an application profile.</summary>
     public static void PrepareDesktopServices() => DesktopRuntimeBackendBootstrap.EnsureRegistered();
+
+    /// <summary>Registers native logging before an application reads assets or starts workers.</summary>
+    public static void PrepareLoggingServices() => DesktopLoggingBackend.EnsureRegistered();
+
+    /// <summary>Registers native worker services before the first DEBUG Engine access or threaded scheduler setup.</summary>
+    public static void PrepareWorkerServices() => DesktopWorkerBackend.EnsureRegistered();
 
     public static RuntimeApplicationProfile? CurrentProfile
     {

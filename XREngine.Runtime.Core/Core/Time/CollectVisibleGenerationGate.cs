@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using XREngine.Execution;
 
 namespace XREngine.Timers;
 
@@ -124,6 +125,10 @@ internal sealed class CollectVisibleGenerationGate
 
     public bool WaitForPublication(int millisecondsTimeout = Timeout.Infinite)
     {
+        if (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser())
+            throw new InvalidOperationException(
+                "WaitForPublication cannot block a caller-thread visibility host.");
+
         return _publicationChanged.Wait(millisecondsTimeout) && !IsTerminated;
     }
 

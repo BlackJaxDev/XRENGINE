@@ -304,7 +304,12 @@ function Copy-LicenseFile([string]$relativePathFromDocsLicenses, [string]$source
     Ensure-Directory -path $licensesDir
     $dst = Join-Path $licensesDir ($relativePathFromDocsLicenses -replace '/', '\\')
     Ensure-Directory -path (Split-Path -Parent $dst)
-    Copy-Item -LiteralPath $sourcePath -Destination $dst -Force
+    $sourceFullPath = [IO.Path]::GetFullPath($sourcePath.Replace('\', [IO.Path]::DirectorySeparatorChar))
+    $destinationFullPath = [IO.Path]::GetFullPath($dst.Replace('\', [IO.Path]::DirectorySeparatorChar))
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    if (-not $sourceFullPath.Equals($destinationFullPath, $comparison)) {
+        Copy-Item -LiteralPath $sourcePath -Destination $dst -Force
+    }
 
     return ('licenses/{0}' -f ($relativePathFromDocsLicenses -replace '\\', '/'))
 }
@@ -1195,6 +1200,57 @@ foreach ($s in $submodules) {
 
 # Nested submodules / vendored-source / fetched-from-upstream dependencies referenced by build scripts or native bridges.
 $nested = New-Object System.Collections.Generic.List[object]
+$slangNotice = Join-Path $licensesDir 'Slang-2026.8.txt'
+if (Test-Path -LiteralPath $slangNotice) {
+    $nested.Add([pscustomobject]@{
+        Name = 'Slang 2026.8 (shader compiler tooling)'
+        UsedBy = 'Tools/ShaderCooker; cook time only'
+        Owner = 'Slang project contributors'
+        Url = 'https://github.com/shader-slang/slang/tree/v2026.8'
+        License = 'Apache-2.0 WITH LLVM-exception'
+        LicenseSourcePath = $slangNotice
+    })
+}
+$browserToolManifest = Join-Path $root 'Tools/BrowserSmoke/package.json'
+if (Test-Path -LiteralPath $browserToolManifest) {
+    $browserTool = Get-Content -LiteralPath $browserToolManifest -Raw | ConvertFrom-Json
+    $playwrightVersion = $browserTool.devDependencies.'@playwright/test'
+    $playwrightNotice = Join-Path $licensesDir "Playwright-$playwrightVersion.txt"
+    if (-not (Test-Path -LiteralPath $playwrightNotice)) {
+        throw "The pinned Playwright notice is missing for $playwrightVersion."
+    }
+    $nested.Add([pscustomobject]@{
+        Name = "Playwright $playwrightVersion (browser validation tooling)"
+        UsedBy = 'Tools/BrowserSmoke; development and CI only'
+        Owner = 'Microsoft Corporation'
+        Url = "https://github.com/microsoft/playwright/tree/v$playwrightVersion"
+        License = 'Apache-2.0'
+        LicenseSourcePath = $playwrightNotice
+    })
+}
+$joltBrowserPinPath = Join-Path $root 'Tools/Dependencies/JoltBrowser.lock.json'
+if (Test-Path -LiteralPath $joltBrowserPinPath) {
+    $joltBrowserPin = Get-Content -LiteralPath $joltBrowserPinPath -Raw | ConvertFrom-Json
+    foreach ($browserDependency in @(
+        @{ Name = "JoltPhysicsSharp $($joltBrowserPin.managedVersion) (browser source)"; UsedBy = 'Jolt browser managed binding'; Owner = 'Amer Koleci and Contributors'; Repository = $joltBrowserPin.managedRepository; Commit = $joltBrowserPin.managedCommit; Notice = 'JoltPhysicsSharp 2.22.0 (browser source)-MIT.txt' },
+        @{ Name = 'joltc (browser static source)'; UsedBy = 'Jolt browser native archives'; Owner = 'Amer Koleci and Contributors'; Repository = $joltBrowserPin.joltcRepository; Commit = $joltBrowserPin.joltcCommit; Notice = 'joltc (browser static source)-MIT.txt' },
+        @{ Name = "Jolt $($joltBrowserPin.joltTag) (browser static source)"; UsedBy = 'Jolt browser native archives'; Owner = 'Jorrit Rouwe'; Repository = $joltBrowserPin.joltRepository; Commit = $joltBrowserPin.joltCommit; Notice = 'Jolt v5.6.0 (browser static source)-MIT.txt' }
+    )) {
+        $noticePath = Join-Path $licensesDir ("nested/{0}" -f $browserDependency.Notice)
+        if (-not (Test-Path -LiteralPath $noticePath)) {
+            throw "The pinned browser dependency notice is missing: $($browserDependency.Notice)."
+        }
+        $nested.Add([pscustomobject]@{
+            Name = $browserDependency.Name
+            UsedBy = $browserDependency.UsedBy
+            Owner = $browserDependency.Owner
+            Url = ($browserDependency.Repository -replace '\.git$', '')
+            License = $joltBrowserPin.license
+            LicenseSourcePath = $noticePath
+        })
+        $nested[$nested.Count - 1].Url += "/tree/$($browserDependency.Commit)"
+    }
+}
 foreach ($previewDependency in @(
     @{ Name = 'KaTeX v0.18.4 (including fonts and mhchem)'; Folder = 'katex'; Owner = 'Khan Academy and contributors'; Url = 'https://github.com/KaTeX/KaTeX/tree/v0.18.4'; License = 'MIT AND Apache-2.0' },
     @{ Name = 'markdown-it v15.0.0 (browser bundle)'; Folder = 'markdown-it'; Owner = 'Vitaly Puzrin, Alex Kocharin and contributors'; Url = 'https://github.com/markdown-it/markdown-it/tree/15.0.0'; License = 'MIT AND BSD-2-Clause' }

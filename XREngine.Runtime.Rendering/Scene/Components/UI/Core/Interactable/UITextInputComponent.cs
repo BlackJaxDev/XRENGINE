@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Reflection;
 using XREngine.Components;
 using XREngine.Core.Attributes;
+using XREngine.Data.Core;
 using XREngine.Input.Devices;
 using XREngine.Input;
 using XREngine.Timers;
@@ -15,6 +16,7 @@ namespace XREngine.Rendering.UI
     [RequireComponents(typeof(UITextComponent))]
     public class UITextInputComponent : UIInspectorEditorComponent
     {
+        public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.TextBox;
         private const int DefaultKeyRepeatDelayMs = 500;
         private const int DefaultKeyRepeatIntervalMs = 50;
 
@@ -80,17 +82,34 @@ namespace XREngine.Rendering.UI
 
         protected override void OnGotFocus()
         {
-            TextComponent.Text = Text;
+            if (SceneNode is not null)
+                TextComponent.Text = Text;
             base.OnGotFocus();
         }
         protected override void OnLostFocus()
         {
-            TextComponent.Text = FormatText(Text);
+            if (SceneNode is not null)
+                TextComponent.Text = FormatText(Text);
             base.OnLostFocus();
         }
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            // Restore the authored input after both components are attached. An empty
+            // input leaves independently authored text on the sibling unchanged.
+            if (!string.IsNullOrEmpty(Text) &&
+                TryGetSiblingComponent<UITextComponent>(out var textComponent))
+            {
+                string displayText = IsFocused ? Text : FormatText(Text);
+                string? previousText = textComponent!.Text;
+                textComponent.Text = displayText;
+                // A nested cooked restore can activate the node while property
+                // notifications are suppressed by an ancestor's hydration scope.
+                if (XRBase.ArePropertyNotificationsSuppressed &&
+                    !string.Equals(previousText, displayText, StringComparison.Ordinal))
+                    textComponent.RefreshTextLayoutAfterSuppressedChange();
+            }
+
             if (InputPlatformServices.TryGetCapsLockState(out bool capsOn))
                 _capsLock = capsOn;
         }
@@ -393,6 +412,59 @@ namespace XREngine.Rendering.UI
             SetValue();
         }
 
+        /// <summary>
+        /// Applies one user edit and caret movement atomically. Native text services can
+        /// supply a completed IME composition or selected-range replacement here.
+        /// </summary>
+        public bool UserReplaceText(string value, int selectionStart, int selectionEnd)
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            if (selectionStart < 0 || selectionEnd < selectionStart || selectionEnd > value.Length)
+                return false;
+            if (MaxInputLength is { } maximum && value.Length > maximum)
+                return false;
+
+            string previous = Text;
+            if (value != previous)
+            {
+                int prefix = 0;
+                int commonLength = Math.Min(previous.Length, value.Length);
+                while (prefix < commonLength && previous[prefix] == value[prefix])
+                    prefix++;
+
+                int suffix = 0;
+                while (suffix < commonLength - prefix &&
+                       previous[previous.Length - 1 - suffix] == value[value.Length - 1 - suffix])
+                    suffix++;
+
+                int insertionLength = value.Length - prefix - suffix;
+                if (insertionLength > 0 && !PreValidateInput(value.Substring(prefix, insertionLength)))
+                    return false;
+                if (!PostValidateInput(value))
+                    return false;
+
+                Text = value;
+                SetValue();
+            }
+
+            CursorPosition = selectionEnd;
+            return true;
+        }
+
+        /// <summary>Raises the same single-line submit action as the engine Enter key.</summary>
+        public void UserSubmit()
+        {
+            if (SingleLineMode)
+                Submitted?.Invoke(this);
+        }
+
+        /// <summary>Raises the same single-line cancel action as the engine Escape key.</summary>
+        public void UserCancel()
+        {
+            if (SingleLineMode)
+                Cancelled?.Invoke(this);
+        }
+
         public void UserRemoveText(int count, bool backward)
         {
             string newText;
@@ -473,8 +545,9 @@ namespace XREngine.Rendering.UI
                 case nameof(Text):
                     //Re-validate cursor position
                     CursorPosition = _cursorPosition;
-                    //Display updated text to the user
-                    TextComponent.Text = FormatText(Text);
+                    // YAML assigns input properties before the owning node is attached.
+                    if (SceneNode is not null)
+                        TextComponent.Text = IsFocused ? Text : FormatText(Text);
                     break;
             }
         }

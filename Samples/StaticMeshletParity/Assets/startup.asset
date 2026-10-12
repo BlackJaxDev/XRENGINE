@@ -1,0 +1,25 @@
+__type: XREngine.GameStartupSettings
+Name: Static Meshlet Parity Startup
+ID: 80eaef12-bb3d-493c-ac09-9906b2717b4d
+LogOutputToFile: true
+NetworkingType: Local
+TargetUpdatesPerSecond: 60
+TargetFramesPerSecond: 60
+FixedFramesPerSecond: 60
+RunVRInPlace: false
+DefaultUserSettings:
+  VSync: Off
+  GlobalIlluminationMode: None
+  AntiAliasingModeOverride:
+    HasOverride: true
+    Value: None
+  GPURenderDispatchOverride:
+    HasOverride: true
+    Value: true
+BuildSettings:
+  Configuration: Release
+  Platform: BrowserWebGPU
+  OutputSubfolder: BrowserWebGPU
+  CleanOutputDirectory: true
+  CookContent: true
+  BuildManagedAssemblies: true

@@ -19,7 +19,28 @@ namespace XREngine.Scene
     /// </summary>
     public partial class VisualScene2D : VisualScene
     {
+        private bool _destroyed;
         public VisualScene2D() { }
+
+        public override void Destroy()
+        {
+            lock (_renderablesLock)
+                _destroyed = true;
+            try
+            {
+                RenderTree.Dispose();
+            }
+            finally
+            {
+                lock (_renderablesLock)
+                {
+                    _renderables.Clear();
+                    _renderableSet.Clear();
+                    _pendingRenderableOperations.Clear();
+                }
+                base.Destroy();
+            }
+        }
 
         [YamlIgnore]
         public Quadtree<RenderInfo2D> RenderTree { get; } = new Quadtree<RenderInfo2D>(new BoundingRectangleF());
@@ -27,13 +48,15 @@ namespace XREngine.Scene
         public void SetBounds(BoundingRectangleF bounds)
         {
             lock (_renderablesLock)
-                RenderTree.Remake(bounds);
+                if (!_destroyed)
+                    RenderTree.Remake(bounds);
         }
 
         public override void DebugRender(IRuntimeCullingCamera? camera, bool onlyContainingItems = false)
         {
             lock (_renderablesLock)
-                RenderTree.DebugRender(camera?.GetOrthoCameraBounds(), onlyContainingItems, RenderAABB);
+                if (!_destroyed)
+                    RenderTree.DebugRender(camera?.GetOrthoCameraBounds(), onlyContainingItems, RenderAABB);
         }
 
         private void RenderAABB(Vector2 extents, Vector2 center, ColorF4 color)
@@ -45,6 +68,8 @@ namespace XREngine.Scene
         {
             lock (_renderablesLock)
             {
+                if (_destroyed)
+                    return;
                 ProcessPendingRenderableOperations();
                 RenderTree.Swap();
                 RenderTree.CollectVisibleNodes(camera?.GetOrthoCameraBounds(), onlyContainingItems, RenderSpatialTreeNodeAction);
@@ -68,7 +93,8 @@ namespace XREngine.Scene
             SortedDictionary<float, List<(IRenderable item, object? data)>> items)
         {
             lock (_renderablesLock)
-                RenderTree.Raycast(screenPoint, items);
+                if (!_destroyed)
+                    RenderTree.Raycast(screenPoint, items);
         }
 
         public override void CollectRenderedItems(
@@ -94,6 +120,8 @@ namespace XREngine.Scene
         {
             lock (_renderablesLock)
             {
+                if (_destroyed)
+                    return;
                 // Ensure pending UI renderables are flushed even when GlobalCollectVisible isn't called
                 // (e.g., screen-space UI path).
                 ProcessPendingRenderableOperations();
@@ -146,15 +174,37 @@ namespace XREngine.Scene
         private readonly object _renderablesLock = new();
 
         public void AddRenderable(RenderInfo2D renderable)
-            => _pendingRenderableOperations.Enqueue((renderable, true));
+        {
+            lock (_renderablesLock)
+                if (!_destroyed)
+                    _pendingRenderableOperations.Enqueue((renderable, true));
+        }
 
         public void RemoveRenderable(RenderInfo2D renderable)
-            => _pendingRenderableOperations.Enqueue((renderable, false));
+        {
+            lock (_renderablesLock)
+                if (!_destroyed)
+                    _pendingRenderableOperations.Enqueue((renderable, false));
+        }
 
         public override void GlobalCollectVisible()
         {
-            base.GlobalCollectVisible();
-            ProcessPendingRenderableOperations();
+            lock (_renderablesLock)
+            {
+                if (_destroyed)
+                    return;
+                base.GlobalCollectVisible();
+                ProcessPendingRenderableOperations();
+            }
+        }
+
+        public override void GlobalSwapBuffers()
+        {
+            lock (_renderablesLock)
+            {
+                if (!_destroyed)
+                    base.GlobalSwapBuffers();
+            }
         }
 
         public override void GlobalPreRender()
@@ -176,6 +226,11 @@ namespace XREngine.Scene
         {
             lock (_renderablesLock)
             {
+                if (_destroyed)
+                {
+                    _pendingRenderableOperations.Clear();
+                    return;
+                }
                 while (_pendingRenderableOperations.TryDequeue(out var operation))
                 {
                     if (operation.add)

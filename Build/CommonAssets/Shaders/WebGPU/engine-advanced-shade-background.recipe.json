@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-shade-background",
+  "pass": "shade-background",
+  "source": "AdvancedShadeBackground.wgsl",
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "compute": "advancedShadeBackground"
+  },
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "shade-background"
+  },
+  "workgroupSize": [
+    16,
+    16,
+    1
+  ],
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 6,
+    "maxUniformBufferBindingSize": 32,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageTexturesPerShaderStage": 4,
+    "maxComputeWorkgroupSizeX": 16,
+    "maxComputeWorkgroupSizeY": 16,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 256,
+    "maxSampledTexturesPerShaderStage": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "VisibilityIdentity",
+        "physicalName": "visibilityIdentity",
+        "group": 0,
+        "binding": 0,
+        "kind": "texture-2d-uint",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "HDRSceneColor",
+        "physicalName": "hdrSceneColor",
+        "group": 0,
+        "binding": 1,
+        "kind": "storage-texture-2d-write-rgba16float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Velocity",
+        "physicalName": "velocity",
+        "group": 0,
+        "binding": 2,
+        "kind": "storage-texture-2d-write-rgba16float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "ReactiveMask",
+        "physicalName": "reactiveMask",
+        "group": 0,
+        "binding": 3,
+        "kind": "storage-texture-2d-write-r32float",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "ShadingDiagnostics",
+        "physicalName": "shadingDiagnostics",
+        "group": 0,
+        "binding": 4,
+        "kind": "storage-texture-2d-write-r32uint",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 5,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 32,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "screenExtent",
+            "provider": "screenExtent",
+            "offset": 0,
+            "bytes": 8,
+            "type": "vec2<u32>"
+          },
+          {
+            "name": "reserved0",
+            "provider": "reserved0",
+            "offset": 8,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved1",
+            "provider": "reserved1",
+            "offset": 12,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "backgroundColor",
+            "provider": "backgroundColor",
+            "offset": 16,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          }
+        ]
+      }
+    ]
+  },
+  "pipeline": {}
+}

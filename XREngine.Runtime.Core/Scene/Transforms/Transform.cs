@@ -514,9 +514,10 @@ namespace XREngine.Scene.Transforms
                 t = Translation;
                 r = Rotation;
 
-                hasScale = s.DistanceSquared(Vector3.One) > tolerance;
-                hasTranslation = t.LengthSquared() > tolerance;
-                hasRotation = !XRMath.IsApproximatelyIdentity(r, tolerance);
+                // A keyframe must reset default values as well as carry non-default ones.
+                hasScale = true;
+                hasTranslation = true;
+                hasRotation = true;
             }
 
             byte[]? scale = hasScale ? WriteHalves(s) : null;
@@ -531,7 +532,7 @@ namespace XREngine.Scene.Transforms
             byte transBits = (byte)16;
             byte quatBits = (byte)8;
 
-            byte[] all = new byte[4 + scale?.Length ?? 0 + translation?.Length ?? 0 + rotation?.Length ?? 0];
+            byte[] all = new byte[4 + (scale?.Length ?? 0) + (translation?.Length ?? 0) + (rotation?.Length ?? 0)];
 
             int offset = 4;
             if (hasScale)
