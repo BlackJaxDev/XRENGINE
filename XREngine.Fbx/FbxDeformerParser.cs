@@ -125,10 +125,45 @@ public static class FbxDeformerParser
 
                 Dictionary<long, FbxBlendShapeChannelBinding[]> frozenBlendShapeChannels = new(blendShapeChannelsByGeometryObjectId.Count);
                 foreach ((long geometryObjectId, List<FbxBlendShapeChannelBinding> bindings) in blendShapeChannelsByGeometryObjectId)
-                    frozenBlendShapeChannels[geometryObjectId] = [.. bindings.OrderBy(static binding => binding.ChannelObjectId)];
+                    frozenBlendShapeChannels[geometryObjectId] = OrderBlendShapeChannels(semantic, geometryObjectId, bindings);
 
                 return new FbxDeformerDocument(skinsByGeometryObjectId, frozenBlendShapeChannels, blendShapeChannelsByObjectId);
             });
+    }
+
+    /// <summary>
+    /// Retains deformer and channel connection order for indexed morph weights.
+    /// Object IDs identify channels but do not define their source indices.
+    /// </summary>
+    private static FbxBlendShapeChannelBinding[] OrderBlendShapeChannels(
+        FbxSemanticDocument semantic,
+        long geometryObjectId,
+        List<FbxBlendShapeChannelBinding> bindings)
+    {
+        Dictionary<long, FbxBlendShapeChannelBinding> remaining = bindings.ToDictionary(static binding => binding.ChannelObjectId);
+        List<FbxBlendShapeChannelBinding> ordered = new(bindings.Count);
+        int geometryIndex = semantic.ObjectIndexById[geometryObjectId];
+        foreach (int ownerConnectionIndex in semantic.GetInboundConnectionIndices(geometryIndex))
+        {
+            FbxConnection ownerConnection = semantic.Connections[ownerConnectionIndex];
+            if (ownerConnection.Source.Id is not { } ownerId ||
+                !semantic.TryGetObject(ownerId, out FbxSceneObject owner) ||
+                owner.Category != FbxObjectCategory.Deformer ||
+                !owner.Subclass.Equals("BlendShape", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            foreach (int channelConnectionIndex in semantic.GetInboundConnectionIndices(semantic.ObjectIndexById[ownerId]))
+            {
+                FbxConnection channelConnection = semantic.Connections[channelConnectionIndex];
+                if (channelConnection.Source.Id is { } channelId && remaining.Remove(channelId, out FbxBlendShapeChannelBinding? channel))
+                    ordered.Add(channel);
+            }
+        }
+
+        if (remaining.Count != 0)
+            throw new InvalidDataException($"FBX geometry {geometryObjectId} has blendshape channels without an ordered deformer connection.");
+
+        return [.. ordered];
     }
 
     private static FbxClusterBinding? ParseClusterBinding(FbxStructuralValueReader reader, FbxSemanticDocument semantic, long clusterObjectId)

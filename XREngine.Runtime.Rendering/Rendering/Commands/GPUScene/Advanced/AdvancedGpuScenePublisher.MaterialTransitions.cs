@@ -707,16 +707,6 @@ public sealed partial class AdvancedGpuScenePublisher
         {
             layout = MaterialBindingLayouts.MaskedForward;
         }
-        if (!AdvancedGpuMaterialPublisher.TryTranslateLayout(
-                layout,
-                out AdvancedMaterialLayoutTranslation translation,
-                out _))
-        {
-            compatibilityReason =
-                EAdvancedCanonicalCompatibilityReason.UnsupportedRenderPass;
-            return false;
-        }
-
         EGpuMaterialStateClass expectedLegacyState = ReferenceEquals(
             layout,
             MaterialBindingLayouts.OpaqueDeferred) || ReferenceEquals(layout, MaterialBindingLayouts.ProjectiveMirror)
@@ -728,6 +718,23 @@ public sealed partial class AdvancedGpuScenePublisher
         {
             compatibilityReason =
                 EAdvancedCanonicalCompatibilityReason.LegacyStateMismatch;
+            return false;
+        }
+
+        bool nativeUber = material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 &&
+            material.TryGetUberMaterialState(out _, out _);
+        if (nativeUber)
+        {
+            bool masked = command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested ||
+                NativeUberMaterialSourceEncoder.RequiresCoverageDiscard(material!);
+            layout = masked ? NativeUberMaterialSchema.Masked : NativeUberMaterialSchema.Opaque;
+        }
+        if (!AdvancedGpuMaterialPublisher.TryTranslateLayout(
+                layout,
+                out AdvancedMaterialLayoutTranslation translation,
+                out _))
+        {
+            compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedRenderPass;
             return false;
         }
 
@@ -798,6 +805,12 @@ public sealed partial class AdvancedGpuScenePublisher
                 fatal = true;
                 return false;
             }
+        }
+        else if (nativeUber)
+        {
+            if (!NativeUberMaterialSourceEncoder.TryEncode(material!, constantWords, legacySources,
+                    out compatibilityReason, out reason))
+                return false;
         }
         else
         {

@@ -29,8 +29,8 @@ namespace XREngine.Animation
         }
 
         private delegate Quaternion DelInterpolate(QuaternionKeyframe? key1, QuaternionKeyframe? key2, float time);
-        private DelInterpolate _interpolateOut = CubicBezier;
-        private DelInterpolate _interpolateIn = CubicBezier;
+        private DelInterpolate _interpolateOut = Step;
+        private DelInterpolate _interpolateIn = Step;
         protected ERadialInterpType _interpolationTypeOut;
         protected ERadialInterpType _interpolationTypeIn;
         private Quaternion _inValue = Quaternion.Identity;

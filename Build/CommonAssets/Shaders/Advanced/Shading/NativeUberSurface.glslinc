@@ -1,0 +1,256 @@
+#ifndef XR_NATIVE_UBER_SURFACE_GLSLINC
+#define XR_NATIVE_UBER_SURFACE_GLSLINC
+#include "Advanced/Shading/NativeUberCoverage.glslinc"
+
+// All texture footprints come from the reconstructed surface. Material values
+// stay in rows and do not produce one shader program for each material.
+vec4 XR_UBER_SurfaceTexture(XRUberCoordinates c, uint slot, int selector,
+    vec4 st, vec2 pan, vec4 absent)
+{
+    vec2 uv, dx, dy;
+    XR_UBER_CoverageUv(c, selector, uv, dx, dy);
+    return XR_UBER_Sample(slot, uv * st.xy + st.zw + pan * c.time,
+        dx * st.xy, dy * st.xy, absent);
+}
+#define UBER_SAMPLE(c, name, absent) XR_UBER_SurfaceTexture(c, UBER_T(name), UBER_I(name ## UV), UBER_V(name ## _ST), UBER_V(name ## Pan).xy, absent)
+
+vec3 XR_UBER_UnpackNormal(vec4 sampleValue, float scale)
+{
+    vec2 xy = (sampleValue.xy * 2.0 - 1.0) * scale;
+    xy.y = -xy.y;
+    return vec3(xy, sqrt(max(1.0 - dot(xy, xy), 0.0)));
+}
+
+vec3 XR_UBER_Normal(XRUberCoordinates c, vec3 geometric, vec3 tangent, vec3 bitangent)
+{
+    vec3 mapped = vec3(0.0, 0.0, 1.0);
+    if (XR_UBER_HasFeature(XR_UBER_FEATURE_NORMAL_MAP))
+    {
+        mapped = XR_UBER_UnpackNormal(UBER_SAMPLE(c, _BumpMap, vec4(0.5, 0.5, 1.0, 1.0)), UBER_F(_BumpScale));
+        if (UBER_I(_BumpMapFlipGreen) != 0) mapped.y = -mapped.y;
+    }
+    if (XR_UBER_HasFeature(XR_UBER_FEATURE_DETAIL_TEXTURES) && abs(UBER_F(_DetailNormalMapScale)) > 1.0e-6)
+    {
+        float mask = UBER_SAMPLE(c, _DetailMask, vec4(1.0)).g;
+        vec3 detail = XR_UBER_UnpackNormal(UBER_SAMPLE(c, _DetailNormalMap, vec4(0.5, 0.5, 1.0, 1.0)), UBER_F(_DetailNormalMapScale) * mask);
+        if (UBER_I(_DetailNormalMapFlipGreen) != 0) detail.y = -detail.y;
+        // Combine both tangent normals before the single world-space transform.
+        mapped = vec3(mapped.xy + detail.xy, mapped.z * detail.z);
+    }
+    return normalize(tangent * mapped.x + bitangent * mapped.y + geometric * mapped.z);
+}
+
+vec3 XR_UBER_DetailColor(XRUberCoordinates c, vec3 color)
+{
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_DETAIL_TEXTURES)) return color;
+    vec3 detail = UBER_SAMPLE(c, _DetailTex, vec4(1.0)).rgb * UBER_V(_DetailTint).rgb + UBER_F(_DetailBrightness);
+    float strength = clamp(UBER_F(_DetailTexIntensity) * UBER_SAMPLE(c, _DetailMask, vec4(1.0)).r, 0.0, 1.0);
+    return mix(color, XR_UBER_Blend(color, detail, UBER_I(_DetailTexBlendMode)), strength);
+}
+
+void XR_UBER_Pbr(XRUberCoordinates c, vec3 base, out float roughness,
+    out float metallic, out vec3 specularColor, out vec3 specularTint,
+    out float specularMask, out float reflectionMask)
+{
+    roughness = clamp(1.0 - UBER_F(_SpecularSmoothness), 0.04, 1.0);
+    metallic = 0.0;
+    specularColor = vec3(1.0);
+    specularTint = vec3(1.0);
+    specularMask = 1.0;
+    reflectionMask = 1.0;
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_SPECULAR)) return;
+    vec4 m = UBER_SAMPLE(c, _PBRMetallicMaps, vec4(1.0));
+    if (UBER_I(_PBRMochiePackedMasksEnabled) != 0)
+    {
+        int reflectionChannel = UBER_I(_PBRMetallicMapsReflectionMaskChannel);
+        int specularChannel = UBER_I(_PBRMetallicMapsSpecularMaskChannel);
+        float reflectionSample = reflectionChannel == 4 ? 1.0 : m[clamp(reflectionChannel, 0, 3)];
+        float specularSample = specularChannel == 4 ? 1.0 : m[clamp(specularChannel, 0, 3)];
+        reflectionMask = reflectionSample * UBER_F(_PBRReflectionStrength);
+        specularMask = specularSample * UBER_F(_SpecularStrength);
+        if (UBER_F(_PBRReflectionMaskInvert) > 0.5) reflectionMask = 1.0 - reflectionMask;
+        if (UBER_F(_PBRSpecularMaskInvert) > 0.5) specularMask = 1.0 - specularMask;
+    }
+    vec4 s = UBER_SAMPLE(c, _PBRSmoothnessMaps, vec4(1.0));
+    float metal = m[clamp(UBER_I(_PBRMetallicMapsMetallicChannel), 0, 3)];
+    float smoothness = s[clamp(UBER_I(_PBRSmoothnessMapsChannel), 0, 3)];
+    if (UBER_F(_PBRMetallicMapInvert) > 0.5) metal = 1.0 - metal;
+    if (UBER_F(_PBRSmoothnessMapInvert) > 0.5) smoothness = 1.0 - smoothness;
+    metallic = clamp(metal * UBER_F(_PBRMetallicMultiplier), 0.0, 1.0);
+    roughness = clamp(1.0 - smoothness * UBER_F(_PBRRoughnessMultiplier), 0.04, 1.0);
+    if (UBER_I(_SpecularType) == 2) roughness = max(roughness * 0.75, 0.04);
+    vec4 spec = UBER_SAMPLE(c, _SpecularMap, vec4(1.0));
+    specularMask *= clamp(max(max(spec.r, spec.g), max(spec.b, spec.a)), 0.0, 1.0);
+    specularTint = max(spec.rgb * UBER_V(_SpecularTint).rgb, vec3(0.0));
+    specularColor = mix(vec3(1.0), base, metallic) * specularTint;
+}
+
+float XR_UBER_MaterialAo(XRUberCoordinates c)
+{
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_MATERIAL_AO)) return 1.0;
+    vec4 sampleValue = UBER_SAMPLE(c, _LightingAOMaps, vec4(1.0));
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_STYLIZED_LIGHTING))
+        return mix(1.0, sampleValue.r, clamp(UBER_F(_LightDataAOStrengthR), 0.0, 1.0));
+    vec4 weighted = mix(vec4(1.0), sampleValue, clamp(UBER_V(_LightDataAOStrengths), 0.0, 1.0));
+    return weighted.r * weighted.g * weighted.b * weighted.a;
+}
+
+float XR_UBER_ShadowMask(XRUberCoordinates c)
+{
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_SHADOW_MASKS)) return 1.0;
+    vec4 sampleValue = UBER_SAMPLE(c, _LightingShadowMasks, vec4(1.0));
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_STYLIZED_LIGHTING))
+        return mix(1.0, sampleValue.r, clamp(UBER_F(_LightingShadowMaskStrengthR), 0.0, 1.0));
+    vec4 weighted = mix(vec4(1.0), sampleValue, clamp(UBER_V(_LightingShadowMaskStrengths), 0.0, 1.0));
+    float detail = mix(1.0, UBER_SAMPLE(c, _LightingDetailShadowMap, vec4(1.0)).r, clamp(UBER_F(_LightingDetailShadowStrength), 0.0, 1.0));
+    return weighted.r * weighted.g * weighted.b * weighted.a * detail;
+}
+
+vec2 XR_UBER_MatcapUv(vec3 normal, vec3 viewDir, mat3 viewMatrix, vec4 projection)
+{
+    float border = max(projection.y, 0.0);
+    int mode = int(projection.z + 0.5);
+    if (mode == 1)
+    {
+        vec3 up = vec3(0.0, 1.0, 0.0) - viewDir * viewDir.y;
+        if (dot(up, up) < 1.0e-8) up = vec3(1.0, 0.0, 0.0);
+        up = normalize(up);
+        vec3 right = normalize(cross(viewDir, up));
+        return vec2(dot(right, normal), dot(up, normal)) * border + 0.5;
+    }
+    if (mode == 2) return reflect(-viewDir, normal).xy * border + 0.5;
+    if (UBER_F(_SourceMatcap) > 0.5)
+    {
+        vec3 detail = (viewMatrix * normal) * vec3(-1.0, -1.0, 1.0);
+        vec3 base = (viewMatrix * viewDir) * vec3(-1.0, -1.0, 1.0) + vec3(0.0, 0.0, 1.0);
+        vec3 corrected = base * (dot(base, detail) / base.z) - detail;
+        return corrected.xy * border + 0.5;
+    }
+    return normalize(normal * viewMatrix).xy * border + 0.5;
+}
+
+float XR_UBER_MatcapMipCount(uint slot)
+{
+    if (slot >= XR_UBER_Material.textureReferenceCount) return 0.0;
+    XRAdvancedEncodedTextureReference reference;
+    XR_ADV_TryResolveTextureReference(XR_ADV_LoadMaterialTextureBinding(XR_UBER_Material, slot), reference);
+    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u) return 0.0;
+#if defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
+    ivec2 size = textureSize(sampler2D(uvec2(reference.payload0, reference.payload1)), 0);
+#elif defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    uint textureIndex = nonuniformEXT(reference.payload0);
+    uint samplerIndex = nonuniformEXT(reference.payload1);
+    ivec2 size = textureSize(sampler2D(XR_ADV_TextureDescriptors[textureIndex], XR_ADV_SamplerDescriptors[samplerIndex]), 0);
+#elif defined(XR_ADV_TEXTURE_MODE_ARRAY)
+    ivec2 size = textureSize(XR_ADV_TextureArray, 0).xy;
+#else
+    ivec2 size = ivec2(1);
+#endif
+    return floor(log2(float(max(max(size.x, size.y), 1))));
+}
+
+void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 geometricDy,
+    vec3 normal, vec3 normalDx, vec3 normalDy,
+    vec3 viewDir, vec3 viewDx, vec3 viewDy, mat3 viewMatrix, vec3 lightColor, float lightMap,
+    uint textureSlot, uint maskSlot, vec4 tint, vec4 parameters, vec4 projection, vec4 blend,
+    vec4 source, vec4 maskParams, vec4 texSt, vec2 texPan, vec4 maskSt, vec2 maskPan,
+    inout vec3 color, inout vec3 emission, inout vec3 lightAdd)
+{
+    if (parameters.x <= 0.0 || all(equal(blend, vec4(0.0))) && projection.x == 0.0 && parameters.z == 0.0 && source.z == 0.0) return;
+    float normalStrength = clamp(parameters.w, 0.0, 1.0);
+    bool sourceMatcap = UBER_F(_SourceMatcap) > 0.5;
+    vec3 projectedNormal = mix(geometric, normal, normalStrength);
+    vec3 projectedNormalX = mix(normalize(geometric + geometricDx), normalize(normal + normalDx), normalStrength);
+    vec3 projectedNormalY = mix(normalize(geometric + geometricDy), normalize(normal + normalDy), normalStrength);
+    if (!sourceMatcap)
+    {
+        projectedNormal = normalize(projectedNormal);
+        projectedNormalX = normalize(projectedNormalX);
+        projectedNormalY = normalize(projectedNormalY);
+    }
+    vec2 uv = XR_UBER_MatcapUv(projectedNormal, viewDir, viewMatrix, projection);
+    vec2 dx = XR_UBER_MatcapUv(projectedNormalX, normalize(viewDir + viewDx), viewMatrix, projection) - uv;
+    vec2 dy = XR_UBER_MatcapUv(projectedNormalY, normalize(viewDir + viewDy), viewMatrix, projection) - uv;
+    if (sourceMatcap)
+    {
+        vec2 maskUv, maskDx, maskDy;
+        XR_UBER_CoverageUv(c, int(maskParams.w + 0.5), maskUv, maskDx, maskDy);
+        maskUv = maskUv * maskSt.xy + maskSt.zw + maskPan * (c.time * 0.05);
+        maskDx *= maskSt.xy; maskDy *= maskSt.xy;
+        vec4 maskSample = XR_UBER_Sample(maskSlot, maskUv, maskDx, maskDy, vec4(1.0));
+        float mask = maskSample[clamp(int(maskParams.x + 0.5), 0, 3)];
+        if (maskParams.y > 0.5) mask = 1.0 - mask;
+        float smoothness = clamp(source.x, 0.0, 1.0);
+        if (source.w > 0.5)
+            smoothness *= maskSample[clamp(int(maskParams.z + 0.5), 0, 3)];
+        float lod = (1.0 - smoothness) * XR_UBER_MatcapMipCount(textureSlot);
+        uv = uv * texSt.xy + texSt.zw + texPan * (c.time * 0.05);
+        vec4 sampleValue = vec4(1.0);
+        if (textureSlot < XR_UBER_Material.textureReferenceCount)
+        {
+            XRAdvancedEncodedTextureReference reference;
+            XR_ADV_TryResolveTextureReference(XR_ADV_LoadMaterialTextureBinding(XR_UBER_Material, textureSlot), reference);
+            sampleValue = XR_ADV_SampleTexture2DLod(reference, uv, lod);
+        }
+        sampleValue *= tint;
+        sampleValue.rgb *= mix(vec3(1.0), lightColor, clamp(projection.w, 0.0, 1.0)) * max(parameters.x, 0.0);
+        sampleValue.rgb = mix(sampleValue.rgb, sampleValue.rgb * color, clamp(source.y, 0.0, 1.0));
+        mask *= mix(1.0, clamp(lightMap, 0.0, 1.0), clamp(parameters.y, 0.0, 1.0)) * sampleValue.a;
+        color = mix(color, sampleValue.rgb, clamp(blend.x * mask * 0.999999, 0.0, 1.0));
+        color *= mix(vec3(1.0), sampleValue.rgb, clamp(blend.y * mask, 0.0, 1.0));
+        color += sampleValue.rgb * blend.z * mask;
+        color = mix(color, XR_UBER_Blend(color, sampleValue.rgb, 6), clamp(blend.w * mask, 0.0, 1.0));
+        lightAdd += sampleValue.rgb * source.z * mask;
+        color = mix(color, color + color * sampleValue.rgb, clamp(projection.x * mask, 0.0, 1.0));
+        emission += sampleValue.rgb * parameters.z * mask;
+        return;
+    }
+    vec4 sampleValue = XR_UBER_Sample(textureSlot, uv, dx, dy, vec4(1.0)) * tint;
+    float mask = XR_UBER_Sample(maskSlot, c.uv0, c.uv0Dx, c.uv0Dy, vec4(1.0)).r;
+    mask *= mix(1.0, clamp(lightMap, 0.0, 1.0), clamp(parameters.y, 0.0, 1.0)) * sampleValue.a;
+    sampleValue.rgb *= mix(vec3(1.0), lightColor, clamp(projection.w, 0.0, 1.0)) * max(parameters.x, 0.0);
+    emission += sampleValue.rgb * max(parameters.z, 0.0) * mask;
+    mask = clamp(mask, 0.0, 1.0);
+    color = mix(color, sampleValue.rgb, clamp(blend.x, 0.0, 1.0) * mask * 0.999999);
+    color *= mix(vec3(1.0), sampleValue.rgb, clamp(blend.y, 0.0, 1.0) * mask);
+    color += sampleValue.rgb * max(blend.z, 0.0) * mask;
+    color = mix(color, XR_UBER_Blend(color, sampleValue.rgb, 6), clamp(blend.w, 0.0, 1.0) * mask);
+    color = mix(color, color + color * sampleValue.rgb, clamp(projection.x, 0.0, 1.0) * mask);
+}
+
+void XR_UBER_EmissionSlot(XRUberCoordinates c, uint textureSlot, uint maskSlot,
+    vec4 st, vec4 maskSt, vec4 tint, vec4 parameters, vec2 pan, int selector,
+    vec4 modifiers, vec4 sampling, inout vec3 base, inout vec3 emission)
+{
+    if (parameters.x == 0.0) return;
+    vec4 texel = XR_UBER_SurfaceTexture(c, textureSlot, selector, st, pan, vec4(1.0));
+    vec4 maskValue = XR_UBER_SurfaceTexture(c, maskSlot, selector, maskSt, vec2(0.0), vec4(1.0));
+    float mask = maskValue[int(clamp(sampling.y, 0.0, 3.0) + 0.5)];
+    mask = mix(mask, 1.0 - mask, clamp(sampling.z, 0.0, 1.0));
+    float pulse = mix(1.0, 0.5 + 0.5 * sin(c.time * parameters.z), clamp(parameters.y, 0.0, 1.0));
+    vec3 source = mix(texel.rgb, base, clamp(sampling.x, 0.0, 1.0));
+    vec2 sourceUv, sourceDx, sourceDy;
+    XR_UBER_CoverageUv(c, selector, sourceUv, sourceDx, sourceDy);
+    float uvX = sourceUv.x * st.x + st.z + pan.x * c.time;
+    float center = modifiers.y > 0.5 ? smoothstep(0.0, 0.5, abs(fract(uvX + c.time * parameters.z) - 0.5)) : 1.0;
+    if (parameters.w != 0.0) source = XR_UBER_hueShift(source, parameters.w * c.time);
+    vec3 contribution = source * XR_UBER_Theme(int(modifiers.w + 0.5), tint.rgb) * max(parameters.x, 0.0) * mask * pulse * center;
+    emission += contribution;
+    base = mix(base, contribution, clamp(modifiers.x, 0.0, 1.0) * mask);
+}
+
+vec3 XR_UBER_Rim(XRUberCoordinates c, vec3 N, vec3 V, vec3 lightColor, float lightMap)
+{
+    float nv = clamp(dot(N, V), 0.0, 1.0);
+    float width = UBER_F(_RimWidth), sharpness = UBER_F(_RimSharpness);
+    float rim = 1.0 - nv;
+    int style = UBER_I(_RimStyle);
+    if (style == 0) rim = smoothstep(0.0, max(1.0 - sharpness, 1.0e-6), pow(rim, (1.0 - width) * 10.0));
+    else if (style == 1) rim = pow(rim, exp2(mix(4.0, 0.0, width)));
+    else if (style == 2) rim = pow(clamp((rim - (1.0 - width)) / max(width, 1.0e-6), 0.0, 1.0), 1.0 / max(sharpness, 1.0e-6));
+    rim *= UBER_SAMPLE(c, _RimMask, vec4(1.0))[clamp(UBER_I(_RimMaskChannel), 0, 3)];
+    rim *= mix(1.0, lightMap, UBER_F(_RimHideInShadow));
+    vec3 color = XR_UBER_Theme(UBER_I(_RimLightColorThemeIndex), UBER_V(_RimLightColor).rgb) * UBER_SAMPLE(c, _RimColorTexture, vec4(1.0)).rgb * rim;
+    return mix(color, color * lightColor, UBER_F(_RimLightColorBias));
+}
+#endif

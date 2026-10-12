@@ -1,7 +1,7 @@
 # Unity Poiyomi Advanced Parity TODO
 
-Last Updated: 2026-10-08
-Status: Active. The source avatar cannot finish import.
+Last Updated: 2026-10-12
+Status: Active
 Architecture: [Advanced Render Pipeline](../../../architecture/rendering/advanced-render-pipeline.md), [Uber Shader Varianting](../../../architecture/rendering/uber-shader-varianting.md), [Mesh Submission Strategies](../../../architecture/rendering/mesh-submission-strategies.md)
 Validation: [Jax2031 Advanced Parity Validation](../../testing/rendering/jax2031-advanced-parity-validation.md)
 Investigation: [Jax2031 Unity And Advanced Vulkan Parity](../../investigations/rendering/2026-10-08-jax2031-unity-advanced-parity.md)
@@ -9,19 +9,18 @@ Import work: [Unity Prefab Parity Import TODO](../assets/unity-prefab-parity-imp
 
 ## Current State
 
-`SerializedSceneImporter` now completes the exact prefab through Assimp. Native model-base publication remains guarded until coordinate and cluster-bind conversion is complete. The Poiyomi importer preserves many common Uber modules, but Advanced publishes standard material rows and executes standard PBR shading. Imported late transparency lacks explicit Advanced eligibility metadata. The avatar is visible in Vulkan, with deformed and detached geometry and incorrect shading. Visual parity and frame-time acceptance remain open.
+Both prefab routes import the same 21 active Unity materials. Native opaque and masked Uber layouts preserve material rows and texture roles. Source Basic dissolve, detail color, circle glitter, detail-normal composition, and matcap mip selection and blend stages now have source adapters. Small visible accessory triangles no longer use a world-area cutoff during reconstruction. Source lighting and backface tangent-basis rules still differ. The horn material has explicit sorted alpha metadata. The validation document owns visual, deformation, and frame-time acceptance. Texture promotion can still expose logical metadata before Vulkan residency is ready.
 
 ## Open Code Items
 
-### Native Uber Material Contract
+### Source Material Semantics
 
-- [ ] Add an explicit native Uber layout and semantic encoder in `AdvancedGpuScenePublisher.MaterialTransitions.cs`, `AdvancedGpuMaterialPublisher.cs`, and `MaterialBindingSourceEncoder.cs`. Done when: active Uber constants and texture semantics reach the canonical rows, and an unsupported Uber program produces an explicit rejection instead of standard PBR admission. Key variants by compatible feature topology and layout. Keep ordinary material values in GPU rows.
-- [ ] Add executable native Uber shading for the active common Pro 9.3.66 features through `AdvancedRenderPipeline.NativeShading.cs`, the Vulkan native shading dispatch, and `Build/CommonAssets/Shaders/Advanced/Shading/`. Done when: native dispatch selects the compatible Uber evaluator and preserves toon lighting, normal maps, emission, matcaps, rim lighting, and the enabled clothing effects. Use reconstructed sampling gradients. Expose each unsupported active feature in diagnostics.
-- [ ] Share the active Uber coverage rules with `VisibilityRasterMasked.frag` and `DirectionalShadowRasterMasked.frag`. Done when: visibility and shadow coverage use the same texture semantics, UV transforms, cutoff, and enabled alpha-mask or dissolve behavior as the material. Route otherwise opaque materials with active discard effects through the required coverage evaluator before depth writes. Read current alpha-to-coverage controls and effective shader state.
+- [ ] Preserve `_FlipBackfaceNormals` in `SerializedMaterialImporter.SourceToonSurfaceFeatures`, `NativeUberMaterialSchema`, and both Uber normal evaluators. Done when: the saved source flag controls backface N/T/B together instead of an unconditional normal-only flip; engine-authored materials retain their current contract.
 
-### Late Transparency
+### Scene Publication
 
-- [ ] Set explicit `AdvancedLatePassMetadata` in `SerializedMaterialImporter.cs` for supported transparent source states. Done when: blend, depth-write, sorting, scene-color dependency, and temporal-reactivity requirements select a permitted late lane. Claimed temporal participation also has velocity and reactive shader variants with matching coverage and compatible geometry; otherwise, diagnostics report the temporal limitation. Opaque and masked materials continue through native visibility and shading. Unsupported mixed states fail with a reason.
+- [ ] Preserve GPU-authored LOD transition state during scene capacity growth in `GPUScene.CommandBuffers.cs` and the render-owner publication boundary. Done when: `EnsureLodTransitionBufferCapacity` does not map a backend buffer on the collection thread, and structural growth preserves transition rows without committing a stale CPU mirror. Keep missing ownership explicit.
+- [ ] Commit imported texture metadata and Vulkan residency together in `VkImageBackedTexture.ImportedUpload.cs` and the descriptor publication boundary. Done when: pending uploads do not expose new dimensions, mip data, or canonical source generation before native resources are ready; failure retains the old published state. Keep canonical source validation enabled.
 
 ## Decisions Needed
 
@@ -33,4 +32,4 @@ Import work: [Unity Prefab Parity Import TODO](../assets/unity-prefab-parity-imp
 - General descriptor and material-cache work remains in [Material Table And Texture Binding Ladder TODO](optimization/material-table-and-texture-binding-ladder-todo.md).
 - General avatar simplification and LOD tooling remains in [Avatar Optimization Roadmap](../avatar/avatar-optimization-roadmap.md). The root failure does not establish a need for a new optimizer.
 - Full Pro-exclusive feature support, outline support, and Unity plugin/menu execution are outside the first still-image parity slice unless the selected outfit requires them.
-- Release shader readiness debugging remains in the linked investigation. Do not select a code fix before its cause is established.
+- Shader readiness debugging in Release and intermittent Debug startup remains in the linked investigation. Do not select a code fix before its cause is established.

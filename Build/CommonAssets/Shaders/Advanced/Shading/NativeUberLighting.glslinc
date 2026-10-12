@@ -1,0 +1,163 @@
+#ifndef XR_NATIVE_UBER_LIGHTING_GLSLINC
+#define XR_NATIVE_UBER_LIGHTING_GLSLINC
+#include "Advanced/Shading/NativeUberSurface.glslinc"
+
+float XR_UBER_LightMap(float nl)
+{
+    int mode = UBER_I(_LightingMapMode);
+    if (mode == 0) return nl * 0.5 + 0.5;
+    if (mode == 1) return clamp(nl * 0.5 + 0.5, 0.0, 1.0);
+    return mode == 3 ? 1.0 : clamp(nl, 0.0, 1.0);
+}
+
+vec3 XR_UBER_LightColor(vec3 color)
+{
+    int mode = UBER_I(_LightingColorMode);
+    float maximum = max(max(color.r, color.g), color.b);
+    if (mode == 1) return vec3(XR_UBER_Luminance(color));
+    if (mode == 2) return vec3(maximum);
+    if (mode == 3) return maximum > 1.0e-6 ? color / maximum : vec3(0.0);
+    return color;
+}
+
+// Glitter uses the red component of the primary ramp before final lighting.
+float XR_UBER_GlitterLightMap(XRUberCoordinates c, vec3 N, vec3 Nx, vec3 Ny, vec3 L, float mask)
+{
+    int direction = UBER_I(_LightingDirectionMode);
+    if (direction == 1) L = N;
+    else if (direction == 3) L = vec3(0.0, 1.0, 0.0);
+    float nl = dot(N, L), map = XR_UBER_LightMap(nl);
+    float ramp;
+    if (UBER_I(_LightingMode) == 0)
+    {
+        vec2 uv, dx, dy;
+        XR_UBER_CoverageUv(c, UBER_I(_ToonRampUV), uv, dx, dy);
+        vec4 st = UBER_V(_ToonRamp_ST);
+        uv.x = clamp(map + UBER_F(_ShadowOffset), 0.0, 1.0);
+        dx.x = clamp(XR_UBER_LightMap(dot(normalize(N + Nx), L)) + UBER_F(_ShadowOffset), 0.0, 1.0) - uv.x;
+        dy.x = clamp(XR_UBER_LightMap(dot(normalize(N + Ny), L)) + UBER_F(_ShadowOffset), 0.0, 1.0) - uv.x;
+        ramp = XR_UBER_Sample(UBER_T(_ToonRamp), uv * st.xy + st.zw + UBER_V(_ToonRampPan).xy * c.time,
+            dx * st.xy, dy * st.xy, vec4(1.0)).r;
+    }
+    else if (UBER_I(_LightingMode) == 2)
+    {
+        float wrapped = nl + UBER_F(_LightingWrappedWrap);
+        if (UBER_F(_LightingWrappedNormalization) > 0.5) wrapped /= max(1.0 + UBER_F(_LightingWrappedWrap), 1.0e-6);
+        ramp = smoothstep(UBER_F(_LightingGradientStart), UBER_F(_LightingGradientEnd), clamp(wrapped, 0.0, 1.0));
+    }
+    else if (UBER_I(_LightingMode) == 5)
+        ramp = UBER_F(_ForceFlatRampedLightmap) > 0.5 ? step(0.5, map) : 1.0;
+    else
+        ramp = smoothstep(UBER_F(_ShadowBorder) - UBER_F(_ShadowBlur),
+            UBER_F(_ShadowBorder) + UBER_F(_ShadowBlur), map);
+    return mix(1.0, ramp, clamp(UBER_F(_ShadowStrength) * mask, 0.0, 1.0));
+}
+
+vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
+    vec3 V, vec3 L, vec3 radiance, vec3 ambient, float visibility, float mask)
+{
+    int direction = UBER_I(_LightingDirectionMode);
+    if (direction == 1) L = N;
+    else if (direction == 2) L = V;
+    else if (direction == 3) L = vec3(0.0, 1.0, 0.0);
+    radiance = XR_UBER_LightColor(radiance);
+    float nl = dot(N, L), map = XR_UBER_LightMap(nl);
+    int mode = UBER_I(_LightingMode);
+    vec3 shadowColor = UBER_V(_LightingShadowColor).rgb;
+    float strength = UBER_F(_ShadowStrength);
+    if (UBER_F(_LightingIgnoreAmbientColor) > 0.0 && mode != 0)
+        ambient = mix(ambient, vec3(XR_UBER_Luminance(ambient)), clamp(UBER_F(_LightingIgnoreAmbientColor), 0.0, 1.0));
+    if (UBER_F(_LightingIndirectUsesNormals) > 0.0)
+        ambient *= mix(0.5, 1.0, N.y * 0.5 + 0.5);
+    vec3 color;
+    if (mode == 0)
+    {
+        vec4 st = UBER_V(_ToonRamp_ST);
+        vec2 rampUv, rampDx, rampDy;
+        XR_UBER_CoverageUv(c, UBER_I(_ToonRampUV), rampUv, rampDx, rampDy);
+        vec2 uv = vec2(clamp(map + UBER_F(_ShadowOffset), 0.0, 1.0), rampUv.y);
+        vec2 dx = vec2(clamp(XR_UBER_LightMap(dot(normalize(N + Nx), L)) + UBER_F(_ShadowOffset), 0.0, 1.0) - uv.x,
+            rampDx.y);
+        vec2 dy = vec2(clamp(XR_UBER_LightMap(dot(normalize(N + Ny), L)) + UBER_F(_ShadowOffset), 0.0, 1.0) - uv.x,
+            rampDy.y);
+        vec3 ramp = XR_UBER_Sample(UBER_T(_ToonRamp), uv * st.xy + st.zw + UBER_V(_ToonRampPan).xy * c.time,
+            dx * st.xy, dy * st.xy, vec4(1.0)).rgb;
+        vec3 ramped = mix(vec3(1.0), ramp, clamp(strength * mask, 0.0, 1.0));
+        vec3 shadow = shadowColor * mix(ambient, base * ramped * radiance, clamp(UBER_F(_LightingIgnoreAmbientColor), 0.0, 1.0));
+        color = mix(shadowColor * ambient, mix(shadow, base * radiance, ramped), mix(1.0, visibility, strength));
+    }
+    else
+    {
+        float band = 1.0;
+        if (mode == 2)
+        {
+            float wrapped = nl + UBER_F(_LightingWrappedWrap);
+            if (UBER_F(_LightingWrappedNormalization) > 0.5) wrapped /= max(1.0 + UBER_F(_LightingWrappedWrap), 1.0e-6);
+            band = smoothstep(UBER_F(_LightingGradientStart), UBER_F(_LightingGradientEnd), clamp(wrapped, 0.0, 1.0));
+        }
+        else if (mode == 5) band = UBER_F(_ForceFlatRampedLightmap) > 0.5 ? step(0.5, map) : 1.0;
+        else band = smoothstep(UBER_F(_ShadowBorder) - UBER_F(_ShadowBlur), UBER_F(_ShadowBorder) + UBER_F(_ShadowBlur), map);
+        vec3 lit = mode == 5 ? radiance * band : mix(radiance * shadowColor, radiance, band);
+        float engineShadow = clamp(visibility * mask, 0.0, 1.0);
+        color = base * lit * mix(1.0, engineShadow, strength) * mix(shadowColor, vec3(1.0), mix(1.0, clamp(band * engineShadow, 0.0, 1.0), strength)) + ambient;
+    }
+    if (UBER_F(_LightingCapEnabled) > 0.5) color = min(color, base * UBER_F(_LightingCap));
+    float luminance = XR_UBER_Luminance(color);
+    if (luminance < UBER_F(_LightingMinLightBrightness)) color *= UBER_F(_LightingMinLightBrightness) / max(luminance, 1.0e-6);
+    return mix(color, base * XR_UBER_Luminance(color), UBER_F(_LightingMonochromatic));
+}
+
+vec3 XR_UBER_Specular(vec3 N, vec3 V, vec3 L, vec3 tangent, vec3 radiance, vec3 tint, float mask)
+{
+    float strength = UBER_I(_PBRMochiePackedMasksEnabled) != 0
+        ? mask : UBER_F(_SpecularStrength) * mask * mask;
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_SPECULAR) || strength <= 0.0) return vec3(0.0);
+    vec3 H = normalize(L + V);
+    float nh = clamp(dot(N, H), 0.0, 1.0), nl = clamp(dot(N, L), 0.0, 1.0);
+    float smoothness = clamp(UBER_F(_SpecularSmoothness), 0.0, 1.0);
+    float highlight = pow(nh, mix(8.0, 256.0, smoothness));
+    if (UBER_I(_SpecularType) == 1)
+    {
+        float size = mix(0.35, 0.98, smoothness), feather = mix(0.08, 0.005, smoothness);
+        highlight = smoothstep(size - feather, size + feather, nh);
+    }
+    else if (UBER_I(_SpecularType) == 2)
+    {
+        float th = dot(tangent, H);
+        highlight = pow(sqrt(max(0.0, 1.0 - th * th)), mix(8.0, 128.0, smoothness));
+    }
+    return tint * radiance * highlight * nl * strength * mix(0.5, 2.0, clamp(UBER_F(_StylizedSpecular), 0.0, 1.0));
+}
+
+vec3 XR_UBER_AdvancedPbr(XRUberCoordinates c, vec3 N, vec3 V, vec3 L, vec3 tangent,
+    vec3 bitangent, vec3 lightColor, float lightMap, vec3 specularColor, vec3 color, inout vec3 emission)
+{
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_PBR)) return color;
+    vec3 H = normalize(L + V);
+    float rotation = UBER_F(_AnisotropyRotation) * 6.28318530718;
+    vec3 aniso = tangent * cos(rotation) + bitangent * sin(rotation);
+    float anisoSpec = pow(clamp(dot(N, normalize(H + aniso * UBER_F(_Anisotropy))), 0.0, 1.0), mix(8.0, 256.0, clamp(UBER_F(_SpecularSmoothness), 0.0, 1.0)));
+    float spec2 = pow(clamp(dot(N, H), 0.0, 1.0), mix(4.0, 512.0, clamp(UBER_F(_Specular2Smoothness), 0.0, 1.0))) * UBER_F(_Specular2Strength);
+    color += (UBER_V(_Specular2Color).rgb * spec2 + specularColor * anisoSpec * abs(UBER_F(_Anisotropy))) * lightColor;
+    color += pow(clamp(dot(N, H), 0.0, 1.0), mix(16.0, 1024.0, clamp(UBER_F(_ClearCoatSmoothness), 0.0, 1.0))) * clamp(dot(N, L), 0.0, 1.0) * UBER_F(_ClearCoat);
+    vec3 direction = reflect(-V, N);
+    if (UBER_I(_CubeMapUvMode) == 0) direction = -V;
+    else if (UBER_I(_CubeMapUvMode) == 2 || UBER_I(_CubeMapUvMode) == 3) direction = N;
+    direction.z *= UBER_F(_CubeMapCoordinateZSign);
+    float cubeRoughness = 1.0 - clamp(UBER_F(_CubeMapSmoothness), 0.0, 1.0);
+    vec4 cube = XR_UBER_Cube(UBER_T(_CubeMap), direction, cubeRoughness * cubeRoughness * 8.0);
+    vec3 environment = cube.rgb * UBER_V(_CubeMapColor).rgb * max(UBER_F(_CubeMapStrength), 0.0);
+    float mask = UBER_SAMPLE(c, _CubeMapMask, vec4(1.0))[clamp(UBER_I(_CubeMapMaskChannel), 0, 3)];
+    mask = mix(mask, 1.0 - mask, clamp(UBER_F(_CubeMapMaskInvert), 0.0, 1.0));
+    mask *= mix(1.0, clamp(lightMap, 0.0, 1.0), clamp(UBER_F(_CubeMapLightMask), 0.0, 1.0));
+    float alpha = clamp(mask * cube.a * UBER_F(_CubeMapBlendAmount), 0.0, 1.0);
+    if (UBER_I(_CubeMapBlendType) == 1) color *= mix(vec3(1.0), environment, alpha);
+    else if (UBER_I(_CubeMapBlendType) == 2) color += environment * alpha;
+    else color = mix(color, environment, alpha);
+    emission += environment * max(UBER_F(_CubeMapEmissionStrength), 0.0) * mask * cube.a;
+    float rim = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), mix(0.25, 16.0, clamp(UBER_F(_RimEnviroSharpness), 0.0, 1.0)));
+    color += environment * smoothstep(1.0 - UBER_F(_RimEnviroWidth), 1.0, rim) * UBER_F(_RimEnviroIntensity);
+    color += UBER_V(_BacklightColor).rgb * clamp(dot(-N, L), 0.0, 1.0) * UBER_SAMPLE(c, _BacklightMask, vec4(1.0)).r * UBER_F(_BacklightStrength);
+    return color;
+}
+#endif

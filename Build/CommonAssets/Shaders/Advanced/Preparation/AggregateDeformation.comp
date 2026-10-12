@@ -56,8 +56,8 @@ struct PackedVertex
     uint Custom0;
     uint SourceVertex;
     uint Flags;
-    uint Reserved0;
-    uint Reserved1;
+    uint TexCoord2Half;
+    uint TexCoord3Half;
     uint Reserved2;
     uint Reserved3;
 };

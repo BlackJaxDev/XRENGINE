@@ -172,7 +172,10 @@ internal sealed partial class VulkanFrameLoop
             request.RequiresMaterialSurfaceExports,
             request.SuppressBaselineDiffuse,
             request.MsaaSampleCount,
-            request.HasAuthoredBackground);
+            request.HasAuthoredBackground)
+        {
+            RenderTimeSeconds = request.RenderTimeSeconds,
+        };
         if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster)
         {
             if (!TryCaptureDirectionalShadowLane(

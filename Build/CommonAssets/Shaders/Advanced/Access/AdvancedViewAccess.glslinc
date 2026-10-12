@@ -72,7 +72,7 @@ XRAdvancedViewRecord XR_ADV_LoadView(uint denseIndex)
     result.sourceCameraIdentityLo = XR_ADV_Views.records[denseIndex].sourceCameraIdentityLo;
     result.sourceCameraIdentityHi = XR_ADV_Views.records[denseIndex].sourceCameraIdentityHi;
     result.cullingLayerMask = XR_ADV_Views.records[denseIndex].cullingLayerMask;
-    result.sourceCameraIdentityPadding1 = XR_ADV_Views.records[denseIndex].sourceCameraIdentityPadding1;
+    result.renderTimeBits = XR_ADV_Views.records[denseIndex].renderTimeBits;
     return result;
 }
 

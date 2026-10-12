@@ -1543,7 +1543,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     private static AdvancedSharedGpuSceneCapacityProfile CreateCapacityProfile(uint capacity)
     {
-        uint materialLayoutCapacity = 4u;
+        uint materialLayoutCapacity = 6u;
         uint materialLayoutMemberCapacity = checked((uint)(
             MaterialBindingLayouts.OpaqueDeferred.PackedMembers.Count +
             MaterialBindingLayouts.OpaqueDeferred.Textures.Count +
@@ -1552,24 +1552,31 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             MaterialBindingLayouts.MaskedForward.PackedMembers.Count +
             MaterialBindingLayouts.MaskedForward.Textures.Count +
             MaterialBindingLayouts.ProjectiveMirror.PackedMembers.Count +
-            MaterialBindingLayouts.ProjectiveMirror.Textures.Count));
+            MaterialBindingLayouts.ProjectiveMirror.Textures.Count +
+            NativeUberMaterialSchema.Opaque.PackedMembers.Count +
+            NativeUberMaterialSchema.Opaque.Textures.Count +
+            NativeUberMaterialSchema.Masked.PackedMembers.Count +
+            NativeUberMaterialSchema.Masked.Textures.Count));
         uint maximumConstantWords = Math.Max(
             MaterialBindingLayouts.OpaqueDeferred.RowWordCount,
             Math.Max(
                 MaterialBindingLayouts.ForwardOpaque.RowWordCount,
                 Math.Max(
                     MaterialBindingLayouts.MaskedForward.RowWordCount,
-                    MaterialBindingLayouts.ProjectiveMirror.RowWordCount)));
+                    Math.Max(MaterialBindingLayouts.ProjectiveMirror.RowWordCount,
+                        NativeUberMaterialSchema.Opaque.RowWordCount))));
         uint maximumTextureBindings = checked((uint)Math.Max(
             MaterialBindingLayouts.OpaqueDeferred.Textures.Count,
             Math.Max(
                 MaterialBindingLayouts.ForwardOpaque.Textures.Count,
                 Math.Max(
                     MaterialBindingLayouts.MaskedForward.Textures.Count,
-                    MaterialBindingLayouts.ProjectiveMirror.Textures.Count))));
+                    Math.Max(MaterialBindingLayouts.ProjectiveMirror.Textures.Count,
+                        NativeUberMaterialSchema.TextureRoleCount)))));
         uint materialConstantWords = checked(capacity * maximumConstantWords);
         uint materialTextureBindings = checked(capacity * maximumTextureBindings);
-        uint materialResourceReferences = checked(capacity * (maximumTextureBindings + AdvancedEngineSurfaceRecord.RoleCount));
+        uint materialResourceReferences = checked(capacity *
+            (maximumTextureBindings + AdvancedEngineSurfaceRecord.RoleCount + AdvancedUberBaseSurfaceRecord.RoleCount));
 
         return new(
             new AdvancedGpuSceneCapacityProfile(

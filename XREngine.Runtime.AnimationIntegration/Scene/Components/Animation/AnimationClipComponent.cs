@@ -88,6 +88,7 @@ namespace XREngine.Components.Animation
         private float _effectiveHumanoidSamplePhase;
 
         private AnimationClip? _animation;
+        private AnimationClip? _playbackAnimation;
         public AnimationClip? Animation
         {
             get => _animation;
@@ -274,8 +275,8 @@ namespace XREngine.Components.Animation
             if (!TryBeginPlayback())
                 return;
 
-            AnimationClip clip = Animation!;
             EnsureInitialized();
+            AnimationClip clip = _playbackAnimation!;
             PrimePlaybackAtInitialTime(clip);
             CompletePlaybackStartup();
         }
@@ -301,8 +302,7 @@ namespace XREngine.Components.Animation
                     return true;
                 }
 
-                AnimationClip? clip = Animation;
-                if (clip is null)
+                if (Animation is null)
                 {
                     _deferredStartPending = false;
                     return true;
@@ -332,7 +332,7 @@ namespace XREngine.Components.Animation
 
                     case 2:
                         using (RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.DeferredStart.PrimePropertyAnimations"))
-                            PrimePlaybackAtInitialTime(clip);
+                            PrimePlaybackAtInitialTime(_playbackAnimation!);
 
                         stage++;
                         return false;
@@ -406,8 +406,8 @@ namespace XREngine.Components.Animation
             _isPaused = false;
             ClearHumanoidAnimationIKSolverGoals();
 
-            if (Animation is not null)
-                StopAllPropertyAnimations(Animation);
+            if (_playbackAnimation is not null)
+                StopAllPropertyAnimations(_playbackAnimation);
 
             if (_initialized)
                 RestoreAnimatedState();
@@ -426,6 +426,7 @@ namespace XREngine.Components.Animation
 
             if (_initialized)
                 Deinitialize();
+            _playbackAnimation = null;
         }
 
         private void RestoreAnimatedState()
@@ -692,13 +693,17 @@ namespace XREngine.Components.Animation
 
         private void EnsureInitialized()
         {
-            if (_initialized || Animation?.RootMember is null)
+            if (_initialized || Animation is null)
+                return;
+
+            _playbackAnimation ??= Animation.CreatePlaybackInstance();
+            if (_playbackAnimation.RootMember is null)
                 return;
 
             _animatedMembers.Clear();
             _baselineMethodArguments.Clear();
             _animatedQuaternionTargets.Clear();
-            InitializeMembers(Animation.RootMember, this, _animatedMembers, _animatedQuaternionTargets);
+            InitializeMembers(_playbackAnimation.RootMember, this, _animatedMembers, _animatedQuaternionTargets);
             _animatedMembersSnapshot = [.. _animatedMembers];
             _animatedQuaternionTargetsSnapshot = [.. _animatedQuaternionTargets];
 
@@ -1170,7 +1175,7 @@ namespace XREngine.Components.Animation
             out ImportedHumanoidProjectionFootGoals footGoals)
         {
             _projectionPoseScratch.Clear();
-            Animation?.PublishImportedHumanoidProjectionMusclesAtTime(
+            _playbackAnimation?.PublishImportedHumanoidProjectionMusclesAtTime(
                 timeSeconds,
                 _projectionPoseScratch);
             footGoals = _projectionPoseScratch.FootGoals;
@@ -1188,7 +1193,7 @@ namespace XREngine.Components.Animation
             out ImportedHumanoidProjectionFootGoals footGoals)
         {
             _projectionPoseScratch.Clear();
-            Animation?.PublishImportedHumanoidProjectionMusclesAtTime(
+            _playbackAnimation?.PublishImportedHumanoidProjectionMusclesAtTime(
                 StopwatchTicksToSeconds(_effectiveSampleTimeTicks),
                 _projectionPoseScratch);
             footGoals = _projectionPoseScratch.FootGoals;

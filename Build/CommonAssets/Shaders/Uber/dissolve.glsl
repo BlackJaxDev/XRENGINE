@@ -2,6 +2,7 @@
 
 #ifndef TOON_DISSOLVE_GLSL
 #define TOON_DISSOLVE_GLSL
+#include "source_dissolve.glsl"
 
 // ============================================
 // Dissolve Uniforms (defined in uniforms.glsl)
@@ -152,6 +153,32 @@ vec3 calculateDissolve(vec2 noiseBaseUV, vec2 detailBaseUV, vec2 maskBaseUV, vec
 // ============================================
 // Modifies color and emission, returns true if fragment should be discarded
 bool applyDissolve(vec2 noiseUV, vec2 detailUV, vec2 maskUV, vec2 edgeBaseUV, vec3 worldPos, vec3 localPos, inout vec3 color, inout vec3 emission, inout float alpha) {
+    if (int(_DissolveType) == 5) {
+        float sourceTime = u_Time * 0.05;
+        float noise = texture(_DissolveNoiseTexture, noiseUV * _DissolveNoiseTexture_ST.xy +
+            _DissolveNoiseTexture_ST.zw + _DissolveNoiseTexturePan * sourceTime).r;
+        vec2 detailUVTransformed = detailUV * _DissolveDetailNoise_ST.xy +
+            _DissolveDetailNoise_ST.zw + _DissolveDetailNoisePan * sourceTime;
+        float detail = texture(_DissolveDetailNoise, detailUVTransformed).r;
+        vec2 maskUVTransformed = maskUV * _DissolveMask_ST.xy +
+            _DissolveMask_ST.zw + _DissolveMaskPan * sourceTime;
+        float mask = texture(_DissolveMask, maskUVTransformed).r;
+        if (_DissolveMaskInvert > 0.5) mask = 1.0 - mask;
+        vec3 result = xrSourceBasicDissolve(noise, detail, mask, _DissolveProgress,
+            _DissolveEdgeWidth, _DissolveDetailStrength, _DissolveInvert,
+            _SourceDissolveParams, u_Time);
+        vec2 dissolvedUV = edgeBaseUV * _DissolveEdgeTexture_ST.xy +
+            _DissolveEdgeTexture_ST.zw + _DissolveEdgeTexturePan * sourceTime;
+        vec4 dissolvedColor = texture(_DissolveEdgeTexture, dissolvedUV) * _DissolveTextureColor;
+        color = mix(color, dissolvedColor.rgb, result.x * 0.999999);
+        alpha = mix(alpha, dissolvedColor.a, result.x * 0.999999);
+        vec2 gradientUV = vec2(result.y) * _DissolveEdgeGradient_ST.xy + _DissolveEdgeGradient_ST.zw;
+        vec3 edge = texture(_DissolveEdgeGradient, gradientUV).rgb * _DissolveEdgeColor.rgb;
+        color = mix(color, edge, result.z);
+        emission += dissolvedColor.rgb * _DissolveToEmissionStrength * result.x +
+            edge * _DissolveEdgeEmission * result.z;
+        return false;
+    }
     vec3 dissolveResult = calculateDissolve(noiseUV, detailUV, maskUV, worldPos, localPos);
     float dissolveAlpha = dissolveResult.x;
     float edgeFactor = dissolveResult.y;

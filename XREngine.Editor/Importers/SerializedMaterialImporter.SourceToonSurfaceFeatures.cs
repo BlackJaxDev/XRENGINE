@@ -36,8 +36,12 @@ public static partial class SerializedMaterialImporter
         SetFloat(material, "_ColorMaskEnabled", HasExternalTexture(document, "_ColorMask") ? 1.0f : 0.0f);
 
         BindExactSurfaceParameters(material, document);
+        BindSourceToonGlitter(material, document);
+        BindSourceToonDissolve(material, document, diagnostics);
+        MapInt(document, material, "_RimLightColorThemeIndex", "_RimLightColorThemeIndex");
         BindCompositeSurfaceParameters(material, document);
         BindSurfaceFeatureTextures(material, document, resolver, diagnostics, warnings);
+        BindSourceToonNormalMetadata(material);
         BindSurfaceCubemap(material, document, resolver, diagnostics, warnings);
         WarnForDeferredSurfaceAdapters(document, warnings);
     }
@@ -202,7 +206,9 @@ public static partial class SerializedMaterialImporter
                 $"_DecalBlendParams{slot}",
                 new Vector4(
                     GetInt(document, $"_DecalBlendType{suffix}"),
-                    GetFloat(document, $"_DecalBlendAlpha{suffix}", 1.0f),
+                    document.TryGetPositive($"_DecalEnabled{suffix}")
+                        ? GetFloat(document, $"_DecalBlendAlpha{suffix}", 1.0f)
+                        : 0.0f,
                     GetFloat(document, $"_DecalAlphaIntensity{suffix}", 1.0f),
                     GetFloat(document, $"_DecalEmissionStrength{suffix}")));
             SetInt(material, $"_DecalUvMode{slot}", GetInt(document, $"_DecalTexture{suffix}UV"));
@@ -261,6 +267,39 @@ public static partial class SerializedMaterialImporter
                 _ => "_Matcap4",
             };
             bool matcapEnabled = document.TryGetPositive($"{matcapPrefix}Enable");
+            if (matcapEnabled)
+            {
+                SetFloat(material, "_SourceMatcap", 1.0f);
+                // A zero hue shift with zero speed is neutral in shift mode.
+                if (document.TryGetPositive($"{matcapPrefix}HueShiftEnabled") &&
+                    (GetFloat(document, $"{matcapPrefix}HueShift") != 0.0f ||
+                     GetFloat(document, $"{matcapPrefix}HueShiftSpeed") != 0.0f ||
+                     GetInt(document, $"{matcapPrefix}HueSelectOrShift", 1) != 1))
+                    throw new SourceVisualImportException($"Source matcap hue conversion is not supported on '{document.Name}'.");
+                foreach (string unsupported in new[] { "ApplyToAlphaEnabled", "AlphaOverride", "MaskGlobalMask", "TPSDepthEnabled" })
+                {
+                    if (document.TryGetPositive($"{matcapPrefix}{unsupported}"))
+                        throw new SourceVisualImportException($"Source matcap option '{matcapPrefix}{unsupported}' is enabled on '{document.Name}'.");
+                }
+                if (Math.Abs(GetFloat(document, $"{matcapPrefix}Rotation")) > 0.0001f ||
+                    document.TryGetPositive($"_Matcap{slot}CircleMaskEnabled") ||
+                    document.TryGetPositive($"_Matcap{slot}CustomNormal") ||
+                    document.TryGetPositive($"_Matcap{slot}ALEnabled"))
+                    throw new SourceVisualImportException($"A source matcap rotation, circle mask, custom normal, or AudioLink option is enabled on '{document.Name}'.");
+                string blendProperty = slot switch
+                {
+                    0 => "_MatCapBlendUV1",
+                    1 => "_MatCap2ndBlendUV1",
+                    2 => "_MatCap3rdBlendUV1",
+                    _ => "_MatCap4thBlendUV1",
+                };
+                if (document.TryGetVector(blendProperty, out Vector4 blendUv) &&
+                    (blendUv.X != 0.0f || blendUv.Y != 0.0f))
+                    throw new SourceVisualImportException($"Source matcap UV blend '{blendProperty}' is enabled on '{document.Name}'.");
+                int projection = GetInt(document, $"{matcapPrefix}UVMode", 1);
+                if (projection < 0 || projection > 2)
+                    throw new SourceVisualImportException($"Source matcap projection '{projection}' is enabled on '{document.Name}'.");
+            }
             SetVector4(
                 material,
                 $"_MatcapSlotParams{slot}",
@@ -287,6 +326,16 @@ public static partial class SerializedMaterialImporter
                     GetFloat(document, $"{matcapPrefix}LightColorMix")));
             SetInt(material, $"_MatcapSlotTheme{slot}", GetInt(document, $"{matcapPrefix}ColorThemeIndex"));
             MapVector4(document, material, $"_MatcapSlotColor{slot}", $"{matcapPrefix}Color");
+            SetVector4(material, $"_MatcapSlotSource{slot}", new Vector4(
+                GetFloat(document, $"{matcapPrefix}Smoothness", 1.0f),
+                GetFloat(document, $"{matcapPrefix}BaseColorMix"),
+                GetFloat(document, $"{matcapPrefix}AddToLight"),
+                GetFloat(document, $"{matcapPrefix}MaskSmoothnessApply")));
+            SetVector4(material, $"_MatcapSlotMask{slot}", new Vector4(
+                GetInt(document, $"{matcapPrefix}MaskChannel"),
+                GetFloat(document, $"{matcapPrefix}MaskInvert"),
+                GetInt(document, $"{matcapPrefix}MaskSmoothnessChannel", 3),
+                GetInt(document, $"{matcapPrefix}MaskUV")));
         }
 
         MapVector4(document, material, "_Rim2Color", "_Rim2Color", "_Rim2LightColor");

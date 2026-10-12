@@ -148,7 +148,8 @@ internal sealed class VulkanPreparedFrameRecording
             package,
             packageGeneration,
             hasAuthoringViews: false,
-            authoringViews: default);
+            authoringViews: default,
+            renderTimeSeconds: 0f);
 
     /// <summary>
     /// Captures package-owned scene data while replacing only its view rows with
@@ -160,24 +161,29 @@ internal sealed class VulkanPreparedFrameRecording
     internal void CaptureGlobalResourcesWithAuthoringViews(
         BackendReadyFramePackage package,
         ulong packageGeneration,
-        in RenderFrameViewSet authoringViews)
+        in RenderFrameViewSet authoringViews,
+        float renderTimeSeconds)
         => CaptureGlobalResourcesCore(
             package,
             packageGeneration,
             hasAuthoringViews: true,
-            in authoringViews);
+            in authoringViews,
+            renderTimeSeconds);
 
     private void CaptureGlobalResourcesCore(
         BackendReadyFramePackage package,
         ulong packageGeneration,
         bool hasAuthoringViews,
-        in RenderFrameViewSet authoringViews)
+        in RenderFrameViewSet authoringViews,
+        float renderTimeSeconds)
     {
         ArgumentNullException.ThrowIfNull(package);
         if (IsFrozen || packageGeneration == 0u)
             throw new InvalidOperationException("Global resources must be captured before prepared-frame freeze.");
         if (hasAuthoringViews)
         {
+            if (!float.IsFinite(renderTimeSeconds))
+                throw new VulkanPlanPreconditionException("Authoring-owned canonical views require finite frozen render time.");
             if (authoringViews.ViewCount < 1 ||
                 authoringViews.ViewCount > RenderFrameViewSet.MaxViewCount)
             {
@@ -197,7 +203,7 @@ internal sealed class VulkanPreparedFrameRecording
                 RenderFrameViewDescriptor view = authoringViews.GetView(index);
                 _globalViews[index] = package.ApplyCanonicalViewPolicy(BackendReadyFramePackage.CreateCanonicalViewRecord(
                     in view,
-                    viewGeneration));
+                    viewGeneration)) with { RenderTimeSeconds = renderTimeSeconds };
             }
             _globalViewCount = authoringViews.ViewCount;
         }

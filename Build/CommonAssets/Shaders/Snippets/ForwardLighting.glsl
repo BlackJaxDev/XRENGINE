@@ -928,7 +928,7 @@ vec3 XRENGINE_GetForwardAmbientFallback(vec3 albedo, vec3 diffuseAO)
     return XRENGINE_ResolveForwardAmbientFallback() * albedo * diffuseAO;
 }
 
-vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 viewDir, vec3 rms, float ambientOcclusion)
+vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 viewDir, vec3 rms, float ambientOcclusion, float reflectionStrength)
 {
     float roughness = rms.x;
     float metallic = rms.y;
@@ -1007,8 +1007,13 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
     vec2 brdfValue = texture(BRDF, vec2(NoV, roughness)).rg;
     vec3 diffuse = GlobalAmbient * irradianceColor * albedo;
     vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
-    return kD * diffuse * diffuseAO + specular * specularOcclusion;
+    return kD * diffuse * diffuseAO + specular * specularOcclusion * reflectionStrength;
 #endif
+}
+
+vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 viewDir, vec3 rms, float ambientOcclusion)
+{
+    return XRENGINE_CalculateAmbientPbr(normal, fragPos, albedo, viewDir, rms, ambientOcclusion, 1.0);
 }
 
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS

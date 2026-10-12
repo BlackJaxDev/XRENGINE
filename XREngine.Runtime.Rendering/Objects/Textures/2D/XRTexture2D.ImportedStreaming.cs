@@ -386,15 +386,11 @@ public partial class XRTexture2D
         texture.TrackStreamingResidentMipmaps(residentData.Mipmaps);
         texture.AutoGenerateMipmaps = false;
         texture.Resizable = false;
-        texture.SizedInternalFormat = residentData.SizedInternalFormat;
+        texture.SizedInternalFormat = ResolveImportedResidentFormat(texture, residentData.SizedInternalFormat);
         texture.LargestMipmapLevel = 0;
         texture.SmallestAllowedMipmapLevel = includeMipChain && residentData.Mipmaps.Length > 0
             ? residentData.Mipmaps.Length - 1
             : 0;
-        texture.MinFilter = includeMipChain && residentData.Mipmaps.Length > 1
-            ? ETexMinFilter.LinearMipmapLinear
-            : ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
         texture.PublishCanonicalSourceContentMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
@@ -456,17 +452,13 @@ public partial class XRTexture2D
         texture.Mipmaps = residentData.Mipmaps;
         texture.TrackStreamingResidentMipmaps(residentData.Mipmaps);
         texture.Resizable = false;
-        texture.SizedInternalFormat = residentData.SizedInternalFormat;
+        texture.SizedInternalFormat = ResolveImportedResidentFormat(texture, residentData.SizedInternalFormat);
         texture.ApplyImportedTextureStreamingMipRangeMetadata(
             autoGenerateMipmaps: false,
             largestMipmapLevel: 0,
             smallestAllowedMipmapLevel: includeMipChain && residentData.Mipmaps.Length > 0
                 ? residentData.Mipmaps.Length - 1
                 : 0);
-        texture.MinFilter = includeMipChain && residentData.Mipmaps.Length > 1
-            ? ETexMinFilter.LinearMipmapLinear
-            : ETexMinFilter.Linear;
-        texture.MagFilter = ETexMagFilter.Linear;
         texture.PublishCanonicalSourceContentMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
@@ -483,6 +475,18 @@ public partial class XRTexture2D
             }
         }
     }
+
+    private static ESizedInternalFormat ResolveImportedResidentFormat(
+        XRTexture2D texture,
+        ESizedInternalFormat decodedFormat)
+        => (texture.ImportedColorSpace, decodedFormat) switch
+        {
+            (ETextureColorSpace.Srgb, ESizedInternalFormat.Rgb8) => ESizedInternalFormat.Srgb8,
+            (ETextureColorSpace.Srgb, ESizedInternalFormat.Rgba8) => ESizedInternalFormat.Srgb8Alpha8,
+            (ETextureColorSpace.Linear, ESizedInternalFormat.Srgb8) => ESizedInternalFormat.Rgb8,
+            (ETextureColorSpace.Linear, ESizedInternalFormat.Srgb8Alpha8) => ESizedInternalFormat.Rgba8,
+            _ => decodedFormat,
+        };
 
     internal static uint GetPreviewResidentSize(uint sourceMaxDimension)
         => sourceMaxDimension == 0

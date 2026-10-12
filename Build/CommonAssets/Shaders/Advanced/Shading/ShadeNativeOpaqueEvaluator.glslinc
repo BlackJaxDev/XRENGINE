@@ -209,6 +209,8 @@ vec3 XR_ADV_EvaluateLight(
     return result;
 }
 
+#include "Advanced/Shading/ShadeNativeUber.glslinc"
+
 void XR_ADV_EvaluateNativeOpaqueSample(
     uvec2 pixel,
     uint viewIndex,
@@ -279,6 +281,11 @@ void XR_ADV_EvaluateNativeOpaqueSample(
 
     XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
     XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+    if (XR_UBER_IsMaterial(material))
+    {
+        XR_UBER_Shade(pixel, surface, view, material, ambientOcclusion, result);
+        return;
+    }
     if (XR_ADV_IsProjectiveMirrorMaterial(material))
     {
         vec3 mirrorColor;

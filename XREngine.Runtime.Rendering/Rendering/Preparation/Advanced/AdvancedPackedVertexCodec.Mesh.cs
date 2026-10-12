@@ -25,10 +25,16 @@ public static partial class AdvancedPackedVertexCodec
                 mesh.HasNormals && !HasInterleavedAttribute(buffer, count, stride, mesh.NormalOffset, 3, "Normal") ||
                 mesh.HasTangents && !HasInterleavedAttribute(buffer, count, stride, mesh.TangentOffset, 4, "Tangent"))
                 return false;
-            for (uint channel = 0; channel < Math.Min(mesh.TexCoordCount, 2u); channel++)
+            for (uint channel = 0; channel < Math.Min(mesh.TexCoordCount, 4u); channel++)
                 if (!HasInterleavedAttribute(buffer, count, stride,
                     mesh.TexCoordOffset is { } uvOffset ? (ulong)uvOffset + channel * 8u : null,
-                    2, channel == 0 ? "TexCoord0" : "TexCoord1"))
+                    2, channel switch
+                    {
+                        0 => "TexCoord0",
+                        1 => "TexCoord1",
+                        2 => "TexCoord2",
+                        _ => "TexCoord3",
+                    }))
                     return false;
             for (uint channel = 0; channel < Math.Min(mesh.ColorCount, 2u); channel++)
                 if (!HasInterleavedAttribute(buffer, count, stride,
@@ -41,7 +47,7 @@ public static partial class AdvancedPackedVertexCodec
             mesh.HasNormals && !HasReadableStream(mesh.NormalsBuffer, count, 3) ||
             mesh.HasTangents && !HasReadableStream(mesh.TangentsBuffer, count, 4))
             return false;
-        for (int channel = 0; channel < Math.Min(mesh.TexCoordCount, 2u); channel++)
+        for (int channel = 0; channel < Math.Min(mesh.TexCoordCount, 4u); channel++)
             if (mesh.TexCoordBuffers is not { } coordinates || channel >= coordinates.Length ||
                 !HasReadableStream(coordinates[channel], count, 2))
                 return false;

@@ -471,28 +471,31 @@ internal static class NativeFbxSceneImporter
     private static Dictionary<long, FbxIntermediateMaterial[]> BuildMaterialsByModelObjectId(FbxSemanticDocument semantic)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
-        Dictionary<long, List<FbxIntermediateMaterial>> materialsByModelObjectId = new();
-        IReadOnlyList<FbxIntermediateMaterial> materials = semantic.IntermediateScene.Materials;
-        for (int materialIndex = 0; materialIndex < materials.Count; materialIndex++)
-        {
-            FbxIntermediateMaterial material = materials[materialIndex];
-            for (int modelIndex = 0; modelIndex < material.ModelObjectIds.Count; modelIndex++)
-            {
-                long modelObjectId = material.ModelObjectIds[modelIndex];
-                if (!materialsByModelObjectId.TryGetValue(modelObjectId, out List<FbxIntermediateMaterial>? nodeMaterials))
-                {
-                    nodeMaterials = [];
-                    materialsByModelObjectId[modelObjectId] = nodeMaterials;
-                }
+        Dictionary<long, FbxIntermediateMaterial> materialsByObjectId = new();
+        foreach (FbxIntermediateMaterial material in semantic.IntermediateScene.Materials)
+            materialsByObjectId.Add(material.ObjectId, material);
 
-                nodeMaterials.Add(material);
-            }
+        Dictionary<long, List<FbxIntermediateMaterial>> materialsByModelObjectId = new();
+        foreach (FbxConnection connection in semantic.Connections)
+        {
+            if (connection.Kind != FbxConnectionKind.ObjectToObject ||
+                connection.Source.Id is not long materialObjectId ||
+                connection.Destination.Id is not long modelObjectId ||
+                !materialsByObjectId.TryGetValue(materialObjectId, out FbxIntermediateMaterial? material) ||
+                !semantic.TryGetObject(modelObjectId, out FbxSceneObject modelObject) ||
+                modelObject.Category != FbxObjectCategory.Model)
+                continue;
+
+            if (!materialsByModelObjectId.TryGetValue(modelObjectId, out List<FbxIntermediateMaterial>? nodeMaterials))
+                materialsByModelObjectId[modelObjectId] = nodeMaterials = [];
+            if (nodeMaterials.Any(item => item.ObjectId == materialObjectId))
+                throw new InvalidDataException($"FBX model '{modelObject.DisplayName}' connects material '{material.Name}' more than once.");
+            nodeMaterials.Add(material);
         }
 
         Dictionary<long, FbxIntermediateMaterial[]> results = new(materialsByModelObjectId.Count);
         foreach ((long modelObjectId, List<FbxIntermediateMaterial> nodeMaterials) in materialsByModelObjectId)
         {
-            nodeMaterials.Sort(static (left, right) => left.ObjectIndex.CompareTo(right.ObjectIndex));
             results[modelObjectId] = [.. nodeMaterials];
         }
 
@@ -704,6 +707,8 @@ internal static class NativeFbxSceneImporter
                         Name = chunks.Count == 1 ? mesh.Name : $"{mesh.Name} {chunkIndex}",
                         RootTransform = rootTransform,
                         RootBone = ResolveRootBone(xrMesh),
+                        ImportedSourceMaterialSlot = materialSlot,
+                        ImportedSourceMaterialName = materialSlot < nodeMaterials.Count ? nodeMaterials[materialSlot].Name : null,
                     };
                     UpdateSkinnedSubMeshCullingBoundsForRuntimeBasis(subMesh, xrMesh, meshWorldMatrix, rootTransform);
 
@@ -1418,11 +1423,15 @@ internal static class NativeFbxSceneImporter
             {
                 semantic.TryGetObject(intermediateMaterial.ObjectId, out FbxSceneObject sceneMaterial);
                 string materialName = sceneMaterial?.DisplayName ?? intermediateMaterial.Name;
-                bool transparentBlendHint = ShouldUseTransparentBlend(sceneMaterial);
-
-                List<TextureSlot> textureSlots = BuildTextureSlots(semantic, intermediateMaterial.ObjectId, transparentBlendHint);
-                material = importer.MaterialFactory(sourceFilePath, materialName, textureSlots, 0, ShadingMode.Phong, []);
-                ApplyMaterialPropertyOverrides(material, sceneMaterial, textureSlots.Count == 0);
+                if (importer.ResolveMaterialRemap(materialName) is { } remapped)
+                    material = remapped;
+                else
+                {
+                    bool transparentBlendHint = ShouldUseTransparentBlend(sceneMaterial);
+                    List<TextureSlot> textureSlots = BuildTextureSlots(semantic, intermediateMaterial.ObjectId, transparentBlendHint);
+                    material = importer.MaterialFactory(sourceFilePath, materialName, textureSlots, 0, ShadingMode.Phong, []);
+                    ApplyMaterialPropertyOverrides(material, sceneMaterial, textureSlots.Count == 0);
+                }
             }
             else
             {

@@ -419,7 +419,8 @@ void uberApplyEmissionSlots(inout FragmentData fragData, ToonMesh mesh)
 
 vec2 uberMatcapUv(ToonMesh mesh, vec4 parameters, vec4 projection)
 {
-    vec3 normal = normalize(mix(mesh.vertexNormal, mesh.worldNormal, saturate(parameters.w)));
+    vec3 normal = mix(mesh.vertexNormal, mesh.worldNormal, saturate(parameters.w));
+    if (_SourceMatcap <= 0.5) normal = normalize(normal);
     int uvMode = int(projection.z + 0.5);
     float border = max(projection.y, 0.0);
 
@@ -436,6 +437,13 @@ vec2 uberMatcapUv(ToonMesh mesh, vec4 parameters, vec4 projection)
         return reflected.xy * border + 0.5;
     }
 
+    if (_SourceMatcap > 0.5)
+    {
+        vec3 detail = (mat3(u_ViewMatrix) * normal) * vec3(-1.0, -1.0, 1.0);
+        vec3 base = (mat3(u_ViewMatrix) * mesh.viewDir) * vec3(-1.0, -1.0, 1.0) + vec3(0.0, 0.0, 1.0);
+        vec3 corrected = base * (dot(base, detail) / base.z) - detail;
+        return corrected.xy * border + 0.5;
+    }
     vec3 viewNormal = normalize(mat3(u_ViewMatrix) * normal);
     return viewNormal.xy * border + 0.5;
 }
@@ -447,19 +455,43 @@ vec4 uberMatcapSlot(
     int themeIndex,
     vec4 parameters,
     vec4 projection,
+    vec4 sourceOptions,
+    vec4 maskOptions,
+    vec4 sourceSt,
+    vec2 sourcePan,
+    vec4 maskSt,
+    vec2 maskPan,
     ToonMesh mesh,
     ToonLight light,
-    inout vec3 emission)
+    vec3 baseColor,
+    inout vec3 emission,
+    inout vec3 lightAdd)
 {
     vec2 uv = uberMatcapUv(mesh, parameters, projection);
-    vec4 sampleColor = texture(source, uv);
+    bool sourceMatcap = _SourceMatcap > 0.5;
+    vec4 maskSample = vec4(1.0);
+    if (sourceMatcap)
+    {
+        vec2 maskUv = panUV(transformUV(getUV(int(maskOptions.w + 0.5), mesh), maskSt), maskPan, u_Time * 0.05);
+        maskSample = texture(maskTexture, maskUv);
+        uv = panUV(transformUV(uv, sourceSt), sourcePan, u_Time * 0.05);
+    }
+    float smoothness = clamp(sourceOptions.x, 0.0, 1.0);
+    if (sourceMatcap && sourceOptions.w > 0.5)
+        smoothness *= maskSample[clamp(int(maskOptions.z + 0.5), 0, 3)];
+    float lod = (1.0 - smoothness) * floor(log2(float(max(textureSize(source, 0).x, textureSize(source, 0).y))));
+    vec4 sampleColor = sourceMatcap ? textureLod(source, uv, lod) : texture(source, uv);
     sampleColor.rgb *= uberResolveThemeColor(themeIndex, color.rgb);
     sampleColor.a *= color.a;
-    float mask = texture(maskTexture, getUV(0, mesh)).r;
+    float mask = sourceMatcap ? maskSample[clamp(int(maskOptions.x + 0.5), 0, 3)] : texture(maskTexture, getUV(0, mesh)).r;
+    if (sourceMatcap && maskOptions.y > 0.5) mask = 1.0 - mask;
     mask *= mix(1.0, saturate(light.lightMap), saturate(parameters.y));
     sampleColor.rgb *= mix(vec3(1.0), light.color, saturate(projection.w));
     sampleColor.rgb *= max(parameters.x, 0.0);
+    if (sourceMatcap)
+        sampleColor.rgb = mix(sampleColor.rgb, sampleColor.rgb * baseColor, clamp(sourceOptions.y, 0.0, 1.0));
     mask *= sampleColor.a;
+    if (sourceMatcap) lightAdd += sampleColor.rgb * sourceOptions.z * mask;
     emission += sampleColor.rgb * max(parameters.z, 0.0) * mask;
     return vec4(sampleColor.rgb, mask);
 }
@@ -474,17 +506,19 @@ void uberBlendMatcapSlot(inout vec3 finalColor, vec4 slot, vec4 blend, float mix
     finalColor = mix(finalColor, finalColor + finalColor * slot.rgb, saturate(mixed) * mask);
 }
 
-void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, ToonMesh mesh, ToonLight light)
+void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3 lightAdd, ToonMesh mesh, ToonLight light)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
-    vec4 value0 = uberMatcapSlot(_Matcap0Tex, _Matcap0Mask, _MatcapSlotColor0, _MatcapSlotTheme0, _MatcapSlotParams0, _MatcapSlotExtra0, mesh, light, emission);
-    vec4 value1 = uberMatcapSlot(_Matcap1Tex, _Matcap1Mask, _MatcapSlotColor1, _MatcapSlotTheme1, _MatcapSlotParams1, _MatcapSlotExtra1, mesh, light, emission);
-    vec4 value2 = uberMatcapSlot(_Matcap2Tex, _Matcap2Mask, _MatcapSlotColor2, _MatcapSlotTheme2, _MatcapSlotParams2, _MatcapSlotExtra2, mesh, light, emission);
-    vec4 value3 = uberMatcapSlot(_Matcap3Tex, _Matcap3Mask, _MatcapSlotColor3, _MatcapSlotTheme3, _MatcapSlotParams3, _MatcapSlotExtra3, mesh, light, emission);
-    uberBlendMatcapSlot(finalColor, value0, _MatcapSlotBlend0, _MatcapSlotExtra0.x);
-    uberBlendMatcapSlot(finalColor, value1, _MatcapSlotBlend1, _MatcapSlotExtra1.x);
-    uberBlendMatcapSlot(finalColor, value2, _MatcapSlotBlend2, _MatcapSlotExtra2.x);
-    uberBlendMatcapSlot(finalColor, value3, _MatcapSlotBlend3, _MatcapSlotExtra3.x);
+#define UBER_MATCAP_SLOT(i) \
+    if (_MatcapSlotParams ## i.x > 0.0) { \
+        vec4 value = uberMatcapSlot(_Matcap ## i ## Tex, _Matcap ## i ## Mask, _MatcapSlotColor ## i, _MatcapSlotTheme ## i, _MatcapSlotParams ## i, _MatcapSlotExtra ## i, _MatcapSlotSource ## i, _MatcapSlotMask ## i, _Matcap ## i ## Tex_ST, _Matcap ## i ## TexPan, _Matcap ## i ## Mask_ST, _Matcap ## i ## MaskPan, mesh, light, finalColor, emission, lightAdd); \
+        uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend ## i, _MatcapSlotExtra ## i.x); \
+    }
+    UBER_MATCAP_SLOT(0)
+    UBER_MATCAP_SLOT(1)
+    UBER_MATCAP_SLOT(2)
+    UBER_MATCAP_SLOT(3)
+#undef UBER_MATCAP_SLOT
 #endif
 }
 

@@ -38,4 +38,6 @@ public readonly record struct BackendReadyCanonicalViewRecord(
     public uint ViewMaskHi { get; init; }
     public Vector4 FoveationCenterAndBias { get; init; }
     public Vector4 FoveationRadii { get; init; }
+    /// <summary>Render time frozen with native view authoring.</summary>
+    public float RenderTimeSeconds { get; init; }
 }

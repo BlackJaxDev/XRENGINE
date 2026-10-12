@@ -667,6 +667,7 @@ the target's type and optional persistent ID.
 | `get_loaded_game_types` | List all types loaded from the game DLL plugin: components, menu items, and all exported types grouped by assembly. |
 | `get_material_uniforms` | List all shader uniforms (Parameters) on a material, including names, types, and current values. Target by asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
+| `get_model_material_bindings` | Read model source slots, assigned materials, texture source paths, sampling metadata, and native Uber encoder preflight results. Preflight does not prove GPU execution. Does not decode textures or read GPU pixels. |
 | `get_network_runtime_measurements` | Read high-rate send, receive, pose application, and relay scope counters plus admission and rejection status. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
 | `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
