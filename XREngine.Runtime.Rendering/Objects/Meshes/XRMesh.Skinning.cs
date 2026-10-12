@@ -43,9 +43,8 @@ public partial class XRMesh
         => _ = GetSkinningBoneOrderForPreparation();
 
     /// <summary>
-    /// Returns the bone ordering the canonical buffers index. A bone rebind
-    /// replaces <see cref="UtilizedBones"/> in place of the packed indices, so
-    /// the property, not the published buffer state, is authoritative.
+    /// Returns the bone ordering used by the canonical influence buffers.
+    /// Rebinding publishes the same ordering to the mesh and its buffer snapshot.
     /// </summary>
     internal (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] GetSkinningBoneOrderForPreparation()
         => UtilizedBones;
@@ -327,9 +326,36 @@ public partial class XRMesh
         return false;
     }
 
+    /// <summary>
+    /// Replaces bone references and bind matrices without changing packed influence indices.
+    /// Each entry must retain the meaning of the same slot in the current palette.
+    /// </summary>
+    /// <remarks>
+    /// Use this during import or cloning, before runtime renderers consume the mesh.
+    /// Existing renderers and their cached bounds require a separate rebuild.
+    /// </remarks>
+    public void ReplaceSkinningBoneBindings(ReadOnlySpan<(TransformBase tfm, Matrix4x4 invBindWorldMtx)> bindings)
+    {
+        lock (_skinningBufferPreparationLock)
+        {
+            if (bindings.Length != UtilizedBones.Length)
+                throw new ArgumentException("A binding replacement must preserve the palette length.", nameof(bindings));
+
+            // Own the array so callers cannot modify a published snapshot.
+            ApplySkinningBufferState(CaptureSkinningBufferState() with { UtilizedBones = bindings.ToArray() });
+        }
+    }
+
     public bool RebindSerializedTransformReferences(TransformBase searchRoot, bool remapVertexWeights = true)
     {
         ArgumentNullException.ThrowIfNull(searchRoot);
+
+        lock (_skinningBufferPreparationLock)
+            return RebindSerializedTransformReferencesCore(searchRoot, remapVertexWeights);
+    }
+
+    private bool RebindSerializedTransformReferencesCore(TransformBase searchRoot, bool remapVertexWeights)
+    {
 
         if (!HasSkinning)
             return false;
@@ -370,39 +396,124 @@ public partial class XRMesh
         // Packed influences index UtilizedBones by position, so rebinding the bone
         // table is the whole remap; two source bones that resolve to one bone
         // simply keep two identical palette entries.
-        UtilizedBones = reboundBones;
+        ApplySkinningBufferState(CaptureSkinningBufferState() with { UtilizedBones = reboundBones });
         RuntimeBoneReferenceRemap = remapVertexWeights ? null : remap;
         return true;
     }
 
     /// <summary>
-    /// Replaces this mesh's inverse-bind matrices with the current bind state of its existing
-    /// bone hierarchy without changing bone ordering or packed influence data.
+    /// Updates the inverse-bind matrices after a hierarchy bind change.
+    /// Keeps each palette entry's bind product and packed influence index.
     /// </summary>
     /// <remarks>
-    /// Source importer metadata can provide a more authoritative skeleton pose than generic
-    /// model-node decomposition. Once that pose has been applied and saved on the
-    /// hierarchy, this method keeps the mesh palette and retained CPU vertex weights in the same
-    /// coordinate frame.
+    /// Capture each bone's bind matrix before the hierarchy changes. Save the new bind
+    /// state before calling this method. The mesh keeps its bind-root matrix.
     /// </remarks>
-    public void RebaseSkinningBindPoseToCurrentHierarchy()
+    /// <returns>The largest absolute difference between an old and a new bind product.</returns>
+    public float RebaseSkinningBindPoseToCurrentHierarchy(
+        IReadOnlyDictionary<TransformBase, Matrix4x4> previousBindMatrices)
     {
-        if (!HasSkinning)
-            return;
+        ArgumentNullException.ThrowIfNull(previousBindMatrices);
 
-        var inverseBinds = new Dictionary<TransformBase, Matrix4x4>(
-            UtilizedBones.Length,
-            System.Collections.Generic.ReferenceEqualityComparer.Instance);
-        var rebasedBones = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[UtilizedBones.Length];
-        for (int boneIndex = 0; boneIndex < UtilizedBones.Length; boneIndex++)
+        lock (_skinningBufferPreparationLock)
         {
-            TransformBase bone = UtilizedBones[boneIndex].tfm;
-            Matrix4x4 inverseBind = bone.InverseBindMatrix;
-            inverseBinds[bone] = inverseBind;
-            rebasedBones[boneIndex] = (bone, inverseBind);
-        }
+            if (!HasSkinning)
+                return 0.0f;
 
-        UtilizedBones = rebasedBones;
+            var rebasedBones = new (TransformBase tfm, Matrix4x4 invBindWorldMtx)[UtilizedBones.Length];
+            float maximumProductError = 0.0f;
+            for (int boneIndex = 0; boneIndex < UtilizedBones.Length; boneIndex++)
+            {
+                (TransformBase bone, Matrix4x4 oldInverseBind) = UtilizedBones[boneIndex];
+                if (!previousBindMatrices.TryGetValue(bone, out Matrix4x4 oldBind))
+                    throw new InvalidOperationException(
+                        $"Mesh '{Name}' has no previous bind matrix for palette entry {boneIndex} ('{bone.SceneNode?.Name}').");
+
+                Matrix4x4 newBind = bone.BindMatrix;
+                if (!IsFiniteBindMatrix(oldInverseBind) ||
+                    !IsFiniteBindMatrix(oldBind) ||
+                    !IsFiniteBindMatrix(newBind))
+                    throw new InvalidOperationException(
+                        $"Mesh '{Name}' has a non-finite bind matrix at palette entry {boneIndex} ('{bone.SceneNode?.Name}').");
+
+                if (!Matrix4x4.Invert(newBind, out Matrix4x4 inverseNewBind) ||
+                    !IsFiniteBindMatrix(inverseNewBind))
+                    throw new InvalidOperationException(
+                        $"Mesh '{Name}' has a singular bind matrix at palette entry {boneIndex} ('{bone.SceneNode?.Name}').");
+
+                Matrix4x4 oldProduct = oldInverseBind * oldBind;
+                Matrix4x4 newInverseBind = oldProduct * inverseNewBind;
+                Matrix4x4 newProduct = newInverseBind * newBind;
+                if (!IsFiniteBindMatrix(oldProduct) ||
+                    !IsFiniteBindMatrix(newInverseBind) ||
+                    !IsFiniteBindMatrix(newProduct))
+                    throw new InvalidOperationException(
+                        $"Mesh '{Name}' has a non-finite rebased palette entry {boneIndex} ('{bone.SceneNode?.Name}').");
+
+                float productError = MaximumBindMatrixDifference(oldProduct, newProduct);
+                float productScale = MathF.Max(1.0f, MaximumAbsoluteBindMatrixValue(oldProduct));
+                if (productError > 1.0e-4f * productScale)
+                    throw new InvalidOperationException(
+                        $"Mesh '{Name}' cannot preserve bind product at palette entry {boneIndex} ('{bone.SceneNode?.Name}'): " +
+                        $"error {productError:R} exceeds {1.0e-4f * productScale:R}.");
+
+                maximumProductError = MathF.Max(maximumProductError, productError);
+                rebasedBones[boneIndex] = (bone, newInverseBind);
+            }
+
+            // Packed indices retain their meaning. Snapshot consumers must receive
+            // the replacement palette in the same generation as those buffers.
+            ApplySkinningBufferState(CaptureSkinningBufferState() with { UtilizedBones = rebasedBones });
+            return maximumProductError;
+        }
+    }
+
+    private static bool IsFiniteBindMatrix(in Matrix4x4 matrix)
+    {
+        ReadOnlySpan<float> values =
+        [
+            matrix.M11, matrix.M12, matrix.M13, matrix.M14,
+            matrix.M21, matrix.M22, matrix.M23, matrix.M24,
+            matrix.M31, matrix.M32, matrix.M33, matrix.M34,
+            matrix.M41, matrix.M42, matrix.M43, matrix.M44,
+        ];
+        foreach (float value in values)
+            if (!float.IsFinite(value))
+                return false;
+
+        return true;
+    }
+
+    private static float MaximumAbsoluteBindMatrixValue(in Matrix4x4 matrix)
+    {
+        ReadOnlySpan<float> values =
+        [
+            matrix.M11, matrix.M12, matrix.M13, matrix.M14,
+            matrix.M21, matrix.M22, matrix.M23, matrix.M24,
+            matrix.M31, matrix.M32, matrix.M33, matrix.M34,
+            matrix.M41, matrix.M42, matrix.M43, matrix.M44,
+        ];
+        float maximum = 0.0f;
+        foreach (float value in values)
+            maximum = MathF.Max(maximum, MathF.Abs(value));
+
+        return maximum;
+    }
+
+    private static float MaximumBindMatrixDifference(in Matrix4x4 first, in Matrix4x4 second)
+    {
+        ReadOnlySpan<float> differences =
+        [
+            first.M11 - second.M11, first.M12 - second.M12, first.M13 - second.M13, first.M14 - second.M14,
+            first.M21 - second.M21, first.M22 - second.M22, first.M23 - second.M23, first.M24 - second.M24,
+            first.M31 - second.M31, first.M32 - second.M32, first.M33 - second.M33, first.M34 - second.M34,
+            first.M41 - second.M41, first.M42 - second.M42, first.M43 - second.M43, first.M44 - second.M44,
+        ];
+        float maximum = 0.0f;
+        foreach (float difference in differences)
+            maximum = MathF.Max(maximum, MathF.Abs(difference));
+
+        return maximum;
     }
 
     private static TransformBase ResolveSerializedBoneReference(TransformBase searchRoot, TransformBase sourceBone)

@@ -362,6 +362,7 @@ public static partial class SerializedMaterialImporter
         // public Toon modules. The normalizer has already removed active
         // Pro-exclusive groups, so preserve every remaining common feature.
         ApplySourceToonSurfaceFeatures(material, document, resolver, diagnostics, warnings);
+        NormalizeSourceToonDetailColor(material, document, detailTexSource, resolver.ProjectRoot);
         ApplySourceToonEffectsAndIntegrations(material, document, resolver, diagnostics, warnings);
         ApplySourceToonRenderState(material, document, diagnostics);
         // Pro material animation/controller semantics are not part of the lossy
@@ -372,6 +373,8 @@ public static partial class SerializedMaterialImporter
         // static material value still requests a normal variant rebuild.
         if (!isSourceToonFeatureLoss)
             material.UseRuntimeUberPropertyBindings();
+
+        material.EngineSemantic = EngineMaterialSemanticIdentity.NativeUberV1;
 
         SourceToonDocuments.Remove(material);
         SourceToonDocuments.Add(material, document);
@@ -582,7 +585,13 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_RimMaskChannel", SourceToonEnumMapper.TextureChannel(document, "_RimMaskChannel", 0, diagnostics));
 
         MapFloat(document, material, "_SpecularSmoothness", "_SpecularSmoothness", "_Smoothness");
-        MapFloat(document, material, "_SpecularStrength", "_SpecularStrength", "_ApplySpecular");
+        if (document.TryGetPositive("_MochieBRDF"))
+            SetFloat(material, "_SpecularStrength",
+                document.TryGetFloat("_MochieSpecularStrength", out float mochieSpecularStrength)
+                    ? mochieSpecularStrength
+                    : 1.0f);
+        else
+            MapFloat(document, material, "_SpecularStrength", "_SpecularStrength", "_ApplySpecular");
         MapVector4(document, material, "_SpecularTint", "_SpecularTint");
         SetInt(material, "_SpecularType", SourceToonEnumMapper.SpecularType(document, diagnostics));
 
@@ -601,18 +610,9 @@ public static partial class SerializedMaterialImporter
         MapFloat(document, material, "_BackFaceAlpha", "_BackFaceAlpha", "_BackFaceReplaceAlpha");
 
         MapVector4(document, material, "_GlitterColor", "_GlitterColor");
-        MapFloat(document, material, "_GlitterDensity", "_GlitterDensity");
-        if (document.TryGetFloat("_GlitterFrequency", out float glitterFrequency))
-            SetFloat(material, "_GlitterDensity", Math.Clamp(glitterFrequency / 100.0f, 0.0f, 10.0f));
         MapFloat(document, material, "_GlitterSize", "_GlitterSize");
         MapFloat(document, material, "_GlitterSpeed", "_GlitterSpeed");
         MapFloat(document, material, "_GlitterBrightness", "_GlitterBrightness");
-        MapFloat(document, material, "_GlitterRainbow", "_GlitterRainbow", "_GlitterRandomColors");
-        if (document.TryGetVector("_GlitterAngleRange", out Vector4 glitterAngleRange))
-        {
-            SetFloat(material, "_GlitterMinAngle", glitterAngleRange.X);
-            SetFloat(material, "_GlitterMaxAngle", glitterAngleRange.Y);
-        }
 
         MapFloat(document, material, "_FlipbookColumns", "_FlipbookColumns");
         MapFloat(document, material, "_FlipbookRows", "_FlipbookRows");
@@ -626,7 +626,6 @@ public static partial class SerializedMaterialImporter
         MapFloat(document, material, "_SSSScale", "_SSSScale", "_SSSStrength");
         MapFloat(document, material, "_SSSAmbient", "_SSSAmbient");
 
-        SetFloat(material, "_DissolveType", SourceToonEnumMapper.DissolveMode(document, diagnostics));
         MapFloat(document, material, "_DissolveProgress", "_DissolveProgress", "_DissolveAlpha", "_DissolveAlpha0");
         MapVector4(document, material, "_DissolveEdgeColor", "_DissolveEdgeColor");
         MapFloat(document, material, "_DissolveEdgeWidth", "_DissolveEdgeWidth");
@@ -637,7 +636,7 @@ public static partial class SerializedMaterialImporter
         MapVector3(document, material, "_DissolveStartPoint", "_DissolveStartPoint");
         MapVector3(document, material, "_DissolveEndPoint", "_DissolveEndPoint");
         MapFloat(document, material, "_DissolveInvert", "_DissolveInvert", "_DissolveInvertNoise");
-        MapFloat(document, material, "_DissolveCutoff", "_DissolveCutoff", "_DissolveAlpha", "_DissolveAlpha0");
+        MapFloat(document, material, "_DissolveCutoff", "_DissolveCutoff");
 
         SetFloat(material, "_ParallaxMode", SourceToonEnumMapper.ParallaxMode(document, diagnostics));
         MapFloat(document, material, "_ParallaxStrength", "_ParallaxStrength", "_ParallaxInternalMaxDepth");
@@ -658,9 +657,27 @@ public static partial class SerializedMaterialImporter
         string? smoothnessSource,
         ICollection<MaterialConversionDiagnostic> diagnostics)
     {
-        float metallicMultiplier = document.TryGetFloat("_Metallic", out float authoredMetallic)
-            ? authoredMetallic
-            : metallicSource is null ? 0.0f : 1.0f;
+        bool mochieBrdfEnabled = document.TryGetPositive("_MochieBRDF");
+        SetInt(material, "_PBRMochiePackedMasksEnabled", mochieBrdfEnabled ? 1 : 0);
+        SetFloat(material, "_PBRReflectionStrength", mochieBrdfEnabled &&
+            document.TryGetFloat("_MochieReflectionStrength", out float mochieReflectionStrength)
+                ? mochieReflectionStrength
+                : 1.0f);
+        SetInt(material, "_PBRMetallicMapsReflectionMaskChannel", mochieBrdfEnabled
+            ? SourceToonEnumMapper.Identity(document, "_MochieMetallicMapsReflectionMaskChannel", 2, 0, 4, diagnostics)
+            : 2);
+        SetInt(material, "_PBRMetallicMapsSpecularMaskChannel", mochieBrdfEnabled
+            ? SourceToonEnumMapper.Identity(document, "_MochieMetallicMapsSpecularMaskChannel", 3, 0, 4, diagnostics)
+            : 3);
+        SetFloat(material, "_PBRReflectionMaskInvert", mochieBrdfEnabled && document.TryGetPositive("_MochieReflectionMaskInvert") ? 1.0f : 0.0f);
+        SetFloat(material, "_PBRSpecularMaskInvert", mochieBrdfEnabled && document.TryGetPositive("_MochieSpecularMaskInvert") ? 1.0f : 0.0f);
+        float metallicMultiplier = mochieBrdfEnabled
+            ? document.TryGetFloat("_MochieMetallicMultiplier", out float mochieMetallic)
+                ? mochieMetallic
+                : 0.0f
+            : document.TryGetFloat("_Metallic", out float authoredMetallic)
+                ? authoredMetallic
+                : metallicSource is null ? 0.0f : 1.0f;
         SetFloat(material, "_PBRMetallicMultiplier", Math.Clamp(metallicMultiplier, 0.0f, 1.0f));
 
         int metallicChannel = 0;
@@ -682,11 +699,15 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_PBRMetallicMapsMetallicChannel", metallicChannel);
         SetFloat(material, "_PBRMetallicMapInvert", metallicInvert ? 1.0f : 0.0f);
 
-        float smoothnessMultiplier = document.TryGetFloat("_Smoothness", out float authoredSmoothness)
-            ? authoredSmoothness
-            : document.TryGetFloat("_SpecularSmoothness", out float specularSmoothness)
-                ? specularSmoothness
-                : smoothnessSource is null ? 0.5f : 1.0f;
+        float smoothnessMultiplier = mochieBrdfEnabled
+            ? document.TryGetFloat("_MochieRoughnessMultiplier", out float mochieSmoothness)
+                ? mochieSmoothness
+                : 1.0f
+            : document.TryGetFloat("_Smoothness", out float authoredSmoothness)
+                ? authoredSmoothness
+                : document.TryGetFloat("_SpecularSmoothness", out float specularSmoothness)
+                    ? specularSmoothness
+                    : smoothnessSource is null ? 0.5f : 1.0f;
         SetFloat(material, "_PBRRoughnessMultiplier", Math.Clamp(smoothnessMultiplier, 0.0f, 1.0f));
 
         int smoothnessChannel = 0;
@@ -702,7 +723,7 @@ public static partial class SerializedMaterialImporter
                 "_MochieMetallicMapsRoughnessChannel",
                 1,
                 diagnostics);
-            smoothnessInvert = true;
+            smoothnessInvert = !mochieBrdfEnabled || document.TryGetPositive("_MochieRoughnessMapInvert");
         }
         else if (string.Equals(smoothnessSource, "_RGBASmoothnessMaps", StringComparison.Ordinal))
         {
@@ -1132,6 +1153,7 @@ public static partial class SerializedMaterialImporter
         }
 
         material.TransparentSortPriority = conversion.PassSet.QueuePriority;
+        ApplySourceToonLatePassMetadata(material, document, diagnostics);
     }
 
     private static void ApplyLilToonRenderState(XRMaterial material, SerializedMaterialDocument document, string? shaderPath)
@@ -1634,19 +1656,52 @@ public static partial class SerializedMaterialImporter
     }
 
     private static void SetFloat(XRMaterial material, string name, float value)
-        => material.Parameter<ShaderFloat>(name)?.SetValue(value);
+    {
+        if (material.Parameter<ShaderFloat>(name) is { } parameter)
+            parameter.SetValue(value);
+        else
+            AddParameter(material, new ShaderFloat(value, name));
+    }
 
     private static void SetInt(XRMaterial material, string name, int value)
-        => material.Parameter<ShaderInt>(name)?.SetValue(value);
+    {
+        if (material.Parameter<ShaderInt>(name) is { } parameter)
+            parameter.SetValue(value);
+        else
+            AddParameter(material, new ShaderInt(value, name));
+    }
 
     private static void SetVector2(XRMaterial material, string name, Vector2 value)
-        => material.Parameter<ShaderVector2>(name)?.SetValue(value);
+    {
+        if (material.Parameter<ShaderVector2>(name) is { } parameter)
+            parameter.SetValue(value);
+        else
+            AddParameter(material, new ShaderVector2(value, name));
+    }
 
     private static void SetVector3(XRMaterial material, string name, Vector3 value)
-        => material.Parameter<ShaderVector3>(name)?.SetValue(value);
+    {
+        if (material.Parameter<ShaderVector3>(name) is { } parameter)
+            parameter.SetValue(value);
+        else
+            AddParameter(material, new ShaderVector3(value, name));
+    }
 
     private static void SetVector4(XRMaterial material, string name, Vector4 value)
-        => material.Parameter<ShaderVector4>(name)?.SetValue(value);
+    {
+        if (material.Parameter<ShaderVector4>(name) is { } parameter)
+            parameter.SetValue(value);
+        else
+            AddParameter(material, new ShaderVector4(value, name));
+    }
+
+    private static void AddParameter(XRMaterial material, ShaderVar parameter)
+    {
+        if (material.Parameter<ShaderVar>(parameter.Name) is { } existing)
+            throw new InvalidDataException(
+                $"Imported material '{material.Name}' has parameter '{parameter.Name}' as {existing.GetType().Name}, but source conversion requires {parameter.GetType().Name}.");
+        material.Parameters = [.. material.Parameters, parameter];
+    }
 
     private static string ResolveSourceProjectRoot(string sourcePath)
     {

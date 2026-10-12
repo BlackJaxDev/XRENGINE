@@ -285,10 +285,24 @@ namespace XREngine
             ShadingMode mode,
             Dictionary<string, List<MaterialProperty>> properties)
         {
+            // A remap owns its textures and surface values. Do not resolve stale
+            // embedded paths or apply producer properties to the replacement.
+            if (ResolveMaterialRemap(name) is { } remapped)
+                return remapped;
+
             XRTexture[] textureList = textures.Count > 0 ? LoadTextures(modelFilePath, textures) : [];
             XRMaterial material = MakeMaterialInternal(textureList, textures, name);
             ApplyImportedDiffuseColor(material, properties);
             return material;
+        }
+
+        /// <summary>Returns the authored replacement before producer material conversion.</summary>
+        internal XRMaterial? ResolveMaterialRemap(string name)
+        {
+            ModelImportOptions? options = _currentImportOptions.Value ?? ImportOptions;
+            return options?.MaterialRemap is { } remaps && remaps.TryGetValue(name, out XRMaterial? material)
+                ? material
+                : null;
         }
 
         /// <summary>
@@ -556,7 +570,8 @@ namespace XREngine
             {
                 Name = textureName,
                 MagFilter = ETexMagFilter.Linear,
-                MinFilter = ETexMinFilter.Linear,
+                MinFilter = ETexMinFilter.LinearMipmapLinear,
+                SmallestAllowedMipmapLevel = 0,
                 UWrap = ETexWrapMode.Repeat,
                 VWrap = ETexWrapMode.Repeat,
                 AlphaAsTransparency = true,
@@ -581,15 +596,6 @@ namespace XREngine
                 XRTexture2D.ScheduleImportedTexturePreviewJob(
                     path,
                     placeholder,
-                    onFinished: tex =>
-                    {
-                        tex.MagFilter = ETexMagFilter.Linear;
-                        tex.UWrap = ETexWrapMode.Repeat;
-                        tex.VWrap = ETexWrapMode.Repeat;
-                        tex.AlphaAsTransparency = true;
-                        tex.Resizable = false;
-                        tex.SizedInternalFormat = ESizedInternalFormat.Rgba8;
-                    },
                     onError: ex => LogImportException(ex, $"[TextureFactory] Texture import job FAILED for '{path}'."),
                     priority: JobPriority.Low);
             }
@@ -929,7 +935,8 @@ namespace XREngine
                     Name = Path.GetFileNameWithoutExtension(key.path),
                     SamplerName = key.samplerName,
                     MagFilter = ETexMagFilter.Linear,
-                    MinFilter = ETexMinFilter.Linear,
+                    MinFilter = ETexMinFilter.LinearMipmapLinear,
+                    SmallestAllowedMipmapLevel = 0,
                     UWrap = ETexWrapMode.Repeat,
                     VWrap = ETexWrapMode.Repeat,
                     AlphaAsTransparency = true,
@@ -952,17 +959,6 @@ namespace XREngine
                     _ = XRTexture2D.ScheduleImportedTexturePreviewJob(
                         key.path,
                         tex,
-                        onFinished: loaded =>
-                        {
-                            loaded.SamplerName = key.samplerName;
-                            loaded.MagFilter = ETexMagFilter.Linear;
-                            loaded.MinFilter = ETexMinFilter.Linear;
-                            loaded.UWrap = ETexWrapMode.Repeat;
-                            loaded.VWrap = ETexWrapMode.Repeat;
-                            loaded.AlphaAsTransparency = true;
-                            loaded.AutoGenerateMipmaps = false;
-                            loaded.Resizable = false;
-                        },
                         onError: ex => LogImportException(
                             ex,
                             $"[UberTexture] Preview load failed for '{key.path}' ({key.samplerName})."),
@@ -2123,6 +2119,7 @@ namespace XREngine
                         NormalizeNodeScales(
                             scene,
                             rootNode,
+                            effectiveImportOptions,
                             cancellationToken,
                             processMeshesAsync,
                             batchSubmeshAdds,
@@ -2427,6 +2424,7 @@ namespace XREngine
         private void NormalizeNodeScales(
             AScene scene,
             SceneNode rootNode,
+            ModelImportOptions importOptions,
             CancellationToken cancellationToken,
             bool processMeshesAsynchronously,
             bool batchSubmeshAddsDuringAsyncImport,
@@ -2437,6 +2435,25 @@ namespace XREngine
             int spatialPartitionMaxTriangles)
         {
             using var t = RuntimeModelImportServices.Current.StartProfileScope("Normalizing node scales");
+            Matrix4x4 originalAssimpRootWorld = _nodeTransforms.Count > 0
+                ? _nodeTransforms[0].SceneNode.Transform.WorldMatrix
+                : Matrix4x4.Identity;
+            AssimpFbxSkinBindPoseResolver? fbxSkinBinds = null;
+            if (string.Equals(Path.GetExtension(SourceFilePath), ".fbx", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    fbxSkinBinds = new AssimpFbxSkinBindPoseResolver(
+                        SourceFilePath,
+                        importOptions.FbxPivotPolicy,
+                        importOptions.MakeLeftHanded);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    LogImportWarning(SourceFilePath,
+                        $"[ModelAssetImporter] Cannot read serialized FBX skin binds for '{SourceFilePath}': {ex.Message}");
+                }
+            }
 
             foreach (var nodeInfo in _nodeTransforms)
             {
@@ -2495,12 +2512,36 @@ namespace XREngine
                 Matrix4x4 unskinnedGeometryTransform = CalculateAssimpUnskinnedGeometryTransform(
                     nodeInfo.OriginalWorldMatrix,
                     nodeInfo.SceneNode.Transform.WorldMatrix);
+                Dictionary<int, Matrix4x4>? authoredSkinBinds = null;
+                if (fbxSkinBinds is not null)
+                {
+                    foreach (int meshIndex in nodeInfo.MeshIndices)
+                    {
+                        Mesh sourceMesh = scene.Meshes[meshIndex];
+                        if (!HasWeightedBones(sourceMesh))
+                            continue;
+                        if (!fbxSkinBinds.TryResolve(
+                            sourceMesh.Name,
+                            nodeInfo.SceneNode.Name ?? string.Empty,
+                            originalAssimpRootWorld,
+                            rootTransform.InverseWorldMatrix,
+                            out Matrix4x4 authoredBind,
+                            out string reason))
+                        {
+                            LogImportWarning(SourceFilePath,
+                                $"[ModelAssetImporter] Cannot use serialized FBX skin bind for mesh '{sourceMesh.Name}' on node '{nodeInfo.SceneNode.Name}': {reason}. Using the Assimp node bind.");
+                            continue;
+                        }
+                        (authoredSkinBinds ??= new()).Add(meshIndex, authoredBind);
+                    }
+                }
                 EnqueueProcessMeshes(
                     nodeInfo.MeshIndices,
                     scene,
                     nodeInfo.SceneNode,
                     nodeInfo.SceneNode.Name ?? "Imported Mesh",
                     skinnedGeometryTransform,
+                    authoredSkinBinds,
                     unskinnedGeometryTransform,
                     rootTransform,
                     cancellationToken,
@@ -2676,6 +2717,7 @@ namespace XREngine
             SceneNode sceneNode,
             string componentBaseName,
             Matrix4x4 skinnedDataTransform,
+            IReadOnlyDictionary<int, Matrix4x4>? authoredSkinBinds,
             Matrix4x4 unskinnedDataTransform,
             TransformBase rootTransform,
             CancellationToken cancellationToken,
@@ -2799,8 +2841,13 @@ namespace XREngine
                 // Weighted meshes use the legacy root-space skinning convention.
                 // Unweighted child meshes keep node-local vertices so the scene node
                 // hierarchy supplies rotation/translation exactly once at render time.
-                Matrix4x4 dataTransform = HasWeightedBones(mesh) ? skinnedDataTransform : unskinnedDataTransform;
+                Matrix4x4 dataTransform = HasWeightedBones(mesh)
+                    ? authoredSkinBinds is not null && authoredSkinBinds.TryGetValue(meshIndex, out Matrix4x4 authoredBind)
+                        ? authoredBind
+                        : skinnedDataTransform
+                    : unskinnedDataTransform;
                 (XRMesh xrMesh, XRMaterial xrMaterial) = ProcessSubMesh(mesh, scene, dataTransform, cancellationToken);
+                ReadProperties(scene.Materials[mesh.MaterialIndex], out string sourceMaterialName, out _, out _, out _);
                 // BindRootMatrix is not set for weighted Assimp/legacy meshes:
                 // the legacy GLSL convention outputs root-local positions (via implicit transpose),
                 // and ModelMatrix correctly transforms root-local to world. Pre-multiplying rootBind
@@ -2812,7 +2859,8 @@ namespace XREngine
                 })
                 {
                     Name = mesh.Name,
-                    RootTransform = rootTransform
+                    RootTransform = rootTransform,
+                    ImportedSourceMaterialName = sourceMaterialName,
                 };
 
                 IReadOnlyList<SubMesh> finalSubMeshes = ModelImportMeshIslandSplitter.SplitSubMesh(

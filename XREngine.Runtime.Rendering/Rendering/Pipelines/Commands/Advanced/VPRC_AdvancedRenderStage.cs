@@ -401,6 +401,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             SampleEncoding = sampleEncoding,
             HasAuthoredBackground = ActivePipelineInstance.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.Background),
             EnableAuthoredDecals = frozenAuthoredDecals,
+            RenderTimeSeconds = state.RenderTimeSeconds,
         };
         return true;
     }

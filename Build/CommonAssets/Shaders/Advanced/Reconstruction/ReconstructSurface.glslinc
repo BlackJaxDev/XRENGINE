@@ -4,7 +4,7 @@
 #include "ReconstructionInterface.glslinc"
 
 #define XR_ADV_RECONSTRUCTION_MIN_W 1.0e-6
-#define XR_ADV_RECONSTRUCTION_MIN_AREA 1.0e-6
+#define XR_ADV_RECONSTRUCTION_MIN_AREA_PIXELS 1.0e-6
 #define XR_ADV_GEOMETRY_SOURCE_PRESKINNED 1u
 #define XR_ADV_GEOMETRY_MISSING_USE_FALLBACK 1u
 
@@ -41,6 +41,22 @@ vec3 XR_ADV_OrthogonalTangent(vec3 normal, vec3 sourceTangent)
         return XR_ADV_FallbackTangent(normal);
     perpendicular *= inversesqrt(perpendicularLengthSquared);
     return XR_ADV_NormalizeOr(cross(perpendicular, normal), XR_ADV_FallbackTangent(normal));
+}
+
+bool XR_ADV_TryGeometricNormal(vec3 edge0, vec3 edge1, out vec3 normal)
+{
+    normal = vec3(0.0);
+    if (!XR_ADV_IsFinite(edge0) || !XR_ADV_IsFinite(edge1)) return false;
+    float scale0 = max(max(abs(edge0.x), abs(edge0.y)), abs(edge0.z));
+    float scale1 = max(max(abs(edge1.x), abs(edge1.y)), abs(edge1.z));
+    if (scale0 == 0.0 || scale1 == 0.0) return false;
+    // World size does not determine degeneracy. Scale before each norm to
+    // retain small, raster-visible triangles without squared-length underflow.
+    vec3 crossValue = cross(edge0 / scale0, edge1 / scale1);
+    float crossScale = max(max(abs(crossValue.x), abs(crossValue.y)), abs(crossValue.z));
+    if (crossScale == 0.0 || !XR_ADV_IsFinite(crossValue)) return false;
+    normal = normalize(crossValue / crossScale);
+    return true;
 }
 
 vec2 XR_ADV_ClipToPixel(
@@ -84,7 +100,7 @@ bool XR_ADV_TryPerspectiveBarycentrics(
         (p2.x - p1.x) * (p0.y - p2.y);
     if (isnan(denominator) ||
         isinf(denominator) ||
-        abs(denominator) <= XR_ADV_RECONSTRUCTION_MIN_AREA)
+        abs(denominator) <= XR_ADV_RECONSTRUCTION_MIN_AREA_PIXELS)
     {
         return false;
     }
@@ -618,26 +634,34 @@ bool XR_ADV_TryReconstructSurface(
         (current0.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u &&
         (current1.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u &&
         (current2.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u;
+    bool requiresTexCoord2 =
+        (requiredMask & XR_ADV_ATTRIBUTE_TEXCOORD2) != 0u;
+    bool hasTexCoord2 =
+        (current0.flags & XR_ADV_VERTEX_HAS_TEXCOORD2) != 0u &&
+        (current1.flags & XR_ADV_VERTEX_HAS_TEXCOORD2) != 0u &&
+        (current2.flags & XR_ADV_VERTEX_HAS_TEXCOORD2) != 0u;
+    bool requiresTexCoord3 =
+        (requiredMask & XR_ADV_ATTRIBUTE_TEXCOORD3) != 0u;
+    bool hasTexCoord3 =
+        (current0.flags & XR_ADV_VERTEX_HAS_TEXCOORD3) != 0u &&
+        (current1.flags & XR_ADV_VERTEX_HAS_TEXCOORD3) != 0u &&
+        (current2.flags & XR_ADV_VERTEX_HAS_TEXCOORD3) != 0u;
     bool flatQualified =
         (requiredMask & XR_ADV_ATTRIBUTE_FLAT) != 0u;
-    vec3 geometricNormal =
-        cross(
-            currentWorld1 - currentWorld0,
-            currentWorld2 - currentWorld0);
-    float geometricLength = length(geometricNormal);
-    if (geometricLength <= XR_ADV_RECONSTRUCTION_MIN_AREA ||
-        isnan(geometricLength) ||
-        isinf(geometricLength))
+    mat3 world3 = mat3(currentTransform.world);
+    vec3 geometricNormal;
+    if (!XR_ADV_TryGeometricNormal(
+            (current1.position - current0.position) * world3,
+            (current2.position - current0.position) * world3,
+            geometricNormal))
     {
         surface.invalidReason =
             XR_ADV_RECONSTRUCTION_DEGENERATE_TRIANGLE;
         return false;
     }
-    geometricNormal /= geometricLength;
 
     bool requiresTangent =
         (requiredMask & XR_ADV_ATTRIBUTE_TANGENT) != 0u;
-    mat3 world3 = mat3(currentTransform.world);
     bool mirrored = determinant(world3) < 0.0;
     vec3 shadingNormal = geometricNormal;
     if ((requiredMask & XR_ADV_ATTRIBUTE_NORMAL) != 0u)
@@ -722,6 +746,20 @@ bool XR_ADV_TryReconstructSurface(
                 weights,
                 flatQualified)
             : requiresTexCoord1 ? uv0 : vec2(0.0);
+    vec2 uv2 = requiresTexCoord2 && hasTexCoord2
+        ? XR_ADV_Interpolate(
+            unpackHalf2x16(current0.texCoord2Half),
+            unpackHalf2x16(current1.texCoord2Half),
+            unpackHalf2x16(current2.texCoord2Half),
+            weights, flatQualified)
+        : vec2(0.0);
+    vec2 uv3 = requiresTexCoord3 && hasTexCoord3
+        ? XR_ADV_Interpolate(
+            unpackHalf2x16(current0.texCoord3Half),
+            unpackHalf2x16(current1.texCoord3Half),
+            unpackHalf2x16(current2.texCoord3Half),
+            weights, flatQualified)
+        : vec2(0.0);
     vec4 color0 =
         (requiredMask & XR_ADV_ATTRIBUTE_COLOR0) != 0u
             ? XR_ADV_Interpolate(
@@ -772,6 +810,34 @@ bool XR_ADV_TryReconstructSurface(
                 unpackHalf2x16(current2.texCoord1Half),
                 weightDy)
             : uv0Dy;
+    vec2 uv2Dx = !derivativesRequested || flatQualified ||
+        !requiresTexCoord2 || !hasTexCoord2
+            ? vec2(0.0)
+            : XR_ADV_Gradient(
+                unpackHalf2x16(current0.texCoord2Half),
+                unpackHalf2x16(current1.texCoord2Half),
+                unpackHalf2x16(current2.texCoord2Half), weightDx);
+    vec2 uv2Dy = !derivativesRequested || flatQualified ||
+        !requiresTexCoord2 || !hasTexCoord2
+            ? vec2(0.0)
+            : XR_ADV_Gradient(
+                unpackHalf2x16(current0.texCoord2Half),
+                unpackHalf2x16(current1.texCoord2Half),
+                unpackHalf2x16(current2.texCoord2Half), weightDy);
+    vec2 uv3Dx = !derivativesRequested || flatQualified ||
+        !requiresTexCoord3 || !hasTexCoord3
+            ? vec2(0.0)
+            : XR_ADV_Gradient(
+                unpackHalf2x16(current0.texCoord3Half),
+                unpackHalf2x16(current1.texCoord3Half),
+                unpackHalf2x16(current2.texCoord3Half), weightDx);
+    vec2 uv3Dy = !derivativesRequested || flatQualified ||
+        !requiresTexCoord3 || !hasTexCoord3
+            ? vec2(0.0)
+            : XR_ADV_Gradient(
+                unpackHalf2x16(current0.texCoord3Half),
+                unpackHalf2x16(current1.texCoord3Half),
+                unpackHalf2x16(current2.texCoord3Half), weightDy);
 
     vec3 interpolatedCurrentWorld = XR_ADV_Interpolate(
         currentWorld0,
@@ -872,6 +938,8 @@ bool XR_ADV_TryReconstructSurface(
     surface.bitangent = bitangent;
     surface.texCoord0 = uv0;
     surface.texCoord1 = uv1;
+    surface.texCoord2 = uv2;
+    surface.texCoord3 = uv3;
     surface.color0 = color0;
     surface.color1 = color1;
     surface.custom0 =
@@ -887,6 +955,43 @@ bool XR_ADV_TryReconstructSurface(
     surface.texCoord0Dy = uv0Dy * foveationScale;
     surface.texCoord1Dx = uv1Dx * foveationScale;
     surface.texCoord1Dy = uv1Dy * foveationScale;
+    surface.texCoord2Dx = uv2Dx * foveationScale;
+    surface.texCoord2Dy = uv2Dy * foveationScale;
+    surface.texCoord3Dx = uv3Dx * foveationScale;
+    surface.texCoord3Dy = uv3Dy * foveationScale;
+    surface.localPosition = XR_ADV_Interpolate(current0.position, current1.position,
+        current2.position, weights, false);
+    surface.worldPositionDx = (currentWorld0 * weightDx.x + currentWorld1 * weightDx.y +
+        currentWorld2 * weightDx.z) * foveationScale;
+    surface.worldPositionDy = (currentWorld0 * weightDy.x + currentWorld1 * weightDy.y +
+        currentWorld2 * weightDy.z) * foveationScale;
+    // Differentiate the normalized interpolant. This preserves the footprint of
+    // normal- and view-projected material coordinates in compute shading.
+    if (!flatQualified && (requiredMask & XR_ADV_ATTRIBUTE_NORMAL) != 0u)
+    {
+        mat3 normalMatrix = transpose(inverse(world3));
+        vec3 n0 = XR_ADV_DecodeOct(current0.normalOct) * normalMatrix;
+        vec3 n1 = XR_ADV_DecodeOct(current1.normalOct) * normalMatrix;
+        vec3 n2 = XR_ADV_DecodeOct(current2.normalOct) * normalMatrix;
+        float normalLength = max(length(n0 * weights.x + n1 * weights.y + n2 * weights.z), 1.0e-6);
+        vec3 dx = n0 * weightDx.x + n1 * weightDx.y + n2 * weightDx.z;
+        vec3 dy = n0 * weightDy.x + n1 * weightDy.y + n2 * weightDy.z;
+        surface.shadingNormalDx = (dx - shadingNormal * dot(shadingNormal, dx)) / normalLength * foveationScale;
+        surface.shadingNormalDy = (dy - shadingNormal * dot(shadingNormal, dy)) / normalLength * foveationScale;
+    }
+    if (!flatQualified && requiresTangent)
+    {
+        float unusedSign;
+        vec3 t0 = XR_ADV_DecodeTangent(current0.tangentOctAndSign, unusedSign) * world3;
+        vec3 t1 = XR_ADV_DecodeTangent(current1.tangentOctAndSign, unusedSign) * world3;
+        vec3 t2 = XR_ADV_DecodeTangent(current2.tangentOctAndSign, unusedSign) * world3;
+        vec3 tx = weights + weightDx * foveationScale;
+        vec3 ty = weights + weightDy * foveationScale;
+        surface.tangentDx = XR_ADV_OrthogonalTangent(normalize(shadingNormal + surface.shadingNormalDx),
+            t0 * tx.x + t1 * tx.y + t2 * tx.z) - tangent;
+        surface.tangentDy = XR_ADV_OrthogonalTangent(normalize(shadingNormal + surface.shadingNormalDy),
+            t0 * ty.x + t1 * ty.y + t2 * ty.z) - tangent;
+    }
     surface.currentUnjitteredClip = currentUnjitteredClip;
     surface.previousUnjitteredClip = previousUnjitteredClip;
     surface.motionNdc = velocityValid
@@ -910,7 +1015,13 @@ bool XR_ADV_TryReconstructSurface(
         XR_ADV_IsFinite(surface.texCoord0Dx) &&
         XR_ADV_IsFinite(surface.texCoord0Dy) &&
         XR_ADV_IsFinite(surface.texCoord1Dx) &&
-        XR_ADV_IsFinite(surface.texCoord1Dy);
+        XR_ADV_IsFinite(surface.texCoord1Dy) &&
+        XR_ADV_IsFinite(surface.texCoord2) &&
+        XR_ADV_IsFinite(surface.texCoord2Dx) &&
+        XR_ADV_IsFinite(surface.texCoord2Dy) &&
+        XR_ADV_IsFinite(surface.texCoord3) &&
+        XR_ADV_IsFinite(surface.texCoord3Dx) &&
+        XR_ADV_IsFinite(surface.texCoord3Dy);
     if (!finite)
     {
         surface.flags = 0u;

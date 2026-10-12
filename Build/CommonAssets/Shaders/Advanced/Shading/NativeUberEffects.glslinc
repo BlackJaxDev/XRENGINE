@@ -1,0 +1,172 @@
+#ifndef XR_NATIVE_UBER_EFFECTS_GLSLINC
+#define XR_NATIVE_UBER_EFFECTS_GLSLINC
+
+#define XR_GLITTER_F(name) UBER_F(name)
+#define XR_GLITTER_I(name) UBER_I(name)
+#define XR_GLITTER_V2(name) UBER_V(name).xy
+#include "Uber/source_glitter.glsl"
+#undef XR_GLITTER_I
+#undef XR_GLITTER_F
+#undef XR_GLITTER_V2
+
+void XR_UBER_ApplySourceGlitter(XRUberCoordinates c, vec3 geometric, vec3 normal,
+    vec3 viewDirection, vec3 lightDirection, vec3 lightColor, float rampedLight,
+    inout vec3 baseColor, inout vec3 emission)
+{
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_GLITTER) || UBER_I(_SourceGlitter) == 0)
+        return;
+    vec2 uv, dx, dy;
+    XR_UBER_CoverageUv(c, UBER_I(_GlitterUV), uv, dx, dy);
+    vec4 maskSample = XR_UBER_CoverageTexture(UBER_T(_GlitterMask), UBER_I(_GlitterMaskUV),
+        UBER_V(_GlitterMask_ST), UBER_V(_GlitterMaskPan).xy * 0.05, c, vec4(1.0));
+    float mask = maskSample[clamp(UBER_I(_GlitterMaskChannel), 0, 3)];
+    if (UBER_F(_GlitterMaskInvert) > 0.5) mask = 1.0 - mask;
+    xrApplySourceGlitter(uv, dx, dy, c.time, geometric, normal, viewDirection,
+        lightDirection, lightColor, rampedLight, dot(lightColor, vec3(0.299, 0.587, 0.114)),
+        UBER_V(_GlitterColor), mask, baseColor, emission);
+}
+
+// The including shader supplies XRUberCoordinates and coverage texture helpers.
+float XR_UBER_EffectHash21(vec2 point)
+{
+    vec3 value = fract(vec3(point.xyx) * 0.1031);
+    value += dot(value, value.yzx + 33.33);
+    return fract((value.x + value.y) * value.z);
+}
+
+vec3 XR_UBER_EffectHsvToRgb(vec3 hsv)
+{
+    vec4 basis = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    vec3 ramp = abs(fract(hsv.xxx + basis.xyz) * 6.0 - basis.www);
+    return hsv.z * mix(basis.xxx, clamp(ramp - basis.xxx, 0.0, 1.0), hsv.y);
+}
+
+vec3 XR_UBER_Glitter(
+    XRUberCoordinates coordinates,
+    vec3 worldNormal,
+    vec3 viewDirection)
+{
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_GLITTER) || UBER_I(_SourceGlitter) != 0)
+        return vec3(0.0);
+
+    vec2 glitterUv = coordinates.uv0 * max(UBER_F(_GlitterDensity), 0.001);
+    float noise = XR_UBER_EffectHash21(
+        floor(glitterUv) + vec2(coordinates.time * UBER_F(_GlitterSpeed)));
+    float viewCosine = clamp(dot(worldNormal, viewDirection), 0.0, 1.0);
+    float angleMask = smoothstep(UBER_F(_GlitterMinAngle),
+        UBER_F(_GlitterMaxAngle), 1.0 - viewCosine);
+    float mask = XR_UBER_Sample(UBER_T(_GlitterMask), coordinates.uv0,
+        coordinates.uv0Dx, coordinates.uv0Dy, vec4(1.0)).r;
+    float strength = pow(noise, max(UBER_F(_GlitterSize), 0.001)) *
+        UBER_F(_GlitterBrightness) * angleMask * mask;
+    vec3 rainbow = XR_UBER_EffectHsvToRgb(
+        vec3(fract(noise + coordinates.time * 0.05), 0.85, 1.0));
+    vec3 color = mix(UBER_V(_GlitterColor).rgb, rainbow,
+        clamp(UBER_F(_GlitterRainbow), 0.0, 1.0));
+    return color * strength;
+}
+
+void XR_UBER_ApplyDecalSlot(
+    XRUberCoordinates coordinates,
+    uint textureSlot,
+    vec4 color,
+    vec2 position,
+    vec2 scale,
+    vec2 pan,
+    float angle,
+    float angleSpeed,
+    int uvSelector,
+    int maskChannel,
+    vec4 modifiers,
+    vec4 effects,
+    vec4 blendParameters,
+    inout vec4 baseColor,
+    inout vec3 emission)
+{
+    if (blendParameters.y <= 0.0)
+        return;
+
+    vec2 uv;
+    vec2 dx;
+    vec2 dy;
+    XR_UBER_CoverageUv(coordinates, uvSelector, uv, dx, dy);
+    int mirrorMode = int(modifiers.z + 0.5);
+    if (mirrorMode == 1)
+    {
+        uv.x = 1.0 - uv.x;
+        dx.x = -dx.x;
+        dy.x = -dy.x;
+    }
+    uv += pan * coordinates.time;
+    vec2 divisor = max(abs(scale), vec2(1.0e-6));
+    uv = (uv - position) / divisor + vec2(0.5);
+    dx /= divisor;
+    dy /= divisor;
+
+    float rotation = radians(angle + angleSpeed * coordinates.time);
+    float sine = sin(rotation);
+    float cosine = cos(rotation);
+    mat2 rotationMatrix = mat2(cosine, sine, -sine, cosine);
+    uv = rotationMatrix * (uv - vec2(0.5)) + vec2(0.5);
+    dx = rotationMatrix * dx;
+    dy = rotationMatrix * dy;
+    float bounds = step(0.0, uv.x) * step(uv.x, 1.0) *
+        step(0.0, uv.y) * step(uv.y, 1.0);
+
+    vec4 sampled = XR_UBER_Sample(textureSlot, uv, dx, dy, vec4(1.0));
+    sampled.rgb = XR_UBER_hueShift(sampled.rgb,
+        effects.x + effects.y * coordinates.time);
+    vec3 themedColor = XR_UBER_Theme(int(effects.w + 0.5), color.rgb);
+    vec4 decal = sampled * vec4(themedColor, color.a);
+    vec4 maskSample = XR_UBER_CoverageTexture(UBER_T(_DecalMask),
+        UBER_I(_DecalMaskUV), UBER_V(_DecalMask_ST),
+        UBER_V(_DecalMaskPan).xy, coordinates, vec4(1.0));
+    float faceMask = modifiers.x == 1.0
+        ? float(coordinates.frontFacing)
+        : modifiers.x == 2.0 ? float(!coordinates.frontFacing) : 1.0;
+    decal.a *= maskSample[maskChannel] * bounds * faceMask;
+
+    int blendMode = int(blendParameters.x + 0.5);
+    float opacity = clamp(decal.a * blendParameters.y, 0.0, 1.0);
+    vec3 blended = XR_UBER_Blend(baseColor.rgb, decal.rgb, blendMode);
+    baseColor.rgb = mix(baseColor.rgb, blended, opacity);
+    baseColor.a = mix(baseColor.a, decal.a,
+        clamp(blendParameters.z, 0.0, 1.0) * opacity);
+    emission += decal.rgb * max(blendParameters.w, 0.0) * opacity;
+}
+
+void XR_UBER_ApplyDecals(
+    XRUberCoordinates coordinates,
+    inout vec4 baseColor,
+    inout vec3 emission)
+{
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_LAYERED_DECALS))
+        return;
+
+    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture),
+        UBER_V(_DecalColor), UBER_V(_DecalPosition).xy,
+        UBER_V(_DecalScale).xy, UBER_V(_DecalTexturePan).xy,
+        UBER_F(_DecalRotation), UBER_F(_DecalRotationSpeed),
+        UBER_I(_DecalUvMode0), 0, UBER_V(_DecalSlotModifiers0),
+        UBER_V(_DecalSlotFx0), UBER_V(_DecalBlendParams0), baseColor, emission);
+    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture1),
+        UBER_V(_DecalColor1), UBER_V(_DecalPosition1).xy,
+        UBER_V(_DecalScale1).xy, UBER_V(_DecalTexturePan1).xy,
+        UBER_F(_DecalRotation1), UBER_F(_DecalRotationSpeed1),
+        UBER_I(_DecalUvMode1), 1, UBER_V(_DecalSlotModifiers1),
+        UBER_V(_DecalSlotFx1), UBER_V(_DecalBlendParams1), baseColor, emission);
+    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture2),
+        UBER_V(_DecalColor2), UBER_V(_DecalPosition2).xy,
+        UBER_V(_DecalScale2).xy, UBER_V(_DecalTexturePan2).xy,
+        UBER_F(_DecalRotation2), UBER_F(_DecalRotationSpeed2),
+        UBER_I(_DecalUvMode2), 2, UBER_V(_DecalSlotModifiers2),
+        UBER_V(_DecalSlotFx2), UBER_V(_DecalBlendParams2), baseColor, emission);
+    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture3),
+        UBER_V(_DecalColor3), UBER_V(_DecalPosition3).xy,
+        UBER_V(_DecalScale3).xy, UBER_V(_DecalTexturePan3).xy,
+        UBER_F(_DecalRotation3), UBER_F(_DecalRotationSpeed3),
+        UBER_I(_DecalUvMode3), 3, UBER_V(_DecalSlotModifiers3),
+        UBER_V(_DecalSlotFx3), UBER_V(_DecalBlendParams3), baseColor, emission);
+}
+
+#endif

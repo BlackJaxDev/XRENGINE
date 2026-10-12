@@ -83,9 +83,58 @@ The unit-testing world exposes the same high-level policy per startup import thr
 
 For a Unity `.prefab` startup import, `ImporterBackend` selects the FBX backend for referenced model prefabs. Direct converter calls and asset loads without backend options continue to use Assimp. Editor asset loading passes an explicit `ModelImportOptions.FbxBackend` through to the Unity converter. `Auto` permits fallback during model parsing; `Native` does not.
 
-Native FBX model bases currently stop before Unity prefab publication with an explicit normalization diagnostic. Their content basis, handedness, and mesh-local cluster binds do not yet satisfy the Unity composition contract. A successful standalone native FBX import does not establish prefab support. Track both routes in [Unity Prefab Parity Import TODO](../../work/todo/assets/unity-prefab-parity-import-todo.md).
+Unity FBX composition checks the source semantic profile before geometry conversion. The supported profiles use metre units (`UnitScaleFactor=100`), `globalScale=1`, `bakeAxisConversion=false`, XYZ rotation, inheritance type 1, and simple TRS nodes without pivot or geometric offsets. The signed axes are +X right with either +Z up/-Y front or +Y up/+Z front. Other FBX profiles fail with a diagnostic. Pivot policy remains independent of the bake-axis setting. Non-FBX model dispatch keeps its existing conversion path.
 
-Unity model metadata reads scale, unit, axis, hierarchy, and name-sorting settings from the `meshes` mapping, with root-level fields retained as compatibility fallbacks. Assimp synthetic roots can distribute their basis into direct children when the wrapper is identity and all child transforms preserve their full matrix under TRS decomposition. Roots used by a skin palette or explicit culling bound remain guarded.
+`SerializedSceneImporter.ModelCoordinates.cs` reads source semantics and converts the complete producer coordinate chart. Assimp first uses its Z reflection, then the Unity boundary applies `K=diag(-1,1,1)`. Native FBX uses `K=diag(-1,1,-1)`. For row-vector matrices, positions use `p*K`; local transforms, inverse binds, and optional bind-root matrices use `inverse(K)*M*K`. Each distinct mesh is converted once. The native content helper is checked against the declared source basis before it enters the common root normalization path.
+
+Unity model metadata reads scale, unit, axis, hierarchy, and name-sorting settings from the `meshes` mapping, with root-level compatibility fallbacks. Generated roots distribute their basis into direct children when the wrapper is identity and each child has an invertible TRS representation. Root removal preserves skin palette products and transforms explicit bounds from the old basis to the new basis. This includes a sole authored child and a palette influence on a removed root. Singular or sheared transforms fail explicitly. Generation-2 identities are assigned after normalization and exclude generated backend helpers.
+
+`XRMesh.TransformImportGeometry` is a cold import operation. It transforms positions, inverse-transpose normals, tangents, and standard blendshape targets. A reflection reverses triangle winding and tangent handedness. It preserves vertex and palette order, texture coordinates, and colors. It rebuilds geometry bounds and derived caches. Specialized blendshape payloads must have a supported conversion before use. Submesh bounds are refreshed after geometry changes.
+
+### Source FBX animation in Unity prefabs
+
+Both model backends use `SerializedSceneImporter.ModelAnimations.cs` to rebuild source clips after root normalization, metadata pose application, and model identity assignment. Raw producer clips are removed. `UnityFbxAnimationConverter` reads the source FBX curves and maps each source node to the final model hierarchy. For row-vector matrices, it computes a rest correction `C=Btarget*inverse(Bsource*F)`, then evaluates animated worlds as `Wtarget=C*Wsource*F`. It derives each local transform from the converted parent world. `F` contains the source up-axis conversion and the Unity model basis.
+
+Conversion samples source key times and 120 Hz intervals. Adaptive subdivision checks matrix interpolation error and limits source Euler-axis steps to 90 degrees. Singular, non-finite, or sheared samples fail explicitly. Conversion is limited to one hour, 16,384 samples, and two million node samples per clip. These allocations occur during import.
+
+`UnityModelAnimationBuilder` writes vector translation and scale tracks plus quaternion rotation tracks. Authored constant tracks remain present. Tracks resolve pinned serialized transform IDs within their owning model. Final prefab composition rejects clips if it removes or reparents their targets, or removes a required morph channel. Blendshape percentage curves become normalized weights and hold their endpoints. The converter also accepts Assimp's joined `channel.Shape` name when the source channel connects that Shape on the target geometry and the resulting name is unique. Each `AnimationClipComponent` creates an independent playback clip, including its member bindings and property tracks, before it changes playback state.
+
+The strict source parser supports one default animation layer, complete XYZ curves for each animated transform property, linear interpolation, and one shape endpoint per channel. Uniform positive repeated `FullWeights` values are accepted. Same-name geometry properties can map to a unique shape channel on that geometry when their defaults match. Duplicate channel curves must have identical times and values. Unsupported interpolation, sparse curve-node defaults, conflicting curves, progressive shapes, explicit extrapolation, and incompatible stack time bounds produce `UNITYMODEL0009`. All stacks must convert before any source clip is attached. A behavior error retains visual composition at the `VisualPrefab` completion tier.
+
+These clips use `GenericTransform` playback. Unity humanoid retargeting, controller behavior, and model metadata clip slicing require separate conversion. Source files remain import dependencies.
+
+Playback copies preserve curve infinity modes, interpolation, baked samples, and
+method delegates without changing the source keyframe graph. Custom property
+animation types must implement `BasePropAnim.CreatePlaybackCopy` when the built-in
+typed codec does not support them. The copy must own its mutable playback state.
+An unsupported custom type fails explicitly instead of sharing that state.
+
+### Skinning binding publication
+
+Prefab bone remapping uses `XRMesh.ReplaceSkinningBoneBindings` before runtime
+publication. It preserves palette slot order and packed influence buffers. It
+publishes the replacement bone table in both `UtilizedBones` and the immutable
+`XRMeshSkinningBufferState` snapshot. The snapshot reference changes so GPU
+deformation consumers rebuild their palette. Import and clone operations can
+allocate a new table; frame updates do not perform this conversion.
+
+Mesh cloning fills the bone table before assigning the cloned buffer collection.
+Serialized transform rebinding and metadata bind-pose replacement also publish
+a complete snapshot. `ModelComponent.RuntimeSkinningDiagnosticSummary` reports
+`snapshotBones` and `snapshotBindingMismatches` to detect a stale table.
+
+These operations do not repair a renderer that already cached inverse binds or
+bone-local bounds. Rebuild runtime meshes when changing an already published
+mesh. Unity prefab conversion suppresses runtime mesh construction
+until world attachment, after all source and prefab changes are complete.
+
+Metadata pose replacement captures each saved bone bind matrix before mutation.
+It computes `Inew = Iold * Bold * inverse(Bnew)` and validates the old and new
+products before publication. It retains native mesh-local cluster offsets and
+packed influence order. Unskinned geometry uses
+`Wbefore * inverse(Wafter)` to retain its world placement when metadata restores
+an authored scale. Explicit culling bounds receive the equivalent basis change.
+A shared mesh that needs different geometry conversions fails explicitly.
 
 ## Native glTF path
 
@@ -164,6 +213,57 @@ Model import settings also persist per-import replacement maps for textures and 
 
 - `TextureRemap`: maps source texture paths from the imported file to finalized `XRTexture2D` assets.
 - `MaterialRemap`: maps imported material names to finalized `XRMaterial` assets.
+
+Both FBX routes resolve material replacements before loading producer texture
+paths. A replacement owns its surface values and texture bindings. Native FBX
+properties must not overwrite a resolved Unity material. The Unity importer also
+accepts a unique connected material name with `/` replaced by `_` in an external
+remap key. Conflicting source names stop the import.
+
+`SubMesh.ImportedSourceMaterialSlot` identifies the model-local FBX material slot.
+`ImportedRendererMaterialSlot` identifies the compact Unity renderer index.
+`ImportedSourceMaterialName` retains the producer name. Native FBX reads slot
+order from material-to-model connections. The Unity Assimp route resolves the
+same connections at the model boundary. Mesh chunks, island splits, and prefab
+clones retain these fields. The Unity FBX boundary derives compact renderer
+indices from the first polygon that uses each material. Unused connections do
+not consume renderer indices. The saved prefab overrides on the validation
+fixture confirm this order. A renderer override updates every matching chunk.
+Imported chunk order is not a material-slot index.
+This mapping requires unique geometry-bearing model names, unique connected
+material names per model, and one mesh geometry per model. Ambiguous source
+identities or unsupported material layers stop the prefab import with a reason.
+
+Native FBX blendshape indices follow the geometry's deformer connections and
+each deformer's channel connections. Numeric FBX object IDs do not define this
+order. This keeps indexed Unity renderer weights aligned with the source
+channels. Named FBX default weights and animation bindings retain their names.
+
+The Assimp FBX route reads serialized cluster bind matrices before it bakes
+weighted vertices into root space. `AssimpFbxSkinBindPoseResolver` uses the
+cluster `Transform * TransformLink` product instead of a mesh node world
+transform. It matches geometry and owner names, checks agreement across
+weighted clusters, and converts the bind to the effective Assimp handedness.
+The imported root basis is applied once. The same bake transforms base vertices
+and morph targets. This prevents an extra parent offset on skins whose source
+vertices already include that placement.
+
+Missing, ambiguous, non-finite, or inconsistent bind metadata produces a warning
+and retains the existing Assimp bind path. Nonidentity FBX geometric transforms
+also retain that path with a warning until their separate vertex conversion is
+supported. Other file formats keep their existing import behavior. Producer
+versions invalidate cached outputs from the older FBX channel and bind rules.
+
+Imported texture previews and resident uploads retain authored filters, wrap
+modes, and color-space metadata. For decoded eight-bit color textures, residency
+uses an sRGB internal format when the import metadata requires sRGB. Linear
+normal and data textures use linear formats. The resident mip range is separate
+from the authored sampling filter.
+
+Use the read-only MCP tool `get_model_material_bindings` to inspect source slots,
+final material paths, texture paths, and sampling metadata. Set
+`include_inactive=true` to include outfit alternatives. This audit does not decode
+pixels or prove that a native shader implements the material's authored effects.
 
 On the first successful model import, these dictionaries are automatically seeded with any discovered texture-path and material-name keys from the source model. New entries are written with null values so reimport settings can be filled in later without manually copying keys out of the model.
 

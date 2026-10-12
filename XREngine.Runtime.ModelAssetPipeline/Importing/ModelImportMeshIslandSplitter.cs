@@ -48,6 +48,9 @@ internal static class ModelImportMeshIslandSplitter
                 Name = FormatIslandName(subMesh.Name, islandIndex),
                 RootTransform = subMesh.RootTransform,
                 RootBone = subMesh.RootBone,
+                ImportedSourceMaterialSlot = subMesh.ImportedSourceMaterialSlot,
+                ImportedRendererMaterialSlot = subMesh.ImportedRendererMaterialSlot,
+                ImportedSourceMaterialName = subMesh.ImportedSourceMaterialName,
             };
 
             islandSubMeshes.Add(islandSubMesh);

@@ -34,6 +34,9 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     bool HasAuthoredBackground = false,
     VulkanAdvancedDirectionalShadowLaneStorage? DirectionalShadowLane = null)
 {
+    /// <summary>Render time frozen with this authored visibility family.</summary>
+    internal float RenderTimeSeconds { get; init; }
+
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
     internal bool IsDirectionalShadowStage => Stage == EAdvancedRenderStage.DirectionalShadowRaster;
 
@@ -76,6 +79,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            Publication.VisibilityContentGeneration == VisibilityContentGeneration &&
            Extractor is not null && RenderFrameId != 0u &&
            Views.ViewCount > 0 &&
+           float.IsFinite(RenderTimeSeconds) &&
            NativeViewIndex < (uint)Views.ViewCount &&
            Target is not null &&
            Target.Width != 0u &&
@@ -114,6 +118,8 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            ReferenceEquals(Extractor, other.Extractor) &&
            RenderFrameId == other.RenderFrameId &&
            Views.Equals(other.Views) &&
+           BitConverter.SingleToUInt32Bits(RenderTimeSeconds) ==
+               BitConverter.SingleToUInt32Bits(other.RenderTimeSeconds) &&
            MatchesVisibilityTargets(in other) &&
            string.Equals(AmbientOcclusionTargetName, other.AmbientOcclusionTargetName, StringComparison.Ordinal) &&
            string.Equals(CurrentDepthPyramidTargetName, other.CurrentDepthPyramidTargetName, StringComparison.Ordinal);

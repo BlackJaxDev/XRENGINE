@@ -41,6 +41,16 @@ public partial class ModelComponent
                     continue;
 
                 SkinningBindPoseAuditResult bindAudit = mesh.CalculateBindPoseAudit();
+                XRMeshSkinningBufferState skinningState = mesh.GetSkinningBufferStateSnapshot();
+                var currentBones = mesh.UtilizedBones;
+                int snapshotBindingMismatchCount = Math.Abs(skinningState.UtilizedBones.Length - currentBones.Length);
+                for (int boneIndex = 0; boneIndex < Math.Min(skinningState.UtilizedBones.Length, currentBones.Length); boneIndex++)
+                {
+                    var published = skinningState.UtilizedBones[boneIndex];
+                    var current = currentBones[boneIndex];
+                    if (!ReferenceEquals(published.tfm, current.tfm) || published.invBindWorldMtx != current.invBindWorldMtx)
+                        snapshotBindingMismatchCount++;
+                }
 
                 int detachedBoneCount = 0;
                 float maximumExpectedTranslation = 0.0f;
@@ -50,9 +60,9 @@ public partial class ModelComponent
                 string? maximumBufferedBone = null;
                 string? maximumDifferenceBone = null;
 
-                for (int boneIndex = 0; boneIndex < mesh.UtilizedBones.Length; ++boneIndex)
+                for (int boneIndex = 0; boneIndex < currentBones.Length; ++boneIndex)
                 {
-                    (TransformBase bone, Matrix4x4 inverseBind) = mesh.UtilizedBones[boneIndex];
+                    (TransformBase bone, Matrix4x4 inverseBind) = currentBones[boneIndex];
                     if (!IsSelfOrDescendantOf(hierarchyRoot, bone))
                         ++detachedBoneCount;
 
@@ -97,7 +107,11 @@ public partial class ModelComponent
                     .Append(" vertices=")
                     .Append(mesh.VertexCount)
                     .Append(" bones=")
-                    .Append(mesh.UtilizedBones.Length)
+                    .Append(currentBones.Length)
+                    .Append(" snapshotBones=")
+                    .Append(skinningState.UtilizedBones.Length)
+                    .Append(" snapshotBindingMismatches=")
+                    .Append(snapshotBindingMismatchCount)
                     .Append(" detached=")
                     .Append(detachedBoneCount)
                     .Append(" convention=")

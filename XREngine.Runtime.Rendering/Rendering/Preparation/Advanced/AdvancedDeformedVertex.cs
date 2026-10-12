@@ -27,8 +27,8 @@ public struct AdvancedDeformedVertex
     public uint Custom0;
     public uint SourceVertex;
     public uint Flags;
-    public uint Reserved0;
-    public uint Reserved1;
+    public uint TexCoord2Half;
+    public uint TexCoord3Half;
     public uint Reserved2;
     public uint Reserved3;
 }

@@ -37,4 +37,6 @@ public enum EngineMaterialSemantic
     UberBase = 23,
     /// <summary>Canonical unlit RGBA and sampled forward surfaces.</summary>
     Unlit = 24,
+    /// <summary>Recognized authored Uber source with a fixed native material row.</summary>
+    NativeUber = 25,
 }

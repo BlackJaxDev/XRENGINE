@@ -53,7 +53,129 @@ Renderer backends
   adoption, and backend telemetry. They consume generated source; they do not
   rebuild Uber material intent.
 
-## Runtime State Model
+## Native Advanced Material Rows
+
+Recognized Unity Poiyomi imports carry `EngineMaterialSemanticIdentity.NativeUberV1`.
+`NativeUberMaterialSchema` defines separate opaque and masked layouts. It does
+not change the bounded WebGPU `AdvancedUberBaseSurfaceRecord` ABI. Both native
+layouts use the canonical material constant and texture binding tables. Numeric
+properties occupy four-word slots. Integer selectors retain their integer bits.
+Texture roles and feature bits have fixed offsets generated into shader source.
+Material values do not create a shader program for each imported material.
+
+`NativeUberMaterialSourceEncoder` checks the authored feature state and supported
+operations before publication. Unsupported active operations return a reason.
+`AdvancedGpuScenePublisher` selects the native layout before standard material
+encoding. The native source contract must not enter standard PBR shading.
+
+`ShadeNativeUber.glslinc` supplies the shared native evaluator for mono, MSAA,
+and overflow repair. It implements the supported toon lighting, normals, material
+AO, specular controls, cubemap reflections, layered matcaps, rim, emission,
+glitter, color themes, and the supported decal operations.
+Reconstructed UV, normal, tangent, and position changes supply compute texture
+footprints. The current evaluator visits all lights that affect the view.
+
+Active Mochie imports use the source metallic and smoothness multipliers.
+Packed green is smoothness. The source invert control determines inversion.
+Packed blue controls probe reflection and packed alpha controls direct specular.
+Their strengths and invert controls remain independent. The opt-in packed-mask
+mode leaves generic Uber materials on their existing path. Probe specular enters
+toon ambient before the brightness cap and monochromatic adjustment. Custom
+stylized specular uses the primary directional light once.
+
+`NativeUberCoverage.glslinc` is shared by masked visibility, directional shadows,
+and native shading. Active face discard, pixel UDIM cells, dissolve, or source
+cutout require masked publication before depth writes. Missing UV1 uses UV0 in
+both raster and reconstruction. UV2 and UV3 use the two former reserved words
+in the 64-byte packed vertex. Missing UV2 and UV3 remain zero, as in the forward
+shader. Active vertex UDIM discard and alpha-to-coverage
+remain explicit unsupported operations. A view stores frozen render-time bits
+at byte offset 940 without changing its 944-byte stride.
+
+The Unity importer preserves transparent source blend and depth state and sets
+`AdvancedLatePassMetadata`. Supported order-dependent materials use sorted alpha.
+The late lane uses the existing filtered direct submission path. Imported Uber
+materials do not claim temporal replay until matching velocity and reactive
+variants exist. Unsupported scene-color dependencies return a diagnostic.
+
+Runtime and image acceptance are tracked in the
+[avatar validation matrix](../../work/testing/rendering/jax2031-advanced-parity-validation.md).
+
+### Source Dissolve And Detail Color
+
+Poiyomi Basic dissolve maps to Uber mode 5. The importer binds this mode after
+exact-name parameters, so the source enum cannot replace the converted value.
+It sums the saved dissolve amount channels into `_DissolveProgress`. Progress
+is independent of alpha cutoff. Other source dissolve modes still require
+separate parity work.
+
+`Uber/source_dissolve.glsl` owns the Basic threshold and edge calculation for
+canonical Uber and native coverage. The amount remaps from `-edgeWidth` to 1;
+noise stays inside the endpoints. Zero progress has no edge or alpha change.
+The source mask, noise inversion, detail subtraction, smoothing, hardness, and
+continuous speed retain their separate roles. Basic texture pan uses source
+time in seconds divided by 20. The dissolved texture changes color and alpha
+before the material cutout test. It does not force an opaque material to clip.
+
+`SerializedMaterialImporter.SourceToonDetailColor` converts multiplicative
+source brightness into `_DetailTint` and clears the engine additive brightness.
+It selects multiply blending and retains intensity and mask. An absent detail
+texture contributes the source gray value, which cancels the source color-space
+factor at brightness 1 and white tint. Unity project color space selects that
+factor; standalone material imports without project settings assume linear.
+The existing native and canonical detail evaluators consume these normalized
+values. Detail-normal composition follows the separate normal contract below.
+
+### Source Normals And Matcaps
+
+The canonical and native Uber evaluators decode base and detail normals in
+tangent space. Detail mask green controls the detail scale. They combine XY by
+addition and Z by multiplication, then apply TBN and normalize once.
+`SerializedMaterialImporter.SourceToonNormals` binds each texture's imported
+green-channel inversion as material state. It does not change shared texture
+bytes. Raw engine normal textures retain their RG decode convention.
+Source backface tangent-basis controls still need a separate adapter.
+
+Imported matcaps use `_SourceMatcap` and per-layer source controls. Smoothness
+selects an explicit mip from the texture size. Mask channel, mask inversion,
+mask UV, optional mask-driven smoothness, texture transform, and source pan
+rate remain separate. Supported projections are source modes 0, 1, and 2.
+Replace, multiply, add, and screen operations change base color before lighting.
+The source Add to Light value and emission use separate contributions. Generic
+engine-authored matcaps retain their existing evaluator path.
+
+The importer rejects enabled matcap controls that the source adapter cannot
+represent, including custom normal, rotation, circle mask, audio controls,
+alpha overrides, and UV1 blend. A hue toggle is accepted only when shift and
+speed are zero in shift mode. Animated matcap hue is not supported. These
+failures use `SourceVisualImportException`.
+
+### Source Glitter
+
+`SerializedMaterialImporter.SourceToonGlitter` binds enabled Poiyomi glitter
+with `_SourceGlitter = 1`. Frequency, degree range, contrast, layer count,
+normal blend, surface color, and brightness retain their source values.
+Integer modes remain integers in native material rows. Mask UV selection,
+transform, pan, channel, and inversion remain independent of flake UVs.
+
+`Uber/source_glitter.glsl` supplies the shared canonical and native evaluator.
+Cell locations remain fixed. Time changes flake orientation, with the source
+time scale and rotation order. Circle coverage uses adjacent surface samples
+to estimate the source derivative across cell boundaries. It does not claim
+pixel-identical hardware derivatives. The evaluator supports angle, pulse,
+and light modes, with one to eight layers. Add blending contributes through
+emission once. Replace blending changes base color before lighting and adds
+only the source excess-brightness emission. Engine-authored glitter keeps its
+existing evaluator, with one emission contribution.
+
+The importer rejects enabled shape/color textures, square shapes, random
+size/color/texture rotation, hue, theme, global mask, and AudioLink options.
+The current lighting ramp supplies the shadow mask. Its lighting model still
+differs from Poiyomi, so matched-lighting acceptance remains separate. The
+two-layer circle evaluator checks 54 candidate sites per shaded sample,
+including its derivative samples. Production GPU timing is still required.
+
+## Authored And Active Variant State
 
 The material keeps requested and active variant state separate so the editor can
 show the desired future shape while the renderer continues using the previous
