@@ -18,6 +18,8 @@ public sealed partial class GPUPhysicsChainDispatcher
     private readonly Dictionary<XRMeshRenderer, PhysicsChainGpuBoundsSource> _pendingBoundsSources =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     private readonly List<GPUPhysicsChainRequest> _outputPublicationRequests = [];
+    // Commit notifications that the render thread sends after it releases _outputPageSync.
+    private readonly List<(XRMeshRenderer Renderer, bool BoundsChanged)> _commitNotifications = [];
     private readonly Dictionary<uint, (uint SourceBase, uint Count)> _copiedPreviousPaletteSlices = [];
     private readonly HashSet<uint> _seededPreviousPaletteSlices = [];
     private XRDataBuffer<SkinPaletteMatrix>? _unpagedSkinPaletteBuffer;
@@ -124,8 +126,26 @@ public sealed partial class GPUPhysicsChainDispatcher
     }
 
     /// <summary>Captures one committed renderer slot for a later output page.</summary>
+    /// <remarks>
+    /// Scene publication calls this for each covered renderer. A current committed spatial
+    /// query of the renderer answers without <c>_outputPageSync</c>.
+    /// </remarks>
     public bool TryCaptureGpuBoundsSource(XRMeshRenderer renderer, out PhysicsChainGpuBoundsSource source)
     {
+        PhysicsChainCommittedSpatialQuery query = renderer.CommittedSpatialQuery;
+        lock (query)
+        {
+            if (TryReuseCommittedSpatialQuery(renderer, query))
+            {
+                source = query.BoundsSource;
+                if (query.HasBoundsSource && query.CoverageComplete
+                    && query.BoneBufferGeneration == source.RendererBoneBufferGeneration)
+                    return true;
+                source = default;
+                return false;
+            }
+        }
+
         lock (_outputPageSync)
         {
             InvalidateFailedPublishedPages();
@@ -301,6 +321,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             _gpuBoundsSlotMetadataBuffer = null;
             _gpuDrivenSkinPaletteBuffer = null;
             _gpuDrivenPreviousSkinPaletteBuffer = null;
+            AdvanceCommittedSpatialEpoch(SpatialEpochCause.Invalidation);
             if (prior is not null)
                 NotifyCommittedSpatialOutputChanged(prior, published: false, priorPage: null);
         }
@@ -513,6 +534,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             _committedBoundsSources.Clear();
             _lastPublishedPaletteInputBoundsByRenderer.Clear();
             _paletteOutputRefreshPending = true;
+            AdvanceCommittedSpatialEpoch(SpatialEpochCause.Invalidation);
             NotifyCommittedSpatialOutputChanged(failed, published: false, priorPage: null);
         }
         if (_historyOutputPageIndex >= 0
@@ -522,6 +544,7 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     private bool CommitOutputPage(IPhysicsChainComputeBackend backend)
     {
+        uint producerEpoch;
         lock (_outputPageSync)
         {
             if (_writingOutputPageIndex < 0)
@@ -569,19 +592,43 @@ public sealed partial class GPUPhysicsChainDispatcher
             _outputProducerEpoch = page.ProducerEpoch;
             page.RenderFrame = _readbackFrameIndex;
             page.Published = true;
+            PhysicsChainOutputPage? priorPage = _publishedOutputPageIndex >= 0
+                ? _outputPages[_publishedOutputPageIndex] : null;
             _historyOutputPageIndex = _publishedOutputPageIndex;
             _publishedOutputPageIndex = _writingOutputPageIndex;
             _writingOutputPageIndex = -1;
-            _committedBoundsSources.Clear();
-            foreach (KeyValuePair<XRMeshRenderer, PhysicsChainGpuBoundsSource> entry in _pendingBoundsSources)
-                _committedBoundsSources.Add(entry.Key, entry.Value);
-            _lastPublishedPaletteInputBoundsByRenderer.Clear();
-            foreach (KeyValuePair<XRMeshRenderer, (AABB Bounds, long BoneGeneration)> entry in _pendingPaletteInputBoundsByRenderer)
-                _lastPublishedPaletteInputBoundsByRenderer.Add(entry.Key, entry.Value);
-            NotifyCommittedSpatialOutputChanged(page, published: true,
-                _historyOutputPageIndex >= 0 ? _outputPages[_historyOutputPageIndex] : null);
-            return true;
+            bool sourcesChanged = !HaveSameBoundsSources(_committedBoundsSources, _pendingBoundsSources);
+            if (sourcesChanged)
+            {
+                _committedBoundsSources.Clear();
+                foreach (KeyValuePair<XRMeshRenderer, PhysicsChainGpuBoundsSource> entry in _pendingBoundsSources)
+                    _committedBoundsSources.Add(entry.Key, entry.Value);
+            }
+            (_lastPublishedPaletteInputBoundsByRenderer, _pendingPaletteInputBoundsByRenderer) =
+                (_pendingPaletteInputBoundsByRenderer, _lastPublishedPaletteInputBoundsByRenderer);
+            bool rendererStateChanged = CollectCommittedSpatialNotifications(page, priorPage, _commitNotifications);
+            if (sourcesChanged)
+                AdvanceCommittedSpatialEpoch(SpatialEpochCause.Sources);
+            else if (rendererStateChanged)
+                AdvanceCommittedSpatialEpoch(SpatialEpochCause.RendererState);
+            producerEpoch = page.ProducerEpoch;
         }
+
+        // Renderers react without _outputPageSync, so collection and scene publication can
+        // read committed state while the render thread sends these notifications.
+        try
+        {
+            for (int index = 0; index < _commitNotifications.Count; ++index)
+            {
+                (XRMeshRenderer renderer, bool boundsChanged) = _commitNotifications[index];
+                renderer.NotifyCommittedOutputChanged(producerEpoch, published: true, boundsChanged);
+            }
+        }
+        finally
+        {
+            _commitNotifications.Clear();
+        }
+        return true;
     }
 
     private bool CopyPreviousOutputPalette(IPhysicsChainComputeBackend backend,
@@ -628,7 +675,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 && prior.BoneGeneration == binding.RendererBoneBufferGeneration
                 && prior.Base < sourcePalette.ElementCount
                 && count <= sourcePalette.ElementCount - prior.Base
-                && _outputPublicationRequestByComponent.TryGetValue(binding.Component, out var request)
+                && binding.Request is { } request
                 && source.RendererStates.TryGetValue(binding.Renderer, out var priorState)
                 && priorState.SpatialSource == GetSpatialSourceIdentity(request, in binding)
                 && ReferenceEquals(priorState.Envelope.Mesh, binding.Renderer.Mesh)

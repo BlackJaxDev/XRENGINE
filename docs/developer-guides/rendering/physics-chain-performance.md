@@ -425,6 +425,153 @@ Profiler scopes and bandwidth counters distinguish:
 
 Runtime bandwidth/frame metrics are available from `GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot()`.
 
+`GPUPhysicsChainDispatcher.CaptureStageTimings()` returns the cumulative
+render-thread time of each dispatcher stage and the number of
+`ProcessDispatches` calls. Capture it twice inside a timed window, for example
+through the MCP `invoke_method` tool, and divide each stage difference by the
+call difference to get milliseconds per frame. The timers are always on and
+cost a few timestamp reads per frame. Use them in place of sampled CPU traces,
+which over-attribute time to lock entry and large struct copies.
+
+`GPUPhysicsChainDispatcher.CaptureCommittedSpatialQueryDiagnostics()` counts
+committed spatial query misses by reason (epoch, page, renderer, mesh, scene
+route, material) and dispatcher spatial epoch advances by cause. A reuse is not
+counted. In a steady-state window the miss counters should not change.
+
+### Frame-loop profiling method
+
+Use these tools in this order. The 2026-10-12 work in the
+[investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
+used them, and the
+[critical-path mapping](../../work/investigations/physics/physics-chain-critical-path-mapping-2026-10-12.md)
+records the code paths they point to.
+
+1. **Phase timings.** Every harness summary has `phaseTimings`. The frame
+   interval is the longer of render and collect, plus the swap. Decide from
+   these values, not from the frame rate alone.
+2. **Stage timers.** Read a stage capture twice inside a timed window and take
+   the difference:
+
+   ```powershell
+   pwsh Tools/Benchmarks/Invoke-McpStaticMethod.ps1 -Session <name> -TypeName GPUPhysicsChainDispatcher -MethodName CaptureStageTimings
+   ```
+
+   Start the harness window with `-UseExistingSession`, wait for
+   `<label>-window-start.json`, then call the probe, wait about 10 seconds,
+   and call it again.
+3. **Sampled CPU trace.** Run a window with `-CpuTraceSeconds 15`, then
+   summarize the Speedscope export:
+
+   ```powershell
+   python Tools/Benchmarks/Summarize-SpeedscopeTrace.py <label>-cpu.speedscope.json --threads 4
+   python Tools/Benchmarks/Summarize-SpeedscopeTrace.py <label>-cpu.speedscope.json --thread "(<tid>)" --focus XRWindow.RenderCallback --depth 8
+   python Tools/Benchmarks/Summarize-SpeedscopeTrace.py <label>-cpu.speedscope.json --callers Monitor.Enter_Slowpath --caller-depth 3
+   ```
+
+   The sample profiler suspends threads at safe points, so it over-attributes
+   time to `Monitor.Enter_Slowpath` and `BulkMoveWithWriteBarrier`. Use it to
+   find call paths only.
+4. **Contention trace.** Before you act on a lock, record the real blocking
+   waits and their owners during a window:
+
+   ```powershell
+   dotnet-trace collect --process-id <pid> --providers "Microsoft-Windows-DotNETRuntime:0x4000:4,Microsoft-DotNETCore-SampleProfiler:0xF00000000000:4" --duration 00:00:00:10 -o contention.nettrace
+   ```
+
+   `ContentionStart` carries the owner thread ID. A blocking wait appears only
+   after the runtime stops spinning, so short spins are not counted. The repository does
+   not include a parser, because it would add the
+   `Microsoft.Diagnostics.Tracing.TraceEvent` package. To read the trace, create
+   a scratch console project outside the repository, add that package, and use
+   this `Program.cs`. It groups waits by waiter and owner thread, and it reports
+   what the owner thread's samples show while each wait lasts:
+
+   ```csharp
+   using Microsoft.Diagnostics.Tracing;
+   using Microsoft.Diagnostics.Tracing.Etlx;
+   using Microsoft.Diagnostics.Tracing.Parsers.Clr;
+
+   // Usage: ContentionReport <trace.nettrace> [topN]
+   string path = args[0];
+   int topN = args.Length > 1 ? int.Parse(args[1]) : 30;
+   using TraceLog log = new(TraceLog.CreateFromEventPipeDataFile(path));
+   TraceLogEventSource source = log.Events.GetSource();
+   var pending = new Dictionary<int, (double Start, int Owner, string Waiter)>();
+   var waits = new List<(double Start, double End, int Waiter, int Owner, string WaiterKey)>();
+   var samples = new Dictionary<int, List<(double Time, string Key)>>();
+   var roots = new Dictionary<int, Dictionary<string, int>>();
+
+   static string Short(string name)
+   {
+       int bang = name.IndexOf('!');
+       if (bang >= 0) name = name[(bang + 1)..];
+       int paren = name.IndexOf('(');
+       return paren >= 0 ? name[..paren] : name;
+   }
+
+   static List<string> EngineFrames(TraceCallStack? stack)
+   {
+       var frames = new List<string>();
+       for (TraceCallStack? s = stack; s is not null; s = s.Caller)
+       {
+           string n = s.CodeAddress.FullMethodName ?? "";
+           if (n.Contains("XREngine", StringComparison.Ordinal) && !n.Contains("XREvent", StringComparison.Ordinal))
+               frames.Add(Short(n));
+       }
+       return frames; // Leaf first.
+   }
+
+   source.Clr.ContentionStart += (ContentionStartTraceData e) =>
+       pending[e.ThreadID] = (e.TimeStampRelativeMSec, (int)e.LockOwnerThreadID,
+           string.Join(" < ", EngineFrames(e.CallStack()).Take(4)));
+   source.Clr.ContentionStop += (ContentionStopTraceData e) =>
+   {
+       if (pending.Remove(e.ThreadID, out var start))
+           waits.Add((start.Start, e.TimeStampRelativeMSec, e.ThreadID, start.Owner, start.Waiter));
+   };
+   source.Dynamic.All += (TraceEvent e) =>
+   {
+       if (!e.ProviderName.Contains("SampleProfiler", StringComparison.Ordinal)) return;
+       List<string> frames = EngineFrames(e.CallStack());
+       if (!samples.TryGetValue(e.ThreadID, out var list)) samples[e.ThreadID] = list = [];
+       list.Add((e.TimeStampRelativeMSec, string.Join(" < ", frames.Take(3))));
+       if (frames.Count == 0) return;
+       if (!roots.TryGetValue(e.ThreadID, out var counts)) roots[e.ThreadID] = counts = [];
+       counts[frames[^1]] = counts.GetValueOrDefault(frames[^1]) + 1;
+   };
+   source.Process();
+
+   string Role(int tid) => roots.TryGetValue(tid, out var c) && c.Count > 0
+       ? $"T{tid}[{c.OrderByDescending(kv => kv.Value).First().Key}]" : $"T{tid}";
+
+   Console.WriteLine($"contentions={waits.Count} totalWaitMs={waits.Sum(w => w.End - w.Start):F1}");
+   Console.WriteLine("== By waiter and owner thread");
+   foreach (var g in waits.GroupBy(w => (w.Waiter, w.Owner)).OrderByDescending(g => g.Sum(w => w.End - w.Start)).Take(topN))
+       Console.WriteLine($"{g.Sum(w => w.End - w.Start),9:F1} ms n={g.Count(),6} waiter={Role(g.Key.Waiter)} owner={Role(g.Key.Owner)}");
+   Console.WriteLine("== By waiter stack");
+   foreach (var g in waits.GroupBy(w => (w.Waiter, w.WaiterKey)).OrderByDescending(g => g.Sum(w => w.End - w.Start)).Take(topN))
+       Console.WriteLine($"{g.Sum(w => w.End - w.Start),9:F1} ms n={g.Count(),6} T{g.Key.Waiter} {g.Key.WaiterKey}");
+   Console.WriteLine("== Owner activity during waits");
+   var activity = new Dictionary<string, int>();
+   foreach (var w in waits)
+   {
+       if (!samples.TryGetValue(w.Owner, out var list)) continue;
+       foreach (var s in list.Where(s => s.Time >= w.Start && s.Time <= w.End))
+       {
+           string key = $"T{w.Owner} holds while T{w.Waiter} waits: owner in {s.Key}";
+           activity[key] = activity.GetValueOrDefault(key) + 1;
+       }
+   }
+   foreach (var kv in activity.OrderByDescending(kv => kv.Value).Take(topN))
+       Console.WriteLine($"{kv.Value,7} samples {kv.Key}");
+   ```
+
+5. **GC check.** `dotnet-counters collect --process-id <pid> --counters System.Runtime --duration 00:00:20 --format csv`
+   reports collections per generation, pause time, allocation rate, and lock
+   contentions per second.
+
+Install `dotnet-trace` and `dotnet-counters` with `dotnet tool install -g`.
+
 `PhysicsChainComponent.GetRuntimeDiagnostics()` is the allocation-free
 per-chain inspection surface. It reports the requested CPU/batched-GPU/
 standalone-GPU path, backend readiness, retained CPU and GPU kernel families,

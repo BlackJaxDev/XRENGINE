@@ -13,7 +13,17 @@ internal sealed class GpuSceneRendererCommandIndexSnapshot
     private readonly Dictionary<XRMeshRenderer, (int First, int Last)> _ranges =
         new(ReferenceEqualityComparer.Instance);
     private readonly List<(uint CommandIndex, PhysicsChainDrawMaterialSnapshot Material, int Next)> _indices = [];
-    internal long PublicationGeneration { get; private set; } = -1;
+    private long _publicationGeneration = -1;
+
+    /// <summary>
+    /// The publication that filled this snapshot, or -1 while it is empty. Writers hold the
+    /// owner's lock. A reader without that lock may use the value only as a change witness.
+    /// </summary>
+    internal long PublicationGeneration
+    {
+        get => Volatile.Read(ref _publicationGeneration);
+        private set => Volatile.Write(ref _publicationGeneration, value);
+    }
 
     /// <summary>Releases renderer references and retains storage for the next capture.</summary>
     public void Clear()
