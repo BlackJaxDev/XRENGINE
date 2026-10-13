@@ -690,7 +690,7 @@ float3 XR_ADV_WorldAmbient(uint viewIndex)
     float3 ambient = float3(0.0);
     for (uint index = 0u; index < SceneCount(14u); ++index)
     {
-        // The canonical 32-word environment record stores flags at word 2,
+        // The canonical environment record stores flags at word 2,
         // ambient color and intensity at word 24, and view masks at word 28.
         uint word = SceneRow(14u, index);
         if ((SceneArena[word + 2u] & 1u) == 0u) continue;

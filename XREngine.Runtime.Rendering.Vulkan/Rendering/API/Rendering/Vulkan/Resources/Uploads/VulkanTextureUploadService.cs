@@ -518,6 +518,7 @@ internal sealed partial class VulkanTextureUploadService
     internal sealed class VulkanImportedTextureUploadJob
     {
         public VulkanImportedTextureUploadJob(
+            VulkanTextureUploadSchedulingContext schedulingContext,
             VulkanImportedTextureUploadRequest request,
             VulkanTextureUploadTicket ticket,
             TextureStreamingResidentData residentData,
@@ -526,8 +527,10 @@ internal sealed partial class VulkanTextureUploadService
             Func<bool>? shouldAcceptResult,
             Action<XRTexture2D>? onFinished,
             Action? onCanceled,
-            Action<Exception>? onError)
+            Action<Exception>? onError,
+            VulkanImportedTextureUploadJob? callbackOwner)
         {
+            SchedulingContext = schedulingContext;
             Request = request;
             Ticket = ticket;
             ResidentData = residentData;
@@ -537,10 +540,13 @@ internal sealed partial class VulkanTextureUploadService
             OnFinished = onFinished;
             OnCanceled = onCanceled;
             OnError = onError;
+            CallbackOwner = callbackOwner ?? this;
             QueueTimestamp = Stopwatch.GetTimestamp();
         }
 
         public VulkanImportedTextureUploadRequest Request { get; }
+        public VulkanTextureUploadSchedulingContext SchedulingContext { get; }
+        public VulkanImportedTextureUploadJob CallbackOwner { get; }
         public VulkanTextureUploadTicket Ticket { get; }
         public TextureStreamingResidentData ResidentData { get; }
         public bool IncludeMipChain { get; }
@@ -701,7 +707,8 @@ internal sealed partial class VulkanTextureUploadService
         Action? onCanceled,
         Action<Exception>? onError,
         CancellationToken cancellationToken,
-        out VulkanTextureUploadTicket ticket)
+        out VulkanTextureUploadTicket ticket,
+        VulkanImportedTextureUploadJob? callbackOwner = null)
     {
         ticket = default;
         if (!context.IsDeviceOperational ||
@@ -758,6 +765,7 @@ internal sealed partial class VulkanTextureUploadService
         }
 
         VulkanImportedTextureUploadJob job = new(
+            context,
             request,
             createdTicket,
             residentData,
@@ -766,7 +774,8 @@ internal sealed partial class VulkanTextureUploadService
             shouldAcceptResult,
             onFinished,
             onCanceled,
-            onError);
+            onError,
+            callbackOwner);
         LogCompatibilityPathState(context.Commands);
 
         return QueueUploadPreparation(context, job);

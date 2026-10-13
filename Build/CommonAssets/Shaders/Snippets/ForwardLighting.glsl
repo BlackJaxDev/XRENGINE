@@ -27,6 +27,14 @@ const int XRENGINE_SHADOW_FALLBACK_STALE_TILE = 3;
 const int XRENGINE_SHADOW_FALLBACK_LEGACY = 5;
 
 uniform vec3 GlobalAmbient;
+uniform bool SourceSHEnabled;
+uniform vec4 SourceSHAr;
+uniform vec4 SourceSHAg;
+uniform vec4 SourceSHAb;
+uniform vec4 SourceSHBr;
+uniform vec4 SourceSHBg;
+uniform vec4 SourceSHBb;
+uniform vec4 SourceSHC;
 uniform float Roughness = 0.9;
 uniform float Metallic = 0.0;
 uniform float Emission = 0.0;
@@ -928,8 +936,50 @@ vec3 XRENGINE_GetForwardAmbientFallback(vec3 albedo, vec3 diffuseAO)
     return XRENGINE_ResolveForwardAmbientFallback() * albedo * diffuseAO;
 }
 
-vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 viewDir, vec3 rms, float ambientOcclusion, float reflectionStrength)
+vec3 XRENGINE_SampleForwardRawPrefilter(vec3 normal, vec3 fragPos,
+    vec3 viewDir, float perceptualRoughness)
 {
+#ifdef XRENGINE_UBER_DISABLE_FORWARD_PBR_RESOURCES
+    return vec3(0.0);
+#else
+    if (!ForwardPbrResourcesEnabled || ProbeCount <= 0)
+        return vec3(0.0);
+    vec4 weights = vec4(0.0);
+    ivec4 indices = ivec4(-1);
+    bool barycentric = false;
+    if (UseProbeGrid)
+        XRENGINE_ResolveProbeWeightsGrid(fragPos, weights, indices, barycentric);
+#ifdef XRENGINE_PROBE_DEBUG_FALLBACK
+    else
+        XRENGINE_ResolveProbeWeights(fragPos, weights, indices);
+#endif
+    vec3 reflection = reflect(-viewDir, normal);
+    vec3 radiance = vec3(0.0);
+    float total = 0.0;
+    float mip = clamp(perceptualRoughness, 0.0, 1.0) *
+        float(max(textureQueryLevels(PrefilterArray) - 1, 0));
+    for (int slot = 0; slot < 4; ++slot)
+    {
+        int index = indices[slot];
+        if (index < 0) continue;
+        float weight = barycentric ? weights[slot]
+            : weights[slot] * XRENGINE_ComputeInfluenceWeight(index, fragPos);
+        if (weight <= 0.0) continue;
+        vec3 direction = XRENGINE_ApplyParallax(index, reflection, fragPos);
+        float normalization = max(ProbeParams[index].ProxyHalfExtents.w, 0.0001);
+        radiance += weight * normalization * XRENGINE_SampleOctaArrayLod(
+            PrefilterArray, direction, index, mip);
+        total += weight;
+    }
+    return total > 0.0 ? radiance / total : vec3(0.0);
+#endif
+}
+
+vec3 XRENGINE_CalculateAmbientPbrWithProbe(vec3 normal, vec3 fragPos,
+    vec3 albedo, vec3 viewDir, vec3 rms, float ambientOcclusion,
+    float reflectionStrength, out vec3 probeSpecular)
+{
+    probeSpecular = vec3(0.0);
     float roughness = rms.x;
     float metallic = rms.y;
     float specularIntensity = rms.z;
@@ -1007,8 +1057,17 @@ vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 v
     vec2 brdfValue = texture(BRDF, vec2(NoV, roughness)).rg;
     vec3 diffuse = GlobalAmbient * irradianceColor * albedo;
     vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
-    return kD * diffuse * diffuseAO + specular * specularOcclusion * reflectionStrength;
+    probeSpecular = specular * specularOcclusion * reflectionStrength;
+    return kD * diffuse * diffuseAO + probeSpecular;
 #endif
+}
+
+vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo,
+    vec3 viewDir, vec3 rms, float ambientOcclusion, float reflectionStrength)
+{
+    vec3 probeSpecular;
+    return XRENGINE_CalculateAmbientPbrWithProbe(normal, fragPos, albedo,
+        viewDir, rms, ambientOcclusion, reflectionStrength, probeSpecular);
 }
 
 vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 viewDir, vec3 rms, float ambientOcclusion)

@@ -84,6 +84,13 @@ struct XRAdvancedEnvironmentRecord
     uint viewMaskHi;
     uint reserved0;
     uint reserved1;
+    vec4 sourceSHAr;
+    vec4 sourceSHAg;
+    vec4 sourceSHAb;
+    vec4 sourceSHBr;
+    vec4 sourceSHBg;
+    vec4 sourceSHBb;
+    vec4 sourceSHC;
 };
 
 struct XRAdvancedGiResourceRecord

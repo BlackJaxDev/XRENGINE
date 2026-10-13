@@ -1,6 +1,7 @@
 using XREngine.Imaging;
 using MemoryPack;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 
@@ -17,6 +18,17 @@ namespace XREngine.Rendering
     [MemoryPackUnion(7, typeof(XRTextureBuffer))]
     public abstract partial class XRTexture : GenericRenderObject, IRenderTextureResource
     {
+        protected readonly object _importedSourceMetadataWriteSync = new();
+
+        protected bool SetImportedTextureMetadataField<T>(
+            ref T field,
+            T value,
+            bool publishNotifications = true,
+            [CallerMemberName] string? propertyName = null)
+        {
+            lock (_importedSourceMetadataWriteSync)
+                return SetField(ref field, value, publishNotifications, propertyName);
+        }
         // Cached "Texture{N}" sampler strings — avoids per-call string interpolation on hot render paths.
         private static readonly string[] _indexedSamplerNames = CreateIndexedSamplerNames(32);
         private static string[] CreateIndexedSamplerNames(int count)
@@ -224,35 +236,35 @@ namespace XREngine.Rendering
         public int MinLOD
         {
             get => _minLOD;
-            set => SetField(ref _minLOD, value);
+            set => SetImportedTextureMetadataField(ref _minLOD, value);
         }
 
         private int _maxLOD = 1000;
         public int MaxLOD
         {
             get => _maxLOD;
-            set => SetField(ref _maxLOD, value);
+            set => SetImportedTextureMetadataField(ref _maxLOD, value);
         }
 
         private int _largestMipmapLevel = 0;
         public int LargestMipmapLevel
         {
             get => _largestMipmapLevel;
-            set => SetField(ref _largestMipmapLevel, value);
+            set => SetImportedTextureMetadataField(ref _largestMipmapLevel, value);
         }
 
         private int _smallestAllowedMipmapLevel = 1000;
         public int SmallestAllowedMipmapLevel
         {
             get => _smallestAllowedMipmapLevel;
-            set => SetField(ref _smallestAllowedMipmapLevel, value);
+            set => SetImportedTextureMetadataField(ref _smallestAllowedMipmapLevel, value);
         }
 
         private bool _autoGenerateMipmaps = false;
         public bool AutoGenerateMipmaps
         {
             get => _autoGenerateMipmaps;
-            set => SetField(ref _autoGenerateMipmaps, value);
+            set => SetImportedTextureMetadataField(ref _autoGenerateMipmaps, value);
         }
 
         internal void ApplyImportedTextureStreamingMipRangeMetadata(
@@ -265,6 +277,13 @@ namespace XREngine.Rendering
             SmallestAllowedMipmapLevel = smallestAllowedMipmapLevel;
         }
 
+        internal void CommitImportedTextureStreamingMipRangeMetadata(int smallestAllowedMipmapLevel)
+        {
+            SetField(ref _autoGenerateMipmaps, false, publishNotifications: false);
+            SetField(ref _largestMipmapLevel, 0, publishNotifications: false);
+            SetField(ref _smallestAllowedMipmapLevel, smallestAllowedMipmapLevel, publishNotifications: false);
+        }
+
         private ETextureColorSpace _importedColorSpace = ETextureColorSpace.Linear;
         /// <summary>
         /// Transfer function requested by the source texture importer.
@@ -272,7 +291,7 @@ namespace XREngine.Rendering
         public ETextureColorSpace ImportedColorSpace
         {
             get => _importedColorSpace;
-            set => SetField(ref _importedColorSpace, value);
+            set => SetImportedTextureMetadataField(ref _importedColorSpace, value);
         }
 
         private ETextureImportUsage _importedUsage = ETextureImportUsage.Data;
@@ -282,7 +301,7 @@ namespace XREngine.Rendering
         public ETextureImportUsage ImportedUsage
         {
             get => _importedUsage;
-            set => SetField(ref _importedUsage, value);
+            set => SetImportedTextureMetadataField(ref _importedUsage, value);
         }
 
         private bool _importedNormalMapFlipGreen;
@@ -292,7 +311,7 @@ namespace XREngine.Rendering
         public bool ImportedNormalMapFlipGreen
         {
             get => _importedNormalMapFlipGreen;
-            set => SetField(ref _importedNormalMapFlipGreen, value);
+            set => SetImportedTextureMetadataField(ref _importedNormalMapFlipGreen, value);
         }
 
         private bool _alphaAsTransparency = false;
@@ -318,7 +337,7 @@ namespace XREngine.Rendering
         public bool RequiresStorageUsage
         {
             get => _requiresStorageUsage;
-            set => SetField(ref _requiresStorageUsage, value);
+            set => SetImportedTextureMetadataField(ref _requiresStorageUsage, value);
         }
 
         [MemoryPackIgnore]

@@ -49,6 +49,18 @@ namespace XREngine.Rendering
 
         public event Action<XRShader>? SourceChanged;
 
+        /// <summary>Reports source edits that can change an authored material contract.</summary>
+        public event Action<XRShader>? AuthoredSourceChanged;
+
+        private long _authoredSourceRevision;
+        internal long AuthoredSourceRevision => Interlocked.Read(ref _authoredSourceRevision);
+
+        private void NotifyAuthoredSourceChanged()
+        {
+            Interlocked.Increment(ref _authoredSourceRevision);
+            AuthoredSourceChanged?.Invoke(this);
+        }
+
         /// <summary>
         /// Monotonic logical source revision used to reject stale asynchronous compile results.
         /// </summary>
@@ -259,6 +271,7 @@ namespace XREngine.Rendering
                     InvalidateResolvedSourceCache();
                     Interlocked.Increment(ref _sourceRevision);
                     MarkDirty();
+                    NotifyAuthoredSourceChanged();
                     SourceChanged?.Invoke(this);
                     break;
                 case nameof(Source):
@@ -298,26 +311,72 @@ namespace XREngine.Rendering
 
         private void OnSourceTextChanged()
         {
-            CookedArtifact = null;
+            ClearCookedArtifactForSourceInvalidation();
             InvalidateResolvedSourceCache();
             Interlocked.Increment(ref _sourceRevision);
 
             //When the source text changes, we need to mark the shader as dirty so it can be recompiled
             MarkDirty();
+            NotifyAuthoredSourceChanged();
             SourceChanged?.Invoke(this);
         }
 
         internal void NotifySourceDependencyChanged(string reason)
             => NotifySourceDependencyChanged(reason, RuntimeShaderServices.Current);
 
-        internal void NotifySourceDependencyChanged(string reason, IRuntimeShaderServices? sourceOwner)
+        internal void NotifySourceDependencyChanged(string reason, IRuntimeShaderServices? sourceOwner,
+            bool affectsAuthoredSource = true)
         {
-            CookedArtifact = null;
-            InvalidateResolvedSourceCache();
+            // Keep source and module identity across compile-only refreshes.
+            if (affectsAuthoredSource)
+            {
+                ClearCookedArtifactForSourceInvalidation();
+                InvalidateResolvedSourceCache();
+            }
             Interlocked.Increment(ref _sourceRevision);
             sourceOwner?.LogWarning(
                 $"Shader dependency changed for '{Name ?? FilePath ?? "UnnamedShader"}': {reason}");
+            if (affectsAuthoredSource)
+                NotifyAuthoredSourceChanged();
             SourceChanged?.Invoke(this);
+        }
+
+        /// <summary>
+        /// Checks the prior resolved source before a manual compile refresh.
+        /// An absent or stale dependency snapshot cannot prove that the source is unchanged.
+        /// </summary>
+        internal bool HasCurrentResolvedSourceDependencies()
+        {
+            if (UberShaderVariantBuilder.IsGeneratedVariant(this))
+                return UberShaderVariantBuilder.HasCurrentProvenance(this);
+            ResolvedShaderSource? payload;
+            ShaderSourceProviderOwner owner;
+            long revision = SourceRevision;
+            long snippetVersion = ShaderSourceResolver.RegisteredSnippetVersion;
+            lock (_resolvedSourceCacheLock)
+            {
+                payload = _resolvedSourcePayloadCache;
+                owner = _resolvedSourceOwner;
+                if (payload is null ||
+                    !string.Equals(_resolvedSourceCacheText, Source.Text, StringComparison.Ordinal) ||
+                    !string.Equals(_resolvedSourceCachePath, Source.FilePath, StringComparison.Ordinal) ||
+                    _resolvedSourceSnippetVersion != snippetVersion)
+                    return false;
+            }
+            if (!ShaderSourceResolver.AreDependenciesCurrent(payload.FileDependencies,
+                    payload.SearchRootDependencies, owner))
+                return false;
+
+            lock (_resolvedSourceCacheLock)
+            {
+                return ReferenceEquals(_resolvedSourcePayloadCache, payload) &&
+                    _resolvedSourceOwner.Equals(owner) &&
+                    SourceRevision == revision &&
+                    string.Equals(_resolvedSourceCacheText, Source.Text, StringComparison.Ordinal) &&
+                    string.Equals(_resolvedSourceCachePath, Source.FilePath, StringComparison.Ordinal) &&
+                    snippetVersion == ShaderSourceResolver.RegisteredSnippetVersion &&
+                    ShaderSourceResolver.IsOwnerCurrent(owner);
+            }
         }
 
         /// <summary>

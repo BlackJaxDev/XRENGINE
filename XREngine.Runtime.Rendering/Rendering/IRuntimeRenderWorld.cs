@@ -40,6 +40,11 @@ public interface IRuntimeRenderWorld
     Lights3DCollection Lights { get; }
     EventList<CameraComponent> FramebufferCameras { get; }
     ColorF3 GetEffectiveAmbientColor();
+    /// <summary>Reports an authored directional ambient input for source materials.</summary>
+    bool HasAmbientSphericalHarmonics => false;
+    /// <summary>Returns linear packed diffuse SH without allocating coefficient arrays.</summary>
+    AmbientSphericalHarmonics GetEffectiveAmbientSphericalHarmonics() =>
+        AmbientSphericalHarmonics.Constant((Vector3)GetEffectiveAmbientColor());
     void ApplyRenderDispatchPreference(bool useGpu);
     void ApplyCpuSceneCullingStructurePreference(ECpuSceneCullingStructure structure);
     void GlobalPreCollectVisible();

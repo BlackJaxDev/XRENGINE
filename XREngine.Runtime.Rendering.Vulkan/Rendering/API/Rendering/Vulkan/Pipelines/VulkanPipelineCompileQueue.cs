@@ -789,6 +789,13 @@ internal sealed unsafe partial class VulkanPipelineManager
         Monitor.Exit(_vulkanPipelineCompileDependencyMutationLock);
     }
 
+    /// <summary>Serializes shader state updates, including updates inside an existing mutation.</summary>
+    internal void ExecuteWithCompilationDependencyGate(Action action)
+    {
+        lock (_vulkanPipelineCompileDependencyMutationLock)
+            action();
+    }
+
     internal VulkanPipelineCompilationDependencyLease AcquireCompilationDependencyLease()
     {
         Monitor.Enter(_vulkanPipelineCompileDependencyMutationLock);

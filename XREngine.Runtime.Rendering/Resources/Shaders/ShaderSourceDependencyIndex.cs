@@ -438,11 +438,13 @@ internal static class ShaderSourceDependencyIndex
 
         PreparedRootRefresh[] refreshes = [.. prepared];
         cancellationToken.ThrowIfCancellationRequested();
-        PublishPreparedRootRefreshesAtFrameSwap(shaders, refreshes, reason, ownership);
+        PublishPreparedRootRefreshesAtFrameSwap(shaders, refreshes, reason, ownership,
+            isManualRefresh: changedPath is null);
     }
 
     private static void PublishPreparedRootRefreshesAtFrameSwap(
-        XRShader[] shaders, PreparedRootRefresh[] refreshes, string reason, SourceOwnership ownership)
+        XRShader[] shaders, PreparedRootRefresh[] refreshes, string reason, SourceOwnership ownership,
+        bool isManualRefresh)
     {
         if (shaders.Length == 0)
             return;
@@ -450,22 +452,28 @@ internal static class ShaderSourceDependencyIndex
         if (!RuntimeRenderingHostServices.HasConcreteHost ||
             RuntimeRenderingHostServices.Scheduling.IsFrameSwapThread)
         {
-            PublishPreparedRootRefreshes(shaders, refreshes, reason, ownership);
+            PublishPreparedRootRefreshes(shaders, refreshes, reason, ownership, isManualRefresh);
             return;
         }
 
         RuntimeRenderingHostServices.Scheduling.EnqueueFrameSwapTask(
-            () => PublishPreparedRootRefreshes(shaders, refreshes, reason, ownership),
+            () => PublishPreparedRootRefreshes(shaders, refreshes, reason, ownership, isManualRefresh),
             $"ShaderSourceDependencyIndex.Refresh[{reason}]");
     }
 
     private static void PublishPreparedRootRefreshes(
-        XRShader[] shaders, PreparedRootRefresh[] refreshes, string reason, SourceOwnership ownership)
+        XRShader[] shaders, PreparedRootRefresh[] refreshes, string reason, SourceOwnership ownership,
+        bool isManualRefresh)
     {
         int published = 0;
         long[] revisions = new long[shaders.Length];
+        bool[] unchangedSources = new bool[shaders.Length];
         for (int i = 0; i < shaders.Length; i++)
+        {
             revisions[i] = shaders[i].SourceRevision;
+            // Capture all proofs before a shared TextFile can notify several shaders.
+            unchangedSources[i] = isManualRefresh && shaders[i].HasCurrentResolvedSourceDependencies();
+        }
 
         for (int i = 0; i < refreshes.Length; i++)
         {
@@ -485,7 +493,8 @@ internal static class ShaderSourceDependencyIndex
             {
                 if (!TryAdmitSourceOwner(ownership))
                     break;
-                shaders[i].NotifySourceDependencyChanged(reason, ownership.Service);
+                shaders[i].NotifySourceDependencyChanged(reason, ownership.Service,
+                    affectsAuthoredSource: !unchangedSources[i]);
             }
             published++;
         }

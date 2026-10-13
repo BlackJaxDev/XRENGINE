@@ -3,6 +3,14 @@
 
 #ifndef TOON_UNIFORMS_GLSL
 #define TOON_UNIFORMS_GLSL
+uniform int _SourceBackfaceNormals;
+uniform int _FlipBackfaceNormals;
+uniform int _SourceLightMode;
+uniform vec4 _SourceLightSettings;
+uniform vec4 _SourceAdditiveSettings;
+uniform vec4 _SourceAdditiveColor;
+uniform vec4 _SourceAdditiveGradient;
+uniform vec4 _SourceWrappedColor;
 
 // ============================================
 // Transform Matrices (Provided by engine - matches EEngineUniform names)
@@ -358,6 +366,8 @@ uniform float _RimSharpness;
 uniform float _RimLightColorBias;
 //@property(name="_RimEmission", display="Emission Amount", mode=static, range=[0,8], default="1.0")
 uniform float _RimEmission;
+uniform vec4 _SourceRimSettings;
+uniform vec4 _SourceRimColorSettings;
 //@property(name="_RimHideInShadow", display="Hide In Shadow", mode=static, range=[0,1], toggle=true, default="0.0")
 uniform float _RimHideInShadow;
 //@property(name="_RimStyle", display="Rim Style", mode=static, enum="0:Smooth|1:Exponential|2:Sharp", default="1")
@@ -425,6 +435,10 @@ uniform float _PBRSmoothnessMapInvert;
 uniform float _PBRRoughnessMultiplier;
 //@property(name="_PBRMochiePackedMasksEnabled", display="Use Packed Reflection And Specular Masks", mode=static, default="0")
 uniform int _PBRMochiePackedMasksEnabled;
+uniform vec4 _SourceMochieSettings;
+uniform vec4 _SourceMochieSecond;
+uniform vec4 _SourceMochieReflection;
+uniform vec4 _SourceMochieReflectionTint;
 //@property(name="_PBRReflectionStrength", display="Reflection Strength", mode=static, default="1.0")
 uniform float _PBRReflectionStrength;
 //@property(name="_PBRMetallicMapsReflectionMaskChannel", display="Reflection Mask Channel", mode=static, default="2")

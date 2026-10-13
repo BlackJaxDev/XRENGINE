@@ -460,8 +460,10 @@ internal unsafe partial class VkRenderProgram
         foreach (VkShader shader in _shaderCache.Values)
         {
             EProgramStageMask mask = ToProgramStageMask(shader.StageFlags);
-            if (mask == EProgramStageMask.None)
-                continue;
+            if (mask == EProgramStageMask.None ||
+                shader.ShaderStageCreateInfo.Module.Handle == 0 ||
+                shader.ShaderStageCreateInfo.PName is null)
+                throw new InvalidOperationException($"Compiled Vulkan shader '{shader.StageDebugLabel}' has no usable pipeline stage.");
 
             _stageLookup[mask] = shader;
         }

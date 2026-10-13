@@ -55,6 +55,9 @@ internal sealed class SceneCaptureWorld : IRuntimeRenderWorld, IDisposable
     public EventList<CameraComponent> FramebufferCameras { get; } = [];
     internal SceneCaptureLightingSnapshot? Lighting { get; set; }
     public ColorF3 GetEffectiveAmbientColor() => _source.GetEffectiveAmbientColor();
+    public bool HasAmbientSphericalHarmonics => _source.HasAmbientSphericalHarmonics;
+    public AmbientSphericalHarmonics GetEffectiveAmbientSphericalHarmonics() =>
+        _source.GetEffectiveAmbientSphericalHarmonics();
     public void ApplyRenderDispatchPreference(bool useGpu) => VisualScene.ApplyRenderDispatchPreference(useGpu);
     public void ApplyCpuSceneCullingStructurePreference(ECpuSceneCullingStructure structure)
         => VisualScene.ApplyCpuSceneCullingStructurePreference(structure);
