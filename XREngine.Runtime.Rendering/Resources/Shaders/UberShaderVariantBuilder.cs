@@ -26,11 +26,12 @@ internal static partial class UberShaderVariantBuilder
     private const string DisableForwardPbrResourcesMacro = "XRENGINE_UBER_DISABLE_FORWARD_PBR_RESOURCES";
 
     private static readonly ConcurrentDictionary<UberVariantCacheKey, string> GeneratedSourceCache = new();
-    private static readonly ConcurrentDictionary<UberVariantCacheKey, XRShader> GeneratedShaderCache = new();
+    private static readonly ConditionalWeakTable<XRShader, ConcurrentDictionary<UberVariantCacheKey, XRShader>> GeneratedShadersByCanonical = new();
     // The canonical shader each generated variant was built from, so a material
     // holding only the variant (after a Play snapshot restore) recovers its
     // canonical shader without reading UberShader.frag from disk again.
     private static readonly ConditionalWeakTable<XRShader, XRShader> CanonicalShaderByVariant = new();
+    private static readonly ConditionalWeakTable<XRShader, UberShaderVariantProvenance> ProvenanceByVariant = new();
     private static readonly ConcurrentDictionary<SourceResolveCacheKey, Lazy<ResolvedUberShaderSource>> ResolvedSourceCache = new();
     private static readonly ConcurrentDictionary<VertexPermutationCacheKey, ulong> VertexPermutationHashCache = new();
     private static readonly ConcurrentDictionary<string, long> LastKnownSourceVersionsByPath = new(StringComparer.Ordinal);
@@ -135,7 +136,7 @@ internal static partial class UberShaderVariantBuilder
     private static void ClearProviderCaches()
     {
         GeneratedSourceCache.Clear();
-        GeneratedShaderCache.Clear();
+        GeneratedShadersByCanonical.Clear();
         ResolvedSourceCache.Clear();
         VertexPermutationHashCache.Clear();
         LastKnownSourceVersionsByPath.Clear();
@@ -178,6 +179,8 @@ internal static partial class UberShaderVariantBuilder
         IReadOnlyCollection<string>? additionalEnabledFeatures = null)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
+        UberShaderSourceStamp canonicalStamp = UberShaderSourceStamp.Capture(canonicalShader);
+        long snippetVersion = ShaderSourceResolver.RegisteredSnippetVersion;
         PreResolvedMaterialVariantAxes preResolvedAxes = BuildPreResolvedMaterialAxes(
             material,
             canonicalShader,
@@ -192,14 +195,24 @@ internal static partial class UberShaderVariantBuilder
         UberVariantCacheKey cacheKey = new(request.VariantHash, request.SourceVersion, resolvedSource.SourcePathHash, request.SourcePath, resolvedSource.Owner);
         PruneStaleSourceEntries(request.SourcePath, resolvedSource.SourcePathHash, request.SourceVersion);
 
+        ConcurrentDictionary<UberVariantCacheKey, XRShader> shaderCache = GeneratedShadersByCanonical.GetValue(canonicalShader, static _ => new());
         bool hasGeneratedSource = GeneratedSourceCache.TryGetValue(cacheKey, out string? cachedGeneratedSource);
-        bool hasGeneratedShader = GeneratedShaderCache.TryGetValue(cacheKey, out XRShader? cachedFragmentShader);
+        bool hasGeneratedShader = shaderCache.TryGetValue(cacheKey, out XRShader? cachedFragmentShader);
+        if (hasGeneratedShader && !HasCurrentProvenance(cachedFragmentShader!))
+        {
+            shaderCache.TryRemove(new KeyValuePair<UberVariantCacheKey, XRShader>(cacheKey, cachedFragmentShader!));
+            hasGeneratedShader = false;
+            cachedFragmentShader = null;
+        }
         bool cacheHit = hasGeneratedSource && hasGeneratedShader;
 
         string generatedSource = cachedGeneratedSource ?? GeneratedSourceCache.GetOrAdd(cacheKey, _ => GenerateVariantSource(resolvedSource.Source, manifest, request));
         cancellationToken.ThrowIfCancellationRequested();
 
-        XRShader fragmentShader = cachedFragmentShader ?? GeneratedShaderCache.GetOrAdd(cacheKey, _ => CreateVariantShader(canonicalShader, generatedSource, request.VariantHash));
+        XRShader fragmentShader = cachedFragmentShader ?? shaderCache.GetOrAdd(cacheKey,
+            _ => CreateVariantShader(canonicalStamp, resolvedSource, snippetVersion, generatedSource, request.VariantHash));
+        if (!HasCurrentProvenance(fragmentShader))
+            throw new InvalidOperationException("Uber shader source changed during variant preparation.");
         stopwatch.Stop();
 
         return new PreparedUberVariant
@@ -398,8 +411,10 @@ internal static partial class UberShaderVariantBuilder
     private static bool RequiresForwardPbrResources(XRMaterial material)
         => HasTruthyParameter(material, "_ForwardPbrResourcesEnabled", "ForwardPbrResourcesEnabled");
 
-    private static XRShader CreateVariantShader(XRShader canonicalShader, string generatedSource, ulong variantHash)
+    private static XRShader CreateVariantShader(UberShaderSourceStamp canonicalStamp,
+        ResolvedUberShaderSource resolvedSource, long snippetVersion, string generatedSource, ulong variantHash)
     {
+        XRShader canonicalShader = canonicalStamp.Shader;
         TextFile text = TextFile.FromText(generatedSource);
         text.FilePath = canonicalShader.Source?.FilePath ?? canonicalShader.FilePath;
         text.Name = canonicalShader.Source?.Name ?? canonicalShader.Name;
@@ -412,7 +427,27 @@ internal static partial class UberShaderVariantBuilder
             GeneratedUberVariantHash = variantHash,
         };
         CanonicalShaderByVariant.AddOrUpdate(variant, canonicalShader);
+        ProvenanceByVariant.Add(variant, new(canonicalStamp, UberShaderSourceStamp.Capture(variant),
+            resolvedSource.Dependencies, resolvedSource.DirectoryDependencies, resolvedSource.Owner, snippetVersion));
         return variant;
+    }
+
+    internal static bool HasCurrentProvenance(XRShader variant)
+        => ProvenanceByVariant.TryGetValue(variant, out UberShaderVariantProvenance? proof) && proof.IsCurrent;
+
+    internal static bool IsCompatibleInternalReplacement(XRShader previous, XRShader next)
+    {
+        XRShader previousCanonical = previous;
+        if (IsGeneratedVariant(previous))
+        {
+            if (!HasCurrentProvenance(previous) || !TryGetCanonicalShader(previous, out XRShader? canonical))
+                return false;
+            previousCanonical = canonical;
+        }
+        if (IsGeneratedVariant(next))
+            return HasCurrentProvenance(next) && TryGetCanonicalShader(next, out XRShader? canonical) &&
+                ReferenceEquals(previousCanonical, canonical);
+        return !ReferenceEquals(previous, previousCanonical) && ReferenceEquals(previousCanonical, next);
     }
 
     /// <summary>
@@ -437,7 +472,8 @@ internal static partial class UberShaderVariantBuilder
             return false;
 
         string? path = copy.Source.FilePath;
-        foreach (KeyValuePair<UberVariantCacheKey, XRShader> entry in GeneratedShaderCache)
+        foreach (var canonicalEntry in GeneratedShadersByCanonical)
+        foreach (KeyValuePair<UberVariantCacheKey, XRShader> entry in canonicalEntry.Value)
         {
             XRShader candidate = entry.Value;
             if (ReferenceEquals(candidate, copy) ||
@@ -447,7 +483,8 @@ internal static partial class UberShaderVariantBuilder
                 candidate.Source?.Text is not { } candidateText ||
                 candidateText.Length != text.Length ||
                 !string.Equals(candidate.Source.FilePath, path, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(candidateText, text, StringComparison.Ordinal))
+                !string.Equals(candidateText, text, StringComparison.Ordinal) ||
+                !HasCurrentProvenance(candidate))
             {
                 continue;
             }
@@ -459,7 +496,7 @@ internal static partial class UberShaderVariantBuilder
         return false;
     }
 
-    private static string? ResolveShaderSourcePathOrName(XRShader shader)
+    internal static string? ResolveShaderSourcePathOrName(XRShader shader)
     {
         if (!string.IsNullOrWhiteSpace(shader.Source?.FilePath))
             return shader.Source.FilePath;
@@ -1554,7 +1591,8 @@ internal static partial class UberShaderVariantBuilder
             }
 
             GeneratedSourceCache.TryRemove(key, out _);
-            GeneratedShaderCache.TryRemove(key, out _);
+            foreach (var canonicalEntry in GeneratedShadersByCanonical)
+                canonicalEntry.Value.TryRemove(key, out _);
         }
     }
 

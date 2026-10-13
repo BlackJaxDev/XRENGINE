@@ -18,8 +18,76 @@ public partial class XRTexture2D
     // Imported-streaming metadata is written as one logical transaction. This is
     // deliberately separate from CanonicalSourceContentGeneration: capture outputs
     // also advance that generation, but their values do not carry seqlock parity.
-    private readonly object _importedSourceMetadataWriteSync = new();
     private long _importedSourceMetadataEpoch = 2L;
+
+    internal object ImportedSourceMetadataWriteSync => _importedSourceMetadataWriteSync;
+
+    private ImportedTextureResidentAuthoredSettings CaptureImportedResidentAuthoredSettings()
+        => new(
+            MinFilter, MagFilter, UWrap, VWrap, LodBias, MaxAnisotropy,
+            MinLOD, MaxLOD, EnableComparison, CompareFunc,
+            RequiresStorageUsage, MultiSampleCount, ImportedUsage,
+            ImportedNormalMapFlipGreen, SizedInternalFormat, Resizable,
+            AutoGenerateMipmaps, LargestMipmapLevel,
+            SmallestAllowedMipmapLevel, Rectangle);
+
+    internal ImportedTextureResidentPublicationPlan CreateImportedResidentPublicationPlan(
+        TextureStreamingResidentData residentData,
+        bool includeMipChain)
+    {
+        lock (_importedSourceMetadataWriteSync)
+        {
+            Mipmap2D[] previousMipmaps = Mipmaps;
+            int mipCount = residentData.Mipmaps.Length;
+            int lockMipLevel = includeMipChain && mipCount > previousMipmaps.Length
+                ? mipCount - previousMipmaps.Length
+                : -1;
+            return new ImportedTextureResidentPublicationPlan(
+                residentData,
+                previousMipmaps,
+                previousMipmaps.Length > 0 ? previousMipmaps[0].Width : 0u,
+                previousMipmaps.Length > 0 ? previousMipmaps[0].Height : 0u,
+                CanonicalSourceContentGeneration,
+                ImportedColorSpace,
+                CaptureImportedResidentAuthoredSettings(),
+                ResolveImportedResidentFormat(this, residentData.SizedInternalFormat),
+                lockMipLevel,
+                includeMipChain && mipCount > 0 ? mipCount - 1 : 0);
+        }
+    }
+
+    internal bool IsImportedResidentPublicationPlanCurrent(in ImportedTextureResidentPublicationPlan plan)
+        => ReferenceEquals(Mipmaps, plan.PreviousMipmaps)
+            && (Mipmaps.Length > 0 ? Mipmaps[0].Width : 0u) == plan.PreviousWidth
+            && (Mipmaps.Length > 0 ? Mipmaps[0].Height : 0u) == plan.PreviousHeight
+            && CanonicalSourceContentGeneration == plan.SourceGeneration
+            && ImportedColorSpace == plan.ColorSpace
+            && CaptureImportedResidentAuthoredSettings() == plan.AuthoredSettings
+            && ResolveImportedResidentFormat(this, plan.ResidentData.SizedInternalFormat) == plan.SizedFormat;
+
+    internal void BeginImportedResidentPublication() => BeginImportedSourceMetadataWrite();
+    internal void CompleteImportedResidentPublication() => CompleteImportedSourceMetadataWrite();
+
+    internal void CommitImportedResidentPublication(in ImportedTextureResidentPublicationPlan plan)
+    {
+        Mipmap2D[] mipmaps = plan.ResidentData.Mipmaps;
+        SetField(ref _streamingLockMipLevel, plan.LockMipLevel, publishNotifications: false);
+        SetField(ref _mipmaps, mipmaps, publishNotifications: false);
+        TrackStreamingResidentMipmaps(mipmaps);
+        SetField(ref _resizable, false, publishNotifications: false);
+        SetField(ref _sizedInternalFormat, plan.SizedFormat, publishNotifications: false);
+        CommitImportedTextureStreamingMipRangeMetadata(plan.SmallestAllowedMipmapLevel);
+        SetField(ref _residencyState.SparseEnabled, false, publishNotifications: false);
+        SetField(ref _residencyState.LogicalWidth, 0u, publishNotifications: false);
+        SetField(ref _residencyState.LogicalHeight, 0u, publishNotifications: false);
+        SetField(ref _residencyState.LogicalMipCount, 0, publishNotifications: false);
+        SetField(ref _residencyState.ResidentBaseMipLevel, int.MaxValue, publishNotifications: false);
+        SetField(ref _residencyState.CommittedBaseMipLevel, int.MaxValue, publishNotifications: false);
+        SetField(ref _residencyState.SparseLevelCount, 0, publishNotifications: false);
+        SetField(ref _residencyState.CommittedBytes, 0L, publishNotifications: false);
+        SetField(ref _residencyState.ResidentPageSelection, SparseTextureStreamingPageSelection.Full, publishNotifications: false);
+        PublishCanonicalSourceContentMutation();
+    }
 
     internal ulong CanonicalSourceContentGeneration
         => unchecked((ulong)Volatile.Read(ref _canonicalSourceContentGeneration));

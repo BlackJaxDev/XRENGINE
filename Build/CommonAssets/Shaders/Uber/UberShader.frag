@@ -56,6 +56,7 @@
 //   uniforms.glsl - the full uniform block (material params, camera, lights)
 #include "common.glsl"
 #include "uniforms.glsl"
+#include "source_shading.glsl"
 // common.glsl defines PI; undef before the snippets below to avoid redef warnings.
 #undef PI
 // #pragma snippet pulls in engine-managed GLSL fragments that provide
@@ -654,20 +655,30 @@ vec3 applyDetailTangentNormal(ToonMesh mesh, vec3 normal) {
 
 // Indirect / IBL term. Receives the combined screen+material AO so corners
 // and baked crevices correctly darken ambient light.
-vec3 calculateForwardAmbientLighting(ToonMesh mesh, vec3 baseColor, vec3 normal, PBRData pbr, float ambientOcclusion) {
+vec3 calculateForwardAmbientLightingWithProbe(ToonMesh mesh, vec3 baseColor,
+    vec3 normal, PBRData pbr, float ambientOcclusion,
+    out vec3 probeSpecular) {
     vec3 ambientRms = resolveSurfaceRms(pbr);
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
     if (_PBRMochiePackedMasksEnabled != 0)
         ambientRms.z = 1.0;
 #endif
-    return XRENGINE_CalculateAmbientPbr(
+    return XRENGINE_CalculateAmbientPbrWithProbe(
         normal,
         mesh.worldPos,
         baseColor,
         mesh.viewDir,
         ambientRms,
         ambientOcclusion,
-        pbr.reflectionMask);
+        pbr.reflectionMask,
+        probeSpecular);
+}
+
+vec3 calculateForwardAmbientLighting(ToonMesh mesh, vec3 baseColor,
+    vec3 normal, PBRData pbr, float ambientOcclusion) {
+    vec3 probeSpecular;
+    return calculateForwardAmbientLightingWithProbe(mesh, baseColor,
+        normal, pbr, ambientOcclusion, probeSpecular);
 }
 
 // Sum of all directional light contributions. `skipPrimaryDirectional` lets
@@ -676,6 +687,9 @@ vec3 calculateForwardAmbientLighting(ToonMesh mesh, vec3 baseColor, vec3 normal,
 vec3 calculateForwardDirectionalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, PBRData pbr, bool skipPrimaryDirectional) {
     vec3 totalLight = vec3(0.0);
     vec3 rms = resolveSurfaceRms(pbr);
+#ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
+    if (_SourceMochieSecond.w > 0.5) rms.z = 0.0;
+#endif
     int startIndex = skipPrimaryDirectional ? 1 : 0;
 
     for (int i = startIndex; i < DirLightCount; ++i) {
@@ -780,6 +794,9 @@ vec3 calculateForwardLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor, P
     vec3 totalLight = vec3(0.0);
     vec3 shadowNormal = mesh.vertexNormal;
     vec3 rms = resolveSurfaceRms(pbr);
+#ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
+    if (_SourceMochieSecond.w > 0.5) rms.z = 0.0;
+#endif
 
     if (ForwardPlusEnabled) {
         int baseIndex = getForwardPlusVisibleLightBaseIndex();
@@ -878,7 +895,7 @@ ToonLight createToonLight(ToonMesh mesh, vec3 normal, vec3 lightDirection, vec3 
         : vec3(0.0, 1.0, 0.0);
 
     light.direction = safeDirection;
-    light.color = resolveStylizedLightingColor(lightColor) * attenuation;
+    light.color = (_SourceLightMode != 0 ? lightColor : resolveStylizedLightingColor(lightColor)) * attenuation;
     light.attenuation = attenuation;
     light.indirectColor = indirectColor;
 
@@ -893,12 +910,12 @@ ToonLight createToonLight(ToonMesh mesh, vec3 normal, vec3 lightDirection, vec3 
     // Texture-ramp mode uses this value as a shadow-source blend. Other
     // stylized modes retain the neutral-ambient remap until their native
     // compositions consume that control directly.
-    if (_LightingIgnoreAmbientColor > 0.0 && _LightingMode != 0) {
+    if (_SourceLightMode == 0 && _LightingIgnoreAmbientColor > 0.0 && _LightingMode != 0) {
         vec3 neutralAmbient = vec3(luminance(light.indirectColor));
         light.indirectColor = mix(light.indirectColor, neutralAmbient, saturate(_LightingIgnoreAmbientColor));
     }
 
-    if (_LightingIndirectUsesNormals > 0.0) {
+    if (_SourceLightMode == 0 && _LightingIndirectUsesNormals > 0.0) {
         // Simple hemisphere lighting: upward-facing surfaces brighten,
         // downward-facing surfaces darken.
         float upFactor = dot(normal, vec3(0.0, 1.0, 0.0)) * 0.5 + 0.5;
@@ -929,7 +946,69 @@ ToonLight createToonLight(ToonMesh mesh, vec3 normal, vec3 lightDirection, vec3 
 // into a `lightMap` value used to index toon ramps / cel bands. In the PBR
 // path the early #ifdef short-circuits the fancy remap and only fills the
 // raw dot products.
+XrSourceShCoefficients getCanonicalSourceSh()
+{
+    XrSourceShCoefficients sh;
+#ifdef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
+    sh.ar = sh.ag = sh.ab = sh.br = sh.bg = sh.bb = sh.c = vec4(0.0);
+#else
+    sh.ar = vec4(0.0, 0.0, 0.0, GlobalAmbient.r);
+    sh.ag = vec4(0.0, 0.0, 0.0, GlobalAmbient.g);
+    sh.ab = vec4(0.0, 0.0, 0.0, GlobalAmbient.b);
+    sh.br = sh.bg = sh.bb = sh.c = vec4(0.0);
+    if (SourceSHEnabled) {
+        sh.ar = SourceSHAr; sh.ag = SourceSHAg; sh.ab = SourceSHAb;
+        sh.br = SourceSHBr; sh.bg = SourceSHBg; sh.bb = SourceSHBb;
+        sh.c = SourceSHC;
+    }
+#endif
+    return sh;
+}
+
+float sampleShadowMap(ToonMesh mesh);
+
 ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
+#ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    if (_SourceLightMode != 0) {
+        vec3 primary = DirLightCount > 0
+            ? DirectionalLights[0].Base.Color * DirectionalLights[0].Base.DiffuseIntensity
+            : vec3(0.0);
+        XrSourceShCoefficients sh = getCanonicalSourceSh();
+        vec3 sourceDirect, sourceIndirect, direction;
+        xrSourceShLight(sh, primary, normal,
+            DirLightCount > 0 ? normalize(-DirectionalLights[0].Direction)
+                : vec3(0.0), _LightingColorMode, _SourceLightSettings.x,
+            _LightingIndirectUsesNormals, direction, sourceDirect,
+            sourceIndirect);
+        vec3 rawSelectedDirect = sourceDirect;
+        sourceDirect = xrSourceDirectColor(sourceDirect, _LightingMinLightBrightness,
+            _LightingMonochromatic, _LightingCapEnabled, _LightingCap);
+        sourceIndirect = xrSourceDirectColor(sourceIndirect, _LightingMinLightBrightness,
+            _LightingMonochromatic, _LightingCapEnabled, _LightingCap);
+        sourceDirect = max(sourceDirect * _SourceLightSettings.z +
+            vec3(_SourceLightSettings.w), vec3(0.0));
+        sourceIndirect = max(sourceIndirect * _SourceLightSettings.z +
+            vec3(_SourceLightSettings.w), vec3(0.0));
+        ToonLight selected = createToonLight(mesh, normal, direction,
+            sourceDirect, 1.0, sourceIndirect);
+        float visibility = sampleShadowMap(mesh);
+        selected.lightMap = _LightingMapMode == 0
+            ? xrSourceShLightMap(sh, normal, rawSelectedDirect,
+                dot(normal, direction), visibility, _SourceLightSettings.y)
+            : xrSourceLightMap(dot(normal, direction), _LightingMapMode,
+                _SourceLightSettings.y, visibility);
+        if (_LightingMode == 2)
+            selected.lightMap = xrSourceWrappedMap(normal, direction, primary,
+                sh, _LightingWrappedWrap, _LightingWrappedNormalization,
+                sampleMaterialAmbientOcclusion(mesh), visibility,
+                _SourceLightSettings.y, 1.0, _LightingMonochromatic);
+        if (_LightingMode == 5)
+            selected.lightMap = _ForceFlatRampedLightmap > 0.5
+                ? smoothstep(0.4, 0.6, dot(normal, direction) * 0.5 + 0.5)
+                : 1.0;
+        return selected;
+    }
+#endif
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_STYLIZED_LIGHTING
     if (_LightingForceDirection > 0.5 || _LightingForceColor > 0.5) {
         vec3 forcedDirection = _LightingForceDirection > 0.5
@@ -970,6 +1049,10 @@ ToonLight calculateLighting(ToonMesh mesh, vec3 normal, vec3 indirectColor) {
 // into broad false-shadow bands.
 float sampleShadowMap(ToonMesh mesh) {
     if (DirLightCount <= 0)
+        return 1.0;
+    if (_SourceLightMode != 0 && xrSourceLuminance(
+        DirectionalLights[0].Base.Color *
+        DirectionalLights[0].Base.DiffuseIntensity) <= 0.000001)
         return 1.0;
 
     vec3 lightDir = normalize(-DirectionalLights[0].Direction);
@@ -1191,11 +1274,90 @@ vec3 applyShadingWithShadow(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3
 #endif
 }
 
+vec3 applySourcePrimaryShading(vec3 baseColor, ToonLight light, ToonMesh mesh,
+    vec3 normal, float materialAo)
+{
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    return baseColor;
+#else
+    if (_LightingMode == 5)
+        return baseColor * light.color * mix(1.0, sampleShadowMap(mesh),
+            clamp(_SourceLightSettings.y, 0.0, 1.0));
+    if (_LightingMode == 2)
+    {
+        vec3 rawPrimary = DirLightCount > 0
+            ? DirectionalLights[0].Base.Color * DirectionalLights[0].Base.DiffuseIntensity
+            : vec3(0.0);
+        XrSourceShCoefficients sh = getCanonicalSourceSh();
+        float visibility = sampleShadowMap(mesh);
+        float map = xrSourceWrappedMap(normal, light.direction, rawPrimary,
+            sh, _LightingWrappedWrap, _LightingWrappedNormalization,
+            materialAo, visibility, _SourceLightSettings.y, 1.0,
+            _LightingMonochromatic);
+        return xrSourceWrappedDiffuse(baseColor, normal, light.direction,
+            rawPrimary, sh, _SourceWrappedColor.rgb,
+            _LightingShadowColor, _LightingWrappedWrap,
+            _LightingWrappedNormalization, materialAo, visibility,
+            _SourceLightSettings.y, 1.0, _LightingMonochromatic,
+            _ShadowStrength, _LightingIgnoreAmbientColor,
+            _LightingGradientStart, _LightingGradientEnd,
+            _LightingMinLightBrightness, _LightingCapEnabled, _LightingCap,
+            fwidth(map));
+    }
+    float map = xrSourceLightMap(dot(normal, light.direction), _LightingMapMode,
+        _SourceLightSettings.y, sampleShadowMap(mesh));
+    if (_LightingMapMode == 0) {
+        vec3 rawPrimary = DirLightCount > 0
+            ? DirectionalLights[0].Base.Color * DirectionalLights[0].Base.DiffuseIntensity
+            : vec3(0.0);
+        XrSourceShCoefficients sh = getCanonicalSourceSh();
+        vec3 sourceDirection, sourceDirect, sourceIndirect;
+        xrSourceShLight(sh, rawPrimary, normal, light.direction,
+            _LightingColorMode, _SourceLightSettings.x,
+            _LightingIndirectUsesNormals, sourceDirection, sourceDirect,
+            sourceIndirect);
+        map = xrSourceShLightMap(sh, normal, sourceDirect,
+            dot(normal, light.direction), sampleShadowMap(mesh),
+            _SourceLightSettings.y);
+    }
+    vec2 rampCoord = transformUV(vec2(clamp(map + _ShadowOffset, 0.0, 1.0),
+        getUV(_ToonRampUV, mesh).y), _ToonRamp_ST);
+    rampCoord = panUV(rampCoord, _ToonRampPan, u_Time);
+    vec3 ramp = texture(_ToonRamp, rampCoord).rgb;
+    return xrSourceRampDiffuse(baseColor, light.color, light.indirectColor,
+        ramp, _LightingShadowColor, _ShadowStrength,
+        sampleLightingShadowMask(mesh), _LightingIgnoreAmbientColor, materialAo);
+#endif
+}
+
 vec3 applyShading(vec3 baseColor, ToonLight light, ToonMesh mesh, vec3 normal) {
 #ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     return baseColor * (light.color * saturate(light.nDotL) + light.indirectColor);
 #else
     return applyShadingWithShadow(baseColor, light, mesh, normal, sampleShadowMap(mesh));
+#endif
+}
+
+vec3 calculateSourceLocalDiffuse(ToonMesh mesh, vec3 baseColor, vec3 normal,
+    vec3 direction, vec3 rawRadiance, float attenuation, float visibility)
+{
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    return vec3(0.0);
+#else
+    vec3 direct, indirect;
+    xrSourceAdditiveColors(rawRadiance, attenuation, _SourceAdditiveSettings,
+        _SourceAdditiveColor, false, direct, indirect);
+    float map = xrSourceAdditiveLightMap(dot(normal, direction), _LightingMapMode,
+        visibility, _SourceAdditiveColor.w);
+    vec2 rampCoord = transformUV(vec2(clamp(map + _ShadowOffset, 0.0, 1.0),
+        getUV(_ToonRampUV, mesh).y), _ToonRamp_ST);
+    rampCoord = panUV(rampCoord, _ToonRampPan, u_Time);
+    vec3 ramp = texture(_ToonRamp, rampCoord).rgb;
+    return xrSourceAdditiveDiffuse(baseColor, direct, indirect, ramp,
+        _LightingShadowColor, dot(normal, direction), visibility,
+        sampleLightingShadowMask(mesh), sampleMaterialAmbientOcclusion(mesh),
+        _ShadowStrength, _LightingIgnoreAmbientColor, _LightingMode,
+        _SourceAdditiveColor, _SourceAdditiveGradient);
 #endif
 }
 
@@ -1214,6 +1376,10 @@ vec3 calculateStylizedPointLight(ToonMesh mesh, vec3 baseColor, vec3 normal, int
         attenuation,
         vec3(0.0));
     float shadow = XRENGINE_ReadShadowMapPoint(lightIndex, light, mesh.vertexNormal, mesh.worldPos);
+    if (_SourceLightMode != 0)
+        return calculateSourceLocalDiffuse(mesh, baseColor, normal,
+            lightVector / lightDistance, light.Base.Color * light.Base.DiffuseIntensity,
+            attenuation, shadow);
     return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
 }
 
@@ -1237,6 +1403,10 @@ vec3 calculateStylizedSpotLight(ToonMesh mesh, vec3 baseColor, vec3 normal, int 
         attenuation,
         vec3(0.0));
     float shadow = XRENGINE_ReadShadowMapSpot(lightIndex, light, mesh.vertexNormal, mesh.worldPos, lightToPosN);
+    if (_SourceLightMode != 0)
+        return calculateSourceLocalDiffuse(mesh, baseColor, normal, lightToPosN,
+            light.Base.Base.Color * light.Base.Base.DiffuseIntensity,
+            attenuation, shadow);
     return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
 }
 
@@ -1258,6 +1428,10 @@ vec3 calculateStylizedForwardPlusPointLight(ToonMesh mesh, vec3 baseColor, vec3 
     float shadow = (sourceIndex >= 0 && sourceIndex < PointLightCount)
         ? XRENGINE_ReadShadowMapPoint(sourceIndex, PointLights[sourceIndex], mesh.vertexNormal, mesh.worldPos)
         : 1.0;
+    if (_SourceLightMode != 0)
+        return calculateSourceLocalDiffuse(mesh, baseColor, normal,
+            lightVector / lightDistance, light.Color_Type.xyz * light.Params.z,
+            attenuation, shadow);
     return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
 }
 
@@ -1285,6 +1459,10 @@ vec3 calculateStylizedForwardPlusSpotLight(ToonMesh mesh, vec3 baseColor, vec3 n
     float shadow = (sourceIndex >= 0 && sourceIndex < SpotLightCount)
         ? XRENGINE_ReadShadowMapSpot(sourceIndex, SpotLights[sourceIndex], mesh.vertexNormal, mesh.worldPos, lightToPosN)
         : 1.0;
+
+    if (_SourceLightMode != 0)
+        return calculateSourceLocalDiffuse(mesh, baseColor, normal, lightToPosN,
+            light.Color_Type.xyz * light.Params.z, attenuation, shadow);
 
     return applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
 }
@@ -1323,8 +1501,18 @@ vec3 calculateStylizedLocalLighting(ToonMesh mesh, vec3 baseColor, vec3 normal) 
 
 vec3 calculateStylizedAdditionalLighting(ToonMesh mesh, vec3 baseColor, vec3 normal) {
     vec3 totalLight = vec3(0.0);
+    if (_SourceLightMode != 0 && _SourceAdditiveSettings.x <= 0.5)
+        return totalLight;
 
     for (int i = 1; i < DirLightCount; ++i) {
+        if (_SourceLightMode != 0 && _SourceAdditiveSettings.y > 0.5) break;
+        if (_SourceLightMode != 0) {
+            vec3 direction = normalize(-DirectionalLights[i].Direction);
+            totalLight += calculateSourceLocalDiffuse(mesh, baseColor, normal,
+                direction, DirectionalLights[i].Base.Color *
+                    DirectionalLights[i].Base.DiffuseIntensity, 1.0, 1.0);
+            continue;
+        }
         ToonLight light = createToonLight(
             mesh,
             normal,
@@ -1428,6 +1616,7 @@ vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
 #ifdef XRENGINE_UBER_DISABLE_RIM_LIGHTING
     return vec3(0.0);
 #else
+    if (_SourceRimSettings.x > 0.5) return vec3(0.0);
     float nDotV = saturate(dot(normal, mesh.viewDir));
     
     float rim;
@@ -1469,10 +1658,155 @@ vec3 calculateRimLight(ToonMesh mesh, vec3 normal, ToonLight light) {
 #endif
 }
 
-vec3 calculateAdvancedSpecular(ToonMesh mesh, vec3 normal, ToonLight light, PBRData pbr) {
+vec3 calculateSourceDirectColor(vec3 radiance) {
+#ifdef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    return max(radiance, vec3(0.0));
+#else
+    return xrSourceDirectColor(radiance, _LightingMinLightBrightness,
+        _LightingMonochromatic, _LightingCapEnabled, _LightingCap);
+#endif
+}
+
+vec3 calculateSourcePrimaryColor(vec3 radiance) {
+#if defined(XRENGINE_UBER_DISABLE_STYLIZED_SHADING) || defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING)
+    return radiance;
+#else
+    if (_SourceLightMode == 0) return calculateSourceDirectColor(radiance);
+    vec3 direct, indirect;
+    xrSourceConstantAmbientLight(max(GlobalAmbient, vec3(0.0)), radiance,
+        _LightingColorMode, _SourceLightSettings.x, direct, indirect);
+    return max(xrSourceDirectColor(direct, _LightingMinLightBrightness,
+        _LightingMonochromatic, _LightingCapEnabled, _LightingCap) *
+        _SourceLightSettings.z + vec3(_SourceLightSettings.w), vec3(0.0));
+#endif
+}
+
+vec3 calculateAdvancedSpecular(ToonMesh mesh, vec3 normal, ToonLight light, PBRData pbr, vec3 baseColor) {
 #ifdef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
     return vec3(0.0);
 #else
+    if (_SourceMochieSecond.w > 0.5) {
+#ifdef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
+        return vec3(0.0);
+#else
+        vec2 smoothnessUV = panUV(transformUV(getUV(_PBRSmoothnessMapsUV, mesh), _PBRSmoothnessMaps_ST),
+            _PBRSmoothnessMapsPan, u_Time);
+        vec4 sampled = texture(_PBRSmoothnessMaps, smoothnessUV);
+        float packedSmoothness = sampled[clamp(_PBRSmoothnessMapsChannel, 0, 3)];
+        if (_PBRSmoothnessMapInvert > 0.5) packedSmoothness = 1.0 - packedSmoothness;
+        float materialAo = sampleMaterialAmbientOcclusion(mesh);
+        float primarySmoothness = packedSmoothness * _PBRRoughnessMultiplier;
+        vec3 normalDx = dFdx(normal), normalDy = dFdy(normal);
+        vec3 sourceSpecular = _SourceLightMode != 0
+            ? xrSourceMochieDirect(normal, mesh.viewDir, light.direction,
+                baseColor, pbr.metallic, primarySmoothness, packedSmoothness,
+                pbr.specularMask, _SpecularTint.rgb, light.color, materialAo,
+                sampleShadowMap(mesh), normalDx, normalDy,
+                _SourceMochieSettings, _SourceMochieSecond, true)
+            : vec3(0.0);
+        if (_SourceLightMode != 0 && _SourceAdditiveSettings.x <= 0.5)
+            return sourceSpecular;
+        for (int index = _SourceLightMode != 0 ? 1 : 0; index < DirLightCount; ++index) {
+            if (_SourceLightMode != 0 && index > 0 && _SourceAdditiveSettings.y > 0.5) continue;
+            DirLight sourceLight = DirectionalLights[index];
+            vec3 direction = normalize(-sourceLight.Direction);
+            float shadow = index == 0 ? sampleShadowMap(mesh) : 1.0;
+            vec3 rawRadiance = sourceLight.Base.Color * sourceLight.Base.DiffuseIntensity;
+            vec3 radiance = index == 0
+                ? calculateSourcePrimaryColor(rawRadiance)
+                : (_SourceLightMode != 0
+                    ? xrSourceAdditiveColor(rawRadiance, 1.0, _SourceAdditiveSettings.z,
+                        _SourceAdditiveSettings.w, _SourceAdditiveColor.x)
+                    : calculateSourceDirectColor(rawRadiance));
+            sourceSpecular += xrSourceMochieDirect(normal, mesh.viewDir, direction,
+                baseColor, pbr.metallic, primarySmoothness, packedSmoothness,
+                pbr.specularMask, _SpecularTint.rgb, radiance, materialAo, shadow,
+                normalDx, normalDy, _SourceMochieSettings, _SourceMochieSecond, true);
+        }
+        if (ForwardPlusEnabled) {
+            int baseIndex = getForwardPlusVisibleLightBaseIndex();
+            for (int offset = 0; offset < ForwardPlusMaxLightsPerTile; ++offset) {
+                int lightIndex = ForwardPlusVisibleIndices[baseIndex + offset];
+                if (lightIndex < 0) break;
+                ForwardPlusLocalLight sourceLight = ForwardPlusLocalLights[lightIndex];
+                vec3 delta = sourceLight.PositionWS.xyz - mesh.worldPos;
+                float distance = length(delta);
+                if (distance <= EPSILON) continue;
+                vec3 direction = delta / distance;
+                float attenuation = XRENGINE_Attenuate(distance, sourceLight.Params.x) *
+                    max(sourceLight.Params.y, 0.0001);
+                float shadow = 1.0;
+                int sourceIndex = int(sourceLight.Params.w + 0.5);
+                if (sourceLight.Color_Type.w < 0.5) {
+                    if (sourceIndex >= 0 && sourceIndex < PointLightCount)
+                        shadow = XRENGINE_ReadShadowMapPoint(sourceIndex,
+                            PointLights[sourceIndex], mesh.vertexNormal, mesh.worldPos);
+                } else {
+                    float cosine = max(dot(-direction, normalize(sourceLight.DirectionWS_Exponent.xyz)), 0.0);
+                    attenuation *= smoothstep(sourceLight.SpotAngles.y,
+                        sourceLight.SpotAngles.x, cosine) * pow(cosine, sourceLight.DirectionWS_Exponent.w);
+                    if (sourceIndex >= 0 && sourceIndex < SpotLightCount)
+                        shadow = XRENGINE_ReadShadowMapSpot(sourceIndex,
+                            SpotLights[sourceIndex], mesh.vertexNormal, mesh.worldPos, direction);
+                }
+                vec3 rawRadiance = sourceLight.Color_Type.xyz * sourceLight.Params.z;
+                vec3 radiance = _SourceLightMode != 0
+                    ? xrSourceAdditiveColor(rawRadiance, attenuation, _SourceAdditiveSettings.z,
+                        _SourceAdditiveSettings.w, _SourceAdditiveColor.x)
+                    : calculateSourceDirectColor(rawRadiance) * attenuation;
+                sourceSpecular += xrSourceMochieDirect(normal, mesh.viewDir, direction,
+                    baseColor, pbr.metallic, primarySmoothness, packedSmoothness,
+                    pbr.specularMask, _SpecularTint.rgb, radiance, materialAo,
+                    shadow, normalDx, normalDy, _SourceMochieSettings,
+                    _SourceMochieSecond, false);
+            }
+        } else {
+            for (int index = 0; index < PointLightCount; ++index) {
+                PointLight sourceLight = PointLights[index];
+                vec3 delta = sourceLight.Position - mesh.worldPos;
+                float distance = length(delta);
+                if (distance <= EPSILON) continue;
+                float attenuation = XRENGINE_Attenuate(distance, sourceLight.Radius) * sourceLight.Brightness;
+                float shadow = XRENGINE_ReadShadowMapPoint(index, sourceLight,
+                    mesh.vertexNormal, mesh.worldPos);
+                vec3 rawRadiance = sourceLight.Base.Color * sourceLight.Base.DiffuseIntensity;
+                vec3 radiance = _SourceLightMode != 0
+                    ? xrSourceAdditiveColor(rawRadiance, attenuation, _SourceAdditiveSettings.z,
+                        _SourceAdditiveSettings.w, _SourceAdditiveColor.x)
+                    : calculateSourceDirectColor(rawRadiance) * attenuation;
+                sourceSpecular += xrSourceMochieDirect(normal, mesh.viewDir, delta / distance,
+                    baseColor, pbr.metallic, primarySmoothness, packedSmoothness,
+                    pbr.specularMask, _SpecularTint.rgb, radiance, materialAo,
+                    shadow, normalDx, normalDy, _SourceMochieSettings,
+                    _SourceMochieSecond, false);
+            }
+            for (int index = 0; index < SpotLightCount; ++index) {
+                SpotLight sourceLight = SpotLights[index];
+                vec3 delta = sourceLight.Base.Position - mesh.worldPos;
+                float distance = length(delta);
+                if (distance <= EPSILON) continue;
+                vec3 direction = delta / distance;
+                float cosine = max(dot(-direction, normalize(sourceLight.Direction)), 0.0);
+                float attenuation = XRENGINE_Attenuate(distance, sourceLight.Base.Radius) *
+                    sourceLight.Base.Brightness * smoothstep(sourceLight.OuterCutoff,
+                    sourceLight.InnerCutoff, cosine) * pow(cosine, sourceLight.Exponent);
+                float shadow = XRENGINE_ReadShadowMapSpot(index, sourceLight,
+                    mesh.vertexNormal, mesh.worldPos, direction);
+                vec3 rawRadiance = sourceLight.Base.Base.Color * sourceLight.Base.Base.DiffuseIntensity;
+                vec3 radiance = _SourceLightMode != 0
+                    ? xrSourceAdditiveColor(rawRadiance, attenuation, _SourceAdditiveSettings.z,
+                        _SourceAdditiveSettings.w, _SourceAdditiveColor.x)
+                    : calculateSourceDirectColor(rawRadiance) * attenuation;
+                sourceSpecular += xrSourceMochieDirect(normal, mesh.viewDir, direction,
+                    baseColor, pbr.metallic, primarySmoothness, packedSmoothness,
+                    pbr.specularMask, _SpecularTint.rgb, radiance, materialAo,
+                    shadow, normalDx, normalDy, _SourceMochieSettings,
+                    _SourceMochieSecond, false);
+            }
+        }
+        return sourceSpecular;
+#endif
+    }
     if (resolveSpecularIntensity(pbr) <= 0.0) {
         return vec3(0.0);
     }
@@ -1521,6 +1855,132 @@ vec3 calculateAdvancedSpecular(ToonMesh mesh, vec3 normal, ToonLight light, PBRD
 // ============================================
 // Main Fragment Function
 // ============================================
+vec3 calculateSourceClearCoat(ToonMesh mesh, vec3 normal, ToonLight primaryLight)
+{
+#if defined(XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS) || defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING) || defined(XRENGINE_UBER_DISABLE_ADVANCED_PBR)
+    return vec3(0.0);
+#else
+    if (_SourceClearCoat.x <= 0.5) return vec3(0.0);
+    vec4 packed = texture(_SourceClearCoatMaps,
+        transformUV(mesh.uv[0], _SourceClearCoatMaps_ST));
+    float smoothness = _SourceClearCoat.y * packed.g;
+    float specularMask = _SourceClearCoat.w * packed.a;
+    float materialAo = sampleMaterialAmbientOcclusion(mesh);
+    vec3 normalDx = dFdx(normal), normalDy = dFdy(normal);
+    vec3 direct = xrSourceGgxLobe(normal, mesh.viewDir, primaryLight.direction,
+        vec3(0.220916301), smoothness, specularMask, vec3(1.0),
+        primaryLight.color, materialAo, sampleShadowMap(mesh), normalDx,
+        normalDy, _SourceClearCoatGsaa, 0.0, true);
+    if (_SourceLightMode == 0 || _SourceAdditiveSettings.x > 0.5)
+    {
+        for (int index = 1; index < DirLightCount; ++index)
+        {
+            if (_SourceLightMode != 0 && _SourceAdditiveSettings.y > 0.5) break;
+            DirLight source = DirectionalLights[index];
+            vec3 raw = source.Base.Color * source.Base.DiffuseIntensity;
+            vec3 radiance = _SourceLightMode != 0
+                ? xrSourceAdditiveColor(raw, 1.0, _SourceAdditiveSettings.z,
+                    _SourceAdditiveSettings.w, _SourceAdditiveColor.x)
+                : raw;
+            direct += xrSourceGgxLobe(normal, mesh.viewDir, normalize(-source.Direction),
+                vec3(0.220916301), smoothness, specularMask, vec3(1.0),
+                radiance, materialAo, 1.0, normalDx, normalDy,
+                _SourceClearCoatGsaa, 0.0, true);
+        }
+        if (ForwardPlusEnabled)
+        {
+            int baseIndex = getForwardPlusVisibleLightBaseIndex();
+            for (int offset = 0; offset < ForwardPlusMaxLightsPerTile; ++offset)
+            {
+                int lightIndex = ForwardPlusVisibleIndices[baseIndex + offset];
+                if (lightIndex < 0) break;
+                ForwardPlusLocalLight source = ForwardPlusLocalLights[lightIndex];
+                vec3 delta = source.PositionWS.xyz - mesh.worldPos;
+                float distance = length(delta);
+                if (distance <= EPSILON) continue;
+                vec3 direction = delta / distance;
+                float attenuation = XRENGINE_Attenuate(distance, source.Params.x) *
+                    max(source.Params.y, 0.0001);
+                if (source.Color_Type.w > 0.5)
+                {
+                    float cosine = max(dot(-direction,
+                        normalize(source.DirectionWS_Exponent.xyz)), 0.0);
+                    attenuation *= smoothstep(source.SpotAngles.y, source.SpotAngles.x,
+                        cosine) * pow(cosine, source.DirectionWS_Exponent.w);
+                }
+                vec3 raw = source.Color_Type.xyz * source.Params.z;
+                vec3 radiance = _SourceLightMode != 0
+                    ? xrSourceAdditiveColor(raw, attenuation, _SourceAdditiveSettings.z,
+                        _SourceAdditiveSettings.w, _SourceAdditiveColor.x)
+                    : raw * attenuation;
+                direct += xrSourceGgxLobe(normal, mesh.viewDir, direction,
+                    vec3(0.220916301), smoothness, specularMask, vec3(1.0),
+                    radiance, materialAo,
+                    _SourceLightMode != 0 ? attenuation : 1.0,
+                    normalDx, normalDy, _SourceClearCoatGsaa, 0.0,
+                    _SourceLightMode != 0);
+            }
+        }
+        else
+        {
+            for (int index = 0; index < PointLightCount; ++index)
+            {
+                PointLight source = PointLights[index];
+                vec3 delta = source.Position - mesh.worldPos;
+                float distance = length(delta);
+                if (distance <= EPSILON) continue;
+                float attenuation = XRENGINE_Attenuate(distance, source.Radius) *
+                    source.Brightness;
+                vec3 raw = source.Base.Color * source.Base.DiffuseIntensity;
+                vec3 radiance = _SourceLightMode != 0
+                    ? xrSourceAdditiveColor(raw, attenuation, _SourceAdditiveSettings.z,
+                        _SourceAdditiveSettings.w, _SourceAdditiveColor.x)
+                    : raw * attenuation;
+                direct += xrSourceGgxLobe(normal, mesh.viewDir, delta / distance,
+                    vec3(0.220916301), smoothness, specularMask, vec3(1.0),
+                    radiance, materialAo,
+                    _SourceLightMode != 0 ? attenuation : 1.0,
+                    normalDx, normalDy, _SourceClearCoatGsaa, 0.0,
+                    _SourceLightMode != 0);
+            }
+            for (int index = 0; index < SpotLightCount; ++index)
+            {
+                SpotLight source = SpotLights[index];
+                vec3 delta = source.Base.Position - mesh.worldPos;
+                float distance = length(delta);
+                if (distance <= EPSILON) continue;
+                vec3 direction = delta / distance;
+                float cosine = max(dot(-direction, normalize(source.Direction)), 0.0);
+                float attenuation = XRENGINE_Attenuate(distance, source.Base.Radius) *
+                    source.Base.Brightness * smoothstep(source.OuterCutoff,
+                    source.InnerCutoff, cosine) * pow(cosine, source.Exponent);
+                vec3 raw = source.Base.Base.Color * source.Base.Base.DiffuseIntensity;
+                vec3 radiance = _SourceLightMode != 0
+                    ? xrSourceAdditiveColor(raw, attenuation, _SourceAdditiveSettings.z,
+                        _SourceAdditiveSettings.w, _SourceAdditiveColor.x)
+                    : raw * attenuation;
+                direct += xrSourceGgxLobe(normal, mesh.viewDir, direction,
+                    vec3(0.220916301), smoothness, specularMask, vec3(1.0),
+                    radiance, materialAo,
+                    _SourceLightMode != 0 ? attenuation : 1.0,
+                    normalDx, normalDy, _SourceClearCoatGsaa, 0.0,
+                    _SourceLightMode != 0);
+            }
+        }
+    }
+    vec3 rawReflection = XRENGINE_SampleForwardRawPrefilter(normal,
+        mesh.worldPos, mesh.viewDir,
+        xrSourcePerceptualRoughness(smoothness, normalDx, normalDy,
+            _SourceClearCoatGsaa));
+    vec3 reflection = xrSourceClearCoatReflection(rawReflection,
+        primaryLight.color, smoothness, _SourceClearCoat.z * packed.b,
+        materialAo, abs(dot(normal, mesh.viewDir)), normalDx, normalDy,
+        _SourceClearCoatGsaa, _SourceClearCoatReflection);
+    return clamp((direct + reflection) * packed.r * _SourceClearCoatGsaa.w,
+        vec3(0.0), vec3(1.0));
+#endif
+}
+
 // High-level flow:
 //   1. Assemble ToonMesh (positions, normal, TBN, UVs, face orientation).
 //   2. Depth-peel early-discard if we're on a hidden peel layer.
@@ -1547,9 +2007,11 @@ void main() {
     mesh.viewDir = normalize(u_CameraPosition - FragPos);
     mesh.isFrontFace = gl_FrontFacing ? 1.0 : -1.0;
 
-    // Flip the interpolated normal when shading the back of a double-sided
-    // surface (e.g. hair cards) so lighting reads correctly from both sides.
-    mesh.vertexNormal *= mesh.isFrontFace;
+    float normalFacing = _SourceBackfaceNormals == 0 || _FlipBackfaceNormals != 0
+        ? mesh.isFrontFace : 1.0;
+    float frameFacing = _SourceBackfaceNormals != 0 && _FlipBackfaceNormals != 0
+        ? mesh.isFrontFace : 1.0;
+    mesh.vertexNormal *= normalFacing;
     mesh.worldNormal = mesh.vertexNormal;
 
     // Prefer the mesh's imported tangent frame. Derivative TBN is only a
@@ -1558,7 +2020,8 @@ void main() {
     // TBN directly (rare) still see a well-formed matrix.
 #if !defined(XRENGINE_UBER_DISABLE_NORMAL_MAP) || !defined(XRENGINE_UBER_DISABLE_DETAIL_TEXTURES) || !defined(XRENGINE_UBER_DISABLE_PARALLAX)
     {
-        mesh.TBN = computeImportedOrFallbackWorldTbn(mesh.vertexNormal, FragTan, FragBinorm, mesh.worldPos, mesh.uv[0]);
+        mesh.TBN = computeImportedOrFallbackWorldTbn(mesh.vertexNormal,
+            FragTan * frameFacing, FragBinorm * frameFacing, mesh.worldPos, mesh.uv[0]);
     }
 #else
     {
@@ -1721,15 +2184,43 @@ void main() {
     if (_SourceMatcap > 0.5)
     {
         ToonLight matcapLight = calculateLighting(mesh, mesh.worldNormal, vec3(0.0));
+#ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+        if (_SourceLightMode != 0 && _LightingMode == 0)
+        {
+            vec2 rampUv = vec2(clamp(matcapLight.lightMap + _ShadowOffset, 0.0, 1.0),
+                getUV(_ToonRampUV, mesh).y);
+            rampUv = rampUv * _ToonRamp_ST.xy + _ToonRamp_ST.zw + _ToonRampPan * u_Time;
+            matcapLight.lightMap = mix(1.0, texture(_ToonRamp, rampUv).r,
+                clamp(_ShadowStrength * sampleLightingShadowMask(mesh), 0.0, 1.0));
+        }
+#endif
         uberApplyMatcapSlots(fragData.baseColor, fragData.emission, matcapLightAdd, mesh, matcapLight);
+    }
+#endif
+#ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
+    if (_SourceRimSettings.x > 0.5 && _RimStyle == 0) {
+        vec2 rimUv = panUV(transformUV(getUV(_RimColorTextureUV, mesh), _RimColorTexture_ST),
+            _RimColorTexturePan, u_Time);
+        vec4 rimTexel = texture(_RimColorTexture, rimUv);
+        vec2 maskUv = transformUV(getUV(_RimMaskUV, mesh), _RimMask_ST);
+        float mask = texture(_RimMask, maskUv)[clamp(_RimMaskChannel, 0, 3)];
+        float rim = xrSourceRimAmount(mesh.vertexNormal, mesh.worldNormal, mesh.viewDir,
+            _RimWidth, _RimSharpness, _SourceRimSettings) * _RimLightColor.a *
+            _RimLightColor.a * rimTexel.a * mask;
+        vec3 rimColor = rimTexel.rgb * uberResolveThemeColor(_RimLightColorThemeIndex,
+            _RimLightColor.rgb) * mix(vec3(1.0), fragData.baseColor,
+            _SourceRimColorSettings.x) * _SourceRimColorSettings.y;
+        fragData.baseColor = xrSourceRimBlend(fragData.baseColor, rimColor,
+            rim * _RimBlendStrength, int(_SourceRimColorSettings.z + 0.5));
+        fragData.emission += rimColor * rim * _RimEmission;
     }
 #endif
     PBRData surfacePbr = buildSurfacePbrData(mesh, fragData.baseColor);
     fragData.baseColor = uberApplyColorMask(fragData.baseColor, mesh, fragData.emission, surfacePbr);
     surfacePbr.F0 = mix(vec3(0.04), fragData.baseColor, surfacePbr.metallic);
     surfacePbr.diffuseColor = fragData.baseColor * (1.0 - surfacePbr.metallic);
-
     // Occlusion = screen-space SSAO * material-baked AO.
+    vec3 sourceProbeSpecular = vec3(0.0);
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_AMBIENT_OCCLUSION
     float screenAmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
@@ -1742,7 +2233,9 @@ void main() {
     float materialAmbientOcclusion = 1.0;
 #endif
     float combinedAmbientOcclusion = saturate(screenAmbientOcclusion * materialAmbientOcclusion);
-    vec3 ambientLighting = calculateForwardAmbientLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, combinedAmbientOcclusion);
+    vec3 ambientLighting = calculateForwardAmbientLightingWithProbe(mesh,
+        fragData.baseColor, mesh.worldNormal, surfacePbr,
+        combinedAmbientOcclusion, sourceProbeSpecular);
     ToonLight light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
 #else
     ToonLight light = createToonLight(
@@ -1795,11 +2288,51 @@ void main() {
             surfacePbr.F0 = mix(vec3(0.04), fragData.baseColor, surfacePbr.metallic);
             surfacePbr.diffuseColor = fragData.baseColor * (1.0 - surfacePbr.metallic);
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
-            ambientLighting = calculateForwardAmbientLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, combinedAmbientOcclusion);
+            ambientLighting = calculateForwardAmbientLightingWithProbe(mesh,
+                fragData.baseColor, mesh.worldNormal, surfacePbr,
+                combinedAmbientOcclusion, sourceProbeSpecular);
             light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
 #endif
         }
     }
+#endif
+
+    vec3 sourceDiffuseBase = fragData.baseColor;
+#ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
+    if (_SourceMochieSecond.w > 0.5)
+        sourceDiffuseBase *= mix(1.0, 0.96 * (1.0 - surfacePbr.metallic),
+            surfacePbr.reflectionMask);
+#endif
+
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
+#ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
+    if (_SourceMochieSecond.w > 0.5) {
+        vec2 smoothnessUv = panUV(transformUV(
+            getUV(_PBRSmoothnessMapsUV, mesh), _PBRSmoothnessMaps_ST),
+            _PBRSmoothnessMapsPan, u_Time);
+        vec4 packedMochie = texture(_PBRSmoothnessMaps, smoothnessUv);
+        float packedSmoothness = packedMochie[clamp(_PBRSmoothnessMapsChannel, 0, 3)];
+        if (_PBRSmoothnessMapInvert > 0.5)
+            packedSmoothness = 1.0 - packedSmoothness;
+        float sourceSmoothness = packedSmoothness * _PBRRoughnessMultiplier;
+        vec3 normalDx = dFdx(mesh.worldNormal);
+        vec3 normalDy = dFdy(mesh.worldNormal);
+        vec3 rawReflection = XRENGINE_SampleForwardRawPrefilter(
+            mesh.worldNormal, mesh.worldPos, mesh.viewDir,
+            xrSourcePerceptualRoughness(sourceSmoothness, normalDx,
+                normalDy, _SourceMochieSettings));
+        vec3 previousProbeSpecular = sourceProbeSpecular;
+        sourceProbeSpecular = xrSourceMochieReflection(rawReflection,
+            light.color, mix(vec3(0.04), fragData.baseColor,
+                surfacePbr.metallic), sourceSmoothness,
+            surfacePbr.reflectionMask, materialAmbientOcclusion,
+            abs(dot(mesh.worldNormal, mesh.viewDir)), normalDx, normalDy,
+            _SourceMochieSettings, _SourceMochieReflection,
+            _SourceMochieReflectionTint.rgb);
+        ambientLighting += sourceProbeSpecular - previousProbeSpecular;
+        light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
+    }
+#endif
 #endif
 
     // Shading dispatch. PBR always evaluates every light through the shared
@@ -1817,17 +2350,28 @@ void main() {
     // stylized wrapper.
     bool useStylizedPrimaryLighting = _LightingMode != 6;
     if (useStylizedPrimaryLighting) {
-        fragData.finalColor = applyShading(fragData.baseColor, light, mesh, mesh.worldNormal);
-        fragData.finalColor += calculateStylizedAdditionalLighting(mesh, fragData.baseColor, mesh.worldNormal);
+        fragData.finalColor = _SourceLightMode != 0 &&
+            (_LightingMode == 0 || _LightingMode == 2 || _LightingMode == 5)
+            ? applySourcePrimaryShading(sourceDiffuseBase, light, mesh,
+                mesh.worldNormal, sampleMaterialAmbientOcclusion(mesh))
+            : applyShading(sourceDiffuseBase, light, mesh, mesh.worldNormal);
+        fragData.finalColor += calculateStylizedAdditionalLighting(mesh,
+            sourceDiffuseBase, mesh.worldNormal);
     } else {
         fragData.finalColor = calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, false) + ambientLighting;
     }
 #endif
 
+#ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
+    if (_SourceLightMode != 0 && _LightingMode != 6)
+        fragData.finalColor += sourceProbeSpecular;
+#endif
+
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
-    fragData.finalColor += calculateAdvancedSpecular(mesh, mesh.worldNormal, light, surfacePbr);
+    fragData.finalColor += calculateAdvancedSpecular(mesh, mesh.worldNormal, light, surfacePbr, fragData.baseColor);
 #endif
     fragData.finalColor = uberApplyAdvancedPbr(mesh, light, surfacePbr, fragData.finalColor, fragData.emission);
+    fragData.finalColor += calculateSourceClearCoat(mesh, mesh.worldNormal, light);
     
     // Subsurface scattering (wrap-lighting approximation): backlit direction
     // times a view-aligned falloff, modulated by a thickness map. Produces
@@ -1863,7 +2407,9 @@ void main() {
 #ifndef XRENGINE_UBER_DISABLE_RIM_LIGHTING
     vec3 rimColor = calculateRimLight(mesh, mesh.worldNormal, light);
     float rimStrength = saturate(_RimBlendStrength);
-    if (_RimBlendMode == 0) {
+    if (_SourceRimSettings.x > 0.5) {
+        rimStrength = 0.0;
+    } else if (_RimBlendMode == 0) {
         fragData.finalColor = mix(fragData.finalColor, rimColor, rimStrength);
     } else if (_RimBlendMode == 2) {
         fragData.finalColor = mix(fragData.finalColor, fragData.finalColor * max(rimColor, vec3(0.0)), rimStrength);

@@ -130,6 +130,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
         for (int probeIndex = 0; probeIndex < probeRows.Count; ++probeIndex)
             probes[probeIndex] = probeRows[probeIndex].Record;
         Vector3 ambient = world.GetEffectiveAmbientColor();
+        var sh = world.GetEffectiveAmbientSphericalHarmonics();
         return new(frameId, lightSources, lights, default, shadowRows.ToArray(), probes, default, default, default)
         {
             ProbeRows = probeRows.ToArray(),
@@ -137,7 +138,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 world.VisualScene.GPUCommands.AdvancedAuthoredDecalsRequested ? AdvancedAuthoredDecalRegistry.Capture(world, frameId) : default,
             AmbientEnvironment = new AdvancedEnvironmentRecord
             {
-                Flags = 1u,
+                Flags = world.HasAmbientSphericalHarmonics ? 3u : 1u,
                 Environment = AdvancedTextureReference.Invalid(EAdvancedResourceFallback.Zero),
                 Irradiance = AdvancedTextureReference.Invalid(EAdvancedResourceFallback.Zero),
                 PrefilteredRadiance = AdvancedTextureReference.Invalid(EAdvancedResourceFallback.Zero),
@@ -146,6 +147,13 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 AmbientColorAndIntensity = new Vector4(ambient, 1.0f),
                 ViewMaskLo = uint.MaxValue,
                 ViewMaskHi = uint.MaxValue,
+                SourceSHAr = sh.Ar,
+                SourceSHAg = sh.Ag,
+                SourceSHAb = sh.Ab,
+                SourceSHBr = sh.Br,
+                SourceSHBg = sh.Bg,
+                SourceSHBb = sh.Bb,
+                SourceSHC = sh.C,
             },
         };
     }
@@ -372,7 +380,8 @@ public readonly record struct AdvancedGlobalResourceCapture(
         float innerConeDegrees,
         float localBrightness)
     {
-        Matrix4x4 matrix = light.LightMeshMatrix;
+        // The volume mesh can shift its center away from the light emitter.
+        Matrix4x4 matrix = light.Transform.RenderMatrix;
         Vector3 direction = Vector3.Normalize(Vector3.TransformNormal(-Vector3.UnitZ, matrix));
         if (!float.IsFinite(direction.X) || !float.IsFinite(direction.Y) || !float.IsFinite(direction.Z))
             direction = -Vector3.UnitZ;

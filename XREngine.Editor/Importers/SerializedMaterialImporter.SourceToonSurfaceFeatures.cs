@@ -40,8 +40,11 @@ public static partial class SerializedMaterialImporter
         BindSourceToonDissolve(material, document, diagnostics);
         MapInt(document, material, "_RimLightColorThemeIndex", "_RimLightColorThemeIndex");
         BindCompositeSurfaceParameters(material, document);
+        BindSourceRimParameters(material, document, diagnostics, warnings);
+        BindSourceLightingParameters(material, document, diagnostics, warnings);
+        BindSourceClearCoatParameters(material, document, diagnostics, warnings);
         BindSurfaceFeatureTextures(material, document, resolver, diagnostics, warnings);
-        BindSourceToonNormalMetadata(material);
+        BindSourceToonNormalMetadata(material, document);
         BindSurfaceCubemap(material, document, resolver, diagnostics, warnings);
         WarnForDeferredSurfaceAdapters(document, warnings);
     }
@@ -91,6 +94,7 @@ public static partial class SerializedMaterialImporter
             document,
             "_MochieBRDF",
             "_AnisotropyEnabled",
+            "_ClearCoatBRDF",
             "_ClearCoatEnabled",
             "_Specular2Enabled",
             "_EnableRimEnviro",
@@ -347,6 +351,64 @@ public static partial class SerializedMaterialImporter
                 GetFloat(document, "_Rim2Sharpness", 1.0f),
                 GetFloat(document, "_Rim2HideInShadow"),
                 GetFloat(document, "_Rim2Intensity", 1.0f)));
+    }
+
+    private static void BindSourceRimParameters(
+        XRMaterial material,
+        SerializedMaterialDocument document,
+        ICollection<MaterialConversionDiagnostic> diagnostics,
+        List<string> warnings)
+    {
+        bool enabled = document.TryGetPositive("_EnableRimLighting");
+        string? unsupportedOption = enabled ? GetUnsupportedSourceRimOption(document) : null;
+        if (unsupportedOption is not null)
+        {
+            AddDiagnostic(diagnostics, warnings,
+                MaterialConversionDiagnosticCodes.IntentionalNativeDifference,
+                $"Source rim option '{unsupportedOption}' on '{document.Name}' uses the approximate Uber shading path.",
+                unsupportedOption);
+        }
+        SetVector4(material, "_SourceRimSettings", new Vector4(
+            enabled && unsupportedOption is null ? 1.0f : 0.0f,
+            GetFloat(document, "_RimLightingInvert"),
+            GetFloat(document, "_RimPower", 1.0f),
+            GetFloat(document, "_Is_NormalMapToRimLight", 1.0f)));
+        SetVector4(material, "_SourceRimColorSettings", new Vector4(
+            GetFloat(document, "_RimBaseColorMix"),
+            GetFloat(document, "_RimBrightness", 1.0f),
+            GetInt(document, "_RimPoiBlendMode"),
+            0.0f));
+    }
+
+    private static bool SupportsExactSourceRim(SerializedMaterialDocument document)
+        => document.TryGetPositive("_EnableRimLighting") &&
+           GetUnsupportedSourceRimOption(document) is null;
+
+    private static string? GetUnsupportedSourceRimOption(SerializedMaterialDocument document)
+    {
+        if (GetInt(document, "_RimStyle") != 0)
+            return "_RimStyle";
+        foreach (string property in new[]
+        {
+            "_RimShadowToggle", "_RimGlobalMask", "_RimApplyAlpha",
+            "_RimApplyGlobalMaskIndex", "_RimBiasIntensity", "_RimMaskInvert"
+        })
+        {
+            if (document.TryGetPositive(property))
+                return property;
+        }
+        if (document.TryGetPositive("_RimHueShiftEnabled") &&
+            (MathF.Abs(GetFloat(document, "_RimHueShift")) > 0.0001f ||
+             MathF.Abs(GetFloat(document, "_RimHueShiftSpeed")) > 0.0001f ||
+             GetInt(document, "_RimHueSelectOrShift", 1) != 1))
+            return "_RimHueShiftEnabled";
+        foreach (string property in new[] { "_RimMaskPan", "_RimTexPan" })
+        {
+            if (document.TryGetVector(property, out Vector4 pan) &&
+                (MathF.Abs(pan.X) > 0.0001f || MathF.Abs(pan.Y) > 0.0001f))
+                return property;
+        }
+        return null;
     }
 
     private static void BindGlobalThemeParameters(XRMaterial material, SerializedMaterialDocument document)

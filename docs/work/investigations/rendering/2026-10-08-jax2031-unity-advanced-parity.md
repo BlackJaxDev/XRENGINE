@@ -1,8 +1,8 @@
 # Jax2031 Unity And Advanced Vulkan Parity
 
 Date: 2026-10-08
-Last updated: 2026-10-11
-Status: Assimp prefab composition completes. Native publication is guarded. Visual parity and frame-time acceptance remain open.
+Last updated: 2026-10-13
+Status: Both prefab routes pass the focused Debug Advanced directional SH, local-light, Mochie probe, clearcoat reflection, backface-normal, texture-publication, and live-edit controls. Probe and local-light buffer lifetime checks fail. The saved harness state is preserved. Matched Unity visual parity, Release validation, and frame-time acceptance remain open.
 
 Architecture: [Advanced Render Pipeline](../../../architecture/rendering/advanced-render-pipeline.md), [Mesh Submission Strategies](../../../architecture/rendering/mesh-submission-strategies.md), [Uber Shader Varianting](../../../architecture/rendering/uber-shader-varianting.md)
 Code work: [Unity Poiyomi Advanced Parity TODO](../../todo/rendering/unity-poiyomi-advanced-parity-todo.md)
@@ -1005,10 +1005,11 @@ accessory reconstruction failure for this native view.
 
 Temporary tank smoothness 1 and detail strength 0 controls change the tank
 output. In the central tank region, mean RGB byte differences from the restored
-image are approximately 0.455 and 0.072. Other opaque groups disappear in two
-control captures and return after restoration. These captures do not establish
-stable live material editing. Keep material publication and group transitions
-open. The final front and oblique views contain the complete avatar.
+image are approximately 0.455 and 0.072. The initial image review incorrectly
+reported missing opaque groups. A later pixel audit found identical RGB values
+throughout the arm, abdomen, and leg regions in these control captures. See
+the live material edit audit below. The front and oblique views contain the
+complete avatar.
 
 Native session `xrengine_2026-10-12_02-14-04_pid39700` has zero Vulkan VUID
 messages, one startup reservation error, and 28 source-mismatch stage warnings.
@@ -1026,11 +1027,12 @@ The same binary imports Assimp with 21 active materials and 30 active mesh/LOD
 rows. The initial front and oblique captures show the complete avatar with the
 same saved matcap and normal controls. Both images were viewed. Changing Tank
 slot-1 smoothness to 1 preserves the complete avatar after 15 seconds. Setting
-its detail-normal strength to 0 omits other opaque groups. Restoring strength 2
-does not restore those groups in the 15-second follow-up capture. Profile
-admission remains true, submission stays at strategy 2, and no terminal fault
-appears. This reproduces a separate live-edit failure. Its cause is not yet
-established; do not attribute it to texture promotion without more evidence.
+its detail-normal strength to 0 changes the tank. The initial image review
+incorrectly reported missing opaque groups after this edit and restoration.
+The later pixel audit found identical RGB values throughout the arm, abdomen,
+and leg regions in all three captures. Profile admission remains true,
+submission stays at strategy 2, and no terminal fault appears. These images
+do not establish a mesh-loss defect or a texture-publication cause.
 
 Assimp session `xrengine_2026-10-12_02-22-53_pid49672` has zero Vulkan VUID
 messages, one startup reservation error, and 35 source-mismatch stage warnings.
@@ -1043,41 +1045,817 @@ rejection pixels. The exported compute color was viewed. Evidence is
 `reports/surface-assimp-diagnostics.json` and `renderdoc/surface-assimp-after.png`.
 Both replay sessions were closed.
 
+### Live Material Edit Audit
+
+The 2026-10-12 follow-up rechecked the original control images before selecting
+a code change. Both import routes have zero RGB differences in the sampled
+arm regions and the full abdomen-and-leg rectangle between the sharp-matcap,
+zero-detail, and restored captures. The tank changes. Small differences also
+occur around the face and hair. The earlier missing-group diagnosis was
+incorrect; no material-publication or shading-group fix is justified by those
+images.
+
+A fresh Assimp import preserves 21 active materials. Seventeen retain native
+Uber identity; four use their existing standard semantics. Detail strength
+`2 -> 0 -> 2` preserves the complete avatar in front and oblique views after
+15-second waits. Vulkan Advanced remains admitted with
+`GpuIndirectZeroReadback`, no downgrade, and no terminal fault. RenderDoc
+comparison finds exactly one changed constant: material row 9, relative word
+148, changes from `0x40000000` to zero. The material header and all other
+material constants remain identical. This verifies a scalar update in the
+native material path.
+
+The clean native FBX import gives the same result without a shader reload.
+It retains 21 active materials and native Uber preflight on the tank throughout
+the sequence. RenderDoc again finds only row 9, word 148, changed from 2 to 0.
+All other constants and the material header remain identical. Front and oblique
+images were viewed for both routes. Small edge and face differences remain
+between frames; no mesh disappears. The clean comparisons use static pose,
+disabled shadows and bloom, and manual exposure 1. They do not establish full
+Unity lighting parity, motion acceptance, or production frame time.
+
+The isolated editor build completed with zero warnings and errors. Assimp
+session `xrengine_2026-10-12_19-37-30_pid23700` and native session
+`xrengine_2026-10-12_19-42-30_pid58116` each have zero Vulkan VUID messages and
+one startup output-reservation error. They have 35 and 28 source-mismatch
+warnings, respectively. The last warnings precede the scalar control captures.
+Both routes retain Advanced admission, GPU indirect submission, and no terminal
+fault at each control point. Owned editor and replay sessions were stopped.
+
+The first native session stalled with a linked compute program whose compute
+stage was unavailable. A manual shader reload restored admission but cleared
+all 21 materials' engine semantic identities. Native Uber rows were retired
+and their constant storage was zeroed. The resulting images are not valid
+native Uber parity evidence. An apparent later HDR loss was also ruled out:
+the late draw changes only 924 hair pixels in the inspected frame; sampled
+body values stay unchanged. Do not use this discarded run as proof of a
+material scalar fault.
+
+The reload failure has a separate confirmed source path.
+`ShaderSourceDependencyIndex.PublishPreparedRootRefreshes` notifies unchanged
+source dependencies. `XRShader` emits `SourceChanged`, and
+`XRMaterial.AuthoredShaderSourceChanged` clears engine semantics. The imported
+native Uber identity is not restored. Internal Uber variant adoption also
+calls `SetShader`, which clears that identity; this second path needs its own
+runtime reproduction. Keep actual authored shader edits distinct from a
+backend refresh when implementing a correction. The linked code todo owns
+this work. No rendering code or tests changed during this audit.
+
+### Shader Reload Identity Correction
+
+The reload fix separates `XRShader.AuthoredSourceChanged` from the general
+`SourceChanged` compile notification. Materials listen to the authored event.
+Manual refresh captures each shader's dependency proof before any shared
+`TextFile` refresh. A current root, include graph, search-directory state,
+snippet version, and source owner permit backend regeneration without clearing
+material identity. An absent or stale proof still clears eligibility. The file
+proof uses the resolver's timestamp and length contract.
+
+Compile-only refreshes retain the proven cache and declared cooked module.
+Repeated reloads therefore keep the proof, even before another source resolve.
+Actual source invalidation clears derived cooked fields without nested property
+callbacks, then publishes the authored event before the general event.
+At this checkpoint, generated Uber variants were excluded because their expanded
+text did not prove the canonical include graph. The later adoption correction
+below adds that proof. A temporary suppression scope was rejected because it
+could hide a reentrant authored edit and break adoption revision checks.
+
+The isolated final build completed with zero warnings and errors. No test
+source changed. Assimp session `xrengine_2026-10-12_20-10-02_pid31992` retained
+17 native Uber and four standard identities through two reloads and tank
+detail strength `2 -> 0 -> 2`. Front and oblique captures retained the meshes.
+Advanced admission and GPU indirect submission remained active, without a
+downgrade or terminal fault. An in-memory root comment edit then cleared the
+tank identity to `None`; restoring the original text did not restore eligibility.
+The source file was not saved. The log has zero VUID messages, one startup
+reservation error, and 35 texture source-mismatch warnings. The last warning
+preceded the first control capture.
+
+Native session `xrengine_2026-10-12_20-14-54_pid64080` used the same binaries
+and passed the same reload and scalar sequence with all 21 identities intact.
+Front and oblique images retained the meshes. The explicit dependency-change
+notification then cleared tank identity to `None`. This negative control checks
+the event path; it does not exercise a disk file watcher. The native log has
+zero VUID messages, one startup reservation error, and 28 texture source-mismatch
+warnings. Its last warning also preceded the first control capture. Both final
+routes kept Advanced admission, GPU indirect submission, and no terminal fault
+through the positive controls. All owned editor sessions were stopped.
+
+Evidence is under `Build/_AgentValidation/20261008-090000-jax-avatar-parity/`:
+`mcp-output/animation-reload-assimp-final-*`,
+`mcp-output/animation-reload-native-final-*`, and
+`reports/reload-pixel-audit.json`. The earlier `reload-native` series used an
+intermediate build and captured ongoing texture promotion; use the final series
+for image comparisons. These checks use a static pose, manual exposure, disabled
+shadows and bloom, and a black background. They do not establish full Unity
+lighting parity, animation acceptance, or a frame-time budget.
+
+### Internal Generated-Variant Adoption
+
+The failure was in material identity ownership. Internal generated fragment
+replacement used the public authored replacement path. That path correctly
+clears identity for user edits, but it also cleared valid native Uber identity
+during engine adoption.
+
+The builder now stamps canonical and generated source inputs, authored revisions,
+resolved dependencies, source owner, and snippet version. Internal replacement
+uses a one-use transition proof for the exact lists, source owner, identity, and
+material revisions. The final check runs after event handlers attach. Adoption
+must advance the shader revision once. The material also retains a canonical
+source listener while a generated fragment is active. No callback restores an
+old identity. Public replacement remains an authored edit.
+
+Generated shader caches use weak canonical ownership. This avoids retaining every
+canonical instance after repeated imports. Cache hits and snapshot recovery reject
+stale provenance. The code review covered callback edits and fallback source paths.
+Reentrant callback injection and snapshot round trips were not exercised live.
+
+The final isolated build has zero warnings and errors. No test source changed.
+Native session `xrengine_2026-10-12_20-40-50_pid23536` adopted a generated Tank
+fragment with shader revision `4 -> 5` and native preflight still true. Two manual
+reloads and detail strength `2 -> 0 -> 2` retained all 17 native Uber and four
+standard identities. Viewed front and oblique images retained the visible meshes.
+Strong highlights and the fixed tank spot remain.
+
+The first profile read caught an empty frame package during publication. All four
+later positive-control reads reported requested and resolved GPU indirect strategy
+2, no downgrade, Advanced admission, and no terminal fault. In-memory generated
+Tank source and canonical Bracelets source edits each cleared eligibility.
+Restoring text did not restore identity. No source file was saved. The canonical
+source is shared, so its negative control also invalidated dependent materials.
+The native log has zero Vulkan VUID messages, one startup reservation error, 21
+texture source-mismatch warnings, and 14 publication-change warnings. The last
+source mismatch preceded the first image. Publication-change warnings also
+occurred during shader refresh. These existing publication limits remain open.
+
+Assimp session `xrengine_2026-10-12_20-45-28_pid51336` used the same final
+binaries. Generated Tank adoption also advanced revision `4 -> 5`. The first
+capture was black with `ShadeBackground.comp` pending regeneration. The first
+manual reload restored Advanced admission. Both reloads and detail strength
+`2 -> 0 -> 2` retained all 21 identities. All four later profile reads reported
+strategy 2, no downgrade, and no terminal fault. Viewed front and oblique captures
+retained the meshes after readiness recovered. The generated fragment remained
+active after both reloads and scalar edits.
+
+An explicit internal return to the canonical Tank fragment advanced revision
+`5 -> 6` and kept native preflight true. Re-adoption then succeeded. Generated
+Tank and canonical Bracelets source edits cleared eligibility; restoring the
+original text did not restore it. The Assimp log has zero Vulkan VUID messages,
+zero texture source-mismatch warnings, one startup reservation error, and seven
+publication-change warnings during refresh. This run does not close the separate
+shader-readiness defect. All owned editor sessions were stopped.
+
+Evidence uses `mcp-output/animation-variant-native-final-*` and
+`mcp-output/animation-variant-assimp-final-*` under
+`Build/_AgentValidation/20261008-090000-jax-avatar-parity/`. Earlier
+`variant-native-initial` evidence uses an intermediate build and is not final
+acceptance evidence. The checks use the exact prefab, explicit backend selection,
+static pose, manual exposure, disabled shadows and bloom, and a black background.
+They do not establish matched Unity lighting, animation coverage, or frame time.
+
+### Vulkan Shader Readiness Race
+
+A diagnostic-only Assimp run reproduced the persistent wait on `Gtao.comp`.
+Session `xrengine_2026-10-12_21-29-37_pid55100` reported a linked program at link
+generation 1 with a nonzero pipeline layout, zero stage entries, and one shader.
+That shader had a nonzero native module and entry point, `IsCompiled=true`,
+`IsCompilePending=false`, and `StageFlags=None`. Both viewed camera captures
+were black. The run was stopped after diagnosis without a manual reload.
+
+This state identifies an adoption race, not a CPU shader compilation failure.
+The asynchronous adopter released the dependency gate after destroying the old
+module. `ApplyCompiledArtifact` then wrote stage flags before native creation.
+Frame-swap invalidation could clear those flags between the two writes. Adoption
+continued and published a ready module with zero stage flags. `BuildStageLookup`
+skipped it, and the program published a linked interface with no stages. Later
+readiness polls accepted that interface and could not repair it. The initial
+clip-remap setup can queue an invalidation at the same source revision, so a
+source-revision check alone cannot prevent this interleaving.
+
+The fix holds the dependency gate across destruction and all module publication.
+It selects the current module and drain scope after entering the gate. Both
+synchronous and asynchronous publication use that boundary. The asynchronous
+path checks task and input ownership under the gate before it publishes success
+or failure. Deferred dependency work stays retryable. The link path also rejects
+a missing native stage instead of publishing an empty stage table. Temporary
+probe logging was removed after the cause was confirmed. No test source changed.
+
+The broader nested warm shared-shader drain scope is outside this cold-publication
+fix. This change preserves that existing queue contract. It does not claim a
+review of all shared-shader replacement paths.
+
+Probe evidence is under `Build/_AgentValidation/20261008-090000-jax-avatar-parity/`
+with the `mcp-output/animation-readiness-assimp-probe-*` prefix. The exact log is
+under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20261012-212828-jax-shader-readiness-probe/logs/`.
+
+The final isolated Debug build has zero warnings and errors. In session
+`xrengine_2026-10-12_21-38-56_pid21420`, Assimp completed Advanced preparation in
+5,783 ms without a manual shader reload. All 21 material identities remained
+stable through tank detail strength `2 -> 0 -> 2`. Front and oblique captures
+were viewed at each value. The avatar retained its visible meshes, bangs, and
+tank coverage. Strong highlights and the fixed tank spot remain.
+
+Two scalar-check diagnostics sampled an empty frame package while profile
+admission remained true. Three later reads each reported a published package,
+requested and resolved submission strategy 2, and no downgrade. No terminal
+fault occurred. The stopped Assimp log has zero Vulkan VUID messages, zero
+shader regeneration messages, one startup output-reservation error, and 42
+source-mismatch stage warnings during texture promotion. The last mismatch
+was at 21:41:17, before the viewed scalar-edit captures.
+
+Final-build evidence uses the `mcp-output/animation-readiness-assimp-complete-*`
+prefix under the task evidence root. Logs and the final build log are under
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20261012-213744-jax-shader-readiness-complete/`.
+
+The same binary then ran the exact prefab with `NativeOnly` in session
+`xrengine_2026-10-12_21-44-26_pid67008`. The import log confirms
+`ActualBackend=xrengine.native-fbx`. Advanced preparation completed in 6,052 ms
+without a manual reload. All 21 material identities remained stable through
+the same scalar sequence. All three sampled packages used requested and
+resolved strategy 2 with no downgrade or terminal fault. Front and oblique
+captures were viewed at each value and retained the visible meshes. The native
+log has zero VUID, shader regeneration, or invalid-stage messages. It has one
+startup reservation error and 35 source-mismatch stage warnings, last seen at
+21:46:52. Evidence uses the `mcp-output/animation-readiness-native-complete-*`
+prefix. The runs use a static pose, no shadows or bloom, and manual exposure 1.
+Release, matched Unity lighting, and frame-time acceptance remain open.
+
+A second Assimp startup with the same binary, session
+`xrengine_2026-10-12_21-47-58_pid40288`, completed preparation in 5,712 ms without
+a reload. It retained 21 material identities, admitted strategy 2 without a
+downgrade, and had no terminal fault. Viewed front and oblique captures retained
+the avatar. The log has zero VUID, shader regeneration, and invalid-stage
+messages, one startup reservation error, and 42 texture source-mismatch stage
+warnings. Evidence uses `mcp-output/animation-readiness-assimp-repeat-*`.
+All editor sessions started for this investigation are stopped. No test source
+was added or changed. These three final-binary startups validate the focused
+Debug fix; they do not establish a long-running stability result.
+
 ### Texture Publication Review
 
-`TryCreateSynchronizedImportedUploadPreparation` currently calls
+`TryCreateSynchronizedImportedUploadPreparation` previously called
 `ApplyResidentDataForVulkanPublication` before allocation and upload complete.
-The call changes dimensions, mip arrays, format, mip range, and canonical
+The call changed dimensions, mip arrays, format, mip range, and canonical
 content generation. The wrapper lock and callback suppression do not protect
-canonical metadata readers. Cancellation can also leave these changes behind.
+canonical metadata readers. Cancellation could also leave these changes behind.
 
-The next implementation must prepare an immutable resident-data and sampler
-plan without changing the live texture. Resolve the format through the existing
-color-space policy. Do not use the upload request's placeholder format. Compute
-sampler limits from the pending mip chain, not the current preview. Recheck
-authored sampler, color-space, and usage inputs before publication.
+The implementation now prepares a resident-data and sampler plan without changing
+the live texture. It resolves the format through the existing color-space policy,
+not the request's placeholder format. Sampler limits come from the pending mip
+chain. Publication rechecks the source generation, prior dimensions and mip array,
+and captured authored settings. Relevant texture setters and in-place resize use
+the metadata writer lock. This prevents an authored edit from passing between the
+check and the commit.
 
-Commit completed descriptor, wrapper, and logical metadata together under the
-streaming publication authority. Acquire the texture metadata writer lock before
-the wrapper image lock, then the descriptor lock. Keep the metadata epoch odd
-for the coupled commit. Descriptor failure must leave logical metadata and
-content generation unchanged. After descriptor success, use notification-free
-`SetField` transfers for the mip array, format, resident tracking, mip limits,
-and cleared sparse state. Advance canonical content generation once. Detach
-published handles before retirement and callbacks. Do not replay a generic
-mipmap-change callback that can destroy the new image.
+The completed descriptor, wrapper, and logical metadata now commit under the
+streaming publication authority. Lock order is texture metadata, wrapper image,
+then descriptor. The metadata epoch stays odd during the coupled commit.
+Descriptor failure leaves logical metadata and content generation unchanged.
+After descriptor success, notification-free `SetField` transfers update the mip
+array, format, resident tracking, mip limits, and cleared sparse state. Canonical
+content generation advances once. Published handles detach before retirement
+and callbacks. The commit does not replay a generic mipmap-change callback that
+can destroy the new image.
+
+Review found that the existing preview cancellation callback records a terminal
+generation failure. It cannot handle a changed sampler during preparation.
+The upload service now retires that stale candidate and marks its ticket canceled.
+It keeps the resident data and creates a fresh ticket under the same logical
+generation and original scheduling context. The original job owns the terminal
+callbacks across retries. Both completed-copy routes use this path. Actual
+cancellation, retirement, or scheduling failure settles the owner once.
 
 Keep strict canonical source validation and generation checks. A package made
 before a successful publication is stale and must still retry. This transaction
-fix will remove premature exposure; it will not remove every source-mismatch
-retry. No texture-publication code changed in this shading validation run.
+fix removes premature exposure; it does not remove every source-mismatch retry.
+The final isolated Debug build has zero warnings and errors. Live validation of
+the final retry revision is recorded below. No test source changed.
+
+Assimp session `xrengine_2026-10-12_22-13-59_pid71268` used the retry binary before
+the final admission-failure repair.
+The exact prefab completed with Advanced admitted and GPU indirect strategy 2
+requested and resolved, with no downgrade. A pending promotion sample retained
+64 by 64 logical metadata while the desired upload was 4096 by 4096.
+`Accessories_Base_color 1` later published 4096 by 4096, 13 mips, and
+`Srgb8Alpha8`. Its resident, published, and upload generations were all 2.
+The controlled LodBias edit and restoration succeeded, but did not trigger a
+stale-candidate retry in this run.
+
+The settled Assimp session had 124 tracked textures, 126 final publications,
+zero pending transitions or uploads, zero upload failures, and zero texture
+validation failures. These are session totals. All 21 material identities stayed
+stable through tank detail strength `2 -> 0 -> 2`. Front and oblique images were
+viewed at each value. Visible meshes, bangs, and tank coverage remained. The
+strong highlights and fixed tank spot remained too. The stopped log has zero
+VUID and shader regeneration messages. It has one existing startup reservation
+error and 35 source-mismatch stage warnings. The last source mismatch at 22:16:34
+preceded the first settled capture at 22:16:47. Capture scheduling warnings are
+separate from texture publication.
+
+This build's logs and `build.log` are under
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20261012-221243-jax-texture-final/`.
+Assimp evidence uses the `mcp-output/animation-texture-assimp-final-*` prefix under
+`Build/_AgentValidation/20261008-090000-jax-avatar-parity/`. Earlier
+`texture-assimp-probe` evidence predates the service-local retry revision and is
+not final acceptance evidence.
+
+The same binary ran native session `xrengine_2026-10-12_22-17-56_pid43244`.
+The import log confirms `ActualBackend=xrengine.native-fbx`. A short series of
+LodBias edits made three Blackmatcap generation-2 upload candidates stale. Each
+candidate retired, and a new ticket reused the logical generation. The texture
+then published successfully. Streaming settled with 126 publications, zero
+pending work, zero upload failures, and zero texture validation failures. Viewed
+restored front and oblique captures retained the avatar. Evidence uses
+`mcp-output/animation-texture-native-final-*`.
+
+Review found a separate failure case in this revision. Canceling the old ticket
+before replacement admission could hide a terminal error if admission failed
+before a new ticket entered the ledger. The final repair keeps the old ticket
+pending until that outcome is known. Rejected admission changes it directly to
+`Failed` and reports `RendererTerminal`. Actual cancellation remains retryable.
+The reviewed revision has no canceled-to-failed transition. Both completed-copy
+routes preserve the failure result. This review found no remaining blocker.
+
+The final rebuild, including rejected-admission handling, has zero warnings and
+errors. Its logs and build output are under
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20261012-222234-jax-texture-complete/`.
+Assimp session `xrengine_2026-10-12_22-23-52_pid65452` completed the exact prefab
+again. All three scalar checks and final profile reads retained Advanced
+admission and strategy 2 without a downgrade or terminal fault. All 21 materials
+retained their identities. All six front and oblique captures were viewed and
+retained the meshes. The same highlights and fixed tank spot remain.
+
+Final Assimp streaming has zero pending work, upload failures, or texture
+validation failures. It has 126 final publications. Of 124 tracked textures,
+57 have resident/published/upload generation 2, 12 have generation 1, and 55
+have no requested generation. The sampler edit was restored. The log has zero
+VUID messages and 49 source-mismatch stage warnings. The last mismatch at
+22:26:29 preceded the first capture at 22:26:43. Evidence uses
+`mcp-output/animation-texture-assimp-complete-*` under the task evidence root.
+
+Native session `xrengine_2026-10-12_22-27-43_pid34708` used the same final binary.
+The explicit native prefab route completed without fallback. Sampler edits made
+four `ACC Metalic` generation-2 candidates stale. Publication tokens 62, 70, 82,
+and 88 were canceled; token 100 published generation 2 at 22:30:04. The final
+binding has 4096 by 4096 pixels, 13 mips, `Rgba8`, and restored LodBias 0.
+The session settled with 126 publications, zero pending work, zero upload
+failures, and zero texture validation failures. Its generation distribution
+matches Assimp. All 21 identities remained stable through tank detail strength
+`2 -> 0 -> 2`. All six front and oblique captures were viewed. The visible meshes
+remained, with the same strong highlights and fixed tank spot.
+
+The final native log has zero VUID messages and 35 source-mismatch stage warnings.
+The last mismatch at 22:30:27 preceded the first capture at 22:30:41. Each final
+route retains one existing startup reservation error. Neither has a terminal
+fault or submission downgrade in the captured checks. Native evidence uses
+`mcp-output/animation-texture-native-complete-*`. The checks use Debug, a static
+pose, no shadows or bloom, and manual exposure 1. They validate publication and
+live edits, not matched Unity lighting or frame time. Rejected replacement
+admission and the recorded-transfer completion path were code-reviewed; these
+runs exercised successful retries through the graphics upload batch. They do
+not provide live fault-injection coverage for every failure path. No test source
+changed. All editor sessions started for this texture check are stopped.
+
+## Source Highlights And Fixed Tank Spot
+
+The native baseline used the same final texture-publication binary. It passed
+the tank detail-normal `2 -> 0 -> 2` control with all material identities and
+meshes retained. The settled front view still had hard white shoulder circles,
+wide skin highlights, and a small fixed patch below the left side of the tank.
+
+RenderDoc identified a separate surface at the fixed patch. Pixel `(893, 665)`
+had visibility draw 3 and primitive 16207. Nearby tank pixels had draw 14.
+The draw resolves to material row 3; the tank resolves to row 9. Live Advanced
+picking confirmed draw 3, primitive 16207, and scene node `Acc - Top Harness`.
+Nearby tank picking confirmed `CLO Tank`, draw 14, and material row 9.
+The picking API uses bottom-origin Y; image pixel Y 665 maps to its Y 414.
+The native shading diagnostic target contained `0xff00` at every
+pixel and no reconstruction or coverage rejection flags. This rules out a tank
+texture mark and a rejected tank triangle as the cause of this patch.
+
+The source harness uses `Goth Bunny-Straps` and `Metal.009 1`. The patch uses
+the first material slot. The second material uses
+`Standard_Double-sided.shader`, has no texture maps, and has smoothness
+`0.8346456`. Its source specular highlights and reflections are enabled.
+The generation-2 source path `//RootNode/root/Acc - Top Harness` resolves to:
+
+- GameObject file ID `-8998589298071549428`.
+- Transform file ID `-8980584500519708193`.
+- SkinnedMeshRenderer file ID `4398915724156461118`.
+
+The prefab explicitly sets this GameObject active and its first blendshape
+weight to 0%. It has no renderer-enabled or transform override for these IDs.
+The imported transform and weight match the saved source state. The user asked
+to keep that state after this finding. The harness remains enabled; no source
+asset or geometry was changed. A matched Unity view is still needed to decide
+whether its visible intersection is also present in the source preview.
+
+The locked Body and Tank shaders use Mochie BRDF shading. Their saved inactive
+stylized-specular fields selected a hard toon highlight in Uber. That path also
+used generic smoothness 1 instead of sampled Mochie smoothness. The source Body
+rim uses inversion, power, brightness, and base-color mixing before lighting.
+Uber instead added an ordinary white silhouette rim after lighting. These are
+separate conversion errors from the harness patch.
+
+The source correction shares the BRDF and rim math between canonical and native
+Uber. It retains the source smoothness, GSAA, direct-light color limits,
+second-lobe maximum, and pre-light rim blend. An independent source review
+checked the active Body, Face, and Tank values against their locked shaders.
+
+The first fresh run exposed an import regression in the new option checks.
+The inactive alternate material `M_TransTop.002 1` enables `_GGXAnisotropics`.
+Rejecting that control produced a generic material, and strict prefab validation
+correctly rejected the import. The fix separates source-adapter enable from
+packed-mask enable. Unsupported effects keep their existing native Uber
+approximation and emit `POI0010`. The strict prefab validator remains unchanged.
+All 21 active materials pass the supported-option scan. The source review still
+identifies SH light selection, additive-light limits, and Face clearcoat as
+separate parity gaps.
+
+The native check used `jax-shading-fixed`, with logs in
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20261012-230522-jax-shading-fixed/`.
+Its editor build had zero warnings and errors. The actual model backend was
+`xrengine.native-fbx`. Front and oblique images at tank detail strength
+`2 -> 0 -> 2` retained the meshes and all 21 material identities. The hard white
+tank circles and wide skin highlight bands were absent. Advanced remained
+admitted with GPU submission strategy 2 and no downgrade or terminal fault.
+Texture uploads settled without pending work or validation failures.
+
+That session had zero Vulkan VUID messages and 28 source-mismatch stage warnings.
+The last mismatch at 23:09:55 preceded the first capture at 23:10:25. Startup
+retained one output reservation error and recovered. Seven shader reflection
+warnings reported missing binding indices. No shader compile, regeneration, or
+invalid-stage failure occurred. The later RenderDoc capture
+`shading-native-final_frame11767.rdc` contained late and post-process work but no
+native compute dispatch. It does not establish final native GPU execution.
+The log shows a second GPU mesh-preparation pass from 23:11:43 through 23:11:58.
+It progressed across meshes but deferred the native stages. Late passes can
+retain the previous opaque color while this work is pending. No direct cause
+from MCP picking was found. Profile admission alone cannot validate such a
+frame. The repeat must require completed preparation and a nonzero native
+dispatch. The earlier baseline capture remains valid only for patch ownership
+and its own reconstruction result.
+
+The final editor rebuild had zero warnings and errors. Assimp session
+`xrengine_2026-10-12_23-17-25_pid55444` used the final binary in
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20261012-231609-jax-shading-final/`.
+The actual model backend was `assimp@2`. All six front and oblique scalar-check
+images were viewed. The highlight correction, visible meshes, 21 material
+identities, and saved harness state remained stable. Advanced used GPU strategy
+2 without a downgrade or terminal fault. Texture work settled without failure.
+The log had zero VUID messages, 35 source-mismatch stage warnings, and 14 GPU
+mesh-preparation deferrals. The last mismatch at 23:19:41 and last preparation
+deferral at 23:19:11 preceded the first capture at 23:20:21. One startup output
+reservation error recovered. No shader compile or upload failure occurred.
+
+Assimp capture `shading-assimp-gpu_frame14346.rdc` has a nonzero indirect native
+shading dispatch at event 244 with groups `(91, 1, 1)`. All 2,073,600 diagnostic
+pixels are `0xff00`, with no reconstruction or coverage rejection flags. The
+exported native color was viewed and retains the corrected shading. The replay
+script exceeded the CLI's 30-second response timeout on its first attempt;
+the repeat completed with a 180-second request limit. This was a replay-tool
+timeout, not an editor or Vulkan failure.
+
+Native session `xrengine_2026-10-12_23-22-31_pid77844` used that same final binary
+with the explicit native route. All six scalar-check images were viewed and
+retained the corrected highlights, meshes, and 21 material identities. Streaming
+settled without failure. Immediately before capture, preparation had no deferral,
+34 draws, published GPU resources, and an executed aggregate dispatch. The scene
+database epoch was 2 and topology generation was 34. Capture
+`shading-native-gpu_frame14710.rdc` contains a nonzero indirect native shading
+dispatch at event 250 with groups `(91, 1, 1)`. All 2,073,600 diagnostic pixels
+are `0xff00`, without reconstruction or coverage rejection flags. The native
+color export was viewed. Both final captures validate native shading execution.
+
+The final native log records backend `xrengine.native-fbx@6`, zero VUID messages,
+and zero shader or texture-upload failures. Its 28 mesh-preparation deferrals
+end at 23:24:31. Its 28 source-mismatch stage warnings end at 23:24:56. Neither
+recurs after the first screenshot at 23:25:23 or the final GPU capture. One
+startup output reservation error recovers. Seven unresolved FBX texture
+references remain import diagnostics; the composed prefab's active material
+bindings use the resolved Unity materials.
+
+These checks use Debug, static pose, Vulkan validation, GPU indirect submission,
+FXAA, no shadows or bloom, and exposure 1. They do not establish matched Unity
+lighting, Release frame time, production AA, or VR performance. No test source
+changed. All editor and RenderDoc sessions started for this check are stopped.
+
+## Source Light Selection, Face Clearcoat, And Backface Normals: 2026-10-13
+
+The active source inventory has 17 Poiyomi materials and four Standard materials.
+Body and the three face materials select source light color mode 2. The other
+Poiyomi materials select mode 0. All 17 select source light direction mode 0 and
+disable additional directional lights. Lashes disables backface normal flipping;
+the other 16 Poiyomi materials enable it. The saved harness state stays enabled.
+
+The engine supplies constant world ambient and octahedral probe textures. It does
+not supply Unity SH coefficients. Constant ambient is sufficient to evaluate the
+source mode 0 and mode 2 formulas for the current fixture. It does not reproduce
+directional SH light selection under a matched Unity probe environment. Unity
+vertex-light assignment is also a separate source contract.
+
+Face enables a separate clearcoat layer. Its packed linear texture uses R for
+the coat mask, G for smoothness, B for the reflection mask, and A for the direct
+specular mask. The saved normal selection uses the vertex normal. The direct
+strength is 0.907, reflection strength is 0.245, and smoothness is 0.882. The source
+reflection calculation requires raw prefiltered radiance before its own Fresnel
+and surface-reduction terms. Reusing engine BRDF-weighted reflection would apply
+those terms twice.
+
+The shared shader now covers source light color modes 0 and 2 and source diffuse
+modes 0, 2, and 5. Wrapped and flat shading retain their own composition instead
+of generic post-color adjustments. Source diffuse replacement preserves the
+existing generic probe specular term. Clearcoat uses its own raw probe sample.
+The source primary path remains active at zero light intensity. A zero-intensity
+primary uses the source fallback direction and does not request a shadow sample.
+
+Review found and corrected three shader issues before acceptance: incomplete
+zero-primary ownership, clearcoat probe mip selection before GSAA filtering, and
+loss of generic probe specular when replacing diffuse ambient. It also added
+explicit handling for the active wrapped and flat materials. The importer states
+that directional SH, Unity vertex-light selection, local diffuse/attenuation,
+and Mochie IBL remain approximate.
+
+The first C# build found missing namespace imports in the two new importer
+partials. The next runtime found absent clearcoat UV and pan words in the native
+material schema. Both were corrected. The supported coat adapter fixes those
+coordinates to UV0 with no pan. The final isolated C# build has zero warnings and
+zero errors. Canonical GLSL checks pass for all features, detail-only, and
+matcap-only variants. No test source changed.
+
+The final Assimp run imports the `.prefab` with actual backend `assimp@2`.
+It retains 21 active materials, including 17 source lighting adapters. Face uses
+coat values `(1, 0.882, 0.245, 0.907)` and a 1024 by 1024 linear RGBA wetness mask
+with 11 mips. Lashes keeps `_FlipBackfaceNormals=0`; the other source materials
+keep 1. Tank detail strength `2 -> 0 -> 2` retains the avatar and GPU submission.
+
+The focused Assimp controls pass:
+
+- Disabling coat changes 141 pixels in the checked lower-face region. Restoring
+  it returns that region exactly.
+- Disabling the hair backface flip changes its shading. The checked arm region
+  remains pixel-identical, including alpha. Small hair differences after restore
+  remain consistent with the active animated glitter.
+- Under primary color `(1, 0.1, 0.02)` and intensity 0.4, Body light color modes
+  0 and 2 differ. Restoring mode 2 returns the checked arm region exactly.
+- With primary intensity 0, unlit intensity `1 -> 2` changes Body shading.
+  Restoring 1 returns the checked arm region exactly.
+- A second directional light leaves the checked Body and Tank regions unchanged
+  under the saved suppression flag. Disabling Tank suppression changes its
+  shading. Restoring suppression returns its checked region exactly.
+
+Each control keeps all 21 identities and admitted GPU submission strategy 2,
+with no downgrade or terminal fault. The validation scripts now restrict material
+identity checks to the prefab subtree. Editor gizmo materials can enter the world
+inventory and are not prefab materials. Temporary values and the added light are
+restored or removed before final capture.
+
+Assimp capture `renderdoc/light-assimp-gpu_frame24688.rdc` under the existing
+`Build/_AgentValidation/20261008-090000-jax-avatar-parity/` evidence run executes
+native indirect shading at event 244 with groups `(91, 1, 1)`. All 2,073,600
+pixels have diagnostic value `0xff00`; no reconstruction or coverage rejection
+occurs. The native color export was viewed.
+
+Final Assimp PID 77396 has no VUID, shader compile, terminal, or texture upload
+failure. One startup reservation error recovers. Fourteen mesh-preparation
+deferrals end at 00:16:09; 35 source-mismatch warnings end at 00:16:26, before
+settled images at 00:17:51 and the GPU capture at 00:25:20. One MCP query exceeds
+90 seconds during startup. The same process later responds and completes the
+checks. The logs do not identify the timeout cause. Seven unresolved source FBX
+texture references remain separate import diagnostics; active composed material
+bindings use Unity textures.
+
+The final native FBX run has the same source control values for all 21 materials.
+All focused controls pass with strategy 2, no downgrade, stable identities, and
+no terminal fault. Disabling coat changes 143 lower-face pixels; restoring it
+returns that region exactly. Hair flip changes shading without changing the
+checked arm pixels. Body color-mode, zero-primary unlit intensity, and additional
+directional suppression controls give the same outcomes as Assimp. Their checked
+regions return exactly after restore. The checked arm and leg pixels do not
+change during the Tank-only additional-light control. Active hair glitter gives
+a small time-dependent difference after restoring the backface flag.
+
+Native capture `renderdoc/light-native-gpu_frame22496.rdc` in the same evidence
+run executes native shading at event 250 with groups `(91, 1, 1)`. All 2,073,600
+pixels have value `0xff00`, with no reconstruction or coverage rejection. Its
+native color export and final front and oblique images were viewed. The final
+publication has 34 draws, database epoch 2, topology generation 34, and no CPU
+readback requirement. Assimp has 29 draws and topology generation 31.
+
+Final native PID 33560 uses `xrengine.native-fbx@6`. It has no VUID, shader
+compile, terminal, or upload failure. One startup reservation failure recovers.
+Twenty-eight mesh-preparation warnings end at 00:31:21. Thirty-five source
+mismatch warnings end at 00:35:21; seven occur after the first settled screenshot,
+but none occur after the final capture. Final texture state has zero pending,
+uploading, or failed entries. Seven unresolved FBX texture references remain
+separate import diagnostics. All owned editor and RenderDoc sessions are stopped.
+
+Both runs use Debug, static pose, mono
+1920 by 1080, Vulkan validation, FXAA, exposure 1, and no shadows or probes.
+These checks do not accept positive probe reflection, matched Unity lighting,
+Release frame time, production AA, or VR performance.
+
+## Directional SH, Local Lights, And Probe Specular — 2026-10-13
+
+World settings now supply seven signed SH vectors. Disabled SH uses constant
+ambient; enabled zero coefficients stay black. The Advanced environment record
+is 240 bytes and preserves the old 128-byte prefix. Capture copies the values
+at world swap. Canonical and native Uber share source SH, local-light, and
+Mochie probe equations. Local lights preserve enable, limit, gradient, color,
+and shadow controls with engine attenuation and per-pixel assignment. Mochie
+reflection uses raw prefiltered radiance, source Fresnel and exposure controls,
+and imported tint. It replaces the prior probe term after overlays.
+
+The isolated lighting build has zero warnings and errors. Canonical all-feature,
+detail-only, and matcap-only GLSL checks pass. No test source changed. The existing
+`AdvancedGlobalResourceContractTests.GlobalRecords_HaveStableStd430CompatiblePacking`
+still expects a 128-byte environment record. The code todo records that stale
+assertion and the required test-edit clearance.
+
+Both exact prefab routes retain 21 active materials through Tank detail-normal
+strength `2 -> 0 -> 2`. Authored positive and negative SH X terms, L2, enabled
+black coefficients, local-light enable, Lambert, gradient, and monochromatic
+controls produce distinct output. Front and oblique images were viewed.
+GPU indirect submission stays admitted. A transient Assimp profile sample has
+an empty frame package; the final GPU capture confirms native execution.
+
+Assimp capture `renderdoc/sh-assimp-probe-gpu_frame26882.rdc` in the existing
+evidence run executes native shading at event 246 with groups `(91, 1, 1)`.
+Native capture `renderdoc/sh-native-gpu_frame43496.rdc` executes at event 250
+with the same groups. Each has 2,073,600 diagnostic values of `0xff00`, with
+no reconstruction or coverage rejection. Both native color exports were viewed.
+The native capture has no accepted nonzero probe at this point.
+
+The first Assimp probe control selects a valid 176-byte probe row with weight 1.
+Its irradiance and prefilter handles resolve to nonzero RGBA16F textures with
+32-square and 256-square extents and 6 and 9 mip levels. The exported studio
+radiance was viewed. Face reflection-only coat changes 375 checked face pixels;
+restoring it returns the checked region exactly. Tank reflection strength also
+changes output, but that control changes diffuse energy. A separate tint control
+is required to isolate the probe specular term.
+
+The first SH/local script used incorrect transform argument names. That run is
+not acceptance evidence. The corrected script uses `translation_x/y/z`.
+Assimp SH restore does not match its initial image after repeated temporary-light
+runs; that comparison remains inconclusive. Temporary lights now receive zero
+intensity and deactivate before removal. An apparent missing-mesh preview was
+also ruled out: the raw PNG has opaque alpha, the expected body and hair pixels,
+and unchanged GPU draw and variant counters.
+
+Probe validation found two separate producer issues. Initial `InitializeStatic`
+can run through generic render-thread jobs without `AbstractRenderer.Current`.
+This causes the explicit Vulkan resource-scope guard to fail before retry setup.
+The correction defers static resource creation and pending-output resolution
+until an active renderer accepts work. It uses the existing renderer-owner check
+and keeps the explicit resource-scope guard. Configure an inactive probe, then
+activate it before assigning the static environment texture. Inactive requests
+can be discarded when automatic capture is disabled.
+
+A separate topology lifetime defect remains. `ForwardLightProbeInstanceResources`
+and `AdvancedRenderPipeline.ConsumePendingProbeTopology` stage imported-buffer
+replacement, then dispose the old buffers before published bindings release them.
+The first Assimp probe run records four disposed `XRDataBuffer` failures around
+probe topology publication and removal. This is not a source BRDF failure. The
+code todo owns buffer retirement; static producer scheduling does not repair it.
+
+The corrected static producer build has zero warnings and errors. Native PID
+24900 uses `xrengine.native-fbx` and reaches valid probe output on the second
+poll, without manual initialization. Face reflection-only coat changes 382
+checked face pixels, with a maximum channel difference of 85. Restore is exact.
+The saved Tank mask gives no measurable tint response. A positive control
+temporarily disables packed masks and sets reflection strength to 1. Black tint
+then changes 34,316 checked Tank pixels, with the Face region unchanged. White
+tint and final saved-value restores are exact in both checked regions.
+
+The corrected native capture `renderdoc/sh-owner-native-probe-gpu_frame17817.rdc`
+executes event 250 with groups `(91, 1, 1)` and no rejected pixels. Its 176-byte
+probe row references irradiance handle 121 and prefilter handle 122. Nonzero
+32-square irradiance and 256-square prefilter exports were viewed. The environment
+row is 240 bytes. Front, oblique, and native compute-color output were viewed.
+There is no Vulkan VUID, shader compile failure, texture upload failure, or
+static resource-scope failure. One startup output reservation error recovers.
+One frame-recording failure at 01:58:57 reports a disposed buffer during probe
+publication; this remains a failed lifetime check even though later frames pass.
+
+Fresh native SH restore is exact in the checked Face and Tank regions. Point
+light and local Lambert, gradient, and monochromatic controls pass. The spot
+control gives zero Tank contribution, including after `Transform.LookAt` sets
+its verified forward vector to approximately `(-0.396, -0.330, 0.857)`. The spot
+check remains open and must not be reported as passed.
+
+The spot failure was traced to `AdvancedGlobalResourceCapture.CreateLight`.
+It used `LightMeshMatrix`, which includes the cone volume's forward offset of
+half its distance. The fixture emitter at `(0.3, 1.25, -0.65)` became
+`(-0.29344, 0.75546, 0.63579)`. Its intended target was behind that displaced
+origin, so the shader correctly returned zero cone attenuation. Light records
+now use `Transform.RenderMatrix`, as the canonical light path does. The volume
+matrix stays unchanged. The final isolated build has zero warnings and errors.
+The fixture keeps the verified look-at orientation for repeated validation.
+
+### Final Assimp Repeat
+
+PID 36892 imports the exact prefab with `RequestedFbxBackend=Assimp` and
+`ActualBackend=assimp`. It retains all 21 active material identities through
+scalar edits and every lighting control. All checked Face and Tank regions
+return exactly after SH, point, spot, probe tint, and coat restoration. The
+point and corrected spot enable controls each change 34,328 Tank pixels while
+the Face region stays unchanged. The L2 control changes 52 Face and 255 Tank
+pixels. The unmasked Mochie tint control changes 34,319 Tank pixels; Face coat
+reflection changes 376 Face pixels with Tank unchanged.
+
+The spot capture `renderdoc/sh-final-assimp-env-spot_frame16942.rdc` and probe
+capture `renderdoc/sh-final-assimp-probe-gpu_frame19132.rdc` each execute native
+shading at event 245 with groups `(91, 1, 1)`. All 2,073,600 diagnostics equal
+`0xff00`. Their native color exports were viewed. The captured spot record has
+origin `(0.3, 1.25, -0.65)`, radius 3, and direction approximately
+`(-0.396, -0.330, 0.857)`. The removed point row has intensity zero. The probe
+row has valid irradiance and prefilter handles 121 and 122, and nonzero studio
+convolution output. Those texture exports and final front and oblique images
+were viewed.
+
+The log has zero VUID, shader compile, or texture upload failures. Thirty-five
+source-mismatch warnings occur from 02:11:38 to 02:12:02, before the measured
+lighting controls. Two frame-recording failures remain; the last occurs at
+02:14:58 and reports disposed `XRDataBuffer` access during probe publication.
+Later frames recover. Recovery does not pass the probe lifetime check.
+
+### Native Repeat And Late-Draw Buffer Failure
+
+Native PID 31784 uses the same final binary. Scalar edits, SH, and point-light
+controls pass before the backend failure. SH restoration is exact in Face and
+Tank regions. Reversing SH X changes 6,473 Face and 33,995 Tank pixels; L2 changes
+50 and 261 pixels. Point enable changes 34,328 Tank pixels with Face unchanged.
+Point restore is exact. Gradient and monochromatic controls change Tank only.
+
+At 02:23:57.964, the first spot-light addition coincides with a terminal
+PresentNow transition. The transparent `Mat_Glow 5:Horns` draw rejects a retired
+Vulkan buffer generation during descriptor update. This occurs before the first
+probe initialization at 02:24:19, so it is separate from probe topology
+publication. The later spot screenshots are byte-identical and are invalid
+lighting evidence. Probe generation cannot complete while scene work is discarded.
+The general timing query reports no terminal fault and the preparation query
+still reports admission; those values do not establish successful presentation.
+The native repeat is stopped, and its failed result is retained.
+
+The first Spot component returns at 02:23:57.956; descriptor rejection follows
+at .962. Point removal completed four seconds earlier. The unchanged
+`EnsureForwardBuffer` path grows the first spot and spot-shadow metadata buffers
+from one to 1,024 entries and immediately disposes their predecessors. These
+buffers, at bindings 36 and 38, are the leading candidates. Captured canonical
+draw bindings can retain the old native handles. The log does not identify the
+rejected binding or resource owner, so this remains a bounded hypothesis.
+Add those fields to the descriptor rejection diagnostic before selecting the
+repair. The frame-slot number in the message is not a shader binding number.
+
+### Final Native Spot And Probe Repeat
+
+PID 5208 uses the same final binary and imports the exact prefab with actual
+backend `xrengine.native-fbx`. This repeat creates one spot without prior point
+creation or removal. It keeps the spot node alive and sets its intensity to zero
+before the probe check. This sequence passes, but does not clear the earlier
+intermittent lifetime failure.
+
+Spot enable changes 34,328 Tank pixels, with Face unchanged. Reflection-only
+Face clearcoat changes 380 Face pixels, with Tank unchanged. The unmasked Mochie
+tint control changes 34,316 Tank pixels, with Face unchanged. All three controls
+restore the checked Face and Tank regions exactly. The final saved material
+values also restore exactly in those regions. Small full-image differences
+remain outside the regions with active glitter.
+
+The final probe capture `renderdoc/sh-repeat-native-probe-gpu_frame15807.rdc`
+executes native shading at event 250 with groups `(91, 1, 1)`. All 2,073,600
+diagnostic pixels equal `0xff00`. The selected probe has handles 121 and 122,
+a 176-byte record, and nonzero 32-square irradiance and 256-square prefilter
+output. The environment record is 240 bytes. Front, oblique, native compute
+color, and exported probe textures were viewed. Pixel metrics are in
+`reports/sh-repeat-native-controls.json` under the task evidence root.
+
+The spot capture `renderdoc/sh-repeat-native-spot_frame14169.rdc` executes
+native shading at event 249 with groups `(91, 1, 1)` and the same all-valid
+diagnostic result. Its light record has the intended emitter position
+`(0.3, 1.25, -0.65)` and direction approximately `(-0.396, -0.330, 0.857)`.
+The native color export was viewed.
+
+The log has zero Vulkan VUID, shader compile, or texture upload failures.
+Twenty-eight source-mismatch warnings end at 02:30:46, before the controls.
+One disposed-buffer command-record failure occurs at 02:31:38 during probe
+publication. The desktop frame reports terminal failure and recreates the
+swapchain; later changed screenshots and the captured native dispatch confirm
+that rendering resumes. This differs from the persistent renderer pause in
+PID 31784. It still fails the probe buffer lifetime check. All owned editor
+and replay sessions are stopped after evidence review.
 
 ## Next Decision
 
-Compare the source lighting map under matched lighting. Preserve the source
-backface tangent-basis flag and investigate the fixed tank spot. Check live
-material edits that temporarily omit other opaque groups.
-Keep texture publication coherent during mip promotion. The earlier extra
+Directional SH, local additive composition, and Mochie probe specular are
+implemented and pass the focused controls on both prefab routes. Repair the
+confirmed probe topology buffer lifetime and identify the retired buffer from
+first local-light activation. Compare all lighting against a matched Unity
+reference. Automatic SH projection and Unity per-renderer probe assignment remain
+unsupported; engine probe convolution and local attenuation remain in use.
+Keep the saved harness state and compare its visible intersection in that view.
+The scalar-edit image audit does not support the earlier missing-group claim.
+Texture metadata and native residency now publish together. The earlier extra
 Assimp object was displaced hair; the source bind correction resolves it. Check
 nonzero expression curves, accessory deformation,
 animated bounds and shadows, and controller integration separately. Match the

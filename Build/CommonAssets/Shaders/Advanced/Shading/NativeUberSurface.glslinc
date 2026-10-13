@@ -50,7 +50,7 @@ vec3 XR_UBER_DetailColor(XRUberCoordinates c, vec3 color)
 
 void XR_UBER_Pbr(XRUberCoordinates c, vec3 base, out float roughness,
     out float metallic, out vec3 specularColor, out vec3 specularTint,
-    out float specularMask, out float reflectionMask)
+    out float specularMask, out float reflectionMask, out float packedSmoothness)
 {
     roughness = clamp(1.0 - UBER_F(_SpecularSmoothness), 0.04, 1.0);
     metallic = 0.0;
@@ -58,6 +58,7 @@ void XR_UBER_Pbr(XRUberCoordinates c, vec3 base, out float roughness,
     specularTint = vec3(1.0);
     specularMask = 1.0;
     reflectionMask = 1.0;
+    packedSmoothness = 1.0;
     if (!XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_SPECULAR)) return;
     vec4 m = UBER_SAMPLE(c, _PBRMetallicMaps, vec4(1.0));
     if (UBER_I(_PBRMochiePackedMasksEnabled) != 0)
@@ -76,6 +77,7 @@ void XR_UBER_Pbr(XRUberCoordinates c, vec3 base, out float roughness,
     float smoothness = s[clamp(UBER_I(_PBRSmoothnessMapsChannel), 0, 3)];
     if (UBER_F(_PBRMetallicMapInvert) > 0.5) metal = 1.0 - metal;
     if (UBER_F(_PBRSmoothnessMapInvert) > 0.5) smoothness = 1.0 - smoothness;
+    packedSmoothness = smoothness;
     metallic = clamp(metal * UBER_F(_PBRMetallicMultiplier), 0.0, 1.0);
     roughness = clamp(1.0 - smoothness * UBER_F(_PBRRoughnessMultiplier), 0.04, 1.0);
     if (UBER_I(_SpecularType) == 2) roughness = max(roughness * 0.75, 0.04);

@@ -294,6 +294,10 @@ namespace XREngine.Rendering
             => GetShaderList(shaderType).Count;
 
         public void SetShader(EShaderType shaderType, XRShader? shader, bool coerceShaderType = false)
+            => SetShaderCore(shaderType, shader, coerceShaderType, internalUberReplacement: false);
+
+        private void SetShaderCore(EShaderType shaderType, XRShader? shader, bool coerceShaderType,
+            bool internalUberReplacement)
         {
             if (shader is not null)
             {
@@ -333,7 +337,28 @@ namespace XREngine.Rendering
             if (!changed)
                 return;
 
-            Shaders = new EventList<XRShader>(updated);
+            EventList<XRShader> replacement = new(updated);
+            UberMaterialShaderTransition? transition = null;
+            if (internalUberReplacement && shader is not null && HasEngineSemantic &&
+                GetShaderCount(EShaderType.Fragment) == 1 &&
+                GetShader(EShaderType.Fragment) is { } previousFragment &&
+                UberShaderVariantBuilder.IsCompatibleInternalReplacement(previousFragment, shader))
+            {
+                transition = new(Shaders, replacement, [.. Shaders], [.. replacement],
+                    previousFragment, shader, ShaderStateRevision, UberStateRevision, EngineSemantic);
+                SetField(ref _pendingUberShaderTransition, transition, publishNotifications: false, nameof(Shaders));
+            }
+            try { Shaders = replacement; }
+            finally
+            {
+                if (ReferenceEquals(_pendingUberShaderTransition, transition))
+                    SetField(ref _pendingUberShaderTransition, null, publishNotifications: false, nameof(Shaders));
+                // The setter has reconciled subscriptions. Recheck edits made by callbacks
+                // while the new shader and list were not yet subscribed.
+                if (transition is not null && ReferenceEquals(Shaders, replacement) &&
+                    HasEngineSemantic && !transition.MatchesAfterAdoption(this))
+                    InvalidateEngineSemantic();
+            }
             MarkDirty();
         }
 
@@ -550,6 +575,8 @@ namespace XREngine.Rendering
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            bool preserveEngineSemantic = propName == nameof(Shaders) &&
+                ConsumeUberShaderTransition(prev, field);
             // V2 auxiliary programs read the live source's parameters/coverage.
             // Numeric and mode edits must not destroy stable replay pipelines.
             // Replacing the parameter layout, shaders, or options still invalidates.
@@ -576,7 +603,8 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Shaders):
-                    InvalidateEngineSemantic();
+                    if (!preserveEngineSemantic)
+                        InvalidateEngineSemantic();
                     ShadersChanged();
                     break;
                 case nameof(Name):
@@ -839,6 +867,7 @@ namespace XREngine.Rendering
 
         private void PreShadersSet()
         {
+            SetUberCanonicalSubscription(null);
             if (_subscribedShaders is not { } subscribed)
                 return;
             subscribed.PostModified -= ShadersModified;
@@ -939,12 +968,14 @@ namespace XREngine.Rendering
 
             foreach (var shader in subscribed)
                 ShaderAdded(shader);
+            ReconcileUberCanonicalSubscription();
         }
 
         private void ShadersModified()
         {
             InvalidateEngineSemantic();
             ShadersChanged();
+            ReconcileUberCanonicalSubscription();
         }
 
         void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
@@ -959,7 +990,7 @@ namespace XREngine.Rendering
             if (item is null)
                 return;
             item.Reloaded -= ShaderReloaded;
-            item.SourceChanged -= AuthoredShaderSourceChanged;
+            item.AuthoredSourceChanged -= AuthoredShaderSourceChanged;
         }
 
         private void ShaderAdded(XRShader item)
@@ -968,8 +999,8 @@ namespace XREngine.Rendering
                 return;
             item.Reloaded -= ShaderReloaded;
             item.Reloaded += ShaderReloaded;
-            item.SourceChanged -= AuthoredShaderSourceChanged;
-            item.SourceChanged += AuthoredShaderSourceChanged;
+            item.AuthoredSourceChanged -= AuthoredShaderSourceChanged;
+            item.AuthoredSourceChanged += AuthoredShaderSourceChanged;
         }
 
         private void ShaderReloaded(XRAsset asset)

@@ -131,23 +131,27 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
 
     internal void ExecuteWithPipelineCompilationQuiesced(
         Action mutation,
-        ShaderModule shaderModule,
+        Func<ShaderModule> getCurrentShaderModule,
         string reason)
     {
         ArgumentNullException.ThrowIfNull(mutation);
-        if (shaderModule.Handle == 0)
+        ArgumentNullException.ThrowIfNull(getCurrentShaderModule);
+        // Select the drain scope only after the gate excludes another publication.
+        context.Resources.PipelineManager.ExecuteWithCompilationDependencyGate(() =>
         {
-            using VulkanPipelineCompilationDependencyLease dependencyLease =
-                context.Resources.PipelineManager.AcquireCompilationDependencyLease();
-            mutation();
-            return;
-        }
+            ShaderModule shaderModule = getCurrentShaderModule();
+            if (shaderModule.Handle == 0)
+            {
+                mutation();
+                return;
+            }
 
-        using VulkanPipelineCompilationMutationLease lease =
-            context.Resources.PipelineManager.AcquireCompilationMutationLease(
-                reason,
-                VulkanPipelineCompilationMutationScope.ForShader(shaderModule));
-        mutation();
+            using VulkanPipelineCompilationMutationLease lease =
+                context.Resources.PipelineManager.AcquireCompilationMutationLease(
+                    reason,
+                    VulkanPipelineCompilationMutationScope.ForShader(shaderModule));
+            mutation();
+        });
     }
 
     // Descriptor-set cache ownership is migrated with the command recording
