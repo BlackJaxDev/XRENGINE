@@ -1475,7 +1475,7 @@ namespace XREngine.Rendering
         public bool Resizable
         {
             get => _resizable;
-            set => SetField(ref _resizable, value);
+            set => SetImportedTextureMetadataField(ref _resizable, value);
         }
 
         public override uint MaxDimension => Math.Max(Width, Height);
@@ -1665,28 +1665,28 @@ namespace XREngine.Rendering
         public Mipmap2D[] Mipmaps
         {
             get => _mipmaps;
-            set => SetField(ref _mipmaps, value);
+            set => SetImportedTextureMetadataField(ref _mipmaps, value);
         }
 
         public ETexMagFilter MagFilter
         {
             get => _magFilter;
-            set => SetField(ref _magFilter, value);
+            set => SetImportedTextureMetadataField(ref _magFilter, value);
         }
         public ETexMinFilter MinFilter
         {
             get => _minFilter;
-            set => SetField(ref _minFilter, value);
+            set => SetImportedTextureMetadataField(ref _minFilter, value);
         }
         public ETexWrapMode UWrap
         {
             get => _uWrap;
-            set => SetField(ref _uWrap, value);
+            set => SetImportedTextureMetadataField(ref _uWrap, value);
         }
         public ETexWrapMode VWrap
         {
             get => _vWrap;
-            set => SetField(ref _vWrap, value);
+            set => SetImportedTextureMetadataField(ref _vWrap, value);
         }
         public GrabPassInfo? GrabPass
         {
@@ -1696,7 +1696,7 @@ namespace XREngine.Rendering
         public float LodBias
         {
             get => _lodBias;
-            set => SetField(ref _lodBias, value);
+            set => SetImportedTextureMetadataField(ref _lodBias, value);
         }
         /// <summary>
         /// Maximum anisotropy requested by the source texture importer.
@@ -1704,7 +1704,7 @@ namespace XREngine.Rendering
         public float MaxAnisotropy
         {
             get => _maxAnisotropy;
-            set => SetField(ref _maxAnisotropy, Math.Max(1.0f, value));
+            set => SetImportedTextureMetadataField(ref _maxAnisotropy, Math.Max(1.0f, value));
         }
         /// <summary>
         /// When true, sampling this texture performs a depth comparison against a reference value
@@ -1713,7 +1713,7 @@ namespace XREngine.Rendering
         public bool EnableComparison
         {
             get => _enableComparison;
-            set => SetField(ref _enableComparison, value);
+            set => SetImportedTextureMetadataField(ref _enableComparison, value);
         }
         /// <summary>
         /// The comparison function used when <see cref="EnableComparison"/> is true.
@@ -1721,12 +1721,12 @@ namespace XREngine.Rendering
         public ETextureCompareFunc CompareFunc
         {
             get => _compareFunc;
-            set => SetField(ref _compareFunc, value);
+            set => SetImportedTextureMetadataField(ref _compareFunc, value);
         }
         public ESizedInternalFormat SizedInternalFormat
         {
             get => _sizedInternalFormat;
-            set => SetField(ref _sizedInternalFormat, value);
+            set => SetImportedTextureMetadataField(ref _sizedInternalFormat, value);
         }
 
         public uint Width => Mipmaps.Length > 0 ? Mipmaps[0].Width : 0;
@@ -1735,7 +1735,12 @@ namespace XREngine.Rendering
         /// <summary>
         /// Set on construction
         /// </summary>
-        public bool Rectangle { get; set; } = false;
+        private bool _rectangle;
+        public bool Rectangle
+        {
+            get => _rectangle;
+            set => SetImportedTextureMetadataField(ref _rectangle, value, publishNotifications: false);
+        }
         public bool MultiSample => MultiSampleCount > 1;
 
         private uint _multiSampleCount = 1;
@@ -1745,7 +1750,7 @@ namespace XREngine.Rendering
         public uint MultiSampleCount
         {
             get => _multiSampleCount;
-            set => SetField(ref _multiSampleCount, value);
+            set => SetImportedTextureMetadataField(ref _multiSampleCount, value);
         }
 
         private bool _fixedSampleLocations = true;
@@ -1772,21 +1777,24 @@ namespace XREngine.Rendering
         /// </summary>
         public void Resize(uint width, uint height)
         {
-            if (Width == width && Height == height || _mipmaps is null || _mipmaps.Length <= 0)
-                return;
-
-            for (int i = 0; i < _mipmaps.Length && width > 0u && height > 0u; ++i)
+            lock (_importedSourceMetadataWriteSync)
             {
-                if (_mipmaps[i] is null)
-                    continue;
+                if (Width == width && Height == height || _mipmaps is null || _mipmaps.Length <= 0)
+                    return;
 
-                _mipmaps[i]?.Resize(width, height);
+                for (int i = 0; i < _mipmaps.Length && width > 0u && height > 0u; ++i)
+                {
+                    if (_mipmaps[i] is null)
+                        continue;
 
-                width >>= 1;
-                height >>= 1;
+                    _mipmaps[i]?.Resize(width, height);
+
+                    width >>= 1;
+                    height >>= 1;
+                }
+
+                Resized?.Invoke();
             }
-
-            Resized?.Invoke();
         }
 
     [field: MemoryPackIgnore]

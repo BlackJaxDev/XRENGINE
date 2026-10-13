@@ -272,6 +272,11 @@ uniform float _AnisotropyRotation;
 uniform float _ClearCoat;
 //@property(name="_ClearCoatSmoothness", display="Clear Coat Smoothness", mode=static, default="0.8")
 uniform float _ClearCoatSmoothness;
+uniform vec4 _SourceClearCoat;
+uniform vec4 _SourceClearCoatGsaa;
+uniform vec4 _SourceClearCoatReflection;
+uniform sampler2D _SourceClearCoatMaps;
+uniform vec4 _SourceClearCoatMaps_ST;
 //@property(name="_CubeMap", display="Material Cubemap", slot=texture, semantic=environment)
 uniform samplerCube _CubeMap;
 //@property(name="_CubeMapColor", display="Cubemap Tint", mode=animated, default="vec4(1.0)")

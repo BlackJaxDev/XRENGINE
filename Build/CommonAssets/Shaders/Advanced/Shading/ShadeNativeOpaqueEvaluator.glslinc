@@ -104,7 +104,32 @@ vec3 XR_ADV_WorldAmbient(uint viewIndex)
     return ambient;
 }
 
-void XR_ADV_EvaluateProbeIbl(
+// Authored SH uses the same captured environment rows and view mask as ambient.
+bool XR_ADV_SourceSH(uint viewIndex, out vec4 ar, out vec4 ag, out vec4 ab,
+    out vec4 br, out vec4 bg, out vec4 bb, out vec4 c)
+{
+    ar = ag = ab = br = bg = bb = c = vec4(0.0);
+    bool enabled = false;
+    for (uint index = 0u; index < uint(XR_ADV_Environments.records.length()); ++index)
+    {
+        XRAdvancedEnvironmentRecord environment = XR_ADV_LoadEnvironment(index);
+        if ((environment.flags & 3u) != 3u) continue;
+        if ((environment.viewMaskLo != 0u || environment.viewMaskHi != 0u) &&
+            (viewIndex < 32u ? (environment.viewMaskLo & (1u << viewIndex)) == 0u :
+                (viewIndex >= 64u || (environment.viewMaskHi & (1u << (viewIndex - 32u))) == 0u))) continue;
+        ar += environment.sourceSHAr;
+        ag += environment.sourceSHAg;
+        ab += environment.sourceSHAb;
+        br += environment.sourceSHBr;
+        bg += environment.sourceSHBg;
+        bb += environment.sourceSHBb;
+        c += environment.sourceSHC;
+        enabled = true;
+    }
+    return enabled;
+}
+
+void XR_ADV_EvaluateProbeIblWithSelection(
     uint viewIndex,
     vec3 worldPosition,
     vec3 N,
@@ -113,12 +138,17 @@ void XR_ADV_EvaluateProbeIbl(
     float roughness,
     float metallic,
     out vec3 diffuseIndirect,
-    out vec3 specularIndirect)
+    out vec3 specularIndirect,
+    out float weights[4],
+    out uint indices[4])
 {
     diffuseIndirect = vec3(0.0);
     specularIndirect = vec3(0.0);
-    float weights[4] = float[4](0.0, 0.0, 0.0, 0.0);
-    uint indices[4] = uint[4](0u, 0u, 0u, 0u);
+    for (uint slot = 0u; slot < 4u; ++slot)
+    {
+        weights[slot] = 0.0;
+        indices[slot] = 0u;
+    }
     for (uint index = 0u; index < uint(XR_ADV_Probes.records.length()); ++index)
     {
         XRAdvancedProbeRecord probe = XR_ADV_LoadProbe(index);
@@ -164,6 +194,34 @@ void XR_ADV_EvaluateProbeIbl(
     diffuseIndirect = irradiance * albedo / PI * (vec3(1.0) - F) * (1.0 - metallic);
     vec2 brdf = XR_ADV_IntegrateSpecularBrdf(NoV, roughness);
     specularIndirect = prefiltered * (F * brdf.x + brdf.y);
+}
+
+void XR_ADV_EvaluateProbeIbl(uint viewIndex, vec3 worldPosition, vec3 N,
+    vec3 V, vec3 albedo, float roughness, float metallic,
+    out vec3 diffuseIndirect, out vec3 specularIndirect)
+{
+    float weights[4];
+    uint indices[4];
+    XR_ADV_EvaluateProbeIblWithSelection(viewIndex, worldPosition, N, V,
+        albedo, roughness, metallic, diffuseIndirect, specularIndirect,
+        weights, indices);
+}
+
+vec3 XR_ADV_SampleSelectedRawPrefilter(vec3 worldPosition, vec3 N, vec3 V,
+    float perceptualRoughness, float weights[4], uint indices[4])
+{
+    vec3 radiance = vec3(0.0);
+    float sum = 0.0;
+    for (uint slot = 0u; slot < 4u; ++slot)
+    {
+        if (weights[slot] <= 0.0) continue;
+        vec3 diffuse, prefiltered;
+        if (!XR_ADV_TrySampleProbe(XR_ADV_LoadProbe(indices[slot]), worldPosition,
+            N, V, perceptualRoughness, diffuse, prefiltered)) continue;
+        radiance += prefiltered * weights[slot];
+        sum += weights[slot];
+    }
+    return sum > 0.0 ? radiance / sum : vec3(0.0);
 }
 
 vec3 XR_ADV_EvaluateLight(

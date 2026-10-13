@@ -63,6 +63,36 @@ properties occupy four-word slots. Integer selectors retain their integer bits.
 Texture roles and feature bits have fixed offsets generated into shader source.
 Material values do not create a shader program for each imported material.
 
+`XRShader.SourceChanged` requests backend regeneration. Material semantic
+eligibility listens to `AuthoredSourceChanged`. Root text, stage, frontend,
+cooked identity, and dependency edits publish the authored event first.
+A manual reload can omit that event only when the previous resolved root,
+dependency graph, search directories, snippet version, and source owner remain
+current. The dependency check uses the resolver's file timestamp and length
+contract. Missing proof clears eligibility. A compile-only refresh retains the
+validated source cache and declared cooked module so repeated reloads do not
+discard that proof or change the selected program. Authored source edits clear
+derived cooked artifacts without nested property callbacks before the source
+notification. Public artifact assignments still invalidate authored eligibility.
+Generated Uber variants use builder-owned provenance. It records canonical and
+generated source stamps, the resolved dependency graph, source owner, and snippet
+version. Authored revisions differ from compile revisions. An unchanged manual
+reload can retain this proof. A generated marker or matching source text alone
+cannot establish ownership.
+
+Internal fragment replacement can preserve identity only through a one-use
+transition proof. It checks the exact old and new shader lists, canonical owner,
+material identity, Uber revision, and shader revision. Adoption must advance the
+shader revision once. The final check runs after list handlers attach. Reentrant
+source or list edits clear eligibility; the code never restores an old identity.
+Public shader replacement keeps the authored-edit contract.
+
+While a generated variant is active, the material also listens to its canonical
+shader. Edits to either source clear eligibility. Generated shader caches use weak
+canonical ownership. Active variants retain their canonical source, but the cache
+does not retain abandoned canonical instances. Cache hits and snapshot recovery
+reject stale provenance before reuse.
+
 `NativeUberMaterialSourceEncoder` checks the authored feature state and supported
 operations before publication. Unsupported active operations return a reason.
 `AdvancedGpuScenePublisher` selects the native layout before standard material
@@ -126,6 +156,112 @@ factor; standalone material imports without project settings assume linear.
 The existing native and canonical detail evaluators consume these normalized
 values. Detail-normal composition follows the separate normal contract below.
 
+### Source Direct Specular And Rim
+
+Supported Mochie materials select the source BRDF with
+`_SourceMochieSecond.w`. `_PBRMochiePackedMasksEnabled` controls packed-mask
+sampling independently. The canonical and native Uber paths share
+`Uber/source_shading.glsl`. They use the packed smoothness channel, source
+multipliers, dielectric Fresnel, material occlusion, and cast-shadow control.
+The source GSAA settings filter roughness from normal derivatives. The optional
+second lobe uses its own smoothness and strength. It combines with the first
+lobe by component-wise maximum. The packed specular mask includes source
+strength once. Inactive stylized-specular controls do not select its shape.
+
+`_SourceMochieSettings` holds GSAA enable, variance, threshold, and second-layer
+enable. `_SourceMochieSecond` holds second-layer smoothness, strength,
+cast-shadow bypass, and adapter enable. These values remain material-row data.
+
+The source style-0 rim uses `_SourceRimSettings` for enable, inversion, power,
+and normal selection. `_SourceRimColorSettings` holds base-color mix, brightness,
+and blend mode. The source rim changes base color before lighting and metallic
+Fresnel construction. Its emission remains separate. Engine-authored materials
+retain their existing specular and rim paths.
+
+The importer reports enabled source controls that this adapter cannot represent
+with `POI0010` and retains the existing native Uber approximation for that effect.
+These include anisotropic or split-mask Mochie sampling, non-default PBR normal
+selection, PBR global masks and tint themes, other rim styles, and active rim
+shadow, alpha, mask, hue, or pan modifiers. The material retains native Uber
+identity and its packed-mask contract. Source light selection and clearcoat use
+separate adapters, described below.
+
+### Source Light Selection And Clearcoat
+
+`SerializedMaterialImporter.SourceLighting` binds `_SourceLightMode` as an
+independent opt-in flag. `_LightingColorMode` keeps the source enum: 0 selects
+Poi Custom and 2 selects UTS2. The shared shader evaluates these modes against
+linear world SH and the primary directional color. Source direction mode 0
+combines the SH L1 direction with the primary direction. It uses the source
+fallback direction when neither input supplies a direction. The primary source
+evaluation still runs when no directional light contributes.
+
+`WorldSettings.AmbientSphericalHarmonicsEnabled` selects the authored
+`AmbientSphericalHarmonics` value. The seven vectors use the Unity packed
+L0/L1/L2 basis: `Ar`, `Ag`, `Ab`, `Br`, `Bg`, `Bb`, and `C`. Coefficients must be
+finite and can be negative. Enabled zero coefficients specify black SH. When
+disabled, the engine supplies constant effective world ambient through the
+three A.w values. Forward uniforms and the Advanced environment record use the
+same value. World clone and interpolation preserve this contract.
+
+`_SourceLightSettings` holds unlit intensity, cast-shadow blend, final lighting
+multiplier, and final lighting addition. Source color processing applies minimum
+brightness, monochromatic mixing, and light cap at the source stage. The source
+adapter is separate from Mochie specular. Source diffuse replacement preserves
+the independent probe specular contribution. Source shading modes 0, 2, and
+5 use their own texture-ramp, wrapped, and flat composition. Color-mode values
+and shading-mode values are separate enums. Wrapped shading consumes raw primary
+and ambient colors; flat shading does not add a diffuse ambient term.
+
+`_SourceAdditiveSettings` holds additive enable, additional-directional disable,
+limit enable, and luminance limit. `_SourceAdditiveColor` holds monochromatic
+mixing, passthrough, additive type, and cast-shadow blend.
+`_SourceAdditiveGradient` holds gradient start and end. Point and spot lights
+evaluate source Lambert, gradient, or material-shading composition per pixel.
+Both shader paths apply the source controls, directional suppression, and
+luminance limits. Engine light attenuation and light assignment remain in use.
+Unity vertex-light assignment and cookies require separate source data. The
+importer reports this boundary with `POI0010`.
+
+Authored world SH is independent of reflection probe textures. The engine does
+not project captured probes into these coefficients or import Unity per-renderer
+light-probe assignments. Other source color or direction modes retain approximate
+Uber lighting with a diagnostic. Source SH maps also feed matcap and glitter
+lighting. Native GI suppression clears the SH input at the shading caller.
+
+Supported Mochie probe specular reads raw prefiltered radiance and applies source
+Fresnel, surface reduction, exposure occlusion, reflection tint, mask, and
+strength once. `_SourceMochieReflection` holds Fresnel strength and exposure
+occlusion. `_SourceMochieReflectionTint` holds the linear tint. This source gate
+is independent of source diffuse lighting. The forward evaluator replaces its
+prior probe term after overlays and rebuilds the lighting context. Both paths
+use the available prefilter mip count. Engine probe selection and convolution
+remain in use; this does not establish matched Unity probe baking.
+
+Static probe convolution requires an active renderer that accepts backend work.
+`LightProbeComponent.InitializeStatic` defers resource creation and pending-output
+resolution to that renderer scope. A render-thread callback alone does not supply
+this scope. The producer retains its renderer owner for retries. Configure and
+activate a probe before assigning its static environment texture when automatic
+capture is disabled.
+
+`SerializedMaterialImporter.SourceClearCoat` binds the supported source GGX coat
+as a separate contribution. `_SourceClearCoat` holds enable, smoothness,
+reflection strength, and direct specular strength. `_SourceClearCoatGsaa` holds
+GSAA enable, variance, threshold, and overall coat strength.
+`_SourceClearCoatReflection` holds Fresnel strength and exposure occlusion.
+The source dielectric Fresnel constant is 0.220916301.
+
+`_SourceClearCoatMaps` is linear data: R is the coat mask, G is smoothness, B is
+the reflection mask, and A is the direct specular mask. The supported adapter
+uses UV0, the imported texture transform, vertex normals, and white tints. It
+uses filtered roughness for both GGX and probe mip selection. Reflection reads
+raw prefiltered probe radiance and applies source Fresnel, visibility, and
+surface reduction once. It does not reuse the engine split-sum BRDF result.
+Only the combined coat contribution is clamped. Unsupported source modifiers
+retain the generic coat with a diagnostic. Probe bake and mip-filter parity
+still depend on the reflection environment.
+
 ### Source Normals And Matcaps
 
 The canonical and native Uber evaluators decode base and detail normals in
@@ -134,7 +270,11 @@ addition and Z by multiplication, then apply TBN and normalize once.
 `SerializedMaterialImporter.SourceToonNormals` binds each texture's imported
 green-channel inversion as material state. It does not change shared texture
 bytes. Raw engine normal textures retain their RG decode convention.
-Source backface tangent-basis controls still need a separate adapter.
+`_SourceBackfaceNormals` selects the source backface contract.
+`_FlipBackfaceNormals` then controls the whole tangent frame: N, T, and B flip
+together before normal sampling. A disabled flag preserves all three vectors.
+Native normal derivatives use the same frame. Engine-authored materials retain
+their existing normal-only backface rule.
 
 Imported matcaps use `_SourceMatcap` and per-layer source controls. Smoothness
 selects an explicit mip from the texture size. Mask channel, mask inversion,

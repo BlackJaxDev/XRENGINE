@@ -113,7 +113,9 @@ namespace XREngine.Components.Capture.Lights
                 return;
             }
 
-            if (_pendingIblOutput is not null)
+            // Main-thread jobs can run outside the window's active renderer scope.
+            // Resource creation and convolution must use the same renderer as retries.
+            if (!IsIblRetryRendererActive() || _pendingIblOutput is not null)
             {
                 if (!_staticIblInitializationQueued)
                 {
@@ -127,6 +129,7 @@ namespace XREngine.Components.Capture.Lights
             if (EnvironmentTextureEquirect is null)
                 return;
 
+            _iblRetryRenderer = AbstractRenderer.Current;
             InitializeOctaIblResources(
                 EnvironmentTextureEquirect,
                 "Scene3D\\IrradianceConvolutionEquirectOcta.fs",
@@ -394,6 +397,8 @@ namespace XREngine.Components.Capture.Lights
                 _staticIblInitializationQueued = false;
                 return true;
             }
+            if (!IsIblRetryRendererActive())
+                return false;
             ResolvePendingIblOutputVersion();
             if (_pendingIblOutput is not null)
                 return false;

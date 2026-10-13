@@ -264,11 +264,14 @@ public static partial class SerializedMaterialImporter
         string? emissionSource = AddMappedTexture(document, resolver, warnings, textures, "_EmissionMap", "_EmissionMap");
         string? matcapSource = AddMappedTexture(document, resolver, warnings, textures, "_Matcap", "_Matcap");
         string? matcapMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_MatcapMask", "_MatcapMask", "_MatcapMask");
-        string? rimColorSource = AddMappedTexture(document, resolver, warnings, textures, "_RimColorTexture", "_RimColorTex", "_RimTex");
+        string? rimColorSource = SupportsExactSourceRim(document)
+                ? AddMappedTexture(document, resolver, warnings, textures, "_RimColorTexture", "_RimTex")
+                : AddMappedTexture(document, resolver, warnings, textures, "_RimColorTexture", "_RimColorTex", "_RimTex");
         string? rimMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_RimMask", "_RimMask");
         string? specularSource = AddMappedTexture(document, resolver, warnings, textures, "_SpecularMap", "_SpecularMap");
         string? metallicSource = AddMappedTexture(document, resolver, warnings, textures, "_PBRMetallicMaps", "_MochieMetallicMaps", "_RGBAMetallicMaps", "_MetallicGlossMap");
         string? smoothnessSource = AddMappedTexture(document, resolver, warnings, textures, "_PBRSmoothnessMaps", "_RGBASmoothnessMaps", "_SmoothnessTex", "_MochieMetallicMaps", "_MetallicGlossMap");
+        string? clearCoatSource = AddMappedTexture(document, resolver, warnings, textures, "_SourceClearCoatMaps", "_ClearCoatMaps");
         string? detailMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailMask", "_DetailMask");
         string? detailTexSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailTex", "_DetailTex");
         string? detailNormalSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailNormalMap", "_DetailNormalMap");
@@ -313,6 +316,7 @@ public static partial class SerializedMaterialImporter
         ApplyTextureTransform(material, document, specularSource, "_SpecularMap");
         ApplySourceToonTextureTransform(material, document, metallicSource, "_PBRMetallicMaps", null, diagnostics);
         ApplySourceToonTextureTransform(material, document, smoothnessSource, "_PBRSmoothnessMaps", null, diagnostics);
+        ApplySourceToonTextureTransform(material, document, clearCoatSource, "_SourceClearCoatMaps", null, diagnostics);
         ApplyTextureTransform(material, document, detailMaskSource, "_DetailMask");
         ApplyTextureTransform(material, document, detailTexSource, "_DetailTex");
         ApplyTextureTransform(material, document, detailNormalSource, "_DetailNormalMap");
@@ -592,7 +596,10 @@ public static partial class SerializedMaterialImporter
                     : 1.0f);
         else
             MapFloat(document, material, "_SpecularStrength", "_SpecularStrength", "_ApplySpecular");
-        MapVector4(document, material, "_SpecularTint", "_SpecularTint");
+        if (document.TryGetPositive("_MochieBRDF"))
+            MapVector4(document, material, "_SpecularTint", "_MochieSpecularTint", "_SpecularTint");
+        else
+            MapVector4(document, material, "_SpecularTint", "_SpecularTint");
         SetInt(material, "_SpecularType", SourceToonEnumMapper.SpecularType(document, diagnostics));
 
         MapVector3(document, material, "_DetailTint", "_DetailTint");
@@ -658,6 +665,17 @@ public static partial class SerializedMaterialImporter
         ICollection<MaterialConversionDiagnostic> diagnostics)
     {
         bool mochieBrdfEnabled = document.TryGetPositive("_MochieBRDF");
+        string? unsupportedSourceBrdfOption = mochieBrdfEnabled
+            ? GetUnsupportedSourceBrdfOption(document)
+            : null;
+        if (unsupportedSourceBrdfOption is not null)
+        {
+            diagnostics.Add(new MaterialConversionDiagnostic(
+                MaterialConversionDiagnosticCodes.IntentionalNativeDifference,
+                MaterialConversionDiagnosticSeverity.Warning,
+                $"Source PBR option '{unsupportedSourceBrdfOption}' on '{document.Name}' uses the approximate Uber shading path.",
+                unsupportedSourceBrdfOption));
+        }
         SetInt(material, "_PBRMochiePackedMasksEnabled", mochieBrdfEnabled ? 1 : 0);
         SetFloat(material, "_PBRReflectionStrength", mochieBrdfEnabled &&
             document.TryGetFloat("_MochieReflectionStrength", out float mochieReflectionStrength)
@@ -732,6 +750,45 @@ public static partial class SerializedMaterialImporter
 
         SetInt(material, "_PBRSmoothnessMapsChannel", smoothnessChannel);
         SetFloat(material, "_PBRSmoothnessMapInvert", smoothnessInvert ? 1.0f : 0.0f);
+        SetVector4(material, "_SourceMochieSettings", new Vector4(
+            mochieBrdfEnabled && document.TryGetPositive("_MochieGSAAEnabled") ? 1.0f : 0.0f,
+            document.TryGetFloat("_PoiGSAAVariance", out float gsaaVariance) ? gsaaVariance : 0.15f,
+            document.TryGetFloat("_PoiGSAAThreshold", out float gsaaThreshold) ? gsaaThreshold : 0.1f,
+            mochieBrdfEnabled && document.TryGetPositive("_Specular2ndLayer") ? 1.0f : 0.0f));
+        SetVector4(material, "_SourceMochieSecond", new Vector4(
+            document.TryGetFloat("_MochieRoughnessMultiplier2", out float secondSmoothness) ? secondSmoothness : 1.0f,
+            document.TryGetFloat("_MochieSpecularStrength2", out float secondStrength) ? secondStrength : 0.0f,
+            document.TryGetFloat("_IgnoreCastedShadows", out float ignoreShadows) ? ignoreShadows : 0.0f,
+            mochieBrdfEnabled && unsupportedSourceBrdfOption is null ? 1.0f : 0.0f));
+        SetVector4(material, "_SourceMochieReflection", new Vector4(
+            GetFloat(document, "_RefSpecFresnelStrength", 1.0f),
+            GetFloat(document, "_SFExposureOcclusion"),
+            0.0f, 0.0f));
+        SetVector4(material, "_SourceMochieReflectionTint",
+            document.TryGetVector("_MochieReflectionTint", out Vector4 reflectionTint)
+                ? reflectionTint : Vector4.One);
+    }
+
+    private static string? GetUnsupportedSourceBrdfOption(SerializedMaterialDocument document)
+    {
+        if (HasExternalTexture(document, "_MochieReflCube"))
+            return "_MochieReflCube";
+        if (document.TryGetFloat("_PBRNormalSelect", out float normalSelect) &&
+            MathF.Abs(normalSelect - 1.0f) > 0.0001f)
+            return "_PBRNormalSelect";
+        foreach (string property in new[]
+        {
+            "_GGXAnisotropics", "_PBRSplitMaskSample", "_MochieMetallicGlobalMask",
+            "_MochieSmoothnessGlobalMask", "_MochieSpecularStrengthGlobalMask",
+            "_MochieMetallicMapsStochastic", "_PBRSplitMaskStochastic",
+            "_MochieSpecularTintThemeIndex", "_MochieReflectionTintThemeIndex",
+            "_MochieReflectionStrengthGlobalMask"
+        })
+        {
+            if (document.TryGetPositive(property))
+                return property;
+        }
+        return null;
     }
 
     private static void ApplyLilToonScalarAndColorProperties(XRMaterial material, SerializedMaterialDocument document)

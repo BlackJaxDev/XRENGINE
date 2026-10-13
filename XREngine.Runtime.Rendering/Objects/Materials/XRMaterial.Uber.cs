@@ -17,6 +17,9 @@ namespace XREngine.Rendering;
 
 public partial class XRMaterial
 {
+    private void SetInternalUberFragmentShader(XRShader? shader)
+        => SetShaderCore(EShaderType.Fragment, shader, coerceShaderType: false, internalUberReplacement: true);
+
     private const int UberVariantDebounceMilliseconds = 40;
     private const int UberConstantPropertyEditDebounceMilliseconds = 180;
     private const string ShaderProgramMaterialVariantKind = "MaterialVariant";
@@ -75,7 +78,7 @@ public partial class XRMaterial
                 ActiveUberVariant.IsEmpty &&
                 UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader))
             {
-                SetShader(EShaderType.Fragment, fragmentShader, coerceShaderType: true);
+                SetInternalUberFragmentShader(fragmentShader);
             }
 
             EnsureUberStateInitialized(fragmentShader, manifest);
@@ -184,7 +187,7 @@ public partial class XRMaterial
         XRShader canonicalShader = ResolveCanonicalUberFragmentShader(fragmentShader);
 
         if (ActiveUberVariant.IsEmpty && UberShaderVariantBuilder.IsGeneratedVariant(fragmentShader) && !ReferenceEquals(canonicalShader, fragmentShader))
-            SetShader(EShaderType.Fragment, canonicalShader, coerceShaderType: true);
+            SetInternalUberFragmentShader(canonicalShader);
 
         foreach (ShaderUiFeature feature in manifest.Features)
             next = next.EnsureFeature(feature.Id, ResolveInitialFeatureEnabled(canonicalShader, feature));
@@ -936,7 +939,7 @@ public partial class XRMaterial
                 return;
             }
 
-            SetShader(EShaderType.Fragment, prepared.FragmentShader, coerceShaderType: true);
+            SetInternalUberFragmentShader(prepared.FragmentShader);
             if (!isCurrentAfterShaderChange())
             {
                 if (!IsDestroyed && !IsMaterialTeardownRequested)
@@ -973,7 +976,7 @@ public partial class XRMaterial
         UberMaterialVariantBindingState previousBinding, XRShader? previousShader)
     {
         if (ReferenceEquals(GetShader(EShaderType.Fragment), prepared.FragmentShader))
-            SetShader(EShaderType.Fragment, previousShader, coerceShaderType: true);
+            SetInternalUberFragmentShader(previousShader);
         if (ActiveUberVariant.Equals(prepared.BindingState))
             SetActiveUberVariant(previousBinding);
     }
@@ -1054,7 +1057,7 @@ public partial class XRMaterial
 
             Stopwatch adoptionStopwatch = Stopwatch.StartNew();
             SetActiveUberVariant(prepared.BindingState);
-            SetShader(EShaderType.Fragment, prepared.FragmentShader, coerceShaderType: true);
+            SetInternalUberFragmentShader(prepared.FragmentShader);
             adoptionStopwatch.Stop();
 
             UberMaterialVariantStatus activeStatus = new()
@@ -1326,7 +1329,7 @@ public partial class XRMaterial
 
         Stopwatch adoptionStopwatch = Stopwatch.StartNew();
         SetActiveUberVariant(prepared.BindingState);
-        SetShader(EShaderType.Fragment, prepared.FragmentShader, coerceShaderType: true);
+        SetInternalUberFragmentShader(prepared.FragmentShader);
         adoptionStopwatch.Stop();
 
         UberMaterialVariantStatus activeStatus = new()
@@ -1379,15 +1382,9 @@ public partial class XRMaterial
 
     private XRShader ResolveCanonicalUberFragmentShader(XRShader fragmentShader)
     {
-        if (_uberCanonicalFragmentShader is not null &&
-            !UberShaderVariantBuilder.IsGeneratedVariant(_uberCanonicalFragmentShader))
-        {
-            return _uberCanonicalFragmentShader;
-        }
-
         if (!UberShaderVariantBuilder.IsGeneratedVariant(fragmentShader))
         {
-            _uberCanonicalFragmentShader = fragmentShader;
+            SetField(ref _uberCanonicalFragmentShader, fragmentShader, publishNotifications: false);
             return fragmentShader;
         }
 
@@ -1395,9 +1392,13 @@ public partial class XRMaterial
         // Play snapshot restore that shares the cached variant lands here.
         if (UberShaderVariantBuilder.TryGetCanonicalShader(fragmentShader, out XRShader? cachedCanonical))
         {
-            _uberCanonicalFragmentShader = cachedCanonical;
+            SetField(ref _uberCanonicalFragmentShader, cachedCanonical, publishNotifications: false);
             return cachedCanonical;
         }
+
+        if (_uberCanonicalFragmentShader is not null && !_uberCanonicalFragmentShader.IsDestroyed &&
+            !UberShaderVariantBuilder.IsGeneratedVariant(_uberCanonicalFragmentShader))
+            return _uberCanonicalFragmentShader;
 
         // Native material serialization embeds generated variant text but does
         // not persist the canonical engine shader's FilePath. Rehydrate that
@@ -1411,24 +1412,26 @@ public partial class XRMaterial
             TextFile text = new(shaderPath);
             text.LoadText(shaderPath);
 
-            _uberCanonicalFragmentShader = new XRShader(fragmentShader.Type, text)
+            XRShader recovered = new(fragmentShader.Type, text)
             {
                 Name = fragmentShader.Name,
                 GenerateAsync = fragmentShader.GenerateAsync,
             };
-            return _uberCanonicalFragmentShader;
+            SetField(ref _uberCanonicalFragmentShader, recovered, publishNotifications: false);
+            return recovered;
         }
 
         try
         {
-            _uberCanonicalFragmentShader = ShaderHelper.UberFragForward();
+            XRShader recovered = ShaderHelper.UberFragForward();
+            SetField(ref _uberCanonicalFragmentShader, recovered, publishNotifications: false);
+            return recovered;
         }
         catch (NotSupportedException ex) when (!ShaderSourceResolver.CanAccessHostShaderFiles)
         {
             throw new NotSupportedException(
                 "UberVariant.CanonicalSourceUnavailable: the canonical Uber shader must be published in the browser shader catalog before a generated material can be rehydrated.", ex);
         }
-        return _uberCanonicalFragmentShader;
     }
 
     private static string? ResolveShaderPathOrName(XRShader shader)
@@ -1454,7 +1457,7 @@ public partial class XRMaterial
 
         XRShader canonicalShader = ResolveCanonicalUberFragmentShader(fragmentShader);
         if (!ReferenceEquals(fragmentShader, canonicalShader))
-            SetShader(EShaderType.Fragment, canonicalShader, coerceShaderType: true);
+            SetInternalUberFragmentShader(canonicalShader);
     }
 
     private static bool ResolveInitialFeatureEnabled(XRShader fragmentShader, ShaderUiFeature feature)

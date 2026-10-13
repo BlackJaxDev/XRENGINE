@@ -411,15 +411,14 @@ internal sealed partial class VulkanTextureUploadService
         }
         if (PublishCompletedImportedTextureUpload(context.Resources, upload, "graphics upload batch",
                 manifest is not null && manifest.Contains(upload.Ticket) &&
-                manifest.RequiresExactDescriptorPublication, out string? failure))
+                manifest.RequiresExactDescriptorPublication, out string? failure,
+                out EVulkanPresentNowFailureDisposition failureDisposition))
             _ = manifest?.MarkReady(upload.Ticket);
         else
             manifest?.Fail(
                 upload.Ticket,
                 failure ?? "final texture upload publication failed",
-                upload.ShouldPublish()
-                    ? EVulkanPresentNowFailureDisposition.RendererTerminal
-                    : EVulkanPresentNowFailureDisposition.RetryFrame);
+                failureDisposition);
     }
 
     private void FailSubmittedUpload(

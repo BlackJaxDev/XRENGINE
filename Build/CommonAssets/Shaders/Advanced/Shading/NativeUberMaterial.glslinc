@@ -1,6 +1,7 @@
 #ifndef XR_NATIVE_UBER_MATERIAL_GLSLINC
 #define XR_NATIVE_UBER_MATERIAL_GLSLINC
 #include "Advanced/Shading/StandardMaterial.glslinc"
+#include "Uber/source_shading.glsl"
 
 XRAdvancedMaterialRecord XR_UBER_Material;
 

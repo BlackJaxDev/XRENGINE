@@ -17,6 +17,7 @@ internal sealed class VulkanImportedTextureUploadPreparation(
     VulkanTextureUploadTicket ticket,
     VkTexture2D texture,
     TextureStreamingResidentData residentData,
+    ImportedTextureResidentPublicationPlan publicationPlan,
     bool includeMipChain,
     ulong publicationToken,
     Func<bool>? shouldAcceptResult,
@@ -27,6 +28,8 @@ internal sealed class VulkanImportedTextureUploadPreparation(
     ImageAspectFlags aspectMask,
     ImageUsageFlags usage,
     ImageLayout finalLayout,
+    SamplerCreateInfo samplerInfo,
+    bool createSampler,
     Extent3D extent,
     uint mipLevels,
     uint arrayLayers,
@@ -36,6 +39,7 @@ internal sealed class VulkanImportedTextureUploadPreparation(
     public VulkanTextureUploadTicket Ticket { get; } = ticket;
     public VkTexture2D Texture { get; } = texture;
     public TextureStreamingResidentData ResidentData { get; } = residentData;
+    public ImportedTextureResidentPublicationPlan PublicationPlan { get; } = publicationPlan;
     public bool IncludeMipChain { get; } = includeMipChain;
     public ulong PublicationToken { get; } = publicationToken;
     public Func<bool>? ShouldAcceptResult { get; } = shouldAcceptResult;
@@ -46,6 +50,8 @@ internal sealed class VulkanImportedTextureUploadPreparation(
     public ImageAspectFlags AspectMask { get; } = aspectMask;
     public ImageUsageFlags Usage { get; } = usage;
     public ImageLayout FinalLayout { get; } = finalLayout;
+    public SamplerCreateInfo SamplerInfo { get; } = samplerInfo;
+    public bool CreateSampler { get; } = createSampler;
     public Extent3D Extent { get; } = extent;
     public uint MipLevels { get; } = mipLevels;
     public uint ArrayLayers { get; } = arrayLayers;

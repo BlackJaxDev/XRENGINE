@@ -78,6 +78,44 @@ Foreground readiness: when an accepted frame references an exact texture generat
 
 `VulkanResidentRehydrationUploadScheduler` sends retained resident mips through the same service.
 
+### Coupled Metadata And Native Publication
+
+Imported upload preparation must not change the live `XRTexture2D`. A staged
+`ImportedTextureResidentPublicationPlan` retains the resident mip chain, resolved
+color format, mip range, source generation, and authored sampler inputs. Vulkan
+preparation uses that plan to create native resources. Sampler limits come from
+the pending mip chain, not the currently published preview. Workers consume the
+captured sampler values.
+
+Publication holds the streaming record authority, texture metadata writer lock,
+wrapper image lock, and descriptor lock in that order. It rechecks the staged
+source and authored inputs before committing. A stale candidate retires its native
+resources. The upload service keeps the resident data and schedules a fresh plan
+with a new ticket under the same logical streaming
+generation. It retains the original scheduling context and terminal callback
+owner. A stale attempt must not run the importer's cancellation callback. Actual
+cancellation, owner retirement, or scheduling failure settles the original owner
+once.
+
+Keep the old ticket pending until replacement admission returns. An admitted
+replacement or actual cancellation changes the old ticket to `Canceled` and
+retries the frame. Rejected admission before replacement registration changes the
+old ticket directly to `Failed` and reports `RendererTerminal`. Do not leave a
+canceled ticket that can hide the original owner's terminal failure.
+
+The metadata epoch stays odd across descriptor publication and the native and
+logical ownership transfers. A failed descriptor publication leaves the live
+metadata and source generation unchanged. After descriptor success, the wrapper
+and texture accept the same mip chain and format. Notification-free `SetField`
+updates set the logical metadata and clear sparse state. The source content
+generation advances once. The pending upload detaches its handles before cleanup
+can release them, and the epoch becomes even after the transfers finish.
+
+Do not replay a generic mipmap-change notification after this commit. It can
+destroy the new image. Retire old resources through their descriptor and frame
+owners after the commit. Keep canonical source validation active: a frame package
+captured before a completed publication is stale and must still retry.
+
 `VulkanTextureUploadFaultInjection` is a development-only diagnostic. When an editor MCP tool arms it, it fails or cancels a bounded number of upcoming upload schedules through the normal rejection and cancel paths. It is inert when not armed.
 
 ## Flags And Environment Variables

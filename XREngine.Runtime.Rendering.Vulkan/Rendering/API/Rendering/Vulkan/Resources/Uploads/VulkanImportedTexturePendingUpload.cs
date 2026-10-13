@@ -25,12 +25,15 @@ internal sealed class VulkanImportedTexturePendingUpload(
     ImageAspectFlags aspectMask,
     ImageUsageFlags usage,
     ImageLayout finalLayout,
+    SamplerCreateInfo samplerInfo,
+    bool createSampler,
     Extent3D extent,
     uint mipLevels,
     uint arrayLayers,
     long committedBytes,
     ulong publicationToken,
     TextureStreamingResidentData residentData,
+    ImportedTextureResidentPublicationPlan publicationPlan,
     bool includeMipChain,
     Func<bool>? shouldAcceptResult,
     Action<XRTexture2D>? onFinished,
@@ -54,6 +57,8 @@ internal sealed class VulkanImportedTexturePendingUpload(
     public ImageAspectFlags AspectMask { get; } = aspectMask;
     public ImageUsageFlags Usage { get; } = usage;
     public ImageLayout FinalLayout { get; } = finalLayout;
+    public SamplerCreateInfo SamplerInfo { get; } = samplerInfo;
+    public bool CreateSampler { get; } = createSampler;
     public AccessFlags FinalAccessMask { get; } =
         finalLayout == ImageLayout.General
             ? AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit
@@ -72,6 +77,7 @@ internal sealed class VulkanImportedTexturePendingUpload(
     /// not built here: one worker-admitted chunk owns one bounded staging lease.
     /// </summary>
     public TextureStreamingResidentData ResidentData { get; } = residentData;
+    public ImportedTextureResidentPublicationPlan PublicationPlan { get; } = publicationPlan;
     public bool IncludeMipChain { get; } = includeMipChain;
     public VulkanImportedTextureUploadStagingResource[] StagingResources => Volatile.Read(ref _stagingResources);
     public int NextMipLevel => Volatile.Read(ref _nextMipLevel);

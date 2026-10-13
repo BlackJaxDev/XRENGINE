@@ -37,6 +37,26 @@ existing owners; it does not create a backend wrapper. GPU-only bounds output
 uses `GpuProduced` storage without a CPU mirror. Do not upload a CPU image over
 the result of that compute pass.
 
+## Vulkan Shader Module Publication
+
+Shader module destruction and publication use the same pipeline dependency gate.
+Read the current native module after entering that gate. Cold publication has no
+pipeline jobs to drain. Replacement of a live module uses the scoped shader
+mutation lease. Keep reflected metadata, stage flags, native creation, stage
+entry point, compiled keys, readiness, and wrapper binding in one transaction.
+
+Asynchronous CPU compilation stays outside this gate. When its task completes,
+check task ownership and the source, configuration, clip-remap, and transform-
+feedback keys before publication. Acquire the dependency gate before the async
+compile lock. A deferred dependency replacement remains pending and keeps the
+completed task for retry. A stale result must not replace current success or
+failure state. Consume a task only after publication or a current compile failure.
+
+An interface cannot become linked with a missing native shader stage. Silently
+skipping zero stage flags can produce a linked program with an empty stage table.
+Its readiness fast path then prevents all later polls from repairing the shader.
+The link path now reports an invalid stage explicitly.
+
 ## Small-Triangle Surface Reconstruction
 
 Visibility and surface reconstruction use different area checks. The screen
@@ -247,11 +267,18 @@ the full-size AO fetch. This source contract still requires browser cook and
 live-output validation for the selected device.
 
 Browser native shading uses the existing `Environments` table at binding 14
-with 128-byte rows for world ambient. Bit 32 in the unchanged 160-byte native
+with 240-byte rows for world ambient and authored source SH. The seven signed
+SH vectors append to the former 128-byte prefix. Existing field offsets remain
+unchanged. Environment flag bit 0 marks a valid row; bit 1 marks enabled authored
+SH, including valid zero coefficients. The world-swap capture freezes the value,
+and the existing environment publisher owns its GPU lifetime. Browser table
+reads use the directory stride and keep the original ambient fields. Bit 32 in
+the unchanged 160-byte native
 shade parameters suppresses world ambient for the selected view. The authored
 decal flag remains bit 16. Native and surface-export mono and x4 recipes declare
 `XR_ADV_WORLD_AMBIENT_SCHEMA_VERSION=1`; reject older cooked programs and recook
-them before use. This adds no binding or table layout.
+them before use. The SH append adds no binding. Regenerate the shared record
+include when its C# record changes.
 
 The September 4–8 [Advanced acceptance records](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md)
 include bounded shaded-output, AO/IBL, temporal, post-processing, and OpenGL
@@ -1262,6 +1289,8 @@ clear the producer's command list before queued scene removal runs. Removal
 must use the registration records under the scene lock.
 
 Desktop frame data is owned by the logical frame-in-flight slot, independently of the acquired swapchain image. Prepared primary recording inputs must explicitly carry both the frame-data slot and timing-query slot. Mapped/immutable arenas, descriptors, Advanced publications and data-dependent command reuse use the logical slot. Presentation, image artifacts and desktop timing queries retain acquired-image ownership. Reset, cancellation and accepted-submission publication must use the same slot. A rejected recording must release its unsubmitted retained publication uses.
+
+Advanced light records use the light emitter's render transform. Do not use `LightMeshMatrix` for the light origin or direction: a spot volume shifts its center by half the light distance. The volume transform is for volume geometry only. Cone attenuation and shadow projection must share the emitter origin.
 
 Retired render-resource generations require a Signaled completion fence before disposal. Missing fences remain pending; failed fences may be replaced but cannot authorize disposal. A request to wait for GPU progress is not itself a completion proof.
 
