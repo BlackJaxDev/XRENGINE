@@ -13,6 +13,13 @@ public partial class XRMeshRenderer : ICommittedWorldBoundsProvider
     /// </summary>
     public event Action<XRMeshRenderer, uint, bool, bool>? CommittedOutputChanged;
 
+    /// <summary>
+    /// The last resolved committed spatial query of this renderer. Collection, culling, and
+    /// scene publication read this bound many times in one frame; the dispatcher reuses the
+    /// result while its witnesses are unchanged.
+    /// </summary>
+    internal PhysicsChainCommittedSpatialQuery CommittedSpatialQuery { get; } = new();
+
     /// <summary>Reads the query bound of the exact committed GPU output.</summary>
     public bool TryGetCommittedWorldBounds(out AABB bounds, out ulong outputGeneration)
         => GPUPhysicsChainDispatcher.Instance.TryGetCommittedSpatialBounds(this, out bounds, out outputGeneration);

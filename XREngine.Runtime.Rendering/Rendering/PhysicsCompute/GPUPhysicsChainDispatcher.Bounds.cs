@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Numerics;
 using XREngine.Data.Geometry;
@@ -19,19 +21,25 @@ public sealed partial class GPUPhysicsChainDispatcher
     private readonly List<PhysicsChainGpuBoundsWorkItem> _gpuBoundsWorkItems = [];
     private readonly List<PhysicsChainGpuBoundsCopyItem> _gpuBoundsCopyItems = [];
     private readonly List<uint> _gpuBoundsCommandScratch = [];
+    // Route snapshots stay valid across frames. Each one is copied again only when the
+    // scene that owns it publishes a new renderer-command route generation.
     private readonly List<GpuSceneRendererCommandIndexSnapshot> _gpuBoundsSceneRoutes = [];
+    private readonly List<GPUScene?> _gpuBoundsSceneRouteOwners = [];
     private readonly List<PhysicsChainDrawMaterialSnapshot> _gpuBoundsMaterialScratch = [];
     private readonly List<GPUScene> _gpuBoundsScenes = [];
+    // Parallel to _gpuDrivenPaletteBindings for one output publication: the scene of each
+    // binding (null without a render world) and its index in _gpuBoundsScenes (-1 without one).
+    private readonly List<GPUScene?> _gpuBoundsBindingScenes = [];
+    private readonly List<int> _gpuBoundsBindingSceneIndices = [];
     private readonly HashSet<XRMeshRenderer> _gpuBoundsCopiedRenderers =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     private readonly Dictionary<XRMeshRenderer, uint> _gpuBoundsSlotByRenderer =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<IPhysicsChainComputeSource, GPUPhysicsChainRequest> _gpuBoundsRequestByComponent =
-        new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     private readonly List<uint> _gpuBoundsSlotMetadata = [];
-    private readonly Dictionary<XRMeshRenderer, (AABB Bounds, long BoneGeneration)> _lastPublishedPaletteInputBoundsByRenderer =
+    // The commit swaps the pending and published maps; a build clears the pending map first.
+    private Dictionary<XRMeshRenderer, (AABB Bounds, long BoneGeneration)> _lastPublishedPaletteInputBoundsByRenderer =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<XRMeshRenderer, (AABB Bounds, long BoneGeneration)> _pendingPaletteInputBoundsByRenderer =
+    private Dictionary<XRMeshRenderer, (AABB Bounds, long BoneGeneration)> _pendingPaletteInputBoundsByRenderer =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
     private XRShader? _gpuBoundsShader;
@@ -110,8 +118,10 @@ public sealed partial class GPUPhysicsChainDispatcher
         try
         {
             // The drawn materials and the copy targets come from one route capture.
-            return CaptureGpuBoundsSceneRoutes()
-                && PublishGpuDrivenBoundsWithRoutes(backend, requests);
+            long stageStart = Stopwatch.GetTimestamp();
+            bool routesCaptured = CaptureGpuBoundsSceneRoutes();
+            AddStageTime(DispatcherStage.BoundsRoutes, stageStart);
+            return routesCaptured && PublishGpuDrivenBoundsWithRoutes(backend, requests);
         }
         finally
         {
@@ -131,15 +141,8 @@ public sealed partial class GPUPhysicsChainDispatcher
         _gpuBoundsSlotAllocator.BeginLayout();
         _gpuBoundsWorkItems.Clear();
         _gpuBoundsSlotByRenderer.Clear();
-        _gpuBoundsRequestByComponent.Clear();
         _pendingBoundsSources.Clear();
         _pendingPaletteInputBoundsByRenderer.Clear();
-        for (int requestIndex = 0; requestIndex < requests.Count; ++requestIndex)
-        {
-            GPUPhysicsChainRequest request = requests[requestIndex];
-            if (request.ParticleOffset >= 0 && request.Particles.Count > 0)
-                _gpuBoundsRequestByComponent[request.Component] = request;
-        }
         // The palette pass has prepared these bindings and slice bases for all requests.
         if (_gpuDrivenPaletteBindings.Count != _gpuDrivenPaletteSliceBases.Count
             || outputPage.CurrentPalette is null || outputPage.PreviousPalette is null)
@@ -147,10 +150,13 @@ public sealed partial class GPUPhysicsChainDispatcher
             _gpuBoundsFailureStage = "GpuBoundsPublication.PaletteLayout";
             return false;
         }
+        long rowsStart = Stopwatch.GetTimestamp();
         for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
         {
             GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
-            if (!_gpuBoundsRequestByComponent.TryGetValue(binding.Component, out GPUPhysicsChainRequest? request)
+            // Bindings come only from the output publication requests of this frame.
+            if (binding.Request is not { } request
+                || request.ParticleOffset < 0 || request.Particles.Count == 0
                 || !IsCertifiedCompleteBoundsBinding(binding)
                 || binding.Renderer.BoneBufferGeneration != binding.RendererBoneBufferGeneration)
                 continue;
@@ -194,7 +200,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 localBounds = new AABB(Vector3.Min(localBounds.Min, priorBounds.Bounds.Min),
                     Vector3.Max(localBounds.Max, priorBounds.Bounds.Max));
 
-            PhysicsChainMaterialBoundsContract materialContract = ResolveDrawnMaterialBoundsContract(binding);
+            PhysicsChainMaterialBoundsContract materialContract = ResolveDrawnMaterialBoundsContract(binding, bindingIndex);
             uint flags = 0u;
             float padding = materialContract.Padding;
             if (!materialContract.IsSupported)
@@ -224,15 +230,18 @@ public sealed partial class GPUPhysicsChainDispatcher
                 paletteCount,
                 slice.BaseElement,
                 flags));
-            PhysicsChainOutputPage? priorPage = _publishedOutputPageIndex >= 0
-                ? _outputPages[_publishedOutputPageIndex] : null;
+            // Read the prior published state once, by reference; the state record is large.
+            ref readonly PhysicsChainGpuRendererOutputState priorState = ref _publishedOutputPageIndex >= 0
+                ? ref CollectionsMarshal.GetValueRefOrNullRef(
+                    _outputPages[_publishedOutputPageIndex].RendererStates, binding.Renderer)
+                : ref Unsafe.NullRef<PhysicsChainGpuRendererOutputState>();
             bool spatialValid = TryBuildRendererSpatialBounds(outputPage, request, in binding,
-                in envelopeStamp, in materialContract, priorPage, out _, out var currentSpatial,
+                in envelopeStamp, in materialContract, in priorState, out var currentSpatial,
                 out var previousSpatial, out AABB spatialBounds);
             AABB committedBounds = spatialBounds;
             ulong committedBoundsVersion = 0UL;
             if (spatialValid)
-                ResolveCommittedSpatialProxy(priorPage, binding.Renderer, in source, in spatialBounds,
+                ResolveCommittedSpatialProxy(in priorState, in source, in spatialBounds,
                     out committedBounds, out committedBoundsVersion);
             outputPage.RendererStates.Add(binding.Renderer, new(source, paletteBase,
                 paletteCount, envelopeStamp,
@@ -248,7 +257,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 CpuSpatialBoundsVersion = committedBoundsVersion,
                 MaterialPadding = materialContract.Padding,
                 MaterialBoundsSupported = materialContract.IsSupported,
-                MaterialRouteScene = binding.Component.World.GetRenderWorld()?.VisualScene.GPUCommands,
+                MaterialRouteScene = _gpuBoundsBindingScenes[bindingIndex],
             });
             bool hasTightCheckpoint = request.ResidentSolveCompleted || !request.ResidentSpatialValid;
             outputPage.SpatialCheckpoints[request] = new(request.ResidentSpatialRevision,
@@ -258,6 +267,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 hasTightCheckpoint ? request.ResidentTightSpatialValid : request.ResidentSpatialValid);
         }
         _gpuBoundsSlotAllocator.EndLayout();
+        AddStageTime(DispatcherStage.BoundsRows, rowsStart);
         Volatile.Write(ref _gpuBoundsLastMaterialRejectionCount, materialRejections);
         if (materialRejections != 0)
             Interlocked.Add(ref _gpuBoundsMaterialRejectionCount, materialRejections);
@@ -355,9 +365,11 @@ public sealed partial class GPUPhysicsChainDispatcher
         _pendingGpuBoundsCommandCount = 0;
         Volatile.Write(ref _gpuBoundsLastCompatibilityRouteRejectionCount, 0);
         _gpuBoundsFailureStage = "GpuBoundsPublication.SceneCopy";
+        long copyStart = Stopwatch.GetTimestamp();
         for (int sceneIndex = 0; sceneIndex < _gpuBoundsScenes.Count; ++sceneIndex)
             if (!PublishGpuBoundsToScene(backend, sceneIndex))
                 return false;
+        AddStageTime(DispatcherStage.BoundsSceneCopy, copyStart);
         return true;
     }
 
@@ -382,55 +394,91 @@ public sealed partial class GPUPhysicsChainDispatcher
     }
 
     /// <summary>
-    /// Collects the scenes of all palette bindings and captures each scene's
-    /// renderer routes once. Returns false when a scene has no published routes.
+    /// Resolves the scene of each palette binding once for this publication, and makes
+    /// each scene's renderer routes current. Returns false when a scene has no published routes.
     /// </summary>
     private bool CaptureGpuBoundsSceneRoutes()
     {
         _gpuBoundsScenes.Clear();
+        _gpuBoundsBindingScenes.Clear();
+        _gpuBoundsBindingSceneIndices.Clear();
         for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
         {
             GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
-            if (binding.Component.World.GetRenderWorld() is not { } renderWorld)
-                continue;
-
-            GPUScene scene = renderWorld.VisualScene.GPUCommands;
-            if (!_gpuBoundsScenes.Contains(scene))
-                _gpuBoundsScenes.Add(scene);
+            GPUScene? scene = binding.Component.World.GetRenderWorld()?.VisualScene.GPUCommands;
+            int sceneIndex = -1;
+            if (scene is not null)
+            {
+                sceneIndex = _gpuBoundsScenes.IndexOf(scene);
+                if (sceneIndex < 0)
+                {
+                    sceneIndex = _gpuBoundsScenes.Count;
+                    _gpuBoundsScenes.Add(scene);
+                }
+            }
+            _gpuBoundsBindingScenes.Add(scene);
+            _gpuBoundsBindingSceneIndices.Add(sceneIndex);
         }
 
         for (int sceneIndex = 0; sceneIndex < _gpuBoundsScenes.Count; ++sceneIndex)
-        {
-            if (sceneIndex == _gpuBoundsSceneRoutes.Count)
-                _gpuBoundsSceneRoutes.Add(new GpuSceneRendererCommandIndexSnapshot());
-
-            // Read the renderer routes from the command set published at scene swap.
-            GpuSceneRendererCommandIndexSnapshot routes = _gpuBoundsSceneRoutes[sceneIndex];
-            _gpuBoundsScenes[sceneIndex].CaptureRendererCommandIndices(routes);
-            if (routes.PublicationGeneration < 0)
+            if (!TryRefreshGpuBoundsSceneRoutes(sceneIndex))
                 return false;
-        }
 
+        // Release the snapshots of scenes that this publication no longer reads.
+        for (int index = _gpuBoundsScenes.Count; index < _gpuBoundsSceneRoutes.Count; ++index)
+        {
+            _gpuBoundsSceneRoutes[index].Clear();
+            _gpuBoundsSceneRouteOwners[index] = null;
+        }
         return true;
     }
 
+    /// <summary>
+    /// Copies the renderer routes that one scene published at its last command swap, unless
+    /// the retained snapshot already holds that publication. Returns false without routes.
+    /// </summary>
+    private bool TryRefreshGpuBoundsSceneRoutes(int sceneIndex)
+    {
+        while (_gpuBoundsSceneRoutes.Count <= sceneIndex)
+        {
+            _gpuBoundsSceneRoutes.Add(new GpuSceneRendererCommandIndexSnapshot());
+            _gpuBoundsSceneRouteOwners.Add(null);
+        }
+
+        GPUScene scene = _gpuBoundsScenes[sceneIndex];
+        GpuSceneRendererCommandIndexSnapshot routes = _gpuBoundsSceneRoutes[sceneIndex];
+        // Each route publication has a new generation, and a cleared table has -1. An equal
+        // generation from the same scene therefore means that the snapshot has the same routes.
+        if (!ReferenceEquals(_gpuBoundsSceneRouteOwners[sceneIndex], scene) ||
+            routes.PublicationGeneration < 0 ||
+            routes.PublicationGeneration != scene.RendererCommandMaterialPublicationGeneration)
+        {
+            scene.CaptureRendererCommandIndices(routes);
+            _gpuBoundsSceneRouteOwners[sceneIndex] = scene;
+        }
+        return routes.PublicationGeneration >= 0;
+    }
+
     private void ReleaseGpuBoundsSceneRoutes()
+        => _gpuBoundsMaterialScratch.Clear();
+
+    /// <summary>Releases the retained route snapshots and their renderer references.</summary>
+    private void ClearGpuBoundsSceneRoutes()
     {
         for (int index = 0; index < _gpuBoundsSceneRoutes.Count; ++index)
+        {
             _gpuBoundsSceneRoutes[index].Clear();
+            _gpuBoundsSceneRouteOwners[index] = null;
+        }
+        _gpuBoundsBindingScenes.Clear();
+        _gpuBoundsBindingSceneIndices.Clear();
         _gpuBoundsMaterialScratch.Clear();
     }
 
-    private GpuSceneRendererCommandIndexSnapshot? FindGpuBoundsSceneRoutes(in GpuDrivenRendererPaletteBinding binding)
+    private GpuSceneRendererCommandIndexSnapshot? FindGpuBoundsSceneRoutes(int bindingIndex)
     {
-        if (binding.Component.World.GetRenderWorld() is not { } renderWorld)
-            return null;
-
-        GPUScene scene = renderWorld.VisualScene.GPUCommands;
-        for (int sceneIndex = 0; sceneIndex < _gpuBoundsScenes.Count; ++sceneIndex)
-            if (ReferenceEquals(_gpuBoundsScenes[sceneIndex], scene))
-                return _gpuBoundsSceneRoutes[sceneIndex];
-        return null;
+        int sceneIndex = _gpuBoundsBindingSceneIndices[bindingIndex];
+        return sceneIndex >= 0 ? _gpuBoundsSceneRoutes[sceneIndex] : null;
     }
 
     /// <summary>
@@ -439,11 +487,11 @@ public sealed partial class GPUPhysicsChainDispatcher
     /// command overrides. A renderer without a route uses its own materials.
     /// </summary>
     private PhysicsChainMaterialBoundsContract ResolveDrawnMaterialBoundsContract(
-        in GpuDrivenRendererPaletteBinding binding)
+        in GpuDrivenRendererPaletteBinding binding, int bindingIndex)
     {
         XRMeshRenderer renderer = binding.Renderer;
         PhysicsChainMaterialBoundsContract contract = default;
-        if (FindGpuBoundsSceneRoutes(binding) is { } routes
+        if (FindGpuBoundsSceneRoutes(bindingIndex) is { } routes
             && routes.TryGetCommandMaterialSnapshots(renderer, _gpuBoundsMaterialScratch))
         {
             for (int index = 0; index < _gpuBoundsMaterialScratch.Count; ++index)
@@ -483,18 +531,16 @@ public sealed partial class GPUPhysicsChainDispatcher
     private bool PublishGpuBoundsToScene(IPhysicsChainComputeBackend backend, int sceneIndex)
     {
         GPUScene scene = _gpuBoundsScenes[sceneIndex];
-        GpuSceneRendererCommandIndexSnapshot routes = _gpuBoundsSceneRoutes[sceneIndex];
         // A scene swap can replace a command route after the palette bound was made.
-        scene.CaptureRendererCommandIndices(routes);
-        if (routes.PublicationGeneration < 0)
+        if (!TryRefreshGpuBoundsSceneRoutes(sceneIndex))
             return false;
+        GpuSceneRendererCommandIndexSnapshot routes = _gpuBoundsSceneRoutes[sceneIndex];
         _gpuBoundsCopyItems.Clear();
         uint maximumCommandSlot = 0u;
         for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
         {
             GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
-            if (binding.Component.World.GetRenderWorld() is not { } renderWorld
-                || !ReferenceEquals(renderWorld.VisualScene.GPUCommands, scene)
+            if (_gpuBoundsBindingSceneIndices[bindingIndex] != sceneIndex
                 || !_gpuBoundsSlotByRenderer.ContainsKey(binding.Renderer)
                 || !routes.TryGetCommandIndices(binding.Renderer, _gpuBoundsCommandScratch))
                 continue;
@@ -584,12 +630,13 @@ public sealed partial class GPUPhysicsChainDispatcher
         {
             GPUScene scene = _gpuBoundsScenes[sceneIndex];
             bool published = false;
-            for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
+            // The bounds publication of this frame resolved the scene of each binding.
+            int bindingCount = Math.Min(_gpuDrivenPaletteBindings.Count, _gpuBoundsBindingSceneIndices.Count);
+            for (int bindingIndex = 0; bindingIndex < bindingCount; ++bindingIndex)
             {
                 GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
-                if (!_gpuBoundsCopiedRenderers.Contains(binding.Renderer)
-                    || binding.Component.World.GetRenderWorld() is not { } renderWorld
-                    || !ReferenceEquals(renderWorld.VisualScene.GPUCommands, scene))
+                if (_gpuBoundsBindingSceneIndices[bindingIndex] != sceneIndex
+                    || !_gpuBoundsCopiedRenderers.Contains(binding.Renderer))
                     continue;
 
                 scene.SetRendererOwnsGpuCopiedAabb(binding.Renderer, true);
@@ -637,17 +684,17 @@ public sealed partial class GPUPhysicsChainDispatcher
         _gpuBoundsWorkItems.Clear();
         _gpuBoundsCopyItems.Clear();
         _gpuBoundsCommandScratch.Clear();
-        ReleaseGpuBoundsSceneRoutes();
+        ClearGpuBoundsSceneRoutes();
         _gpuBoundsScenes.Clear();
         _gpuBoundsCopiedRenderers.Clear();
         _pendingGpuBoundsCommandCount = 0;
         _gpuBoundsSlotByRenderer.Clear();
-        _gpuBoundsRequestByComponent.Clear();
         _gpuBoundsSlotMetadata.Clear();
         _pendingBoundsSources.Clear();
         _committedBoundsSources.Clear();
         _pendingPaletteInputBoundsByRenderer.Clear();
         _lastPublishedPaletteInputBoundsByRenderer.Clear();
+        AdvanceCommittedSpatialEpoch(SpatialEpochCause.Invalidation);
     }
 
     /// <summary>

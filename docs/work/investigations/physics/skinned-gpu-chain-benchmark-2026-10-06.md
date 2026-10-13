@@ -6,7 +6,8 @@ Last updated: 2026-10-08
 [Design](../../design/physics/physics-chain-steady-state-cpu-design.md) ·
 [Code items](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md) ·
 [Validation](../../testing/physics/physics-validation.md#gpu-skinned-chain-scale) ·
-[Performance guide](../../../developer-guides/rendering/physics-chain-performance.md)
+[Performance guide](../../../developer-guides/rendering/physics-chain-performance.md) ·
+[Critical-path mapping](physics-chain-critical-path-mapping-2026-10-12.md)
 
 This document records the evidence: measurements, root causes, fixed defects, rejected experiments, and open faults. The design doc owns the response. The todo owns the code items. The validation doc owns the checks that remain.
 
@@ -60,6 +61,9 @@ Machines, cameras, observers, and code changed between rows. The table shows the
 | 10-08 | Laptop | Frame-loop phase counters added; no optimization. | 19.42 | 70.9 |
 | 10-08 | Laptop | Baseline for the A/B below, shared and unique meshes. | 21.8–23.3 | 49–56 |
 | 10-08 | Laptop | Committed bound version and proxy, shared and unique meshes. | 21.0–24.8 | 46–62 |
+| 10-12 | Laptop | Baseline at `beb7d7896` (branch merged with integration). | 18.4–21.4 | 55–70 |
+| 10-12 | Laptop | Committed spatial query cache; see [lock traffic](#lock-traffic-and-the-committed-spatial-query-cache). | 21.7–23.8 | 48–58 |
+| 10-12 | Laptop | Publisher unchanged-row gate, shared and unique meshes; see [unchanged-row gate](#publisher-unchanged-row-gate). | 27.9–30.1 | 38–43 |
 
 ### Ablations
 
@@ -293,6 +297,85 @@ Two windows of the new build also had a slower update phase, which this change d
 
 **Mesh sharing.** `-MeshSharing Unique` formed 2,000 indexed instance groups for 2,000 payloads, and `Shared` formed one. The two modes measured the same in both builds, so instancing does not change this CPU-bound frame.
 
+## Lock traffic and the committed spatial query cache
+
+Status: implemented and live-validated on 2026-10-12 (laptop). Unit tests for the cache are an open test item.
+
+**Evidence.** A sampled CPU trace (`-CpuTraceSeconds 15`) of the HEAD build put 66% of the collect thread, 21% of the render thread, and 32% of the update thread in `Monitor.Enter_Slowpath`. On the collect thread, 41% of the samples were under `GPUPhysicsChainDispatcher.TryGetCommittedSpatialBounds` and 12% under `TryCaptureGpuBoundsSource` in the swap publisher. Each committed bound query took about six shared locks: `_outputPageSync` twice, the global `_cpuSpatialMaterialSync`, `GPUScene._lock` two or three times, and the per-material contract cache lock. All 2,000 benchmark chains share one material, so every query on every thread took the same material lock. Collection made about 10 queries per renderer per frame: reconcile, canonical-collection checks (two per mesh), culling and octree volumes, the primary shadow view, and root-bone render-matrix notifications during both render-matrix publications.
+
+A runtime contention trace (`Microsoft-Windows-DotNETRuntime:0x4000:4` with `ContentionStart` owner thread IDs, parsed with TraceEvent) measured the real blocking waits over 10 seconds:
+
+| Waiter | Owner | Wait | Cause |
+| --- | --- | ---: | --- |
+| Fixed update (`PhysicsChainWorld.FixedTick`) | Update thread (`LateTickExclusive`) | 2.67 s, 12.4 ms each | World tick gate. Not on the render critical path. |
+| Collect (bound queries) | Render (`CommitOutputPage` → `NotifyCommittedSpatialOutputChanged` under `_outputPageSync`) | 0.38 s | Per-renderer commit notifications sent under the page lock. |
+| Collect (`PublishRenderMatrices`, collect and swap) | Update (`TransformHierarchyStore.Process`) | 0.22 s, about 3 ms each | Publication waits for the update pass gate. |
+| Transform propagation workers | Each other | about 0.3 s | Worker queue lock. |
+
+The blocking waits on the collect thread were therefore about 3 ms per frame. The rest of the sampled `Monitor.Enter_Slowpath` time was lock-word traffic between cores and sampler bias: the EventPipe sample profiler suspends threads at safe points, so it over-attributes time to lock entry and to `BulkMoveWithWriteBarrier` (large struct copies). The update thread's 26% in `SubmitData` had no contention event at all; world-tick telemetry measured that bridge stage at about 1.4 ms per late tick. Use the sampled trace to find call paths, and use phase timings or scope timers for cost. GC was not a cause: 2.6 gen0 collections per second and 1.4% pause time (`dotnet-counters`).
+
+**Change.** `GPUPhysicsChainDispatcher.TryGetCommittedSpatialBounds` keeps each renderer's last result in `XRMeshRenderer.CommittedSpatialQuery` and reuses it while its witnesses are unchanged. A reuse takes only the renderer's own lock. The witnesses are a dispatcher spatial epoch, the usability of the published page (read without the page lock), coverage, the bone buffer generation, the mesh envelope, the scene's renderer-command material publication generation (read without the scene lock), and the drawn material snapshots and contracts. The epoch advances only when the committed bounds sources change, when a renderer's committed query state changes between pages, and on invalidation, retirement, or reset. `CommitOutputPage` keeps an unchanged bounds-source map and sends renderer notifications after it releases `_outputPageSync`. `TryCaptureGpuBoundsSource` reads the cached query first. `PhysicsChainMaterialBoundsEvaluator.Evaluate` reads an immutable contract entry without a lock.
+
+**Validation.** `GPUPhysicsChainDispatcher.CaptureCommittedSpatialQueryDiagnostics()` counts misses by reason. Over 10 seconds of the 2,000-chain steady state, no query missed; all misses happened during startup, before the scene route existed. The epoch advanced 15 times in the whole session. Targeted unit tests: 422 passed; the 23 failures are the known stale tests.
+
+| Build | Windows | Hz | p95 ms | Update | Collect | Swap | Render |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| HEAD | 3 | 18.4–21.4 | 57.5–69.9 | 31.0–35.3 | 23.9–27.6 | 16.5–18.4 | 30.3–36.2 |
+| Query cache | 3 | 21.7–23.8 | 47.6–57.7 | 30.1–32.4 | 15.8–17.8 | 15.0–16.9 | 27.1–30.0 |
+
+Collect fell by about 30%, but collect is not on the critical path: the collect thread now waits about 11 ms per cycle for render. Render plus swap (about 44 ms) still sets the frame interval.
+
+**Limit (cache).** The epoch is dispatcher-wide. A proxy refit of one renderer invalidates every cached query. This benchmark refits almost never, but a scene with many chains that travel far would resolve each query about once per frame. Per-renderer change stamps would remove this limit.
+
+## Publisher unchanged-row gate
+
+Status: implemented and live-validated on 2026-10-12 (laptop). The [advanced render pipeline](../../../architecture/rendering/advanced-render-pipeline.md) owns the contract.
+
+**Defect.** `AdvancedGpuScenePublisher.PublishCore` planned every command (`TryBuildAndPreflightWholeScenePlan`, about 7 ms at 2,000 chains) before its reuse check. The reuse check then failed in every frame, because `AdvancedGlobalResourceCapture` writes the cascade's `LastRenderedFrame` into each directional shadow record, and moving covered casters re-render the cascade on each physics output. So each swap planned and committed the whole scene.
+
+**Change.** Before the whole-scene plan, a gate compares each row's inputs with the retained plan of the last accepted publication: the command row and source lookup, the render snapshot, the primitive mesh and material versions, the raster state, the CPU cull-bound version, frame continuity, and the registration. It checks each material header one time. One read of the dispatcher spatial epoch covers all covered rows. When only global resources changed, the publisher commits the retained submission and deformation-source rows with the global transition and skips the per-command apply, tombstone, and plan-capture passes. Any difference runs the full plan unchanged. `get_render_state` reports `unchangedRowGateHitCount` and `retainedRowCommit`.
+
+**Validation.** At 2,000 chains, every window reused all 2,002 rows (`unchangedRowGateHitCount` 2002) and committed the retained rows (`retainedRowCommit` true), as the shadow-record cause predicts. 42 publisher contract tests pass, 12 of them new (`AdvancedGpuSceneUnchangedRowGateTests`). Windows of 30 seconds, all accepted, values in milliseconds per call:
+
+| Build | Mesh | Hz | p95 ms | Update | Collect | Swap | Render |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Query cache | Shared | 21.7–23.8 | 47.6–57.7 | 30.1–32.4 | 15.8–17.8 | 15.0–16.9 | 27.1–30.0 |
+| Gate | Shared | 27.9–30.1 | 37.7–42.5 | 31.2–31.9 | 15.9–16.9 | 6.8–8.3 | 26.5–27.6 |
+| Gate | Unique | 28.2 | 40.9 | 31.9 | 16.4 | 7.7 | 28.0 |
+
+The swap fell by about 8 ms, and the frame rate rose by about 30%. The render callback (about 27 ms) is now the largest part of the critical path, and collect waits about 11 ms for it.
+
+**Remaining.** The gate still visits each row in each publication (scene lookups, a render-snapshot copy, and the registration checks), so its cost grows with the row count. Page versions for the command rows would remove that walk.
+
+## Render-thread dispatcher stages
+
+Status: partly done on 2026-10-12 (laptop). The remaining items are in the [todo](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#render-thread-dispatcher-publication).
+
+**Measurement.** `GPUPhysicsChainDispatcher.CaptureStageTimings()` gives the cumulative render-thread time of each dispatcher stage. Two captures 10 seconds apart inside a 2,000-chain window give the cost per frame. These timers corrected the sampled trace: `PollSimulationReceipts` costs 0.07–0.11 ms per frame, not about 3.5 ms.
+
+| Stage (ms per frame) | Query cache and gate | Route reuse, bound-once scene, single binding snapshot | + request in binding, map swap, prior state by reference |
+| --- | ---: | ---: | ---: |
+| Total | 12.62 | 9.86 | 9.07 |
+| Bounds | 4.79 | 3.54 | 3.10 |
+| — bounds rows | — | 3.02 | 2.72 |
+| — route capture | — | 0.15 | 0.14 |
+| — scene copy | — | 0.10 | 0.09 |
+| Simulation group | 2.37 | 2.18 | 2.14 |
+| Commit | 0.92 | 0.79 | 0.71 |
+| Accept inputs | 0.92 | 0.73 | 0.66 |
+| Previous palette | 0.81 | 0.72 | 0.67 |
+| Palette sources | 0.80 | 0.64 | 0.57 |
+| Collect bindings | 0.51 | 0.42 | 0.35 |
+| Palette matrices | 0.43 | 0.15 | 0.13 |
+| Ownership finalize | 0.38 | 0.11 | 0.11 |
+| Poll receipts | 0.11 | 0.07 | 0.07 |
+
+The bounds stage had copied each scene's renderer route table (2,000 entries, under the scene lock) twice per frame, and resolved each binding's render world about four times. Route snapshots now persist until the scene publishes a new route generation.
+
+**Open question.** The dispatcher fell by 3.5 ms per frame, but the render callback stayed at about 27 ms (26.8 and 27.2 ms against 26.5–28.0 ms before), and the frame rate stayed at 28.9–29.5 Hz. The Vulkan frame shows no fence, acquire, or present wait (each under 0.1 ms; command recording 8.7–10.3 ms). The ablation of 2026-10-07 showed the same pattern: with physics frozen, the dispatcher time moved into `Advanced.VisibilityPreparation`. A wait inside the render callback that depends on the collect thread is the likely cause. It is not yet identified.
+
+**Validation.** 434 targeted unit tests pass; the 23 failures are the known stale tests. One fresh session latched at startup (input and output page fences failed with `QueueDiscard`, and the dispatcher reported no failure); a restart of the same binary was healthy. This is the known cold-start fault.
+
 ## Measurement notes
 
 - Window-to-window variation is 15–25%. Do not claim a gain smaller than this from frame rate alone.
@@ -312,14 +395,21 @@ Two windows of the new build also had a slower update phase, which this change d
 - After a session name is rebuilt, `Start -NoBuild` with that name can resolve to an older session folder with the same name. Use a new session name for each binary.
 - A session can latch into rejecting every frame at startup (see the open faults). Check completed frame outcomes before reading any counter, because a latched session shows failure behavior, not the steady state. The harness readiness gate does this for timed windows.
 - MCP tool calls during a 2,000-chain benchmark can take several seconds and slow the frame. Keep probes out of timed windows.
+- The `dotnet-trace` sample profiler over-attributes time to `Monitor.Enter_Slowpath` and `BulkMoveWithWriteBarrier`, because it samples at safe points. Before you act on a lock in a sampled trace, confirm it with a contention trace: `dotnet-trace collect --providers "Microsoft-Windows-DotNETRuntime:0x4000:4,Microsoft-DotNETCore-SampleProfiler:0xF00000000000:4"`. `ContentionStart` carries the owner thread ID, and the sample stacks of the owner show what it held the lock for.
+- A traced window ran about 6% slower than an untraced window, so its call paths are representative.
+- The [profiling method](../../../developer-guides/rendering/physics-chain-performance.md#frame-loop-profiling-method) lists the tools: `Tools/Benchmarks/Invoke-McpStaticMethod.ps1` for stage timers, `Tools/Benchmarks/Summarize-SpeedscopeTrace.py` for sampled traces, and the contention-trace parser source.
 
 The evidence files were disposable runs under `Build/_AgentValidation/`, and most have been pruned. This document is the durable record.
 
 ## Next steps
 
-Follow the [todo priority order](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#priority-order): ceiling prototypes, the shared versioning contract, the physics steady state, and the change-driven renderer path with the serial swap. Measure each change in both mesh modes. The evidence from 2026-10-08 points to these items first:
+Follow the [todo priority order](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#priority-order). Measure each change in both mesh modes. After the 2026-10-12 changes, the critical path at 2,000 chains is the render callback (about 27 ms) plus the swap (about 7–8 ms). A sampled trace of the query-cache build divided the render callback as follows; the sampler is biased, so confirm each cost before you act:
 
-- The render callback (about 29 ms) and the serial swap (about 13 ms) are the critical path at 2,000 chains.
-- `ReconcileCommittedWorldBounds` runs about four times per mesh per frame and queries the bound each time. This is the "resolve committed bounds once" item.
+- `GPUPhysicsChainDispatcher.ProcessDispatches`: now 9.1 ms per frame by stage timers; see [dispatcher stages](#render-thread-dispatcher-stages). First find why the render callback did not shrink with it.
+- Vulkan frame transaction, about 10 ms: `TryPreparePrimaryFrameData` about 5 ms.
+- Advanced render stage (`AdvancedPreparationExtractor.Build`), about 7 ms.
+
+The read-only mapping pass of 2026-10-12 proposed items for each of these areas with locations, estimated savings, risks, and validation. The [critical-path mapping](physics-chain-critical-path-mapping-2026-10-12.md) keeps its full results.
+
 - Count the silent output-page producer failures, and find why the startup compute operation context can have no resource-planner generation.
 - Run the controlled desktop ladder in both mesh modes when the desktop is available.

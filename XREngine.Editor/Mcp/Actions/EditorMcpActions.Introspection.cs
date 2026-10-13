@@ -428,6 +428,8 @@ namespace XREngine.Editor.Mcp
                     pendingIdentityRecipientCount = activeGpuScene.AdvancedPendingIdentityRecipientCount,
                     reusedStaticDrawPlanCount = activeGpuScene.AdvancedReusedStaticDrawPlanCount,
                     materialResolveAttemptCount = activeGpuScene.AdvancedMaterialResolveAttemptCount,
+                    unchangedRowGateHitCount = activeGpuScene.AdvancedUnchangedRowGateHitCount,
+                    retainedRowCommit = activeGpuScene.AdvancedRetainedRowCommit,
                     geometryCompactionReplacementCount = activeGpuScene.AdvancedGeometryCompactionReplacementCount,
                     geometryCompactionReclaimedBytes = activeGpuScene.AdvancedGeometryCompactionReclaimedBytes,
                     geometryCompactionCount = activeGpuScene.AdvancedGeometryCompactionCount,

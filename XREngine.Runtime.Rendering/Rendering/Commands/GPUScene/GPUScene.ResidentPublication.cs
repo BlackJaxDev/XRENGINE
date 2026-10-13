@@ -50,6 +50,15 @@ public partial class GPUScene
     /// <summary>Gets the number of material resolution attempts in the last preflight.</summary>
     public int AdvancedMaterialResolveAttemptCount => _advancedScenePublisher.MaterialResolveAttemptCount;
 
+    /// <summary>
+    /// Gets the command rows that the last publication reused without the
+    /// whole-scene plan. Zero means that the whole-scene plan ran.
+    /// </summary>
+    public int AdvancedUnchangedRowGateHitCount => _advancedScenePublisher.LastUnchangedRowGateHitCount;
+
+    /// <summary>Gets whether the last publication committed the retained rows without the whole-scene plan.</summary>
+    public bool AdvancedRetainedRowCommit => _advancedScenePublisher.LastPublicationCommittedRetainedRows;
+
     public int AdvancedGeometryCompactionReplacementCount
         => _advancedScenePublisher.LastGeometryCompactionReplacementCount;
 

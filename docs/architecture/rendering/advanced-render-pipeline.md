@@ -75,18 +75,62 @@ groups cannot become the reusable plan; the next stable publication builds it.
 Callback exceptions still propagate to the caller. In the normal editor loop,
 they cause a terminal timer fault, so automatic retry is not guaranteed.
 
-These caches replace identity searches and grouping work. Each publication still captures
-current source state, command metadata, effective materials, poses, and GPU
-bounds sources. Existing geometry, material, temporal, resource, and transaction
-checks remain active. Structural transaction plans are rebuilt. Every identity
-callback still receives the current accepted publication. No frame resource
-or output-page lease is stored in these caches.
+These caches replace identity searches and grouping work. When the unchanged-row
+gate below does not pass, the publication captures current source state, command
+metadata, effective materials, poses, and GPU bounds sources. Existing geometry,
+material, temporal, resource, and transaction checks remain active. Structural
+transaction plans are rebuilt. Every identity callback still receives the
+current accepted publication. No frame resource or output-page lease is stored
+in these caches.
+
+### Unchanged-row gate
+
+Before the whole-scene plan, the publisher compares each command row with the
+retained plan of the last accepted publication. For each row, the gate reads
+the scene command row and source lookup, the command render snapshot, the
+primitive mesh and effective material, the raster state, the cull bound version
+of a CPU-owned bound, and the registration. It checks the material header one
+time for each run of rows with one material, because the material versions do
+not cover every header input. For an unsupported row, the gate repeats the
+geometry check and the layout selection, and it requires the same compatibility
+reason. A covered row requires the same renderer bone set. One read of the
+GPU physics-chain dispatcher spatial epoch covers all covered rows, and the read
+fails while the published output page is not usable.
+
+The gate passes only when all of these conditions are true:
+
+- The retained plan describes the current publication.
+- The ordered identities and source groups are valid, and no identity recipient is pending.
+- The frame identifier follows the last published frame.
+- The boundary storage did not grow.
+- Each supported row reused its committed material plan, and its material has no texture.
+- Each active registration belongs to one row.
+
+Any difference runs the full plan with no change in behavior. Thus a rejected
+bounds route rejects in the full plan with its usual reason.
+
+When the gate passes and no global resource changed, the publisher reuses the
+current publication and delivers the identities again, as the full reuse path
+does. The reuse applies the same lease rule as the full reuse path, so the
+publisher does not reuse a publication that the ring drains. When a global
+resource changed, or when the ring drained the publication, the publisher
+commits the retained submission rows with the global transition. This commit
+skips the per-command apply, tombstone, and committed-plan capture passes. Every
+source still receives the new publication identity. The commit needs the rows
+of a full commit, so after a full-path reuse the next commit runs the full plan.
+The retained rows include the managed deformation-source rows. The commit reuses
+their browser companion data and renderer rejection text without a new
+computation, as the full reuse path does.
 
 The existing `get_render_state` response exposes
 `canonicalResidentScene.registrationIdentityReuseCount` and
 `registrationLookupRebuildCount`, plus `sourceGroupReuseCount`,
 `sourceGroupRebuildCount`, and `pendingIdentityRecipientCount`, for the latest
-publication attempt. These live
+publication attempt. `unchangedRowGateHitCount` gives the rows that the latest
+publication reused without the full plan; zero means that the full plan ran.
+`retainedRowCommit` is true when the latest publication committed the retained
+rows. The `GpuIndirect.AdvancedPublication.UnchangedRowGate` profiler scope
+times the gate. These live
 counters can be read while the publisher is updating them. Use repeated samples
 for diagnostics; do not treat one response as an atomic publication snapshot.
 
@@ -98,6 +142,10 @@ and cache reference cleanup. `AdvancedGpuSceneIdentityDeliveryBoundaryTests`
 checks failures after commit and during reuse of a pinned publication. A
 successful caller retry must deliver the accepted publication and clear every
 pending recipient before the image becomes consumable.
+`AdvancedGpuSceneUnchangedRowGateTests` checks that an unchanged scene skips the
+full plan, that a pinned publication is reused, that a global change commits the
+retained rows unchanged, and that material, raster, geometry, transform, mesh,
+header, frame-gap, and membership changes run the full plan.
 
 ### Material payload slots
 
