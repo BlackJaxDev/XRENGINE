@@ -221,6 +221,7 @@ public sealed partial class HLODGroupComponent
             HookSources(sources);
             if (!isCurrent()) throw new OperationCanceledException("HLOD.ObsoleteCapture: source changed during replacement.");
             SetField(ref _built, true, publishNotifications: false);
+            RefreshProxyCollectCallback();
             replacementNode.IsActiveSelf = true;
             if (!replacementNode.IsActiveSelf) throw new InvalidOperationException("HLOD.ReplacementActivationRejected: the completed replacement could not be activated.");
             if (!impostorOwner.Matches(billboard.ImpostorAsset, billboard.ImposterViews))
@@ -247,6 +248,7 @@ public sealed partial class HLODGroupComponent
             Restore(() => _renderCommand.Mesh = oldProxy);
             Restore(() => _renderCommand.RenderPass = oldPass);
             Restore(() => _renderInfo.LocalCullingVolume = oldBounds);
+            Restore(RefreshProxyCollectCallback);
             foreach (SourceHook hook in oldHooks)
             {
                 _sourceHooks.Add(hook);

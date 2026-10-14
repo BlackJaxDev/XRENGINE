@@ -36,7 +36,8 @@ namespace XREngine.Rendering.Info
         public abstract ITreeNode? TreeNode { get; }
 
         public IRenderable? Owner { get; set; }
-        protected bool IsDisposalRequested => _disposeRequested;
+        /// <summary>Gets whether disposal of this render info was requested. No camera collects it after this point.</summary>
+        protected internal bool IsDisposalRequested => _disposeRequested;
 
         public override string ToString()
             => $"{Owner?.ToString() ?? "Unknown"}";
@@ -74,6 +75,37 @@ namespace XREngine.Rendering.Info
         /// </summary>
         [YamlIgnore]
         public DelAddRenderCommandsCallback? PreCollectCommandsCallback;
+
+        // The callback that the owner declared camera independent. The declaration applies only while
+        // PreCollectCommandsCallback holds this same delegate instance, so a callback that replaces or wraps it is
+        // camera dependent until the owner declares it again.
+        private DelAddRenderCommandsCallback? _cameraIndependentPreCollectCommandsCallback;
+
+        /// <summary>
+        /// Sets <see cref="PreCollectCommandsCallback"/> to <paramref name="callback"/> and declares that the callback
+        /// gives the same result for every camera and every pass collection.
+        /// </summary>
+        /// <remarks>
+        /// Use this method only for a callback that reads owner state, for example the draw space of a canvas, and
+        /// ignores its camera and pass collection arguments. When such a callback rejects a main view, it also rejects
+        /// every shadow camera, so the scene does not count the render info as a shadow-only caster. The declaration
+        /// stops when other code assigns a different delegate to <see cref="PreCollectCommandsCallback"/>.
+        /// </remarks>
+        public void SetCameraIndependentPreCollectCommandsCallback(DelAddRenderCommandsCallback? callback)
+        {
+            // The release write of the callback publishes the declaration before it. A collect thread reads the
+            // callback with acquire semantics before the declaration, so it cannot pair the new callback with an old
+            // declaration.
+            _cameraIndependentPreCollectCommandsCallback = callback;
+            Volatile.Write(ref PreCollectCommandsCallback, callback);
+        }
+
+        /// <summary>
+        /// Returns whether <paramref name="callback"/> is the callback that the owner declared camera independent through
+        /// <see cref="SetCameraIndependentPreCollectCommandsCallback"/>.
+        /// </summary>
+        internal bool IsCameraIndependentPreCollectCommandsCallback(DelAddRenderCommandsCallback? callback)
+            => callback is not null && ReferenceEquals(callback, _cameraIndependentPreCollectCommandsCallback);
 
         protected RenderInfo(IRenderable? owner, params RenderCommand[] renderCommands)
         {
@@ -249,6 +281,7 @@ namespace XREngine.Rendering.Info
                 CollectedForRenderCallback = null;
                 SwapBuffersCallback = null;
                 PreCollectCommandsCallback = null;
+                _cameraIndependentPreCollectCommandsCallback = null;
                 RenderCullingVolumeDebugOverride = null;
                 Owner = null;
                 if (failures is not null)
@@ -341,11 +374,34 @@ namespace XREngine.Rendering.Info
         IRenderableBase? ITreeItem.Owner => Owner;
 
         public void CollectCommands(RenderCommandCollection passes, IRuntimeRenderCamera? camera)
+            => TryCollectCommands(passes, camera, out _);
+
+        /// <summary>
+        /// Adds the enabled render commands of this render info to <paramref name="passes"/>.
+        /// </summary>
+        /// <param name="passes">The pass collection that receives the commands.</param>
+        /// <param name="camera">The camera of the collection, or null.</param>
+        /// <param name="invokedCallback">
+        /// The pre-collection callback that this call invoked, or null when it invoked no callback. For the result
+        /// <see cref="ERenderInfoCollectResult.CallbackRejected"/>, this is the callback that rejected the collection.
+        /// </param>
+        /// <returns>
+        /// <see cref="ERenderInfoCollectResult.Collected"/> when the commands were added. Any other value means that no
+        /// command was added, and tells whether the rejection can be different for another camera.
+        /// </returns>
+        internal ERenderInfoCollectResult TryCollectCommands(
+            RenderCommandCollection passes,
+            IRuntimeRenderCamera? camera,
+            out DelAddRenderCommandsCallback? invokedCallback)
         {
+            invokedCallback = null;
             if (_disposeRequested)
-                return;
-            if (!(PreCollectCommandsCallback?.Invoke(this, passes, camera) ?? true))
-                return;
+                return ERenderInfoCollectResult.Disposed;
+
+            DelAddRenderCommandsCallback? callback = Volatile.Read(ref PreCollectCommandsCallback);
+            invokedCallback = callback;
+            if (callback is not null && !callback(this, passes, camera))
+                return ClassifyCallbackRejection(callback);
 
             for (int i = 0; i < RenderCommands.Count; i++)
             {
@@ -367,6 +423,23 @@ namespace XREngine.Rendering.Info
             {
                 RenderCullingVolume();
             }
+
+            return ERenderInfoCollectResult.Collected;
+        }
+
+        /// <summary>
+        /// Tells whether the rejection of <paramref name="callback"/> applies to every camera. A retiring
+        /// <see cref="XREngine.Components.Scene.Mesh.RenderableMesh"/> rejects every collection, and so does a callback
+        /// that its owner declared camera independent. Any other callback can accept a different camera.
+        /// </summary>
+        private ERenderInfoCollectResult ClassifyCallbackRejection(DelAddRenderCommandsCallback callback)
+        {
+            if (this is RenderInfo3D { OwnerRenderableMesh: { IsRetirementRequested: true } })
+                return ERenderInfoCollectResult.Retired;
+
+            return IsCameraIndependentPreCollectCommandsCallback(callback)
+                ? ERenderInfoCollectResult.RejectedForEveryCamera
+                : ERenderInfoCollectResult.CallbackRejected;
         }
     }
 }

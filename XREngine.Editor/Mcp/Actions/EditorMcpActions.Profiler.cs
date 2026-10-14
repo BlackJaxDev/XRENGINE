@@ -1606,6 +1606,7 @@ namespace XREngine.Editor.Mcp
             CollectVisiblePreCollectStageTimings preCollect = snapshot.PreCollect;
             CollectVisibleLightStageTimings lights = snapshot.Lights;
             CollectVisibleSwapStageTimings swap = snapshot.Swap;
+            CollectVisibleSwapAdvancedPublicationTimings advancedPublication = swap.AdvancedPublication;
             CollectVisibleSwapLightStageTimings swapLights = snapshot.SwapLights;
             CollectVisibleHandoffTimings handoff = snapshot.Handoff;
             return new
@@ -1662,6 +1663,17 @@ namespace XREngine.Editor.Mcp
                     cpu_tree_ms = swap.CpuTreeMilliseconds,
                     scene_commands_ms = swap.SceneCommandsMilliseconds,
                     advanced_publication_ms = swap.AdvancedPublicationMilliseconds,
+                    // Split of advanced_publication_ms at the unchanged-row gate decision. The time before the
+                    // gate decision is advanced_publication_ms minus row_gate_ms minus commit_ms.
+                    advanced_publication = new
+                    {
+                        row_gate_passes = advancedPublication.RowGatePasses,
+                        row_gate_failures = advancedPublication.RowGateFailures,
+                        row_gate_ms = advancedPublication.RowGateMilliseconds,
+                        unchanged_row_publications = advancedPublication.UnchangedRowPublications,
+                        commit_calls = advancedPublication.CommitCalls,
+                        commit_ms = advancedPublication.CommitMilliseconds,
+                    },
                     viewports_ms = swap.ViewportsMilliseconds,
                     main_view_swap_calls = swap.MainViewSwapCalls,
                     main_view_swap_ms = swap.MainViewSwapMilliseconds,
@@ -1773,6 +1785,7 @@ namespace XREngine.Editor.Mcp
                 primary_tile_collect_now = snapshot.PrimaryTileCollectNow,
                 primary_tile_renders = snapshot.PrimaryTileRenders,
                 primary_package_render_reads = snapshot.PrimaryPackageRenderReads,
+                primary_tile_stale_declines = snapshot.PrimaryTileStaleDeclines,
                 need = new
                 {
                     none = need.None,
@@ -1782,6 +1795,8 @@ namespace XREngine.Editor.Mcp
                     no_render_world = need.NoRenderWorld,
                     primary_viewport = need.PrimaryViewport,
                     no_relevant_viewport = need.NoRelevantViewport,
+                    pending_shadow_capture = need.PendingShadowCapture,
+                    shadow_only_casters = need.ShadowOnlyCasters,
                 },
                 legacy = new
                 {

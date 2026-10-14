@@ -144,9 +144,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // the publisher. A nested publication would overwrite the outer plan.
         if (System.Threading.Interlocked.CompareExchange(ref _publishInProgress, 1, 0) != 0)
             throw new InvalidOperationException("Canonical scene publication is already in progress.");
+        // PublishCore sets this mark at the gate decision. It stays 0 when the
+        // publication stops before that point, or when the world swap section
+        // is not open on this thread.
+        long stageMark = 0L;
         try
         {
-            PublishCore(scene, frameId, in globalResources);
+            PublishCore(scene, frameId, in globalResources, ref stageMark);
         }
         finally
         {
@@ -162,9 +166,20 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 System.Threading.Volatile.Write(ref _publishInProgress, 0);
             }
         }
+        // The commit stage ends after the scratch release, so that it holds all
+        // of the work after the gate decision.
+        CollectVisibleStageTimings.End(ECollectVisibleStage.SwapAdvancedCommit, stageMark);
     }
 
-    private void PublishCore(GPUScene scene, ulong frameId, in AdvancedGlobalResourceCapture globalResources)
+    /// <summary>
+    /// Runs one publication. <paramref name="stageMark"/> receives the swap stage
+    /// mark at the gate decision, and it stays 0 outside the world swap section.
+    /// </summary>
+    private void PublishCore(
+        GPUScene scene,
+        ulong frameId,
+        in AdvancedGlobalResourceCapture globalResources,
+        ref long stageMark)
     {
         // Every global-resource preflight rebuilds the authored decal rows.
         Array.Clear(_plannedDecals, 0, _plannedDecalCount);
@@ -217,6 +232,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 ? globalResources
                 : AdvancedGlobalResourceCapture.Empty(frameId);
 
+        // The swap stage timers split the publication here. Only the collect
+        // thread in the world swap section gets a nonzero mark, the same gate
+        // as the parent publication stage of the GPU-scene swap.
+        stageMark = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
+
         // The retained plan, rows, and draw handles describe the current
         // publication. When every row input is unchanged, skip the whole-scene plan.
         if (!boundaryGrew)
@@ -227,9 +247,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.UnchangedRowGate"))
                 rowsUnchanged = TryPassUnchangedRowGate(
                     scene, frameId, out reusedStaticPlans, out materialResolveAttempts);
+            CollectVisibleStageTimings.MarkAdvancedRowGate(ref stageMark, rowsUnchanged);
             if (rowsUnchanged && TryPublishUnchangedRows(
                     frameId, in acceptedGlobalResources, reusedStaticPlans, materialResolveAttempts))
+            {
+                CollectVisibleStageTimings.CountAdvancedUnchangedRowPublication(stageMark);
                 return;
+            }
         }
 
         // Plans and submission sources are scratch closures, not publication leases.

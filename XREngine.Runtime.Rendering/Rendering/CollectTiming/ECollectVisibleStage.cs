@@ -112,6 +112,23 @@ internal enum ECollectVisibleStage
     /// <summary>The Advanced resident-scene publication. Parent: <see cref="SwapSceneCommands"/>.</summary>
     SwapAdvancedPublication,
 
+    /// <summary>
+    /// The unchanged-row gate of the Advanced resident-scene publication. The gate does not run when the
+    /// resident tables grow at the frame boundary. Parent: <see cref="SwapAdvancedPublication"/>.
+    /// </summary>
+    SwapAdvancedRowGate,
+
+    /// <summary>
+    /// The Advanced resident-scene publication after the gate decision: the unchanged-row publication or the full
+    /// plan with its commit, and the scratch release. When the gate does not run, this stage starts at the same
+    /// point. Parent: <see cref="SwapAdvancedPublication"/>.
+    /// </summary>
+    /// <remarks>
+    /// The boundary capacity check and the tombstone reclaim come before the gate decision. Their time stays in
+    /// the parent residual.
+    /// </remarks>
+    SwapAdvancedCommit,
+
     /// <summary>The number of stages. This value is not a stage.</summary>
     Count,
 }

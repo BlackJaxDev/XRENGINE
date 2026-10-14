@@ -729,6 +729,7 @@ namespace XREngine.Components.Lights
                     break;
                 case nameof(UseShadowAtlas):
                     ClearDirectionalAtlasSlots();
+                    InvalidatePrimaryShadowPublication();
                     EnsureShadowMapForActiveDynamicLight();
                     break;
                 case nameof(ShadowMapStorageFormat):
@@ -740,7 +741,12 @@ namespace XREngine.Components.Lights
                     if (CastsShadows)
                         EnsureCascadeShadowResources();
                     else
+                    {
+                        // The light stops collecting and swapping. Its last primary package must not count as current
+                        // when shadows turn on again.
+                        InvalidatePrimaryShadowPublication();
                         ReleaseCascadeShadowResources();
+                    }
                     break;
             }
         }
