@@ -2702,6 +2702,7 @@ namespace XREngine.Rendering
             using var frameSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.RenderFrame");
             AbstractRenderer frameRenderer = _renderer;
             LatchRenderSurface();
+            long callbackStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
             try
             {
@@ -2827,9 +2828,11 @@ namespace XREngine.Rendering
                     PublishAdvancedDirectionalShadowConsumerAuthority(renderFrameId);
                     frameRenderer.PrepareRenderFramePacing();
                     using var preRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPreRender");
+                    long preRenderStart = System.Diagnostics.Stopwatch.GetTimestamp();
                     try
                     {
                         TargetWorldInstance?.GlobalPreRender();
+                        RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.PreRender, preRenderStart);
                     }
                     catch (Exception preRenderEx)
                     {
@@ -2842,10 +2845,12 @@ namespace XREngine.Rendering
                     }
                 }
 
+                long viewportsCallbackStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 using (var renderCallbackSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.RenderViewportsCallback"))
                 {
                     RenderViewportsCallback?.Invoke();
                 }
+                RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.ViewportsCallback, viewportsCallbackStart);
 
                 // Viewport/pipeline rendering is isolated so that exceptions during scene rendering
                 // do not prevent Vulkan's RenderFrameCallback (acquire/record/submit/present) from
@@ -2879,6 +2884,7 @@ namespace XREngine.Rendering
                             RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
                         }
                         RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.RenderWindowViewports", viewportsPhaseStart);
+                        RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.Viewports, viewportsPhaseStart);
                     }
                 }
                 catch (Exception vpEx)
@@ -2905,9 +2911,11 @@ namespace XREngine.Rendering
                 if (!interactiveResizeFrame)
                 {
                     using var postRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPostRender");
+                    long postRenderStart = System.Diagnostics.Stopwatch.GetTimestamp();
                     try
                     {
                         TargetWorldInstance?.GlobalPostRender();
+                        RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.PostRender, postRenderStart);
                     }
                     catch (Exception postRenderEx)
                     {
@@ -2957,6 +2965,7 @@ namespace XREngine.Rendering
                     }
                     finally
                     {
+                        RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.RendererWindow, presentStart);
                         LastCompletedRenderWindowInterval = new XRWindowCompletedRenderInterval(
                             Interlocked.Increment(ref _completedRenderWindowIntervalSequence),
                             renderFrameId,
@@ -2979,17 +2988,21 @@ namespace XREngine.Rendering
                         System.Diagnostics.Stopwatch.GetTimestamp() - presentStart);
                 }
 
+                long postViewportsStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 using (var postViewportsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.PostRenderViewportsCallback"))
                 {
                     PostRenderViewportsCallback?.Invoke();
                 }
+                RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.PostViewportsCallback, postViewportsStart);
 
                 // Tick render-thread coroutines (e.g. progressive texture uploads) while the renderer
                 // is still marked active so that IsRendererActive guards inside those coroutines pass.
                 if (!interactiveResizeFrame)
                 {
                     using var inFrameJobsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.InFrameMainThreadJobs");
+                    long jobsStart = System.Diagnostics.Stopwatch.GetTimestamp();
                     RuntimeEngine.ProcessMainThreadTasks();
+                    RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.MainThreadJobs, jobsStart);
                 }
 
                 // Successful frame: clear circuit breaker state (viewport failures don't block present).
@@ -3003,6 +3016,8 @@ namespace XREngine.Rendering
                     RuntimeRenderingHostServices.Scheduling.MarkRenderFrameReadyForCollect(this);
                 if (!viewportRenderFailed)
                     AnyRendererFrameCompleted?.Invoke(this, frameRenderer.BackendGeneration);
+                RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.Total, callbackStart);
+                RenderCallbackStageTimings.CountCall();
             }
             catch (Exception ex)
             {

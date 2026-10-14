@@ -129,13 +129,21 @@ public sealed partial class GPUPhysicsChainDispatcher
     /// <remarks>
     /// Scene publication calls this for each covered renderer. A current committed spatial
     /// query of the renderer answers without <c>_outputPageSync</c>.
+    /// <para>
+    /// Lock order: scene publication calls this while it holds the scene lock, and a query
+    /// resolve in <see cref="TryGetCommittedSpatialBounds(XRMeshRenderer, out AABB, out ulong)"/>
+    /// holds the query lock while it reads the scene. This method therefore never waits for
+    /// the query lock. When another thread holds it, the locked path below answers.
+    /// </para>
     /// </remarks>
     public bool TryCaptureGpuBoundsSource(XRMeshRenderer renderer, out PhysicsChainGpuBoundsSource source)
     {
         PhysicsChainCommittedSpatialQuery query = renderer.CommittedSpatialQuery;
-        lock (query)
+        bool queryTaken = false;
+        try
         {
-            if (TryReuseCommittedSpatialQuery(renderer, query))
+            Monitor.TryEnter(query, ref queryTaken);
+            if (queryTaken && TryReuseCommittedSpatialQuery(renderer, query))
             {
                 source = query.BoundsSource;
                 if (query.HasBoundsSource && query.CoverageComplete
@@ -144,6 +152,11 @@ public sealed partial class GPUPhysicsChainDispatcher
                 source = default;
                 return false;
             }
+        }
+        finally
+        {
+            if (queryTaken)
+                Monitor.Exit(query);
         }
 
         lock (_outputPageSync)
@@ -202,30 +215,62 @@ public sealed partial class GPUPhysicsChainDispatcher
         }
     }
 
-    /// <summary>Captures inputs for a covered draw. The caller must retain the page while it uses the span.</summary>
-    public bool TryCaptureRendererOutputState(PhysicsChainGpuOutputPageToken token,
+    /// <summary>
+    /// Opens a lock-free reader of the renderer states on a retained output page. The page lock,
+    /// the page lookup, and the usability check happen here once. The caller must keep the page
+    /// retained while it uses the reader: a retained page is never rewritten.
+    /// </summary>
+    public bool TryOpenRendererStateReader(PhysicsChainGpuOutputPageToken token,
+        out PhysicsChainGpuRendererStateReader reader)
+    {
+        lock (_outputPageSync)
+        {
+            if (!TryGetOutputPageLocked(ToOutputPageIndex(token), token, out PhysicsChainOutputPage? page) ||
+                page!.RetainCount <= 0 ||
+                !IsUsableOutputPage(page))
+            {
+                reader = default;
+                return false;
+            }
+            reader = new PhysicsChainGpuRendererStateReader(this, page.StatesBySlot, page.MorphWeights);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Captures the inputs of a covered draw through an open reader, without a lock. The state
+    /// must still name the exact bounds source, the renderer must keep its bone-buffer
+    /// generation, and the retained envelope must still describe the renderer and mesh.
+    /// </summary>
+    public bool TryReadRendererOutputState(in PhysicsChainGpuRendererStateReader reader,
         scoped in PhysicsChainGpuBoundsSource source, XRMesh mesh,
         out PhysicsChainGpuRendererOutputState state,
         out ReadOnlySpan<PhysicsChainMorphWeight> morphWeights)
     {
         morphWeights = default;
-        lock (_outputPageSync)
+        PhysicsChainGpuRendererOutputState[]? states = reader.StatesBySlot;
+        if (!ReferenceEquals(reader.Dispatcher, this) ||
+            !ReferenceEquals(source.Dispatcher, this) ||
+            states is null ||
+            source.BoundsSlot >= (uint)states.Length)
         {
-            if (!ReferenceEquals(source.Dispatcher, this) ||
-                !TryGetOutputPageLocked(ToOutputPageIndex(token), token, out PhysicsChainOutputPage? page) ||
-                !IsUsableOutputPage(page!) ||
-                !page!.RendererStates.TryGetValue(source.Renderer, out state) ||
-                state.BoundsSource != source ||
-                source.Renderer.BoneBufferGeneration != source.RendererBoneBufferGeneration ||
-                !state.Envelope.Matches(source.Renderer, mesh))
-            {
-                state = default;
-                return false;
-            }
-            morphWeights = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(page!.MorphWeights)
-                .Slice(state.MorphWeightOffset, state.MorphWeightCount);
-            return true;
+            state = default;
+            return false;
         }
+
+        ref readonly PhysicsChainGpuRendererOutputState slotState = ref states[source.BoundsSlot];
+        if (slotState.BoundsSource != source ||
+            source.Renderer.BoneBufferGeneration != source.RendererBoneBufferGeneration ||
+            !slotState.Envelope.Matches(source.Renderer, mesh))
+        {
+            state = default;
+            return false;
+        }
+
+        state = slotState;
+        morphWeights = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(reader.MorphWeights)
+            .Slice(state.MorphWeightOffset, state.MorphWeightCount);
+        return true;
     }
 
     /// <summary>Releases one retained page token.</summary>
@@ -412,7 +457,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 page.FailureRecoveryRequested = false;
                 page.PaletteSlices.Clear();
                 page.PaletteHistoryResetRenderers.Clear();
-                page.RendererStates.Clear();
+                page.ClearRendererStates();
                 page.MorphWeights.Clear();
                 page.SpatialCheckpoints.Clear();
                 page.PreviousPaletteSourceToken = default;
@@ -796,7 +841,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             {
                 PhysicsChainOutputPage page = _outputPages[_writingOutputPageIndex];
                 page.PreviousPaletteSourceToken = default;
-                page.RendererStates.Clear();
+                page.ClearRendererStates();
                 page.MorphWeights.Clear();
                 page.SpatialCheckpoints.Clear();
                 if (page.HasQueuedGpuWork)
@@ -912,7 +957,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         page.Published = false;
         page.PaletteSlices.Clear();
         page.PaletteHistoryResetRenderers.Clear();
-        page.RendererStates.Clear();
+        page.ClearRendererStates();
         page.MorphWeights.Clear();
         page.SpatialCheckpoints.Clear();
         page.PreviousPaletteSourceToken = default;
@@ -942,7 +987,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             page.ProducerFence = null;
             page.HasUnfencedGpuWork = false;
             page.PreviousPaletteSourceToken = default;
-            page.RendererStates.Clear();
+            page.ClearRendererStates();
             page.MorphWeights.Clear();
             page.SpatialCheckpoints.Clear();
             return (page.BoundsAtlas?.IsDestroyed ?? true)
@@ -978,6 +1023,30 @@ public sealed partial class GPUPhysicsChainDispatcher
         public PhysicsChainGpuOutputPageToken PreviousPaletteSourceToken;
         public readonly Dictionary<XRMeshRenderer, PhysicsChainGpuRendererOutputState> RendererStates =
             new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        // The same states, indexed by bounds slot, for lock-free reads of a retained page
+        // (PhysicsChainGpuRendererStateReader). Cleared in place and grown only while the page
+        // is written, so a reader of a retained page always sees this array.
+        public PhysicsChainGpuRendererOutputState[] StatesBySlot = [];
+        private int _usedStateSlots;
+
+        /// <summary>Adds one renderer state to both the renderer map and the slot array.</summary>
+        public void AddRendererState(XRMeshRenderer renderer, in PhysicsChainGpuRendererOutputState state)
+        {
+            RendererStates.Add(renderer, state);
+            int slot = checked((int)state.BoundsSource.BoundsSlot);
+            if (slot >= StatesBySlot.Length)
+                Array.Resize(ref StatesBySlot, Math.Max(slot + 1, StatesBySlot.Length * 2));
+            StatesBySlot[slot] = state;
+            _usedStateSlots = Math.Max(_usedStateSlots, slot + 1);
+        }
+
+        /// <summary>Removes every renderer state from both the renderer map and the slot array.</summary>
+        public void ClearRendererStates()
+        {
+            RendererStates.Clear();
+            Array.Clear(StatesBySlot, 0, _usedStateSlots);
+            _usedStateSlots = 0;
+        }
         public readonly List<PhysicsChainMorphWeight> MorphWeights = [];
         public readonly Dictionary<GPUPhysicsChainRequest, PhysicsChainResidentSpatialCheckpoint> SpatialCheckpoints = [];
         public readonly Dictionary<XRMeshRenderer, (uint Base, uint Count, long BoneGeneration)> PaletteSlices =

@@ -109,6 +109,18 @@ The MCP server settings are located in the **Global Editor Preferences** panel u
 | `McpDispatchMode` | Default thread dispatch mode for MCP tools without explicit affinity | `Direct` |
 
 Changes take effect immediately - the server will start or stop based on the `McpServerEnabled` setting, and will restart on a new port if `McpServerPort` is changed while running.
+The server reads these settings only after the effective preferences are fully composed
+(`Engine.EditorPreferencesChanged`). A composition copies the global values first and then
+applies overrides and session values, such as the `--mcp` switch, so a partial value must not
+stop the server. A session-only `set_editor_preference` call therefore does not restart it.
+
+Tools with `Main` affinity, and unannotated tools in `MainThread` mode, run as app-thread jobs on
+the update thread. The update thread does not start app-thread work while a render frame
+dispatches, but it starts work that render frames have deferred for 50 ms. Under a heavy render
+load, a call can therefore wait about 50 ms plus one update iteration, or longer while another
+long app-thread job runs (for example a benchmark spawn). Call the static
+`Engine.CaptureAppThreadDispatchDiagnostics()` through `invoke_method` to read the deferral counts
+and the longest deferral.
 
 Set `XRE_MCP_REQUEST_TRACE=1` before editor startup to trace single-request
 `invoke_method` calls. The trace records the JSON-RPC ID, tool and target

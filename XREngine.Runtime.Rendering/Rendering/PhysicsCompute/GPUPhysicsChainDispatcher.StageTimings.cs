@@ -24,6 +24,11 @@ public sealed partial class GPUPhysicsChainDispatcher
         BoundsRoutes,
         BoundsRows,
         BoundsSceneCopy,
+        SimTreeParams,
+        SimActiveWork,
+        SimUploadRanges,
+        SimUploadColliders,
+        SimUploadOther,
         Count,
     }
 
@@ -52,7 +57,11 @@ public sealed partial class GPUPhysicsChainDispatcher
             ToMs(DispatcherStage.PaletteMatrices), ToMs(DispatcherStage.PreviousPalette),
             ToMs(DispatcherStage.Bounds), ToMs(DispatcherStage.Commit),
             ToMs(DispatcherStage.FinalizeOwnership), ToMs(DispatcherStage.PaletteSources),
-            ToMs(DispatcherStage.CompleteUpdates), ToMs(DispatcherStage.BoundsRoutes),
-            ToMs(DispatcherStage.BoundsRows), ToMs(DispatcherStage.BoundsSceneCopy));
+            ToMs(DispatcherStage.CompleteUpdates),
+            new PhysicsChainDispatcherSubStageTimings(
+                ToMs(DispatcherStage.BoundsRoutes), ToMs(DispatcherStage.BoundsRows),
+                ToMs(DispatcherStage.BoundsSceneCopy), ToMs(DispatcherStage.SimTreeParams),
+                ToMs(DispatcherStage.SimActiveWork), ToMs(DispatcherStage.SimUploadRanges),
+                ToMs(DispatcherStage.SimUploadColliders), ToMs(DispatcherStage.SimUploadOther)));
     }
 }

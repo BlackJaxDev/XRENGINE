@@ -242,7 +242,10 @@ public sealed class GPUPhysicsChainDispatcherTests
             UploadedTransformDataVersion = 13,
             UploadedColliderDataVersion = 14,
         };
-        var replacementRequest = new GPUPhysicsChainRequest(replacement.AsComputeSource());
+        var replacementRequest = new GPUPhysicsChainRequest(replacement.AsComputeSource())
+        {
+            ColliderCatalogStamp = new PhysicsChainColliderCatalogStamp(8, 7, 14, Valid: true),
+        };
 
         replacementRequest.AdoptArenaAllocationFrom(originalRequest);
 
@@ -258,6 +261,8 @@ public sealed class GPUPhysicsChainDispatcherTests
             replacementRequest.UploadedStaticDataVersion.ShouldBe(int.MinValue);
             replacementRequest.UploadedTransformDataVersion.ShouldBe(int.MinValue);
             replacementRequest.UploadedColliderDataVersion.ShouldBe(int.MinValue);
+            // A cleared catalog stamp makes the next upload copy the colliders again.
+            replacementRequest.ColliderCatalogStamp.Valid.ShouldBeFalse();
             replacementRequest.PendingArenaAllocationChange.ShouldBeTrue();
         });
     }

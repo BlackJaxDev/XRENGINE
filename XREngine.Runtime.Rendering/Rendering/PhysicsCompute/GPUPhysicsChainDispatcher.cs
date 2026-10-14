@@ -1477,14 +1477,14 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     private bool BuildResidentArenaBuffers(IPhysicsChainComputeBackend backend, IReadOnlyList<GPUPhysicsChainRequest> requests)
     {
+        long stageStart = Stopwatch.GetTimestamp();
         _allPerTreeParams.Clear();
         for (int requestIndex = 0; requestIndex < requests.Count; ++requestIndex)
         {
             GPUPhysicsChainRequest request = requests[requestIndex];
-            if (!EnsureRequestArenaSlices(request, out bool allocationChanged))
-                return false;
-
-            request.PendingArenaAllocationChange |= allocationChanged;
+            // PrepareFrameArenaCapacity allocated the slices of every active request this
+            // frame, and accepted inputs do not change during the pass.
+            System.Diagnostics.Debug.Assert(request.ParticleOffset >= 0, "PrepareFrameArenaCapacity allocates every active request.");
             request.TreeOffset = _allPerTreeParams.Count;
             for (int treeIndex = 0; treeIndex < request.Trees.Count; ++treeIndex)
             {
@@ -1508,6 +1508,8 @@ public sealed partial class GPUPhysicsChainDispatcher
             }
         }
 
+        AddStageTime(DispatcherStage.SimTreeParams, stageStart);
+        stageStart = Stopwatch.GetTimestamp();
         BuildActiveWorkRecords(requests);
         EnsureTransformInputCatalogCapacity();
         TotalParticleCount = _particleArenaHighWater;
@@ -1520,16 +1522,25 @@ public sealed partial class GPUPhysicsChainDispatcher
                 _colliderArenaHighWater, _particleArenaHighWater)
             || !EnsureSpecializedKernelResources(backend, requests))
             return false;
+        AddStageTime(DispatcherStage.SimActiveWork, stageStart);
 
+        stageStart = Stopwatch.GetTimestamp();
         for (int requestIndex = 0; requestIndex < requests.Count; ++requestIndex)
             UploadDirtyRequestRanges(requests[requestIndex]);
+        AddStageTime(DispatcherStage.SimUploadRanges, stageStart);
 
-        if (!UploadInputPageColliders(requests)
-            || !UploadInputPageTransforms()
+        stageStart = Stopwatch.GetTimestamp();
+        if (!UploadInputPageColliders(requests))
+            return false;
+        AddStageTime(DispatcherStage.SimUploadColliders, stageStart);
+
+        stageStart = Stopwatch.GetTimestamp();
+        if (!UploadInputPageTransforms()
             || !UploadDynamicTreeHeaders(requests)
             || !UploadActiveWorkInputs(requests)
             || !TryCompletePass(backend, InputPublicationPass))
             return false;
+        AddStageTime(DispatcherStage.SimUploadOther, stageStart);
         _particleArenaUploadedHighWater = _particleArenaHighWater;
         _colliderArenaUploadedHighWater = _colliderArenaHighWater;
         RefreshMainPassBindings();
@@ -3870,6 +3881,8 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
     public int UploadedStaticDataVersion = int.MinValue;
     public int UploadedTransformDataVersion = int.MinValue;
     public int UploadedColliderDataVersion = int.MinValue;
+    // The collider rows that the dispatcher collider catalog holds for this request.
+    internal PhysicsChainColliderCatalogStamp ColliderCatalogStamp;
     public bool PendingArenaAllocationChange;
     public bool DynamicHeaderInitialized;
     public int DynamicHeaderVersion;
@@ -3912,6 +3925,7 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
         UploadedStaticDataVersion = int.MinValue;
         UploadedTransformDataVersion = int.MinValue;
         UploadedColliderDataVersion = int.MinValue;
+        ColliderCatalogStamp = default;
         UploadedDynamicHeaderVersion = int.MinValue;
         UploadedSchedulingMetadataVersion = int.MinValue;
         UploadedTreeWorkStaticVersion = int.MinValue;

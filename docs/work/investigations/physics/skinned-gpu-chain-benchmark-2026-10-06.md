@@ -204,6 +204,9 @@ These defects were found and fixed during the investigation. The architecture do
 | Materials | Translation-class vertex effects now pad the bound; scale, rotation, look-at, and barrel effects reject the GPU route. |
 | History | Failed aggregate output could become valid previous history. Producer markers and consumed page tokens now guard it. |
 | Lifecycle | `GPUScene.Remove` enumerated a list that was being disposed. A reclaim race between publication and lease acknowledgement. A duplicate key in the profiling dictionary. Material and scene tables needed old-plus-incoming capacity. Boundary growth checked only draw fields. Input pages reused storage after a failed marker without a native reuse proof. Input banks grew during timing; capacity planning now provisions all eight banks. The debug batch destroyed a shared cached shader. Debug and readback paths accessed storage before admission. |
+| Locks | A query resolve in `GPUPhysicsChainDispatcher.TryGetCommittedSpatialBounds` held the renderer's committed spatial query lock while it took the scene lock, and scene publication held the scene lock while `TryCaptureGpuBoundsSource` waited for the query lock. The update thread (a root-bone render-matrix notification) and the swap deadlocked; see [lock-order defect](#lock-order-defect). `TryCaptureGpuBoundsSource` now only tries the query lock. |
+| MCP | Calls stalled for more than 60 seconds during the 2,000-chain benchmark; none of nine windows on 2026-10-13 afternoon was accepted. The harness sets MCP dispatch to `MainThread`, so each call is an app-thread job. `Engine.ProcessPendingAppThreadWork` drained that queue only between update iterations and only when no render frame dispatched. The update iteration (about 31 ms) and the render frame (about 27 of 33 ms) had almost the same period, so the check stayed inside render frames for many iterations in a row. A request trace showed a queued `invoke_method` call that waited 118 ms even before the benchmark. Work that render frames have deferred for 50 ms now starts anyway (`AppThreadWorkDeferralPolicy`, counters in `Engine.CaptureAppThreadDispatchDiagnostics()`, tests in `AppThreadWorkDeferralPolicyTests`). Two rejected designs: an update-thread wait for the end of a render frame loses wakeups (a `ManualResetEventSlim` reset by the next frame) and can stall both threads when a render frame waits for an update-thread task. |
+| MCP | The MCP server stopped itself during a session-only `set_editor_preference` call, and the harness failed with "An error occurred while sending the request". Preference composition copies the global values and then applies overrides and session values; the `--mcp` switch is a session value, so `McpServerEnabled` was false for a short time. The server reacted to each property change after a fixed 25 ms delay and dropped a second change while a refresh was pending. The server now acts only on settled values (`Engine.IsComposingEditorPreferences`, `Engine.EditorPreferencesChanged`), and `McpServerStateRefreshScheduler` repeats a refresh until no request arrived during it (`McpServerStateRefreshSchedulerTests`). The `McpServerHostProtocolTests` reflection call, stale since a trace parameter was added on 2026-10-07, now passes that parameter. |
 | Frame package | Mutable strategy state could produce two submission lanes in one package (`RangeExecutionLaneMismatch`). `EditorRenderInfo3D` was excluded from canonical collection. |
 | Shadows | A new covered palette did not dirty the cached cascade. A coalesced covered-caster output revision now does. |
 | Selective readback | Affine gather omitted translation and read the authored pose. Worlds shared physical slots. Ranges and template changes had no witness. |
@@ -327,6 +330,8 @@ Collect fell by about 30%, but collect is not on the critical path: the collect 
 
 **Limit (cache).** The epoch is dispatcher-wide. A proxy refit of one renderer invalidates every cached query. This benchmark refits almost never, but a scene with many chains that travel far would resolve each query about once per frame. Per-renderer change stamps would remove this limit.
 
+<a id="lock-order-defect"></a>**Lock-order defect (found and fixed 2026-10-13).** The cache added a lock-order inversion. A resolve holds the renderer's query lock while it takes `_outputPageSync`, `_cpuSpatialMaterialSync`, and the scene lock (`GPUScene.TryGetRendererCommandMaterialGeneration`). Scene publication holds the scene lock in `GPUScene.SwapCommandBuffers` and called `TryCaptureGpuBoundsSource`, which waited for the same query lock. A session stopped making progress at 11:07 during a benchmark stop: the editor used almost no CPU, every MCP call timed out, and the logs stopped. A mini dump showed the update thread in `RenderableMesh.RootBone_WorldMatrixChanged` → `TryGetCommittedSpatialBounds` waiting for the scene lock with the query lock held, and the collect thread in `AdvancedGpuScenePublisher.Publish` → `TryCaptureGpuBoundsSource` waiting for the query lock with the scene lock held. The render thread waited for the next frame signal. `TryCaptureGpuBoundsSource` now uses `Monitor.TryEnter` and takes the existing locked path when the query lock is busy; that path does not take a query lock. The rule is in the [output architecture](../../../architecture/physics/physics-chain-output-and-readback.md). Some earlier MCP timeouts and session stops may have had this cause. A unit test for the rule is an open todo item.
+
 ## Publisher unchanged-row gate
 
 Status: implemented and live-validated on 2026-10-12 (laptop). The [advanced render pipeline](../../../architecture/rendering/advanced-render-pipeline.md) owns the contract.
@@ -349,7 +354,7 @@ The swap fell by about 8 ms, and the frame rate rose by about 30%. The render ca
 
 ## Render-thread dispatcher stages
 
-Status: partly done on 2026-10-12 (laptop). The remaining items are in the [todo](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#render-thread-dispatcher-publication).
+Status: partly done on 2026-10-12 (laptop). The remaining items are in the [todo](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#remaining-render-thread-items).
 
 **Measurement.** `GPUPhysicsChainDispatcher.CaptureStageTimings()` gives the cumulative render-thread time of each dispatcher stage. Two captures 10 seconds apart inside a 2,000-chain window give the cost per frame. These timers corrected the sampled trace: `PollSimulationReceipts` costs 0.07–0.11 ms per frame, not about 3.5 ms.
 
@@ -372,9 +377,166 @@ Status: partly done on 2026-10-12 (laptop). The remaining items are in the [todo
 
 The bounds stage had copied each scene's renderer route table (2,000 entries, under the scene lock) twice per frame, and resolved each binding's render world about four times. Route snapshots now persist until the scene publishes a new route generation.
 
-**Open question.** The dispatcher fell by 3.5 ms per frame, but the render callback stayed at about 27 ms (26.8 and 27.2 ms against 26.5–28.0 ms before), and the frame rate stayed at 28.9–29.5 Hz. The Vulkan frame shows no fence, acquire, or present wait (each under 0.1 ms; command recording 8.7–10.3 ms). The ablation of 2026-10-07 showed the same pattern: with physics frozen, the dispatcher time moved into `Advanced.VisibilityPreparation`. A wait inside the render callback that depends on the collect thread is the likely cause. It is not yet identified.
+**Render callback (resolved 2026-10-13).** The question was why the render callback stayed at about 27 ms when the dispatcher fell by 3.5 ms. `RenderCallbackStageTimings.Capture()` now gives the cumulative time of each part of `XRWindow.RenderCallback`. In a 2,000-chain window, the total of 24.85 ms per frame was the sum of three parts with nothing between them: pre-render (dispatcher) 8.78 ms, viewports 6.94 ms, and the Vulkan frame 9.12 ms. The Advanced preparation lock waits (`AdvancedSharedPreparationService.GetCurrentDiagnostics()`, acquire and copy) were 0.3 ms in total over the probe interval. There is no wait that absorbs the saving. That window ran at 31.0 Hz with p95 37.2 ms and render 25.1 ms; the earlier flat readings were window-to-window noise. Later windows showed how large that noise is: the Vulkan frame part varied from 9.1 to 13.7 ms with no change in its code. Judge changes by stage timers, not by single-window frame rates. The Advanced preparation build cost about 5.7 ms per rebuild, of which extraction was about 4.1 ms; Vulkan recording is most of the Vulkan frame part.
+
+**Simulation group and colliders (2026-10-13).** Sub-stage timers split the simulation stage (1.94 ms): tree parameters 0.11, active-work records 0.33, dirty-range uploads 0.45, per-request collider writes 0.53, other uploads 0.19, and the dispatch about 0.33 ms. Each collider write was a separate mapped write with lease lookups and an allocator lock, for 128 bytes. Colliders now go into a dense catalog at their arena offsets; an input bank receives one write of the catalog only when it holds an older catalog version or another buffer. The collider writes fell from 0.53 to 0.05 ms per frame, and the simulation stage from 1.94 to 1.53 ms. The second `EnsureRequestArenaSlices` pass was also removed. The window was accepted with no input-page failure. The catalog protocol is in `PhysicsChainColliderInputCatalog`; `PhysicsChainColliderInputCatalogTests` show that a collider change reaches each of the 8 rotating banks exactly once, that unchanged frames write nothing, and that rollback, arena reallocation, a cleared stamp, and a replaced bank buffer each force the needed writes.
+
+**Session faults (2026-10-12 and 2026-10-13).** Two of about ten fresh sessions latched at startup with the known cold-start fault, and one window failed with a 60-second MCP request timeout while the editor stayed healthy. A restart or a retry with the same binary was healthy each time.
 
 **Validation.** 434 targeted unit tests pass; the 23 failures are the known stale tests. One fresh session latched at startup (input and output page fences failed with `QueueDiscard`, and the dispatcher reported no failure); a restart of the same binary was healthy. This is the known cold-start fault.
+
+## Advanced preparation extraction
+
+Status: partly done on 2026-10-13 (laptop). The remaining items are in the [todo](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#structural-frame-reuse).
+
+**Change.** `AdvancedPreparationExtractor` did the same per-row work twice for each covered skinned draw. It captured the renderer output state (a lock on `_outputPageSync`, a page check, a dictionary lookup, and an envelope compare) once for the material check and again for the pose. It prepared the mesh (`TryPrepareMesh`: two table lookups and two witness checks) in the pre-pass and again in extraction. It also evaluated the material bounds contract for each row, although the benchmark chains share one material. Now each covered draw captures its output state once; extraction reuses the pre-pass mesh slice while `AdvancedGpuDeformationResources.MeshSliceRevision` and the mesh geometry are unchanged; consecutive rows with one shared mesh use one preparation; and `PhysicsChainMaterialBoundsContractMemo` evaluates each published material state once per `Build`.
+
+**Result.** `AdvancedSharedPreparationService.GetCurrentDiagnostics()` `SharedTelemetry`, two reads 10 seconds apart inside 2,000-chain windows, divided by the rebuild count:
+
+| Build | Windows | Extraction (ms per rebuild) | Build (ms per rebuild) | Build allocations |
+| --- | ---: | ---: | ---: | ---: |
+| Before (dispatcher and collider changes) | 4 | 4.11–4.74 | 5.66–6.41 | 0 B |
+| Extraction changes | 2 | 3.68–3.81 | 5.48–5.58 | 0 B |
+
+Extraction fell by about 0.7 ms per rebuild (about 16%). The mapping estimated 1.1 ms for these three items. In both new windows the benchmark stopped just after the second read, so the harness rejected the windows. The reads still cover steady-state frames: 27–28 rebuilds per second, the same as the frame rate. After the MCP fixes, two harness windows were accepted (16.7 and 17.2 Hz), but the laptop was thermally limited: the GPU stayed at 83 °C in power state P5, and the update phase, which these changes do not touch, rose from 31 to 42–44 ms. Those frame rates cannot be compared with the earlier windows.
+
+**Extraction parts.** `XRE_ADVANCED_EXTRACTION_SUBSTAGE_TIMERS=1` times each part of an extraction row (`AdvancedPreparationExtractor.CaptureExtractionSubStageTimings`). Milliseconds per build at 2,000 chains, shared mesh, GPU clocks locked:
+
+| Part | Before, window 1 | Before, window 2 | Covered pose fast path and schedule skip |
+| --- | ---: | ---: | ---: |
+| Mesh pre-pass | 0.78 | 1.07 | 1.12 |
+| Route, output state, material check | 1.09 | 1.39 | 1.49 |
+| Geometry and candidate | 0.17 | — | 0.22 |
+| Mesh preparation | 0.41 | 0.41 | 0.41 |
+| Pose capture | 1.18 | 1.27 | 0.71 |
+| History and arena slice | 0.37 | 0.43 | 0.40 |
+| Schedule and job | 0.56 | 0.86 | 0.24 |
+| Extraction total (service ticks) | 3.94 | 4.90 | 3.61 |
+
+A later build added the lock-free renderer state reader. Two windows: route part 1.15 and 1.10 ms, pose 0.63 and 0.60 ms, schedule and job 0.30 and 0.28 ms, mesh pre-pass 0.96 and 1.37 ms; extraction total 3.17 and 2.85 ms, build 4.96 and 4.89 ms.
+
+- Parts that only read scattered objects (the mesh pre-pass and the route part) vary by up to 45% between windows of the same binary. Each chain owns its `XRMesh` in the shared-mesh mode too ("shared" means identical content that the deformation static inputs intern), so these parts take one or more cache misses for each row.
+- The covered pose fast path skips `XRMeshRenderer.TryPrepareDeformationInputs` for a covered renderer without active blendshapes. The retained envelope already proves the mesh, geometry revision, bind root, and bone layout; only the pose version is read. The full path still runs for blendshape meshes and until the renderer records GPU-owned bones, so a later loss of coverage resets the CPU palette seed state. The pose part fell by about 0.5 ms.
+- Covered rows no longer call the CPU animation scheduler: their palette comes from the physics output page, and the scheduler returned the constant bone tier 0. The schedule part fell by 0.3–0.6 ms.
+- The lock-free renderer state reader did not measurably change the route part (1.10–1.15 ms against 1.09–1.49 ms). The page lock and the renderer dictionary were not its cost. The remaining cost is the per-row read of each renderer and mesh: the bone-buffer generation, the mesh geometry revision, bind root, and bone layout in the envelope check, and the state copy. The reader stays: it removes about 2,000 acquisitions per frame of the lock that collection also takes.
+- Retained row templates for the mesh path would still validate the same scattered mesh state (skinning buffers, blendshape buffers, and their revisions), so they would save only the lookups. A real saving needs meshes and renderers to report their changes in dense versions (the shared versioning contract in the todo).
+- Comparing two binaries: `Tools/Manage-McpEditorSession.ps1` keeps no build output of stopped sessions (`$retainedStoppedSessionBuildCount = 0`), so a `-NoBuild` restart of an older session fails after any other session starts. These windows compare one new window with two windows of the old code instead.
+
+**Validation.** `PhysicsChainMaterialBoundsContractMemoTests` (7 tests: one evaluation per pass for a shared material, a new evaluation after a clear, a changed value, a rejected slot, a rotation effect, more materials than entries, and a null material) and three `AdvancedGpuDeformationResourceTests` (the revision advances on frame open and static reset, an unsupported mesh keeps it, and the reuse checks) pass. Frame outcome counts showed no new deferred frames: the deferred count stayed at the 89–101 startup deferrals of each session.
+
+## Vulkan visibility family
+
+Status: in progress on 2026-10-13 (laptop). The remaining items are in the [todo](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#structural-frame-reuse).
+
+**Measurement.** `XRE_S13A_PUBLICATION_TELEMETRY=1` and the `get_s13a_publication_telemetry` tool give the cumulative calls and ticks of each Advanced family step (`S13aAdvancedFamilyStep`). Read two captures inside a window. The recording validation stage (`EVulkanCpuStage.PrimaryAdvancedRasterValidationOperation`, read with `RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanCpuStageTelemetry`) records only with `XRE_VULKAN_RECORDING_PROFILE_DETAIL=1`.
+
+**Records by reference.** `VulkanPreparedStableBinStream` copied each frozen record (about 2 KB) by value in most of its per-frame passes. Template retention, manifest resolution, submission-plan sealing, raster payloads, native-state resolution, and raster pipeline preparation now read records and headers by `ref readonly`. Milliseconds per frame at 2,000 chains:
+
+| Step | Before (1 window) | By reference (2 windows) |
+| --- | ---: | ---: |
+| Submission plans | 0.24 | 0.02–0.03 |
+| Template retention | 0.19 | 0.01–0.02 |
+| Manifests | 1.01 | 0.70–0.79 |
+| Raster realization | 0.50 | 0.30–0.43 |
+| Raster pipelines (two calls) and header validation | 1.96 | 1.53–1.90 |
+| Geometry payloads | 1.51 | 1.48–1.64 |
+| Family total | about 4.6 | about 3.4–4.0 |
+
+The geometry payload pass did not change: its cost is the per-payload work, not record copies. Individual steps vary between windows of one build (one later window measured manifests at 4.1 ms), so compare totals over several windows.
+
+**Native vertex-source check once per bin (ruled out).** A trial checked the native lifetime of the shared deformation output range once per build at seal, and once per bin header during recording, instead of once per record. A/B windows with `XRE_VULKAN_RECORDING_PROFILE_DETAIL=1`: the recording validation stage took 0.454 ms per raster phase before and 0.456 ms after, and the geometry payload step 1.48 and 1.45 ms. The native check (a lifetime lock and a wrapper lookup) is not the cost. The stage still costs about 0.9 ms per frame (two raster phases, 2,000 records each); the likely cost is the copy of each record's 660-byte geometry closure, which a positional record property cannot return by reference, and the value checks. The trial was reverted. The remaining options are per-header validation of sealed records and slimmer records (main todo, structural frame reuse).
+
+**Native state and key memo.** In `TryBuildVisibilityGeometryStream`, consecutive payloads with equal `VisibilityRecordInputs` (cull mode, instance count, index count, raster class, coverage, topology, skinned flag, producer, binding geometry, and prepared vertex source) reuse the previous native state and bin key. The geometry payload step fell from 1.45–1.64 to 1.36–1.41 ms.
+
+## Visibility content stability
+
+Status: measured on 2026-10-13 (laptop). This is step 1 of the [structural frame reuse contract](../../design/physics/physics-chain-steady-state-cpu-design.md#structural-frame-reuse-contract).
+
+**Question.** Does Advanced extraction give the same visibility content in each steady-state frame? If it does, the per-row work of extraction and of the Vulkan visibility family repeats the same result in each frame, and a witness can let consumers keep it.
+
+**Change.** `AdvancedVisibilityContentWitness` compares the visibility columns of each build with the last compared build: payloads, producers, indirect ranges, range payload order, and deformed-arena slices without their frame slots. `StableVisibilityContentGeneration` changes only when a column changes. `GetCurrentDiagnostics()` reports the counts in `VisibilityContent`.
+
+**Result.** Two reads 10 seconds apart inside accepted 2,000-chain windows:
+
+| Mesh | Builds compared | Unchanged | Columns changed | Build (ms per rebuild) | Extraction | Hz |
+| --- | ---: | ---: | --- | ---: | ---: | ---: |
+| Shared | 316 | 316 | none | 4.45 | 2.75 | 29.5 |
+| Unique | 311 | 311 | none | 4.65 | 2.91 | 27.2 |
+
+- Every steady-state build gave the same content. Only frame bindings change between frames.
+- The comparison cost was within noise: the build took 4.45–4.65 ms, against 4.89–4.96 ms in the earlier windows. The build allocated 0 bytes.
+- The Vulkan visibility records could not be kept as they were. Each record and bin key contained the scene native generation (`VulkanAdvancedSceneResourceRuntime.NextNativeGeneration` advances on each scene publication preparation) and the deformation output buffer. Desktop Vulkan has two frame plans and the deformed arena has three frame slots, so each frame plan sees all three output buffers in turn. The static vertex and index slices are not frame bindings: they come from the resident geometry cache and keep their identity. The [next section](#vulkan-visibility-stream-reuse) removes the two frame bindings.
+
+## Vulkan visibility stream reuse
+
+Status: implemented and live-validated on 2026-10-13 (laptop, GPU clocks unlocked). The [advanced render pipeline](../../../architecture/rendering/advanced-render-pipeline.md#vulkan-visibility-stream-reuse) owns the contract.
+
+**Change.** Records and bin keys no longer contain the scene native generation or the deformation output buffer. A deformed record keeps only its vertex base, and the raster pipeline step binds the frame's deformation output into each deformed bin header. The frame plan reset keeps a valid seal. The next seal keeps the stream when `VulkanVisibilitySealSignature` and an exact comparison of the visibility columns are equal, and it applies only the frame bindings. Range members are validated once for each sealed content, and recording checks each bin once instead of each record. `AdvancedVisibilityStreamReuseTelemetry.Capture()` counts reuses and reseals by first reason.
+
+**Result.** Two reads 10 seconds apart inside accepted 2,000-chain windows. Before: the content-witness windows of the same day.
+
+| Build | Mesh | Hz | Update | Collect | Swap | Render | Render waits for collect |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Before | Shared | 29.5 | 34.0 | 17.0 | 7.9 | 26.1 | 6.5 |
+| Before | Unique | 27.2 | 36.9 | 17.7 | 8.4 | 28.5 | 6.1 |
+| Stream reuse | Shared | 33.0 | 31.8 | 15.7 | 9.4 | 20.9 | 7.1 |
+| Stream reuse | Unique | 34.2 | 30.5 | 15.1 | 8.4 | 20.9 | 6.4 |
+
+| Family step (ms per frame) | Before | Stream reuse |
+| --- | ---: | ---: |
+| Bin sealing (geometry stream, manifests, submission plans) | 2.1–2.2 | 0.07 |
+| Raster pipelines and member validation (two calls) | 1.5–1.9 | 0.08 |
+| Template retention | 0.01–0.02 | 0.05 |
+| Raster realization | 0.30–0.43 | 0.44 |
+
+- The stream was kept in every steady-state frame: 384 of 384 seals with a shared mesh and 408 of 408 with unique meshes. The reseals since session start came from benchmark spawn and teardown (publication 92, submission 6, deformation output 6, no retained stream 2, columns 1).
+- Render time fell by about 5 ms (26.1 to 20.9 ms with a shared mesh, 28.5 to 20.9 ms with unique meshes). The recording validation stage was not measured, because `XRE_VULKAN_RECORDING_PROFILE_DETAIL` was not set.
+- The reuse path allocated 0 bytes. Other family steps allocate about 46 KB per frame, before and after this change: native compute about 6.5 KB and native descriptors about 4.6 KB per call (three calls per frame), the late closure about 1.5 KB, and the target closure about 290 B per call, which allocates its expected attachment arrays in `TryValidateAdvancedVisibilityTarget`.
+- Render now waits 6.4–7.1 ms for collect. Render work without the wait is about 14 ms, and collect takes 15–16 ms, so collection is now on the critical path.
+- Visual check: wide, middle, and close captures of the running chains show the full grid and chains bent by the simulation. The session logs have no Vulkan validation message or plan exception. The 8 rejected frames were mesh readiness retries during startup and spawn (`visible-mesh-cold-admission`).
+
+## Collection, dispatcher, and allocation mapping
+
+Status: mapped on 2026-10-13; no code change yet. A read-only pass of five mapping agents and one critic covered collection, CPU bone work, the dispatcher bounds stage, dispatcher per-request work, and the Vulkan family allocations. The full result is disposable evidence (`collect-dispatcher-alloc-map-2026-10-13.json` in the run reports folder). The findings that later work needs are below.
+
+**Collect thread, sampled trace.** One 2,000-chain window (shared mesh, 28.4 Hz with tracing), as a share of the collect thread. The sampler overstates lock entry, so confirm each part with stage timers.
+
+| Part | Share |
+| --- | ---: |
+| Primary directional shadow collection of covered meshes (`BeforeAdd`, culling volume reads, `ComputeShadowCasterCommandSetSignature` 6%) | 26% |
+| `VisualScene3D.RefreshCoveredCommandSources` (several committed-bound queries with locks for each renderer) | 15% |
+| Main view `CanUseCanonicalGpuCollection` for each mesh | 9% |
+| Swap on the same thread: `PublishRenderMatrices` (covered `RootBone_WorldMatrixChanged` handlers 8%) | 16% |
+| Swap on the same thread: publisher unchanged-row gate walk | 12% |
+
+**Findings.**
+
+- The primary directional shadow viewport may be collected in every frame with no consumer. On the Vulkan atlas path, `EnsureCascadeShadowResources` releases the cascade receiver textures, so `ShouldCollectPrimaryShadowViewport` is always true, but the atlas submits the primary tile only when `NeedsPrimaryDirectionalShadowMap()` is true. Confirm at runtime with a counter of primary collections against primary tile renders. If it is confirmed, gating the collection is the largest collect saving (estimated 2.5–4 ms).
+- No stage timer splits the collect phase, and no counter measures the `TransformHierarchyStore._passGate` wait at pre-collect or at the swap. Add these before collect changes.
+- The bones of covered chains (12,000 non-root bones) are propagated, published, and notified in each tick, but no steady-state consumer reads them. They also hold the rest pose, not the simulated pose.
+- The dispatcher reads `_publishedOutputPageIndex`, `_committedBoundsSources`, and `_lastPublishedPaletteInputBoundsByRenderer` on the render thread without `_outputPageSync`, while collect-thread queries can clear them through `InvalidateFailedPublishedPages` (also `TryBeginSimulationReceipt`). These races occur only on page failure or arena reset. Fix them before other dispatcher changes.
+- The Commit stage timer includes `backend.CommitBatch`, so the 0.71 ms is not all notification work.
+- The 32-bit palette layout signature is a rebuild witness that can collide, and each of the four output pages keeps its own signature, so one binding change rebuilds the layout four times.
+- About half of the 46.6 KB per frame in the Vulkan family comes from one line: the generated record equality of `VulkanAdvancedScenePublicationState` in `TryPrepareAdvancedVisibilityFamily` boxes Silk.NET handles (about 3.3 KB for each of seven compares). Most other owners are also generated equality over Silk.NET handles (native closure compares, `Extent3D`, compute pipeline), interpolated resource names, target signature arrays, and a readiness closure. `TryValidateAdvancedVisibilityTarget` runs before the TargetClosure probe, so its arrays are in the unprobed bytes.
+- Collect-thread allocations outside the Vulkan family: `XRViewport.CollectVisible` calls `GetUpdatingCommandCount` (LINQ `Sum` over a dictionary) with all result consumers commented out.
+
+**Planned order.** One telemetry build first (collect stage timers, `_passGate` waits, commit split, primary-shadow consumption counter) together with the low-risk allocation fixes. Then the primary shadow gate (if confirmed), the low-risk transform store changes on the swap, the persistent covered row store (stage A), covered render-matrix handler removal, the dispatcher race fixes, the low-risk dispatcher simulation items, notification changes, the exact binding-set version, the bulk previous-palette copy, retained bounds rows, and the remaining allocation fixes. Dormant bones and the row store stage B come last, behind measurement, because most of their saving is on the update thread or they carry high risk. Re-measure collect against render work after each collect step: when collect falls below render work (about 14 ms), more collect savings do not shorten the frame.
+
+## GPU floor with locked clocks
+
+Status: measured on 2026-10-13 (laptop). The RTX 4070 Laptop GPU was locked at 2,595 MHz graphics and 8,101 MHz memory (P0, 65–68 °C). `Tools/Benchmarks/Sample-GpuFrameTime.ps1` sampled the GPU time of the frame command buffer for each completed frame inside accepted harness windows (shared mesh).
+
+| Chains | GPU ms mean | GPU ms p95 | Hz | Render | Swap | Collect | Update |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 3.84 | 4.34 | 172.2 | 5.21 | 0.68 | 0.23 | 0.41 |
+| 1,000 | 5.25 | 5.73 | 50.2 | 15.62 | 4.38 | 7.38 | 14.66 |
+| 2,000 | 6.99 | 7.89 | 30.2 | 26.06 | 7.11 | 16.48 | 31.07 |
+
+- The GPU time is about 3.7 ms fixed plus about 1.6 µs per chain. At 2,000 chains it is 7.0 ms, inside the 10 ms budget with about 3 ms to spare. The earlier values (8.8 ms in the Nsight trace, 12.6–15 ms in a throttled session) had lower clocks.
+- GPU utilization was 21–32% in the 2,000-chain window. The CPU sets the frame.
+- At 100 Hz the GPU would be busy about 70% of the time. A laptop can lose clock speed under that sustained load. Check the clocks in a sustained test when the CPU frame allows 100 Hz.
+- CPU budget: at 1 chain, render plus swap is 5.9 ms. At 2,000 chains it is 33.2 ms, so the critical path grows by about 13.6 µs per chain. To reach 10 ms, the cost per chain on the critical path must fall to about 2 µs, or the fixed cost must fall as well.
+- The frozen-scene ceiling flag was not built. Freezing Advanced preparation needs the split of stable rows from per-frame bindings, which is the same work as the retained template item. The GPU floor and the chain-count ladder answer the hardware question instead.
 
 ## Measurement notes
 
@@ -390,11 +552,13 @@ The bounds stage had copied each scene's renderer route table (2,000 entries, un
 - GPU clock samples were sometimes empty, and clocks moved between P0 and P5.
 - `invoke_method` serializes at most 20 public properties of a struct or object. It now lists the rest in `omittedProperties`. A 21st dispatcher property once hid `OutputPageDiagnostics` from the harness, so expose new diagnostics through methods.
 - Pass `-LadderChainCounts` as one comma-separated string. `pwsh -File` does not pass arrays to a script.
-- To compare two binaries, build each into its own named session and alternate windows between them. For a baseline, build from a temporary edit and remove the edit right after the build. Compare phase times relative to the update phase when a change does not touch it: the update phase shows machine slowdowns, for example thermal ones.
+- To compare two binaries, you cannot alternate `-NoBuild` restarts: each session start removes the build output of every stopped session (`$retainedStoppedSessionBuildCount = 0` in `Tools/Manage-McpEditorSession.ps1`). Build the baseline from a temporary edit, measure it, then rebuild the change; or compare several windows of each binary. For a baseline, remove the temporary edit right after the build. Compare phase times relative to the update phase when a change does not touch it: the update phase shows machine slowdowns, for example thermal ones.
 - Routine `Tools/Limit-AgentValidation.ps1` removes the build output of every stopped session, so a later `Start -NoBuild` fails with "The isolated build did not create ...". Run it only after the last `-NoBuild` restart of the task.
 - After a session name is rebuilt, `Start -NoBuild` with that name can resolve to an older session folder with the same name. Use a new session name for each binary.
 - A session can latch into rejecting every frame at startup (see the open faults). Check completed frame outcomes before reading any counter, because a latched session shows failure behavior, not the steady state. The harness readiness gate does this for timed windows.
-- MCP tool calls during a 2,000-chain benchmark can take several seconds and slow the frame. Keep probes out of timed windows.
+- MCP calls in `MainThread` dispatch mode run as app-thread jobs. Render frames can defer them for 50 ms, and a long app-thread job, such as the benchmark spawn, delays them for its full duration. Probe calls during a window took about 1.5–2.5 seconds including the client start. Keep probes out of timed windows.
+- After hours of builds and benchmark runs, the laptop throttles: the GPU reached 83 °C in power state P5, and the update phase grew by about 35%. Check `machineState.gpuClocks` and the update phase before you compare windows, and let the machine cool.
+- The cold-start latch (0 completed frames, every frame rejected) hit 4 of 5 fresh starts between 11:50 and 12:40 on 2026-10-13, with old and new binaries. A `-NoBuild` restart was healthy. Check the completed frame count about 45 seconds after a start, before a harness run.
 - The `dotnet-trace` sample profiler over-attributes time to `Monitor.Enter_Slowpath` and `BulkMoveWithWriteBarrier`, because it samples at safe points. Before you act on a lock in a sampled trace, confirm it with a contention trace: `dotnet-trace collect --providers "Microsoft-Windows-DotNETRuntime:0x4000:4,Microsoft-DotNETCore-SampleProfiler:0xF00000000000:4"`. `ContentionStart` carries the owner thread ID, and the sample stacks of the owner show what it held the lock for.
 - A traced window ran about 6% slower than an untraced window, so its call paths are representative.
 - The [profiling method](../../../developer-guides/rendering/physics-chain-performance.md#frame-loop-profiling-method) lists the tools: `Tools/Benchmarks/Invoke-McpStaticMethod.ps1` for stage timers, `Tools/Benchmarks/Summarize-SpeedscopeTrace.py` for sampled traces, and the contention-trace parser source.
@@ -405,9 +569,10 @@ The evidence files were disposable runs under `Build/_AgentValidation/`, and mos
 
 Follow the [todo priority order](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#priority-order). Measure each change in both mesh modes. After the 2026-10-12 changes, the critical path at 2,000 chains is the render callback (about 27 ms) plus the swap (about 7–8 ms). A sampled trace of the query-cache build divided the render callback as follows; the sampler is biased, so confirm each cost before you act:
 
-- `GPUPhysicsChainDispatcher.ProcessDispatches`: now 9.1 ms per frame by stage timers; see [dispatcher stages](#render-thread-dispatcher-stages). First find why the render callback did not shrink with it.
+- `GPUPhysicsChainDispatcher.ProcessDispatches`: about 9–10 ms per frame by stage timers; see [dispatcher stages](#render-thread-dispatcher-stages). The render callback does shrink with it; single windows had hidden the change.
 - Vulkan frame transaction, about 10 ms: `TryPreparePrimaryFrameData` about 5 ms.
-- Advanced render stage (`AdvancedPreparationExtractor.Build`), about 7 ms.
+- Advanced preparation build, about 5.5 ms per rebuild, of which extraction is about 3.8 ms after the [extraction changes](#advanced-preparation-extraction).
+- Repeat the extraction comparison in accepted windows on a cool machine.
 
 The read-only mapping pass of 2026-10-12 proposed items for each of these areas with locations, estimated savings, risks, and validation. The [critical-path mapping](physics-chain-critical-path-mapping-2026-10-12.md) keeps its full results.
 

@@ -147,6 +147,107 @@ full plan, that a pinned publication is reused, that a global change commits the
 retained rows unchanged, and that material, raster, geometry, transform, mesh,
 header, frame-gap, and membership changes run the full plan.
 
+### Extraction lookups
+
+`AdvancedPreparationExtractor.Build` reads each skinned draw's mesh preparation
+once. The pre-pass `TryPrepareCanonicalDeformationMeshes` keeps a ready mesh
+slice for each command (`AdvancedPreparedDeformationMesh`), and consecutive
+rows that draw one shared mesh use one preparation. `TryAddDeformation` reuses
+the stored slice while `AdvancedGpuDeformationResources.MeshSliceRevision` is
+unchanged and the mesh keeps its geometry revision, vertex count, and topology
+generation. Otherwise it calls `TryPrepareMesh` again. The revision advances
+when a frame opens, when the static generation changes or resets, and when a
+mesh slice is added or removed. Slice offsets do not move in other cases:
+copy-on-write keeps them, and a commit only appends rows.
+
+A covered draw captures its retained renderer output state once. The bounds
+route material check, the pose, and the history check use the same capture.
+`PhysicsChainMaterialBoundsContractMemo` keeps up to four material bounds
+contracts for one `Build`, keyed by the published material snapshot. A hit still
+requires the material to be current. The memo is cleared for each `Build`, so a
+shader change that does not advance a material version is seen in the next
+frame. `PhysicsChainMaterialBoundsContractMemoTests` cover it.
+
+A covered renderer without active blendshapes takes a fast path in
+`AdvancedGpuDeformationResources.TryGetOrAddPoseCore`: it skips
+`XRMeshRenderer.TryPrepareDeformationInputs`, because the retained palette
+replaces the renderer palette and the retained envelope proves the mesh,
+geometry revision, bind root, and bone layout. The full path runs until the
+renderer records GPU-owned bones (`HasGpuOwnedDeformationPose`), so a later loss
+of coverage still resets the CPU palette seed state. Covered rows also skip the
+CPU animation scheduler and use bone tier 0.
+
+### Visibility content generation
+
+After the indirect planner, `Build` compares its visibility columns with the
+columns of the last compared build (`AdvancedVisibilityContentWitness`): the
+payloads, the geometry producers, the indirect ranges, the range payload order,
+and the deformed-arena slices. The frame slots of a slice change in each frame,
+so the comparison ignores them; it compares the slice offsets and the other
+fields. `StableVisibilityContentGeneration` keeps its value while every column
+is equal, and it takes a new value from one process-wide counter when any column
+changes. `VisibilityContentGeneration` is different: it advances on each build
+and guards the mutable extractor columns. A deferred build does not compare, so
+the next successful build compares with the last successful content.
+`AdvancedSharedPreparationService.GetCurrentDiagnostics()` reports the
+cumulative counts in `VisibilityContent`: comparisons, unchanged comparisons,
+and the builds in which each column changed.
+
+### Vulkan visibility stream reuse
+
+Each Vulkan frame plan owns the stable-bin stream of its visibility family
+(`VulkanPreparedStableBinStream`). Frame plans are pooled for each frame slot,
+so one stream serves every second frame on desktop. The stream keeps its sealed
+records, bin headers, manifests, and submission plans across frames when every
+seal input is equal.
+
+Records and bin keys contain no frame binding:
+
+- A deformed record does not hold the deformation output buffer. The deformed
+  arena rotates three frame slots, so that buffer changes in each frame. The
+  record keeps only its vertex base inside the buffer
+  (`VulkanVisibilityGeometryRecordClosure.UsesDeformedVertexSource`), and its
+  manifest has no native use for the buffer. The bin key uses a fixed vertex
+  binding signature for deformed bins.
+- Records and keys do not contain the scene native generation, which advances
+  with each scene publication preparation. Each frame binds the generation to
+  the stream (`BoundSceneNativeGeneration`).
+- The static vertex and index slices come from the resident geometry cache.
+  They keep their identity while the cache entry stays resident.
+
+When the frame plan resets, `RetainForNextPlan` releases the template leases and
+clears the sealed state of the plan, but it keeps a valid seal. The next seal
+calls `TryReuseVisibilitySeal`. It keeps the stream only when these inputs are
+equal:
+
+- `VulkanVisibilitySealSignature`: the database epoch, the draw and geometry
+  table generations, the resident static vertex and index slices, the pass
+  index, the view mask, the frame-operation context of the bin keys, the
+  submission strategy, the lane capabilities, the output policy (with the output
+  reservation), the diagnostic plan, and the deformation history validity.
+- An exact row comparison of the visibility columns: payloads, producers,
+  indirect ranges, range payload order, and deformed-arena slices without their
+  frame slots. A deformed slice must also name the frame slots of this frame's
+  deformation output.
+- This frame's deformation output must cover the largest vertex extent of the
+  kept records.
+
+A kept stream binds the frame: the deformation output buffers, the scene native
+generation, and the geometry sources. It clears the raster pipelines, header
+native state, and shadow pipelines, which the raster pipeline step prepares
+again for the frame's target closure. That step binds the frame's deformation
+output into each deformed bin header. It validates range members once for each
+sealed content, because a kept stream has equal records and payloads. Recording
+checks each bin once: the stream must be bound to the scene publication of the
+frame, the bin's sources must be live, and the header must bind the vertex
+source of its records. The records of a bin share one index slice and vertex
+source through the bin key, so one check covers every member.
+
+Any other difference thaws the stream and seals it again with no change in
+behavior. `AdvancedVisibilityStreamReuseTelemetry.Capture()` reports the reuse
+count and the reseal count for each first reason
+(`EAdvancedVisibilityStreamReuseMiss`).
+
 ### Material payload slots
 
 `AdvancedMaterialDatabase` gives each material a fixed constant-word slot and

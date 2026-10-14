@@ -35,6 +35,9 @@ public sealed partial class GPUPhysicsChainDispatcher
     /// A repeated query reuses the renderer's last result while its witnesses are unchanged
     /// (see <see cref="PhysicsChainCommittedSpatialQuery"/>). The reuse takes only the renderer's
     /// own lock, so collection and scene publication do not contend with the render thread.
+    /// A resolve holds the query lock while it takes <c>_outputPageSync</c>,
+    /// <c>_cpuSpatialMaterialSync</c>, and the scene lock. Code that holds one of those locks
+    /// must not wait for a query lock.
     /// </remarks>
     public bool TryGetCommittedSpatialBounds(XRMeshRenderer renderer, out AABB bounds, out ulong generation)
     {

@@ -38,7 +38,7 @@ namespace XREngine.Editor.Mcp
 
         private Task? _listenerTask;
         private int _port;
-        private int _pendingServerStateRefresh;
+        private readonly McpServerStateRefreshScheduler _serverStateRefresh;
         private DateTimeOffset _startedUtc;
         private long _requestCounter;
         private readonly McpRateLimiter _rateLimiter = new();
@@ -93,6 +93,11 @@ namespace XREngine.Editor.Mcp
 
         private McpServerHost()
         {
+            _serverStateRefresh = new McpServerStateRefreshScheduler(
+                static () => Engine.IsComposingEditorPreferences,
+                UpdateServerState,
+                static () => Task.Delay(25),
+                static ex => Debug.LogException(ex));
         }
 
         public string? Prefix { get; private set; }
@@ -153,8 +158,10 @@ namespace XREngine.Editor.Mcp
                 $"effective_enabled={Engine.EditorPreferences.McpServerEnabled} " +
                 $"effective_port={Engine.EditorPreferences.McpServerPort}");
 
-            // Subscribe to preference changes
+            // Subscribe to preference changes. A composition of the effective preferences can
+            // raise property changes with partial values; the composed event follows it.
             Engine.EditorPreferences.PropertyChanged += Instance.OnPreferencesChanged;
+            Engine.EditorPreferencesChanged += Instance.OnEffectivePreferencesComposed;
 
             // Start if enabled in preferences (or via CLI)
             Instance.UpdateServerState();
@@ -194,30 +201,15 @@ namespace XREngine.Editor.Mcp
                 _ = BroadcastPromptsListChangedAsync(e.PropertyName ?? "server_state_change");
         }
 
-        private void ScheduleServerStateRefresh()
-        {
-            if (Interlocked.Exchange(ref _pendingServerStateRefresh, 1) != 0)
-                return;
+        private void OnEffectivePreferencesComposed(EditorPreferences preferences)
+            => ScheduleServerStateRefresh();
 
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    // Preference recomputation copies globals and then applies overrides.
-                    // Waiting one tick avoids reacting to the transient pre-override values.
-                    await Task.Delay(25).ConfigureAwait(false);
-                    UpdateServerState();
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogException(ex);
-                }
-                finally
-                {
-                    Interlocked.Exchange(ref _pendingServerStateRefresh, 0);
-                }
-            });
-        }
+        /// <summary>
+        /// Requests a server state refresh. The scheduler applies settled preferences only; see
+        /// <see cref="McpServerStateRefreshScheduler"/>.
+        /// </summary>
+        private void ScheduleServerStateRefresh()
+            => _serverStateRefresh.Request();
 
         private void UpdateServerState()
         {
@@ -309,6 +301,7 @@ namespace XREngine.Editor.Mcp
         public void Dispose()
         {
             Engine.EditorPreferences.PropertyChanged -= OnPreferencesChanged;
+            Engine.EditorPreferencesChanged -= OnEffectivePreferencesComposed;
             Stop();
         }
 
