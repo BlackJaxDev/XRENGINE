@@ -945,9 +945,11 @@ namespace XREngine.Rendering.Vulkan
                 EVulkanAdvancedSceneResourceFailure sceneFailure;
                 string sceneReason;
                 bool scenePrepared;
+                bool sceneReused = false;
                 if (familySceneState.IsValid && ReferenceEquals(familyScenePackage, stagePackage))
                 {
                     sceneState = familySceneState;
+                    sceneReused = true;
                     sceneFailure = EVulkanAdvancedSceneResourceFailure.None;
                     sceneReason = "Ready";
                     scenePrepared = true;
@@ -1006,12 +1008,14 @@ namespace XREngine.Rendering.Vulkan
                                     .RendererTerminal;
                     return false;
                 }
+                // A reused state is a copy of the family state, so only a newly
+                // prepared state needs the full record compare.
                 if (!familySceneState.IsValid)
                 {
                     familySceneState = sceneState;
                     familyScenePackage = stagePackage;
                 }
-                else if (familySceneState != sceneState)
+                else if (!sceneReused && familySceneState != sceneState)
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: the family stages resolved different canonical scene publications.";
@@ -2014,6 +2018,28 @@ namespace XREngine.Rendering.Vulkan
             return true;
         }
 
+        /// <summary>Expected attachment order of a single-sample advanced visibility target.</summary>
+        private static readonly EFrameBufferAttachment[] VisibilityTargetAttachments =
+        [
+            EFrameBufferAttachment.ColorAttachment0,
+            EFrameBufferAttachment.ColorAttachment1,
+            EFrameBufferAttachment.ColorAttachment2,
+            EFrameBufferAttachment.DepthStencilAttachment,
+        ];
+
+        /// <summary>
+        /// Expected attachment order of a multisample advanced visibility raster target. The fourth
+        /// color attachment holds the sample positions.
+        /// </summary>
+        private static readonly EFrameBufferAttachment[] MultisampleVisibilityTargetAttachments =
+        [
+            EFrameBufferAttachment.ColorAttachment0,
+            EFrameBufferAttachment.ColorAttachment1,
+            EFrameBufferAttachment.ColorAttachment2,
+            EFrameBufferAttachment.ColorAttachment3,
+            EFrameBufferAttachment.DepthStencilAttachment,
+        ];
+
         private static bool TryValidateAdvancedVisibilityTarget(
             in VulkanAdvancedVisibilityStageRequest request,
             VkFrameBuffer target,
@@ -2029,44 +2055,20 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            EFrameBufferAttachment[] expected = multisampleRaster
-                ? [
-                    EFrameBufferAttachment.ColorAttachment0,
-                    EFrameBufferAttachment.ColorAttachment1,
-                    EFrameBufferAttachment.ColorAttachment2,
-                    EFrameBufferAttachment.ColorAttachment3,
-                    EFrameBufferAttachment.DepthStencilAttachment,
-                ]
-                : [
-                    EFrameBufferAttachment.ColorAttachment0,
-                    EFrameBufferAttachment.ColorAttachment1,
-                    EFrameBufferAttachment.ColorAttachment2,
-                    EFrameBufferAttachment.DepthStencilAttachment,
-                ];
-            string[] names = multisampleRaster
-                ? [
-                    request.IdentityTargetName,
-                    request.MetadataTargetName,
-                    request.SelectionTargetName,
-                    AdvancedVisibilityResourceNames.SamplePositionMultisample,
-                    request.DepthTargetName,
-                ]
-                : [
-                    request.IdentityTargetName,
-                    request.MetadataTargetName,
-                    request.SelectionTargetName,
-                    request.DepthTargetName,
-                ];
+            ReadOnlySpan<EFrameBufferAttachment> expected = multisampleRaster
+                ? MultisampleVisibilityTargetAttachments
+                : VisibilityTargetAttachments;
             for (int index = 0; index < attachments.Length; ++index)
             {
+                string expectedName = GetExpectedVisibilityAttachmentName(in request, index, multisampleRaster);
                 if (attachments[index].Attachment != expected[index] ||
                     attachments[index].Target is not GenericRenderObject targetObject ||
                     !string.Equals(
                         targetObject.Name,
-                        names[index],
+                        expectedName,
                         StringComparison.Ordinal))
                 {
-                    reason = $"attachment {index} is not the expected '{names[index]}'/{expected[index]} resource";
+                    reason = $"attachment {index} is not the expected '{expectedName}'/{expected[index]} resource";
                     return false;
                 }
             }
@@ -2078,6 +2080,24 @@ namespace XREngine.Rendering.Vulkan
             reason = string.Empty;
             return true;
         }
+
+        /// <summary>
+        /// Gets the expected resource name of one visibility target attachment. The index order
+        /// matches <see cref="VisibilityTargetAttachments"/> or
+        /// <see cref="MultisampleVisibilityTargetAttachments"/>.
+        /// </summary>
+        private static string GetExpectedVisibilityAttachmentName(
+            in VulkanAdvancedVisibilityStageRequest request,
+            int index,
+            bool multisampleRaster)
+            => index switch
+            {
+                0 => request.IdentityTargetName,
+                1 => request.MetadataTargetName,
+                2 => request.SelectionTargetName,
+                3 when multisampleRaster => AdvancedVisibilityResourceNames.SamplePositionMultisample,
+                _ => request.DepthTargetName,
+            };
 
         /// <summary>
         /// Prepares one deferred cascade group for recording: the family's sealed

@@ -3,6 +3,7 @@ using XREngine.Components.Capture.Lights;
 using XREngine.Components.Capture.Lights.Types;
 using XREngine.Components.Lights;
 using XREngine.Data;
+using XREngine.Rendering;
 using XREngine.Rendering.Lightmapping;
 
 namespace XREngine.Scene
@@ -17,6 +18,8 @@ namespace XREngine.Scene
             PopulateLocalShadowRelevanceCameras(scratch);
             bool cullByCameraFrusta = RuntimeEngine.Rendering.Settings.CullShadowCollectionByCameraFrusta && !RuntimeEngine.VRState.IsInVR;
             bool gateShadowSwaps = cullByCameraFrusta;
+            // The relevance update above and the lightmap requests below stay in the light swap residual.
+            long stageMark = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
 
             using (RuntimeEngine.Profiler.Start("Lights3DCollection.SwapBuffers.DirectionalLights"))
             {
@@ -28,6 +31,7 @@ namespace XREngine.Scene
                         l.SwapBuffers(LightmapBaking);
                 }
             }
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SwapLightsDirectional);
 
             using (RuntimeEngine.Profiler.Start("Lights3DCollection.SwapBuffers.SpotLights"))
             {
@@ -54,22 +58,26 @@ namespace XREngine.Scene
                     }
                 }
             }
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SwapLightsLocal);
 
             using (RuntimeEngine.Profiler.Start("Lights3DCollection.SwapBuffers.ShadowAtlas"))
             {
                 PublishShadowAtlasFrame(collectVisibleNow: false, scratch);
             }
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SwapLightsAtlasPublication);
 
             using (RuntimeEngine.Profiler.Start("WorldInstance.GlobalSwapBuffers.LightmapBaking"))
             {
                 LightmapBaking.ProcessManualRequests();
             }
+            CollectVisibleStageTimings.Restart(ref stageMark);
 
             using (RuntimeEngine.Profiler.Start("Lights3DCollection.SwapBuffers.SceneCaptures"))
             {
                 foreach (SceneCaptureComponentBase sc in CaptureComponents)
                     sc.SwapBuffers();
             }
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SwapLightsCaptures);
 
         }
 

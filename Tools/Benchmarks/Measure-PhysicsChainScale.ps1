@@ -452,6 +452,253 @@ function Get-StageDifference([string]$Before, [string]$After, [long]$RenderedFra
     return $delta
 }
 
+function Get-OptionalValue($Object, [string]$Name) {
+    # Strict mode rejects a read of a missing property, and an older editor build can omit a field.
+    if ($null -eq $Object) { return $null }
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) { return $Object[$Name] }
+        return $null
+    }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
+}
+
+function Get-CounterDelta($Before, $After, [string]$Name) {
+    $old = Get-OptionalValue $Before $Name
+    $new = Get-OptionalValue $After $Name
+    if ($null -eq $old -or $null -eq $new) { return $null }
+    return [double]$new - [double]$old
+}
+
+function Get-Ratio($Numerator, $Denominator) {
+    if ($null -eq $Numerator -or $null -eq $Denominator -or [double]$Denominator -le 0) { return $null }
+    return [double]$Numerator / [double]$Denominator
+}
+
+function Get-SumDifferences($Before, $After, [string[]]$Names, $Calls, $CompletedFrames) {
+    # Each name must be a cumulative sum, so that the after value minus the before value is the window value.
+    # Never pass a maximum or a timestamp. Calls and CompletedFrames must come from the same captures as the sums.
+    $group = [ordered]@{
+        calls = $Calls
+        callsPerCompletedFrame = Get-Ratio $Calls $CompletedFrames
+    }
+    foreach ($name in $Names) {
+        $total = Get-CounterDelta $Before $After $name
+        $group[$name] = [ordered]@{
+            total = $total
+            perCompletedFrame = Get-Ratio $total $CompletedFrames
+            perCall = Get-Ratio $total $Calls
+        }
+    }
+    return $group
+}
+
+function Get-FrameStageSnapshots($ProfilerSnapshot) {
+    # get_render_profiler_stats captures these next to the phase totals, in the same response as the
+    # completed-frame count. Thus the same pair of snapshots brackets the stages and the frames.
+    $lifecycle = Get-OptionalValue $ProfilerSnapshot 'frame_lifecycle'
+    return [ordered]@{
+        collectStages = Get-OptionalValue $lifecycle 'collect_stages'
+        passGate = Get-OptionalValue $lifecycle 'pass_gate'
+        directionalShadowConsumption = Get-OptionalValue $lifecycle 'directional_shadow_consumption'
+    }
+}
+
+function Get-CollectStageDifferences($Before, $After, $CompletedFrames, $PhaseTimings) {
+    if ($null -eq $Before -or $null -eq $After) {
+        Write-Warning 'Collect and swap stage timings are not available in this editor build.'
+        return $null
+    }
+    $preBefore = Get-OptionalValue $Before 'pre_collect'
+    $preAfter = Get-OptionalValue $After 'pre_collect'
+    $lightsBefore = Get-OptionalValue $Before 'lights'
+    $lightsAfter = Get-OptionalValue $After 'lights'
+    $swapBefore = Get-OptionalValue $Before 'swap'
+    $swapAfter = Get-OptionalValue $After 'swap'
+    $swapLightsBefore = Get-OptionalValue $Before 'swap_lights'
+    $swapLightsAfter = Get-OptionalValue $After 'swap_lights'
+    $handoffBefore = Get-OptionalValue $Before 'handoff'
+    $handoffAfter = Get-OptionalValue $After 'handoff'
+    $collectCalls = Get-CounterDelta $Before $After 'collect_calls'
+    $swapCalls = Get-CounterDelta $Before $After 'swap_calls'
+    $views = [ordered]@{}
+    foreach ($view in @('main_view', 'primary_shadow', 'cascades', 'local_shadows', 'other_views')) {
+        $viewBefore = Get-OptionalValue $Before $view
+        $viewAfter = Get-OptionalValue $After $view
+        $views[$view] = Get-SumDifferences $viewBefore $viewAfter @('rows', 'total_ms', 'gpu_collection_ms',
+            'cpu_collection_ms', 'masked_family_ms', 'package_prepare_ms') (Get-CounterDelta $viewBefore $viewAfter 'calls') $CompletedFrames
+    }
+
+    # The stage totals use the same start and end timestamps as the frame-loop phase totals, so the
+    # remainders must be near zero. A large remainder shows a stage scope that did not close.
+    $collectTotal = Get-CounterDelta $Before $After 'collect_total_ms'
+    $swapTotal = Get-CounterDelta $Before $After 'swap_total_ms'
+    $phaseCollect = Get-OptionalValue $PhaseTimings 'collect'
+    $phaseSwap = Get-OptionalValue $PhaseTimings 'swap'
+    $phaseCollectMilliseconds = Get-OptionalValue $phaseCollect 'milliseconds'
+    $phaseCollectCalls = Get-OptionalValue $phaseCollect 'calls'
+    $phaseSwapMilliseconds = Get-OptionalValue $phaseSwap 'milliseconds'
+    $phaseSwapCalls = Get-OptionalValue $phaseSwap 'calls'
+
+    return [ordered]@{
+        collect = Get-SumDifferences $Before $After @('collect_total_ms', 'pre_collect_event_ms', 'collect_event_ms',
+            'post_collect_event_ms', 'collect_allocated_bytes') $collectCalls $CompletedFrames
+        preCollect = Get-SumDifferences $preBefore $preAfter @('transforms_ms', 'transform_store_publish_ms',
+            'pending_mesh_matrices_ms', 'scene_ms', 'scene_calls') (Get-CounterDelta $preBefore $preAfter 'calls') $CompletedFrames
+        sceneRefresh = Get-SumDifferences $preBefore $preAfter @('renderable_operations_ms', 'gpu_bounds_eligibility_ms',
+            'covered_command_refresh_ms', 'skinned_cpu_bounds_ms', 'cpu_tree_swap_ms', 'skinned_mesh_rows',
+            'gpu_bounds_eligible_rows', 'covered_command_source_rows') (Get-CounterDelta $preBefore $preAfter 'scene_calls') $CompletedFrames
+        lights = Get-SumDifferences $lightsBefore $lightsAfter @('planning_ms', 'shadow_collect_ms') (Get-CounterDelta $lightsBefore $lightsAfter 'calls') $CompletedFrames
+        views = $views
+        swap = Get-SumDifferences $Before $After @('swap_total_ms', 'swap_allocated_bytes') $swapCalls $CompletedFrames
+        swapSerial = Get-SumDifferences $swapBefore $swapAfter @('jobs_ms', 'world_ms', 'viewports_ms') $swapCalls $CompletedFrames
+        # world_calls counts each world swap. world_ms is one value for each serial swap and covers all
+        # world-swap subscribers, so only swapSerial divides it.
+        worldSwap = Get-SumDifferences $swapBefore $swapAfter @('transforms_ms', 'transform_store_publish_ms',
+            'pending_mesh_matrices_ms', 'lights_ms', 'advanced_global_capture_ms', 'scene_ms', 'covered_sources_ms',
+            'cpu_tree_ms', 'scene_commands_ms', 'advanced_publication_ms') (Get-CounterDelta $swapBefore $swapAfter 'world_calls') $CompletedFrames
+        mainViewSwap = Get-SumDifferences $swapBefore $swapAfter @('main_view_swap_ms') (Get-CounterDelta $swapBefore $swapAfter 'main_view_swap_calls') $CompletedFrames
+        swapLights = Get-SumDifferences $swapLightsBefore $swapLightsAfter @('directional_ms', 'local_ms',
+            'atlas_publication_ms', 'captures_ms') (Get-CounterDelta $swapLightsBefore $swapLightsAfter 'calls') $CompletedFrames
+        handoff = [ordered]@{
+            # perCall is the mean time from a render dispatch start to the collect-thread release.
+            renderUntilCollectRelease = Get-SumDifferences $handoffBefore $handoffAfter @('render_until_collect_release_ms') (Get-CounterDelta $handoffBefore $handoffAfter 'render_until_collect_release_calls') $CompletedFrames
+            # perCall is the share of collect iterations that found the render release already set.
+            collectIterations = Get-SumDifferences $handoffBefore $handoffAfter @('collect_finished_after_release') (Get-CounterDelta $handoffBefore $handoffAfter 'collect_iterations') $CompletedFrames
+        }
+        phaseCrossCheck = [ordered]@{
+            collectTotalMinusPhaseCollectMilliseconds = $(if ($null -ne $collectTotal -and $null -ne $phaseCollectMilliseconds) { $collectTotal - [double]$phaseCollectMilliseconds } else { $null })
+            collectCallsMinusPhaseCollectCalls = $(if ($null -ne $collectCalls -and $null -ne $phaseCollectCalls) { $collectCalls - [double]$phaseCollectCalls } else { $null })
+            swapTotalMinusPhaseSwapMilliseconds = $(if ($null -ne $swapTotal -and $null -ne $phaseSwapMilliseconds) { $swapTotal - [double]$phaseSwapMilliseconds } else { $null })
+            swapCallsMinusPhaseSwapCalls = $(if ($null -ne $swapCalls -and $null -ne $phaseSwapCalls) { $swapCalls - [double]$phaseSwapCalls } else { $null })
+        }
+    }
+}
+
+function Get-PassGateDifferences($Before, $After, $CompletedFrames) {
+    if ($null -eq $Before -or $null -eq $After) {
+        Write-Warning 'Transform pass-gate telemetry is not available in this editor build.'
+        return $null
+    }
+    $beforeCaptured = Get-OptionalValue $Before 'captured_timestamp'
+    $sites = [ordered]@{}
+    foreach ($siteName in @('publish_pre_collect', 'publish_swap', 'publish_other', 'process', 'flush_hierarchy')) {
+        $siteBefore = Get-OptionalValue $Before $siteName
+        $siteAfter = Get-OptionalValue $After $siteName
+        if ($null -eq $siteBefore -or $null -eq $siteAfter) {
+            $sites[$siteName] = $null
+            continue
+        }
+        # The entry count is the call count of a site, so perCall is the value for each gate entry.
+        $site = Get-SumDifferences $siteBefore $siteAfter @('contended_entries', 'wait_ms', 'hold_ms', 'hold_notify_ms',
+            'published_rows', 'notified_owners', 'reentrant_skips', 'waits_under_50_us', 'waits_50_to_250_us',
+            'waits_250_us_to_1_ms', 'waits_1_to_4_ms', 'waits_at_least_4_ms', 'blocked_by_process',
+            'blocked_by_publication', 'blocked_by_other', 'blocked_by_unknown') (Get-CounterDelta $siteBefore $siteAfter 'entries') $CompletedFrames
+        $site['waitMillisecondsPerContendedEntry'] = Get-Ratio $site['wait_ms']['total'] $site['contended_entries']['total']
+        $waits1To4 = $site['waits_1_to_4_ms']['total']
+        $waitsAtLeast4 = $site['waits_at_least_4_ms']['total']
+        $waitsAtLeast1 = $(if ($null -ne $waits1To4 -and $null -ne $waitsAtLeast4) { $waits1To4 + $waitsAtLeast4 } else { $null })
+        $site['waitsAtLeast1Ms'] = [ordered]@{
+            total = $waitsAtLeast1
+            perCompletedFrame = Get-Ratio $waitsAtLeast1 $CompletedFrames
+            perCall = Get-Ratio $waitsAtLeast1 $site['calls']
+        }
+        # The maximum wait is a high-water value for the process lifetime, not a sum, so it is never
+        # subtracted. It belongs to this window only when it ended at or after the first capture.
+        $maxWait = Get-OptionalValue $siteAfter 'max_wait_ms'
+        $maxTimestamp = Get-OptionalValue $siteAfter 'max_wait_timestamp'
+        $maxInWindow = $null -ne $maxWait -and $null -ne $maxTimestamp -and $null -ne $beforeCaptured -and
+            [long]$maxTimestamp -gt 0 -and [long]$maxTimestamp -ge [long]$beforeCaptured
+        $site['maxWaitLifetimeMilliseconds'] = $maxWait
+        $site['maxWaitInWindowMilliseconds'] = $(if ($maxInWindow) { [double]$maxWait } else { $null })
+        $sites[$siteName] = $site
+    }
+    return $sites
+}
+
+function Get-DirectionalShadowDifferences($Before, $After, $CompletedFrames) {
+    if ($null -eq $Before -or $null -eq $After) {
+        Write-Warning 'Directional shadow consumption counts are not available in this editor build.'
+        return $null
+    }
+    $needBefore = Get-OptionalValue $Before 'need'
+    $needAfter = Get-OptionalValue $After 'need'
+    $legacyBefore = Get-OptionalValue $Before 'legacy'
+    $legacyAfter = Get-OptionalValue $After 'legacy'
+    $cascadesBefore = Get-OptionalValue $Before 'cascades'
+    $cascadesAfter = Get-OptionalValue $After 'cascades'
+    $passes = Get-CounterDelta $Before $After 'shadow_collect_passes'
+    return [ordered]@{
+        # perCall is the value for each shadow collect pass.
+        perShadowCollectPass = Get-SumDifferences $Before $After @('light_collect_calls', 'primary_collections',
+            'primary_swaps', 'primary_swap_ms', 'primary_swapped_mesh_commands', 'atlas_primary_decisions',
+            'needs_primary_viewport_true', 'needs_primary_viewport_no_relevant_viewport', 'needs_primary_viewport_false',
+            'atlas_primary_submitted', 'atlas_primary_dirty', 'primary_tile_render_attempts', 'primary_tile_collect_now',
+            'primary_tile_renders', 'primary_package_render_reads') $passes $CompletedFrames
+        # perCall is the value for each primary shadow view swap.
+        primarySwap = Get-SumDifferences $Before $After @('primary_swap_ms', 'primary_swapped_mesh_commands') (Get-CounterDelta $Before $After 'primary_swaps') $CompletedFrames
+        # perCall is the share of the light collections. The need counts add up to the light collections.
+        need = Get-SumDifferences $needBefore $needAfter @('none', 'cascades_disabled', 'no_cascade_receiver',
+            'no_published_cascades', 'no_render_world', 'primary_viewport', 'no_relevant_viewport') (Get-CounterDelta $Before $After 'light_collect_calls') $CompletedFrames
+        legacy = Get-SumDifferences $legacyBefore $legacyAfter @('render_calls', 'collect_now', 'primary_render_attempts',
+            'primary_renders', 'cascade_render_calls') $passes $CompletedFrames
+        # perCall is the share of the cascade source collections.
+        cascades = Get-SumDifferences $cascadesBefore $cascadesAfter @('skip_disabled', 'skip_no_cascades',
+            'skip_no_atlas_render_request', 'gpu_packages', 'group_collections', 'group_skip_no_collection_request',
+            'viewport_collections', 'tile_renders', 'group_renders', 'render_collect_now') (Get-CounterDelta $cascadesBefore $cascadesAfter 'source_collect_calls') $CompletedFrames
+    }
+}
+
+function Get-DispatcherStageTimings {
+    # An older editor build has no CaptureStageTimings method. Then this probe returns null, and the
+    # window continues without dispatcher stage times, as it does for a missing profiler snapshot.
+    try {
+        $data = Invoke-ScaleTool 'invoke_method' @{ type_name = 'GPUPhysicsChainDispatcher'; method_name = 'CaptureStageTimings'; arguments = @() }
+    }
+    catch {
+        Write-Warning "Could not read the dispatcher stage timings: $($_.Exception.Message)"
+        return $null
+    }
+    return Get-OptionalValue (Get-OptionalValue $data 'result') 'properties'
+}
+
+function Get-DispatcherStageDifferences($Before, $After, [double]$WindowSeconds, [double]$CompletedHz) {
+    if ($null -eq $Before -or $null -eq $After) {
+        Write-Warning 'Dispatcher stage timings are not available in this editor build.'
+        return $null
+    }
+    # This probe is not part of the profiler snapshots that count completed frames. The dispatch count from
+    # the same probe gives the values for each dispatch (perCall). The completed frames of the probe window
+    # are an estimate: completedHz multiplied by the time between the two probes.
+    $estimatedFrames = $(if ($WindowSeconds -gt 0 -and $CompletedHz -gt 0) { $CompletedHz * $WindowSeconds } else { $null })
+    $calls = Get-CounterDelta $Before $After 'Calls'
+    $detailBefore = Get-OptionalValue (Get-OptionalValue $Before 'Detail') 'properties'
+    $detailAfter = Get-OptionalValue (Get-OptionalValue $After 'Detail') 'properties'
+    # Only these commit parts run inside the output-page commit. The backend batch and the commit
+    # remainder run on each dispatch that gets to the commit stage, also when it commits no output page.
+    $commitPageNames = @('CommitPageLockWaitMilliseconds', 'CommitFenceMilliseconds', 'CommitPageStateMilliseconds',
+        'CommitCollectNotificationsMilliseconds', 'CommitNotifyMilliseconds')
+    $commitNames = @('CommitBackendBatchMilliseconds') + $commitPageNames + @('CommitOtherMilliseconds')
+    return [ordered]@{
+        windowSeconds = $WindowSeconds
+        estimatedCompletedFrames = $estimatedFrames
+        stages = Get-SumDifferences $Before $After @('TotalMilliseconds', 'PollReceiptsMilliseconds',
+            'ConfirmSpatialMilliseconds', 'AcceptInputsMilliseconds', 'PrepareArenaMilliseconds', 'SimulationMilliseconds',
+            'SelectiveReadbackMilliseconds', 'CollectBindingsMilliseconds', 'PaletteMatricesMilliseconds',
+            'PreviousPaletteMilliseconds', 'BoundsMilliseconds', 'CommitMilliseconds', 'FinalizeOwnershipMilliseconds',
+            'PaletteSourcesMilliseconds', 'CompleteUpdatesMilliseconds') $calls $estimatedFrames
+        detail = Get-SumDifferences $detailBefore $detailAfter (@('BoundsRoutesMilliseconds', 'BoundsRowsMilliseconds',
+            'BoundsSceneCopyMilliseconds', 'SimTreeParamsMilliseconds', 'SimActiveWorkMilliseconds',
+            'SimUploadRangesMilliseconds', 'SimUploadCollidersMilliseconds', 'SimUploadOtherMilliseconds') +
+            $commitNames + @('CommittedOutputPages', 'CommitNotifications')) $calls $estimatedFrames
+        # perCall is the value for each committed output page. CommitNotifications perCall is the
+        # number of renderer notifications for each commit. The detail group gives the backend batch
+        # and the commit remainder for each dispatch.
+        commitPerOutputPage = Get-SumDifferences $detailBefore $detailAfter ($commitPageNames + @('CommitNotifications')) (Get-CounterDelta $detailBefore $detailAfter 'CommittedOutputPages') $estimatedFrames
+    }
+}
+
 try {
     if ($CpuTraceSeconds -gt 0 -and $CpuTraceSeconds -gt $WindowSeconds - 5) {
         throw 'The CPU trace must end at least five seconds before the measurement window.'
@@ -726,6 +973,11 @@ try {
     $beforeDispatcher = Get-DispatcherSnapshot
     $beforeDispatcher | ConvertTo-Json -Depth 40 |
         Set-Content -LiteralPath (Join-Path $outputPath "$safeLabel-dispatcher-before.json") -Encoding UTF8
+    # Always-on cumulative dispatcher stage times, read in every window. The clock measures the probe
+    # window, which is longer than the window of the profiler snapshots.
+    $beforeDispatcherStageTimings = Get-DispatcherStageTimings
+    $dispatcherStageClock = [System.Diagnostics.Stopwatch]::StartNew()
+    $summary.dispatcherStageTimingsBefore = $beforeDispatcherStageTimings
     $beforeFailures = [long]$beforeDispatcher.DispatchDiagnostics.properties.FailureCount
     $beforeProducerEpoch = [long]$beforeDispatcher.OutputPageDiagnostics.properties.ProducerEpoch
     $beforeInputPages = $beforeDispatcher.InputPageDiagnostics.properties
@@ -795,6 +1047,8 @@ try {
     $summary.completedHz = $delta.completed / $timer.Elapsed.TotalSeconds
     $summary.outcomeChanges = $delta
     $summary.phaseTimings = Get-PhaseTimings $beforeProfilerSnapshot $afterProfilerSnapshot $delta.completed
+    $summary.frameStageSnapshotsBefore = Get-FrameStageSnapshots $beforeProfilerSnapshot
+    $summary.frameStageSnapshotsAfter = Get-FrameStageSnapshots $afterProfilerSnapshot
     $summary.samples = @($samples.ToArray())
     $summary.machineState.gpuClocks = [ordered]@{
         source = $(if ($null -ne $script:nvidiaSmiPath) { 'nvidia-smi' } else { 'unavailable' })
@@ -825,6 +1079,9 @@ try {
     $afterDispatcher = Get-DispatcherSnapshot
     $afterDispatcher | ConvertTo-Json -Depth 40 |
         Set-Content -LiteralPath (Join-Path $outputPath "$safeLabel-dispatcher-after.json") -Encoding UTF8
+    $afterDispatcherStageTimings = Get-DispatcherStageTimings
+    $dispatcherStageClock.Stop()
+    $summary.dispatcherStageTimingsAfter = $afterDispatcherStageTimings
     if ($SubmissionStrategy -eq 'GpuIndirectZeroReadback' -and
         ([long]$afterDispatcher.ReadbackDiagnostics.properties.SubmittedCount -ne
             [long]$beforeDispatcher.ReadbackDiagnostics.properties.SubmittedCount)) {
@@ -922,6 +1179,16 @@ try {
     $summary.inputPagesAfter = $afterInputPages
     $summary.samples = @($samples.ToArray())
     $summary.dispatcherDifferences = Get-NumericDifferences $beforeDispatcher $afterDispatcher
+    $summary.dispatcherStageTimingDifferences = Get-NumericDifferences $beforeDispatcherStageTimings $afterDispatcherStageTimings
+    # Each group divides by counters from its own captures. The completed frames come from the same
+    # profiler snapshots that hold the collect, pass-gate and shadow snapshots.
+    $summary.stageDifferences = [ordered]@{
+        completedFrames = $delta.completed
+        collectStages = Get-CollectStageDifferences $summary.frameStageSnapshotsBefore.collectStages $summary.frameStageSnapshotsAfter.collectStages $delta.completed $summary.phaseTimings
+        passGate = Get-PassGateDifferences $summary.frameStageSnapshotsBefore.passGate $summary.frameStageSnapshotsAfter.passGate $delta.completed
+        directionalShadowConsumption = Get-DirectionalShadowDifferences $summary.frameStageSnapshotsBefore.directionalShadowConsumption $summary.frameStageSnapshotsAfter.directionalShadowConsumption $delta.completed
+        dispatcher = Get-DispatcherStageDifferences $beforeDispatcherStageTimings $afterDispatcherStageTimings $dispatcherStageClock.Elapsed.TotalSeconds $summary.completedHz
+    }
     if ($Telemetry) {
         $worldDifferences = Get-NumericDifferences $beforeTelemetry.worldLateTick $afterTelemetry.worldLateTick
         $collectionDifferences = Get-NumericDifferences $beforeTelemetry.collection $afterTelemetry.collection

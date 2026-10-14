@@ -100,9 +100,20 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
     private static bool HasOutput(VulkanPhysicalImageGroup group, Format format, VulkanPhysicalImageGroup reference)
         => HasImage(group, format, ImageUsageFlags.StorageBit) && HasSameExtent(group, reference);
 
+    /// <summary>
+    /// Compares the resolved extents field by field and then the layer counts. Silk.NET
+    /// <see cref="Extent3D"/> has no typed equality, so this avoids the boxing
+    /// <c>ValueType.Equals</c> call.
+    /// </summary>
     private static bool HasSameExtent(VulkanPhysicalImageGroup left, VulkanPhysicalImageGroup right)
-        => left.ResolvedExtent.Equals(right.ResolvedExtent) &&
-           Math.Max(1u, left.Template.Layers) == Math.Max(1u, right.Template.Layers);
+    {
+        Extent3D leftExtent = left.ResolvedExtent;
+        Extent3D rightExtent = right.ResolvedExtent;
+        return leftExtent.Width == rightExtent.Width &&
+               leftExtent.Height == rightExtent.Height &&
+               leftExtent.Depth == rightExtent.Depth &&
+               Math.Max(1u, left.Template.Layers) == Math.Max(1u, right.Template.Layers);
+    }
 
     private bool CheckFroxels(in ResourcePlannerRuntimeState plannerState, string name, ref VulkanFrozenBufferBarrier buffer, ulong tiles, out string reason)
     {

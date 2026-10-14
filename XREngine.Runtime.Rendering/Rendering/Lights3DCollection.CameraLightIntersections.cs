@@ -68,9 +68,15 @@ namespace XREngine.Scene
             return Matches(RuntimeEngine.VRState.LeftEyeViewport) || Matches(RuntimeEngine.VRState.RightEyeViewport);
         }
 
-        internal bool NeedsPrimaryDirectionalShadowMap()
+        /// <summary>
+        /// Returns true when an active window or VR eye viewport that targets this world has a camera that prefers the
+        /// primary directional shadow map. It also returns true when no such viewport with a camera exists.
+        /// <paramref name="noRelevantViewport"/> is true only in that second case.
+        /// </summary>
+        internal bool NeedsPrimaryDirectionalShadowMap(out bool noRelevantViewport)
         {
             bool sawRelevantViewport = false;
+            noRelevantViewport = false;
 
             bool PrefersPrimary(XRViewport? viewport)
             {
@@ -96,7 +102,8 @@ namespace XREngine.Scene
             if (PrefersPrimary(RuntimeEngine.VRState.LeftEyeViewport) || PrefersPrimary(RuntimeEngine.VRState.RightEyeViewport))
                 return true;
 
-            return !sawRelevantViewport;
+            noRelevantViewport = !sawRelevantViewport;
+            return noRelevantViewport;
         }
 
         private XRCamera? ResolveDirectionalShadowSourceCamera(ShadowRequestSource source)

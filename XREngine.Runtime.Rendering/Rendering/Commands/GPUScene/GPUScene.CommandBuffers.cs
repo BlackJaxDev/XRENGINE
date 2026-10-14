@@ -115,7 +115,11 @@ namespace XREngine.Rendering.Commands
                 }
                 PublishMeshSubmissionIfRequested();
                 using (RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers.AdvancedPublication"))
+                {
+                    long advancedPublicationStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
                     PublishAdvancedResidentSceneIfRequested();
+                    CollectVisibleStageTimings.End(ECollectVisibleStage.SwapAdvancedPublication, advancedPublicationStart);
+                }
 
                 if (_useInternalBvh && !_commandAabbBackfillRequired)
                     _commandAabbPublishedContentVersion = _lastSwappedCommandsContentVersion;

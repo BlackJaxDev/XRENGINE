@@ -171,7 +171,9 @@ namespace XREngine.Scene
             if (IsGpuCulling || commands.RequiresFullResidentAuthoredCollection)
             {
                 using var gpuSample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                long gpuPathStart = CollectVisibleStageTimings.StartPath();
                 visibleRenderables = CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors, modelDiagActive, allowGpuCollection);
+                CollectVisibleStageTimings.EndPath(ECollectVisiblePath.GpuCollection, gpuPathStart, visibleRenderables);
             }
             else
             {
@@ -179,6 +181,7 @@ namespace XREngine.Scene
                 I3DRenderTree<RenderInfo3D> cpuTree = ActiveCpuRenderTree;
                 int cpuCommandsBefore = commands.GetUpdatingCommandCount();
                 long collectStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                long cpuPathStart = CollectVisibleStageTimings.StartPath();
                 using var cpuSample = RuntimeEngine.Profiler.Start(
                     _cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh
                         ? "VisualScene3D.CollectRenderedItems.CpuBvh"
@@ -200,6 +203,7 @@ namespace XREngine.Scene
                 {
                     contextStack.Pop();
                 }
+                CollectVisibleStageTimings.EndPath(ECollectVisiblePath.CpuCollection, cpuPathStart, visibleRenderables);
 
                 long collectTicks = System.Diagnostics.Stopwatch.GetTimestamp() - collectStart;
                 int emittedCommands = Math.Max(0, commands.GetUpdatingCommandCount() - cpuCommandsBefore);
@@ -264,11 +268,19 @@ namespace XREngine.Scene
 
         public override void GlobalCollectVisible()
         {
+            long stageMark = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.Collect);
             base.GlobalCollectVisible();
             SyncCpuSceneCullingStructurePreference();
             ProcessPendingRenderableOperations();
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SceneRenderableOperations);
             RefreshGpuBoundsEligibility();
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SceneGpuBoundsEligibility);
             RefreshCoveredCommandSources();
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SceneCoveredCommandRefresh);
+            CollectVisibleStageTimings.AddSceneRefreshRows(
+                _skinnedMeshes.Count,
+                _gpuBoundsEligibleRenderables.Count,
+                _coveredCommandSources.Count);
 
             if (_isGpuDispatchActive)
                 ActiveCpuRenderTree.Swap();
@@ -279,8 +291,10 @@ namespace XREngine.Scene
                     EvaluateSkinCullRejectDiagnostics(_collectGen);
                 _collectGen++;
                 RefreshSkinnedCpuCullingBounds();
+                CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SceneSkinnedCpuBounds);
                 ActiveCpuRenderTree.Swap();
             }
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SceneCpuTreeSwap);
         }
 
         // Per-collect generation counter for the SkinCullRejectDiag stage log. Incremented once per
@@ -325,7 +339,9 @@ namespace XREngine.Scene
         public override void GlobalSwapBuffers()
         {
             SyncCpuGpuCommandMirrorState();
+            long coveredSourcesStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
             PublishCoveredCommandSources();
+            CollectVisibleStageTimings.End(ECollectVisibleStage.SwapCoveredSources, coveredSourcesStart);
             base.GlobalSwapBuffers();
             ProcessQueuedRaycasts();
             SwapBuffersHook?.Invoke(this);
