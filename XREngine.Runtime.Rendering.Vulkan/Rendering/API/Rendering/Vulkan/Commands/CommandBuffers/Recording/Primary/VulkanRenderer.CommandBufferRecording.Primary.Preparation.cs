@@ -1853,40 +1853,6 @@ namespace XREngine.Rendering.Vulkan
                     ? 0b11u
                     : 0b1u;
             }
-            // Visibility raster is canonical-geometry-only. Ordinary resident
-            // ingress may coexist for other passes, but it must never decide
-            // which geometry address space this ABI consumes.
-            bins.ThawForReuse();
-            S13aPublicationTelemetry.StepProbe geometryProbe =
-                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
-            bool geometryBuilt = bins.TryBuildVisibilityGeometryStream(
-                    ResourceRuntime,
-                    input.Payloads,
-                    input.Producers,
-                    input.DeformationSlices,
-                    input.DeformationPublication,
-                    package,
-                    in sceneState,
-                    passIndex,
-                    outputViewMask,
-                    in context,
-                    out reason);
-            geometryProbe.End(S13aAdvancedFamilyStep.BinGeometryStream);
-            if (!geometryBuilt)
-                return false;
-            S13aPublicationTelemetry.StepProbe manifestProbe =
-                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
-            bool manifestsResolved = bins.TryResolveManifests(
-                    ResourceRuntime.ResidentDrawTemplates
-                        .StableBinManifestCache,
-                    package.CanonicalScenePublication.TopologyGeneration,
-                    out VulkanBinResourceManifestFailure manifestFailure);
-            manifestProbe.End(S13aAdvancedFamilyStep.BinManifests);
-            if (!manifestsResolved)
-            {
-                reason = $"canonical visibility atlas manifests could not be sealed: {manifestFailure}";
-                return false;
-            }
             GpuDiagnosticReadbackPlanNode? diagnosticNode = null;
             ReadOnlySpan<GpuDiagnosticReadbackPlan> diagnostics =
                 package.DiagnosticReadbackPlans;
@@ -1936,6 +1902,84 @@ namespace XREngine.Rendering.Vulkan
                 reason = outputPolicy.DescribeCanonicalVisibilityRejection();
                 return false;
             }
+
+            // A stream sealed by an earlier frame of this frame plan is kept when
+            // every seal input is equal; only the frame bindings are applied again.
+            AdvancedGpuDeformationPublication deformationPublication =
+                input.DeformationPublication;
+            bool hasSignature = package.TryGetCanonicalPublicationSnapshot(
+                out AdvancedGpuScenePublicationSnapshot canonicalPublication);
+            VulkanVisibilitySealSignature signature = hasSignature
+                ? new VulkanVisibilitySealSignature(
+                    canonicalPublication.DatabaseEpoch,
+                    canonicalPublication.Draws.Generations,
+                    canonicalPublication.Geometry.Generations,
+                    sceneState.StaticVertices,
+                    sceneState.Indices,
+                    passIndex,
+                    outputViewMask,
+                    VulkanRenderBinContextCompatibility.Create(in context),
+                    resolution.Resolved,
+                    capabilities,
+                    outputPolicy,
+                    diagnosticNode,
+                    deformationPublication.PreviousOutputValid)
+                : default;
+            EAdvancedVisibilityStreamReuseMiss reuseMiss =
+                EAdvancedVisibilityStreamReuseMiss.NoRetainedStream;
+            if (hasSignature &&
+                bins.TryReuseVisibilitySeal(
+                    ResourceRuntime,
+                    in signature,
+                    input.Payloads,
+                    input.Producers,
+                    input.DeformationSlices,
+                    input.IndirectRanges,
+                    input.IndirectPayloadIndices,
+                    in deformationPublication,
+                    in sceneState,
+                    out reuseMiss))
+            {
+                AdvancedVisibilityStreamReuseTelemetry.RecordReuse();
+                reason = "Ready";
+                return true;
+            }
+            AdvancedVisibilityStreamReuseTelemetry.RecordReseal(reuseMiss);
+
+            // Visibility raster is canonical-geometry-only. Ordinary resident
+            // ingress may coexist for other passes, but it must never decide
+            // which geometry address space this ABI consumes.
+            bins.ThawForReuse();
+            S13aPublicationTelemetry.StepProbe geometryProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+            bool geometryBuilt = bins.TryBuildVisibilityGeometryStream(
+                    ResourceRuntime,
+                    input.Payloads,
+                    input.Producers,
+                    input.DeformationSlices,
+                    deformationPublication,
+                    package,
+                    in sceneState,
+                    passIndex,
+                    outputViewMask,
+                    in context,
+                    out reason);
+            geometryProbe.End(S13aAdvancedFamilyStep.BinGeometryStream);
+            if (!geometryBuilt)
+                return false;
+            S13aPublicationTelemetry.StepProbe manifestProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+            bool manifestsResolved = bins.TryResolveManifests(
+                    ResourceRuntime.ResidentDrawTemplates
+                        .StableBinManifestCache,
+                    package.CanonicalScenePublication.TopologyGeneration,
+                    out VulkanBinResourceManifestFailure manifestFailure);
+            manifestProbe.End(S13aAdvancedFamilyStep.BinManifests);
+            if (!manifestsResolved)
+            {
+                reason = $"canonical visibility atlas manifests could not be sealed: {manifestFailure}";
+                return false;
+            }
             S13aPublicationTelemetry.StepProbe submissionProbe =
                 S13aPublicationTelemetry.BeginAdvancedFamilyStep();
             bool plansSealed = bins.TrySealSubmissionPlans(
@@ -1956,6 +2000,16 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            if (hasSignature)
+            {
+                bins.RetainVisibilitySeal(
+                    in signature,
+                    input.Payloads,
+                    input.Producers,
+                    input.DeformationSlices,
+                    input.IndirectRanges,
+                    input.IndirectPayloadIndices);
+            }
             reason = "Ready";
             return true;
         }

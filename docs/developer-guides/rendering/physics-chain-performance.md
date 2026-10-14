@@ -395,7 +395,7 @@ Physics-chain per-tree parameter updates no longer allocate through `ToArray()`,
 
 ### Transfer Bandwidth
 
-The GPU path separates static particle metadata from dynamic state. Stable scenes avoid static-data uploads. The direct upload path skips unchanged colliders by version. The mapped input-page path does not: it writes every collider and the full transform catalog into each page. A per-bank version record is an open [code item](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md#physics-steady-state).
+The GPU path separates static particle metadata from dynamic state. Stable scenes avoid static-data uploads. The direct upload path skips unchanged colliders by version. The mapped input-page path does not: it writes every collider and the full transform catalog into each page. A per-bank version record is an open [code item](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md#physics-inputs-at-the-render-rate).
 
 Batched mode has been reevaluated around resident-buffer copy churn so combined-buffer work can be measured separately from upload and readback bandwidth.
 
@@ -458,7 +458,25 @@ records the code paths they point to.
 
    Start the harness window with `-UseExistingSession`, wait for
    `<label>-window-start.json`, then call the probe, wait about 10 seconds,
-   and call it again.
+   and call it again. The same method works for
+   `RenderCallbackStageTimings.Capture` (the parts of the window render
+   callback: pre-render, viewports, and the backend frame) and
+   `AdvancedSharedPreparationService.GetCurrentDiagnostics` (Advanced
+   preparation build, extraction, and lock-wait ticks in `SharedTelemetry`).
+   The dispatcher capture nests its bounds and simulation sub-stages in
+   `Detail`, because `invoke_method` serializes at most 20 properties of one
+   object. For the parts of each extraction row (mesh pre-pass, route and
+   output state, geometry, mesh preparation, pose, history and arena,
+   schedule and job, payload), set `XRE_ADVANCED_EXTRACTION_SUBSTAGE_TIMERS=1`
+   before session launch and read
+   `AdvancedPreparationExtractor.CaptureExtractionSubStageTimings` the same
+   way. Divide by the `Builds` or `Rows` difference. The timers add about eight
+   timestamp reads to each row, so leave the variable unset for frame-rate
+   windows. To see whether steady-state frames keep their work, read
+   `VisibilityContent` in the `GetCurrentDiagnostics` result (builds whose
+   visibility columns did not change) and
+   `AdvancedVisibilityStreamReuseTelemetry.Capture` (Vulkan visibility streams
+   kept across frames, and the first reason for each reseal). Both are always on.
 3. **Sampled CPU trace.** Run a window with `-CpuTraceSeconds 15`, then
    summarize the Speedscope export:
 
@@ -569,6 +587,19 @@ records the code paths they point to.
 5. **GC check.** `dotnet-counters collect --process-id <pid> --counters System.Runtime --duration 00:00:20 --format csv`
    reports collections per generation, pause time, allocation rate, and lock
    contentions per second.
+6. **GPU floor.** A CPU-limited frame lets the driver lower the GPU clocks, so
+   the GPU time grows and does not show the real floor. Lock the clocks in an
+   elevated shell (`nvidia-smi -lgc <max>,<max>` and, where supported,
+   `nvidia-smi -lmc <max>,<max>`). Then start a harness window, wait for
+   `<label>-window-start.json`, and sample the frame command buffer time:
+
+   ```powershell
+   pwsh Tools/Benchmarks/Sample-GpuFrameTime.ps1 -Session <name> -Seconds 22 -OutputPath <run>/reports/<label>-gpu-samples.json
+   ```
+
+   Reset the clocks afterwards (`nvidia-smi -rgc` and `nvidia-smi -rmc`).
+   Measure at 1, 1,000, and 2,000 chains to split a fixed cost from a cost
+   per chain.
 
 Install `dotnet-trace` and `dotnet-counters` with `dotnet tool install -g`.
 

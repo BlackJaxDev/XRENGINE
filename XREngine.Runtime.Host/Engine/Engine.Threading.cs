@@ -703,9 +703,11 @@ namespace XREngine
 
         private static void ProcessPendingAppThreadWork(int maxJobs)
         {
-            // App-thread work must not run while the render frame is being dispatched.
-            if (IsDispatchingRenderFrame)
+            // App-thread work does not start while a render frame dispatches, unless render frames
+            // have already deferred it for too long.
+            if (IsDispatchingRenderFrame && !ShouldStartDeferredAppThreadWork())
                 return;
+            _appThreadWorkDeferral.OnWorkStarted();
 
             using var scope = Engine.Profiler.Start("AppThreadJobs.Dispatch", ProfilerScopeKind.ConditionalLoop);
             using var allocationScope = EditorPreferences.Debug.EnableThreadAllocationTracking

@@ -7,6 +7,8 @@ public sealed partial class AdvancedPreparationExtractor
 {
     private readonly AdvancedGpuBoundsPatchRoute[] _gpuBoundsRoutes;
     private PhysicsChainGpuOutputPageLease _gpuBoundsPage;
+    // Reads covered renderer states of the retained page without the page lock.
+    private PhysicsChainGpuRendererStateReader _gpuBoundsStates;
     private GPUPhysicsChainDispatcher? _gpuBoundsDispatcher;
     private bool _physicsOutputMismatch;
 
@@ -27,6 +29,8 @@ public sealed partial class AdvancedPreparationExtractor
             if (!source.Dispatcher.TryAcquirePublishedOutputPage(out _gpuBoundsPage))
                 return false;
             _gpuBoundsDispatcher = source.Dispatcher;
+            if (!_gpuBoundsDispatcher.TryOpenRendererStateReader(_gpuBoundsPage.Token, out _gpuBoundsStates))
+                return false;
         }
         return true;
     }
@@ -49,5 +53,6 @@ public sealed partial class AdvancedPreparationExtractor
         _gpuBoundsDispatcher?.ReleaseOutputPage(_gpuBoundsPage.Token);
         _gpuBoundsDispatcher = null;
         _gpuBoundsPage = default;
+        _gpuBoundsStates = default;
     }
 }

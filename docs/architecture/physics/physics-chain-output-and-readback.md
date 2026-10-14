@@ -158,7 +158,20 @@ when a renderer's committed query state differs between pages, and on page
 invalidation, retirement, and bounds reset. A commit with unchanged renderer
 values keeps the epoch. Failure handling stays on the locked resolution path,
 which the render thread also runs in each frame. `TryCaptureGpuBoundsSource`
-answers from a current query first. `CommitOutputPage` keeps an unchanged
+answers from a current query first. Lock order: a query resolve holds the
+query lock while it takes `_outputPageSync`, `_cpuSpatialMaterialSync`, and the
+scene lock. Scene publication calls `TryCaptureGpuBoundsSource` while it holds
+the scene lock, so that method only tries the query lock. When another thread
+holds it, the method uses the locked path. Code that holds one of those locks
+must never wait for a query lock. Advanced preparation reads covered renderer
+states without `_outputPageSync`: after it retains the published page, it opens a
+`PhysicsChainGpuRendererStateReader` once (`TryOpenRendererStateReader`, under
+the lock, with the usability check), and then reads each state by bounds slot
+(`TryReadRendererOutputState`). The page keeps the states in a slot-indexed
+array beside `RendererStates`. The array is cleared in place and grows only while
+the page is written, and a retained page is never rewritten, so the reader stays
+valid until the page is released. Each read still checks the exact bounds
+source, the bone-buffer generation, and the mesh envelope. `CommitOutputPage` keeps an unchanged
 bounds-source map and sends renderer notifications after it releases
 `_outputPageSync`. `CaptureCommittedSpatialQueryDiagnostics()` counts misses by
 reason and epoch advances by cause.

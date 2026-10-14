@@ -243,7 +243,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             if (spatialValid)
                 ResolveCommittedSpatialProxy(in priorState, in source, in spatialBounds,
                     out committedBounds, out committedBoundsVersion);
-            outputPage.RendererStates.Add(binding.Renderer, new(source, paletteBase,
+            outputPage.AddRendererState(binding.Renderer, new(source, paletteBase,
                 paletteCount, envelopeStamp,
                 !outputPage.PaletteHistoryResetRenderers.Contains(binding.Renderer),
                 morphOffset, outputPage.MorphWeights.Count - morphOffset)

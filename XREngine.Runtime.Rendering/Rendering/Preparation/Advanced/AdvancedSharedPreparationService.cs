@@ -79,7 +79,8 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 service._extractor.GpuDeformation.LastOutputReuseSlot,
                 service._extractor.GpuDeformation.LastOutputReuseAuthority,
                 service.GetTelemetryLocked(), service._extractor.ArenaTelemetry,
-                service._extractor.FrameUploadTelemetry);
+                service._extractor.FrameUploadTelemetry,
+                service._extractor.VisibilityContentTelemetry);
     }
 
     private AdvancedSharedPreparationTelemetry GetTelemetryLocked() => new(

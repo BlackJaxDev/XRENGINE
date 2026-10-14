@@ -23,6 +23,4 @@ public readonly record struct PhysicsChainDispatcherStageTimings(
     double FinalizeOwnershipMilliseconds,
     double PaletteSourcesMilliseconds,
     double CompleteUpdatesMilliseconds,
-    double BoundsRoutesMilliseconds,
-    double BoundsRowsMilliseconds,
-    double BoundsSceneCopyMilliseconds);
+    PhysicsChainDispatcherSubStageTimings Detail);
