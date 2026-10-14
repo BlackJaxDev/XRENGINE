@@ -544,6 +544,65 @@ function Get-AdvancedPublicationDifferences($SwapBefore, $SwapAfter, $CompletedF
         # reclaim, and the publications that stopped before the gate decision. perCall is the value for each
         # world swap, as in worldSwap.
         preGateMilliseconds = New-DerivedDifference $preGateMilliseconds $worldCalls $CompletedFrames
+        # The verdict that the collect thread prepares for the gate decision.
+        preparedGate = Get-AdvancedPreparedGateDifferences (Get-OptionalValue $before 'prepared_gate') (Get-OptionalValue $after 'prepared_gate') $CompletedFrames
+    }
+}
+
+function Get-ReasonDifferences($Before, $After, $Calls, $CompletedFrames) {
+    # Each reason count is a cumulative sum. Calls must come from the same pair of captures as the counts.
+    # The result omits a reason with no count in the window, so that the summary stays short.
+    if ($null -eq $Before -or $null -eq $After) { return $null }
+    $names = @()
+    if ($After -is [System.Collections.IDictionary]) {
+        $names = @($After.Keys)
+    }
+    else {
+        $names = @($After.PSObject.Properties | ForEach-Object { $_.Name })
+    }
+    $group = [ordered]@{}
+    foreach ($name in $names) {
+        $total = Get-CounterDelta $Before $After ([string]$name)
+        if ($null -eq $total -or $total -eq 0) { continue }
+        $group[[string]$name] = New-DerivedDifference $total $Calls $CompletedFrames
+    }
+    return $group
+}
+
+function Get-AdvancedPreparedGateDifferences($Before, $After, $CompletedFrames) {
+    # The editor counts each prepare of the unchanged-row verdict on the collect thread, and each consume at
+    # the gate decision of a world-swap publication. The consume scope is the scope of row_gate_passes and
+    # row_gate_failures, so with the prepare enabled consume calls equal their sum. Each group divides by calls
+    # from the same pair of captures.
+    if ($null -eq $Before -or $null -eq $After) {
+        Write-Warning 'The prepared unchanged-row verdict counters are not available in this editor build.'
+        return $null
+    }
+    $prepareCalls = Get-CounterDelta $Before $After 'prepare_calls'
+    $consumeCalls = Get-CounterDelta $Before $After 'consume_calls'
+    $hits = Get-CounterDelta $Before $After 'hits'
+    return [ordered]@{
+        prepareEnabled = Get-OptionalValue $After 'prepare_enabled'
+        verifyEnabled = Get-OptionalValue $After 'verify_enabled'
+        # perCall is the share of the prepares.
+        prepare = Get-SumDifferences $Before $After @('prepared', 'refusals_total', 'prepare_exceptions') $prepareCalls $CompletedFrames
+        # perCall is the share of the publications at the gate decision. A publication without a verdict is a
+        # miss with the reason not_prepared.
+        consume = Get-SumDifferences $Before $After @('hits', 'misses_total') $consumeCalls $CompletedFrames
+        # perCall is the rows for each consume that the swap evaluated again. They keep the swap-time walk cost.
+        reevaluatedRows = Get-SumDifferences $Before $After @('reevaluated_rows') $consumeCalls $CompletedFrames
+        # The most recent prepare exception since the process started. Release builds write no warning log.
+        lastExceptionType = Get-OptionalValue $After 'last_exception_type'
+        lastExceptionHResult = Get-OptionalValue $After 'last_exception_hresult'
+        lastExceptionMessage = Get-OptionalValue $After 'last_exception_message'
+        # perCall is the share of the hits. A disagreement is a hit that the swap-time gate rejected.
+        verify = Get-SumDifferences $Before $After @('verify_disagreements_total') $hits $CompletedFrames
+        # perCall is the share of the prepares.
+        refusals = Get-ReasonDifferences (Get-OptionalValue $Before 'refusals') (Get-OptionalValue $After 'refusals') $prepareCalls $CompletedFrames
+        # perCall is the share of the publications at the gate decision.
+        misses = Get-ReasonDifferences (Get-OptionalValue $Before 'misses') (Get-OptionalValue $After 'misses') $consumeCalls $CompletedFrames
+        # perCall is the share of the hits. The reason names the witness that should have caught the change.
+        verifyDisagreements = Get-ReasonDifferences (Get-OptionalValue $Before 'verify_disagreements') (Get-OptionalValue $After 'verify_disagreements') $hits $CompletedFrames
     }
 }
 
@@ -596,7 +655,7 @@ function Get-CollectStageDifferences($Before, $After, $CompletedFrames, $PhaseTi
 
     return [ordered]@{
         collect = Get-SumDifferences $Before $After @('collect_total_ms', 'pre_collect_event_ms', 'collect_event_ms',
-            'post_collect_event_ms', 'collect_allocated_bytes') $collectCalls $CompletedFrames
+            'post_collect_event_ms', 'prepare_swap_publication_event_ms', 'collect_allocated_bytes') $collectCalls $CompletedFrames
         preCollect = Get-SumDifferences $preBefore $preAfter @('transforms_ms', 'transform_store_publish_ms',
             'pending_mesh_matrices_ms', 'scene_ms', 'scene_calls') (Get-CounterDelta $preBefore $preAfter 'calls') $CompletedFrames
         sceneRefresh = Get-SumDifferences $preBefore $preAfter @('renderable_operations_ms', 'gpu_bounds_eligibility_ms',

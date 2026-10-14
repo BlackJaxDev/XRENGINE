@@ -236,6 +236,16 @@ namespace XREngine.Scene
         private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until PreCollectVisible runs on the collect visible thread
         private long _shadowCasterMembershipRevision;
         private bool IsGpuCulling => _isGpuDispatchActive;
+
+        /// <summary>
+        /// Gets whether each mesh command swap of a tracked renderable updates
+        /// its GPU scene rows. This is true while GPU dispatch or the CPU mirror
+        /// of the GPU scene is active. A swap that skips the GPU scene does not
+        /// advance its row-input version.
+        /// </summary>
+        internal bool RoutesCommandSwapsToGpuScene
+            => _isGpuDispatchActive || _isCpuGpuCommandMirrorActive;
+
         private readonly HashSet<RenderableMesh> _skinnedMeshes = new();
         private readonly HashSet<RenderInfo3D> _committedCpuTreeMembers = new();
         private readonly List<RenderInfo3D> _gpuBoundsEligibleRenderables = [];
@@ -601,7 +611,7 @@ namespace XREngine.Scene
 
         private void OnRenderableSwapBuffers(RenderInfo info, RenderCommand command)
         {
-            if ((_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
+            if (RoutesCommandSwapsToGpuScene
                 && command is IRenderCommandMesh meshCmd)
             {
                 GpuSceneMeshCommandSnapshot snapshot = command is RenderCommandMesh3D mesh3D

@@ -357,6 +357,7 @@ public static class CollectVisibleStageTimings
             Ms(ECollectVisibleStage.PreCollectEvent),
             Ms(ECollectVisibleStage.CollectEvent),
             Ms(ECollectVisibleStage.PostCollectEvent),
+            Ms(ECollectVisibleStage.PrepareSwapPublicationEvent),
             Volatile.Read(ref s_collectAllocatedBytes),
             Ms(ECollectVisibleStage.SwapTotal),
             Volatile.Read(ref s_swapAllocatedBytes),

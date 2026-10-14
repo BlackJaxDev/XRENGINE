@@ -46,6 +46,15 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     private AdvancedGpuScenePublicationReference _currentPublication;
     private bool _identityDeliveryIncomplete;
     private int _publishInProgress;
+    // Advances in the finally block of each Publish call, before the call
+    // clears _publishInProgress. A value read while no publication runs stays
+    // equal until the next Publish call completes.
+    private long _publisherEpoch;
+    // The frame id of the most recent publication that stamped its rows. Each
+    // stamp site sets it after its row loop, also when no row has a
+    // registration, so it equals LastSeenFrameId of each row that the loop
+    // stamped. A rejection clears it to zero, and it is zero before the first stamp.
+    private ulong _lastStampedFrameId;
     private int _dirtyOwnerRangeCount;
     private uint _registrationLookupGeneration;
     private uint _preflightSeenGeneration;
@@ -117,6 +126,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     public bool PublicationFaulted => Database.PublicationFaulted;
 
+    /// <summary>
+    /// Gets the number of completed <see cref="Publish"/> calls. Each call
+    /// advances it at its end, so two equal reads prove that no publication
+    /// completed between them.
+    /// </summary>
+    internal long PublisherEpoch => System.Threading.Interlocked.Read(ref _publisherEpoch);
+
     public AdvancedGpuScenePublicationReference CurrentPublication
         => _identityDeliveryIncomplete ? default : _currentPublication;
 
@@ -163,6 +179,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 // Boundary sizing can retain source payloads when a later stage
                 // rejects. Only copied arena bytes belong to a publication.
                 Array.Clear(_stagedGeometry, 0, Math.Min(_stagedGeometry.Length, _plannedCommandCount));
+                // PublishCore took the prepared verdict. Its witnesses must not
+                // keep materials or options reachable after this publication.
+                ReleasePreparedWitnesses();
+                // Advance the epoch before the in-progress flag clears, so a
+                // reader that sees no publication in progress also sees the epoch
+                // of every completed publication.
+                System.Threading.Interlocked.Increment(ref _publisherEpoch);
                 System.Threading.Volatile.Write(ref _publishInProgress, 0);
             }
         }
@@ -181,6 +204,9 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         in AdvancedGlobalResourceCapture globalResources,
         ref long stageMark)
     {
+        // A prepared verdict is single use. Take it before any check, so that
+        // no exit path leaves it for a later publication.
+        AdvancedPreparedUnchangedRowGate prepared = TakePreparedUnchangedRowGate();
         // Every global-resource preflight rebuilds the authored decal rows.
         Array.Clear(_plannedDecals, 0, _plannedDecalCount);
         _plannedDecalCount = 0;
@@ -239,14 +265,28 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
         // The retained plan, rows, and draw handles describe the current
         // publication. When every row input is unchanged, skip the whole-scene plan.
+        // A verdict that the collect thread prepared replaces the row walk; any
+        // miss runs the swap-time gate. The verify mode runs the swap-time gate
+        // inside the consume, so the gate then does not run a second time.
         if (!boundaryGrew)
         {
             bool rowsUnchanged;
             int reusedStaticPlans;
             int materialResolveAttempts;
             using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.UnchangedRowGate"))
-                rowsUnchanged = TryPassUnchangedRowGate(
-                    scene, frameId, out reusedStaticPlans, out materialResolveAttempts);
+            {
+                rowsUnchanged = TryConsumePreparedUnchangedRowGate(
+                    scene,
+                    frameId,
+                    in prepared,
+                    recordTelemetry: stageMark != 0L,
+                    out bool gateDecided,
+                    out reusedStaticPlans,
+                    out materialResolveAttempts);
+                if (!gateDecided)
+                    rowsUnchanged = TryPassUnchangedRowGate(
+                        scene, frameId, out reusedStaticPlans, out materialResolveAttempts);
+            }
             CollectVisibleStageTimings.MarkAdvancedRowGate(ref stageMark, rowsUnchanged);
             if (rowsUnchanged && TryPublishUnchangedRows(
                     frameId, in acceptedGlobalResources, reusedStaticPlans, materialResolveAttempts))
@@ -451,6 +491,9 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                             : null,
                     };
                 }
+                // Record the frame also when no row has a registration, so that
+                // the next prepare expects the frame after this publication.
+                _lastStampedFrameId = frameId;
 
                 TombstoneMissingRegistrations();
                 CompletePreflightedMaterialTransitions();
@@ -601,6 +644,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // A rejected boundary does not describe the current publication.
         _unchangedRowBaselineValid = false;
         _committedSubmissionRowsValid = false;
+        _lastStampedFrameId = 0UL;
         InvalidateRegistrationIdentityCache();
         if (string.Equals(_lastPublicationFailure, reason, StringComparison.Ordinal))
             return;
@@ -1104,15 +1148,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     /// </summary>
     private bool EnsureBoundaryCapacity(uint commandCount, uint globalResourceCount, out bool grew)
     {
-        uint required = Math.Max(
-            InitialCapacity,
-            NextPowerOfTwo(Math.Max(
-                Math.Max(commandCount + 1u, globalResourceCount + 1u),
-                checked((uint)_registrationCount + 1u))));
+        uint required = ComputeBoundaryRequirement(commandCount, globalResourceCount);
         // Every boundary-sized scratch array grows only from this value, so an
         // unchanged value leaves the retained plan lookups intact.
         grew = required != _lastBoundaryRequired;
         _lastBoundaryRequired = required;
+        _lastBoundaryGlobalResourceCount = globalResourceCount;
         if (required > (uint)_commandDrawHandles.Length)
         {
             Array.Resize(ref _commandDrawHandles, checked((int)required));

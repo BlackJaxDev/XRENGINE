@@ -554,6 +554,7 @@ internal unsafe class VkFrameBuffer(
         }
 
         Span<bool> writeCapableDepthStencilAttachments = stackalloc bool[signatures.Length];
+        writeCapableDepthStencilAttachments.Clear();
         CollectWriteCapableDepthStencilAttachments(
             signatures,
             pass,
@@ -1236,6 +1237,7 @@ internal unsafe class VkFrameBuffer(
     {
         FrameBufferAttachmentSignature[] planned = (FrameBufferAttachmentSignature[])_attachmentSignature!.Clone();
         Span<bool> touchedAttachments = stackalloc bool[planned.Length];
+        touchedAttachments.Clear();
         bool[] writeCapableDepthStencilAttachments = new bool[planned.Length];
         Span<int> matchingIndices = stackalloc int[planned.Length];
         int touchedAttachmentCount = 0;

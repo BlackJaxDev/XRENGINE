@@ -7,6 +7,9 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Current focus
 
+- [Math selection AOT exception and frozen view](2026-10-13-math-selection-aot-and-blank-view.md)
+  records the gizmo asset fixes, Vulkan review, and live checks of a view that
+  showed one new frame per resize.
 - [Jax2031 Unity and Advanced Vulkan parity](2026-10-08-jax2031-unity-advanced-parity.md)
   records the repaired Assimp root import, remaining visible deformation,
   native FBX normalization guard, Pro 9.3.66 material evidence, native Uber

@@ -80,6 +80,9 @@ public sealed partial class AdvancedGpuScenePublisher
                 in plan.Command,
                 in registration);
         }
+        // Record the frame also when no row has a registration, so that the
+        // next prepare expects the frame after this publication.
+        _lastStampedFrameId = frameId;
 
         _identityDeliveryIncomplete = true;
         try

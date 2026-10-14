@@ -12,6 +12,10 @@ namespace XREngine.Rendering;
 /// <param name="PreCollectEventMilliseconds">The time of the pre-collect event subscribers.</param>
 /// <param name="CollectEventMilliseconds">The time of the collect event subscribers: the lights, the viewports and the other collectors.</param>
 /// <param name="PostCollectEventMilliseconds">The time of the post-collect event subscribers.</param>
+/// <param name="PrepareSwapPublicationEventMilliseconds">
+/// The time of the swap publication prepare event subscribers after the post-collect event. It holds the prepare of the
+/// unchanged-row verdict of the next Advanced resident-scene publication.
+/// </param>
 /// <param name="CollectAllocatedBytes">The managed bytes that the collecting thread allocated in the collect phase.</param>
 /// <param name="SwapTotalMilliseconds">
 /// The serial swap time. It uses the same start and end timestamps as the swap-phase total of the frame lifecycle.
@@ -37,6 +41,7 @@ public readonly record struct CollectVisibleStageTimingSnapshot(
     double PreCollectEventMilliseconds,
     double CollectEventMilliseconds,
     double PostCollectEventMilliseconds,
+    double PrepareSwapPublicationEventMilliseconds,
     long CollectAllocatedBytes,
     double SwapTotalMilliseconds,
     long SwapAllocatedBytes,

@@ -1,6 +1,6 @@
 # Physics Chain Thousands-Scale Optimization TODO
 
-Last Updated: 2026-10-13
+Last Updated: 2026-10-14
 Status: Active. This list holds the path to the 100 Hz target; other open items are in the [backlog](physics-chain-backlog-todo.md).
 Branch: `physics-chain-gpu-covered-rendering`
 Architecture: [Physics Chain World Runtime](../../../architecture/physics/physics-chain-world-runtime.md), [Compute Backends](../../../architecture/physics/physics-chain-compute-backends.md), [Output And Readback](../../../architecture/physics/physics-chain-output-and-readback.md), [Mesh Submission Strategies](../../../architecture/rendering/mesh-submission-strategies.md), [Advanced Render Pipeline](../../../architecture/rendering/advanced-render-pipeline.md)
@@ -11,9 +11,7 @@ Investigation: [Skinned GPU chain benchmark](../../investigations/physics/skinne
 
 ## Current State
 
-At 2,000 chains on the laptop the frame runs at 33–34 Hz: render callback about 21 ms (about 14 ms of work and 6–7 ms of waiting for collection), serial swap 8–9 ms, collection 15–16 ms, and update 30–32 ms. With locked clocks the GPU needs 7.0 ms. Since 2026-10-12, the committed bound query cache and the publisher unchanged-row gate raised the rate from 18–21 Hz; the later dispatcher, extraction, and Vulkan record changes cut render-thread stage time by about 5 ms but moved the frame rate little. Those results and their measurements are in the [investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md). The target needs the critical path to fall from about 33 ms to 10 ms, and each per-row trim saves 0.1–1 ms, so the structural frame reuse items come first. Their [contract](../../design/physics/physics-chain-steady-state-cpu-design.md#structural-frame-reuse-contract) is defined: every steady-state extraction gives the same visibility content as the previous frame, and the Vulkan visibility stream is now kept across frames. That cut render from about 26 to 21 ms and raised the rate to 33–34 Hz on 2026-10-13 ([investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#vulkan-visibility-stream-reuse)).
-
-The [stage telemetry](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#frame-handoff-and-stage-telemetry) of 2026-10-13 splits collect, swap, and the dispatcher Commit stage, and it adds frame handoff counters. On the desktop the baseline is 38–39 Hz. The critical path is the render callback until it releases the collect thread (about 19 ms) plus the serial swap (about 7.6 ms). Collect (about 15.6 ms) has 3–4 ms of slack. The swap is the transform store publication (3.4 ms) plus the Advanced scene publication (4.0 ms). The primary directional shadow view took 6.5 ms of collect with no consumer; since 2026-10-14 it is collected only when a consumer needs it, and collect fell to about 8 ms ([gate](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#primary-directional-shadow-collection-gate)). Collect now has about 10 ms of slack. In the swap, the Advanced publication is the unchanged-row gate walk (2.4–2.6 ms) and the commit (1.2–1.7 ms). The [priority order](#priority-order) follows these measurements.
+The publisher now prepares the unchanged-row verdict during collection and checks its witnesses during the serial swap. The commit stays in the swap. The primary directional shadow view collects only when a consumer needs it. The latest desktop comparison at 2,000 chains averages 44.61 Hz with preparation enabled and 41.62 Hz with it disabled; the mean swap falls from 7.30 ms to 5.41 ms. Both steady-state verification windows report zero disagreements and preparation exceptions. The live-edit check did not start before the usage limit, and the broader saved test run has 12 failures. See the [closeout](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#prepared-unchanged-row-verdict-closeout) and the [validation checks](../../testing/physics/physics-validation.md#physics-chain-scale). The 100 Hz target remains open. This closeout adds no implementation scope.
 
 ## Priority Order
 
@@ -23,11 +21,10 @@ Make decisions from the cost per chain of each frame phase, not from the frame r
 
 Work in this order (agreed 2026-10-13, after the stage telemetry). The frame interval is the longer of render until it releases the collect thread and collect, plus the serial swap:
 
-1. Build the Advanced scene publication during collect ([Serial swap](#serial-swap)). The unchanged-row gate walk (2.4–2.6 ms) can leave the swap; the commit (1.2–1.7 ms) stays.
-2. Remove the swap transform-store wait and the notification of owners with no listeners ([Serial swap](#serial-swap)), about 2.7 ms.
-3. The retained dispatcher bounds rows ([Structural frame reuse](#structural-frame-reuse)), 3.5 ms of render. Then the other [structural frame reuse](#structural-frame-reuse) and [render-thread](#remaining-render-thread-items) items, by measured cost.
-4. Other [collection](#collection) items, when render falls below collect.
-5. [Physics inputs at the render rate](#physics-inputs-at-the-render-rate).
+1. Remove the swap transform-store wait and the notification of owners with no listeners ([Serial swap](#serial-swap)), about 2.7 ms.
+2. The retained dispatcher bounds rows ([Structural frame reuse](#structural-frame-reuse)), 3.5 ms of render. Then the other [structural frame reuse](#structural-frame-reuse) and [render-thread](#remaining-render-thread-items) items, by measured cost.
+3. Other [collection](#collection) items, when render falls below collect.
+4. [Physics inputs at the render rate](#physics-inputs-at-the-render-rate).
 
 The GPU floor is measured: with locked clocks, the GPU takes about 3.7 ms fixed plus about 1.6 µs per chain, 7.0 ms at 2,000 chains (see the [investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#gpu-floor-with-locked-clocks)). The critical path must therefore fall from about 13.6 µs to about 2 µs per chain.
 
@@ -69,9 +66,8 @@ Stage costs are in milliseconds per frame at 2,000 chains, from `GPUPhysicsChain
 
 ### Serial swap
 
-`EngineTimer` runs the swap after collection finishes and the render thread releases the collect thread (just after queue submit on Vulkan). The render thread cannot start the next frame during the swap. At 2,000 chains the swap takes 7–8 ms (13–17 ms before the publisher unchanged-row gate). On the desktop on 2026-10-13 it was the Advanced scene publication (4.0 ms) and the transform store publication (3.4 ms).
+`EngineTimer` runs the swap after collection finishes and the render thread releases the collect thread (just after queue submit on Vulkan). The render thread cannot start the next frame during the swap. At 2,000 chains on the desktop, the prepared unchanged-row verdict reduced the mean swap from 7.30 ms to 5.41 ms on 2026-10-14. The remaining items below retain their earlier measurements.
 
-- [ ] Prepare the unchanged-row verdict of the Advanced scene publication during collection (the publication takes 3.6–4.2 ms of the swap; the movable gate walk measured 2.4–2.6 ms on 2026-10-14). `GPUScene.SwapCommandBuffers` calls `PublishAdvancedResidentSceneIfRequested`, so `AdvancedGpuScenePublisher.Publish` runs inside the swap. The commit (transaction, seal, resource and submission capture, `_currentPublication`, identity delivery) must stay in the swap: the global capture is final only after the light swap, and render frame N still reads publication N. Collect has about 10 ms of slack since the primary shadow gate. Design: prepared unchanged-row verdict with witnesses that advance after each write (GPUScene row-input version, late render-thread world write, bone state, mesh geometry revision, per-command `MutationVersion`, material and raster option witnesses, publisher epoch, frame continuity), single use, with a kill switch and a verify mode. Done when: a verdict prepared in collect lets the swap skip the gate walk; any witness miss runs today's swap-time gate; the verify mode shows no disagreement over a full benchmark run with live material, raster, mesh, and coverage edits; and the swap falls by the measured gate time. Expected frame: about 24 ms on the desktop, not 22.6 ms.
 - [ ] Do not block the serial swap on update-thread transform propagation (measured 0.9–1.1 ms per frame; contended in 32–42% of swaps). `TransformHierarchyStore.PublishRenderMatrices` takes `_passGate` without waiting at the swap and keeps the publication flags for the next collect. Done when: a unit test shows that a skipped publication publishes at the next call, and the swap no longer waits for `Process`.
 - [ ] Notify only transforms with render-matrix listeners or overriding owners (measured at the swap: 1.8–2.6 ms for 8,900–11,400 owners per frame; `Process` notifies about 11,300 owners in 1.0 ms). `TransformHierarchyStore` (`DispatchNotifications`, `PublishRenderMatrices`) and `TransformBase`. Done when: a plain transform with no subscribers gets no dispatch, a later subscriber gets the next change, and the notification scan visits only flagged rows.
 

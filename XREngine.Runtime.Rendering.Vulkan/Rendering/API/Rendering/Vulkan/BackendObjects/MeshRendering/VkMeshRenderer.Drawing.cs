@@ -28,6 +28,17 @@ namespace XREngine.Rendering.Vulkan;
 internal unsafe partial class VkMeshRenderer
 {
 	private readonly Lock _recordDrawSync = new();
+	private readonly string _drawSkipWarningKey = $"Vulkan.MeshRenderer.DrawSkip.{Interlocked.Increment(ref _nextDrawSkipWarningId)}";
+	private static long _nextDrawSkipWarningId;
+
+	private void ReportSkippedDraw(string reason, int passIndex, string targetName)
+	{
+		Debug.VulkanWarningEvery(
+			_drawSkipWarningKey,
+			TimeSpan.FromSeconds(2),
+			"[Vulkan] Mesh draw skipped. mesh='{0}' pass={1} target='{2}' reason={3}",
+			Mesh?.Name ?? "<unnamed mesh>", passIndex, targetName, reason);
+	}
 
 	private static IDisposable? StartMeshDrawDetailScope(string name)
 		=> VulkanMeshRenderingConventions.CommandRecordingDetailProfilingEnabled
@@ -56,6 +67,32 @@ internal unsafe partial class VkMeshRenderer
 		string targetName,
 		int drawUniformSlot,
 		int frameDataImageIndex)
+		=> RecordDraw(commandBuffer, draw, renderPass, useDynamicRendering,
+			dynamicRenderingFormats, passIndex, passMetadata, target, context,
+			depthStencilReadOnly, pipelineName, targetName, drawUniformSlot,
+			frameDataImageIndex, out _, out _);
+
+	/// <summary>
+	/// Records a draw and returns its failure under the recording lock.
+	/// An empty failure reason permits an intentional draw omission.
+	/// </summary>
+	internal bool RecordDraw(
+		CommandBuffer commandBuffer,
+		in PendingMeshDraw draw,
+		RenderPass renderPass,
+		bool useDynamicRendering,
+		DynamicRenderingFormatSignature dynamicRenderingFormats,
+		int passIndex,
+		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+		XRFrameBuffer? target,
+		in FrameOpContext context,
+		bool depthStencilReadOnly,
+		string pipelineName,
+		string targetName,
+		int drawUniformSlot,
+		int frameDataImageIndex,
+		out string failureReason,
+		out bool pipelineUnavailable)
 	{
 		lock (_recordDrawSync)
 		{
@@ -73,7 +110,9 @@ internal unsafe partial class VkMeshRenderer
 				pipelineName,
 				targetName,
 				drawUniformSlot,
-				frameDataImageIndex);
+				frameDataImageIndex,
+				out failureReason,
+				out pipelineUnavailable);
 		}
 	}
 
@@ -91,8 +130,12 @@ internal unsafe partial class VkMeshRenderer
 		string pipelineName,
 		string targetName,
 		int drawUniformSlot,
-		int frameDataImageIndex)
+		int frameDataImageIndex,
+		out string failureReason,
+		out bool pipelineUnavailable)
 	{
+		failureReason = string.Empty;
+		pipelineUnavailable = false;
 		ActivateDrawMaterializationSnapshot(draw);
 		var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 		string prepareReason;
@@ -105,6 +148,8 @@ internal unsafe partial class VkMeshRenderer
 		}
 		if (!preparedForRecord)
 		{
+			failureReason = $"preparation failed: {prepareReason}; {LastPrepareDetail}";
+			ReportSkippedDraw(failureReason, passIndex, targetName);
 			if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw)
 				Debug.MeshesWarning("[DrawTrace] {0}: skipped before command recording because preparation failed: {1} {2}", Mesh?.Name ?? "?", prepareReason, LastPrepareDetail);
 			return false;
@@ -136,6 +181,8 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		bool uniformsNotified = false;
+		string? drawFailureReason = null;
+		bool pipelineFailureObserved = false;
 
 		bool DrawIndexed(VkDataBuffer? indexBuffer, IndexSize size, PrimitiveTopology topology)
 		{
@@ -148,6 +195,7 @@ internal unsafe partial class VkMeshRenderer
 
 			if (size == IndexSize.Byte && !BackendContext.Supports(EVulkanDeviceCapability.IndexTypeUint8))
 			{
+				drawFailureReason = "Vulkan indexTypeUint8 is unavailable";
 				WarnOnce("Skipping indexed draw using byte-sized indices because Vulkan indexTypeUint8 is not enabled.");
 				return false;
 			}
@@ -162,12 +210,15 @@ internal unsafe partial class VkMeshRenderer
 
 			Pipeline pipeline = default;
 			bool pipelineReady;
+			string pipelineFailure;
 			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.EnsurePipeline"))
 			{
-				pipelineReady = EnsurePipeline(material, topology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, out pipeline);
+				pipelineReady = EnsurePipelineCore(material, topology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, foregroundRequired: false, out pipeline, out _, out pipelineFailure);
 			}
 			if (!pipelineReady)
 			{
+				pipelineFailureObserved = true;
+				drawFailureReason = $"indexed pipeline unavailable: {pipelineFailure}";
 				if (verboseTrace)
 					Debug.MeshesWarning("[DrawTrace] {0}: EnsurePipeline FAILED for {1} dynRender={2} colors={3} depthFmt={4}",
 						Mesh?.Name ?? "?", topology, useDynamicRendering, dynamicRenderingFormats.DescribeColorFormats(), dynamicRenderingFormats.DepthAttachmentFormat);
@@ -182,6 +233,7 @@ internal unsafe partial class VkMeshRenderer
 				vertexBuffersBound = BindVertexBuffersForCurrentPipeline(commandBuffer);
 			if (!vertexBuffersBound)
 			{
+				drawFailureReason = "indexed vertex buffers unavailable";
 				if (verboseTrace)
 					Debug.MeshesWarning("[DrawTrace] {0}: BindVertexBuffers FAILED", Mesh?.Name ?? "?");
 				return false;
@@ -202,6 +254,7 @@ internal unsafe partial class VkMeshRenderer
 				descriptorsBound = BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot, frameDataImageIndex, passIndex);
 			if (!descriptorsBound)
 			{
+				drawFailureReason = "indexed descriptors unavailable";
 				if (verboseTrace)
 					Debug.MeshesWarning("[DrawTrace] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
 				return false;
@@ -276,15 +329,35 @@ internal unsafe partial class VkMeshRenderer
 					fallbackTopology,
 					Mesh?.Name ?? "<unnamed mesh>",
 					_geometryLayoutSignature.DebugSummary);
+				failureReason = drawFailureReason ?? string.Empty;
+				pipelineUnavailable = pipelineFailureObserved;
+				if (failureReason.Length > 0)
+					ReportSkippedDraw(failureReason, passIndex, targetName);
+				return false;
+			}
+			if (vertexCount == 0)
+			{
+				failureReason = drawFailureReason ?? string.Empty;
+				pipelineUnavailable = pipelineFailureObserved;
+				if (failureReason.Length > 0)
+					ReportSkippedDraw(failureReason, passIndex, targetName);
 				return false;
 			}
 
 			Pipeline pipeline = default;
 			bool pipelineReady;
+			string pipelineFailure;
 			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.EnsurePipeline"))
 			{
-				pipelineReady = vertexCount > 0 &&
-					EnsurePipeline(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, out pipeline);
+				pipelineReady = EnsurePipelineCore(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, foregroundRequired: false, out pipeline, out _, out pipelineFailure);
+			}
+			if (!pipelineReady && verboseTrace)
+				Debug.MeshesWarning("[DrawTrace] {0}: non-indexed pipeline unavailable: {1}; pass={2} target={3} dynRender={4} colors={5} depthFmt={6}",
+					Mesh?.Name ?? "?", pipelineFailure, passIndex, targetName, useDynamicRendering, dynamicRenderingFormats.DescribeColorFormats(), dynamicRenderingFormats.DepthAttachmentFormat);
+			if (!pipelineReady)
+			{
+				pipelineFailureObserved = true;
+				drawFailureReason = $"non-indexed pipeline unavailable: {pipelineFailure}";
 			}
 			if (pipelineReady)
 			{
@@ -295,7 +368,15 @@ internal unsafe partial class VkMeshRenderer
 				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindVertexBuffers"))
 					vertexBuffersBound = BindVertexBuffersForCurrentPipeline(commandBuffer);
 				if (!vertexBuffersBound)
+				{
+					drawFailureReason = "non-indexed vertex buffers unavailable";
+					if (verboseTrace)
+						Debug.MeshesWarning("[DrawTrace] {0}: non-indexed vertex buffers unavailable; pass={1} target={2}", Mesh?.Name ?? "?", passIndex, targetName);
+					failureReason = drawFailureReason;
+					pipelineUnavailable = pipelineFailureObserved;
+					ReportSkippedDraw(failureReason, passIndex, targetName);
 					return false;
+				}
 
 				if (!uniformsNotified && _program?.Data is { } programData)
 				{
@@ -311,7 +392,15 @@ internal unsafe partial class VkMeshRenderer
 				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
 					descriptorsBound = BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot, frameDataImageIndex, passIndex);
 				if (!descriptorsBound)
+				{
+					drawFailureReason = "non-indexed descriptors unavailable";
+					if (verboseTrace)
+						Debug.MeshesWarning("[DrawTrace] {0}: non-indexed descriptors unavailable; pass={1} target={2}", Mesh?.Name ?? "?", passIndex, targetName);
+					failureReason = drawFailureReason;
+					pipelineUnavailable = pipelineFailureObserved;
+					ReportSkippedDraw(failureReason, passIndex, targetName);
 					return false;
+				}
 
 				if (verboseTrace)
 					Debug.MeshesWarning("[DrawTrace] {0}: CmdDraw({1}) pass={2} target={3} dynRender={4} dsReadOnly={5} pipeline=0x{6:X} topology={7} cull={8} blend={9} blendOps={10}/{11} blendFactors={12},{13},{14},{15} alphaToCoverage={16} depthTest={17} depthWrite={18} depthCmp={19} colorWrite={20} viewport=({21},{22},{23},{24}) scissor=({25},{26},{27},{28}) prog={29}",
@@ -362,6 +451,13 @@ internal unsafe partial class VkMeshRenderer
 			}
 		}
 
+		if (!drew)
+		{
+			failureReason = drawFailureReason ?? string.Empty;
+			pipelineUnavailable = pipelineFailureObserved;
+			if (failureReason.Length > 0)
+				ReportSkippedDraw(failureReason, passIndex, targetName);
+		}
 		return drew;
 	}
 

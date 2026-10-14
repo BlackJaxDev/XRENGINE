@@ -86,6 +86,10 @@ namespace XREngine.Rendering.Commands
                     CopyDrawIndexedSoABuffersToRenderSnapshot();
                     CopyDirtyStableSoABuffersToRenderSnapshot();
                 }
+                // The render-side rows now equal the updating rows. A row-input
+                // write after this copy reaches the render side only at the next
+                // swap, so it must leave the version newer than this record.
+                RecordAdvancedRowInputVersionAtSwap();
 
                 // This is the sole publication point for meshlet descriptor-table
                 // generations. VisualScene calls it after collect/update and before
@@ -1012,7 +1016,10 @@ namespace XREngine.Rendering.Commands
             set
             {
                 if (SetField(ref _updatingCommandCount, value))
+                {
                     MarkUpdatingCommandsDirty();
+                    MarkAllAdvancedRowInputsWritten();
+                }
             }
         }
 
@@ -1043,6 +1050,12 @@ namespace XREngine.Rendering.Commands
 
         private void EnsureDrawIndexedSoACapacity(uint requiredCapacity)
         {
+            // A resize replaces the row storage that the canonical row gate reads.
+            bool rowInputStorageGrows =
+                requiredCapacity > UpdatingDrawMetadataBuffer.ElementCount ||
+                requiredCapacity > DrawMetadataBuffer.ElementCount ||
+                requiredCapacity > UpdatingBoundsBuffer.ElementCount ||
+                requiredCapacity > BoundsBuffer.ElementCount;
             EnsureBufferCapacity(UpdatingDrawMetadataBuffer, requiredCapacity);
             EnsureBufferCapacity(DrawMetadataBuffer, requiredCapacity);
             EnsureBufferCapacity(UpdatingBoundsBuffer, requiredCapacity);
@@ -1051,6 +1064,8 @@ namespace XREngine.Rendering.Commands
             EnsureBufferCapacity(ClassificationBuffer, requiredCapacity);
             EnsureBufferCapacity(UpdatingVisibilityBuffer, requiredCapacity);
             EnsureBufferCapacity(VisibilityBuffer, requiredCapacity);
+            if (rowInputStorageGrows)
+                MarkAllAdvancedRowInputsWritten();
         }
 
         private void EnsureTransformCapacity(uint requiredCapacity)

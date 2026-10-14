@@ -153,6 +153,46 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
     public void GlobalCollectVisible() => Lights.CollectVisibleItems();
 
     /// <summary>
+    /// Prepares swap-time publication work on the collect thread after visibility
+    /// collection. It prepares the unchanged-row verdict of the next Advanced
+    /// resident-scene publication, so that the serial swap can skip its row walk.
+    /// </summary>
+    /// <remarks>
+    /// The work is optional. It does nothing while the publication session is
+    /// closed, or when a mesh command swap can skip the GPU scene. An exception
+    /// removes the verdict, and <see cref="Commands.AdvancedPreparedGateTelemetry"/>
+    /// counts it and keeps its type name, HRESULT, and message in all builds.
+    /// Debug builds also log a rate-limited warning. An exception never stops
+    /// the collect loop, because the swap-time gate then decides.
+    /// </remarks>
+    public void GlobalPrepareSwapPublications()
+    {
+        lock (_collectPublicationLock)
+        {
+            if (!_collectPublicationOpen)
+                return;
+            if (!VisualScene.RoutesCommandSwapsToGpuScene)
+                return;
+
+            Commands.GPUScene scene = VisualScene.GPUCommands;
+            try
+            {
+                scene.PrepareAdvancedResidentPublication();
+            }
+            catch (Exception exception)
+            {
+                scene.DiscardPreparedAdvancedResidentPublication();
+                Commands.AdvancedPreparedGateTelemetry.RecordException(exception);
+                Debug.RenderingWarningEvery(
+                    "RuntimeWorldRenderer.GlobalPrepareSwapPublications",
+                    TimeSpan.FromSeconds(5),
+                    "[CanonicalPublication] The prepare of the unchanged-row verdict failed. The swap-time gate decides. {0}",
+                    exception.Message);
+            }
+        }
+    }
+
+    /// <summary>
     /// Publishes world-owned render buffers using the ambient engine frame identity.
     /// This remains the normal window-driven swap path.
     /// </summary>

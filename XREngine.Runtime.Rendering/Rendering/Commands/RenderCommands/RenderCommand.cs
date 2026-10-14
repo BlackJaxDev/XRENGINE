@@ -127,6 +127,14 @@ namespace XREngine.Rendering.Commands
         private long _acknowledgedVersion;
         internal virtual bool _dirty => System.Threading.Volatile.Read(ref _mutationVersion) !=
             System.Threading.Volatile.Read(ref _acknowledgedVersion);
+
+        /// <summary>
+        /// Gets the mutation version. It advances after each observed render-state
+        /// change of this command: a dirty property change or a <see cref="MarkDirty"/>
+        /// call. Two equal reads prove that no observed change occurred between them.
+        /// </summary>
+        internal long MutationVersion => System.Threading.Volatile.Read(ref _mutationVersion);
+
         internal volatile bool _authoritativePublishQueued = false;
 
         internal bool HasSwappedBuffers => _hasSwappedBuffers;
@@ -288,5 +296,13 @@ namespace XREngine.Rendering.Commands
                 StableQueryKey, detail: _dirty ? 1 : 0);
             System.Threading.Interlocked.Increment(ref _mutationVersion);
         }
+
+        /// <summary>
+        /// Advances <see cref="MutationVersion"/> without a dirty notification
+        /// record. Use it when the render state did not change, but a reader that
+        /// sampled the version must stop trusting its sample. Safe to call from any thread.
+        /// </summary>
+        internal void AdvanceMutationVersion()
+            => System.Threading.Interlocked.Increment(ref _mutationVersion);
     }
 }

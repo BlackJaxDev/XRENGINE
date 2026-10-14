@@ -2162,6 +2162,18 @@ namespace XREngine.Rendering
         private long _staleGpuDrivenBoneReleaseCount;
         private bool _hasCompleteGpuDrivenBoneCoverage;
 
+        // Advances after each bone-set generation write and after each change of
+        // the stored coverage bit, in any renderer. A reader that samples it
+        // before and after it reads renderer bone state detects a write that
+        // overlapped the read.
+        private static long s_gpuDrivenBoneStateEpoch;
+
+        /// <summary>
+        /// Gets the number of bone-set generation writes and coverage changes in
+        /// all renderers. Each writer advances it after its write.
+        /// </summary>
+        internal static long GpuDrivenBoneStateEpoch => Interlocked.Read(ref s_gpuDrivenBoneStateEpoch);
+
         /// <summary>Gets the current bone-set generation.</summary>
         public long BoneBufferGeneration => Volatile.Read(ref _boneBufferGeneration);
 
@@ -2366,7 +2378,12 @@ namespace XREngine.Rendering
         private GpuDrivenBoneCoverageSnapshot RefreshGpuDrivenBoneCoverageLocked()
         {
             GpuDrivenBoneCoverageSnapshot snapshot = CaptureGpuDrivenBoneCoverageLocked();
+            bool coverageChanged = _hasCompleteGpuDrivenBoneCoverage != snapshot.IsFullyCovered;
             Volatile.Write(ref _hasCompleteGpuDrivenBoneCoverage, snapshot.IsFullyCovered);
+            // The dispatcher refreshes the coverage at each call. Only a changed
+            // bit advances the shared epoch, after the write.
+            if (coverageChanged)
+                Interlocked.Increment(ref s_gpuDrivenBoneStateEpoch);
             return snapshot;
         }
 
@@ -2375,6 +2392,7 @@ namespace XREngine.Rendering
             if (_boneBufferGeneration == long.MaxValue)
                 throw new InvalidOperationException("Bone-buffer generation was exhausted.");
             Volatile.Write(ref _boneBufferGeneration, _boneBufferGeneration + 1);
+            Interlocked.Increment(ref s_gpuDrivenBoneStateEpoch);
         }
 
         private void ClearExternalSkinPaletteSourceLocked()
