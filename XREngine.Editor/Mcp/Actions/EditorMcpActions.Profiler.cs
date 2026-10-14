@@ -12,7 +12,9 @@ using XREngine.Execution;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Occlusion;
+using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
+using XREngine.Scene.Transforms;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering.Info;
 using McpCapability = XREngine.Runtime.Automation.Mcp.McpCapability;
@@ -546,6 +548,9 @@ namespace XREngine.Editor.Mcp
                         frame_packages_rejected = RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackagesRejected,
                         frame_package_generation_age = RuntimeEngine.Rendering.Stats.FrameLifecycle.FramePackageGenerationAge,
                         phase_totals = BuildFrameLifecyclePhaseTotals(RuntimeEngine.Rendering.Stats.FrameLifecycle.CapturePhaseTotals()),
+                        collect_stages = BuildCollectVisibleStageTimings(CollectVisibleStageTimings.Capture()),
+                        pass_gate = BuildTransformHierarchyPassGate(TransformHierarchyStore.GetPassGateTelemetrySnapshot()),
+                        directional_shadow_consumption = BuildDirectionalShadowConsumption(DirectionalShadowConsumptionTelemetry.Capture()),
                     },
                     gpu_pipeline = new
                     {
@@ -1591,6 +1596,217 @@ namespace XREngine.Editor.Mcp
                 calls = total.Calls,
                 total_ms = total.TotalMilliseconds,
             };
+
+        /// <summary>
+        /// Formats the cumulative stage times of the collect phase and the serial swap, with the frame handoff counters.
+        /// All values are sums. Callers subtract two snapshots to get the values for a measurement window.
+        /// </summary>
+        private static object BuildCollectVisibleStageTimings(CollectVisibleStageTimingSnapshot snapshot)
+        {
+            CollectVisiblePreCollectStageTimings preCollect = snapshot.PreCollect;
+            CollectVisibleLightStageTimings lights = snapshot.Lights;
+            CollectVisibleSwapStageTimings swap = snapshot.Swap;
+            CollectVisibleSwapLightStageTimings swapLights = snapshot.SwapLights;
+            CollectVisibleHandoffTimings handoff = snapshot.Handoff;
+            return new
+            {
+                collect_calls = snapshot.CollectCalls,
+                swap_calls = snapshot.SwapCalls,
+                collect_total_ms = snapshot.CollectTotalMilliseconds,
+                pre_collect_event_ms = snapshot.PreCollectEventMilliseconds,
+                collect_event_ms = snapshot.CollectEventMilliseconds,
+                post_collect_event_ms = snapshot.PostCollectEventMilliseconds,
+                collect_allocated_bytes = snapshot.CollectAllocatedBytes,
+                swap_total_ms = snapshot.SwapTotalMilliseconds,
+                swap_allocated_bytes = snapshot.SwapAllocatedBytes,
+                pre_collect = new
+                {
+                    calls = preCollect.Calls,
+                    transforms_ms = preCollect.TransformsMilliseconds,
+                    transform_store_publish_ms = preCollect.TransformStorePublishMilliseconds,
+                    pending_mesh_matrices_ms = preCollect.PendingMeshMatricesMilliseconds,
+                    scene_ms = preCollect.SceneMilliseconds,
+                    scene_calls = preCollect.SceneCalls,
+                    renderable_operations_ms = preCollect.RenderableOperationsMilliseconds,
+                    gpu_bounds_eligibility_ms = preCollect.GpuBoundsEligibilityMilliseconds,
+                    covered_command_refresh_ms = preCollect.CoveredCommandRefreshMilliseconds,
+                    skinned_cpu_bounds_ms = preCollect.SkinnedCpuBoundsMilliseconds,
+                    cpu_tree_swap_ms = preCollect.CpuTreeSwapMilliseconds,
+                    skinned_mesh_rows = preCollect.SkinnedMeshRows,
+                    gpu_bounds_eligible_rows = preCollect.GpuBoundsEligibleRows,
+                    covered_command_source_rows = preCollect.CoveredCommandSourceRows,
+                },
+                lights = new
+                {
+                    calls = lights.Calls,
+                    planning_ms = lights.PlanningMilliseconds,
+                    shadow_collect_ms = lights.ShadowCollectMilliseconds,
+                },
+                main_view = BuildCollectVisibleViewStageTimings(snapshot.MainView),
+                primary_shadow = BuildCollectVisibleViewStageTimings(snapshot.PrimaryShadow),
+                cascades = BuildCollectVisibleViewStageTimings(snapshot.Cascades),
+                local_shadows = BuildCollectVisibleViewStageTimings(snapshot.LocalShadows),
+                other_views = BuildCollectVisibleViewStageTimings(snapshot.OtherViews),
+                swap = new
+                {
+                    jobs_ms = swap.JobsMilliseconds,
+                    world_calls = swap.WorldCalls,
+                    world_ms = swap.WorldMilliseconds,
+                    transforms_ms = swap.TransformsMilliseconds,
+                    transform_store_publish_ms = swap.TransformStorePublishMilliseconds,
+                    pending_mesh_matrices_ms = swap.PendingMeshMatricesMilliseconds,
+                    lights_ms = swap.LightsMilliseconds,
+                    advanced_global_capture_ms = swap.AdvancedGlobalCaptureMilliseconds,
+                    scene_ms = swap.SceneMilliseconds,
+                    covered_sources_ms = swap.CoveredSourcesMilliseconds,
+                    cpu_tree_ms = swap.CpuTreeMilliseconds,
+                    scene_commands_ms = swap.SceneCommandsMilliseconds,
+                    advanced_publication_ms = swap.AdvancedPublicationMilliseconds,
+                    viewports_ms = swap.ViewportsMilliseconds,
+                    main_view_swap_calls = swap.MainViewSwapCalls,
+                    main_view_swap_ms = swap.MainViewSwapMilliseconds,
+                },
+                swap_lights = new
+                {
+                    calls = swapLights.Calls,
+                    directional_ms = swapLights.DirectionalMilliseconds,
+                    local_ms = swapLights.LocalMilliseconds,
+                    atlas_publication_ms = swapLights.AtlasPublicationMilliseconds,
+                    captures_ms = swapLights.CapturesMilliseconds,
+                },
+                handoff = new
+                {
+                    render_until_collect_release_calls = handoff.RenderUntilCollectReleaseCalls,
+                    render_until_collect_release_ms = handoff.RenderUntilCollectReleaseMilliseconds,
+                    collect_iterations = handoff.CollectIterations,
+                    collect_finished_after_release = handoff.CollectFinishedAfterRelease,
+                },
+            };
+        }
+
+        /// <summary>Formats the cumulative collection times and accepted rows of one view kind.</summary>
+        private static object BuildCollectVisibleViewStageTimings(CollectVisibleViewStageTimings view)
+            => new
+            {
+                calls = view.Calls,
+                rows = view.Rows,
+                total_ms = view.TotalMilliseconds,
+                gpu_collection_ms = view.GpuCollectionMilliseconds,
+                cpu_collection_ms = view.CpuCollectionMilliseconds,
+                masked_family_ms = view.MaskedFamilyMilliseconds,
+                package_prepare_ms = view.PackagePrepareMilliseconds,
+            };
+
+        /// <summary>
+        /// Formats the cumulative transform-store pass-gate counters of each measured entry site.
+        /// </summary>
+        /// <remarks>
+        /// The maximum wait is a high-water value for the process lifetime, not a sum. Do not subtract two maximums.
+        /// The maximum is inside a window only when its timestamp is not before the capture timestamp of the first snapshot.
+        /// </remarks>
+        private static object BuildTransformHierarchyPassGate(TransformHierarchyPassGateTelemetrySnapshot snapshot)
+        {
+            double millisecondsPerTick = snapshot.StopwatchFrequency > 0
+                ? 1000.0 / snapshot.StopwatchFrequency
+                : 0.0;
+            return new
+            {
+                stopwatch_frequency = snapshot.StopwatchFrequency,
+                captured_timestamp = snapshot.CapturedTimestamp,
+                publish_pre_collect = BuildTransformHierarchyPassGateSite(snapshot.PublishPreCollect, millisecondsPerTick),
+                publish_swap = BuildTransformHierarchyPassGateSite(snapshot.PublishSwap, millisecondsPerTick),
+                publish_other = BuildTransformHierarchyPassGateSite(snapshot.PublishOther, millisecondsPerTick),
+                process = BuildTransformHierarchyPassGateSite(snapshot.ProcessPass, millisecondsPerTick),
+                flush_hierarchy = BuildTransformHierarchyPassGateSite(snapshot.FlushHierarchy, millisecondsPerTick),
+            };
+        }
+
+        /// <summary>Formats the cumulative pass-gate counters of one entry site. Tick values become milliseconds.</summary>
+        private static object BuildTransformHierarchyPassGateSite(TransformHierarchyPassGateSiteTelemetry site, double millisecondsPerTick)
+            => new
+            {
+                entries = site.Entries,
+                contended_entries = site.ContendedEntries,
+                wait_ms = site.WaitTicks * millisecondsPerTick,
+                max_wait_ms = site.MaxWaitTicks * millisecondsPerTick,
+                max_wait_timestamp = site.MaxWaitTimestamp,
+                hold_ms = site.HoldTicks * millisecondsPerTick,
+                hold_notify_ms = site.HoldNotifyTicks * millisecondsPerTick,
+                published_rows = site.PublishedRows,
+                notified_owners = site.NotifiedOwners,
+                reentrant_skips = site.ReentrantSkips,
+                waits_under_50_us = site.WaitsUnder50Us,
+                waits_50_to_250_us = site.Waits50To250Us,
+                waits_250_us_to_1_ms = site.Waits250UsTo1Ms,
+                waits_1_to_4_ms = site.Waits1To4Ms,
+                waits_at_least_4_ms = site.WaitsAtLeast4Ms,
+                blocked_by_process = site.BlockedByProcess,
+                blocked_by_publication = site.BlockedByPublication,
+                blocked_by_other = site.BlockedByOther,
+                blocked_by_unknown = site.BlockedByUnknown,
+            };
+
+        /// <summary>
+        /// Formats the cumulative counts of how the directional lights collect, swap, submit and render their primary
+        /// shadow view and their cascades. All values are sums. Callers subtract two snapshots.
+        /// </summary>
+        private static object BuildDirectionalShadowConsumption(DirectionalShadowConsumptionSnapshot snapshot)
+        {
+            DirectionalPrimaryShadowNeedCounts need = snapshot.Need;
+            DirectionalLegacyShadowRenderCounts legacy = snapshot.Legacy;
+            DirectionalCascadeConsumptionCounts cascades = snapshot.Cascades;
+            return new
+            {
+                shadow_collect_passes = snapshot.ShadowCollectPasses,
+                light_collect_calls = snapshot.LightCollectCalls,
+                primary_collections = snapshot.PrimaryCollections,
+                primary_swaps = snapshot.PrimarySwaps,
+                primary_swap_ms = snapshot.PrimarySwapMilliseconds,
+                primary_swapped_mesh_commands = snapshot.PrimarySwappedMeshCommands,
+                atlas_primary_decisions = snapshot.AtlasPrimaryDecisions,
+                needs_primary_viewport_true = snapshot.NeedsPrimaryViewportTrue,
+                needs_primary_viewport_no_relevant_viewport = snapshot.NeedsPrimaryViewportNoRelevantViewport,
+                needs_primary_viewport_false = snapshot.NeedsPrimaryViewportFalse,
+                atlas_primary_submitted = snapshot.AtlasPrimarySubmitted,
+                atlas_primary_dirty = snapshot.AtlasPrimaryDirty,
+                primary_tile_render_attempts = snapshot.PrimaryTileRenderAttempts,
+                primary_tile_collect_now = snapshot.PrimaryTileCollectNow,
+                primary_tile_renders = snapshot.PrimaryTileRenders,
+                primary_package_render_reads = snapshot.PrimaryPackageRenderReads,
+                need = new
+                {
+                    none = need.None,
+                    cascades_disabled = need.CascadesDisabled,
+                    no_cascade_receiver = need.NoCascadeReceiver,
+                    no_published_cascades = need.NoPublishedCascades,
+                    no_render_world = need.NoRenderWorld,
+                    primary_viewport = need.PrimaryViewport,
+                    no_relevant_viewport = need.NoRelevantViewport,
+                },
+                legacy = new
+                {
+                    render_calls = legacy.RenderCalls,
+                    collect_now = legacy.CollectNow,
+                    primary_render_attempts = legacy.PrimaryRenderAttempts,
+                    primary_renders = legacy.PrimaryRenders,
+                    cascade_render_calls = legacy.CascadeRenderCalls,
+                },
+                cascades = new
+                {
+                    source_collect_calls = cascades.SourceCollectCalls,
+                    skip_disabled = cascades.SkipDisabled,
+                    skip_no_cascades = cascades.SkipNoCascades,
+                    skip_no_atlas_render_request = cascades.SkipNoAtlasRenderRequest,
+                    gpu_packages = cascades.GpuPackages,
+                    group_collections = cascades.GroupCollections,
+                    group_skip_no_collection_request = cascades.GroupSkipNoCollectionRequest,
+                    viewport_collections = cascades.ViewportCollections,
+                    tile_renders = cascades.TileRenders,
+                    group_renders = cascades.GroupRenders,
+                    render_collect_now = cascades.RenderCollectNow,
+                },
+            };
+        }
 
         private static object BuildFrameOutputManifest(RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot snapshot)
         {

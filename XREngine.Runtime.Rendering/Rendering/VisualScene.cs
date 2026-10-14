@@ -61,8 +61,12 @@ namespace XREngine.Scene
         public virtual void GlobalSwapBuffers()
         {
             using var sample = RuntimeEngine.Profiler.Start("VisualScene.GlobalSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop);
+            // Only the world swap records these stages. UI scene swaps run outside that section.
+            long stageMark = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
             GenericRenderTree.Swap();
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SwapCpuTree);
             GPUCommands.SwapCommandBuffers();
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SwapSceneCommands);
         }
 
         public virtual void Initialize()

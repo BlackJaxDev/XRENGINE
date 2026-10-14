@@ -2669,9 +2669,11 @@ public sealed partial class GPUPhysicsChainDispatcher
             AddStageTime(DispatcherStage.Bounds, stageStart);
 
             stageStart = Stopwatch.GetTimestamp();
+            long commitMark = stageStart;
             backend.CommitBatch();
             outputCommitted = true;
-            if (hasCompleteRenderer && !CommitOutputPage(backend))
+            MarkStageTime(DispatcherStage.CommitBackendBatch, ref commitMark);
+            if (hasCompleteRenderer && !CommitOutputPage(backend, ref commitMark))
             {
                 AbandonOutputPage(backend);
                 return RecordDispatchFailure("OutputPageFence");

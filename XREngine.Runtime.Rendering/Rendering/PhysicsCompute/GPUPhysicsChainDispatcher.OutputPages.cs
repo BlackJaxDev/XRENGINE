@@ -587,11 +587,22 @@ public sealed partial class GPUPhysicsChainDispatcher
             _historyOutputPageIndex = -1;
     }
 
-    private bool CommitOutputPage(IPhysicsChainComputeBackend backend)
+    /// <summary>
+    /// Publishes the writing output page behind a producer fence, then notifies each changed
+    /// renderer after it releases <see cref="_outputPageSync"/>.
+    /// </summary>
+    /// <param name="backend">The backend that inserts the producer fence.</param>
+    /// <param name="stageMark">
+    /// The commit stage mark. Each commit part adds the time since this mark to its stage and
+    /// moves the mark to now.
+    /// </param>
+    /// <returns><see langword="true"/> when the page is committed.</returns>
+    private bool CommitOutputPage(IPhysicsChainComputeBackend backend, ref long stageMark)
     {
         uint producerEpoch;
         lock (_outputPageSync)
         {
+            MarkStageTime(DispatcherStage.CommitPageLockWait, ref stageMark);
             if (_writingOutputPageIndex < 0)
                 return false;
 
@@ -618,6 +629,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 _writingOutputPageIndex = -1;
                 return false;
             }
+            MarkStageTime(DispatcherStage.CommitFence, ref stageMark);
             if (page.ProducerFence is null
                 || page.ProducerFence.SubmissionStatus == EGpuFenceSubmissionStatus.Failed)
             {
@@ -651,6 +663,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             }
             (_lastPublishedPaletteInputBoundsByRenderer, _pendingPaletteInputBoundsByRenderer) =
                 (_pendingPaletteInputBoundsByRenderer, _lastPublishedPaletteInputBoundsByRenderer);
+            MarkStageTime(DispatcherStage.CommitPageState, ref stageMark);
             bool rendererStateChanged = CollectCommittedSpatialNotifications(page, priorPage, _commitNotifications);
             if (sourcesChanged)
                 AdvanceCommittedSpatialEpoch(SpatialEpochCause.Sources);
@@ -658,6 +671,8 @@ public sealed partial class GPUPhysicsChainDispatcher
                 AdvanceCommittedSpatialEpoch(SpatialEpochCause.RendererState);
             producerEpoch = page.ProducerEpoch;
         }
+        MarkStageTime(DispatcherStage.CommitCollectNotifications, ref stageMark);
+        _commitNotificationCount += _commitNotifications.Count;
 
         // Renderers react without _outputPageSync, so collection and scene publication can
         // read committed state while the render thread sends these notifications.
@@ -673,6 +688,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         {
             _commitNotifications.Clear();
         }
+        MarkStageTime(DispatcherStage.CommitNotify, ref stageMark);
         return true;
     }
 

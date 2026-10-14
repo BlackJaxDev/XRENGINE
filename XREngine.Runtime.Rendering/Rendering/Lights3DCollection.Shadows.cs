@@ -23,6 +23,8 @@ namespace XREngine.Scene
         public void CollectVisibleItems()
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.CollectVisibleItems");
+            long stageMark = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.Collect);
+            DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.ShadowCollectPasses);
             ShadowScratch scratch = CurrentShadowScratch;
 
             //CollectingVisibleShadowMaps = true;
@@ -36,6 +38,7 @@ namespace XREngine.Scene
             PrepareDirectionalShadowMaps();
             PopulateLocalShadowRelevanceCameras(scratch);
             PlanShadowAtlasRequests(scratch);
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.LightsPlanning);
 
             _shadowLightsCollectedThisTick.Clear();
 
@@ -86,6 +89,7 @@ namespace XREngine.Scene
                 CollectShadowItems(DynamicSpotLights, scratch);
                 CollectShadowItems(DynamicPointLights, scratch);
             }
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.LightsShadowCollect);
 
             //CollectingVisibleShadowMaps = false;
         }
@@ -670,9 +674,12 @@ namespace XREngine.Scene
                 bool hasAnyDirectionalCascades =
                     light.HasPublishedCascades(ShadowRequestSource.Desktop) ||
                     light.HasPublishedCascades(ShadowRequestSource.Hmd);
-                bool submitPrimary = !light.EnableCascadedShadows ||
-                    !hasAnyDirectionalCascades ||
-                    NeedsPrimaryDirectionalShadowMap();
+                // The viewport test enumerates the viewports, so it runs only when the cascades are active.
+                bool cascadesActive = light.EnableCascadedShadows && hasAnyDirectionalCascades;
+                bool noRelevantViewport = false;
+                bool needsPrimaryViewport = cascadesActive && NeedsPrimaryDirectionalShadowMap(out noRelevantViewport);
+                bool submitPrimary = !cascadesActive || needsPrimaryViewport;
+                DirectionalShadowConsumptionTelemetry.CountAtlasPrimaryDecision(cascadesActive, needsPrimaryViewport, noRelevantViewport);
                 if (submitPrimary && light.ShadowCamera is XRCamera primaryCamera)
                 {
                     SubmitShadowAtlasRequest(
@@ -907,7 +914,9 @@ namespace XREngine.Scene
                 InvalidationDomains: ResolveShadowInvalidationDomains(dirtyReason, receiverSamplingChanged));
 
             LogDirectionalAtlasSubmit(light, request, hasPrevious, previous);
-            ShadowAtlas.Submit(request);
+            bool accepted = ShadowAtlas.Submit(request);
+            if (projectionType == EShadowProjectionType.DirectionalPrimary)
+                DirectionalShadowConsumptionTelemetry.CountAtlasPrimarySubmit(accepted, isDirty || !canReusePreviousFrame);
         }
 
         private static bool ShouldSkipDirectionalCascadeRefreshByCadence(

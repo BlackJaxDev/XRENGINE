@@ -1,6 +1,6 @@
 # Physics Chain Performance
 
-Last updated: 2026-10-07
+Last updated: 2026-10-13
 
 The physics-chain optimization work reduces `PhysicsChainComponent` CPU cost, GPU transfer bandwidth, synchronization stalls, and hot-path allocations across CPU, standalone GPU, and batched GPU modes.
 
@@ -121,7 +121,36 @@ acceptance windows. They use wall time and include waits inside each phase.
 The phases run on different threads and overlap, so do not add them to get the
 frame interval. The render thread normally waits for the swap section to
 publish its generation; only a late-collect reuse policy can render the previous
-visibility during it.
+visibility during it. So `render_wait_for_collect` is mostly the wait for the
+swap, not a wait inside the render phase.
+
+`get_render_profiler_stats` also reports three always-on snapshots next to
+`phase_totals` in `frame_lifecycle`:
+
+- `collect_stages` (`CollectVisibleStageTimings.Capture`): the parts of the
+  collect phase and of the serial swap, each view kind with its collection path
+  and row count, the bytes that the collect thread allocates in each phase, and
+  the frame handoff counters. `render_until_collect_release_ms` is the render
+  time until the backend releases the collect thread; Vulkan releases it just
+  after queue submit. `collect_finished_after_release` counts the frames in
+  which collect finished later than that release.
+- `pass_gate` (`TransformHierarchyStore.GetPassGateTelemetrySnapshot`): for the
+  pre-collect publication, the swap publication, and the update-thread
+  `Process`, the entries, contended entries, wait and hold times, wait-time
+  buckets, the blocking site, and the published rows and notified owners.
+- `directional_shadow_consumption` (`DirectionalShadowConsumptionTelemetry.Capture`):
+  primary and cascade collections, the reason that the primary view is
+  collected, accepted atlas requests, tile renders, legacy renders, and
+  render-thread reads of the primary package.
+
+The harness reads these snapshots and
+`GPUPhysicsChainDispatcher.CaptureStageTimings` before and after every window.
+It writes the differences to `stageDifferences` (`collectStages`, `passGate`,
+`directionalShadowConsumption`, and `dispatcher`), per completed frame and per
+call. Each value is divided by a counter from the same capture.
+`stageDifferences.collectStages.phaseCrossCheck` must be 0: the collect and swap
+totals use the same boundaries as `phase_totals`. The frame interval is about
+the longer of `render_until_collect_release_ms` and collect, plus the swap.
 Scheduled counter samples remain for rate trends only. Benchmark cleanup starts
 gradual teardown and restores the source rig when that teardown ends. For a
 restart check, wait for one source chain and its palette binding before the
@@ -446,9 +475,13 @@ used them, and the
 [critical-path mapping](../../work/investigations/physics/physics-chain-critical-path-mapping-2026-10-12.md)
 records the code paths they point to.
 
-1. **Phase timings.** Every harness summary has `phaseTimings`. The frame
-   interval is the longer of render and collect, plus the swap. Decide from
-   these values, not from the frame rate alone.
+1. **Phase timings and stage differences.** Every harness summary has
+   `phaseTimings` and `stageDifferences`. The frame interval is the longer of
+   render until it releases the collect thread and collect, plus the swap. Read
+   the handoff counters in `stageDifferences.collectStages.handoff` to see
+   which thread is late, then read the stage parts of that thread. Decide from
+   these values, not from the frame rate alone. A live session is required; run
+   the harness with `powershell -NoProfile -File` where `pwsh` is not installed.
 2. **Stage timers.** Read a stage capture twice inside a timed window and take
    the difference:
 
@@ -463,9 +496,12 @@ records the code paths they point to.
    callback: pre-render, viewports, and the backend frame) and
    `AdvancedSharedPreparationService.GetCurrentDiagnostics` (Advanced
    preparation build, extraction, and lock-wait ticks in `SharedTelemetry`).
-   The dispatcher capture nests its bounds and simulation sub-stages in
-   `Detail`, because `invoke_method` serializes at most 20 properties of one
-   object. For the parts of each extraction row (mesh pre-pass, route and
+   The dispatcher capture nests its bounds, simulation, and commit sub-stages
+   in `Detail`, because `invoke_method` serializes at most 20 properties of one
+   object. The commit parts are the backend batch, the page lock wait, the
+   fence, the page state, notification collection, notification, and the
+   remainder; `CommittedOutputPages` and `CommitNotifications` count pages and
+   notifications. For the parts of each extraction row (mesh pre-pass, route and
    output state, geometry, mesh preparation, pose, history and arena,
    schedule and job, payload), set `XRE_ADVANCED_EXTRACTION_SUBSTAGE_TIMERS=1`
    before session launch and read

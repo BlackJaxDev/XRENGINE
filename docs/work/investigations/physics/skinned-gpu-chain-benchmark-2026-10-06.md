@@ -1,7 +1,7 @@
 # Skinned GPU Chain Benchmark Investigation
 
 Status: Open. The 100 Hz target is not met.
-Last updated: 2026-10-08
+Last updated: 2026-10-13
 
 [Design](../../design/physics/physics-chain-steady-state-cpu-design.md) ·
 [Code items](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md) ·
@@ -251,6 +251,7 @@ The Math world ambient light repair is recorded in the [ambient validation](../.
 | Two cold launches lost their engine loop threads, and one process exited after startup with no log. | Causes unknown. | Capture a dump on the next occurrence. |
 | A terminating `IndexOutOfRangeException` in `PhysicsChainComponent.BuildRuntimeTemplate`, on the fixed-update thread (`PhysicsChainWorld.DrainStructuralCommands` → `AddComponent` → `GetOrCreateRuntimeTemplate`). It happened once in about 40 benchmark stops on 2026-10-08, in the same second that a 1-chain window ended and the controller restored the source rig. The window had already been accepted. | Cause unconfirmed. The method counts particles in one pass and fills arrays in a second pass, so a concurrent particle-tree rebuild during source restoration could overrun them. | Code item in the todo. |
 | A callback exception during identity delivery stops the editor timer. | Existing terminal-fault policy; direct publisher tests prove caller retry. | No change planned. |
+| The collect thread stopped 20 seconds after a fresh start (desktop, 2026-10-13, one of four starts). `get_time_state` showed a terminal fault: `InvalidOperationException` "Render object 'XRDataBuffer' requested a backend operation before an active render owner was available." The stack is `VisualScene3D.ProcessPendingRenderableOperations` → `GPUScene.Add` → `VerifyUpdatingBufferSize` → `EnsureLodTransitionBufferCapacity` → `SyncLodTransitionBufferFromGpu` → `XRDataBuffer.MapBufferData`. When the GPU scene grows its command capacity after a GPU LOD dispatch has set `_lodTransitionGpuWritePending`, the sync maps the LOD transition buffer on the collect thread, where no render owner exists. That code is the same at HEAD. | Unresolved. A restart of the same binary was healthy. | Code item in the [backlog](../../todo/physics/physics-chain-backlog-todo.md#gpu-residency-and-submission). |
 
 ## Output page stall
 
@@ -492,12 +493,12 @@ Status: implemented and live-validated on 2026-10-13 (laptop, GPU clocks unlocke
 - The stream was kept in every steady-state frame: 384 of 384 seals with a shared mesh and 408 of 408 with unique meshes. The reseals since session start came from benchmark spawn and teardown (publication 92, submission 6, deformation output 6, no retained stream 2, columns 1).
 - Render time fell by about 5 ms (26.1 to 20.9 ms with a shared mesh, 28.5 to 20.9 ms with unique meshes). The recording validation stage was not measured, because `XRE_VULKAN_RECORDING_PROFILE_DETAIL` was not set.
 - The reuse path allocated 0 bytes. Other family steps allocate about 46 KB per frame, before and after this change: native compute about 6.5 KB and native descriptors about 4.6 KB per call (three calls per frame), the late closure about 1.5 KB, and the target closure about 290 B per call, which allocates its expected attachment arrays in `TryValidateAdvancedVisibilityTarget`.
-- Render now waits 6.4–7.1 ms for collect. Render work without the wait is about 14 ms, and collect takes 15–16 ms, so collection is now on the critical path.
+- Render now waits 6.4–7.1 ms for collect. Collect takes 15–16 ms. (Correction, 2026-10-13: this wait is outside the render phase. It is the wait for the serial swap, and it is shorter than the swap. Collection is not on the critical path; see [frame handoff](#frame-handoff-and-stage-telemetry).)
 - Visual check: wide, middle, and close captures of the running chains show the full grid and chains bent by the simulation. The session logs have no Vulkan validation message or plan exception. The 8 rejected frames were mesh readiness retries during startup and spawn (`visible-mesh-cold-admission`).
 
 ## Collection, dispatcher, and allocation mapping
 
-Status: mapped on 2026-10-13; no code change yet. A read-only pass of five mapping agents and one critic covered collection, CPU bone work, the dispatcher bounds stage, dispatcher per-request work, and the Vulkan family allocations. The full result is disposable evidence (`collect-dispatcher-alloc-map-2026-10-13.json` in the run reports folder). The findings that later work needs are below.
+Status: mapped on 2026-10-13. The telemetry build and the low-risk allocation fixes are done; see [frame handoff and stage telemetry](#frame-handoff-and-stage-telemetry). A read-only pass of five mapping agents and one critic covered collection, CPU bone work, the dispatcher bounds stage, dispatcher per-request work, and the Vulkan family allocations. The full result is disposable evidence (`collect-dispatcher-alloc-map-2026-10-13.json` in the run reports folder). The findings that later work needs are below.
 
 **Collect thread, sampled trace.** One 2,000-chain window (shared mesh, 28.4 Hz with tracing), as a share of the collect thread. The sampler overstates lock entry, so confirm each part with stage timers.
 
@@ -511,7 +512,7 @@ Status: mapped on 2026-10-13; no code change yet. A read-only pass of five mappi
 
 **Findings.**
 
-- The primary directional shadow viewport may be collected in every frame with no consumer. On the Vulkan atlas path, `EnsureCascadeShadowResources` releases the cascade receiver textures, so `ShouldCollectPrimaryShadowViewport` is always true, but the atlas submits the primary tile only when `NeedsPrimaryDirectionalShadowMap()` is true. Confirm at runtime with a counter of primary collections against primary tile renders. If it is confirmed, gating the collection is the largest collect saving (estimated 2.5–4 ms).
+- The primary directional shadow viewport may be collected in every frame with no consumer. On the Vulkan atlas path, `EnsureCascadeShadowResources` releases the cascade receiver textures, so `ShouldCollectPrimaryShadowViewport` is always true, but the atlas submits the primary tile only when `NeedsPrimaryDirectionalShadowMap()` is true. Confirm at runtime with a counter of primary collections against primary tile renders. If it is confirmed, gating the collection is the largest collect saving (estimated 2.5–4 ms). Confirmed on 2026-10-13: the collection costs 6.5–7.4 ms of collect per frame on the desktop and has no consumer.
 - No stage timer splits the collect phase, and no counter measures the `TransformHierarchyStore._passGate` wait at pre-collect or at the swap. Add these before collect changes.
 - The bones of covered chains (12,000 non-root bones) are propagated, published, and notified in each tick, but no steady-state consumer reads them. They also hold the rest pose, not the simulated pose.
 - The dispatcher reads `_publishedOutputPageIndex`, `_committedBoundsSources`, and `_lastPublishedPaletteInputBoundsByRenderer` on the render thread without `_outputPageSync`, while collect-thread queries can clear them through `InvalidateFailedPublishedPages` (also `TryBeginSimulationReceipt`). These races occur only on page failure or arena reset. Fix them before other dispatcher changes.
@@ -521,6 +522,95 @@ Status: mapped on 2026-10-13; no code change yet. A read-only pass of five mappi
 - Collect-thread allocations outside the Vulkan family: `XRViewport.CollectVisible` calls `GetUpdatingCommandCount` (LINQ `Sum` over a dictionary) with all result consumers commented out.
 
 **Planned order.** One telemetry build first (collect stage timers, `_passGate` waits, commit split, primary-shadow consumption counter) together with the low-risk allocation fixes. Then the primary shadow gate (if confirmed), the low-risk transform store changes on the swap, the persistent covered row store (stage A), covered render-matrix handler removal, the dispatcher race fixes, the low-risk dispatcher simulation items, notification changes, the exact binding-set version, the bulk previous-palette copy, retained bounds rows, and the remaining allocation fixes. Dormant bones and the row store stage B come last, behind measurement, because most of their saving is on the update thread or they carry high risk. Re-measure collect against render work after each collect step: when collect falls below render work (about 14 ms), more collect savings do not shorten the frame.
+
+## Frame handoff and stage telemetry
+
+Status: measured on 2026-10-13 (desktop, Ryzen 9 7950X3D, RTX 3090, GPU clocks not locked). The telemetry build adds always-on counters; the [performance guide](../../../developer-guides/rendering/physics-chain-performance.md#frame-loop-profiling-method) lists them.
+
+**Change.** The build measures only. It adds these counters:
+
+- Collect and swap stage timers (`CollectVisibleStageTimings`). The collect and swap totals equal the phase totals exactly (`phaseCrossCheck` is 0 in every window).
+- Frame handoff counters: render time until the collect thread is released, and the frames in which collect finishes after that release.
+- Transform store pass-gate counters (`TransformHierarchyStore.GetPassGateTelemetrySnapshot`) for the pre-collect publication, the swap publication, and the update-thread `Process`.
+- A split of the dispatcher Commit stage.
+- Directional shadow consumption counters (`DirectionalShadowConsumptionTelemetry`).
+
+The harness reads all of them in every window (`stageDifferences`). The build also has the low-risk allocation fixes from the [mapping](#collection-dispatcher-and-allocation-mapping).
+
+**Desktop baseline.** HEAD before the telemetry build, two unobserved windows.
+
+| Mesh | Hz | p95 ms | Update | Collect | Swap | Render | Render waits for collect | Collect waits for render |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Shared | 39.3 | 31.5 | 32.4 | 14.8 | 7.3 | 18.8 | 6.6 | 3.4 |
+| Unique | 38.3 | 31.3 | 31.6 | 14.1 | 7.5 | 19.3 | 6.7 | 4.6 |
+
+A probed baseline window divided the render callback (18.7 ms) as follows: pre-render (dispatcher) 8.5 ms, viewports 5.4 ms, and the Vulkan frame 4.7 ms. The Advanced preparation build took 4.3 ms per rebuild, of which extraction was 2.6 ms.
+
+**Critical path.** The Vulkan frame loop releases the collect thread just after queue submit (`MarkRenderFrameReadyForCollect`). The collect thread then runs the serial swap, and the render thread waits in `EngineTimer.WaitToRender` for the swap to publish. That wait is `render_wait_for_collect`. The frame interval is therefore the longer of "render until release" and "collect", plus the swap. The evidence:
+
+- In the cleanest telemetry window, render until release took 19.0 ms and the swap took 7.6 ms. Their sum, 26.6 ms, matches the mean interval of 26.8 ms (37.3 Hz).
+- Collect finished after the release in only 3.8–8.9% of frames.
+- In the baselines, the render wait (6.6–6.7 ms) is shorter than the swap (7.3–7.5 ms). That is possible only when collect finishes first. The laptop windows of the same day show the same pattern (wait 6.4–7.1 ms, swap 8.4–9.4 ms).
+
+The statement in [stream reuse](#vulkan-visibility-stream-reuse) that collection is on the critical path was a misreading. The [frame-loop phase totals](#frame-loop-phase-totals) of 2026-10-08 had already found the correct cycle.
+
+**Results.** Four telemetry windows ran on the final build. Unity shader compilation (34 compiler processes) and an editor session that another tool started ran at the same time. The rates fell from 37.3 to 32.7, 31.6, and 16.2 Hz, and in the last window every phase on every thread doubled. Use the absolute values below as upper bounds. The proportions agree across the windows. Values are milliseconds per frame from window 1 (shared mesh, 37.3 Hz).
+
+| Collect part | ms | Notes |
+| --- | ---: | --- |
+| Transform store publication (pre-collect) | 1.00 | Gate wait 0.30, hold 0.70, notification of about 2,300 owners 0.52 |
+| Covered command refresh | 4.76 | 2,000 rows, about 2.4 µs per row |
+| GPU bounds eligibility refresh | 0.34 | |
+| Primary directional shadow view | 6.49 | 2,004 rows; package preparation 1.51 |
+| Main view | 2.83 | GPU collection path |
+| Cascades | 0.01 | GPU package path; no CPU collection |
+| Collect total | 15.57 | Allocates about 2.9 KB per frame |
+
+| Swap part | ms | Notes |
+| --- | ---: | --- |
+| Transform store publication | 3.36 | Gate wait 0.86 (contended in 33% of swaps, always by the update-thread `Process`); hold 2.49, of which owner notification 1.82 for about 8,900 owners |
+| Advanced scene publication | 3.97 | `AdvancedGpuScenePublisher.Publish` |
+| Covered command sources | 0.11 | |
+| Viewports | 0.11 | Main view command swap 0.09 |
+| Lights | 0.06 | Atlas publication 0.03 |
+| Swap total | 7.64 | Allocates about 3.9 KB per frame |
+
+| Render-thread dispatcher stage | ms per call |
+| --- | ---: |
+| Bounds (rows 3.49) | 3.98 |
+| Simulation | 1.38 |
+| Commit | 0.98 |
+| Accept inputs | 0.75 |
+| Palette sources | 0.62 |
+| Previous palette | 0.51 |
+| Collect bindings | 0.48 |
+| Total | 9.60 |
+
+- **Commit split.** Notification collection took 0.31 ms and per-renderer notification 0.62 ms (2,000 notifications per page). Page state took 0.07 ms. The backend batch commit took 0.001 ms. The Commit stage is therefore notification work.
+- **Primary directional shadow.** Confirmed in every window. In each frame, `NeedsPrimaryDirectionalShadowMap` returns false. `ShouldCollectPrimaryShadowViewport` still returns true with the reason "no cascade receiver", because the Vulkan atlas path releases the cascade receiver textures. The primary view is collected and swapped (about 2,000 mesh commands), but nothing consumes it: there are no primary tile renders, no legacy renders, and no render-thread reads of its package. It costs 6.5–7.4 ms of collect and 0.015 ms of swap per frame.
+- **Update thread.** `Process` holds the pass gate for 3.8 ms per frame (5.1 ms per pass) and notifies about 11,300 owners. It rarely waits.
+- **Allocations.** A separate window with `XRE_S13A_PUBLICATION_TELEMETRY=1` measured the Vulkan Advanced family. Values are bytes per frame (360 frames, three family calls each); the "before" values come from the laptop before the fixes. The counts depend on the code path, not on the machine.
+
+  | Step | After | Before |
+  | --- | ---: | ---: |
+  | `advancedPlanAllocatedBytes` | about 14,000 | 46,600 |
+  | Scene publication | 152 | about 22,800 |
+  | Native closure capture | 0 | about 12,100 |
+  | Native descriptors | 9,524 | — |
+  | Late closure | 1,916 | about 1,500 |
+  | Raster realization | 944 | — |
+  | Target closure | 567 | about 870 |
+
+  The native descriptor rewrite is the largest remaining owner.
+
+**What the results mean.**
+
+- Collect has 3–4 ms of slack. A collect saving alone does not shorten the frame. The primary shadow gate frees 6.5 ms of collect, and that slack lets swap work move into collect.
+- The swap is on the critical path. If the Advanced publication (4.0 ms) moves into the collect phase, the swap falls to about 3.6 ms. Collect then grows to about 19.6 ms, which is longer than render (19.0 ms), unless the primary shadow gate comes first. With the gate, collect is about 13 ms. The estimated frame is 19.0 + 3.6 = 22.6 ms (about 44 Hz). This is an estimate.
+- Swap transform publication costs 3.4 ms. The owner notification (1.8 ms for about 8,900 owners) is mostly covered-chain bones that no steady-state consumer reads. The wait for `Process` costs 0.9 ms.
+- On the render thread, the largest single parts are the dispatcher bounds rows (3.5 ms), the Advanced preparation build (about 4.3 ms), and the Vulkan frame (about 4.7 ms).
+
+**Validation.** Editor and test builds have 0 warnings and 0 errors. The targeted test filter gave 61 failures in 336 tests. All 61 also fail on a HEAD worktree with the same assertions, so the build caused none of them. Visual capture was not repeated, because the build measures only. The allocation fixes keep the equality semantics, and reviewers checked them field by field.
 
 ## GPU floor with locked clocks
 
@@ -557,6 +647,8 @@ Status: measured on 2026-10-13 (laptop). The RTX 4070 Laptop GPU was locked at 2
 - After a session name is rebuilt, `Start -NoBuild` with that name can resolve to an older session folder with the same name. Use a new session name for each binary.
 - A session can latch into rejecting every frame at startup (see the open faults). Check completed frame outcomes before reading any counter, because a latched session shows failure behavior, not the steady state. The harness readiness gate does this for timed windows.
 - MCP calls in `MainThread` dispatch mode run as app-thread jobs. Render frames can defer them for 50 ms, and a long app-thread job, such as the benchmark spawn, delays them for its full duration. Probe calls during a window took about 1.5–2.5 seconds including the client start. Keep probes out of timed windows.
+- `render_wait_for_collect` is the render thread's wait for the serial swap to publish, not a wait inside the render phase. Read the critical path from the handoff counters: the longer of `render_until_collect_release` and collect, plus the swap.
+- Check for other heavy processes before a window. On 2026-10-13 (desktop), Unity shader compilation and an editor session that another tool started cut the rate of later windows by up to half on every thread.
 - After hours of builds and benchmark runs, the laptop throttles: the GPU reached 83 °C in power state P5, and the update phase grew by about 35%. Check `machineState.gpuClocks` and the update phase before you compare windows, and let the machine cool.
 - The cold-start latch (0 completed frames, every frame rejected) hit 4 of 5 fresh starts between 11:50 and 12:40 on 2026-10-13, with old and new binaries. A `-NoBuild` restart was healthy. Check the completed frame count about 45 seconds after a start, before a harness run.
 - The `dotnet-trace` sample profiler over-attributes time to `Monitor.Enter_Slowpath` and `BulkMoveWithWriteBarrier`, because it samples at safe points. Before you act on a lock in a sampled trace, confirm it with a contention trace: `dotnet-trace collect --providers "Microsoft-Windows-DotNETRuntime:0x4000:4,Microsoft-DotNETCore-SampleProfiler:0xF00000000000:4"`. `ContentionStart` carries the owner thread ID, and the sample stacks of the owner show what it held the lock for.
@@ -567,7 +659,18 @@ The evidence files were disposable runs under `Build/_AgentValidation/`, and mos
 
 ## Next steps
 
-Follow the [todo priority order](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#priority-order). Measure each change in both mesh modes. After the 2026-10-12 changes, the critical path at 2,000 chains is the render callback (about 27 ms) plus the swap (about 7–8 ms). A sampled trace of the query-cache build divided the render callback as follows; the sampler is biased, so confirm each cost before you act:
+Follow the [todo priority order](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#priority-order). Measure each change in both mesh modes.
+
+The [stage telemetry](#frame-handoff-and-stage-telemetry) of 2026-10-13 supports this order for the next changes. It is a proposal in the todo's decisions list.
+
+1. Skip the primary directional shadow collection when nothing consumes it. This frees about 6.5 ms of collect.
+2. Build the Advanced scene publication during collect instead of in the swap. This removes about 4 ms from the critical path.
+3. Remove the swap transform publication costs: the owner notification (1.8 ms) and the wait for `Process` (0.9 ms).
+4. Make the render-thread dispatcher changes, starting with the retained bounds rows (3.5 ms).
+
+Repeat the windows on a quiet machine before you compare the frame rate with the baseline.
+
+The earlier notes follow. After the 2026-10-12 changes, the critical path at 2,000 chains is the render callback (about 27 ms) plus the swap (about 7–8 ms). A sampled trace of the query-cache build divided the render callback as follows; the sampler is biased, so confirm each cost before you act:
 
 - `GPUPhysicsChainDispatcher.ProcessDispatches`: about 9–10 ms per frame by stage timers; see [dispatcher stages](#render-thread-dispatcher-stages). The render callback does shrink with it; single windows had hidden the change.
 - Vulkan frame transaction, about 10 ms: `TryPreparePrimaryFrameData` about 5 ms.
