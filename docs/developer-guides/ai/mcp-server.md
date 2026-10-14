@@ -697,6 +697,7 @@ the target's type and optional persistent ID.
 | `get_scene_statistics` | Get scene statistics including node and component counts. |
 | `get_selection` | Get the currently selected scene nodes. |
 | `get_shader_command_coverage` | Return opt-in shader command coverage. OpenGL counters are issued commands; Vulkan counters are command-buffer Recorded commands, never GPU-completed work. |
+| `get_shadow_caster_census` | Read the shadow-only caster census that gates the primary directional shadow views under a zero-readback strategy: GPU dispatch state, previous and current candidate counts, previous and current main-view GPU collection counts, the shadow caster membership revision against its pass-start value, MayHaveShadowOnlyCasters, and the last atlas planning decision. With capture_candidates, also capture the candidates that the next completed main-view GPU collection counts, with reason, owner, scene node, layer, flags, pre-collection callback method and command types. A world without GPU dispatch or without a recent main-view GPU collection gets no capture. |
 | `get_texture_streaming_summary` | Return imported texture streaming summary telemetry, including Vulkan freeze and generation state. |
 | `get_time_state` | Get timing, delta, and target frequency information. |
 | `get_transform_decomposed` | Get local/world/render translation, rotation, and scale for a scene node. |

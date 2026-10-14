@@ -5,8 +5,8 @@ namespace XREngine.Rendering;
 
 /// <summary>
 /// Always-on cumulative stage times of the collect phase and of the serial swap of the engine timer, with
-/// per-view path times, row counts, allocated bytes and frame handoff counters. Capture twice around a timed
-/// window and use the differences.
+/// per-view path times, row counts, allocated bytes, Advanced unchanged-row gate results and frame handoff
+/// counters. Capture twice around a timed window and use the differences.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -46,6 +46,10 @@ public static class CollectVisibleStageTimings
     private static long s_skinnedMeshRows;
     private static long s_gpuBoundsEligibleRows;
     private static long s_coveredCommandSourceRows;
+
+    private static long s_advancedRowGatePasses;
+    private static long s_advancedRowGateFailures;
+    private static long s_advancedUnchangedRowPublications;
 
     private static long s_renderUntilCollectReleaseTicks;
     private static long s_renderUntilCollectReleaseCalls;
@@ -294,6 +298,36 @@ public static class CollectVisibleStageTimings
     }
 
     /// <summary>
+    /// Adds the unchanged-row gate time since <paramref name="mark"/> to <see cref="ECollectVisibleStage.SwapAdvancedRowGate"/>,
+    /// counts the gate result and moves the mark to now. A mark of 0 records nothing.
+    /// </summary>
+    /// <remarks>
+    /// Get the mark with <see cref="StartIn"/> and <see cref="ECollectVisibleSection.WorldSwap"/>, the same section as the
+    /// parent stage. Then the gate records only for the publications that the parent stage records.
+    /// </remarks>
+    internal static void MarkAdvancedRowGate(ref long mark, bool passed)
+    {
+        if (mark == 0L)
+            return;
+
+        Mark(ref mark, ECollectVisibleStage.SwapAdvancedRowGate);
+        if (passed)
+            ++s_advancedRowGatePasses;
+        else
+            ++s_advancedRowGateFailures;
+    }
+
+    /// <summary>
+    /// Counts one Advanced publication that the unchanged-row path completed after the gate passed.
+    /// A mark of 0 records nothing.
+    /// </summary>
+    internal static void CountAdvancedUnchangedRowPublication(long mark)
+    {
+        if (mark != 0L)
+            ++s_advancedUnchangedRowPublications;
+    }
+
+    /// <summary>
     /// Adds the time from the start of a render dispatch to the first release of the collect thread in that frame.
     /// Any thread can call it.
     /// </summary>
@@ -364,6 +398,13 @@ public static class CollectVisibleStageTimings
                 Ms(ECollectVisibleStage.SwapCpuTree),
                 Ms(ECollectVisibleStage.SwapSceneCommands),
                 Ms(ECollectVisibleStage.SwapAdvancedPublication),
+                new CollectVisibleSwapAdvancedPublicationTimings(
+                    Volatile.Read(ref s_advancedRowGatePasses),
+                    Volatile.Read(ref s_advancedRowGateFailures),
+                    Ms(ECollectVisibleStage.SwapAdvancedRowGate),
+                    Volatile.Read(ref s_advancedUnchangedRowPublications),
+                    Calls(ECollectVisibleStage.SwapAdvancedCommit),
+                    Ms(ECollectVisibleStage.SwapAdvancedCommit)),
                 Ms(ECollectVisibleStage.SwapViewports),
                 Calls(ECollectVisibleStage.MainViewSwap),
                 Ms(ECollectVisibleStage.MainViewSwap)),

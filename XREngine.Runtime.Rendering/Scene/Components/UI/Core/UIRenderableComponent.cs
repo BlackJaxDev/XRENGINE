@@ -23,7 +23,10 @@ namespace XREngine.Rendering.UI
             RenderInfo3D = RenderInfo3D.New(this, RenderCommand3D);
             RenderInfo2D = RenderInfo2D.New(this, RenderCommand2D);
             RenderedObjects = [RenderInfo3D, RenderInfo2D];
-            RenderInfo3D.PreCollectCommandsCallback = ShouldRender3D;
+            // The callback does not pass the camera or the pass collection to ShouldRender3D. When it rejects a main view,
+            // it rejects the shadow cameras too, so the declaration keeps a hidden or screen-space item out of the
+            // shadow-only caster census.
+            RenderInfo3D.SetCameraIndependentPreCollectCommandsCallback(PreCollectRenderInfo3D);
             RenderInfo2D.PreCollectCommandsCallback = ShouldRender2D;
         }
 
@@ -42,8 +45,24 @@ namespace XREngine.Rendering.UI
 
         //TODO: register callback on canvas to set RenderInfo3D/2D Visible property so no quadtree/octree culling is done if the canvas is not visible
 
+        /// <summary>
+        /// The pre-collection callback of <see cref="RenderInfo3D"/>. The render info declares it camera independent,
+        /// because it ignores its camera and pass collection arguments.
+        /// </summary>
+        private bool PreCollectRenderInfo3D(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
+            => ShouldRender3D();
+
         private static int _shouldRender3DDiagCount = 0;
-        protected virtual bool ShouldRender3D(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
+        /// <summary>
+        /// Returns whether the 3D render info collects its commands: only for an active, visible item on a world-space or
+        /// camera-space canvas that renders directly, without an offscreen target.
+        /// </summary>
+        /// <remarks>
+        /// The result applies to every camera and every pass collection, because the 3D render info declares its
+        /// pre-collection callback camera independent. An override must read only component, transform and canvas
+        /// state.
+        /// </remarks>
+        protected virtual bool ShouldRender3D()
         {
             var tfm = BoundableTransform;
             bool diagLog = _shouldRender3DDiagCount < 20;

@@ -20,6 +20,9 @@ namespace XREngine.Rendering;
 /// <param name="AdvancedPublicationMilliseconds">
 /// The Advanced resident-scene publication. This time is part of <paramref name="SceneCommandsMilliseconds"/>.
 /// </param>
+/// <param name="AdvancedPublication">
+/// The split of <paramref name="AdvancedPublicationMilliseconds"/> at the unchanged-row gate decision, with the gate results.
+/// </param>
 /// <param name="ViewportsMilliseconds">The viewport and window swap event.</param>
 /// <param name="MainViewSwapCalls">The number of automatic viewport command swaps whose scene output is due.</param>
 /// <param name="MainViewSwapMilliseconds">
@@ -39,6 +42,7 @@ public readonly record struct CollectVisibleSwapStageTimings(
     double CpuTreeMilliseconds,
     double SceneCommandsMilliseconds,
     double AdvancedPublicationMilliseconds,
+    CollectVisibleSwapAdvancedPublicationTimings AdvancedPublication,
     double ViewportsMilliseconds,
     long MainViewSwapCalls,
     double MainViewSwapMilliseconds);

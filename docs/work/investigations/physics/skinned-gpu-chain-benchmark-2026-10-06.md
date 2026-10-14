@@ -606,11 +606,46 @@ The statement in [stream reuse](#vulkan-visibility-stream-reuse) that collection
 **What the results mean.**
 
 - Collect has 3–4 ms of slack. A collect saving alone does not shorten the frame. The primary shadow gate frees 6.5 ms of collect, and that slack lets swap work move into collect.
-- The swap is on the critical path. If the Advanced publication (4.0 ms) moves into the collect phase, the swap falls to about 3.6 ms. Collect then grows to about 19.6 ms, which is longer than render (19.0 ms), unless the primary shadow gate comes first. With the gate, collect is about 13 ms. The estimated frame is 19.0 + 3.6 = 22.6 ms (about 44 Hz). This is an estimate.
+- The swap is on the critical path. If the Advanced publication (4.0 ms) moves into the collect phase, the swap falls to about 3.6 ms. Collect then grows to about 19.6 ms, which is longer than render (19.0 ms), unless the primary shadow gate comes first. With the gate, collect is about 13 ms. The estimated frame is 19.0 + 3.6 = 22.6 ms (about 44 Hz). This is an estimate. (Correction, 2026-10-13: a design review found that only the unchanged-row gate walk, estimated at 2.0–2.8 ms, can leave the swap. The commit must stay in the swap. The revised estimate is about 24 ms, about 41 Hz.)
 - Swap transform publication costs 3.4 ms. The owner notification (1.8 ms for about 8,900 owners) is mostly covered-chain bones that no steady-state consumer reads. The wait for `Process` costs 0.9 ms.
 - On the render thread, the largest single parts are the dispatcher bounds rows (3.5 ms), the Advanced preparation build (about 4.3 ms), and the Vulkan frame (about 4.7 ms).
 
 **Validation.** Editor and test builds have 0 warnings and 0 errors. The targeted test filter gave 61 failures in 336 tests. All 61 also fail on a HEAD worktree with the same assertions, so the build caused none of them. Visual capture was not repeated, because the build measures only. The allocation fixes keep the equality semantics, and reviewers checked them field by field.
+
+## Primary directional shadow collection gate
+
+Status: implemented and live-validated on 2026-10-14 (desktop, Vulkan atlas, `GpuIndirectZeroReadback`). The [default render pipeline notes](../../../architecture/rendering/default-render-pipeline-notes.md) own the gate contract, and the [frame lifecycle](../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md) owns the census rule.
+
+**Change.** A directional light collects its primary shadow view only when a consumer reads it in the same pass. The consumers are:
+
+- the atlas plan of that pass (a viewport that needs the primary map, missing cascades, or pending capture work);
+- a backend that cannot render cascades;
+- shadow-only casters under zero-readback.
+
+A publication state pairs each collection with its swap and never publishes an empty buffer. The same build splits the swap's Advanced publication into the unchanged-row gate and the commit (`SwapAdvancedRowGate`, `SwapAdvancedCommit`).
+
+**Census defect found in the first build.** The first gate build never skipped the primary view: the need reason was `ShadowOnlyCasters` in every frame. A temporary probe showed one candidate in each main-view collection: the 3D render info of the FPS overlay text (`UITextComponent` on `TestTextNode`). Its pre-collection callback, `UIRenderableComponent.ShouldRender3D`, rejects every camera when the canvas is screen space or offscreen, shadow cameras included. The census had counted every callback rejection as camera dependent. Now:
+
+- It ignores disposed render infos, retiring `RenderableMesh` render infos, and callbacks declared camera independent (`RenderInfo.SetCameraIndependentPreCollectCommandsCallback`).
+- `UIRenderableComponent` and a disabled or unbuilt `HLODGroupComponent` declare their callbacks this way.
+- The MCP tool `get_shadow_caster_census` reads the census and captures the candidates of one main-view collection.
+
+Why a screen-space UI item has a 3D render info in the scene at all is an open [UI todo item](../../todo/ui/native-ui-retained-performance-and-editor-parity-todo.md).
+
+**Result.** One accepted window per mesh mode. The machine was quiet; Unity was open but idle. These builds also contain uncommitted Vulkan recording changes from another tool, so frame rates do not isolate this change. Use the collect values.
+
+| Build | Mesh | Hz | p95 ms | Collect | Swap | Render until release | Primary view | Row gate | Commit |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Telemetry (window 1) | Shared | 37.3 | 42.0 | 15.6 | 7.6 | 19.0 | 6.5 | — | — |
+| Gate | Shared | 42.4 | 29.2 | 8.1 | 6.8 | 16.8 | 0 | 2.44 | 1.17 |
+| HEAD baseline | Unique | 38.3 | 31.3 | 14.1 | 7.5 | — | — | — | — |
+| Gate | Unique | 38.5 | 31.4 | 8.0 | 7.7 | 18.2 | 0 | 2.56 | 1.68 |
+
+- Each frame: primary collections 0, primary swaps 0, need `None`, no stale declines, no tile renders. `get_shadow_caster_census` reported 0 candidates and `may_have_shadow_only_casters` false.
+- Collect fell by about 7 ms in both mesh modes. Collect is not on the critical path, so the unique-mesh rate did not change (38.3 to 38.5 Hz). Collect now finishes before render in every frame (late fraction 0), and has about 10 ms of slack.
+- The Advanced publication in the swap is 3.6–4.2 ms: the unchanged-row gate walk takes 2.4–2.6 ms, the commit 1.2–1.7 ms, and the part before the gate nearly 0. The gate walk can move into collect. The commit must stay in the swap.
+- A 15-second window with `-RequireDirectionalShadows -CaptureEvidence` was accepted. The cascade lane accepted 726 new groups, with no new rejected or unconsumed groups. The wide capture shows the full chain grid. MCP readback images are dark (an open fault), so the image check is limited. Before the change no consumer read the primary view in this scene, so skipping it cannot change the image here.
+- Shadow-only casters (VR avatar layers, shadow-pass-only materials), Monado, and light-probe capture at startup are not covered by this scene; see the [shadow validation](../../testing/rendering/shadow-validation.md).
 
 ## GPU floor with locked clocks
 
@@ -661,10 +696,10 @@ The evidence files were disposable runs under `Build/_AgentValidation/`, and mos
 
 Follow the [todo priority order](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md#priority-order). Measure each change in both mesh modes.
 
-The [stage telemetry](#frame-handoff-and-stage-telemetry) of 2026-10-13 supports this order for the next changes. It is a proposal in the todo's decisions list.
+The [stage telemetry](#frame-handoff-and-stage-telemetry) of 2026-10-13 supports this order for the next changes. The user agreed to this order on 2026-10-13.
 
-1. Skip the primary directional shadow collection when nothing consumes it. This frees about 6.5 ms of collect.
-2. Build the Advanced scene publication during collect instead of in the swap. This removes about 4 ms from the critical path.
+1. Skip the primary directional shadow collection when nothing consumes it. Done on 2026-10-14; see the [gate](#primary-directional-shadow-collection-gate).
+2. Prepare the unchanged-row verdict of the Advanced scene publication during collect. This removes the gate walk (2.4–2.6 ms) from the swap; the commit stays in the swap.
 3. Remove the swap transform publication costs: the owner notification (1.8 ms) and the wait for `Process` (0.9 ms).
 4. Make the render-thread dispatcher changes, starting with the retained bounds rows (3.5 ms).
 

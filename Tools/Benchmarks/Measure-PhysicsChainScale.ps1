@@ -494,6 +494,59 @@ function Get-SumDifferences($Before, $After, [string[]]$Names, $Calls, $Complete
     return $group
 }
 
+function New-DerivedDifference($Total, $Calls, $CompletedFrames) {
+    # Total must come from differences of the same pair of captures as Calls and CompletedFrames.
+    return [ordered]@{
+        total = $Total
+        perCompletedFrame = Get-Ratio $Total $CompletedFrames
+        perCall = Get-Ratio $Total $Calls
+    }
+}
+
+function Get-AdvancedPublicationDifferences($SwapBefore, $SwapAfter, $CompletedFrames) {
+    # The editor splits advanced_publication_ms at the unchanged-row gate decision. It records the split
+    # only for the publications in the world swap, the same publications as advanced_publication_ms.
+    $before = Get-OptionalValue $SwapBefore 'advanced_publication'
+    $after = Get-OptionalValue $SwapAfter 'advanced_publication'
+    if ($null -eq $before -or $null -eq $after) {
+        Write-Warning 'The Advanced publication split is not available in this editor build.'
+        return $null
+    }
+    $commitCalls = Get-CounterDelta $before $after 'commit_calls'
+    $gatePasses = Get-CounterDelta $before $after 'row_gate_passes'
+    $gateFailures = Get-CounterDelta $before $after 'row_gate_failures'
+    $unchangedPublications = Get-CounterDelta $before $after 'unchanged_row_publications'
+    $publicationMilliseconds = Get-CounterDelta $SwapBefore $SwapAfter 'advanced_publication_ms'
+    $gateMilliseconds = Get-CounterDelta $before $after 'row_gate_ms'
+    $commitMilliseconds = Get-CounterDelta $before $after 'commit_ms'
+    $worldCalls = Get-CounterDelta $SwapBefore $SwapAfter 'world_calls'
+    $gateCalls = $(if ($null -ne $gatePasses -and $null -ne $gateFailures) { $gatePasses + $gateFailures } else { $null })
+    $gateSkipped = $(if ($null -ne $commitCalls -and $null -ne $gateCalls) { $commitCalls - $gateCalls } else { $null })
+    $passesToFullPlan = $(if ($null -ne $gatePasses -and $null -ne $unchangedPublications) { $gatePasses - $unchangedPublications } else { $null })
+    $preGateMilliseconds = $(if ($null -ne $publicationMilliseconds -and $null -ne $gateMilliseconds -and $null -ne $commitMilliseconds) {
+            $publicationMilliseconds - $gateMilliseconds - $commitMilliseconds
+        } else { $null })
+
+    return [ordered]@{
+        # perCall is the value for each publication that reached the gate decision. For
+        # unchanged_row_publications it is the share of those publications that the unchanged-row path completed.
+        commit = Get-SumDifferences $before $after @('commit_ms', 'unchanged_row_publications') $commitCalls $CompletedFrames
+        # perCall is the value for each gate call. For row_gate_passes it is the share of gate calls that passed.
+        rowGate = Get-SumDifferences $before $after @('row_gate_ms', 'row_gate_passes', 'row_gate_failures',
+            'unchanged_row_publications') $gateCalls $CompletedFrames
+        # Publications in which the gate did not run because the resident tables grew.
+        # perCall is the share of the publications that reached the gate decision.
+        gateSkippedForTableGrowth = New-DerivedDifference $gateSkipped $commitCalls $CompletedFrames
+        # Gate passes that the unchanged-row path could not publish. They continued to the full plan.
+        # perCall is the share of the gate passes.
+        gatePassesToFullPlan = New-DerivedDifference $passesToFullPlan $gatePasses $CompletedFrames
+        # The time before the gate decision: the request check, the boundary capacity check, the tombstone
+        # reclaim, and the publications that stopped before the gate decision. perCall is the value for each
+        # world swap, as in worldSwap.
+        preGateMilliseconds = New-DerivedDifference $preGateMilliseconds $worldCalls $CompletedFrames
+    }
+}
+
 function Get-FrameStageSnapshots($ProfilerSnapshot) {
     # get_render_profiler_stats captures these next to the phase totals, in the same response as the
     # completed-frame count. Thus the same pair of snapshots brackets the stages and the frames.
@@ -558,6 +611,7 @@ function Get-CollectStageDifferences($Before, $After, $CompletedFrames, $PhaseTi
         worldSwap = Get-SumDifferences $swapBefore $swapAfter @('transforms_ms', 'transform_store_publish_ms',
             'pending_mesh_matrices_ms', 'lights_ms', 'advanced_global_capture_ms', 'scene_ms', 'covered_sources_ms',
             'cpu_tree_ms', 'scene_commands_ms', 'advanced_publication_ms') (Get-CounterDelta $swapBefore $swapAfter 'world_calls') $CompletedFrames
+        advancedPublication = Get-AdvancedPublicationDifferences $swapBefore $swapAfter $CompletedFrames
         mainViewSwap = Get-SumDifferences $swapBefore $swapAfter @('main_view_swap_ms') (Get-CounterDelta $swapBefore $swapAfter 'main_view_swap_calls') $CompletedFrames
         swapLights = Get-SumDifferences $swapLightsBefore $swapLightsAfter @('directional_ms', 'local_ms',
             'atlas_publication_ms', 'captures_ms') (Get-CounterDelta $swapLightsBefore $swapLightsAfter 'calls') $CompletedFrames
@@ -635,12 +689,16 @@ function Get-DirectionalShadowDifferences($Before, $After, $CompletedFrames) {
             'primary_swaps', 'primary_swap_ms', 'primary_swapped_mesh_commands', 'atlas_primary_decisions',
             'needs_primary_viewport_true', 'needs_primary_viewport_no_relevant_viewport', 'needs_primary_viewport_false',
             'atlas_primary_submitted', 'atlas_primary_dirty', 'primary_tile_render_attempts', 'primary_tile_collect_now',
-            'primary_tile_renders', 'primary_package_render_reads') $passes $CompletedFrames
+            'primary_tile_renders', 'primary_package_render_reads', 'primary_tile_stale_declines') $passes $CompletedFrames
         # perCall is the value for each primary shadow view swap.
         primarySwap = Get-SumDifferences $Before $After @('primary_swap_ms', 'primary_swapped_mesh_commands') (Get-CounterDelta $Before $After 'primary_swaps') $CompletedFrames
+        # perCall is the share of the primary atlas tile render attempts. A declined tile stays dirty.
+        primaryTile = Get-SumDifferences $Before $After @('primary_tile_collect_now', 'primary_tile_renders',
+            'primary_tile_stale_declines') (Get-CounterDelta $Before $After 'primary_tile_render_attempts') $CompletedFrames
         # perCall is the share of the light collections. The need counts add up to the light collections.
         need = Get-SumDifferences $needBefore $needAfter @('none', 'cascades_disabled', 'no_cascade_receiver',
-            'no_published_cascades', 'no_render_world', 'primary_viewport', 'no_relevant_viewport') (Get-CounterDelta $Before $After 'light_collect_calls') $CompletedFrames
+            'no_published_cascades', 'no_render_world', 'primary_viewport', 'no_relevant_viewport',
+            'pending_shadow_capture', 'shadow_only_casters') (Get-CounterDelta $Before $After 'light_collect_calls') $CompletedFrames
         legacy = Get-SumDifferences $legacyBefore $legacyAfter @('render_calls', 'collect_now', 'primary_render_attempts',
             'primary_renders', 'cascade_render_calls') $passes $CompletedFrames
         # perCall is the share of the cascade source collections.

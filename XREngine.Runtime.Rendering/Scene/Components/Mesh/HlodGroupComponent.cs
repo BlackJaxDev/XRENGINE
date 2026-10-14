@@ -36,8 +36,12 @@ namespace XREngine.Components.Scene.Mesh
         private sealed record SourceHook(RenderInfo RenderInfo, RenderInfo.DelAddRenderCommandsCallback? OriginalCallback,
             RenderInfo.DelAddRenderCommandsCallback InstalledCallback);
 
+        // The proxy callback while the group is disabled or has no built proxy. It rejects every camera.
+        private static readonly RenderInfo.DelAddRenderCommandsCallback RejectInactiveProxyCollect = static (_, _, _) => false;
+
         private readonly RenderCommandMesh3D _renderCommand;
         private readonly RenderInfo3D _renderInfo;
+        private readonly RenderInfo.DelAddRenderCommandsCallback _proxyPreCollect;
 
         private readonly List<SourceHook> _sourceHooks = new();
         private XRMeshRenderer? _proxyRenderer;
@@ -61,7 +65,8 @@ namespace XREngine.Components.Scene.Mesh
             };
 
             _renderInfo = RenderInfo3D.New(this, _renderCommand);
-            _renderInfo.PreCollectCommandsCallback = ProxyPreCollect;
+            _proxyPreCollect = ProxyPreCollect;
+            RefreshProxyCollectCallback();
             RenderedObjects = [_renderInfo];
         }
 
@@ -71,7 +76,11 @@ namespace XREngine.Components.Scene.Mesh
         public bool Enabled
         {
             get => _enabled;
-            set => SetField(ref _enabled, value);
+            set
+            {
+                if (SetField(ref _enabled, value))
+                    RefreshProxyCollectCallback();
+            }
         }
         private bool _enabled = true;
 
@@ -251,7 +260,26 @@ namespace XREngine.Components.Scene.Mesh
             finally
             {
                 _building = false;
+                RefreshProxyCollectCallback();
             }
+        }
+
+        /// <summary>
+        /// Installs the pre-collection callback of the proxy render info that agrees with the group state. Call it after
+        /// each change of <see cref="Enabled"/>, the build state or the proxy renderer.
+        /// </summary>
+        /// <remarks>
+        /// While the group is disabled or has no built proxy, the proxy rejects every camera. The render info then
+        /// declares a camera-independent callback, so the shadow-only caster census does not count the proxy. While the
+        /// proxy can draw, <see cref="ProxyPreCollect"/> selects it by camera distance, and that callback is camera
+        /// dependent.
+        /// </remarks>
+        private void RefreshProxyCollectCallback()
+        {
+            if (Enabled && _built && _proxyRenderer is not null)
+                _renderInfo.PreCollectCommandsCallback = _proxyPreCollect;
+            else
+                _renderInfo.SetCameraIndependentPreCollectCommandsCallback(RejectInactiveProxyCollect);
         }
 
         private bool ProxyPreCollect(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera)
@@ -339,6 +367,7 @@ namespace XREngine.Components.Scene.Mesh
             ProxyBuild? previous = _ownedProxy;
             SetField(ref _ownedProxy, null, publishNotifications: false);
             SetField(ref _proxyRenderer, null, publishNotifications: false);
+            RefreshProxyCollectCallback();
             try { _renderCommand.Mesh = null; }
             finally { previous?.Dispose(); }
         }

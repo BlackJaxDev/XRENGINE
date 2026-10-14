@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Shadows;
 /// <remarks>
 /// <para>
 /// The collect thread writes most counters. The render thread writes the tile and legacy render counters. The render
-/// thread also writes the collect and swap counters when a render path collects the light again with
+/// thread also writes the primary collection and swap counters when a render path forces a collection with
 /// <c>collectVisibleNow</c>, while the collect thread collects the next frame. All writes therefore use interlocked
 /// operations. No method allocates managed memory.
 /// </para>
@@ -73,6 +73,8 @@ public static class DirectionalShadowConsumptionTelemetry
             EDirectionalPrimaryShadowNeed.NoRenderWorld => EDirectionalShadowConsumptionCounter.NeedNoRenderWorld,
             EDirectionalPrimaryShadowNeed.PrimaryViewport => EDirectionalShadowConsumptionCounter.NeedPrimaryViewport,
             EDirectionalPrimaryShadowNeed.NoRelevantViewport => EDirectionalShadowConsumptionCounter.NeedNoRelevantViewport,
+            EDirectionalPrimaryShadowNeed.PendingShadowCapture => EDirectionalShadowConsumptionCounter.NeedPendingShadowCapture,
+            EDirectionalPrimaryShadowNeed.ShadowOnlyCasters => EDirectionalShadowConsumptionCounter.NeedShadowOnlyCasters,
             _ => EDirectionalShadowConsumptionCounter.NeedNone,
         });
 
@@ -128,7 +130,9 @@ public static class DirectionalShadowConsumptionTelemetry
                 Read(EDirectionalShadowConsumptionCounter.NeedNoPublishedCascades),
                 Read(EDirectionalShadowConsumptionCounter.NeedNoRenderWorld),
                 Read(EDirectionalShadowConsumptionCounter.NeedPrimaryViewport),
-                Read(EDirectionalShadowConsumptionCounter.NeedNoRelevantViewport)),
+                Read(EDirectionalShadowConsumptionCounter.NeedNoRelevantViewport),
+                Read(EDirectionalShadowConsumptionCounter.NeedPendingShadowCapture),
+                Read(EDirectionalShadowConsumptionCounter.NeedShadowOnlyCasters)),
             new DirectionalLegacyShadowRenderCounts(
                 Read(EDirectionalShadowConsumptionCounter.LegacyRenderCalls),
                 Read(EDirectionalShadowConsumptionCounter.LegacyCollectNow),
@@ -146,7 +150,8 @@ public static class DirectionalShadowConsumptionTelemetry
                 Read(EDirectionalShadowConsumptionCounter.CascadeViewportCollections),
                 Read(EDirectionalShadowConsumptionCounter.CascadeTileRenders),
                 Read(EDirectionalShadowConsumptionCounter.CascadeGroupRenders),
-                Read(EDirectionalShadowConsumptionCounter.CascadeRenderCollectNow)));
+                Read(EDirectionalShadowConsumptionCounter.CascadeRenderCollectNow)),
+            Read(EDirectionalShadowConsumptionCounter.PrimaryTileStaleDeclines));
 
     private static long Read(EDirectionalShadowConsumptionCounter counter)
         => Interlocked.Read(ref s_values[(int)counter]);

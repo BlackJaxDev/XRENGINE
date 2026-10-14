@@ -422,6 +422,19 @@ XRViewport.CollectVisible()
 
 That method is currently a linear snapshot/filter over tracked renderables. The actual per-command visibility reduction then occurs inside the GPU pass pipeline, not in `VisualScene3D` itself.
 
+A main view (a collection that is not a shadow pass) also counts shadow-only caster candidates in this loop. Under a zero-readback strategy, the directional shadow atlas planning reads this census (`VisualScene3D.MayHaveShadowOnlyCasters`) to decide whether the primary directional shadow views must still collect. A candidate is a shadow-casting render info with a mesh command that a shadow camera can collect but this main view does not collect with its primary command:
+
+- `AllowRender` rejects it (layer, mirror filter, volume, or a subclass rule), and its disposal or retirement was not requested.
+- `RenderInfo.TryCollectCommands` returns `CallbackRejected`: the pre-collection callback rejected this camera and can accept a different camera (HLOD, light probe preview, mirror display).
+- The main view collects it without the primary command, because the material enables only the shadow pass.
+
+The results `Disposed`, `Retired` (a retiring `RenderableMesh`) and `RejectedForEveryCamera` do not count, because the shadow cameras reject the render info too. An owner declares a callback camera independent with `RenderInfo.SetCameraIndependentPreCollectCommandsCallback`. The callback must read only owner state, never the camera or the pass collection. A different delegate assigned to `PreCollectCommandsCallback` ends the declaration. Two owners use the declaration:
+
+- `UIRenderableComponent` declares a private callback that calls the virtual `ShouldRender3D()`. This hook gets no camera and no pass collection, so an override cannot make the result camera dependent through the arguments. The 3D render info of a screen-space or offscreen UI item is therefore not a candidate when `AllowRender` accepts it.
+- `HLODGroupComponent` declares a callback that rejects every camera while the group is disabled or has no built proxy. While the proxy can draw, it installs the camera-dependent distance callback. Each change of `Enabled`, the build state or the proxy renderer installs the callback again.
+
+The main view sees a callback result only when `AllowRender` accepts the render info. When `AllowRender` rejects a render info with a declared callback first, for example by layer, the render info still counts. The MCP tool `get_shadow_caster_census` reads the census and captures the candidates of one main-view collection. It requests a capture only for a world with GPU dispatch and a main-view GPU collection in the previous or current pass.
+
 So there are two distinct collection layers in GPU mode:
 
 1. CPU-side command emission into the viewport's command collection.
