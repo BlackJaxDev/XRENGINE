@@ -77,108 +77,212 @@ public sealed partial class AdvancedGpuScenePublisher
         ulong frameId,
         out int reusedStaticPlans,
         out int materialResolveAttempts)
+        => TryPassUnchangedRowGate(
+            scene,
+            frameId,
+            out reusedStaticPlans,
+            out materialResolveAttempts,
+            out _);
+
+    /// <summary>
+    /// Runs the unchanged-row gate and gives the reason of a failure.
+    /// <paramref name="mismatch"/> is <see cref="EAdvancedPreparedGateOutcome.None"/>
+    /// when the gate passed.
+    /// </summary>
+    private bool TryPassUnchangedRowGate(
+        GPUScene scene,
+        ulong frameId,
+        out int reusedStaticPlans,
+        out int materialResolveAttempts,
+        out EAdvancedPreparedGateOutcome mismatch)
     {
         reusedStaticPlans = 0;
         materialResolveAttempts = 0;
-        int rowCount = _plannedCommandCount;
-        if (!_unchangedRowBaselineValid ||
-            !_currentPublication.IsValid ||
-            _identityDeliveryIncomplete ||
-            _pendingIdentitySourceCount != 0 ||
-            !_committedMaterialPlanCacheValid ||
-            _registrationLookupNeedsRebuild ||
-            !_orderedRegistrationIdentitiesValid ||
-            _orderedRegistrationMembershipGeneration != _registrationMembershipGeneration ||
-            _orderedRegistrationIdentityCount != rowCount ||
-            !_retainedIdentityGroupsValid ||
-            _retainedIdentityMembershipGeneration != _registrationMembershipGeneration ||
-            scene.TotalCommandCount != (uint)rowCount ||
-            rowCount > _plannedCommands.Length)
-            return false;
-
-        GPUPhysicsChainDispatcher? boundsDispatcher = null;
-        XRMaterial? checkedHeaderMaterial = null;
-        AdvancedGpuHandle checkedHeaderHandle = AdvancedGpuHandle.Invalid;
-        int supportedRows = 0;
-        for (int commandIndex = 0; commandIndex < rowCount; ++commandIndex)
+        if (!HasValidUnchangedRowBaseline(scene))
         {
-            ref readonly AdvancedGpuSceneCommandTransition plan =
-                ref _plannedCommands[commandIndex];
-            ref readonly OrderedRegistrationIdentity identity =
-                ref _orderedRegistrationIdentities[commandIndex];
-            uint row = (uint)commandIndex;
-            if (plan.Source is not { } planSource)
-            {
-                // A missing source stays missing only while a scene lookup still fails.
-                if (identity.Source is not null || identity.GroupIndex >= 0 ||
-                    identity.RegistrationIndex >= 0 || identity.Draw.IsValid ||
-                    scene.TryGetAdvancedPreparationCommand(row, out _) &&
-                    scene.TryGetSourceCommand(row, out IRenderCommandMesh? missing, out _) &&
-                    missing is not null)
-                    return false;
-                continue;
-            }
-
-            if (!ReferenceEquals(identity.Source, planSource) ||
-                identity.PrimitiveIndex != plan.PrimitiveIndex ||
-                identity.SourcePrimitiveCount != plan.SourcePrimitiveCount ||
-                identity.Supported != plan.Supported ||
-                !IsRetainedSourceGroupCurrent(in identity, planSource, plan.SourcePrimitiveCount) ||
-                !scene.TryGetSourceCommand(row, out IRenderCommandMesh? source, out int primitiveIndex) ||
-                !ReferenceEquals(source, planSource) ||
-                primitiveIndex != plan.PrimitiveIndex ||
-                !scene.TryGetAdvancedPreparationCommand(row, out DrawMetadata command))
-                return false;
-
-            AdvancedMeshRenderSnapshot snapshot = CaptureSourceSnapshot(planSource);
-            XRMeshRenderer? renderer = snapshot.Renderer;
-            if (Math.Max(1, renderer?.Submeshes.Count ?? 0) != plan.SourcePrimitiveCount ||
-                !IsGpuBoundsSourceUnchanged(renderer, in plan.GpuBoundsSource, ref boundsDispatcher))
-                return false;
-            ResolveSourcePrimitive(
-                in snapshot,
-                plan.PrimitiveIndex,
-                out XRMesh? mesh,
-                out XRMaterial? material,
-                out RenderingParameters? renderOptions);
-
-            if (!plan.Supported)
-            {
-                if (!IsUnchangedUnsupportedRow(in plan, in identity, in command, mesh, material,
-                        ref materialResolveAttempts))
-                    return false;
-                continue;
-            }
-
-            Matrix4x4 world = snapshot.WorldMatrixIsModelMatrix
-                ? snapshot.CurrentWorld
-                : Matrix4x4.Identity;
-            Matrix4x4 previousWorld = snapshot.WorldMatrixIsModelMatrix
-                ? snapshot.PreviousWorld
-                : Matrix4x4.Identity;
-            if (!command.Equals(plan.Command) ||
-                !ReferenceEquals(renderer, plan.Renderer) ||
-                world != plan.World ||
-                previousWorld != plan.PreviousWorld ||
-                !IsUnchangedSupportedRow(
-                    scene,
-                    commandIndex,
-                    frameId,
-                    in plan,
-                    in identity,
-                    in command,
-                    mesh,
-                    material,
-                    renderOptions,
-                    ref checkedHeaderMaterial,
-                    ref checkedHeaderHandle,
-                    ref reusedStaticPlans))
-                return false;
-            ++supportedRows;
+            mismatch = EAdvancedPreparedGateOutcome.BaselineInvalid;
+            return false;
         }
 
+        UnchangedRowGateScratch scratch = default;
+        int rowCount = _plannedCommandCount;
+        bool rowsUnchanged = true;
+        for (int commandIndex = 0; rowsUnchanged && commandIndex < rowCount; ++commandIndex)
+            rowsUnchanged = EvaluateUnchangedRow(scene, commandIndex, frameId, ref scratch);
+
+        reusedStaticPlans = scratch.ReusedStaticPlans;
+        materialResolveAttempts = scratch.MaterialResolveAttempts;
+        if (!rowsUnchanged)
+        {
+            mismatch = scratch.RowMismatch;
+            return false;
+        }
+
+        if (!TryFinishUnchangedRowGate(ref scratch))
+        {
+            mismatch = EAdvancedPreparedGateOutcome.BoundsRouteChanged;
+            return false;
+        }
+
+        mismatch = EAdvancedPreparedGateOutcome.None;
+        return true;
+    }
+
+    /// <summary>
+    /// Returns true when the retained plan, the ordered identities, and the
+    /// source groups describe the current publication, and the scene has one
+    /// command row for each retained plan row.
+    /// </summary>
+    private bool HasValidUnchangedRowBaseline(GPUScene scene)
+    {
+        int rowCount = _plannedCommandCount;
+        return _unchangedRowBaselineValid &&
+            _currentPublication.IsValid &&
+            !_identityDeliveryIncomplete &&
+            _pendingIdentitySourceCount == 0 &&
+            _committedMaterialPlanCacheValid &&
+            !_registrationLookupNeedsRebuild &&
+            _orderedRegistrationIdentitiesValid &&
+            _orderedRegistrationMembershipGeneration == _registrationMembershipGeneration &&
+            _orderedRegistrationIdentityCount == rowCount &&
+            _retainedIdentityGroupsValid &&
+            _retainedIdentityMembershipGeneration == _registrationMembershipGeneration &&
+            scene.TotalCommandCount == (uint)rowCount &&
+            rowCount <= _plannedCommands.Length;
+    }
+
+    /// <summary>
+    /// Returns true when one retained row has the inputs of its plan. The
+    /// method reads the scene lookup and the render-side rows of the command
+    /// in one scene-lock scope, so a caller does not need to hold the scene
+    /// lock. It updates the walk fields of <paramref name="scratch"/>, and it
+    /// writes the inputs that it compared to the row fields. When the row
+    /// fails, <see cref="UnchangedRowGateScratch.RowMismatch"/> names the
+    /// input group that changed.
+    /// </summary>
+    private bool EvaluateUnchangedRow(
+        GPUScene scene,
+        int commandIndex,
+        ulong frameId,
+        ref UnchangedRowGateScratch scratch)
+    {
+        scratch.ClearRow();
+        ref readonly AdvancedGpuSceneCommandTransition plan =
+            ref _plannedCommands[commandIndex];
+        ref readonly OrderedRegistrationIdentity identity =
+            ref _orderedRegistrationIdentities[commandIndex];
+        uint row = (uint)commandIndex;
+        if (plan.Source is not { } planSource)
+        {
+            // A missing source stays missing only while a scene lookup still fails.
+            if (identity.Source is not null || identity.GroupIndex >= 0 ||
+                identity.RegistrationIndex >= 0 || identity.Draw.IsValid)
+                return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RegistrationChanged);
+            if (scene.TryGetAdvancedRowInputs(
+                    row,
+                    readCullBounds: false,
+                    out IRenderCommandMesh? missing,
+                    out _,
+                    out _,
+                    out _) &&
+                missing is not null)
+                return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged);
+            return true;
+        }
+
+        // Only a supported row with a CPU-owned bound compares the cull bounds row.
+        bool readCullBounds = plan.Supported && plan.GpuBoundsSource is null;
+        if (!ReferenceEquals(identity.Source, planSource) ||
+            identity.PrimitiveIndex != plan.PrimitiveIndex ||
+            identity.SourcePrimitiveCount != plan.SourcePrimitiveCount ||
+            identity.Supported != plan.Supported ||
+            !IsRetainedSourceGroupCurrent(in identity, planSource, plan.SourcePrimitiveCount))
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RegistrationChanged);
+        if (!scene.TryGetAdvancedRowInputs(
+                row,
+                readCullBounds,
+                out IRenderCommandMesh? source,
+                out int primitiveIndex,
+                out DrawMetadata command,
+                out BoundsGpu cullBounds) ||
+            !ReferenceEquals(source, planSource) ||
+            primitiveIndex != plan.PrimitiveIndex)
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged);
+
+        AdvancedMeshRenderSnapshot snapshot = CaptureSourceSnapshot(planSource);
+        XRMeshRenderer? renderer = snapshot.Renderer;
+        scratch.RowSource = planSource;
+        scratch.RowSupported = plan.Supported;
+        scratch.RowRenderer = renderer;
+        scratch.RowMaterialOverride = snapshot.MaterialOverride;
+        if (Math.Max(1, renderer?.Submeshes.Count ?? 0) != plan.SourcePrimitiveCount)
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.CommandChanged);
+        if (!IsGpuBoundsSourceUnchanged(renderer, in plan.GpuBoundsSource, ref scratch.BoundsDispatcher))
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.BoneStateChanged);
+        ResolveSourcePrimitive(
+            in snapshot,
+            plan.PrimitiveIndex,
+            out XRMesh? mesh,
+            out XRMaterial? material,
+            out RenderingParameters? renderOptions);
+        scratch.RowMesh = mesh;
+        scratch.RowMaterial = material;
+        scratch.RowRenderOptions = renderOptions;
+
+        if (!plan.Supported)
+            return IsUnchangedUnsupportedRow(in plan, in identity, in command, mesh, material,
+                    ref scratch.MaterialResolveAttempts) ||
+                FailRow(ref scratch, EAdvancedPreparedGateOutcome.UnsupportedRowChanged);
+
+        Matrix4x4 world = snapshot.WorldMatrixIsModelMatrix
+            ? snapshot.CurrentWorld
+            : Matrix4x4.Identity;
+        Matrix4x4 previousWorld = snapshot.WorldMatrixIsModelMatrix
+            ? snapshot.PreviousWorld
+            : Matrix4x4.Identity;
+        if (!command.Equals(plan.Command))
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged);
+        if (!ReferenceEquals(renderer, plan.Renderer))
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.CommandChanged);
+        // A command swap that changes the matrices also advances the scene row
+        // inputs. With equal row inputs, only a late render-thread write remains.
+        if (world != plan.World || previousWorld != plan.PreviousWorld)
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.LateWorldWrite);
+        if (!IsUnchangedSupportedRow(
+                commandIndex,
+                frameId,
+                in plan,
+                in identity,
+                in command,
+                in cullBounds,
+                mesh,
+                material,
+                renderOptions,
+                ref scratch))
+            return false;
+        ++scratch.SupportedRows;
+        return true;
+    }
+
+    /// <summary>Records the reason of a failed row comparison and returns false.</summary>
+    private static bool FailRow(
+        ref UnchangedRowGateScratch scratch,
+        EAdvancedPreparedGateOutcome mismatch)
+    {
+        scratch.RowMismatch = mismatch;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns true when the walk covered every active registration and the
+    /// covered rows still have the bounds epoch of the last full plan. Call it
+    /// after every row passed <see cref="EvaluateUnchangedRow"/>.
+    /// </summary>
+    private bool TryFinishUnchangedRowGate(ref UnchangedRowGateScratch scratch)
+    {
         // Every active registration must belong to one row. Otherwise the full
         // plan would release and tombstone the unseen registrations.
+        int supportedRows = scratch.SupportedRows;
         if (supportedRows != _legacyMappingCount ||
             supportedRows != CountActiveRegistrations())
             return false;
@@ -186,6 +290,7 @@ public sealed partial class AdvancedGpuScenePublisher
         // One read of the dispatcher epoch covers every covered row. The epoch
         // advances when a committed bounds source changes, and the read fails
         // while the published output page is not usable.
+        GPUPhysicsChainDispatcher? boundsDispatcher = scratch.BoundsDispatcher;
         return boundsDispatcher is null ||
             _planBoundsEpochCaptured &&
             ReferenceEquals(boundsDispatcher, GPUPhysicsChainDispatcher.Instance) &&
@@ -225,21 +330,21 @@ public sealed partial class AdvancedGpuScenePublisher
 
     /// <summary>
     /// Returns true when a supported row has the inputs of its retained plan and
-    /// its registration still holds the committed result of that plan.
+    /// its registration still holds the committed result of that plan. The
+    /// geometry values, the material versions, and the render state go to the
+    /// row fields of <paramref name="scratch"/> before the comparison reads them.
     /// </summary>
     private bool IsUnchangedSupportedRow(
-        GPUScene scene,
         int commandIndex,
         ulong frameId,
         in AdvancedGpuSceneCommandTransition plan,
         in OrderedRegistrationIdentity identity,
         in DrawMetadata command,
+        in BoundsGpu cullBounds,
         XRMesh? mesh,
         XRMaterial? material,
         RenderingParameters? renderOptions,
-        ref XRMaterial? checkedHeaderMaterial,
-        ref AdvancedGpuHandle checkedHeaderHandle,
-        ref int reusedStaticPlans)
+        ref UnchangedRowGateScratch scratch)
     {
         int registrationIndex = identity.RegistrationIndex;
         // Only rows that reused the committed material plan prove that the
@@ -247,31 +352,41 @@ public sealed partial class AdvancedGpuScenePublisher
         if (!plan.ReusedCommittedMaterial ||
             registrationIndex < 0 ||
             registrationIndex != plan.RegistrationIndex ||
-            registrationIndex >= _registrationCount ||
-            mesh is null ||
+            registrationIndex >= _registrationCount)
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RegistrationChanged);
+        if (mesh is null ||
             !ReferenceEquals(mesh, plan.Mesh) ||
-            !ReferenceEquals(material, plan.MaterialSource) ||
-            !IsUntexturedCanonicalMaterial(material))
-            return false;
+            !ReferenceEquals(material, plan.MaterialSource))
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.CommandChanged);
+        if (!IsUntexturedCanonicalMaterial(material))
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.MaterialChanged);
+        if (!IsUnchangedRowGeometry(mesh, in plan, ref scratch))
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.GeometryChanged);
 
-        if (Math.Max(0, mesh.VertexCount) != plan.MeshVertexCount ||
-            Math.Max(0, mesh.IndexCount) != plan.MeshIndexCount ||
-            mesh.GeometryRevision != plan.MeshGeometryRevision ||
-            mesh.Type != plan.MeshPrimitiveTopology ||
-            mesh.Triangles is not { } triangles ||
-            (long)triangles.Count * 3L != plan.MeshIndexCount ||
-            (material?.BindingLayoutVersion ?? 0u) != plan.MaterialBindingLayoutVersion ||
-            (material?.BindingValueVersion ?? 0u) != plan.MaterialBindingValueVersion ||
-            (material?.BindingResourceVersion ?? 0u) != plan.MaterialBindingResourceVersion ||
-            (material?.ShaderStateRevision ?? 0L) != plan.MaterialShaderStateRevision ||
-            (material?.UberStateRevision ?? 0L) != plan.MaterialUberStateRevision ||
-            !SameRenderState(CreateRenderState(mesh, renderOptions, in command), in plan.RenderState))
-            return false;
+        // Read each material version one time. The comparison and the row
+        // fields use the same value.
+        scratch.RowMaterialBindingLayoutVersion = material?.BindingLayoutVersion ?? 0u;
+        scratch.RowMaterialBindingValueVersion = material?.BindingValueVersion ?? 0u;
+        scratch.RowMaterialBindingResourceVersion = material?.BindingResourceVersion ?? 0u;
+        scratch.RowMaterialShaderStateRevision = material?.ShaderStateRevision ?? 0L;
+        scratch.RowMaterialUberStateRevision = material?.UberStateRevision ?? 0L;
+        if (scratch.RowMaterialBindingLayoutVersion != plan.MaterialBindingLayoutVersion ||
+            scratch.RowMaterialBindingValueVersion != plan.MaterialBindingValueVersion ||
+            scratch.RowMaterialBindingResourceVersion != plan.MaterialBindingResourceVersion ||
+            scratch.RowMaterialShaderStateRevision != plan.MaterialShaderStateRevision ||
+            scratch.RowMaterialUberStateRevision != plan.MaterialUberStateRevision)
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.MaterialChanged);
+
+        // The mesh topology and the draw row are equal to the plan here, so a
+        // different render state comes from the raster options.
+        scratch.RowRenderState = CreateRenderState(mesh, renderOptions, in command);
+        if (!SameRenderState(in scratch.RowRenderState, in plan.RenderState))
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RenderOptionsChanged);
 
         // A CPU-owned bound enters the content signature through its version.
         if (plan.GpuBoundsSource is null &&
-            ReadCullBounds(scene, in command).BoundsVersion != plan.Bounds.BoundsVersion)
-            return false;
+            cullBounds.BoundsVersion != plan.Bounds.BoundsVersion)
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RowInputsChanged);
 
         ref readonly AdvancedResidentRegistration registration =
             ref _registrations[registrationIndex];
@@ -284,10 +399,12 @@ public sealed partial class AdvancedGpuScenePublisher
             registration.PrimitiveIndex != plan.PrimitiveIndex ||
             !identity.Draw.IsValid ||
             registration.Draw != identity.Draw ||
-            registration.LegacyCommandIndex != (uint)commandIndex ||
-            registration.LastSeenFrameId == 0UL ||
-            unchecked(registration.LastSeenFrameId + 1UL) != frameId ||
-            registration.StructuralSignature != plan.StructuralSignature ||
+            registration.LegacyCommandIndex != (uint)commandIndex)
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RegistrationChanged);
+        if (registration.LastSeenFrameId == 0UL ||
+            unchecked(registration.LastSeenFrameId + 1UL) != frameId)
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.FrameGap);
+        if (registration.StructuralSignature != plan.StructuralSignature ||
             registration.ContentSignature != plan.ContentSignature ||
             !ReferenceEquals(registration.TemporalMesh, mesh) ||
             registration.TemporalGeometryRevision != plan.MeshGeometryRevision ||
@@ -306,14 +423,19 @@ public sealed partial class AdvancedGpuScenePublisher
             cache.Draw != registration.Draw ||
             cache.MaterialHandle != registration.Material ||
             !IsRegistrationCurrent(in registration))
-            return false;
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RegistrationChanged);
 
         // The material versions do not cover every header input, for example a
         // vertex uniform handler. The full plan checks the header for each
         // material, so check it one time for each run of rows with one material.
-        if (!ReferenceEquals(material, checkedHeaderMaterial) ||
-            registration.Material != checkedHeaderHandle)
+        scratch.RowMaterialHandle = registration.Material;
+        if (!ReferenceEquals(material, scratch.CheckedHeaderMaterial) ||
+            registration.Material != scratch.CheckedHeaderHandle)
         {
+            scratch.RowHeaderChecked = true;
+            scratch.RowHeaderLayout = layout;
+            scratch.RowHeaderCoverage = cache.Coverage;
+            scratch.RowHeaderState = cache.State;
             if (!_materialPublisher.HeaderMatches(
                     registration.Material,
                     material,
@@ -321,9 +443,9 @@ public sealed partial class AdvancedGpuScenePublisher
                     cache.Coverage,
                     cache.State,
                     ReadOnlySpan<AdvancedMaterialTextureBinding>.Empty))
-                return false;
-            checkedHeaderMaterial = material;
-            checkedHeaderHandle = registration.Material;
+                return FailRow(ref scratch, EAdvancedPreparedGateOutcome.MaterialChanged);
+            scratch.CheckedHeaderMaterial = material;
+            scratch.CheckedHeaderHandle = registration.Material;
         }
 
         if (plan.GpuBoundsSource is not null &&
@@ -331,8 +453,38 @@ public sealed partial class AdvancedGpuScenePublisher
             plan.PreviousWorld == Matrix4x4.Identity &&
             cache.GpuOwnedBounds &&
             cache.IdentityWorld)
-            ++reusedStaticPlans;
+            ++scratch.ReusedStaticPlans;
         return true;
+    }
+
+    /// <summary>
+    /// Returns true when the mesh has the geometry values of the plan. Each
+    /// value goes to the row fields of <paramref name="scratch"/> before the
+    /// comparison reads it, so the comparison and the row fields use one read.
+    /// The reads stop at the first different value, in the order of the full
+    /// plan checks.
+    /// </summary>
+    private static bool IsUnchangedRowGeometry(
+        XRMesh mesh,
+        in AdvancedGpuSceneCommandTransition plan,
+        ref UnchangedRowGateScratch scratch)
+    {
+        scratch.RowMeshVertexCount = Math.Max(0, mesh.VertexCount);
+        if (scratch.RowMeshVertexCount != plan.MeshVertexCount)
+            return false;
+        scratch.RowMeshIndexCount = Math.Max(0, mesh.IndexCount);
+        if (scratch.RowMeshIndexCount != plan.MeshIndexCount)
+            return false;
+        scratch.RowMeshGeometryRevision = mesh.GeometryRevision;
+        if (scratch.RowMeshGeometryRevision != plan.MeshGeometryRevision)
+            return false;
+        scratch.RowMeshPrimitiveType = mesh.Type;
+        if (scratch.RowMeshPrimitiveType != plan.MeshPrimitiveTopology)
+            return false;
+        if (mesh.Triangles is not { } triangles)
+            return false;
+        scratch.RowMeshTriangleCount = triangles.Count;
+        return (long)scratch.RowMeshTriangleCount * 3L == plan.MeshIndexCount;
     }
 
     /// <summary>
@@ -582,5 +734,8 @@ public sealed partial class AdvancedGpuScenePublisher
             registration.LastSeenSequence = _sequence;
             registration.LastSeenFrameId = frameId;
         }
+        // Record the frame also when no row has a registration, so that the
+        // next prepare expects the frame after this publication.
+        _lastStampedFrameId = frameId;
     }
 }

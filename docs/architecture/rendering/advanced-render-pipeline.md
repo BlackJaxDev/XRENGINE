@@ -147,6 +147,56 @@ full plan, that a pinned publication is reused, that a global change commits the
 retained rows unchanged, and that material, raster, geometry, transform, mesh,
 header, frame-gap, and membership changes run the full plan.
 
+### Prepared unchanged-row verdict
+
+The gate walk can run on the collect thread before the swap. After
+`PostCollectVisible`, `EngineTimer` raises `PrepareSwapPublications`.
+`RuntimeWorldRenderer.GlobalPrepareSwapPublications` calls
+`GPUScene.PrepareAdvancedResidentPublication`, which runs the same row evaluator
+as the swap-time gate (`EvaluateUnchangedRow`) and stores a single-use verdict.
+At the swap, `PublishCore` first tries to consume the verdict and runs
+`TryPassUnchangedRowGate` only when the verdict did not decide. The commit is
+unchanged and stays in the swap: boundary capacity, tombstone reclaim, the
+global preflight, the transaction, the stamp, the seal, the captures,
+`_currentPublication`, and identity delivery. The global capture is final only
+after the light swap, and render frame N still reads publication N.
+
+Every input that the gate reads has a witness that the prepare samples before
+the first row read. Each cross-thread writer advances its witness after the
+write:
+
+- `GPUScene` row-input version: every draw row, bound, lookup, count, render
+  snapshot, and capacity write. The swap records it right after `CopyStreams`,
+  under the scene lock, and the prepare requires the same version with empty
+  dirty ranges. The prepare reads render-side rows only through
+  `TryGetAdvancedRowInputs`, under the scene lock.
+- Static epochs: late render-thread world writes, GPU-driven bone state and
+  coverage, and mesh geometry revisions.
+- Per row: the command `MutationVersion`, and a mesh witness for each run of rows
+  with one mesh (vertex count, index count, geometry revision, primitive type,
+  triangle count).
+- Per material and per raster option set: the values that the evaluator compared.
+- The publisher epoch (advanced only when a publication ends), frame continuity,
+  the settings bits, and the dispatcher bounds epoch.
+
+A row is evaluated again at the consume, instead of trusted, when its source is
+not a `RenderCommandMesh3D`, when its renderer has no current mutation binding,
+when its material override differs from its snapshot, when its command is dirty,
+when its command version changed, or when it is an unsupported row. Any other
+witness change is a miss, and the swap runs today's gate, which falls back to
+the full plan. The prepare takes the collect publication lock first and the
+scene lock only for one row at a time. It never calls the committed spatial
+query, so the recorded lock order is unchanged. An exception in the prepare
+discards the verdict and is recorded; it never stops the collect thread.
+
+`XRE_ADVANCED_PREPARED_GATE=0` disables the prepare; the swap then runs exactly
+today's gate. `XRE_ADVANCED_PREPARED_GATE_VERIFY=1` also runs the swap-time gate
+after each hit, publishes its result, and counts each disagreement with the
+witness that should have caught it. `get_render_profiler_stats` reports the
+counters in `frame_lifecycle.collect_stages.swap.advanced_publication.prepared_gate`:
+prepares, refusals and misses by reason, hits, re-evaluated rows, verify
+disagreements, and the last exception.
+
 ### Extraction lookups
 
 `AdvancedPreparationExtractor.Build` reads each skinned draw's mesh preparation

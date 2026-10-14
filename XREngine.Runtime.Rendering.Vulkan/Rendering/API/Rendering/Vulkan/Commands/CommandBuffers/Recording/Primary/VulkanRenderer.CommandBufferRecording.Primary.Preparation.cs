@@ -2406,13 +2406,19 @@ namespace XREngine.Rendering.Vulkan
             scoped ref PrimaryCommandBufferRecordingState recordingState,
             VulkanPipelineVariantManifest pipelineVariantManifest)
         {
-            if (pipelineVariantManifest.WarmupCompleted)
+            long pipelineRetirementGeneration =
+                ResourceRuntime.PipelineManager.SharedGraphicsPipelineRetirementGeneration;
+            CommandBufferRecordingScratch scratch =
+                recordingState.RecordingScratch;
+            scratch.CurrentPipelineVariantManifest = pipelineVariantManifest;
+            bool pipelineRetired = RefreshPipelineAdmissionForRetirement(
+                scratch, pipelineRetirementGeneration);
+            if (pipelineVariantManifest.IsWarmForPipelineGeneration(
+                    pipelineRetirementGeneration))
                 return TryAssociatePrimaryMeshTaskPipelines(
                     ref recordingState,
                     pipelineVariantManifest);
 
-            CommandBufferRecordingScratch scratch =
-                recordingState.RecordingScratch;
             HashSet<int> pendingRequirements =
                 scratch.PipelineDeferredRequirementIndices;
             HashSet<int> optionalRequirements =
@@ -2422,7 +2428,8 @@ namespace XREngine.Rendering.Vulkan
             ulong previousManifestIdentity =
                 scratch.PipelineDeferredManifestIdentity;
             int cursorBeforeReset = scratch.PipelinePrewarmRequirementCursor;
-            bool manifestReset = previousManifestIdentity != manifestIdentity;
+            bool manifestReset = previousManifestIdentity != manifestIdentity ||
+                pipelineRetired;
             if (manifestReset)
             {
                 scratch.PipelineDeferredManifestIdentity = manifestIdentity;
@@ -2571,9 +2578,43 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (optionalRequirements.Count == 0)
-                pipelineVariantManifest.MarkWarmupCompleted();
+            if (optionalRequirements.Count == 0 &&
+                ResourceRuntime.PipelineManager.SharedGraphicsPipelineRetirementGeneration ==
+                    pipelineRetirementGeneration)
+                pipelineVariantManifest.MarkWarmupCompleted(pipelineRetirementGeneration);
             return true;
+        }
+
+        /// <summary>Removes pipeline admissions that refer to retired native handles.</summary>
+        private static bool RefreshPipelineAdmissionForRetirement(
+            CommandBufferRecordingScratch scratch,
+            long pipelineRetirementGeneration)
+        {
+            if (scratch.PipelineDeferredRetirementGeneration == pipelineRetirementGeneration)
+                return false;
+
+            scratch.PipelineDeferredRetirementGeneration = pipelineRetirementGeneration;
+            scratch.PipelineDeferredManifestIdentity = 0;
+            scratch.PipelinePrewarmRequirementCursor = 0;
+            scratch.PipelinePrewarmInitialScanComplete = false;
+            scratch.PipelineDeferredRequirementIndices.Clear();
+            scratch.PipelineOptionalDeferredRequirementIndices.Clear();
+            scratch.AdmittedPipelinePreparationSignatures.Clear();
+            return true;
+        }
+
+        /// <summary>Requires a fresh pre-recording scan after an admitted pipeline miss.</summary>
+        private static void InvalidatePrimaryGraphicsPipelineAdmission(
+            scoped ref PrimaryCommandBufferRecordingState recordingState)
+        {
+            CommandBufferRecordingScratch scratch = recordingState.RecordingScratch;
+            scratch.CurrentPipelineVariantManifest?.InvalidateWarmup();
+            scratch.PipelineDeferredManifestIdentity = 0;
+            scratch.PipelinePrewarmRequirementCursor = 0;
+            scratch.PipelinePrewarmInitialScanComplete = false;
+            scratch.PipelineDeferredRequirementIndices.Clear();
+            scratch.PipelineOptionalDeferredRequirementIndices.Clear();
+            scratch.AdmittedPipelinePreparationSignatures.Clear();
         }
 
         /// <summary>

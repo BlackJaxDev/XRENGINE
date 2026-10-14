@@ -679,8 +679,18 @@ internal sealed partial class VulkanResourceRuntime
         VulkanCommandBufferTrackingBatch batch,
         out string reason,
         out long lifetimeLockWaitTicks)
+        => TryPublishCommandBufferTrackingBatch(commandBuffer, batch, out reason,
+            out _, out lifetimeLockWaitTicks);
+
+    internal bool TryPublishCommandBufferTrackingBatch(
+        CommandBuffer commandBuffer,
+        VulkanCommandBufferTrackingBatch batch,
+        out string reason,
+        out EVulkanCommandBufferTrackingFailureKind failureKind,
+        out long lifetimeLockWaitTicks)
     {
         reason = string.Empty;
+        failureKind = EVulkanCommandBufferTrackingFailureKind.None;
         lifetimeLockWaitTicks = 0L;
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         if (commandBufferHandle == 0)
@@ -704,12 +714,13 @@ internal sealed partial class VulkanResourceRuntime
                 if (batch.QueuedSubmissionCount != 0)
                 {
                     reason = $"Command buffer 0x{commandBufferHandle:X} is queued for submission.";
+                    failureKind = EVulkanCommandBufferTrackingFailureKind.QueuedForSubmission;
                     return false;
                 }
 
                 foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
                 {
-                    if (!TryValidateCommandBufferDependencyNoLock(commandBufferHandle, key, out reason))
+                    if (!TryValidateCommandBufferDependencyNoLock(commandBufferHandle, key, out reason, out failureKind))
                         return false;
                 }
 
@@ -826,7 +837,15 @@ internal sealed partial class VulkanResourceRuntime
         ulong commandBufferHandle,
         VulkanResourceLifetimeKey key,
         out string reason)
+        => TryValidateCommandBufferDependencyNoLock(commandBufferHandle, key, out reason, out _);
+
+    internal bool TryValidateCommandBufferDependencyNoLock(
+        ulong commandBufferHandle,
+        VulkanResourceLifetimeKey key,
+        out string reason,
+        out EVulkanCommandBufferTrackingFailureKind failureKind)
     {
+        failureKind = EVulkanCommandBufferTrackingFailureKind.None;
         if (TryGetRetainedPresentationImageNoLock(commandBufferHandle, key, out _))
         {
             reason = string.Empty;
@@ -837,6 +856,7 @@ internal sealed partial class VulkanResourceRuntime
         if ((resource.State & (EVulkanResourceLifetimeState.PendingRetirement | EVulkanResourceLifetimeState.Destroyed)) != 0)
         {
             reason = $"Command buffer 0x{commandBufferHandle:X} attempted to record retired resource {key} generation {resource.Generation}.";
+            failureKind = EVulkanCommandBufferTrackingFailureKind.RetiredDependency;
             return false;
         }
 
@@ -844,21 +864,21 @@ internal sealed partial class VulkanResourceRuntime
             Lifetime.Tracker.ImageViewBackingImages.TryGetValue(key.Handle, out ulong backingImage) &&
             backingImage != 0)
         {
-            if (!TryValidateCommandBufferDependencyNoLock(commandBufferHandle, new VulkanResourceLifetimeKey(ObjectType.Image, backingImage), out reason))
+            if (!TryValidateCommandBufferDependencyNoLock(commandBufferHandle, new VulkanResourceLifetimeKey(ObjectType.Image, backingImage), out reason, out failureKind))
                 return false;
         }
         else if (key.Type == ObjectType.BufferView &&
                  Lifetime.Tracker.BufferViewBackingBuffers.TryGetValue(key.Handle, out ulong backingBuffer) &&
                  backingBuffer != 0)
         {
-            if (!TryValidateCommandBufferDependencyNoLock(commandBufferHandle, new VulkanResourceLifetimeKey(ObjectType.Buffer, backingBuffer), out reason))
+            if (!TryValidateCommandBufferDependencyNoLock(commandBufferHandle, new VulkanResourceLifetimeKey(ObjectType.Buffer, backingBuffer), out reason, out failureKind))
                 return false;
         }
         else if (key.Type == ObjectType.Framebuffer &&
                  Lifetime.Tracker.FramebufferAttachments.TryGetValue(key.Handle, out VulkanResourceLifetimeKey[]? attachments))
         {
             for (int index = 0; index < attachments.Length; index++)
-                if (attachments[index].IsValid && !TryValidateCommandBufferDependencyNoLock(commandBufferHandle, attachments[index], out reason))
+                if (attachments[index].IsValid && !TryValidateCommandBufferDependencyNoLock(commandBufferHandle, attachments[index], out reason, out failureKind))
                     return false;
         }
 

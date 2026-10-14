@@ -22,6 +22,12 @@ internal enum ECollectVisibleStage
     /// <summary>The post-collect event. Parent: <see cref="CollectTotal"/>.</summary>
     PostCollectEvent,
 
+    /// <summary>
+    /// The swap publication prepare event after the post-collect event. It prepares the unchanged-row verdict of
+    /// the next Advanced resident-scene publication. Parent: <see cref="CollectTotal"/>.
+    /// </summary>
+    PrepareSwapPublicationEvent,
+
     /// <summary>The world render-matrix publication and the pending matrix queue before collection.</summary>
     PreCollectTransforms,
 

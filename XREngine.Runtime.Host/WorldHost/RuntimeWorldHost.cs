@@ -239,6 +239,7 @@ public sealed class RuntimeWorldHost : IDisposable
         Engine.Time.Timer.WorldSwapBuffers += SwapWorldBuffers;
         Engine.Time.Timer.PreCollectVisible += RenderWorld.GlobalPreCollectVisible;
         Engine.Time.Timer.CollectVisible += RenderWorld.GlobalCollectVisible;
+        Engine.Time.Timer.PrepareSwapPublications += RenderWorld.GlobalPrepareSwapPublications;
         RenderWorld.SetCollectPublicationOpen(true);
         _timeCallbacksLinked = true;
     }
@@ -257,6 +258,7 @@ public sealed class RuntimeWorldHost : IDisposable
         Engine.Time.Timer.WorldSwapBuffers -= SwapWorldBuffers;
         Engine.Time.Timer.PreCollectVisible -= RenderWorld.GlobalPreCollectVisible;
         Engine.Time.Timer.CollectVisible -= RenderWorld.GlobalCollectVisible;
+        Engine.Time.Timer.PrepareSwapPublications -= RenderWorld.GlobalPrepareSwapPublications;
         _timeCallbacksLinked = false;
     }
 

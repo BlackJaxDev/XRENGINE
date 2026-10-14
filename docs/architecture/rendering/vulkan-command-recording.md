@@ -1,6 +1,6 @@
 # Vulkan Primary And Secondary Command Recording
 
-Last updated: 2026-10-04
+Last updated: 2026-10-13
 
 This document explains how XRENGINE turns a frame's rendering work into Vulkan
 command buffers. It covers the desktop path, the persistent secondary-recording
@@ -60,6 +60,28 @@ Worker threads
 | Frame slot | One entry in the frames-in-flight ring. Pools and cached recordings are tracked per slot so in-flight GPU work is not reset. |
 
 ## Recording Modes
+
+Primary inline mesh draws use `VkMeshRenderer.RecordDraw`. This path activates
+the captured program, binds the declared vertex slots, and tracks resource use.
+Do not insert a resident encoder before this path unless it preserves these
+contracts and transfers each acquired template use to frame completion. An
+encoder must not report success when it emits no draw.
+
+Pipeline warmup belongs to a shared graphics-pipeline retirement generation.
+Both PresentNow preparation and primary admission clear stale preparation
+records when that generation changes. An unexpected pipeline miss during
+recording invalidates the current warm manifest and requires a fresh scan.
+Pipeline compilation stays in preparation, before command recording.
+
+An admitted inline mesh draw returns a per-call failure result under its
+recording lock. An unexpected failure rejects the partial frame, so downstream
+passes cannot publish retained intermediate images as new content. Intentional
+empty draws and excluded shadow primitives do not cause a frame retry.
+
+Command-buffer publication reports retired dependencies with a typed result.
+The recorder abandons the rejected command buffer and retries a fresh frame.
+A publication attempt for a command buffer already queued for submission
+remains a hard failure. This rule preserves resource lifetime validation.
 
 Recording-lane contexts have one active command-buffer owner per lane and frame
 slot. Their registry retains both the native handle and recording generation;

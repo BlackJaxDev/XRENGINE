@@ -77,6 +77,7 @@ public sealed partial class AdvancedGpuScenePublisher
             Array.Resize(ref _plannedDeformationSources, required);
         }
         EnsureSourceGroupCapacity(checked(required * 2));
+        EnsurePreparedGateCapacity(required);
         if (_plannedMaterials.Length < required)
         {
             Array.Resize(ref _plannedMaterials, required);

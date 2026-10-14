@@ -266,6 +266,12 @@ namespace XREngine.Rendering.Commands
                     return true;
                 }
 
+                // A command update follows a command swap. The swap can change the
+                // render-side command state that the canonical row gate reads, even
+                // when no row bytes change, so each update counts as a row write.
+                for (int i = 0; i < indices.Count; i++)
+                    MarkAdvancedRowInputWritten(indices[i]);
+
                 XRMeshRenderer? meshRenderer = snapshot.Renderer;
                 if (meshRenderer is null)
                 {

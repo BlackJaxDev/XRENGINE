@@ -1617,6 +1617,7 @@ namespace XREngine.Editor.Mcp
                 pre_collect_event_ms = snapshot.PreCollectEventMilliseconds,
                 collect_event_ms = snapshot.CollectEventMilliseconds,
                 post_collect_event_ms = snapshot.PostCollectEventMilliseconds,
+                prepare_swap_publication_event_ms = snapshot.PrepareSwapPublicationEventMilliseconds,
                 collect_allocated_bytes = snapshot.CollectAllocatedBytes,
                 swap_total_ms = snapshot.SwapTotalMilliseconds,
                 swap_allocated_bytes = snapshot.SwapAllocatedBytes,
@@ -1673,6 +1674,9 @@ namespace XREngine.Editor.Mcp
                         unchanged_row_publications = advancedPublication.UnchangedRowPublications,
                         commit_calls = advancedPublication.CommitCalls,
                         commit_ms = advancedPublication.CommitMilliseconds,
+                        // The collect thread prepares the gate decision in prepare_swap_publication_event_ms. A hit
+                        // replaces the row walk in row_gate_ms; a miss runs the swap-time row walk.
+                        prepared_gate = BuildAdvancedPreparedGateTelemetry(AdvancedPreparedGateTelemetry.Capture()),
                     },
                     viewports_ms = swap.ViewportsMilliseconds,
                     main_view_swap_calls = swap.MainViewSwapCalls,
@@ -1693,6 +1697,57 @@ namespace XREngine.Editor.Mcp
                     collect_iterations = handoff.CollectIterations,
                     collect_finished_after_release = handoff.CollectFinishedAfterRelease,
                 },
+            };
+        }
+
+        /// <summary>
+        /// Formats the cumulative counters of the prepared unchanged-row verdict. All counts are sums. Callers subtract
+        /// two snapshots to get the values for a measurement window. Each prepare gives one stored verdict, one refusal,
+        /// or one exception. Each world-swap publication at the gate decision gives one hit or one miss, the same scope
+        /// as row_gate_passes and row_gate_failures. The last_exception values identify the most recent prepare
+        /// exception in all builds, because Release builds write no warning log.
+        /// </summary>
+        private static object BuildAdvancedPreparedGateTelemetry(AdvancedPreparedGateTelemetrySnapshot snapshot)
+        {
+            Dictionary<string, long> refusals = [];
+            Dictionary<string, long> misses = [];
+            Dictionary<string, long> verifyDisagreements = [];
+            for (EAdvancedPreparedGateOutcome reason = EAdvancedPreparedGateOutcome.None;
+                reason < EAdvancedPreparedGateOutcome.Count;
+                ++reason)
+            {
+                // These values are results, not reasons.
+                if (reason is EAdvancedPreparedGateOutcome.None or EAdvancedPreparedGateOutcome.Prepared or
+                    EAdvancedPreparedGateOutcome.Hit or EAdvancedPreparedGateOutcome.Exception)
+                    continue;
+
+                string name = System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(reason.ToString());
+                refusals[name] = snapshot.GetRefusals(reason);
+                misses[name] = snapshot.GetMisses(reason);
+                verifyDisagreements[name] = snapshot.GetVerifyDisagreements(reason);
+            }
+
+            return new
+            {
+                prepare_enabled = snapshot.PrepareEnabled,
+                verify_enabled = snapshot.VerifyEnabled,
+                prepare_calls = snapshot.PrepareCalls,
+                prepared = snapshot.Prepared,
+                refusals_total = snapshot.RefusalTotal,
+                prepare_exceptions = snapshot.Exceptions,
+                last_exception_type = snapshot.LastExceptionType,
+                last_exception_hresult = snapshot.LastExceptionHResult,
+                last_exception_message = snapshot.LastExceptionMessage,
+                consume_calls = snapshot.ConsumeCalls,
+                hits = snapshot.Hits,
+                misses_total = snapshot.MissTotal,
+                // The rows that the consumes evaluated again at the swap. They keep the swap-time row walk cost.
+                reevaluated_rows = snapshot.ReevaluatedRows,
+                verify_disagreements_total = snapshot.VerifyDisagreementTotal,
+                // Each map holds the count of each reason. The reason names are the same in the three maps.
+                refusals,
+                misses,
+                verify_disagreements = verifyDisagreements,
             };
         }
 

@@ -1,7 +1,7 @@
 # Skinned GPU Chain Benchmark Investigation
 
 Status: Open. The 100 Hz target is not met.
-Last updated: 2026-10-13
+Last updated: 2026-10-14
 
 [Design](../../design/physics/physics-chain-steady-state-cpu-design.md) ·
 [Code items](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md) ·
@@ -13,7 +13,7 @@ This document records the evidence: measurements, root causes, fixed defects, re
 
 ## Problem
 
-The `Physics Chain GPU Dispatcher Skinned Mesh Test` in the Math Intersections world must render 2,000 visible animated chains at 100 or more completed frames per second, with a frame-interval p95 of at most 10 ms. Simulation, bone palettes, deformation, and bounds stay on the GPU with zero physics readback. The target applies to a shared-mesh scenario and a unique-mesh scenario. Current results are 16–25 Hz.
+The `Physics Chain GPU Dispatcher Skinned Mesh Test` in the Math Intersections world must render 2,000 visible animated chains at 100 or more completed frames per second, with a frame-interval p95 of at most 10 ms. Simulation, bone palettes, deformation, and bounds stay on the GPU with zero physics readback. The target applies to a shared-mesh scenario and a unique-mesh scenario. The latest desktop prepared-gate runs average 44.61 Hz across both mesh modes; see the [closeout](#prepared-unchanged-row-verdict-closeout).
 
 ## Setup
 
@@ -24,6 +24,8 @@ The `Physics Chain GPU Dispatcher Skinned Mesh Test` in the Math Intersections w
 - Harness: `Tools/Benchmarks/Measure-PhysicsChainScale.ps1`. See the [performance guide](../../../developer-guides/rendering/physics-chain-performance.md#gpu-skinned-scale-measurement) for its gates and options. Results from the two machines are not a matched comparison.
 
 ## Conclusion
+
+The paragraph below describes the earlier baseline. The [prepared-gate closeout](#prepared-unchanged-row-verdict-closeout) records the latest measurements and validation limits.
 
 The frame is CPU-bound. Each steady-state frame does CPU work for every chain on four threads, at about 20 µs per chain, against a budget of about 2.5 µs. No loop skips an unchanged chain, and most of the work is in the object pattern. The physics simulation itself is not the limit: freezing the physics callbacks gave no stable gain, while hiding the whole chain rendering path tripled the rate. After the committed bound version and proxy change, collect is below render, and the render callback plus the serial swap (about 42 ms at 2,000 chains) is the critical path. Instancing does not change the CPU-bound frame. Small caches inside full per-chain walks saved 1 ms or less each, which is inside the 15–25% window noise. The response is in the [design](../../design/physics/physics-chain-steady-state-cpu-design.md).
 
@@ -235,6 +237,34 @@ The Math world ambient light repair is recorded in the [ambient validation](../.
 | Device-local visibility memory | Placement confirmed; no matched gain. | Kept. |
 | CPU palette listener detach | Within run-to-run noise. | Kept. |
 
+## Prepared unchanged-row verdict closeout
+
+Date: 2026-10-14. This closes the interrupted work session, not the 100 Hz target or the remaining validation. The user requested cleanup and a summary only. No further optimization or test changes were made during closeout.
+
+The completed changes are:
+
+- Frame handoff and collect, swap, and dispatcher commit telemetry. The benchmark harness records these counters.
+- The primary directional shadow view collects only when a consumer needs it. The measured shared-mesh collection time fell from 15.6 ms to 8.1 ms. The primary shadow collection count fell from one to zero per frame. These measurements do not isolate the change in total frame rate from other concurrent changes.
+- The Advanced scene publisher prepares its unchanged-row verdict during collection. It checks the input witnesses during the serial swap. A miss uses the existing swap-time gate. Publication commit stays in the swap. The [architecture](../../../architecture/rendering/advanced-render-pipeline.md#prepared-unchanged-row-verdict) describes ownership, witnesses, switches, and counters.
+
+The final desktop comparison used 2,000 chains, Vulkan, the Advanced pipeline, and both shared and unique mesh modes. The table gives arithmetic means across the saved windows. Swap time is per completed frame.
+
+| Configuration | Windows | Completed Hz | Serial swap ms |
+| --- | ---: | ---: | ---: |
+| Prepared gate disabled | 4 | 41.62 | 7.30 |
+| Prepared gate enabled | 4 | 44.61 | 5.41 |
+| Prepared gate with verification | 2 | 41.27 | 7.59 |
+
+All ten windows passed the harness acceptance checks. This does not mean that they met the 100 Hz target. The enabled comparison reduced the mean swap by 1.89 ms. The mean rate increased by about 7.2%, but the windows were sequential and normal run variation limits the frame-rate claim. Verification runs the original gate as well, so its timing is not the enabled-path performance result. Each consume re-evaluated two rows; witness checks still cost time in the swap.
+
+Both verification windows recorded zero disagreements and zero preparation exceptions. The planned live material, raster, mesh, and coverage edit check did not run: the worker stopped at the Claude usage limit before any tool call. That existing check remains in [Physics Validation](../../testing/physics/physics-validation.md#physics-chain-scale). No final visual check of the prepared-gate build was established during this closeout.
+
+The final isolated Release editor build succeeded with zero warnings and zero errors. The saved broader test run executed 189 tests: 177 passed and 12 failed. Eleven failures concern source-text or source-layout contracts; one concerns cooked-mesh YAML deserialization. The failures include `VisualScene3D_GlobalCollectVisible_RefreshesSkinnedBoundsBeforeCpuTreeSwap` and `MeshGeometryLayoutFeedsGpuSceneIndirectAndMeshletRecords`. This closeout does not classify all failures as pre-existing and does not report a clean test suite. No tests were added, changed, or rerun.
+
+The first disabled-gate attempt lost the MCP connection and the editor process. Four repeat disabled-gate windows completed with crash dumps enabled and produced no dump. The cause remains unknown; a successful repeat does not rule out either the prepared-gate changes or an existing process-exit fault.
+
+The source evidence is Claude session `a617dff7-7809-4633-99c0-c61be2df316f`, which ended at 02:26 PDT on 2026-10-14. Saved evidence includes the `prep2`, `gateoff-r`, and `verify` window summaries and `prepared-gate.trx`. These files are disposable; this section preserves the required results. At closeout, `chain-gate-1`, `chain-gate-2`, `chain-prep-1`, and `chain-prep-2` were stopped. The live-edit session had not started. Routine retention cleanup removed stopped-session build output and old renderer build caches; logs and reports were kept. The implementation remains in the working tree; no closeout commit was made.
+
 ## Open faults
 
 | Fault | State | Next step |
@@ -248,7 +278,7 @@ The Math world ambient light repair is recorded in the [ambient validation](../.
 | One launch stopped with "Canonical resident tables exhausted their preflighted frame-boundary capacity". | Did not repeat. The message also covers invalid material, geometry, and lookup failures. | If it repeats, add failure-only diagnostics at the first failed check. |
 | One benchmark start threw `NullReferenceException` and left 70 copies alive. | Did not repeat. Failed-start cleanup now removes partial copies. | None until it repeats. |
 | Cold start: `visible-mesh-cold-admission` retries, one exhausted descriptor-preparation recovery, one cold `GpuBoundsPublication.AtlasBufferReadiness` failure. Readiness can take more than 45 seconds at 2,000 chains. On 2026-10-08, one of about eight session starts latched at frame 83: "Compute descriptor resources for 'UnnamedProgram' could not be prepared before recording ... The frame plan has no resource-planner generation for the compute operation context." PresentNow recovery used its budget of three attempts. After that, the renderer rejected every frame (0 completed, 11,181 rejected) and discarded the queued scene work. Each physics output page was committed, its fence failed with `QueueDiscard`, and a simulation receipt then withdrew the page as a known producer failure. This was silent: `OutputPageDiagnostics.FailureCount` did not change. A restart without a rebuild was healthy. | Excluded from timing windows by the readiness gate, which needs completed frames. The silent page failures are a code item in the todo. | Find why the compute operation context has no resource-planner generation at cold start. Track separately from steady-state work. |
-| Two cold launches lost their engine loop threads, and one process exited after startup with no log. | Causes unknown. | Capture a dump on the next occurrence. |
+| Two cold launches lost their engine loop threads, and one process exited after startup with no log. On 2026-10-14, the first disabled prepared-gate window also lost its MCP connection and editor process. Four repeat windows completed with dump capture enabled and no dump. | Causes unknown; the repeat does not identify or rule out a cause. | Capture a dump on the next occurrence. |
 | A terminating `IndexOutOfRangeException` in `PhysicsChainComponent.BuildRuntimeTemplate`, on the fixed-update thread (`PhysicsChainWorld.DrainStructuralCommands` → `AddComponent` → `GetOrCreateRuntimeTemplate`). It happened once in about 40 benchmark stops on 2026-10-08, in the same second that a 1-chain window ended and the controller restored the source rig. The window had already been accepted. | Cause unconfirmed. The method counts particles in one pass and fills arrays in a second pass, so a concurrent particle-tree rebuild during source restoration could overrun them. | Code item in the todo. |
 | A callback exception during identity delivery stops the editor timer. | Existing terminal-fault policy; direct publisher tests prove caller retry. | No change planned. |
 | The collect thread stopped 20 seconds after a fresh start (desktop, 2026-10-13, one of four starts). `get_time_state` showed a terminal fault: `InvalidOperationException` "Render object 'XRDataBuffer' requested a backend operation before an active render owner was available." The stack is `VisualScene3D.ProcessPendingRenderableOperations` → `GPUScene.Add` → `VerifyUpdatingBufferSize` → `EnsureLodTransitionBufferCapacity` → `SyncLodTransitionBufferFromGpu` → `XRDataBuffer.MapBufferData`. When the GPU scene grows its command capacity after a GPU LOD dispatch has set `_lodTransitionGpuWritePending`, the sync maps the LOD transition buffer on the collect thread, where no render owner exists. That code is the same at HEAD. | Unresolved. A restart of the same binary was healthy. | Code item in the [backlog](../../todo/physics/physics-chain-backlog-todo.md#gpu-residency-and-submission). |
@@ -699,7 +729,7 @@ Follow the [todo priority order](../../todo/physics/physics-chain-thousands-scal
 The [stage telemetry](#frame-handoff-and-stage-telemetry) of 2026-10-13 supports this order for the next changes. The user agreed to this order on 2026-10-13.
 
 1. Skip the primary directional shadow collection when nothing consumes it. Done on 2026-10-14; see the [gate](#primary-directional-shadow-collection-gate).
-2. Prepare the unchanged-row verdict of the Advanced scene publication during collect. This removes the gate walk (2.4–2.6 ms) from the swap; the commit stays in the swap.
+2. The unchanged-row verdict now prepares during collect; the commit stays in the swap. The [closeout](#prepared-unchanged-row-verdict-closeout) records the measured saving and the live-edit validation that remains open.
 3. Remove the swap transform publication costs: the owner notification (1.8 ms) and the wait for `Process` (0.9 ms).
 4. Make the render-thread dispatcher changes, starting with the retained bounds rows (3.5 ms).
 

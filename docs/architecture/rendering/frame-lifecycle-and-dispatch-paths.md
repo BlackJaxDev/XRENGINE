@@ -195,6 +195,15 @@ package instances follow the same producer/consumer ownership split as the
 command buffers, so preparation can overlap the previous render without
 overwriting in-flight data.
 
+After `PostCollectVisible`, `EngineTimer.DispatchCollectVisible()` raises
+`PrepareSwapPublications` on the collect thread, inside the same fault
+boundary. `RuntimeWorldHost` links it to
+`RuntimeWorldRenderer.GlobalPrepareSwapPublications`, which prepares the
+unchanged-row verdict of the Advanced scene publication before the serial swap
+(see the [Advanced render pipeline](advanced-render-pipeline.md#prepared-unchanged-row-verdict)).
+The prepare catches its own exceptions. The `PrepareSwapPublicationEvent`
+collect stage times it.
+
 ### 4. SwapBuffers
 
 After collection finishes and after the render thread signals that the previous frame is done, the collect-visible thread runs swap work.

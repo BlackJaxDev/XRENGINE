@@ -144,6 +144,12 @@ namespace XREngine.Timers
         /// </summary>
         public XREvent? PostCollectVisible;
         /// <summary>
+        /// Subscribe to this event to prepare optional work of the next serial swap on the collect visible thread.
+        /// It runs after <see cref="PostCollectVisible"/>, while the render thread renders the previous frame.
+        /// A subscriber must handle its own failures, because an exception here stops the collect loop.
+        /// </summary>
+        public XREvent? PrepareSwapPublications;
+        /// <summary>
         /// Subscribe to this event to execute render commands that have been swapped for consumption.
         /// </summary>
         public XREvent? RenderFrame;
@@ -895,6 +901,8 @@ namespace XREngine.Timers
                     XREngine.Rendering.CollectVisibleStageTimings.Mark(ref stageMark, XREngine.Rendering.ECollectVisibleStage.CollectEvent);
                     PostCollectVisible?.Invoke();
                     XREngine.Rendering.CollectVisibleStageTimings.Mark(ref stageMark, XREngine.Rendering.ECollectVisibleStage.PostCollectEvent);
+                    PrepareSwapPublications?.Invoke();
+                    XREngine.Rendering.CollectVisibleStageTimings.Mark(ref stageMark, XREngine.Rendering.ECollectVisibleStage.PrepareSwapPublicationEvent);
                 }
                 finally
                 {

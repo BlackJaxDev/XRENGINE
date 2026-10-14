@@ -71,7 +71,8 @@ internal sealed partial class VulkanCommandRuntime
                             operationIndex,
                             recordingState.CurrentPrimaryOperationRecorded);
                     }
-                    if (recordingState.CommandChainPublicationDeferred)
+                    if (recordingState.CommandChainPublicationDeferred ||
+                        recordingState.FailureKind != EVulkanCommandRecordingFailureKind.None)
                         return false;
                     continue;
                 }
@@ -108,7 +109,8 @@ internal sealed partial class VulkanCommandRuntime
                         operationIndex,
                         recordingState.CurrentPrimaryOperationRecorded);
                 }
-                if (recordingState.CommandChainPublicationDeferred)
+                if (recordingState.CommandChainPublicationDeferred ||
+                    recordingState.FailureKind != EVulkanCommandRecordingFailureKind.None)
                     return false;
             }
             catch (Exception exception)
@@ -1707,8 +1709,19 @@ internal sealed partial class VulkanCommandRuntime
             BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         }
         int uniformSlot = GetMeshDrawUniformSlot(ref state, info.OperationIndex, payload.Draw.Renderer, state.ActiveContext, payload.Draw);
-        bool recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot);
+        bool recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot, out string failureReason, out bool pipelineUnavailable);
         state.CurrentPrimaryOperationRecorded = recorded;
+        if (!recorded && failureReason.Length > 0)
+        {
+            // Downstream passes must not publish retained intermediate images
+            // as the output of this accepted frame.
+            if (pipelineUnavailable)
+                InvalidatePrimaryGraphicsPipelineAdmission(ref state);
+            state.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+            state.RecordingDeferredReason =
+                $"Mesh draw did not record. pass={info.PassIndex} target='{target?.Name ?? "<swapchain>"}' reason={failureReason}";
+            return info.OperationIndex;
+        }
         int originalIndex = state.Ops.GetHeader(info.OperationIndex).OriginalIndex;
         if (IsTemporalResolveProducer(originalIndex))
         {
