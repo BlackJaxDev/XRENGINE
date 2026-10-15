@@ -12,6 +12,7 @@ public interface IRuntimeWindowBackend : IDisposable
     RuntimeWindowBackendKind Kind { get; }
     RuntimeWindowBackendOwnershipInfo Ownership { get; }
     RuntimeGraphicsApiKind GraphicsApi { get; }
+    RuntimeWindowCreateOptions Options { get; }
     int OwnerThreadId { get; }
     long LifetimeGeneration { get; }
     WindowSurfaceSnapshot Surface { get; }
@@ -24,6 +25,7 @@ public interface IRuntimeWindowBackend : IDisposable
     IRuntimeWindowVulkanSurface? VulkanSurface { get; }
     nint PlatformWindowHandle { get; }
     nint OperatingSystemWindowHandle { get; }
+    IVector2 Position { get; }
     IVector2 ClientScreenPosition { get; }
     ReadOnlyMemory<RuntimeDesktopMonitor> Monitors { get; }
     string Title { get; }

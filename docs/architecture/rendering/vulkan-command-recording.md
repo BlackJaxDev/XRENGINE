@@ -110,6 +110,54 @@ Hybrid is not an all-or-nothing mode. A single primary may execute cached
 secondaries, execute newly recorded secondaries, and directly record ineligible
 operations.
 
+## Inline Mesh Draw Flow
+
+`VkMeshRenderer.Drawing.cs` keeps each direct draw under `_recordDrawSync`.
+The lock covers program preparation, deformation uploads, resource binding,
+and command recording because these operations use mutable mesh-renderer state.
+
+`RecordDrawNoLock` runs the operations in this order:
+
+1. Activate the captured draw state and prepare its program with
+   `TryPrepareDrawForRecording`.
+2. Upload skinning and blendshape data with `UploadDrawDeformationData`.
+3. Call `TryRecordIndexedDraw` for triangles, then eligible lines and points.
+   Each available type is attempted, even after another type succeeds.
+4. If no indexed draw succeeds, call `TryRecordNonIndexedDraw` with the mesh's
+   topology. Shadow passes retain their triangle-only restriction.
+5. Return failure details only when no draw succeeds. An empty failure reason
+   permits an intentional omission, such as an empty mesh.
+
+The private `DrawRecordingState` value type is declared in
+`VkMeshRenderer.DrawRecordingState.cs`. Helpers receive it by reference. It
+keeps the captured inputs, uniform-notification flag, and failure state together
+without a per-draw heap object. Uniform notification occurs at most once across
+the indexed attempts and the non-indexed fallback. Pipeline lookup does not
+create a pipeline during recording. Detailed trace helpers run only when their
+existing diagnostic flags are enabled.
+
+## Mesh Uniform Source Map
+
+The `VkMeshRenderer` uniform code uses focused partial files. The split keeps
+the same method boundaries and call order. It adds no runtime dispatch layer.
+
+| File | Responsibility |
+|---|---|
+| `VkMeshRenderer.Uniforms.cs` | Draw update order, write leases, cached block publication, and full-block fallback. |
+| `VkMeshRenderer.Uniforms.Buffers.cs` | Draw-slot capacity, arena reservations, buffer views, and validity checks. |
+| `VkMeshRenderer.Uniforms.Publication.cs` | Cached write plans, frequency ownership, content generations, and typed operations. |
+| `VkMeshRenderer.Uniforms.Values.cs` | Value source priority, draw snapshots, structures, arrays, and defaults. |
+| `VkMeshRenderer.Uniforms.ValueWriting.cs` | Scalar, vector, and matrix writes into reflected byte ranges. |
+| `VkMeshRenderer.Uniforms.EngineUpload.cs` | Legacy named engine-uniform uploads. |
+| `VkMeshRenderer.Uniforms.Diagnostics.cs` | Write failures, payload parity, and opt-in material, gizmo, and light diagnostics. |
+
+Keep the write lease active until block publication finishes. Early returns
+release both lease types through `finally`. The cached path copies static bytes
+when a range receives a new plan. It then clears and writes the changed frequency
+ranges. An unchanged generation can keep its existing bytes. A failed typed
+operation invalidates the publication state before the full legacy rewrite.
+These rules preserve descriptor storage and avoid repeated reflection work.
+
 ## Linked Binding Schema
 
 Each successful Vulkan program link compiles shader reflection into one

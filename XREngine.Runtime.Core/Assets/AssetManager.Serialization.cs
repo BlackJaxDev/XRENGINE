@@ -559,7 +559,10 @@ namespace XREngine
             HashSet<Assembly> assemblies = [];
 
             foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
-                assemblies.Add(assembly);
+            {
+                if (XREngine.Core.XRLoadableTypeCatalog.ShouldScanAssemblyForEngineTypes(assembly))
+                    assemblies.Add(assembly);
+            }
 
             // Asset payload wrappers depend on DataSource's YAML converter, but the data assembly
             // is not guaranteed to be loaded before the serializer is initialized.

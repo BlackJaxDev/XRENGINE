@@ -12,9 +12,11 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanOpenXrBackend
 {
+    private static readonly VulkanOpenXrThreadExecutionState DisposedFallbackThreadExecutionState = new();
     private const int EyeResourcePlannerStateCount = 2;
     private readonly ThreadLocal<VulkanOpenXrThreadExecutionState> _threadExecutionState =
         new(static () => new VulkanOpenXrThreadExecutionState(), trackAllValues: false);
+    private volatile bool _threadExecutionStateDisposed;
     private object? _primaryCommandArtifactOwners;
     private object? _resourcePlannerStates;
 
@@ -36,16 +38,34 @@ internal sealed class VulkanOpenXrBackend
     internal readonly object ResourcePlannerStatesLock = new();
     internal IDisposable? EyeRecordWorkerScheduler;
 
-    internal VulkanOpenXrThreadExecutionState CurrentThreadExecutionState =>
-        _threadExecutionState.Value
-            ?? throw new InvalidOperationException("The Vulkan OpenXR thread execution context is unavailable.");
+    internal VulkanOpenXrThreadExecutionState CurrentThreadExecutionState
+    {
+        get
+        {
+            if (_threadExecutionStateDisposed)
+                return DisposedFallbackThreadExecutionState;
+
+            try
+            {
+                return _threadExecutionState.Value
+                    ?? throw new InvalidOperationException("The Vulkan OpenXR thread execution context is unavailable.");
+            }
+            catch (ObjectDisposedException)
+            {
+                return DisposedFallbackThreadExecutionState;
+            }
+        }
+    }
 
     /// <summary>
     /// Drops every thread's execution state after generation teardown so a
     /// long-lived thread cannot keep this generation's OpenXR state reachable.
     /// </summary>
     internal void ReleaseThreadExecutionStates()
-        => _threadExecutionState.Dispose();
+    {
+        _threadExecutionStateDisposed = true;
+        _threadExecutionState.Dispose();
+    }
 
     /// <summary>Number of reserved eye-planner frame-data slots.</summary>
     internal int EyeFrameDataSlotCount => EyeResourcePlannerStateCount;

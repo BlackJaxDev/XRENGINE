@@ -180,12 +180,16 @@ public partial class OpenGLRenderer
             RuntimeEngine.Rendering.State.HasVulkanDepthClipControl = false;
         }
 
+        long initGlBridgeStart = System.Diagnostics.Stopwatch.GetTimestamp();
         RuntimeEngine.Rendering.RefreshVulkanUpscaleBridgeCapabilitySnapshot(this);
+        long initGlCacheStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
         GLRenderProgram.ReadBinaryShaderCache(api);
+        long initGlAsyncStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
         // Initialize async program binary upload via a shared GL context.
         InitAsyncProgramBinaryUpload();
+        long initGlStateStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
         api.Enable(EnableCap.Multisample);
         api.Enable(EnableCap.TextureCubeMapSeamless);
@@ -215,6 +219,12 @@ public partial class OpenGLRenderer
         InitializeReadOnlyStorageArena(api);
 
         SetupDebug(api);
+        long initGlEnd = System.Diagnostics.Stopwatch.GetTimestamp();
+        Debug.OpenGL(
+            $"[StartupTiming] OpenGLRenderer.InitGL phases: bridgeSnapshot={(initGlCacheStart - initGlBridgeStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F1}ms " +
+            $"binaryCacheRead={(initGlAsyncStart - initGlCacheStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F1}ms " +
+            $"asyncProgramQueues={(initGlStateStart - initGlAsyncStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F1}ms " +
+            $"stateAndDebug={(initGlEnd - initGlStateStart) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:F1}ms");
     }
 
     public override void MemoryBarrier(EMemoryBarrierMask mask)

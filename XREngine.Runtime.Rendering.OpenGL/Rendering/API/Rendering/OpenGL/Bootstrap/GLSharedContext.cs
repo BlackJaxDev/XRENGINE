@@ -269,15 +269,16 @@ namespace XREngine.Rendering.OpenGL
             /// Used from renderer/window shutdown so an in-flight driver shader link
             /// cannot turn application close into a multi-second join chain.
             /// </summary>
-            public void DisposeForShutdown()
-                => Dispose(TimeSpan.Zero);
+            public void DisposeForShutdown(TimeSpan joinTimeout = default)
+                => Dispose(joinTimeout);
 
             private void Dispose(TimeSpan joinTimeout)
             {
                 if (Interlocked.Exchange(ref _disposeRequested, 1) != 0)
                     return;
 
-                Interlocked.Exchange(ref _disposeResourcesOnWorkerExit, 1);
+                if (joinTimeout <= TimeSpan.Zero)
+                    Interlocked.Exchange(ref _disposeResourcesOnWorkerExit, 1);
 
                 try
                 {
@@ -297,6 +298,13 @@ namespace XREngine.Rendering.OpenGL
                     joined = true;
 
                 if (joined)
+                {
+                    ReleaseStoppedResources();
+                    return;
+                }
+
+                Interlocked.Exchange(ref _disposeResourcesOnWorkerExit, 1);
+                if (thread is not null && !thread.IsAlive)
                 {
                     ReleaseStoppedResources();
                     return;
@@ -405,12 +413,18 @@ namespace XREngine.Rendering.OpenGL
                 IRuntimeWindowBackend? nativeWindow = workerWindow ?? _window;
                 XRWindow? owner = _ownerWindow;
                 if (nativeWindow is not null && owner is not null)
-                    RuntimeRenderingHostServices.Scheduling.EnqueueWindowThreadTask(
-                        owner,
-                        Volatile.Read(ref _contextDetachFailed) != 0
-                            ? nativeWindow.RetainAbandonedResources
-                            : nativeWindow.Dispose,
-                        $"GLSharedContext.DestroyNative[{_threadName}]");
+                {
+                    Action disposeAction = Volatile.Read(ref _contextDetachFailed) != 0
+                        ? nativeWindow.RetainAbandonedResources
+                        : nativeWindow.Dispose;
+                    if (Environment.CurrentManagedThreadId == owner.NativeWindowThreadId)
+                        disposeAction();
+                    else
+                        RuntimeRenderingHostServices.Scheduling.EnqueueWindowThreadTask(
+                            owner,
+                            disposeAction,
+                            $"GLSharedContext.DestroyNative[{_threadName}]");
+                }
 
                 try
                 {

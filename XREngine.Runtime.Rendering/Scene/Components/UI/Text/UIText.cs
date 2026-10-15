@@ -194,9 +194,36 @@ namespace XREngine.Rendering.UI
             return change;
         }
 
+        private bool HasAuthoredOrMaterializedText
+            => !string.IsNullOrEmpty(_text) || Mesh is not null || _glyphs.Count > 0;
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(TextTransform):
+                    if (TextTransform is not null)
+                        TextTransform.RenderMatrixChanged += OnTransformRenderMatrixChanged;
+                    InvalidateTextMatrix();
+                    return;
+                case nameof(LocalTranslation):
+                    InvalidateTextMatrix();
+                    return;
+                case nameof(Roll):
+                    InvalidateTextMatrix();
+                    return;
+                case nameof(Scale):
+                    InvalidateTextMatrix();
+                    return;
+                case nameof(GlyphRelativeTransforms):
+                    MarkGlyphTransformsChanged();
+                    return;
+            }
+
+            if (!HasAuthoredOrMaterializedText)
+                return;
+
             switch (propName)
             {
                 case nameof(Font):
@@ -206,23 +233,6 @@ namespace XREngine.Rendering.UI
                     break;
                 case nameof(Text):
                     UpdateText(false);
-                    break;
-                case nameof(TextTransform):
-                    if (TextTransform is not null)
-                        TextTransform.RenderMatrixChanged += OnTransformRenderMatrixChanged;
-                    InvalidateTextMatrix();
-                    break;
-                case nameof(LocalTranslation):
-                    InvalidateTextMatrix();
-                    break;
-                case nameof(Roll):
-                    InvalidateTextMatrix();
-                    break;
-                case nameof(Scale):
-                    InvalidateTextMatrix();
-                    break;
-                case nameof(GlyphRelativeTransforms):
-                    MarkGlyphTransformsChanged();
                     break;
                 case nameof(RenderParameters):
                     {
@@ -287,14 +297,14 @@ namespace XREngine.Rendering.UI
         /// <param name="forceRemake"></param>
         protected virtual void UpdateText(bool forceRemake)
         {
-            Font ??= FontGlyphSet.LoadDefaultFont();
-            VerifyCreated(forceRemake, Font.Atlas);
+            _font ??= FontGlyphSet.LoadDefaultFont();
+            VerifyCreated(forceRemake, _font.Atlas);
             uint count;
             lock (_glyphLock)
             {
                 float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;
                 float glyphSpacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
-                Font.GetQuads(Text, _glyphs, FontSize, 0, 0, FontGlyphSet.EWrapMode.None, glyphSpacing, DefaultLineSpacing + outlineSpacing);
+                _font.GetQuads(Text, _glyphs, FontSize, 0, 0, FontGlyphSet.EWrapMode.None, glyphSpacing, DefaultLineSpacing + outlineSpacing);
                 count = (uint)(_glyphs?.Count ?? 0);
             }
             ResizeGlyphCount(count);

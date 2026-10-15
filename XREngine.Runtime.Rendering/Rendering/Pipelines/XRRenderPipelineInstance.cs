@@ -1242,6 +1242,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 catchUpMaxDuration: TimeSpan.FromMilliseconds(8.0),
                 catchUpMaxSpecsPerSlice: 16);
         }
+        else if (ActiveGeneration is null && PendingGeneration?.Key == key)
+        {
+            // When no active generation exists, this pipeline skips its command chain
+            // until the initial generation commits. Use a larger slice budget so initial
+            // resources materialize in 1-3 slices instead of 80+ four-resource slices.
+            TryPreparePendingGeneration(
+                "FramePrepareInitialCatchUp",
+                forceDue: true,
+                catchUpMaxDuration: TimeSpan.FromMilliseconds(250.0),
+                catchUpMaxSpecsPerSlice: 256);
+        }
         else
         {
             TryPreparePendingGeneration("FramePrepare");

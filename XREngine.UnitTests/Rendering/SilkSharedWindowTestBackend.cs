@@ -22,6 +22,7 @@ internal sealed class SilkSharedWindowTestBackend(IWindow window) : IRuntimeWind
 
     public RuntimeWindowBackendKind Kind => throw Unsupported();
     public RuntimeWindowBackendOwnershipInfo Ownership => throw Unsupported();
+    public RuntimeWindowCreateOptions Options => throw Unsupported();
     public int OwnerThreadId => throw Unsupported();
     public long LifetimeGeneration => throw Unsupported();
     public WindowSurfaceSnapshot Surface => throw Unsupported();
@@ -29,6 +30,7 @@ internal sealed class SilkSharedWindowTestBackend(IWindow window) : IRuntimeWind
     public WindowInputSnapshot Input => throw Unsupported();
     public nint PlatformWindowHandle => throw Unsupported();
     public nint OperatingSystemWindowHandle => throw Unsupported();
+    public IVector2 Position => throw Unsupported();
     public IVector2 ClientScreenPosition => throw Unsupported();
     public ReadOnlyMemory<RuntimeDesktopMonitor> Monitors => throw Unsupported();
 

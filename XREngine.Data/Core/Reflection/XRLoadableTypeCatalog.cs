@@ -22,6 +22,41 @@ public static class XRLoadableTypeCatalog
     private static readonly ConcurrentDictionary<string, byte> LoadFailureDiagnostics =
         new(StringComparer.Ordinal);
 
+    private static readonly string[] IgnoredEngineScanAssemblyPrefixes =
+    [
+        "System",
+        "Microsoft",
+        "netstandard",
+        "mscorlib",
+        "Silk.NET",
+        "Newtonsoft",
+        "YamlDotNet",
+        "MathNet",
+        "ImGuiNET",
+        "SixLabors",
+        "Assimp",
+        "SharpFont",
+        "StbImage",
+        "NVorbis",
+        "NAudio",
+        "OpenTK",
+        "Vulkan",
+        "Steamworks",
+        "Concentus",
+        "Bepu",
+        "Jolt",
+        "MagicPhysX",
+        "Rive",
+        "NUnit",
+        "Shouldly",
+        "testhost",
+        "NuGet",
+        "Google",
+        "Grpc",
+        "SkiaSharp",
+        "HarfBuzz"
+    ];
+
     /// <summary>Gets every type that the runtime could load from <paramref name="assembly"/>.</summary>
     public static IReadOnlyList<Type> GetTypes(Assembly assembly)
         => GetOrCreate(assembly).Types;
@@ -29,6 +64,37 @@ public static class XRLoadableTypeCatalog
     /// <summary>Gets every externally visible loadable type from <paramref name="assembly"/>.</summary>
     public static IReadOnlyList<Type> GetExportedTypes(Assembly assembly)
         => GetOrCreate(assembly).ExportedTypes;
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="assembly"/> can contain engine domain types,
+    /// transforms, or type redirect attributes. Excludes BCL and third-party libraries.
+    /// </summary>
+    public static bool ShouldScanAssemblyForEngineTypes(Assembly? assembly)
+    {
+        if (assembly is null || assembly.IsDynamic)
+            return false;
+
+        string? fullName = assembly.FullName;
+        if (string.IsNullOrEmpty(fullName))
+            return true;
+
+        ReadOnlySpan<char> nameSpan = fullName.AsSpan();
+        int commaIndex = nameSpan.IndexOf(',');
+        if (commaIndex > 0)
+            nameSpan = nameSpan[..commaIndex];
+
+        for (int i = 0; i < IgnoredEngineScanAssemblyPrefixes.Length; i++)
+        {
+            string prefix = IgnoredEngineScanAssemblyPrefixes[i];
+            if (nameSpan.StartsWith(prefix.AsSpan(), StringComparison.OrdinalIgnoreCase) &&
+                (nameSpan.Length == prefix.Length || nameSpan[prefix.Length] is '.' or '_'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// Returns stable, deduplicated loader diagnostics captured while building

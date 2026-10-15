@@ -18,6 +18,8 @@ namespace XREngine
             private static readonly Dictionary<XRViewport, IVulkanUpscaleBridge> _vulkanUpscaleBridges = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
             private static string? _lastVulkanUpscaleBridgeProbeKey;
             private static string? _lastVulkanUpscaleBridgeFingerprint;
+            private static bool _vulkanUpscaleBridgeProbePending;
+            private static string? _pendingVulkanUpscaleBridgeProbeFingerprint;
 
             public static bool VulkanUpscaleBridgeRequested => IsEnvFlagEnabled(VulkanUpscaleBridgeEnvVar, defaultValue: true);
             public static bool VulkanUpscaleBridgeWindowsOnly => true;
@@ -64,6 +66,8 @@ namespace XREngine
                     ReleaseVulkanUpscaleBridge(viewport, DescribeVulkanUpscaleBridgeDisabledByEnvironmentReason());
                     return EVulkanUpscaleBridgeState.Disabled;
                 }
+
+                EnsureVulkanUpscaleBridgeProbeCompleted();
 
                 IVulkanUpscaleBridge bridge;
                 lock (_vulkanUpscaleBridgeRegistrySync)
@@ -155,6 +159,8 @@ namespace XREngine
                     {
                         _vulkanUpscaleBridgeSnapshot = new();
                         _lastVulkanUpscaleBridgeProbeKey = null;
+                        _vulkanUpscaleBridgeProbePending = false;
+                        _pendingVulkanUpscaleBridgeProbeFingerprint = null;
                     }
 
                     ReleaseAllVulkanUpscaleBridges(DescribeVulkanUpscaleBridgeDisabledByEnvironmentReason());
@@ -170,19 +176,34 @@ namespace XREngine
                     renderer.HasExternalSemaphore ? "1" : "0",
                     renderer.HasExternalSemaphoreWin32 ? "1" : "0");
 
+                bool probeNow = IsVendorUpscaleBridgeFeatureRequested();
+
                 lock (_vulkanUpscaleBridgeSnapshotSync)
                 {
-                    if (string.Equals(_lastVulkanUpscaleBridgeProbeKey, probeKey, StringComparison.Ordinal))
+                    if (string.Equals(_lastVulkanUpscaleBridgeProbeKey, probeKey, StringComparison.Ordinal) &&
+                        (!probeNow || !_vulkanUpscaleBridgeProbePending))
                     {
                         LogVulkanUpscaleBridgeCapabilitySnapshot();
                         return;
                     }
                 }
 
-                IRuntimeVendorUpscaleService? service = RuntimeVendorUpscaleService.Current;
-                VulkanUpscaleBridgeProbeSnapshot probe = service?.ProbeBridge(
-                    State.OpenGLVendor,
-                    State.OpenGLRendererName) ?? default;
+                VulkanUpscaleBridgeProbeSnapshot probe = default;
+                if (probeNow)
+                {
+                    IRuntimeVendorUpscaleService? service = RuntimeVendorUpscaleService.Current;
+                    probe = service?.ProbeBridge(
+                        State.OpenGLVendor,
+                        State.OpenGLRendererName) ?? default;
+                }
+                else
+                {
+                    probe = new VulkanUpscaleBridgeProbeSnapshot
+                    {
+                        ProbeSucceeded = false,
+                        ProbeFailureReason = "Vulkan bridge probe deferred until a vendor upscaler is requested",
+                    };
+                }
 
                 var snapshot = new VulkanUpscaleBridgeCapabilitySnapshot
                 {
@@ -221,10 +242,75 @@ namespace XREngine
                 {
                     _lastVulkanUpscaleBridgeProbeKey = probeKey;
                     _vulkanUpscaleBridgeSnapshot = snapshot;
+                    _vulkanUpscaleBridgeProbePending = !probeNow;
+                    _pendingVulkanUpscaleBridgeProbeFingerprint = !probeNow ? snapshot.Fingerprint : null;
                 }
 
                 LogVulkanUpscaleBridgeCapabilitySnapshot(force: true);
                 NotifyVulkanUpscaleBridgeCapabilitySnapshotChanged("bridge capability snapshot changed");
+            }
+
+            public static void EnsureVulkanUpscaleBridgeProbeCompleted()
+            {
+                VulkanUpscaleBridgeCapabilitySnapshot baseSnapshot;
+                lock (_vulkanUpscaleBridgeSnapshotSync)
+                {
+                    if (!_vulkanUpscaleBridgeProbePending ||
+                        !string.Equals(_vulkanUpscaleBridgeSnapshot.Fingerprint, _pendingVulkanUpscaleBridgeProbeFingerprint, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    baseSnapshot = _vulkanUpscaleBridgeSnapshot;
+                }
+
+                IRuntimeVendorUpscaleService? service = RuntimeVendorUpscaleService.Current;
+                VulkanUpscaleBridgeProbeSnapshot probe = service?.ProbeBridge(
+                    baseSnapshot.OpenGlVendor ?? State.OpenGLVendor,
+                    baseSnapshot.OpenGlRenderer ?? State.OpenGLRendererName) ?? default;
+
+                var updated = baseSnapshot with
+                {
+                    VulkanProbeSucceeded = probe.ProbeSucceeded,
+                    HasVulkanExternalMemoryImport = probe.HasVulkanExternalMemoryImport,
+                    HasVulkanExternalSemaphoreImport = probe.HasVulkanExternalSemaphoreImport,
+                    VulkanDeviceName = probe.SelectedDeviceName,
+                    VulkanVendorId = probe.SelectedVendorId,
+                    VulkanDeviceId = probe.SelectedDeviceId,
+                    SamePhysicalGpu = probe.SamePhysicalGpu,
+                    GpuIdentityReason = probe.GpuIdentityReason,
+                    ProbeFailureReason = probe.ProbeFailureReason,
+                };
+
+                updated = updated with
+                {
+                    Fingerprint = BuildVulkanUpscaleBridgeFingerprint(updated)
+                };
+
+                lock (_vulkanUpscaleBridgeSnapshotSync)
+                {
+                    if (!_vulkanUpscaleBridgeProbePending ||
+                        !string.Equals(_vulkanUpscaleBridgeSnapshot.Fingerprint, _pendingVulkanUpscaleBridgeProbeFingerprint, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    _vulkanUpscaleBridgeSnapshot = updated;
+                    _vulkanUpscaleBridgeProbePending = false;
+                    _pendingVulkanUpscaleBridgeProbeFingerprint = null;
+                }
+
+                LogVulkanUpscaleBridgeCapabilitySnapshot(force: true);
+                NotifyVulkanUpscaleBridgeCapabilitySnapshotChanged("deferred Vulkan bridge probe completed");
+            }
+
+            private static bool IsVendorUpscaleBridgeFeatureRequested()
+            {
+                var settings = EffectiveSettings;
+                return settings.EnableNvidiaDlss ||
+                    (settings.EnableNvidiaDlssFrameGeneration && settings.NvidiaDlssFrameGenerationMode != ENvidiaDlssFrameGenerationMode.Off) ||
+                    settings.AntiAliasingMode == EAntiAliasingMode.Dlaa ||
+                    settings.EnableIntelXess;
             }
 
             public static void LogVulkanUpscaleBridgeCapabilitySnapshot(bool force = false)
@@ -270,6 +356,7 @@ namespace XREngine
 
             public static string DescribeVulkanUpscaleBridgeUnavailability(XRViewport? viewport, bool hdrRequested)
             {
+                EnsureVulkanUpscaleBridgeProbeCompleted();
                 VulkanUpscaleBridgeCapabilitySnapshot snapshot = VulkanUpscaleBridgeSnapshot;
                 List<string> reasons = new(12);
 

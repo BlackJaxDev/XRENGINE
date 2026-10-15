@@ -366,7 +366,7 @@ namespace XREngine.Rendering
                _renderer is not null &&
                EffectiveFramebufferSize.X > 0 &&
                EffectiveFramebufferSize.Y > 0 &&
-               RenderOwnerThreadId != 0;
+               (RenderOwnerThreadId != 0 || TargetWorldInstance is null);
 
         public Exception? LastRenderException => _lastRenderException;
 
@@ -1636,6 +1636,22 @@ namespace XREngine.Rendering
                 return false;
             }
 
+            foreach (var viewport in Viewports)
+            {
+                try
+                {
+                    viewport.RenderPipelineInstance.ResetAfterRendererRetirement(retiring);
+                }
+                catch (Exception ex)
+                {
+                    Debug.RenderingWarning(
+                        "[XRWindow] Failed to reset viewport pipeline instance after renderer retirement. Window={0} Viewport={1} Error={2}",
+                        GetHashCode(),
+                        viewport.Index,
+                        ex);
+                }
+            }
+
             // Keep the retired instance assigned as an inert placeholder until the
             // replacement is ready. Collapsed render-loop dispatch uses the window's
             // initialized state and renderer presence to decide whether to keep servicing
@@ -1711,6 +1727,88 @@ namespace XREngine.Rendering
 
         internal void CompleteFailedRendererReplacement()
             => _rendererRecreationInProgress = false;
+
+        /// <summary>
+        /// Replaces the desktop window backend with a new native window configured for <paramref name="targetApi"/>
+        /// while the window's renderer is detached during a replacement transaction.
+        /// Preserves the window position, size, and title.
+        /// </summary>
+        public void ReplaceDesktopWindowBackend(RuntimeGraphicsApiKind targetApi)
+        {
+            if (_isDisposed || _isDisposing)
+                throw new ObjectDisposedException(nameof(XRWindow));
+            if (!_rendererRecreationInProgress)
+                throw new InvalidOperationException("The desktop window backend can only be replaced while its renderer is detached for replacement.");
+
+            IRuntimeWindowBackend currentBackend = _desktopBackend
+                ?? throw new InvalidOperationException("No desktop window backend is attached.");
+            WarnIfNotNativeWindowThread("ReplaceDesktopWindowBackend");
+
+            if (currentBackend.GraphicsApi == targetApi)
+                return;
+
+            if (currentBackend.GraphicsApi == RuntimeGraphicsApiKind.OpenGL)
+            {
+                try
+                {
+                    RuntimeEngine.Rendering.SecondaryContext.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Debug.RenderingWarning(
+                        "[XRWindow] Failed to dispose secondary GPU context before replacing desktop window backend. Window={0} Error={1}",
+                        GetHashCode(),
+                        ex);
+                }
+            }
+
+            RuntimeWindowCreateOptions previousOptions = currentBackend.Options;
+            IVector2 currentPosition = currentBackend.Position;
+            Vector2D<int> currentWindowSize = EffectiveWindowSize;
+            string currentTitle = currentBackend.Title;
+
+            WindowStartupValues replacementStartup = previousOptions.Startup with
+            {
+                Title = currentTitle,
+                Width = Math.Max(1, currentWindowSize.X),
+                Height = Math.Max(1, currentWindowSize.Y),
+            };
+
+            RuntimeWindowCreateOptions replacementOptions = previousOptions with
+            {
+                GraphicsApi = targetApi,
+                Startup = replacementStartup,
+                Position = currentPosition,
+                Size = new IVector2(Math.Max(1, currentWindowSize.X), Math.Max(1, currentWindowSize.Y)),
+                SwapAutomatically = targetApi == RuntimeGraphicsApiKind.OpenGL,
+                SharedContext = null,
+            };
+
+            currentBackend.Dispose();
+            _desktopBackend = null;
+
+            IRuntimeWindowBackend replacementBackend = RuntimeWindowBackendRegistry.RequireFactory().Create(in replacementOptions);
+            try
+            {
+                replacementBackend.Initialize(new DesktopWindowEventSink(this));
+                _desktopBackend = replacementBackend;
+                Volatile.Write(ref _renderOwnerThreadId, replacementBackend.OwnerThreadId);
+                UpdateEffectiveFramebufferSize(GetCurrentFramebufferSize());
+                UpdateEffectiveWindowSize(GetCurrentWindowSize());
+                RefreshWindowBackendOwnership("graphics-api-switch");
+                PublishWindowSurfaceSnapshot(
+                    EffectiveFramebufferSize,
+                    EffectiveWindowSize,
+                    IsInteractiveResizeInProgress);
+                PublishWindowEventSnapshot(closeRequested: false, closeApproved: false);
+                RecordAllRenderExtents(EffectiveFramebufferSize);
+            }
+            catch
+            {
+                replacementBackend.Dispose();
+                throw;
+            }
+        }
 
         private bool TryPrepareOpenXrForRendererTeardown(AbstractRenderer renderer, string reason)
         {
@@ -1871,6 +1969,7 @@ namespace XREngine.Rendering
                 try
                 {
                     viewport.RenderPipelineInstance.InvalidatePhysicalResources();
+                    viewport.RefreshRenderPipelineOutputBinding();
                 }
                 catch (Exception ex)
                 {
