@@ -15,7 +15,7 @@ internal sealed class VulkanImGuiInputRouter(XRWindow windowHost) : IDisposable
 
     internal void FlushPendingInputEvents(ImGuiIOPtr io)
     {
-        WindowInputSnapshot input = windowHost.ConsumeUiInputSnapshot(_events);
+        windowHost.ConsumeUiInputSnapshot(_events);
         bool viewports = (io.ConfigFlags & ImGuiConfigFlags.ViewportsEnable) != 0;
         var origin = windowHost.DesktopWindowBackend?.ClientScreenPosition ?? default;
         ReadOnlySpan<WindowInputEvent> events = CollectionsMarshal.AsSpan(_events);
@@ -43,7 +43,6 @@ internal sealed class VulkanImGuiInputRouter(XRWindow windowHost) : IDisposable
                     break;
             }
         }
-        io.AddFocusEvent(input.IsFocused);
     }
 
     private void ReplayModifier(ImGuiIOPtr io, EKey key, bool down)

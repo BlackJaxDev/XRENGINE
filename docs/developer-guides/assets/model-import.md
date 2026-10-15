@@ -169,7 +169,7 @@ For importer and exporter tracing, set `XRE_FBX_LOG` before launching the editor
 
 Model import diagnostics and enabled FBX trace lines flow through the engine `Meshes` log category, appearing in the Console's `Meshes` tab and `Build/Logs/.../log_meshes.log` when file logging is enabled. FBX warnings and errors remain visible even with optional tracing off. There is no separate glTF trace env var today; native glTF warnings, unsupported-extension diagnostics, and Auto-to-Assimp fallback messages also surface through the normal model-import logging path.
 
-Missing texture references found by model material loading are collected per import. Once processing finishes, the importer adds them to Missing Assets with the model path as context and emits a summary warning. The editor opens that panel with the collected references; import retains its existing placeholder textures and does not rewrite source references.
+Missing texture references found by model material loading are collected per import. Once processing finishes, the importer adds them to Missing Assets with the model path as context and emits a summary warning. The ImGui editor reports these references in the menu bar notification bell. Select the missing asset event to open the panel. Import retains its existing placeholder textures and does not rewrite source references. See [Editor Notifications](../../user-guide/editor/notifications.md).
 
 The remaining import settings apply across native and compatibility paths unless noted otherwise:
 

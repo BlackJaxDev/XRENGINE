@@ -169,8 +169,9 @@ namespace XREngine.Scene
             if (buffer is not null && buffer.ElementCount >= elementCount)
                 return buffer;
 
-            buffer?.Dispose();
-            return CreateForwardLightBuffer<T>(name, elementCount);
+            XRDataBuffer replacement = CreateForwardLightBuffer<T>(name, elementCount);
+            buffer?.RetireBindingStorage();
+            return replacement;
         }
 
         private static uint ResolveForwardLocalBufferCapacity(int requiredCount)
@@ -217,6 +218,26 @@ namespace XREngine.Scene
                 _forwardSpotShadowMetadataBuffer,
                 "ForwardSpotShadowMetadata",
                 spotCapacity);
+        }
+
+        private void ReleaseForwardLightBuffers()
+        {
+            RetireForwardBuffer(ref _forwardDirectionalLightsBuffer);
+            RetireForwardBuffer(ref _forwardPointLightsBuffer);
+            RetireForwardBuffer(ref _forwardSpotLightsBuffer);
+            RetireForwardBuffer(ref _forwardPointShadowMetadataBuffer);
+            RetireForwardBuffer(ref _forwardSpotShadowMetadataBuffer);
+            RetireForwardBuffer(ref _emptyForwardPlusLocalLightsBuffer);
+            RetireForwardBuffer(ref _emptyForwardPlusVisibleIndicesBuffer);
+            _lightBuffersUploadedFrameTicks = long.MinValue;
+            _shadowMetadataUploadedFrameTicks = long.MinValue;
+        }
+
+        private static void RetireForwardBuffer(ref XRDataBuffer? buffer)
+        {
+            XRDataBuffer? previous = buffer;
+            buffer = null;
+            previous?.RetireBindingStorage();
         }
 
         private void BindForwardLightBuffers(XRRenderProgram program)

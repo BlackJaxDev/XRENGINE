@@ -204,13 +204,12 @@ internal sealed partial class VulkanResourcePlannerSessionService(
     }
 
     /// <summary>
-    /// Removes planner states that an older resource generation of the same
-    /// pipeline, viewport, output and logical view left in
-    /// <paramref name="switchingState"/>. The generation counter only advances,
-    /// so such a state can never become current again, but while its key stays in
-    /// the table its allocator counts as owned and its whole physical image/buffer
-    /// set is never retired (every committed generation would otherwise keep each
-    /// previous set alive). Allocators of removed states are appended to
+    /// Removes older planner states for the same logical output from
+    /// <paramref name="switchingState"/>. A newer resource generation replaces
+    /// an older one. Within one generation, a newer registry instance revision
+    /// replaces the prior descriptor state for the same size and pass. A removed
+    /// state's allocator remains owned until its key leaves the table. Allocators
+    /// of removed states are appended to
     /// <paramref name="supersededAllocators"/> for the caller to retire once no
     /// remaining state owns them.
     /// </summary>
@@ -245,6 +244,41 @@ internal sealed partial class VulkanResourcePlannerSessionService(
                 supersededAllocators.Add(removed.ResourceAllocator);
             }
         }
+    }
+
+    /// <summary>
+    /// Removes plans whose output framebuffer has completed destruction. Capture
+    /// cycles can replace outputs without changing the viewport generation.
+    /// The caller retires removed allocators through GPU completion tracking.
+    /// </summary>
+    internal static List<VulkanResourceAllocator>? RemoveDestroyedOutputStates(
+        FrameOpResourcePlannerSwitchingState switchingState)
+    {
+        List<VulkanFrameOpPlannerStateKey>? destroyedKeys = null;
+        foreach (KeyValuePair<VulkanFrameOpPlannerStateKey, ResourcePlannerRuntimeState> entry in switchingState.States)
+        {
+            if (!switchingState.ActiveKeys.Contains(entry.Key) &&
+                !(switchingState.HasActiveKey && switchingState.ActiveKey.Equals(entry.Key)) &&
+                entry.Value.LastActiveFrameOpContext?.OutputFrameBuffer is { IsDestroyed: true })
+                (destroyedKeys ??= []).Add(entry.Key);
+        }
+
+        if (destroyedKeys is null)
+            return null;
+
+        List<VulkanResourceAllocator> removedAllocators = [];
+        foreach (VulkanFrameOpPlannerStateKey key in destroyedKeys)
+        {
+            if (!switchingState.States.Remove(key, out ResourcePlannerRuntimeState removed))
+                continue;
+
+            switchingState.LastUsedSerials.Remove(key);
+            switchingState.ActiveKeys.Remove(key);
+            if (removed.ResourceAllocator is not null && !removedAllocators.Contains(removed.ResourceAllocator))
+                removedAllocators.Add(removed.ResourceAllocator);
+        }
+        switchingState.SwitchingActive = switchingState.ActiveKeys.Count > 1;
+        return removedAllocators;
     }
 
     /// <summary>
@@ -317,6 +351,34 @@ internal sealed partial class VulkanResourcePlannerSessionService(
             return IsAllocatorOwned(ResolvePublishedSwitchingState(), allocator);
     }
 
+    /// <summary>Preserves image groups that remaining planner states still own.</summary>
+    internal void CollectOwnedImageGroups(HashSet<VulkanPhysicalImageGroup> groups)
+    {
+        AddOwnedImageGroups(ResolveActiveSwitchingState(), groups);
+        lock (planner.PlannerReadbackGate)
+            AddOwnedImageGroups(ResolvePublishedSwitchingState(), groups);
+    }
+
+    private static void AddOwnedImageGroups(
+        FrameOpResourcePlannerSwitchingState switchingState,
+        HashSet<VulkanPhysicalImageGroup> groups)
+    {
+        foreach (ResourcePlannerRuntimeState state in switchingState.States.Values)
+            AddAllocatorImageGroups(state.ResourceAllocator, groups);
+        if (switchingState.HasPreparationState)
+            AddAllocatorImageGroups(switchingState.PreparationState.ResourceAllocator, groups);
+    }
+
+    private static void AddAllocatorImageGroups(
+        VulkanResourceAllocator? allocator,
+        HashSet<VulkanPhysicalImageGroup> groups)
+    {
+        if (allocator is null || allocator.IsRetired)
+            return;
+        foreach (VulkanPhysicalImageGroup group in allocator.EnumeratePhysicalGroups())
+            groups.Add(group);
+    }
+
     /// <summary>
     /// Marks the published table's entry that owns <paramref name="allocator"/> as
     /// used. OpenXR eye and mirror planners render from states shared out of the
@@ -369,14 +431,21 @@ internal sealed partial class VulkanResourcePlannerSessionService(
     private static bool IsSupersededGenerationKey(
         in VulkanFrameOpPlannerStateKey candidate,
         in VulkanFrameOpPlannerStateKey currentKey)
-        => candidate.ResourceGeneration < currentKey.ResourceGeneration &&
-           candidate.ContextKind == currentKey.ContextKind &&
+        => candidate.ContextKind == currentKey.ContextKind &&
            candidate.PipelineIdentity == currentKey.PipelineIdentity &&
            candidate.ViewportIdentity == currentKey.ViewportIdentity &&
            candidate.OutputFrameBufferIdentity == currentKey.OutputFrameBufferIdentity &&
            candidate.OutputTargetIdentity == currentKey.OutputTargetIdentity &&
            candidate.LogicalViewId == currentKey.LogicalViewId &&
-           candidate.SubmissionQueueFamily == currentKey.SubmissionQueueFamily;
+           candidate.SubmissionQueueFamily == currentKey.SubmissionQueueFamily &&
+           (candidate.ResourceGeneration < currentKey.ResourceGeneration ||
+            candidate.ResourceGeneration == currentKey.ResourceGeneration &&
+            candidate.ResourceRegistryInstanceRevision < currentKey.ResourceRegistryInstanceRevision &&
+            candidate.DisplayWidth == currentKey.DisplayWidth &&
+            candidate.DisplayHeight == currentKey.DisplayHeight &&
+            candidate.InternalWidth == currentKey.InternalWidth &&
+            candidate.InternalHeight == currentKey.InternalHeight &&
+            candidate.PassMetadataSignature == currentKey.PassMetadataSignature);
 
     private FrameOpResourcePlannerSwitchingState ResolveActiveSwitchingState(
         VulkanCommandThreadContext threadContext)
@@ -404,7 +473,7 @@ internal sealed partial class VulkanResourcePlannerSessionService(
            first.OutputTargetIdentity == second.OutputTargetIdentity &&
            first.SubmissionQueueFamily == second.SubmissionQueueFamily;
 
-    private static bool IsReusableState(in ResourcePlannerRuntimeState state)
+    internal static bool IsReusableState(in ResourcePlannerRuntimeState state)
         => state.ResourcePlanner is not null &&
            state.ResourceAllocator is not null &&
            !state.ResourceAllocator.IsRetired &&

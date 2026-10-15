@@ -382,7 +382,8 @@ namespace XREngine.Rendering.Vulkan
             ReadOnlySpan<byte> source,
             Format format,
             int pixelCount,
-            byte[] dstRgba)
+            byte[] dstRgba,
+            bool encodeLinearRgbForSrgbDisplay = false)
         {
             if (pixelCount <= 0 || dstRgba.Length < pixelCount * 4)
                 return false;
@@ -397,6 +398,15 @@ namespace XREngine.Rendering.Vulkan
             {
                 float clamped = Math.Clamp(v, 0.0f, 1.0f);
                 return (byte)Math.Clamp((int)MathF.Round(clamped * 255.0f), 0, 255);
+            }
+
+            static byte LinearToSrgbByte(float value)
+            {
+                float linear = Math.Clamp(value, 0.0f, 1.0f);
+                float encoded = linear <= 0.0031308f
+                    ? linear * 12.92f
+                    : 1.055f * MathF.Pow(linear, 1.0f / 2.4f) - 0.055f;
+                return FloatToByte(encoded);
             }
 
             switch (format)
@@ -456,9 +466,12 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 8;
                         int dstIndex = i * 4;
-                        dstRgba[dstIndex + 0] = FloatToByte((float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 0)));
-                        dstRgba[dstIndex + 1] = FloatToByte((float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 2)));
-                        dstRgba[dstIndex + 2] = FloatToByte((float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 4)));
+                        float red = (float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 0));
+                        float green = (float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 2));
+                        float blue = (float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 4));
+                        dstRgba[dstIndex + 0] = encodeLinearRgbForSrgbDisplay ? LinearToSrgbByte(red) : FloatToByte(red);
+                        dstRgba[dstIndex + 1] = encodeLinearRgbForSrgbDisplay ? LinearToSrgbByte(green) : FloatToByte(green);
+                        dstRgba[dstIndex + 2] = encodeLinearRgbForSrgbDisplay ? LinearToSrgbByte(blue) : FloatToByte(blue);
                         dstRgba[dstIndex + 3] = FloatToByte((float)BitConverter.UInt16BitsToHalf(ReadUInt16(source, srcIndex + 6)));
                     }
                     return true;
@@ -493,9 +506,12 @@ namespace XREngine.Rendering.Vulkan
                     {
                         int srcIndex = i * 16;
                         int dstIndex = i * 4;
-                        dstRgba[dstIndex + 0] = FloatToByte(ReadSingle(source, srcIndex + 0));
-                        dstRgba[dstIndex + 1] = FloatToByte(ReadSingle(source, srcIndex + 4));
-                        dstRgba[dstIndex + 2] = FloatToByte(ReadSingle(source, srcIndex + 8));
+                        float red = ReadSingle(source, srcIndex + 0);
+                        float green = ReadSingle(source, srcIndex + 4);
+                        float blue = ReadSingle(source, srcIndex + 8);
+                        dstRgba[dstIndex + 0] = encodeLinearRgbForSrgbDisplay ? LinearToSrgbByte(red) : FloatToByte(red);
+                        dstRgba[dstIndex + 1] = encodeLinearRgbForSrgbDisplay ? LinearToSrgbByte(green) : FloatToByte(green);
+                        dstRgba[dstIndex + 2] = encodeLinearRgbForSrgbDisplay ? LinearToSrgbByte(blue) : FloatToByte(blue);
                         dstRgba[dstIndex + 3] = FloatToByte(ReadSingle(source, srcIndex + 12));
                     }
                     return true;
@@ -521,9 +537,9 @@ namespace XREngine.Rendering.Vulkan
                         int dstIndex = i * 4;
                         uint packed = ReadUInt32(source, srcIndex);
                         DecodeB10G11R11Ufloat(packed, out float r, out float g, out float b);
-                        dstRgba[dstIndex + 0] = FloatToByte(r);
-                        dstRgba[dstIndex + 1] = FloatToByte(g);
-                        dstRgba[dstIndex + 2] = FloatToByte(b);
+                        dstRgba[dstIndex + 0] = encodeLinearRgbForSrgbDisplay ? LinearToSrgbByte(r) : FloatToByte(r);
+                        dstRgba[dstIndex + 1] = encodeLinearRgbForSrgbDisplay ? LinearToSrgbByte(g) : FloatToByte(g);
+                        dstRgba[dstIndex + 2] = encodeLinearRgbForSrgbDisplay ? LinearToSrgbByte(b) : FloatToByte(b);
                         dstRgba[dstIndex + 3] = 255;
                     }
                     return true;

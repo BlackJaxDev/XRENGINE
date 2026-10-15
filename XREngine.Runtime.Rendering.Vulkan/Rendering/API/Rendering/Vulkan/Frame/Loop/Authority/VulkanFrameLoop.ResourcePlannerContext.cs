@@ -1141,7 +1141,14 @@ internal sealed partial class VulkanFrameLoop
         }
         catch
         {
-            scope.Dispose();
+            try
+            {
+                RetireSupersededPlannerAllocators(scope.SupersededAllocators);
+            }
+            finally
+            {
+                scope.Dispose();
+            }
             throw;
         }
     }
@@ -1172,6 +1179,7 @@ internal sealed partial class VulkanFrameLoop
         HashSet<VulkanPhysicalImageGroup> keptImageGroups = [];
         foreach (VulkanPhysicalImageGroup group in currentAllocator.EnumeratePhysicalGroups())
             keptImageGroups.Add(group);
+        _resourcePlannerSessions.CollectOwnedImageGroups(keptImageGroups);
 
         for (int index = 0; index < superseded.Count; index++)
         {

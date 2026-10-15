@@ -35,6 +35,17 @@ internal sealed class ComputeDispatchSnapshot
     public Dictionary<uint, ProgramImageBinding> Images { get; private set; }
     public Dictionary<uint, VulkanComputeBufferBinding> Buffers { get; }
     public Dictionary<string, VulkanComputeBufferBinding> BuffersByName { get; }
+    private bool _ownsBufferBindings;
+    private readonly VulkanTextureArrayBindingUseSet _textureArrayUses = new();
+    internal bool IsFramePoolOwned { get; set; }
+
+    internal void ReleaseIfUnpooled()
+    {
+        if (!IsFramePoolOwned)
+            ReleaseReadOnlyStorageBindings();
+    }
+    internal bool HasTextureArrayBindingUse(XRTexture texture)
+        => _textureArrayUses.Contains(texture);
     internal ReadOnlyStorageBindingSet? ReadOnlyStorageBindings { get; private set; }
     private GPUMaterialTablePublication? _materialTablePublication;
     internal GPUMaterialTablePublication? MaterialTablePublication => _materialTablePublication;
@@ -105,6 +116,16 @@ internal sealed class ComputeDispatchSnapshot
         Images = images;
         Buffers = buffers;
         BuffersByName = buffersByName;
+        RetainTextureArrayBindings(transfer: false);
+        try
+        {
+            RetainBufferBindings();
+        }
+        catch
+        {
+            _textureArrayUses.ReleaseAll();
+            throw;
+        }
     }
 
     internal bool HasPublishedBindingLayoutSignatures { get; private set; }
@@ -189,6 +210,7 @@ internal sealed class ComputeDispatchSnapshot
         Copy(samplerNamesByUnit, SamplerNamesByUnit);
         Copy(samplersByName, SamplersByName);
         Copy(images, Images);
+        RetainTextureArrayBindings(transfer: true);
         Buffers.Clear();
         BuffersByName.Clear();
         SamplerUnitBindingLayoutSignature = 0;
@@ -239,6 +261,7 @@ internal sealed class ComputeDispatchSnapshot
         (SamplerNamesByUnit, samplerNamesByUnit) = (samplerNamesByUnit, SamplerNamesByUnit);
         (SamplersByName, samplersByName) = (samplersByName, SamplersByName);
         (Images, images) = (images, Images);
+        RetainTextureArrayBindings(transfer: true);
 
         HasPublishedBindingLayoutSignatures = false;
         UniformBindingLayoutSignature = 0;
@@ -277,8 +300,61 @@ internal sealed class ComputeDispatchSnapshot
 
     internal void ReleaseReadOnlyStorageBindings()
     {
-        SetReadOnlyStorageBindings(null);
-        SetMaterialTablePublication(null);
+        Exception? firstFailure = null;
+        try
+        {
+            ReleaseBufferBindings();
+        }
+        catch (Exception exception)
+        {
+            firstFailure = exception;
+        }
+        try
+        {
+            _textureArrayUses.ReleaseAll();
+        }
+        catch (Exception exception)
+        {
+            firstFailure ??= exception;
+        }
+        try
+        {
+            SetReadOnlyStorageBindings(null);
+        }
+        catch (Exception exception)
+        {
+            firstFailure ??= exception;
+        }
+        try
+        {
+            SetMaterialTablePublication(null);
+        }
+        catch (Exception exception)
+        {
+            firstFailure ??= exception;
+        }
+        if (firstFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstFailure).Throw();
+    }
+
+    /// <summary>Transfers one active buffer use into this captured snapshot.</summary>
+    internal void AddCapturedBufferBinding(
+        uint binding,
+        in VulkanComputeBufferBinding bufferBinding)
+    {
+        Buffers.Add(binding, bufferBinding);
+        _ownsBufferBindings = true;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(bufferBinding.Data.AttributeName))
+                BuffersByName.TryAdd(bufferBinding.Data.AttributeName, bufferBinding);
+        }
+        catch
+        {
+            Buffers.Remove(binding);
+            _ownsBufferBindings = Buffers.Count != 0;
+            throw;
+        }
     }
 
     /// <summary>Transfers the immutable material-row authority into this sealed snapshot.</summary>
@@ -368,6 +444,16 @@ internal sealed class ComputeDispatchSnapshot
         PreparedMaterialTableSignature = source.PreparedMaterialTableSignature;
         DescriptorSignatures.CopyFrom(source.DescriptorSignatures);
         SealedContentVersion = Interlocked.Increment(ref s_sealedContentVersion);
+        RetainBufferBindings();
+        try
+        {
+            RetainTextureArrayBindings(transfer: true);
+        }
+        catch
+        {
+            ReleaseBufferBindings();
+            throw;
+        }
     }
 
     /// <summary>
@@ -382,6 +468,20 @@ internal sealed class ComputeDispatchSnapshot
         XRRenderPipelineInstance? frameSourcePipeline,
         EUniformRequirements retainedEngineRequirements)
     {
+        // Shared artifacts have no buffer owner count. Keep buffer bindings in
+        // frame-owned snapshots until each artifact consumer owns a lease.
+        if (Buffers.Count != 0 || BuffersByName.Count != 0)
+            throw new InvalidOperationException("A shared binding artifact cannot own buffer bindings.");
+        foreach (XRTexture texture in Samplers.Values)
+            if (texture is XRTexture2DArray)
+                throw new InvalidOperationException("A shared binding artifact cannot own texture arrays.");
+        foreach (XRTexture texture in SamplersByName.Values)
+            if (texture is XRTexture2DArray)
+                throw new InvalidOperationException("A shared binding artifact cannot own texture arrays.");
+        foreach (ProgramImageBinding image in Images.Values)
+            if (image.Texture is XRTexture2DArray)
+                throw new InvalidOperationException("A shared binding artifact cannot own texture arrays.");
+
         Dictionary<string, ProgramUniformValue> retainedUniforms =
             new(Uniforms.Count, StringComparer.Ordinal);
         foreach ((string name, ProgramUniformValue value) in Uniforms)
@@ -458,11 +558,10 @@ internal sealed class ComputeDispatchSnapshot
 
     private void BeginNewContent()
     {
+        ReleaseReadOnlyStorageBindings();
         IsImmutableBindingArtifact = false;
         AllowsMaterialBindingFastPath = false;
         _materialUniformBindings = null;
-        SetReadOnlyStorageBindings(null);
-        SetMaterialTablePublication(null);
         RequiredSamplerNames.Clear();
         HasMutableFrameSourceSamplerBindings = false;
         _publishedImageResourceSignature = 0UL;
@@ -474,6 +573,99 @@ internal sealed class ComputeDispatchSnapshot
         _liveFrameSourceExactSamplerResourceSignature = 0UL;
         _liveFrameSourcePersistentEngineResourceSignature = 0UL;
         DescriptorSignatures.Clear();
+    }
+
+    private void RetainTextureArrayBindings(bool transfer)
+    {
+        try
+        {
+            foreach (XRTexture texture in Samplers.Values)
+            {
+                if (transfer)
+                    _textureArrayUses.RetainTransfer(texture);
+                else
+                    _textureArrayUses.RetainFresh(texture);
+            }
+            foreach (XRTexture texture in SamplersByName.Values)
+            {
+                if (transfer)
+                    _textureArrayUses.RetainTransfer(texture);
+                else
+                    _textureArrayUses.RetainFresh(texture);
+            }
+            foreach (ProgramImageBinding image in Images.Values)
+            {
+                if (transfer)
+                    _textureArrayUses.RetainTransfer(image.Texture);
+                else
+                    _textureArrayUses.RetainFresh(image.Texture);
+            }
+        }
+        catch
+        {
+            _textureArrayUses.ReleaseAll();
+            throw;
+        }
+    }
+
+    private void RetainBufferBindings()
+    {
+        int retainedCount = 0;
+        try
+        {
+            foreach (VulkanComputeBufferBinding binding in Buffers.Values)
+            {
+                binding.Data.RetainBindingUse();
+                retainedCount++;
+            }
+        }
+        catch (Exception acquisitionFailure)
+        {
+            Exception? releaseFailure = null;
+            foreach (VulkanComputeBufferBinding binding in Buffers.Values)
+            {
+                if (retainedCount == 0)
+                    break;
+                try
+                {
+                    binding.Data.ReleaseBindingUse();
+                }
+                catch (Exception exception)
+                {
+                    releaseFailure ??= exception;
+                }
+                retainedCount--;
+            }
+            if (releaseFailure is not null)
+                throw new AggregateException(acquisitionFailure, releaseFailure);
+            throw;
+        }
+
+        _ownsBufferBindings = retainedCount != 0;
+    }
+
+    private void ReleaseBufferBindings()
+    {
+        if (!_ownsBufferBindings)
+            return;
+
+        _ownsBufferBindings = false;
+
+        Exception? firstFailure = null;
+        foreach (VulkanComputeBufferBinding binding in Buffers.Values)
+        {
+            try
+            {
+                binding.Data.ReleaseBindingUse();
+            }
+            catch (Exception exception)
+            {
+                firstFailure ??= exception;
+            }
+        }
+
+        if (firstFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstFailure).Throw();
     }
 
     /// <summary>

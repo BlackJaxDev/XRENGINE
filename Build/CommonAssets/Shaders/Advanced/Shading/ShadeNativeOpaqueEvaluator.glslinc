@@ -191,7 +191,8 @@ void XR_ADV_EvaluateProbeIblWithSelection(
     float NoV = max(dot(N, V), 0.0);
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
     vec3 F = XR_ADV_FresnelSchlick(NoV, F0);
-    diffuseIndirect = irradiance * albedo / PI * (vec3(1.0) - F) * (1.0 - metallic);
+    // Convolution stores irradiance divided by PI. Apply the diffuse factor once.
+    diffuseIndirect = irradiance * albedo * (vec3(1.0) - F) * (1.0 - metallic);
     vec2 brdf = XR_ADV_IntegrateSpecularBrdf(NoV, roughness);
     specularIndirect = prefiltered * (F * brdf.x + brdf.y);
 }

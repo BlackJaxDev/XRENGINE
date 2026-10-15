@@ -31,9 +31,11 @@ internal unsafe partial class VkMeshRenderer
 		int frameIndex,
 		int drawUniformSlot,
 		out DescriptorBufferInfo bufferInfo,
+		out XRDataBuffer? retainedPipelineBuffer,
 		ComputeDispatchSnapshot? bindingSnapshot = null)
 	{
 		bufferInfo = default;
+		retainedPipelineBuffer = null;
 		if (bindingSnapshot?.MaterialTablePublication is not null &&
 			binding.DescriptorType == DescriptorType.StorageBuffer &&
 			binding.Binding == MaterialBindingLayouts.MaterialTableSsboBinding)
@@ -94,7 +96,7 @@ internal unsafe partial class VkMeshRenderer
 		{
 			// found by name — use it directly
 		}
-		else if (TryResolvePipelineResourceBuffer(binding, out buffer))
+		else if (TryResolvePipelineResourceBuffer(binding, out buffer, out retainedPipelineBuffer))
 		{
 			// found by render-pipeline resource name
 		}
@@ -224,9 +226,13 @@ internal unsafe partial class VkMeshRenderer
 		return true;
 	}
 
-	private bool TryResolvePipelineResourceBuffer(DescriptorBindingInfo binding, out VkDataBuffer? buffer)
+	private bool TryResolvePipelineResourceBuffer(
+		DescriptorBindingInfo binding,
+		out VkDataBuffer? buffer,
+		out XRDataBuffer? retainedBuffer)
 	{
 		buffer = null;
+		retainedBuffer = null;
 		if (string.IsNullOrWhiteSpace(binding.Name))
 			return false;
 
@@ -243,12 +249,21 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-		bool allowSynchronousBufferUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
-		if (WrapperLookup.GetOrCreate(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
-			return false;
+		try
+		{
+			bool allowSynchronousBufferUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
+			if (WrapperLookup.GetOrCreate(dataBuffer, generateNow: allowSynchronousBufferUpload) is not VkDataBuffer vkBuffer)
+				return false;
 
-		buffer = vkBuffer;
-		return true;
+			buffer = vkBuffer;
+			retainedBuffer = dataBuffer;
+			return true;
+		}
+		finally
+		{
+			if (buffer is null)
+				dataBuffer.ReleaseBindingUse();
+		}
 	}
 
 	private static bool TryResolvePipelineResourceDataBuffer(
@@ -258,13 +273,28 @@ internal unsafe partial class VkMeshRenderer
 		out XRDataBuffer dataBuffer)
 	{
 		dataBuffer = null!;
-		if (!pipeline.TryGetBuffer(name, out XRDataBuffer? buffer) || buffer is null)
+		if (!pipeline.TryRetainBufferBinding(name, out XRDataBuffer? buffer) || buffer is null)
 			return false;
 
 		if (!IsDescriptorCompatibleBufferTarget(descriptorType, buffer.Target))
+		{
+			buffer.ReleaseBindingUse();
 			return false;
+		}
 
 		dataBuffer = buffer;
+		return true;
+	}
+
+	private static bool BindingResolvesPipelineResourceDataBuffer(
+		XRRenderPipelineInstance pipeline,
+		string name,
+		DescriptorType descriptorType)
+	{
+		if (!TryResolvePipelineResourceDataBuffer(pipeline, name, descriptorType, out XRDataBuffer buffer))
+			return false;
+
+		buffer.ReleaseBindingUse();
 		return true;
 	}
 

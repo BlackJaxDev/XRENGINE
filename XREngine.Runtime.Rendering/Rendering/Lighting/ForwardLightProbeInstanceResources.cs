@@ -222,9 +222,9 @@ internal sealed class ForwardLightProbeInstanceResources
     {
         InvalidateTopologyWork();
         UnbindOwnedResources();
-        IrradianceArray?.Destroy();
+        IrradianceArray?.RetireBindingStorage();
         IrradianceArray = null;
-        PrefilterArray?.Destroy();
+        PrefilterArray?.RetireBindingStorage();
         PrefilterArray = null;
         DestroyBuffer(ref PositionBuffer);
         DestroyBuffer(ref ParamBuffer);
@@ -274,8 +274,7 @@ internal sealed class ForwardLightProbeInstanceResources
         if (oldBuffer is null)
             return;
 
-        oldBuffer.Destroy(true);
-        oldBuffer.Dispose();
+        oldBuffer.RetireBindingStorage();
     }
 
     public static ulong ComputeLayoutSignature(

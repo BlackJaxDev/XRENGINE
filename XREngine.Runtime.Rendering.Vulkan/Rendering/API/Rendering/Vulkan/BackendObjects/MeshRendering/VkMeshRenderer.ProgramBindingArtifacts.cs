@@ -101,6 +101,7 @@ internal unsafe partial class VkMeshRenderer
                 .UniformContentGeneration ?? 0UL,
             engineRequirements,
             MeshRenderer.CaptureUniformsOnRender);
+        engineBindingSnapshot?.ReleaseIfUnpooled();
         if (currentGeneration != _fastPersistentArtifactGeneration)
             return false;
 
@@ -162,6 +163,7 @@ internal unsafe partial class VkMeshRenderer
                 .UniformContentGeneration ?? 0UL,
             engineRequirements,
             MeshRenderer.CaptureUniformsOnRender);
+        engineBindingSnapshot?.ReleaseIfUnpooled();
         return generation == _fastPersistentArtifactGeneration;
     }
 
@@ -210,6 +212,7 @@ internal unsafe partial class VkMeshRenderer
             typedPublisherSignature,
             engineRequirements,
             engineBindingSnapshot);
+        engineBindingSnapshot?.ReleaseIfUnpooled();
         return true;
     }
 
@@ -280,6 +283,7 @@ internal unsafe partial class VkMeshRenderer
                     typedPublisherSignature,
                     engineRequirements,
                     engineBindingSnapshot);
+            engineBindingSnapshot?.ReleaseIfUnpooled();
             PersistentProgramBindingArtifactSlotKey slot =
                 new(material, MeshRenderer);
             return expectedProgram.TryGetPersistentProgramBindingArtifact(
@@ -525,6 +529,15 @@ internal unsafe partial class VkMeshRenderer
             fallbackDetail = "ordinary buffer bindings require a frame-owned binding snapshot";
             return false;
         }
+        foreach (XRTexture texture in snapshot.Samplers.Values)
+            if (texture is XRTexture2DArray)
+                return RejectTextureArrayArtifact(out fallbackReason, out fallbackDetail);
+        foreach (XRTexture texture in snapshot.SamplersByName.Values)
+            if (texture is XRTexture2DArray)
+                return RejectTextureArrayArtifact(out fallbackReason, out fallbackDetail);
+        foreach (ProgramImageBinding image in snapshot.Images.Values)
+            if (image.Texture is XRTexture2DArray)
+                return RejectTextureArrayArtifact(out fallbackReason, out fallbackDetail);
         // Cross-frame artifacts are shared by reference and do not own a
         // publication lease per recorded consumer. Keep immutable storage on
         // the frame-owned GPU snapshot path until that cache supports leases.
@@ -589,6 +602,15 @@ internal unsafe partial class VkMeshRenderer
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline,
             RetainedArtifactEngineRequirements);
         return true;
+    }
+
+    private static bool RejectTextureArrayArtifact(
+        out EVulkanProgramBindingArtifactFallbackReason reason,
+        out string? detail)
+    {
+        reason = EVulkanProgramBindingArtifactFallbackReason.UnownedDescriptorResource;
+        detail = "texture arrays require a frame-owned binding snapshot";
+        return false;
     }
 
     private static bool SnapshotContainsOnlyMaterialSamplers(

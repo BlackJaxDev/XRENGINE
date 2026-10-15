@@ -97,6 +97,14 @@ internal sealed class BrdfIntegrationResources
 
                 if (!_quarantined && !HasCurrentTargetResource(renderer, target))
                 {
+                    // Descriptor publication can lag a physical-plan change. Prepare
+                    // the attachment, then require evidence of a new ready resource.
+                    // An unavailable descriptor alone does not invalidate its contents.
+                    if (_quad is null || !renderer.TryPrepareFrameBufferAttachments(_quad) ||
+                        !renderer.GetTextureShaderSamplingState(target).IsReady)
+                        return;
+                    if (!HasProvenTargetResourceReplacement(renderer, target))
+                        return;
                     TraceReset("DescriptorEpochCompletion", renderer, target);
                     ResetCompletionStateForTargetRebind();
                 }

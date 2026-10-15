@@ -11,7 +11,11 @@ Investigation: [Jax2031 Unity And Advanced Vulkan Parity](../../investigations/r
 
 Use the isolated editor workflow in [Editor And Tooling Workflows](../../../developer-guides/ai/agent-editor-workflows.md). Use ImGui, desktop mode, and Vulkan for the first check. Load `<unity-project-root>/Assets/Avatars/JAX/Mine/jax2031 (1).prefab` through the serialized prefab importer. Use a dedicated external unit-world settings file. Do not change the author's Unity assets or normal editor settings.
 
-Request `XRE_ADVANCED_RENDER_PIPELINE_MODE=Required` and `XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback`. Enable Vulkan validation. Build Release for measurements. Use Debug only when detailed failure diagnostics are needed. Do not use `-NoBuild` unless the session binaries contain the source under review.
+Request `XRE_ADVANCED_RENDER_PIPELINE_MODE=Required` and `XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback`. Enable Vulkan validation for correctness checks. For performance, use a separate Release run with validation, RenderDoc, and code-profiler logging disabled. Record those settings with the results. Use Debug only when detailed failure diagnostics are needed. Do not use `-NoBuild` unless the session binaries contain the source under review.
+
+Record whether RenderDoc suppresses validation-layer debug output. When it does,
+an empty VUID log does not prove a clean validation-layer run. Keep GPU capture,
+engine fault, ownership, and image results separate from that claim.
 
 The 2026-10-11 coordinate comparison used `Kind=Static` with skinning enabled. Source animation checks use `Kind=Animated` and require `VisualAndAvatarBehavior`. Both profiles use `XRE_GPU_DRIVEN_VALIDATION_CAPACITY_FLOOR=1024` to avoid the known scene-growth failure. This keeps GPU submission, but does not validate capacity growth.
 
@@ -61,6 +65,69 @@ reflection strength 0 with 0.245. Restore all material values. Keep the probe
 alive through the capture and stop the owned editor afterward. Record any
 probe-publication error separately from the final shading result.
 
+For buffer-lifetime acceptance, use a fresh process for each explicit prefab
+route. Run the first point and spot activation before adding a probe. Then
+publish, remove, and recreate the static probe. Move the replacement probe three
+times, remove it, and capture front and oblique output again. Keep the process
+alive through all operations. Check both Vulkan logs and changed control pixels;
+profile admission or a null general timing fault alone cannot prove that the
+renderer is still running. Inspect a GPU capture after probe replacement.
+
+For probe diffuse acceptance, disable the primary light and world ambient.
+Enable zero authored SH. Disable reflections, clearcoat, emission, rim, and
+matcaps on the selected Face and Tank materials. Set their metallic multiplier
+and minimum light brightness to zero. Move the static probe outside its influence
+and back for lighting modes 0, 2, and 6. Compare front and oblique images. Restore
+all saved values. Confirm nonzero irradiance and valid native shading in a GPU
+capture. This separates diffuse probe lighting from source SH and reflections.
+
+Check late-array consumption with a temporary lit transparent sphere. Use FXAA
+with motion blur disabled for this control. Add, remove, and recreate the static
+probe while the sphere remains visible. Require a visible response and inspect
+the sphere's fragment bindings 7 and 8 in RenderDoc. They must reference the
+nonzero irradiance and prefilter arrays, not the 1 by 1 dummy. Native opaque
+probe output alone does not validate these bindings. Remove the control objects.
+Motion-blur-only transparent velocity needs a separate frame-matrix check.
+
+Read `get_vulkan_resource_planner_states` and `get_vulkan_memory_statistics`
+between probe controls. Repeated moves must not retain another full target set
+per registry revision. Check native allocated bytes after retirement settles;
+a bounded managed planner census alone does not prove native resource release.
+Keep output dimensions fixed or record their change with the memory results.
+
+Check scene capture separately from static environment conversion. Create an
+inactive probe with no environment asset, enable `UseAdvancedCapturePipeline`
+and `AutoCaptureOnActivate`, disable
+realtime capture and preview drawing, and configure its resolution and influence.
+Activate it once. Require a nonzero capture version and usable IBL output. Inspect
+the captured irradiance, final native shading, and front and oblique images.
+Remove the probe and stop the owned editor after the check.
+The viewport's Required Advanced setting does not select the probe capture
+pipeline. Record the probe's capture-pipeline setting separately. Nonzero output
+and a usable publication flag alone do not establish complete scene capture.
+
+For continuous capture, use a fresh process for each explicit route. Select
+Advanced probe capture, 128-pixel cube faces, irradiance resolution 16, and the
+default 100 ms request interval. Keep transient environment release enabled.
+Measure a fixed camera before capture, during capture, after moving the probe,
+and after removing it. Keep capture active for at least 180 seconds. Require
+capture-version progress across both continuous windows. Record actual progress;
+the request interval does not guarantee ten completed captures per second.
+Inspect native allocation bytes, live planner storage, and the retirement meter.
+Use `metering.pendingRetirementCount` and per-class backlog instead of the legacy
+pending count. Export and view irradiance and prefilter images, plus front and
+oblique viewport images after capture stops and after probe removal.
+
+Use separate 30-second windows without profile logging to measure completed
+desktop presentations per elapsed wall time. Then collect detailed CPU callback,
+GPU timestamp, and presentation-interval distributions. Do not report
+`frame_output_whole_frame_ms` as complete frame cadence: it excludes the prior
+wait for collection. Deduplicate GPU sequence identifiers and report sample age.
+Match a stored failure's frame identifier before treating it as a current error.
+Retain each completed profile before starting the fourth one; runtime capture
+retention keeps only three profiles per process. Record current deferrals
+separately from stale last-failure text.
+
 For a source-clip check, disable only the empty `AnimStateMachineComponent` that the unit-world setup adds to the import wrapper. Keep its `HumanoidComponent` active. The empty controller otherwise overwrites the child source clip's pose each frame. This setup gives the generic source clip sole pose ownership; it does not validate controller blending or Unity humanoid retargeting. Seek `Armature|ArmatureAction` at 0, 0.9583333, 1.2083333, and 1.5833334 seconds. Let rendering settle for two seconds after each seek or camera move before capture. Then play it looped at half speed with a fixed camera. Compare `Velocity` while still and moving. The source action has constant-zero shape curves, so use a separate expression check for animated morph acceptance.
 
 Use the same active outfit, pose, expression, camera, lights, reflection environment, color space, and exposure as Unity. The supplied image does not define those settings. Establish the reference settings before a quantitative image comparison. Start without bloom or temporal upscaling, then compare each authored effect separately. Repeat the final check with the selected production AA mode.
@@ -91,14 +158,17 @@ The entry for both routes is `jax2031 (1).prefab`. Its FBX model prefab is a dep
 | Texture failure and transfer-path coverage | Reject replacement admission after a stale candidate. Exercise cancellation, owner retirement, and the recorded-transfer completion path. | Terminal errors remain terminal; actual cancellation stays retryable; the original completion owner settles once. | Code-reviewed; extended live coverage open | 2026-10-12: review covers both completion paths and rejected admission. Live retries use the graphics upload batch. These fixture runs do not inject admission failure or exercise every retirement path. |
 | Exact prefab import | Import the saved prefab in the isolated session. Inspect jobs, scene nodes, and mesh logs. | Import completes. The avatar enters the scene with stable Unity object identity. | Passed for visual composition | 2026-10-11: both routes complete the saved prefab and produce the same 69 model node IDs. This does not validate every component or source identity. |
 | Final materials and textures | After import, inspect every active and inherited slot. Compare Unity GUID references and effective texture metadata. | Active slots use resolved Unity materials. No visible texture depends on an unresolved FBX source path. | Passed for required active slots | 2026-10-11: all 30 active renderer slots agree on 21 Unity materials, raw source-slot sets, and source-backed 2D texture settings. Source inventory resolves 74 remaps, 94 non-null outer overrides, and 106 texture assets. Generated defaults and converted HDR cubes require separate interpretation. Inactive producer materials are not fully accepted. |
-| Required Release admission | Start Release, prewarm shaders, and inspect the bound Advanced profile through a stable interval. | Advanced remains admitted with no submission downgrade or repeating shader regeneration. | Revalidation open after publication fix | 2026-10-08: Release remained pending on `ShadeNativeOpaqueMsaa.comp`. The 2026-10-12 shader-publication fix has Debug evidence only. |
+| Required Release admission | Start Release, prewarm shaders, and inspect the bound Advanced profile through a stable interval. | Advanced remains admitted with no submission downgrade or repeating shader regeneration. | Passed for both routes | 2026-10-14: both explicit prefab routes complete Release texture warmup, live material controls, and continuous Advanced probe capture with GPU indirect submission. The old shader-regeneration block does not recur. |
 | Debug startup readiness | Repeat the isolated prefab startup with the same binary and Required profile. Inspect shader readiness after import. | Advanced admits the frame without a restart or manual shader reload. | Passed for both routes | 2026-10-12: the corrected final binary completes Advanced preparation in 5,783 ms for Assimp and 6,052 ms for native FBX. Both exact prefab routes retain 21 material identities through detail strength `2 -> 0 -> 2`. Front and oblique captures were viewed at each value. No terminal fault, shader regeneration message, or invalid-stage message occurs. Assimp has two empty frame-package samples; three later reads each publish strategy 2 without a downgrade. Native reports strategy 2 at all three scalar checks. |
 | Native Uber execution | Inspect material publication and native evaluator selection for each active opaque or masked material. | The bound native evaluator implements the active Uber features. Unsupported features have explicit diagnostics. | Execution passed; image parity remains open | 2026-10-11: both routes admit all 16 active opaque or masked Uber materials. Final GPU captures have nonzero indirect native shading dispatches and source-contract-11 rows with 2312 words and 72 texture roles. A later corrected Assimp capture has 16 source-contract-11 rows with 2324 words and 72 roles. Both corrected captures have nonzero indirect shading and viewed compute-color exports. Opaque and masked layouts have separate hashes. Four standard materials retain their standard rows. The transparent horn uses the late lane. |
 | Still-image parity | Capture and view front, side, and rear images. Add close views of eyes, skin, hair, and black clothing. Compare with matched Unity references. | Silhouette, normals, texture detail, shading, eye highlights, emission, and clothing reflections match. | Failed | 2026-10-12: corrected front and oblique views use the same static pose, black background, manual exposure 1, and no bloom. Fresh imports after the bind and morph-order fixes retain the bangs and tank coverage in both routes. Later dissolve and detail-color fixes remove the moving clothing patches and excess detail-color multiplier. The source glitter correction removes the broad moving hair bands. Later matcap and detail-normal adapters preserve source blur and composition. The accessory reconstruction fix removes the magenta rejection pixels in both routes. The later source BRDF and rim correction removes the hard tank circles and wide skin highlight bands in both routes. The fixed patch is the enabled top harness. Its saved state is preserved at the user's request. These controlled views still lack a matched Unity lighting reference. |
 | Directional SH and local composition | Reverse signed SH X terms, add L2, set enabled black coefficients, then restore. Compare local enable, Lambert, gradient, and monochrome. | Each control changes the intended contribution and restores stable regions. | Focused controls passed for both routes | 2026-10-13: both routes retain 21 active material identities. SH direction, L2, enabled black, point, gradient, and monochrome controls respond. SH and point restores are exact in checked Face and Tank regions. Correcting the spot record to use the emitter transform makes spot enable change 34,328 Tank pixels on each route, with Face unchanged and exact regional restores. An earlier native run stopped on first Spot activation; the fresh repeat passes the control but does not clear the lifetime defect. |
 | Mochie and clearcoat probe reflection | Assign a nonzero static environment. Isolate reflection tint and reflection-only Face coat. Inspect GPU probe data and native output. | Both source reflection terms respond and restore without changing other material regions. | Focused controls passed for both routes | 2026-10-13: static generation waits for an active renderer and completes without manual retry. Reflection-only Face coat changes 376 Assimp and 380 native checked pixels, with Tank unchanged. Unmasked Tank tint changes 34,319 Assimp and 34,316 native pixels, with Face unchanged. Each control restores both regions exactly. The saved Tank mask gives no measurable tint response. Final GPU captures show nonzero probe radiance, 176-byte probe rows, 240-byte environment rows, and zero reconstruction or coverage rejection pixels. |
-| Probe publication lifetime | Add, replace, and remove probe data while frames remain live. | Published bindings never resolve disposed buffers. | Failed | 2026-10-13: static renderer scheduling is corrected, but one disposed-buffer frame-recording failure remains when the native probe publishes. Earlier runs also fail around replacement and removal. The code todo owns buffer retirement. |
-| Local-light buffer lifetime | Add the first local light while canonical late draws remain active. Inspect descriptor admission and actual presentation. | Captured bindings remain valid through buffer growth. | Failed intermittently | 2026-10-13: native PID 31784 enters a persistent renderer terminal state immediately after first Spot activation. Horns rejects a retired buffer generation. Forward spot and shadow-metadata buffer growth are leading candidates; the rejected binding is not logged. A fresh identical-binary run passes the spot control. Admission and the general timing query do not expose the earlier persistent backend fault. |
+| Probe publication lifetime | Add, replace, move, and remove probe data while frames remain live. | Published buffers and arrays stay valid through their last use. Obsolete target sets retire. | Focused checks passed on both routes | 2026-10-14: final native PID 97292 and Assimp PID 72228 complete publication, removal, recreation, repeated moves, and final removal. No disposed-resource failure or renderer pause occurs. Planner target storage stays at 616.40 MiB. Native allocation bytes settle at 2,914.13 MiB and 2,626.22 MiB respectively after capture transients. Replacement captures execute native shading with valid probe records and no rejection pixels. Sustained realtime capture remains open. |
+| Probe diffuse GI | Disable direct light, ambient, SH, reflections, and other indirect material terms. Move the probe outside its influence and back. | Probe diffuse changes the intended surfaces and restores stable regions. | Static-environment checks passed on both routes | 2026-10-14: lighting modes 0, 2, and 6 respond on Face and Tank. Front regions restore exactly. Small oblique differences occur over hair at the left edge of the Tank region. Replacement captures contain nonzero irradiance, valid probe and environment records, and 2,073,600 valid diagnostic pixels. This confirms engine probe GI consumption. It does not validate Unity baked-probe assignment. |
+| Lit transparent probe arrays | Add, remove, and recreate a static probe with a lit transparent sphere present. Inspect its image response and bound fragment arrays. | BRDF readiness recovers after publication. The shader samples real arrays and returns to its baseline after removal. | Focused image and GPU checks passed on both routes | 2026-10-14: native PID 5636 and Assimp PID 6072 each change 29,940 of 30,000 checked pixels. Both removed-probe images return the same baseline. Native event 528 and Assimp event 522 bind nonzero 32 by 32 irradiance and 256 by 256 prefilter arrays, with 6 and 9 mips. Both routes keep target storage at 616.40 MiB and retain the avatar after control removal. The initial empty-array result exposed a BRDF attachment-preparation deadlock; the corrected producer now retries and settles. Motion-blur-only velocity and sustained realtime capture remain open. |
+| Advanced scene-probe capture | Explicitly select Advanced capture. Capture the scene once without an environment asset. Inspect output radiance and native shading. | The probe publishes visible scene lighting and the viewport remains active. | One-shot checks passed on both routes | 2026-10-14: native and Assimp publish capture version 1. Irradiance means are 0.01718 and 0.01714; prefilter means are 0.01650 and 0.01647. The viewed native prefilter contains the avatar. Both captures have 2,073,600 valid native diagnostic pixels. Front and oblique views remain intact after removal. The later Release result below covers continuous capture. Per-face geometry completeness and production performance remain open. The earlier default-pipeline capture produced nearly black output and does not establish Advanced capture acceptance. |
+| Local-light buffer lifetime | Add the first local light while canonical late draws remain active. Inspect descriptor admission and actual presentation. | Captured bindings remain valid through buffer growth. | Focused checks passed on both routes | 2026-10-14: fresh native and Assimp processes complete first point and spot activation without retired-buffer rejection. Each spot control changes 34,328 Tank pixels and restores the checked regions exactly. GPU indirect strategy 2 remains active. An earlier Assimp attempt stops at a transient deformation-readiness gate; the engine recovers, and the complete fresh repeat passes. |
 | Source Basic dissolve | Import each prefab route with saved amount 0 and edge width 0.334. View fixed-camera and oblique output. Temporarily set amount 0.5, then restore it. | Zero amount produces no dissolve edge. Nonzero amount retains the source transition. | Passed for this prefab; other dissolve modes open | 2026-10-11: both corrected routes retain the authored widths without moving tank or shorts patches. Mode 5 and progress 0 reach runtime. Amount 0.5 produces a visible patterned transition. Shared source math now runs in canonical and native coverage. Checks use shadows off. |
 | Detail color neutrality | Import each prefab route at fixed exposure with the saved face detail intensity 1. Inspect normalized tint and brightness. | An absent detail texture with source brightness 1 is neutral. | Passed for this prefab | 2026-10-11: both routes retain intensity 1, normalized tint approximately 1, and engine additive brightness 0. Viewed front and oblique captures show skin shading without disabling detail color. Gamma projects and authored detail textures need separate acceptance. |
 | Hair flicker | Hold camera and pose fixed. Capture pairs with source glitter brightness 2.7 and a temporary value 0. Restore 2.7. | Source sparkles do not become broad moving bands. | Passed for the active source circle glitter | 2026-10-12: both routes retain frequency 2000, two layers, angle 3.9, contrast 640, and brightness 2.7. Viewed close, front, and oblique captures have no broad moving glitter bands. Mean RGB byte change in the fixed hair region is 0.338 then 0.343 for native, and 0.330 then 0.326 for Assimp. Both disabled pairs are exactly stable. Glitter remains active. Checks use static pose and shadows off; matched lighting and production AA remain open. |
@@ -121,7 +191,7 @@ The entry for both routes is `jax2031 (1).prefab`. Its FBX model prefab is a dep
 | Existing animation and import regressions | Run `AnimationClipComponentTests`, `AnimationClipSerializationTests`, `NativeFbxImporterTests`, and `SerializedSceneImporterTests`. | All selected tests pass. | Passed | 2026-10-11: 46 pass, zero failures. The editor build has zero warnings and errors. No test source changed. This selection does not clear the separate cooked YAML failure. |
 | Existing material and import regressions | Run `SerializedSceneImporterTests`, `NativeFbxImporterTests`, and `SourceToonConversionBaselineTests`. | All selected tests pass. | Passed | 2026-10-11: 31 pass, zero failures. The final editor build has zero warnings and errors. A broader selection has nine stale source-text assertion failures in `ImportedTextureStreamingContractTests`; expected tokens are absent at the asserted paths in both HEAD and the working tree. No test source changed. |
 | Native material contract regressions | Run the existing material database, scene identity, and source toon conversion tests. | All selected tests pass. | Passed | 2026-10-11: 26 pass after the Mochie correction. The isolated editor build has zero warnings and errors. A separate deformation selection has one existing owner-history confirmation failure; see the investigation. No test source changed. |
-| Backend logs | Stop the owned session and inspect import, shader, Vulkan, and rendering logs. | No unresolved non-teardown error affects the measured frame. | Failed lifetime checks; final shading captures valid | 2026-10-13: final Assimp and native repeats have zero Vulkan VUID, shader compile, or texture-upload failures. Source-mismatch warnings end before the measured lighting controls: 35 Assimp and 28 native. Both recover from disposed-buffer frame-recording failures during probe publication. A separate native attempt enters a persistent renderer terminal state at first Spot activation. Final successful captures execute native shading without reconstruction or coverage rejection. These captures do not clear either lifetime defect. |
+| Backend logs | Stop the owned session and inspect import, shader, Vulkan, and rendering logs. | No unresolved non-teardown error affects the measured frame. | Focused lifetime checks passed; recoverable deferrals remain | 2026-10-14: final native PID 97292 and Assimp PID 72228 have no disposed-resource failure, retired-buffer rejection, renderer pause, or target-allocation failure. Cold mesh preparation, import-time deformation publication, material-table growth, and target preparation can defer a frame. They recover before measured output. Replacement captures execute native shading with all 2,073,600 diagnostic pixels valid. RenderDoc suppresses validation-layer debug output, so these runs do not establish clean VUID validation. The final Debug build has zero warnings and errors. No test source changed. |
 
 The 2026-10-12 Debug readiness check also repeated Assimp startup with the same
 final binary. Preparation completed in 5,712 ms without a shader reload. The
@@ -130,23 +200,116 @@ oblique output was viewed. The log had zero VUID and shader regeneration
 messages, one startup reservation error, and 42 texture source-mismatch stage
 warnings. This startup timing is not a frame-time measurement.
 
+## Model Inspector Checks
+
+Use the default model editor with the composed prefab. Enable and disable
+`Render Bounds` on one component. Inspect front and oblique views. Other
+components' bounds switches must remain independent. Repeat with the selected
+CPU or GPU bounds source; the source setting is separate from mesh submission.
+
+Open **Blendshapes (All LODs)** and the per-submesh list. The **Hide Blendshapes
+Without Effect** switch must start enabled. A shape with nonzero position,
+normal, or tangent deltas must remain visible even when its weight is zero.
+Disable the filter to show all imported channels. The operation must preserve
+weights and source data. A name used by any LOD stays in the all-LOD list.
+
+The 2026-10-14 Release native check shows the bounds in front and oblique
+views. The Body and Face switches act independently. The default filter shows
+three Body entries, including an effective zero-weight entry. The unfiltered
+list exposes the other channels. The check does not yet cover GPU bounds
+readback or unavailable CPU blendshape data.
+
+The final 2026-10-15 repeat passes the CPU bounds on/off and camera-move checks
+without selection in both routes. Front, oblique, and off-images were viewed.
+The old dark residue is gone after explicit stencil initialization. RenderDoc
+confirms that the first visibility pass clears depth and stencil. The exported
+stencil channel has zero nonzero pixels after bounds are disabled, compared
+with 48,824 before the fix. These checks use FXAA. MSAA and live GPU bounds
+remain separate checks.
+
+## Screenshot Display Transfer
+
+Capture the same fixed front and oblique views with
+`include_screen_space_ui=false` and `true`. Compare an unobstructed scene region.
+The float SDR viewport target must report `readback.output_transfer=LinearToSrgb`.
+The composited sRGB swapchain must report `Unchanged`. Alpha and raw texture
+readback must keep their existing contracts.
+
+The 2026-10-14 Release check passes for both prefab routes in Vulkan Advanced.
+All four image pairs were viewed. Mean absolute RGB error in the fixed scene
+region is 0.047 to 0.049 byte levels out of 255; the 99th percentile is one.
+The earlier dark PNGs must not be used for absolute brightness or Unity color
+acceptance. HDR output and other presentation paths need separate checks.
+
 ## Performance Checks
 
 Measure warmed Release frames after import and shader readiness. Keep the camera and output fixed. Record an empty-scene baseline, one still avatar, and one moving avatar. Report CPU and GPU frame time at P50, P95, and P99. Record active vertices, triangles, bones, morph channels, material kernels, draw calls, texture memory, skinning cost, shadow cost, late transparency cost, overdraw, shader cache misses, and frame allocations.
 
 | Check | Procedure | Expected | Status | Last evidence |
 |---|---|---|---|---|
-| Frame budget | Measure at the chosen production output and target refresh rate. Include the whole frame. | P95 fits the selected 16.7 ms, 11.1 ms, or 8.3 ms budget for 60, 90, or 120 Hz. Report P99 stalls separately. | Blocked by visual correctness and Release readiness | No valid avatar timing. |
+| Frame budget | Measure at the chosen production output and target refresh rate. Include the whole frame. | P95 fits the selected 16.7 ms, 11.1 ms, or 8.3 ms budget for 60, 90, or 120 Hz. Report P99 stalls separately. | Release editor measurements available; production acceptance open | 2026-10-14: the still-avatar baseline is 57.01 FPS in native and 61.82 FPS in Assimp. Continuous 128-pixel Advanced probe capture measures 27.08 to 29.03 FPS. These are 30-second completed-presentation windows at 1920 by 1080. See the workload and recovery limits below. |
 | Feature variants | Compare cold preparation and warmed output while values and compatible materials change. | Values use material rows. Warmed frames do not compile known feature variants or multiply kernels per material value. | Open | none |
 | Submission and allocation | Inspect the resolved submission strategy, GPU work counters, and frame allocation data. | Native opaque work keeps GPU submission without count readback. Any permitted CPU late submission is reported separately. | Partial | 2026-10-11: both routes retain Advanced admission, requested and resolved strategy 2, and no downgrade during source playback. Allocation and dynamic growth remain open. |
 | Visibility and LOD | Measure the selected outfit before changing geometry or textures. Disable unused alternatives. Compare close and distant output after any LOD change. | Cost falls while the required silhouette, deformation, and material borders stay correct. | Open | Current geometry counts are unknown. |
 | VR | Repeat with both views, production shadows, active animation, and required physics. | The stereo frame meets the selected full-frame budget without eye mismatch or temporal artifacts. | Open | none |
 
+### Release Continuous Capture Result
+
+The 2026-10-14 checks use the Release ImGui editor, Vulkan Required Advanced,
+GPU indirect submission, FXAA, manual exposure 1, and no skybox or shadows.
+Vulkan validation, RenderDoc, and code-profiler logging are disabled for the
+30-second throughput windows. Only the owned editor process is present.
+The output is 1920 by 1080. These checks use a still avatar, not animated VR.
+
+| Completed desktop presentations per second | Native FBX prefab route | Assimp prefab route |
+|---|---:|---:|
+| Before capture | 57.01 | 61.82 |
+| Fixed probe, capture active | 29.03 | 27.53 |
+| Moved probe, capture active | 28.55 | 27.08 |
+| First window after removal | 46.56 | 52.90 |
+| Later window after bounds and selection reset | Not repeated | 62.14 |
+
+The later detailed native profile returns to an 18.30 ms median presentation
+interval, compared with 17.95 ms before capture. Assimp has Face bounds and
+selection visible in the later capture images. Successful commands disable
+Body and Face bounds, clear selection, and restore the fixed camera before the
+extra recovery window. There is no saved property readback after those setters.
+The earlier Assimp windows therefore have an editor-overlay workload caveat;
+they are not a controlled comparison of importer cost.
+
+Native completes 453 probe updates and Assimp completes 463. Both remain active
+for more than 180 seconds. Their final irradiance and prefilter arrays contain
+finite, nonzero radiance. Viewed front and oblique images retain the avatar.
+No detailed profile reports a rejected frame. Fixed and moved profiles contain
+recoverable preparation deferrals: 536 and 536 in native, 568 and 532 in Assimp.
+Detailed profile logging changes throughput; do not substitute its FPS for the
+separate unprofiled windows above.
+
+After removal, native allocation bytes settle at 3.26 GB and 3.22 GB. Both have
+three planners with 616.40 MiB of image storage. Direct-compute descriptor-set
+counts return to eight in each route; compute uniform-buffer counts return to
+eight and six. The remaining 36 pending image/view records belong to the fixed
+capture bank. This is bounded target retention, not proof of complete resource
+reclamation. Frame-data reservation counts still grow to 8,875 and 9,283. The
+capture ownership item remains open in the code todo. Continuous capture does
+not yet satisfy a long-run resource or production frame-budget acceptance gate.
+
+### Continuous Capture Follow-up Checks
+
+These checks remain open. Track code changes in the [capture ownership](../../todo/rendering/unity-poiyomi-advanced-parity-todo.md#capture-frame-data-ownership) and [capture performance](../../todo/rendering/unity-poiyomi-advanced-parity-todo.md#continuous-probe-capture-performance) items.
+
+| Check | Procedure | Acceptance |
+|---|---|---|
+| Long-run reservation growth | Run continuous capture through both Unity prefab import routes in Vulkan Required Advanced. Record completed captures, live family and frequency reservation counts, reserved bytes, and retained resources over time. Run enough updates to exceed the old reservation limit at the recorded growth rate. | Counts reach a stable bound for a fixed live workload. Capture continues without reservation exhaustion, rejected preparation, missing meshes, or invalid GPU access. A short run below the old limit is insufficient. |
+| Owner retirement and range reuse | Repeat probe creation, movement, capture stop, restart, and removal. Keep a second probe active during removal. Wait for recorded completion and retirement conditions. | Removed owners release their reservations. Surviving owners retain valid ranges and images. Reused ranges have valid allocation identities. Shared resources remain valid until all readers release them. |
+| Continuous capture cost | Repeat the recorded Release workload for both prefab routes. Confirm the same camera, bounds and selection state, output resolution, capture resolution, and request interval by readback. Measure fixed and moved probes. Use separate stage-profile and unprofiled throughput windows. | Report before/after completed presentations, completed probe updates, CPU and GPU P50/P95/P99 times, allocation counts, and preparation deferrals. Demonstrate lower capture cost without reducing update throughput or image quality. Production acceptance still requires the selected frame budget. |
+| Image and recovery checks | View front and oblique images during capture and after probe removal. Inspect irradiance and prefilter output. Repeat the no-capture measurement after retirement settles. | Both routes preserve geometry, materials, and finite probe lighting. No flicker or stale lighting appears. Memory and frame times return to the expected live-workload range. |
+
 ## Hardware Matrix
 
 | Hardware | Backend and output | Result |
 |---|---|---|
-| NVIDIA GeForce RTX 3090 in the local system | NVIDIA Vulkan capabilities, desktop mono, 1920 by 1080 | Both prefab routes reach Debug Advanced admission. Native Uber material rows, masked coverage, and sorted alpha execute. Active material and source texture bindings agree. Bangs placement and indexed body morph fixes pass in both routes. Focused texture-publication checks pass. Full image, geometry, Release streaming stress, and frame-time acceptance remain open. No accepted avatar FPS result. |
+| NVIDIA GeForce RTX 3090, AMD Ryzen 9 7950X3D, driver 617.14 | Vulkan, desktop mono, 1920 by 1080 | Both prefab routes reach Release Advanced admission and complete continuous probe capture. Native Uber material rows, masked coverage, sorted alpha, and live texture controls execute. The timing table records editor throughput. Matched Unity lighting, long-run reservation lifetime, production frame-budget acceptance, and VR remain open. |
 | Production VR hardware | Vulkan stereo, production per-eye resolution | Not measured. |
 
 ## Failures
@@ -155,5 +318,4 @@ Measure warmed Release frames after import and shader readiness. Keep the camera
 |---|---|---|
 | Scene capacity growth | Collection maps GPU-authored LOD storage without an active render owner. | Linked investigation and scene publication code item. |
 | Cooked YAML regression | Wrapped runtime mesh payload becomes a failed-mesh placeholder. | Linked investigation; baseline reproduction remains open. |
-| Release admission | Native MSAA compute shader remains in regeneration. | Linked investigation. |
-| Native Uber image parity | The source lighting adapters are implemented. Matched Unity lighting and production output remain unvalidated. The fixed harness patch retains its saved state. | Linked investigation and the lighting rows above. Probe and local-light buffer lifetime remain open. |
+| Native Uber image parity | The source lighting adapters are implemented. Matched Unity lighting and production output remain unvalidated. The fixed harness patch retains its saved state. | Linked investigation and the lighting rows above. Focused probe and local-light lifetime controls pass. The Release result below records continuous capture and remaining long-run and frame-budget limits. |

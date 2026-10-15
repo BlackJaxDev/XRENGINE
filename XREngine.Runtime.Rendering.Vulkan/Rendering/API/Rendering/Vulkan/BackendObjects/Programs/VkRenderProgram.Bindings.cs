@@ -65,14 +65,33 @@ internal unsafe partial class VkRenderProgram
         _samplersByName.Clear();
         _imagesByUnit.Clear();
         _buffersByBinding.Clear();
-        _readOnlyStorageBindings?.Dispose();
+        Exception? firstFailure = null;
+        try
+        {
+            ReleaseLegacyBindingUsesNoLock();
+        }
+        catch (Exception exception)
+        {
+            firstFailure = exception;
+        }
+        ReadOnlyStorageBindingSet? readOnlyBindings = _readOnlyStorageBindings;
         _readOnlyStorageBindings = null;
+        try
+        {
+            readOnlyBindings?.Dispose();
+        }
+        catch (Exception exception)
+        {
+            firstFailure ??= exception;
+        }
         // Frame snapshots can already be owned by queued indirect draws. Binding
         // preparation clears the immediate program dictionaries between draws,
         // but it must not retire that frame-owned snapshot pool: doing so clears
         // immutable storage publications before descriptor resolution. The pool
         // is released when its render-frame identity advances or on teardown.
         _frameMaterialBindingSnapshots.Clear();
+        if (firstFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstFailure).Throw();
     }
 
     private void SetUniformValue(string name, EShaderVarType type, object value, bool isArray = false)
@@ -196,7 +215,7 @@ internal unsafe partial class VkRenderProgram
 
         capture.SamplersByUnit.EnsureCapacity(capture.SamplersByUnit.Count + snapshot.Samplers.Count);
         foreach (KeyValuePair<uint, XRTexture> pair in snapshot.Samplers)
-            capture.SamplersByUnit[pair.Key] = pair.Value;
+            capture.MergeSampler(pair.Key, pair.Value);
 
         capture.SamplerNamesByUnit.EnsureCapacity(
             capture.SamplerNamesByUnit.Count + snapshot.SamplerNamesByUnit.Count);
@@ -206,7 +225,7 @@ internal unsafe partial class VkRenderProgram
         capture.SamplersByName.EnsureCapacity(
             capture.SamplersByName.Count + snapshot.SamplersByName.Count);
         foreach (KeyValuePair<string, XRTexture> pair in snapshot.SamplersByName)
-            capture.SamplersByName[pair.Key] = pair.Value;
+            capture.MergeNamedSampler(pair.Key, pair.Value);
 
         capture.RequiredSamplerNames.EnsureCapacity(
             capture.RequiredSamplerNames.Count +
@@ -216,12 +235,14 @@ internal unsafe partial class VkRenderProgram
 
         capture.ImagesByUnit.EnsureCapacity(capture.ImagesByUnit.Count + snapshot.Images.Count);
         foreach (KeyValuePair<uint, ProgramImageBinding> pair in snapshot.Images)
-            capture.ImagesByUnit[pair.Key] = pair.Value;
+            capture.MergeImage(pair.Key, pair.Value);
 
         capture.BuffersByBinding.EnsureCapacity(
             capture.BuffersByBinding.Count + snapshot.Buffers.Count);
+        capture.RetainedBufferSources.EnsureCapacity(
+            capture.RetainedBufferSources.Count + snapshot.Buffers.Count);
         foreach (KeyValuePair<uint, VulkanComputeBufferBinding> pair in snapshot.Buffers)
-            capture.BuffersByBinding[pair.Key] = pair.Value.Data;
+            capture.MergeBuffer(pair.Key, pair.Value.Data);
         if (snapshot.ReadOnlyStorageBindings is { } readOnlyBindings)
             ReplaceReadOnlyStorageBindings(
                 ref capture.ReadOnlyStorageBindings,
@@ -243,30 +264,80 @@ internal unsafe partial class VkRenderProgram
         _samplersByName.Clear();
         _imagesByUnit.Clear();
         _buffersByBinding.Clear();
+        ReleaseLegacyBindingUsesNoLock();
 
         foreach (var pair in snapshot.Uniforms)
             _uniformValues[pair.Key] = pair.Value;
 
         foreach (var pair in snapshot.Samplers)
-            _samplersByUnit[pair.Key] = pair.Value;
+            _legacyTextureArrayUses.ReplaceSampler(_samplersByUnit, pair.Key, pair.Value, transfer: true);
 
         foreach (var pair in snapshot.SamplerNamesByUnit)
             _samplerNamesByUnit[pair.Key] = pair.Value;
 
         foreach (var pair in snapshot.SamplersByName)
-            _samplersByName[pair.Key] = pair.Value;
+            _legacyTextureArrayUses.ReplaceSampler(_samplersByName, pair.Key, pair.Value, transfer: true);
 
         foreach (var pair in snapshot.Images)
-            _imagesByUnit[pair.Key] = pair.Value;
+            _legacyTextureArrayUses.ReplaceImage(_imagesByUnit, pair.Key, pair.Value, transfer: true);
 
+        _buffersByBinding.EnsureCapacity(snapshot.Buffers.Count);
+        _retainedLegacyBufferSources.EnsureCapacity(snapshot.Buffers.Count);
         foreach (var pair in snapshot.Buffers)
-            _buffersByBinding[pair.Key] = pair.Value.Data;
+        {
+            XRDataBuffer buffer = pair.Value.Data;
+            buffer.RetainBindingUse();
+            _retainedLegacyBufferSources[pair.Key] = buffer;
+            _buffersByBinding[pair.Key] = buffer;
+        }
 
         ReplaceReadOnlyStorageBindings(
             ref _readOnlyStorageBindings,
             snapshot.ReadOnlyStorageBindings);
 
         _appliedBindingSnapshot = null;
+    }
+
+    private void ReleaseLegacyRetainedBufferSourcesNoLock()
+    {
+        Exception? firstFailure = null;
+        foreach (XRDataBuffer buffer in _retainedLegacyBufferSources.Values)
+        {
+            try
+            {
+                buffer.ReleaseBindingUse();
+            }
+            catch (Exception exception)
+            {
+                firstFailure ??= exception;
+            }
+        }
+        _retainedLegacyBufferSources.Clear();
+        if (firstFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstFailure).Throw();
+    }
+
+    private void ReleaseLegacyBindingUsesNoLock()
+    {
+        Exception? firstFailure = null;
+        try
+        {
+            _legacyTextureArrayUses.ReleaseAll();
+        }
+        catch (Exception exception)
+        {
+            firstFailure = exception;
+        }
+        try
+        {
+            ReleaseLegacyRetainedBufferSourcesNoLock();
+        }
+        catch (Exception exception)
+        {
+            firstFailure ??= exception;
+        }
+        if (firstFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstFailure).Throw();
     }
 
     internal ComputeDispatchSnapshot CaptureComputeSnapshot()
@@ -507,6 +578,7 @@ internal unsafe partial class VkRenderProgram
             _samplersByName,
             _imagesByUnit,
             _buffersByBinding,
+            _retainedLegacyBufferSources,
             RentFrameBindingSnapshot());
     }
 
@@ -523,12 +595,23 @@ internal unsafe partial class VkRenderProgram
             ref capture.SamplerNamesByUnit,
             ref capture.SamplersByName,
             ref capture.ImagesByUnit);
-        CaptureComputeBufferBindings(capture.BuffersByBinding, snapshot);
-        snapshot.SetReadOnlyStorageBindings(capture.ReadOnlyStorageBindings);
-        snapshot.PublishBindingLayoutSignatures(
-            BackendContext,
-            WrapperLookup.Lookup,
-            RuntimeEngine.Rendering.State.CurrentRenderingPipeline);
+        try
+        {
+            CaptureComputeBufferBindings(
+                capture.BuffersByBinding,
+                capture.RetainedBufferSources,
+                snapshot);
+            snapshot.SetReadOnlyStorageBindings(capture.ReadOnlyStorageBindings);
+            snapshot.PublishBindingLayoutSignatures(
+                BackendContext,
+                WrapperLookup.Lookup,
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline);
+        }
+        catch
+        {
+            snapshot.ReleaseReadOnlyStorageBindings();
+            throw;
+        }
         return snapshot;
     }
 
@@ -539,6 +622,7 @@ internal unsafe partial class VkRenderProgram
         Dictionary<string, XRTexture> samplersByName,
         Dictionary<uint, ProgramImageBinding> imagesByUnit,
         Dictionary<uint, XRDataBuffer> buffersByBinding,
+        Dictionary<uint, XRDataBuffer>? retainedBufferSources,
         ComputeDispatchSnapshot? rentedSnapshot)
     {
         ComputeDispatchSnapshot snapshot = rentedSnapshot ?? new ComputeDispatchSnapshot();
@@ -548,18 +632,27 @@ internal unsafe partial class VkRenderProgram
             samplerNamesByUnit,
             samplersByName,
             imagesByUnit);
-        CaptureComputeBufferBindings(buffersByBinding, snapshot);
-        snapshot.SetReadOnlyStorageBindings(_readOnlyStorageBindings);
-        snapshot.PublishBindingLayoutSignatures(
-            BackendContext,
-            WrapperLookup.Lookup,
-            RuntimeEngine.Rendering.State.CurrentRenderingPipeline);
+        try
+        {
+            CaptureComputeBufferBindings(buffersByBinding, retainedBufferSources, snapshot);
+            snapshot.SetReadOnlyStorageBindings(_readOnlyStorageBindings);
+            snapshot.PublishBindingLayoutSignatures(
+                BackendContext,
+                WrapperLookup.Lookup,
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline);
+        }
+        catch
+        {
+            snapshot.ReleaseReadOnlyStorageBindings();
+            throw;
+        }
 
         return snapshot;
     }
 
     private void CaptureComputeBufferBindings(
         Dictionary<uint, XRDataBuffer> buffersByBinding,
+        Dictionary<uint, XRDataBuffer>? retainedBufferSources,
         ComputeDispatchSnapshot snapshot)
     {
         snapshot.Buffers.EnsureCapacity(buffersByBinding.Count);
@@ -567,56 +660,39 @@ internal unsafe partial class VkRenderProgram
         foreach (KeyValuePair<uint, XRDataBuffer> pair in buffersByBinding)
         {
             XRDataBuffer buffer = pair.Value;
-            if (WrapperLookup.GetOrCreate(buffer, generateNow: allowSynchronousUpload) is not VkDataBuffer vkBuffer ||
-                !vkBuffer.TryCaptureComputeBufferSnapshot(allowSynchronousUpload, out VulkanComputeBufferBinding bufferBinding))
+            if (retainedBufferSources is not null &&
+                retainedBufferSources.TryGetValue(pair.Key, out XRDataBuffer? source) &&
+                ReferenceEquals(source, buffer))
             {
-                bufferBinding = new VulkanComputeBufferBinding(buffer, default, 0UL, 0, default, 0UL);
+                buffer.RetainBindingUse();
             }
+            else if (!buffer.TryRetainActiveBindingUse())
+                throw new InvalidOperationException(
+                    $"Cannot capture retired Vulkan buffer binding {pair.Key} from '{buffer.AttributeName}'.");
 
-            snapshot.Buffers[pair.Key] = bufferBinding;
-            if (!string.IsNullOrWhiteSpace(buffer.AttributeName))
-                snapshot.BuffersByName.TryAdd(buffer.AttributeName, bufferBinding);
+            bool transferred = false;
+            try
+            {
+                if (WrapperLookup.GetOrCreate(buffer, generateNow: allowSynchronousUpload) is not VkDataBuffer vkBuffer ||
+                    !vkBuffer.TryCaptureComputeBufferSnapshot(allowSynchronousUpload, out VulkanComputeBufferBinding bufferBinding))
+                {
+                    bufferBinding = new VulkanComputeBufferBinding(buffer, default, 0UL, 0, default, 0UL);
+                }
+
+                snapshot.AddCapturedBufferBinding(pair.Key, in bufferBinding);
+                transferred = true;
+            }
+            finally
+            {
+                if (!transferred)
+                    buffer.ReleaseBindingUse();
+            }
         }
     }
 
-    /// <summary>
-    /// Rents binding storage only while a render-pipeline frame context is active.
-    /// The global render-frame ID covers desktop and OpenXR outputs, while captures
-    /// made during initialization keep owning snapshots because their lifetime is
-    /// not bounded by a published frame context.
-    /// </summary>
+    /// <summary>Rents immediate binding storage from the generation workspace.</summary>
     private ComputeDispatchSnapshot? RentFrameBindingSnapshot()
-    {
-        if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is null)
-            return null;
-
-        ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
-        if (frameId == 0)
-            return null;
-
-        if (_frameBindingSnapshotPoolFrame != frameId)
-        {
-            ReleaseFrameBindingSnapshots();
-            _frameBindingSnapshotPoolFrame = frameId;
-            _frameBindingSnapshotPoolCursor = 0;
-        }
-
-        int index = _frameBindingSnapshotPoolCursor++;
-        if (index < _frameBindingSnapshotPool.Count)
-            return _frameBindingSnapshotPool[index];
-
-        ComputeDispatchSnapshot snapshot = new();
-        _frameBindingSnapshotPool.Add(snapshot);
-        return snapshot;
-    }
-
-    private void ReleaseFrameBindingSnapshots()
-    {
-        foreach (ComputeDispatchSnapshot snapshot in _frameBindingSnapshotPool)
-            snapshot.ReleaseReadOnlyStorageBindings();
-        _frameBindingSnapshotPoolFrame = 0;
-        _frameBindingSnapshotPoolCursor = 0;
-    }
+        => CurrentBindingCaptureWorkspace.RentImmediateFrameSnapshot();
 
     /// <summary>
     /// Performs an allocation-free preflight of immutable buffer bindings before a
@@ -845,11 +921,11 @@ internal unsafe partial class VkRenderProgram
     private void SetSamplerNoLock(string name, XRTexture texture, uint unit)
     {
         DetachAppliedBindingSnapshotNoLock();
-        _samplersByUnit[unit] = texture;
+        _legacyTextureArrayUses.ReplaceSampler(_samplersByUnit, unit, texture, transfer: false);
         if (!string.IsNullOrWhiteSpace(name))
         {
             _samplerNamesByUnit[unit] = name;
-            _samplersByName[name] = texture;
+            _legacyTextureArrayUses.ReplaceSampler(_samplersByName, name, texture, transfer: false);
         }
         else
         {
@@ -872,19 +948,19 @@ internal unsafe partial class VkRenderProgram
         if (capture is not null)
         {
             capture.RejectTypedResourceWrite("storage image");
-            capture.ImagesByUnit[unit] = binding;
+            capture.SetImage(unit, binding);
         }
         else if (Monitor.IsEntered(_bindingLock))
         {
             DetachAppliedBindingSnapshotNoLock();
-            _imagesByUnit[unit] = binding;
+            _legacyTextureArrayUses.ReplaceImage(_imagesByUnit, unit, binding, transfer: false);
         }
         else
         {
             lock (_bindingLock)
             {
                 DetachAppliedBindingSnapshotNoLock();
-                _imagesByUnit[unit] = binding;
+                _legacyTextureArrayUses.ReplaceImage(_imagesByUnit, unit, binding, transfer: false);
             }
         }
 
@@ -901,12 +977,14 @@ internal unsafe partial class VkRenderProgram
         if (capture is not null)
         {
             capture.RejectTypedResourceWrite("buffer");
-            capture.BuffersByBinding[index] = buffer;
+            capture.BindFreshBuffer(index, buffer);
         }
         else if (Monitor.IsEntered(_bindingLock))
         {
             DetachAppliedBindingSnapshotNoLock();
             _buffersByBinding[index] = buffer;
+            if (_retainedLegacyBufferSources.Remove(index, out XRDataBuffer? previous))
+                previous.ReleaseBindingUse();
         }
         else
         {
@@ -914,6 +992,8 @@ internal unsafe partial class VkRenderProgram
             {
                 DetachAppliedBindingSnapshotNoLock();
                 _buffersByBinding[index] = buffer;
+                if (_retainedLegacyBufferSources.Remove(index, out XRDataBuffer? previous))
+                    previous.ReleaseBindingUse();
             }
         }
 
@@ -950,6 +1030,8 @@ internal unsafe partial class VkRenderProgram
             DetachAppliedBindingSnapshotNoLock();
             ReplaceReadOnlyStorageBinding(ref _readOnlyStorageBindings, binding);
             _buffersByBinding.Remove(binding.Binding);
+            if (_retainedLegacyBufferSources.Remove(binding.Binding, out XRDataBuffer? previous))
+                previous.ReleaseBindingUse();
             return;
         }
 
@@ -958,6 +1040,8 @@ internal unsafe partial class VkRenderProgram
             DetachAppliedBindingSnapshotNoLock();
             ReplaceReadOnlyStorageBinding(ref _readOnlyStorageBindings, binding);
             _buffersByBinding.Remove(binding.Binding);
+            if (_retainedLegacyBufferSources.Remove(binding.Binding, out XRDataBuffer? previous))
+                previous.ReleaseBindingUse();
         }
     }
 

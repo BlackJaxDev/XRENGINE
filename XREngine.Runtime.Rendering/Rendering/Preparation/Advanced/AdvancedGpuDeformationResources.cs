@@ -333,6 +333,7 @@ public sealed partial class AdvancedGpuDeformationResources :
 
         _staticGeneration.EnsureInitialized();
         _meshSlices.Clear();
+        _staticGeneration.MeshAliasWitnesses.Clear();
         _staticGeneration.InputWitnesses.Clear();
         _poseEntries.Clear();
         _controlsByPose.Clear();
@@ -1154,6 +1155,7 @@ AdvancedGpuDeformationStaticBuffers replacement =
         {
             _meshSlices.Add(mesh, slice);
             _staticGeneration.InputWitnesses.Add(mesh, source.InputWitnesses[mesh]);
+            _staticGeneration.MeshAliasWitnesses.Add(mesh, source.MeshAliasWitnesses[mesh]);
         }
         _sourceVertexCount = source.SourceVertexCount;
         _skinInfluenceCount = source.SkinInfluenceCount;

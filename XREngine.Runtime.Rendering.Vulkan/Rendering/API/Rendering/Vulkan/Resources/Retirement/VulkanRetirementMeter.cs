@@ -191,8 +191,9 @@ internal sealed class VulkanRetirementMeter
     }
 
     /// <summary>
-    /// Grants only this queue's unused fair scan share. The grant is not charged
-    /// until <see cref="CompleteScan"/> reports entries actually inspected.
+    /// Grants this queue's unused scan budget. A pressured queue gets a bounded
+    /// emergency budget so inactive slots cannot prevent backlog recovery.
+    /// The grant is charged when <see cref="CompleteScan"/> reports inspections.
     /// </summary>
     internal int ReserveScanLimit(EVulkanRetirementWorkClass workClass, object queue, int requested)
     {
@@ -204,6 +205,12 @@ internal sealed class VulkanRetirementMeter
             return requested;
         int index = (int)workClass;
         int allowed = Math.Max(8, _ordinaryCaps[index] * 4);
+        if (requested >= _highWaterMarks[index] || _backlog[index] >= _highWaterMarks[index])
+        {
+            MarkUncapped(index);
+            int emergencyRemaining = Math.Max(allowed, _highWaterMarks[index] * 4) - state.Scanned;
+            return Math.Min(requested, Math.Max(0, emergencyRemaining));
+        }
         int queues = GetRegisteredQueueCount(workClass);
         int share = allowed / queues;
         int remainder = allowed % queues;

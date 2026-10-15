@@ -22,6 +22,12 @@ public static partial class EditorImGuiUI
         private static void DrawMissingAssetsPanel()
         {
             if (!_showMissingAssets) return;
+            if (_focusMissingAssets)
+            {
+                ImGui.SetNextWindowFocus();
+                ImGui.SetNextWindowCollapsed(false);
+                _focusMissingAssets = false;
+            }
             if (!ImGui.Begin("Missing Assets", ref _showMissingAssets))
             {
                 ImGui.End();

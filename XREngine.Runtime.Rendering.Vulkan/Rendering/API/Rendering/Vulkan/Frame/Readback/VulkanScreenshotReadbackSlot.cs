@@ -28,6 +28,7 @@ internal sealed class VulkanScreenshotReadbackSlot
     public int Width;
     public int Height;
     public Format SourceFormat;
+    public bool EncodeLinearRgbForSrgbDisplay;
     public bool WithTransparency;
     public bool UsedMultisampleResolve;
     public long SubmittedTimestamp;

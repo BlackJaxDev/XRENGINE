@@ -30,10 +30,12 @@ internal unsafe partial class VkMeshRenderer
 		XRMaterial material,
 		DescriptorType descriptorType,
 		out DescriptorImageInfo imageInfo,
+		out XRTexture? retainedTexture,
 		int arrayIndex = 0,
 		ComputeDispatchSnapshot? snapshot = null)
 	{
 		imageInfo = default;
+		retainedTexture = null;
 		bool requiresReadyDescriptor =
 			binding.Requirement == EVulkanDescriptorBindingRequirement.Required ||
 			snapshot?.IsSamplerReadyRequired(binding.Name) == true;
@@ -62,6 +64,17 @@ internal unsafe partial class VkMeshRenderer
 						? namedTexture
 						: null);
 		XRTexture? texture = textureBinding.Texture;
+		if (texture is XRTexture2DArray)
+		{
+			if (snapshot?.HasTextureArrayBindingUse(texture) == true)
+				texture.RetainBindingUse();
+			else if (!texture.TryRetainActiveBindingUse())
+			{
+				RecordDescriptorFailure(binding, "texture array retired before descriptor capture");
+				return false;
+			}
+			retainedTexture = texture;
+		}
 		if (VulkanMeshRenderingConventions.DescriptorTraceEnabled &&
 			string.Equals(binding.Name, "SourceTexture", StringComparison.Ordinal))
 		{

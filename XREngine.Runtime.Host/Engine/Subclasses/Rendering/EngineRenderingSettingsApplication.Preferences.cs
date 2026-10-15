@@ -220,6 +220,13 @@ namespace XREngine
                     return;
                 }
 
+                if (request.Purpose == ERenderPipelinePurpose.DesktopScene &&
+                    viewport.Window is { IsRendererInitialized: false })
+                {
+                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                    return;
+                }
+
                 IRuntimeRendererHost? renderer = viewport.Window?.Renderer
                     ?? RuntimeRenderingHostServices.FrameTiming.CurrentRenderer;
                 AdvancedRenderPipelineCapabilities capabilities =

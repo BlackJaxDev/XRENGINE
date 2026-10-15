@@ -31,6 +31,7 @@ internal unsafe partial class VkMeshRenderer
 				DestroyEngineUniformBufferArray(toDestroy);
 
 			_engineUniformBuffers.Remove(singleName);
+			_engineUniformBufferCertificates.Remove(singleName);
 			return;
 		}
 
@@ -38,6 +39,7 @@ internal unsafe partial class VkMeshRenderer
 			DestroyEngineUniformBufferArray(buffers);
 
 		_engineUniformBuffers.Clear();
+		_engineUniformBufferCertificates.Clear();
 	}
 
 	/// <summary>
@@ -52,6 +54,7 @@ internal unsafe partial class VkMeshRenderer
 				DestroyAutoUniformBufferArray(toDestroy);
 
 			_autoUniformBuffers.Remove(singleName);
+			_autoUniformBufferCertificates.Remove(singleName);
 			_autoUniformOwnerSlotTables.Remove(singleName);
 			_publishedAutoUniformMaterialWritePlans.Remove(singleName);
 			return;
@@ -61,6 +64,7 @@ internal unsafe partial class VkMeshRenderer
 			DestroyAutoUniformBufferArray(buffers);
 
 		_autoUniformBuffers.Clear();
+		_autoUniformBufferCertificates.Clear();
 		_autoUniformOwnerSlotTables.Clear();
 		_publishedAutoUniformMaterialWritePlans.Clear();
 	}

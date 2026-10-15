@@ -517,6 +517,8 @@ public sealed partial class VulkanRenderer :
             out failure);
 
     public override void MemoryBarrier(EMemoryBarrierMask mask) => _frameLoop.EnqueueMemoryBarrier(mask);
+    public override bool TryPrepareFrameBufferAttachments(XRFrameBuffer frameBuffer)
+        => _frameLoop.TryPrepareFrameBufferAttachments(frameBuffer);
     public override void PublishFrameBufferAttachmentsForSampling(XRFrameBuffer frameBuffer) => _frameLoop.PublishFrameBufferAttachmentsForSampling(frameBuffer);
     public override void ApplyRenderParameters(RenderingParameters parameters) => _commandRuntime.ApplyRenderParameters(parameters);
     public override void SetEngineUniforms(XRRenderProgram program, XRCamera camera) => _commandRuntime.SetEngineUniforms(program, camera);

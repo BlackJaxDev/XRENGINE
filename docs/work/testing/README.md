@@ -37,6 +37,7 @@ Validation docs hold manual, runtime, visual, hardware, profiler, benchmark, and
 
 ### Other Subsystems
 
+- [ImGui Panels And Notifications](editor/panel-notifications.md)
 - [Branch Integration Validation](runtime/branch-integration-validation.md)
 - [Local Agent Broker Validation](ai/local-agent-broker.md)
 - [Animation Validation](animation/animation-validation.md)
