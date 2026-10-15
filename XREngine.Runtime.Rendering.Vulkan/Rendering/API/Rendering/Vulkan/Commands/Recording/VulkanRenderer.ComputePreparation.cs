@@ -114,6 +114,7 @@ internal sealed partial class VulkanCommandRuntime
             int passIndex;
             IReadOnlyCollection<RenderPassMetadata>? passMetadata;
             FrameOpContext frameContext;
+            XRFrameBuffer? directOutputOwner = null;
 
             ref readonly FrameOperationHeader header =
                 ref operations.GetHeader(operationIndex);
@@ -132,6 +133,7 @@ internal sealed partial class VulkanCommandRuntime
                     passIndex = header.PassIndex;
                     passMetadata = operationContext.PassMetadata;
                     frameContext = operationContext;
+                    directOutputOwner = operationContext.OutputFrameBuffer;
                     break;
                 case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect:
                     ref readonly ComputeDispatchIndirectPayload indirect =
@@ -215,13 +217,15 @@ internal sealed partial class VulkanCommandRuntime
                 resourcesReady = program.TryPrepareComputeDispatchResources(
                     VulkanProgramPlannerRequest.From(frameContext), imageIndex, snapshot,
                     reusableDescriptorKey, out bindingSuperseded, out failureReason,
-                    excludeGlobalTextureArray, allowSynchronousResourceUploads);
+                    excludeGlobalTextureArray, allowSynchronousResourceUploads,
+                    directOutputOwner);
             }
             else
                 resourcesReady = program.TryPrepareComputeDispatchResources(
                     VulkanProgramPlannerRequest.From(frameContext), imageIndex, snapshot,
                     reusableDescriptorKey, out bindingSuperseded, out failureReason,
-                    excludeGlobalTextureArray, allowSynchronousResourceUploads);
+                    excludeGlobalTextureArray, allowSynchronousResourceUploads,
+                    directOutputOwner);
 
             if (resourcesReady)
                 continue;

@@ -18,6 +18,7 @@ public sealed class ScreenshotReadbackResult
         int height,
         string backend,
         string? sourceFormat,
+        string? outputTransfer,
         long rawByteCount,
         bool usedMultisampleResolve,
         int? queueSlot,
@@ -33,6 +34,7 @@ public sealed class ScreenshotReadbackResult
         Height = height;
         Backend = backend;
         SourceFormat = sourceFormat;
+        OutputTransfer = outputTransfer;
         RawByteCount = rawByteCount;
         UsedMultisampleResolve = usedMultisampleResolve;
         QueueSlot = queueSlot;
@@ -49,6 +51,8 @@ public sealed class ScreenshotReadbackResult
     public int Height { get; }
     public string Backend { get; }
     public string? SourceFormat { get; }
+    /// <summary>Gets the transfer applied to RGB during screenshot export.</summary>
+    public string? OutputTransfer { get; }
     public long RawByteCount { get; }
     public bool UsedMultisampleResolve { get; }
     public int? QueueSlot { get; }
@@ -72,7 +76,8 @@ public sealed class ScreenshotReadbackResult
         DateTimeOffset? submittedAtUtc = null,
         DateTimeOffset? completedAtUtc = null,
         double? gpuCompletionSeconds = null,
-        double? cpuProcessingSeconds = null)
+        double? cpuProcessingSeconds = null,
+        string? outputTransfer = null)
     {
         ArgumentNullException.ThrowIfNull(image);
         int expectedPixelCount = checked((int)((long)image.Width * image.Height));
@@ -85,6 +90,7 @@ public sealed class ScreenshotReadbackResult
             height,
             backend,
             sourceFormat,
+            outputTransfer,
             rawByteCount,
             usedMultisampleResolve,
             queueSlot,
@@ -106,7 +112,8 @@ public sealed class ScreenshotReadbackResult
         int? queueSlot = null,
         DateTimeOffset? submittedAtUtc = null,
         DateTimeOffset? completedAtUtc = null,
-        double? gpuCompletionSeconds = null)
+        double? gpuCompletionSeconds = null,
+        string? outputTransfer = null)
         => new(
             image: null,
             pixelCount: 0,
@@ -114,6 +121,7 @@ public sealed class ScreenshotReadbackResult
             height,
             backend,
             sourceFormat,
+            outputTransfer,
             rawByteCount,
             usedMultisampleResolve,
             queueSlot,

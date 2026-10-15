@@ -116,6 +116,14 @@ The loop:
    The command builds into the session's own .NET artifacts root, selects an unused MCP port, starts the editor asynchronously, and waits for MCP readiness. Confirm the relevant scene content is configured in `Assets/UnitTestingWorldSettings.jsonc` (for example `RenderAPI`, lights, and the model to import) before launching.
 2. Position the view with MCP: `set_editor_camera_view` (or `focus_node_in_view` after locating the subject with `find_nodes_by_name`/`select_node_by_name`). Use `duration: 0` for an immediate cut.
 3. Capture the result with MCP `capture_viewport_screenshot` and actually view the saved PNG. Pass `output_dir` under the current run root, for example `Build/_AgentValidation/<run>/mcp-captures/`; do not rely on the default `McpCaptures/` location. Re-capture from more than one camera position — an artifact that does not change with the camera is sampling stale/uninitialized data rather than rendering the scene.
+
+   Vulkan viewport PNG capture applies the SDR sRGB display transfer only when
+   its floating-point color image matches the retained submitted desktop
+   presentation source and the desktop uses an sRGB swapchain. MCP reports the
+   applied conversion in `readback.output_transfer`.
+   SDR composited window capture reads the encoded swapchain bytes. Raw texture
+   and diagnostic readbacks keep their source values. This conversion does not
+   provide an HDR screenshot display transform.
 4. Determine what the issue looks like and whether it still exists by inspecting the image(s), not by trusting tool return values.
 5. Stop only the named editor session:
 

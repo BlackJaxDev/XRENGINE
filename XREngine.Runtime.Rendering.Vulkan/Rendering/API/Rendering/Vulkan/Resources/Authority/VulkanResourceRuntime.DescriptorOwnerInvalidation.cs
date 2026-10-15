@@ -13,6 +13,7 @@ internal sealed partial class VulkanResourceRuntime
     /// </summary>
     internal int DrainPendingSupersededDescriptorOwners()
     {
+        DrainDestroyedDirectComputeOutputs();
         Descriptors.DrainReleasedMaterialDescriptorClosures();
         int releasedOwnerCount =
             Descriptors.DrainPendingSupersededComputePoolRetirements();

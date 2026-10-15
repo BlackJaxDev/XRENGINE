@@ -41,7 +41,8 @@ internal sealed partial class VulkanCommandRuntime
     {
         ulong frameId =
             RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
-        if (frameId == 0)
+        if (frameId == 0 ||
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is null)
             return CaptureForwardLightingBindingSnapshot(
                 lights,
                 programData,
@@ -246,7 +247,16 @@ internal sealed partial class VulkanCommandRuntime
             if (backendProgram is null)
                 lights.SetForwardLightingUniforms(program);
             else if (GetForwardLightingBindingSnapshotForArtifact(lights, program, backendProgram) is { } snapshot)
-                backendProgram.MergeBindingSnapshot(snapshot);
+            {
+                try
+                {
+                    backendProgram.MergeBindingSnapshot(snapshot);
+                }
+                finally
+                {
+                    snapshot.ReleaseIfUnpooled();
+                }
+            }
         }
         else if ((requirements & EUniformRequirements.AmbientOcclusion) != 0)
             Lights3DCollection.SetForwardAmbientOcclusionUniforms(program);

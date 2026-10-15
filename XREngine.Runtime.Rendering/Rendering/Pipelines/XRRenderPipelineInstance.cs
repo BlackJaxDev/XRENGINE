@@ -897,25 +897,34 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     }
                 }
 
-                using (AbstractRenderer.Current?.EnterRenderPipelineFrameResourceScope(this, viewport))
+                try
                 {
-                    long consumptionStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-                    DirectionalShadowPipelineDiagnostics.Record(
-                        EDirectionalShadowPipelineReceiptStage.BeforeCommandChainExecute,
-                        this,
-                        Pipeline,
-                        targetFBO);
-                    try
+                    using (AbstractRenderer.Current?.EnterRenderPipelineFrameResourceScope(this, viewport))
                     {
-                        Pipeline.CommandChain.Execute();
+                        long consumptionStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                        DirectionalShadowPipelineDiagnostics.Record(
+                            EDirectionalShadowPipelineReceiptStage.BeforeCommandChainExecute,
+                            this,
+                            Pipeline,
+                            targetFBO);
+                        try
+                        {
+                            Pipeline.CommandChain.Execute();
+                        }
+                        catch
+                        {
+                            NotifyCommandChainExecutionAborted();
+                            throw;
+                        }
+                        RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageConsumption(
+                            System.Diagnostics.Stopwatch.GetTimestamp() - consumptionStarted);
                     }
-                    catch
-                    {
-                        NotifyCommandChainExecutionAborted();
-                        throw;
-                    }
-                    RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageConsumption(
-                        System.Diagnostics.Stopwatch.GetTimestamp() - consumptionStarted);
+                }
+                catch (RenderResourcePreparationPendingException exception)
+                {
+                    return ReportExactOutputPreconditionFailure(
+                        in outputCompletionRequest,
+                        exception.Message);
                 }
 
                 if (RenderState.HasRequiredOffscreenAuthoringFailure)
@@ -2560,8 +2569,18 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             "NotifyCacheClearing",
             () => NotifyCacheClearingHandlers("DestroyCache"),
             ref firstFailure);
+        RunResourceCleanupStep(
+            "ClearStagedImportedBindings",
+            ClearStagedImportedBindings,
+            ref firstFailure);
         if (!HasAnyTrackedResources())
+        {
+            if (firstFailure is not null && !suppressFailures)
+                throw new InvalidOperationException(
+                    $"One or more render resource cleanup steps failed for {ProfilerKey}.",
+                    firstFailure);
             return;
+        }
 
         RunResourceCleanupStep(
             "PrepareForPhysicalResourceDestruction",
@@ -2916,6 +2935,26 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             || Variables.TryResolveTexture(Resources, name, out texture);
     }
 
+    /// <summary>Returns a texture with one counted use for descriptor binding.</summary>
+    public bool TryRetainTextureBinding(
+        string name,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out XRTexture? texture)
+    {
+        RenderResourceRegistry registry = Resources;
+        if (registry.TryRetainTextureBinding(name, out texture))
+            return true;
+
+        if (Variables.TryResolveTexture(registry, name, out texture) &&
+            texture is not null &&
+            texture.TryRetainActiveBindingUse())
+        {
+            return true;
+        }
+
+        texture = null;
+        return false;
+    }
+
     /// <summary>
     /// Sets a texture resource in the render pipeline instance.
     /// </summary>
@@ -2972,6 +3011,26 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public bool TryGetBuffer(string name, out XRDataBuffer? buffer) 
         => Resources.TryGetBuffer(name, out buffer)
             || Variables.TryResolveBuffer(Resources, name, out buffer);
+
+    /// <summary>Returns a buffer with one counted use for descriptor binding.</summary>
+    public bool TryRetainBufferBinding(
+        string name,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out XRDataBuffer? buffer)
+    {
+        RenderResourceRegistry registry = Resources;
+        if (registry.TryRetainBufferBinding(name, out buffer))
+            return true;
+
+        if (Variables.TryResolveBuffer(registry, name, out buffer) &&
+            buffer is not null &&
+            buffer.TryRetainActiveBindingUse())
+        {
+            return true;
+        }
+
+        buffer = null;
+        return false;
+    }
 
     /// <summary>
     /// Sets a data buffer resource in the render pipeline instance.

@@ -16,6 +16,9 @@ public sealed partial class AdvancedGpuScenePublisher
     private AdvancedGpuResourceBindingSource[] _plannedResourceSources = [];
     private AdvancedMaterialTextureBinding[] _plannedResolvedBindings = [];
     private AdvancedGpuResourceBindingSource[] _resourceAcquireSources = [];
+    // One reusable role destination for unchanged native Uber source checks.
+    private readonly AdvancedGpuResourceBindingSource[] _reuseNativeUberSources =
+        new AdvancedGpuResourceBindingSource[NativeUberMaterialSchema.TextureRoleCount];
     private AdvancedMaterialTextureBinding[] _resourceAcquireBindings = [];
     private AdvancedMaterialTextureBinding[] _resourceReleaseBindings = [];
     private int[] _plannedVariantSlots = [];
@@ -227,7 +230,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 continue;
             }
 
-            bool reusedMaterial = TryReuseCommittedUntexturedDrawMaterial(
+            bool reusedMaterial = TryReuseCommittedDrawMaterial(
                 in plan, registrationIndex, out int materialPlanIndex);
             bool reusedStaticPlan = reusedMaterial && registrationIndex >= 0 &&
                 plan.GpuBoundsSource is not null &&
@@ -371,7 +374,7 @@ public sealed partial class AdvancedGpuScenePublisher
     }
 
     /// <summary>Reuses a committed draw plan only while its exact source inputs remain current.</summary>
-    private bool TryReuseCommittedUntexturedDrawMaterial(
+    private bool TryReuseCommittedDrawMaterial(
         in AdvancedGpuSceneCommandTransition plan,
         int registrationIndex,
         out int materialPlanIndex)
@@ -379,8 +382,7 @@ public sealed partial class AdvancedGpuScenePublisher
         materialPlanIndex = -1;
         if (!_committedMaterialPlanCacheValid || registrationIndex < 0 ||
             plan.MaterialSource is AdvancedProjectiveMirrorMaterial ||
-            plan.MaterialSource is { } material &&
-                (material.SurfaceTextureBindings.Length != 0 || material.Textures.Count != 0))
+            !CanReuseMaterialSources(plan.MaterialSource))
             return false;
 
         ref readonly AdvancedResidentRegistration registration =
@@ -427,7 +429,7 @@ public sealed partial class AdvancedGpuScenePublisher
             return false;
         }
 
-        return TryReuseUnboundMaterialPlan(plan.MaterialSource, layout,
+        return TryReuseCommittedMaterialPlan(plan.MaterialSource, layout,
             cache.Coverage, cache.State, registrationIndex,
             out materialPlanIndex);
     }
@@ -706,7 +708,7 @@ public sealed partial class AdvancedGpuScenePublisher
         if (materialPlanIndex >= 0)
             return true;
 
-        if (TryReuseUnboundMaterialPlan(material, layout,
+        if (TryReuseCommittedMaterialPlan(material, layout,
                 translation.RequiredCoverage, state, registrationIndex,
                 out materialPlanIndex))
             return true;
@@ -1045,8 +1047,8 @@ public sealed partial class AdvancedGpuScenePublisher
         return true;
     }
 
-    /// <summary>Reuses a current material row when its unbound inputs did not change.</summary>
-    private bool TryReuseUnboundMaterialPlan(
+    /// <summary>Reuses a current material row when its source bindings still match.</summary>
+    private bool TryReuseCommittedMaterialPlan(
         XRMaterial? material,
         MaterialBindingLayout layout,
         EAdvancedMaterialCoverageMode coverage,
@@ -1056,12 +1058,18 @@ public sealed partial class AdvancedGpuScenePublisher
     {
         materialPlanIndex = -1;
         if (registrationIndex < 0 || material is AdvancedProjectiveMirrorMaterial ||
-            material is not null && (material.SurfaceTextureBindings.Length != 0 || material.Textures.Count != 0))
+            !CanReuseMaterialSources(material))
             return false;
 
         ref readonly AdvancedResidentRegistration registration =
             ref _registrations[registrationIndex];
+        ref readonly AdvancedCommittedMaterialPlan cache =
+            ref registration.CommittedMaterialPlan;
         if (!registration.Active || !ReferenceEquals(registration.MaterialSource, material) ||
+            !cache.Valid || !ReferenceEquals(cache.Material, material) ||
+            !ReferenceEquals(cache.Layout, layout) ||
+            cache.Coverage != coverage || cache.State != state ||
+            cache.MaterialHandle != registration.Material ||
             registration.MaterialBindingLayoutVersion != (material?.BindingLayoutVersion ?? 0u) ||
             registration.MaterialBindingValueVersion != (material?.BindingValueVersion ?? 0u) ||
             registration.MaterialBindingResourceVersion != (material?.BindingResourceVersion ?? 0u) ||
@@ -1084,27 +1092,11 @@ public sealed partial class AdvancedGpuScenePublisher
                 out AdvancedNativeVertexMaterial nativeVertex))
             return false;
 
-        for (int bindingIndex = 0; bindingIndex < bindings.Length; ++bindingIndex)
-        {
-            if (IsBound(in bindings[bindingIndex]))
-                return false;
-        }
-
-        // The companion records are the committed result of the same material
-        // inputs. The version checks above prove that the inputs did not change.
-        // The companion roles must also be unbound, so no resource ownership moves.
         int companionBindingCount = engineSurface.SchemaVersion == 0 ? 0 : AdvancedEngineSurfaceRecord.RoleCount;
         int uberBindingCount = uberSurface.SchemaVersion == 0 ? 0 : AdvancedUberBaseSurfaceRecord.RoleCount;
-        for (int role = 0; role < companionBindingCount; ++role)
-        {
-            if (IsBound(engineSurface.GetRole(role).Binding))
-                return false;
-        }
-        for (int role = 0; role < uberBindingCount; ++role)
-        {
-            if (IsBound(uberSurface.GetBinding(role)))
-                return false;
-        }
+        if (!CommittedMaterialBindingsMatch(material, layout, bindings,
+                in engineSurface, in uberSurface))
+            return false;
         if (!_materialPublisher.HeaderMatches(registration.Material, material,
                 layout, coverage, state, bindings))
             return false;
@@ -1141,6 +1133,76 @@ public sealed partial class AdvancedGpuScenePublisher
         ++_plannedMaterialCount;
         InsertPlannedMaterial(materialPlanIndex);
         InsertPlannedExistingMaterial(materialPlanIndex);
+        return true;
+    }
+
+    /// <summary>Limits source reuse to untextured rows and the fixed native Uber texture map.</summary>
+    private static bool CanReuseMaterialSources(XRMaterial? material)
+        => IsUntexturedCanonicalMaterial(material) ||
+           material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1;
+
+    /// <summary>
+    /// Checks current native Uber texture roles against committed logical resources.
+    /// The scalar values use the five material revisions. This check reads only
+    /// texture names and metadata, so it does not repeat the scalar encoder.
+    /// </summary>
+    private bool CommittedMaterialBindingsMatch(
+        XRMaterial? material,
+        MaterialBindingLayout layout,
+        ReadOnlySpan<AdvancedMaterialTextureBinding> bindings,
+        in AdvancedEngineSurfaceRecord engineSurface,
+        in AdvancedUberBaseSurfaceRecord uberSurface)
+    {
+        if (material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1)
+        {
+            if (!ReferenceEquals(layout, NativeUberMaterialSchema.Opaque) &&
+                !ReferenceEquals(layout, NativeUberMaterialSchema.Masked))
+                return false;
+            if (engineSurface.SchemaVersion != 0 || uberSurface.SchemaVersion != 0 ||
+                bindings.Length != NativeUberMaterialSchema.TextureRoleCount)
+                return false;
+
+            try
+            {
+                if (!NativeUberMaterialSourceEncoder.TryEncodeTextureRoles(
+                        material, _reuseNativeUberSources, out _, out _))
+                    return false;
+                for (int role = 0; role < bindings.Length; ++role)
+                {
+                    ref readonly AdvancedGpuResourceBindingSource source =
+                        ref _reuseNativeUberSources[role];
+                    // Arrays and GPU-authored cubes do not have a complete
+                    // source-content witness. Keep them on the full plan.
+                    if (source.Texture is not null &&
+                        (source.Texture.IsDestroyed ||
+                         source.Texture is not XRTexture2D &&
+                         (source.Texture is not XRTextureCube ||
+                          source.SourceContentGeneration == 0UL)))
+                        return false;
+                    if (!_resourcePublisher.BindingMatches(in bindings[role], in source))
+                        return false;
+                }
+                return true;
+            }
+            finally
+            {
+                Array.Clear(_reuseNativeUberSources);
+            }
+        }
+
+        if (!IsUntexturedCanonicalMaterial(material))
+            return false;
+        for (int bindingIndex = 0; bindingIndex < bindings.Length; ++bindingIndex)
+            if (IsBound(in bindings[bindingIndex]))
+                return false;
+        int companionCount = engineSurface.SchemaVersion == 0 ? 0 : AdvancedEngineSurfaceRecord.RoleCount;
+        int uberCount = uberSurface.SchemaVersion == 0 ? 0 : AdvancedUberBaseSurfaceRecord.RoleCount;
+        for (int role = 0; role < companionCount; ++role)
+            if (IsBound(engineSurface.GetRole(role).Binding))
+                return false;
+        for (int role = 0; role < uberCount; ++role)
+            if (IsBound(uberSurface.GetBinding(role)))
+                return false;
         return true;
     }
 

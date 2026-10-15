@@ -324,8 +324,16 @@ internal unsafe partial class VkRenderProgram
     private void DestroyLayoutsAfterPipelineCompileDrain()
     {
         bool invalidatedPublishedInterface = IsLinked;
-        DestroyComputeUniformBuffers();
-        _reusableComputeDescriptorResourceSignatures.Clear();
+        lock (_directComputeOutputRetirementGate)
+        {
+            RetireDirectComputeDescriptorPoolsForLayout();
+            DestroyComputeUniformBuffers();
+            lock (_computeDescriptorHeapPayloadGate)
+            {
+                _reusableComputeDescriptorResourceSignatures.Clear();
+                _directComputeOutputOwners.Clear();
+            }
+        }
 
         if (_computePipeline.Handle != 0)
         {
@@ -366,10 +374,19 @@ internal unsafe partial class VkRenderProgram
 
     private void DestroyComputeUniformBuffers()
     {
-        foreach (ComputeUniformBuffer resource in _computeUniformBuffers.Values)
-            ReleaseComputeUniformBuffer(resource);
+        lock (_computeDescriptorHeapPayloadGate)
+        {
+            foreach (ComputeUniformBuffer resource in _computeUniformBuffers.Values)
+                _pendingLayoutComputeUniformRetirements.Add(resource);
+            _computeUniformBuffers.Clear();
+        }
 
-        _computeUniformBuffers.Clear();
+        while (_pendingLayoutComputeUniformRetirements.Count != 0)
+        {
+            int index = _pendingLayoutComputeUniformRetirements.Count - 1;
+            ReleaseComputeUniformBuffer(_pendingLayoutComputeUniformRetirements[index]);
+            _pendingLayoutComputeUniformRetirements.RemoveAt(index);
+        }
     }
 
     private void ReleaseComputeUniformBuffer(in ComputeUniformBuffer resource)

@@ -23,4 +23,11 @@ public readonly record struct RuntimeWindowCreateOptions(
     bool OpenGlDebugContext,
     bool OpenGlForwardCompatible,
     bool SwapAutomatically,
-    IRuntimeWindowGlContext? SharedContext = null);
+    IRuntimeWindowGlContext? SharedContext = null)
+{
+    /// <summary>
+    /// Gets the parent window generation that pumps this auxiliary window's events.
+    /// Zero uses the shared GL context owner when one exists.
+    /// </summary>
+    public long EventPumpParentGeneration { get; init; }
+}

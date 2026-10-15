@@ -43,6 +43,7 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
     public uint PinCount { get; set; }
     public AdvancedGpuDeformationStaticBuffers Buffers = null!;
     public Dictionary<XRMesh, AdvancedGpuDeformationMeshSlice> MeshSlices = null!;
+    public Dictionary<XRMesh, AdvancedGpuDeformationMeshAliasWitness> MeshAliasWitnesses = null!;
     public Dictionary<ulong, int> PayloadHashHeads = null!;
     public List<AdvancedGpuDeformationMeshPayloadEntry> PayloadEntries = null!;
     public Dictionary<XRMesh, AdvancedGpuDeformationInputWitness> InputWitnesses = null!;
@@ -95,6 +96,7 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         TopologyGeneration = topologyGeneration;
         PreparationPolicy = preparationPolicy;
         MeshSlices.Clear();
+        MeshAliasWitnesses.Clear();
         PayloadHashHeads.Clear();
         PayloadEntries.Clear();
         InputWitnesses.Clear();
@@ -232,6 +234,9 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         MeshSlices = new Dictionary<XRMesh, AdvancedGpuDeformationMeshSlice>(
             _maximumJobs,
             ReferenceEqualityComparer.Instance);
+        MeshAliasWitnesses = new Dictionary<XRMesh, AdvancedGpuDeformationMeshAliasWitness>(
+            _maximumJobs,
+            ReferenceEqualityComparer.Instance);
         PayloadHashHeads = new Dictionary<ulong, int>(_maximumJobs);
         PayloadEntries = new List<AdvancedGpuDeformationMeshPayloadEntry>(_maximumJobs);
         InputWitnesses = new(_maximumJobs, ReferenceEqualityComparer.Instance);
@@ -253,6 +258,7 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         Buffers?.Destroy();
         Buffers = null!;
         MeshSlices = null!;
+        MeshAliasWitnesses = null!;
         PayloadHashHeads = null!;
         PayloadEntries = null!;
         InputWitnesses = null!;
@@ -279,6 +285,8 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
     {
         if (MeshSlices is not null)
             MeshSlices.Clear();
+        if (MeshAliasWitnesses is not null)
+            MeshAliasWitnesses.Clear();
         PayloadHashHeads?.Clear();
         PayloadEntries?.Clear();
         if (InputWitnesses is not null)

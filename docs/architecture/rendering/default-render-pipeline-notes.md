@@ -70,7 +70,142 @@ normalization. It rejects zero and non-finite inputs. This preserves winding
 without subtracting large translated world positions. The CPU reference in
 `AdvancedReconstructionTangentSpace` uses the same method.
 
+## Desktop Output Admission
+
+Desktop Advanced output admission runs after the window renderer initializes.
+An existing window with an uninitialized renderer defers its binding check.
+`XRWindow.BeginTick` refreshes viewport output bindings after initialization.
+Required mode still rejects an unsupported initialized renderer.
+
 ## Resource Generation Lifecycle
+
+### Imported And Forward Buffer Ownership
+
+Replaceable CPU buffer owners call `XRDataBuffer.RetireBindingStorage()`.
+Retirement stops new binding admission and defers `Dispose()` until counted
+binding users release the buffer. It leaves `IsDestroyed` false while those
+users still need wrapper lookup. Direct disposal remains available to owners
+whose resource contract does not use this deferred path.
+
+Imported staging and each generation registry retain separate binding uses.
+Publish the replacement before releasing the prior use. Unbind releases staging;
+registry replacement or teardown releases the published use. Clear staged
+bindings on cache teardown even when no resource generation exists.
+
+Vulkan buffer snapshots retain their own uses before native handle capture.
+Sealed copies retain independently; pool reset and frame-payload cleanup release
+them. The renderer generation owns pooled capture workspaces. Shutdown drains
+them after queued work ends. Program unlink must not release snapshots that
+queued frames can still use. A copied lighting layer retains its source use,
+so an existing consumer can transfer a retiring buffer into a new snapshot.
+Mesh materialization requires an active render frame and pipeline context before
+capture. A missing context reports `FrameBindingCaptureUnavailable`. Cold compute
+captures outside that context use explicit operation ownership instead of a pool.
+Shared immutable program artifacts exclude buffer bindings. A registry
+descriptor lookup acquires a use atomically with the record read and holds it
+through descriptor publication. The final managed release starts the existing
+Vulkan native retirement path, which still waits for descriptor, command, and
+queue completion references. A fixed frame delay is not a lifetime guarantee.
+
+Forward light growth creates its replacement before retiring prior storage.
+Probe topology replacement uses the same buffer retirement contract in both
+render pipelines.
+
+### Imported Probe Texture Ownership
+
+`XRTexture.RetireBindingStorage()` stops fresh binding admission and delays
+managed destruction until counted uses end. Imported staging and each registry
+record retain separate uses. Probe replacement retires the old irradiance and
+prefilter arrays after it removes their staged bindings. This contract does not
+replace the retained output-generation contract for individual probe images.
+
+Vulkan sampler and image snapshots retain array bindings through authoring.
+Array bindings cannot enter shared immutable program artifacts, which have a
+different cache lifetime. Ordinary 2D material artifacts keep their existing
+reuse path. Native image, view, descriptor, and submission ownership still
+controls GPU retirement after managed authoring ends.
+
+Planner keys include registry instance revisions. Within one resource generation,
+a complete newer revision replaces older revisions for the same logical output,
+dimensions, and pass signature. Remove those cache entries and retire their
+allocators through native completion ownership. Do not keep a full target set for
+each probe descriptor update. Descriptor signatures are hashes; they do not prove
+revision order.
+
+Realtime capture can replace its output framebuffer without changing the
+viewport generation. Planner scopes remove inactive cached states when their
+exact output framebuffer has completed destruction. This also runs on cache
+hits, so the final capture state can retire after capture stops. Shared image
+groups stay alive while any remaining active, published, or preparation state
+owns them. Convolution mip targets own their private materials and destroy them
+with their quads.
+
+Direct compute descriptor keys can include the output framebuffer identity.
+`VkRenderProgram` records that exact framebuffer for direct dispatch keys only.
+Pre-record maintenance retires a key after its owner framebuffer is destroyed.
+It removes the key's cached descriptor pools, uniform buffers, and resource
+signatures through the existing native retirement paths. Descriptor and command
+completion tickets still protect in-flight uses. A failed retirement handoff
+keeps its owner for a later attempt. Reusable refresh rejects a destroyed output
+before it can publish descriptors. Program layout teardown also retires owned
+descriptor pools before it clears the owner records. Indirect compute and mesh
+task keys do not acquire this output owner.
+
+Vulkan retirement uses a bounded emergency scan budget above its high-water
+mark. It does not divide that queue's emergency scans among inactive frame
+slots. This permits the destruction budget to recover from a capture backlog.
+Each candidate must still pass completion, dependency, and ownership checks.
+The fixed ready batch and rotating scan cursor remain in use.
+
+The shared capture viewport can retain an active Advanced bank after the last
+probe is removed. Its descriptor slots can keep old image dependencies alive.
+Fixed bank and slot capacities bound this cache. A queue-domain watermark is
+not itself proof of unfinished work. Any future idle-bank trim must stop new
+plan admission, prove that plan and recorded leases are zero and queue work is
+complete, then retire the dedicated descriptor pools and rebuild them before
+reuse. Planner inactivity alone does not authorize descriptor pin release.
+
+### Probe Diffuse Composition
+
+Probe convolution stores diffuse irradiance divided by PI. Native and forward
+shading apply albedo, Fresnel, the nonmetal fraction, and ambient occlusion once.
+Probe diffuse does not depend on the world's ambient color. Imported source
+Uber shading adds this engine GI term after its source lighting calculation,
+beside probe specular. World SH retains the source lighting rules. This does not
+project engine probe textures into Unity SH coefficients.
+
+The baseline diffuse suppression flag also suppresses probe diffuse. It leaves
+probe specular available. Source-mode shading must not pass already weighted
+probe diffuse back through a function that multiplies albedo again.
+
+### Recoverable Preparation
+
+The BRDF producer waits while an Advanced output reservation is stale. Visibility
+preparation refreshes that reservation. A temporarily unavailable descriptor does
+not prove that BRDF contents were replaced. Prepare its attachment and require a
+new ready descriptor epoch before invalidating completed lookup work.
+`TryPrepareFrameBufferAttachments` performs this explicit preparation. Vulkan
+refreshes the existing attachment wrappers without a synchronous upload. A
+sampling-readiness query remains read-only. Preparing the fullscreen mesh alone
+does not refresh an attachment and can leave a completed BRDF lookup unavailable
+after a probe import changes the physical resource plan.
+
+Each static deformation generation owns its mesh alias witnesses. A writable
+successor copies them with the mesh slices. A newer generation must not overwrite
+the evidence needed to reuse an older retained generation.
+
+A planner scope publishes only a complete plan for its exact requested key.
+Cache and previous-state shortcuts obey the same rule. Incomplete preparation
+must not relabel an old plan or remove the last valid cached state. Pipeline
+authoring reports the pending output precondition, and desktop command recording
+returns a frame retry. Native retirement still protects submitted uses of a
+superseded allocator.
+
+Advanced participating-transparent motion replay also requires an active velocity
+consumer. Visible transparent commands alone do not require a velocity or reactive
+mask replay. FXAA with motion blur disabled must not request temporal matrices for
+unused output. `ShouldGenerateVelocityBuffer()` preserves the motion-blur and
+temporal-upscale consumers.
 
 The deferred light-combine descriptor declares the destination color, depth,
 and stencil attachments through the same framebuffer identity. An inferred
@@ -1260,6 +1395,12 @@ The default pipeline's clean-frame path follows these invariants:
   descriptor-update scratch storage are frame-bounded pools or retained
   growth-only containers. Per-frame heap allocation in collection, submission,
   recording, and present paths is a bug.
+- `VkMeshRenderer` checks a published uniform array once and records its exact
+  array identity, length, minimum element size, native-handle validity, and
+  mapped-slice validity. Reuse checks that record without scanning every draw
+  slot. A frequency-owned auto-uniform replacement updates the record
+  conservatively; array replacement and cleanup remove it. The selected slice
+  still needs its write lease and native descriptor checks.
 - The Forward+ local-light culling pass exits before resolving textures,
   buffers, or dispatch state when the scene has no point or spot lights.
 - Generated Vulkan mesh-program identity is rebuilt only when material,

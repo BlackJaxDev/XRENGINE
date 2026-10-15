@@ -15,7 +15,8 @@ namespace XREngine.Rendering.Vulkan;
 internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContext context)
 {
     private readonly ThreadLocal<VkRenderProgram.BindingCaptureWorkspace> _bindingWorkspace =
-        new(static () => new VkRenderProgram.BindingCaptureWorkspace(), trackAllValues: false);
+        new(static () => new VkRenderProgram.BindingCaptureWorkspace(), trackAllValues: true);
+    private int _threadWorkspacesReleased;
 
     internal VkRenderProgram.BindingCaptureWorkspace BindingWorkspace
         => _bindingWorkspace.Value ?? throw new InvalidOperationException(
@@ -29,7 +30,33 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
     /// <see cref="ThreadLocal{T}"/> is disposed; finalization cannot break that cycle.
     /// </summary>
     internal void ReleaseThreadWorkspaces()
-        => _bindingWorkspace.Dispose();
+    {
+        if (Interlocked.Exchange(ref _threadWorkspacesReleased, 1) != 0)
+            return;
+
+        Exception? firstFailure = null;
+        try
+        {
+            foreach (VkRenderProgram.BindingCaptureWorkspace workspace in _bindingWorkspace.Values)
+            {
+                try
+                {
+                    workspace.Reset();
+                }
+                catch (Exception exception)
+                {
+                    firstFailure ??= exception;
+                }
+            }
+        }
+        finally
+        {
+            _bindingWorkspace.Dispose();
+        }
+
+        if (firstFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(firstFailure).Throw();
+    }
 
     /// <summary>
     /// Creates a shader dependency through the generation's cold wrapper

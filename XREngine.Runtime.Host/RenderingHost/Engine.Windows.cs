@@ -191,10 +191,6 @@ namespace XREngine
                 window.RenderOwnerThreadId);
 
             window.SetWorld(windowSettings.TargetWorld is null ? null : GetOrCreateRenderWorld(windowSettings.TargetWorld));
-            // SetWorld links the window tick and initializes its renderer. Apply
-            // renderer-dependent pipeline selection only after that boundary so
-            // Required mode can evaluate live queues, timelines, and resources.
-            EngineRenderingSettingsApplication.ApplyRenderPipelinePreference();
 
             Debug.Rendering(
                 "[StartupWindow] Window world assigned hash={0} targetWorld={1} tickLinked={2}",

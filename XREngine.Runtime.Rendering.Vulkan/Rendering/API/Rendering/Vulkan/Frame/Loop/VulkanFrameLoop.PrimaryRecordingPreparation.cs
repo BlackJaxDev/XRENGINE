@@ -623,6 +623,15 @@ internal sealed partial class VulkanFrameLoop
                 ref attempt,
                 $"primary command recording exceeded the attempt limit ({recordingAttemptLimit}): {replanReason}");
         }
+        catch (RenderResourcePreparationPendingException exception)
+        {
+            return VulkanPrimaryCommandRecordingResult.Failed(
+                exception.Message,
+                attempt.ReadinessPolicy,
+                attempt.WorkClass,
+                attempt.FrameNumber,
+                EVulkanCommandRecordingFailureKind.RetryFrame);
+        }
         finally
         {
             VulkanAdvancedVisibilityInputLease.ReleaseOperations(

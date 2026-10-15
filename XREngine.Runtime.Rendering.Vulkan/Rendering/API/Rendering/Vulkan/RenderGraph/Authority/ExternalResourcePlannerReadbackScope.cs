@@ -46,8 +46,10 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
         if (!_active)
             return;
 
+        SupersededAllocators = VulkanResourcePlannerSessionService.RemoveDestroyedOutputStates(switchingState);
+
         bool canReusePreviousState =
-            RuntimeStateMatchesKeyIgnoringRegistry(_previousState, _key) &&
+            IsPreparedStateForKey(_previousState, _key) &&
             VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
                 switchingState,
                 _key,
@@ -107,7 +109,12 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
 
         ResourcePlannerRuntimeState preparedState =
             _sessions.CaptureRuntimeState();
-        preparedState.LastActiveFrameOpContext = _context;
+        if (!IsPreparedStateForKey(preparedState, _key))
+        {
+            throw new RenderResourcePreparationPendingException(
+                "The requested Vulkan resource plan is not ready for publication.");
+        }
+
         PublishPreparedState(_sessions.ResolveActiveSwitchingState(), preparedState);
     }
 
@@ -121,7 +128,7 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
         // Generation commits publish into the shared table, so tables that only
         // render-time preparation fills (OpenXR eye and mirror planners) would
         // otherwise keep every earlier generation's full image set.
-        List<VulkanResourceAllocator> superseded = [];
+        List<VulkanResourceAllocator> superseded = SupersededAllocators ?? [];
         VulkanResourcePlannerSessionService.RemoveSupersededGenerationStates(
             switchingState,
             _key,
@@ -143,13 +150,13 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
         if (canPublish)
         {
             currentState = _sessions.CaptureRuntimeState();
-            currentState.LastActiveFrameOpContext = _context;
             FrameOpResourcePlannerSwitchingState switchingState =
                 _sessions.ResolveActiveSwitchingState();
-            canPublish = VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
-                switchingState,
-                _key,
-                currentState.ResourceAllocator);
+            canPublish = IsPreparedStateForKey(currentState, _key) &&
+                VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
+                    switchingState,
+                    _key,
+                    currentState.ResourceAllocator);
             if (canPublish)
             {
                 switchingState.States[_key] = currentState;
@@ -193,6 +200,7 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
                     context,
                     candidateKey,
                     candidateState.LastActiveFrameOpContext?.PassMetadata) ||
+                !IsPreparedStateForKey(candidateState, candidateKey) ||
                 !VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
                     switchingState,
                     candidateKey,
@@ -214,36 +222,17 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
         return found;
     }
 
-    private static bool RuntimeStateMatchesKeyIgnoringRegistry(
-        in ResourcePlannerRuntimeState state,
-        in VulkanFrameOpPlannerStateKey key)
-    {
-        if (state.ResourceAllocator is null || state.ResourceAllocator.IsRetired ||
-            state.LastActiveFrameOpContext is not FrameOpContext context)
-        {
-            return false;
-        }
-
-        VulkanFrameOpPlannerStateKey contextKey =
-            VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(context);
-        return contextKey.ContextKind == key.ContextKind &&
-            contextKey.PipelineIdentity == key.PipelineIdentity &&
-            contextKey.ViewportIdentity == key.ViewportIdentity &&
-            contextKey.DisplayWidth == key.DisplayWidth &&
-            contextKey.DisplayHeight == key.DisplayHeight &&
-            contextKey.InternalWidth == key.InternalWidth &&
-            contextKey.InternalHeight == key.InternalHeight &&
-            contextKey.OutputFrameBufferIdentity == key.OutputFrameBufferIdentity &&
-            contextKey.OutputTargetIdentity == key.OutputTargetIdentity &&
-            contextKey.LogicalViewId == key.LogicalViewId &&
-            contextKey.PassMetadataSignature == key.PassMetadataSignature &&
-            contextKey.ResourceGeneration == key.ResourceGeneration &&
-            contextKey.DescriptorGeneration == key.DescriptorGeneration &&
-            contextKey.SubmissionQueueFamily == key.SubmissionQueueFamily;
-    }
-
     private static bool ContextHasPlannerResources(in FrameOpContext context)
         => context.ResourceRegistry is not null || context.PassMetadata is { Count: > 0 };
+
+    private static bool IsPreparedStateForKey(
+        in ResourcePlannerRuntimeState state,
+        in VulkanFrameOpPlannerStateKey key)
+        => state.ResourcePlannerRevision != 0 &&
+           !ReferenceEquals(state.RenderGraphPlan, VulkanRenderGraphPlan.Empty) &&
+           VulkanResourcePlannerSessionService.IsReusableState(state) &&
+           state.LastActiveFrameOpContext is FrameOpContext preparedContext &&
+           VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(preparedContext) == key;
 
     private static int Score(in ResourcePlannerRuntimeState state)
     {

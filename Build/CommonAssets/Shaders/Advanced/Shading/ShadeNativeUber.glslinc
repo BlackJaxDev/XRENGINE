@@ -170,7 +170,7 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     float coatSmoothness = coatSettings.y * coatMap.g;
     float coatSpecularMask = coatSettings.w * coatMap.a;
     vec3 coatDirect = vec3(0.0);
-    vec3 ambient = vec3(0.0), probeSpecular = vec3(0.0);
+    vec3 ambient = vec3(0.0), probeDiffuse = vec3(0.0), probeSpecular = vec3(0.0);
     float probeWeights[4] = float[4](0.0, 0.0, 0.0, 0.0);
     uint probeIndices[4] = uint[4](0u, 0u, 0u, 0u);
     if ((u_Push.flags & 32u) == 0u)
@@ -181,7 +181,8 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
         XR_ADV_EvaluateProbeIblWithSelection(surface.viewIndex, surface.worldPosition,
             N, V, base.rgb, roughness, metallic, diffuseProbe, probeSpecular,
             probeWeights, probeIndices);
-        if ((u_Push.flags & 32u) == 0u) ambient += diffuseProbe * ao;
+        if ((u_Push.flags & 32u) == 0u) probeDiffuse = diffuseProbe * ao;
+        ambient += probeDiffuse;
         probeSpecular *= XR_ADV_SpecularOcclusion(max(dot(N, V), 0.0), ao, roughness) * reflectionMask;
     }
     if (XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_SPECULAR) &&
@@ -205,7 +206,7 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
         primaryVisibility, shadowMask, true, rawPrimaryColor, sourceRawDirect,
         sourceSh) : ambient;
     if (stylized && UBER_I(_SourceLightMode) != 0)
-        color += probeSpecular;
+        color += probeDiffuse + probeSpecular;
     if (UBER_I(_SourceLightMode) != 0 &&
         XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_SPECULAR) &&
         UBER_V(_SourceMochieSecond).w > 0.5)

@@ -16,6 +16,7 @@ namespace XREngine.Scene
 
             _forwardDirectionalShadowRecordPublication?.Dispose();
             _forwardDirectionalShadowRecordPublication = null;
+            ReleaseForwardLightBuffers();
 
             DynamicSpotLights.Clear();
             DynamicPointLights.Clear();

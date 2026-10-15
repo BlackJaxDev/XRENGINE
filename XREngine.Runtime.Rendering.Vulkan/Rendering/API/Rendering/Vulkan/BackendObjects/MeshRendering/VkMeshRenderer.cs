@@ -740,6 +740,16 @@ internal unsafe partial class VkMeshRenderer(
         // they would be emitted with an invalid pass index and dropped at recording time.
         if (producer.Context.PipelineInstance is null)
             return false;
+        if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is null ||
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId == 0)
+        {
+            _ = SetPrepareResult(
+                false,
+                "FrameBindingCaptureUnavailable",
+                "Mesh binding capture requires an active render frame and pipeline context.",
+                out _);
+            return false;
+        }
 
         int passIndex = request.PassIndex;
         XRFrameBuffer? target = producer.Target;
@@ -960,6 +970,7 @@ internal unsafe partial class VkMeshRenderer(
                         programBindingSnapshot,
                         out string descriptorPrewarmReason))
                 {
+                    programBindingSnapshot?.ReleaseIfUnpooled();
                     CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
                     _ = SetPrepareResult(
                         false,
@@ -1450,7 +1461,9 @@ internal unsafe partial class VkMeshRenderer(
         bool shareSnapshot =
             publisherStateValid &&
             !captureUniforms &&
-            !hasMutableShadowUniformHandlers;
+            !hasMutableShadowUniformHandlers &&
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId != 0 &&
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is not null;
         MaterialBindingSnapshotCacheKey snapshotCacheKey = default;
         MaterialUniformBindingPayload? materialUniformPayload = null;
         if (shareSnapshot)
@@ -1718,6 +1731,7 @@ internal unsafe partial class VkMeshRenderer(
                         material,
                         persistentArtifact,
                         "persistent-artifact");
+                    snapshot.ReleaseIfUnpooled();
                     return persistentArtifact;
                 }
 

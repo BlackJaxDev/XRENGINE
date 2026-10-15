@@ -12,11 +12,19 @@ public partial class LightProbeComponent
     private void DestroyIblMipTargets()
     {
         foreach (XRQuadFrameBuffer target in _irradianceMipTargets)
-            target.Destroy();
+            DestroyIblMipTarget(target);
         foreach (XRQuadFrameBuffer target in _prefilterMipTargets)
-            target.Destroy();
+            DestroyIblMipTarget(target);
         _irradianceMipTargets = [];
         _prefilterMipTargets = [];
+    }
+
+    private static void DestroyIblMipTarget(XRQuadFrameBuffer target)
+    {
+        // Each mip owns its material. The quad treats materials as borrowed.
+        XRMaterial? material = target.Material;
+        target.Destroy();
+        material?.Destroy();
     }
 
     private XRQuadFrameBuffer[] GetIblMipTargets(bool prefilter, XRTexture2D output)
@@ -26,7 +34,7 @@ public partial class LightProbeComponent
         if (targets.Length != count)
         {
             foreach (XRQuadFrameBuffer target in targets)
-                target.Destroy();
+                DestroyIblMipTarget(target);
             targets = [];
             XRQuadFrameBuffer template = (prefilter ? _prefilterFBO : _irradianceFBO)
                 ?? throw new InvalidOperationException("Convolution template is missing.");
@@ -60,7 +68,7 @@ public partial class LightProbeComponent
             catch
             {
                 for (int index = 0; index < createdCount; index++)
-                    created[index].Destroy();
+                    DestroyIblMipTarget(created[index]);
                 throw;
             }
         }

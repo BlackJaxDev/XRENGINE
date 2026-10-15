@@ -657,7 +657,7 @@ vec3 applyDetailTangentNormal(ToonMesh mesh, vec3 normal) {
 // and baked crevices correctly darken ambient light.
 vec3 calculateForwardAmbientLightingWithProbe(ToonMesh mesh, vec3 baseColor,
     vec3 normal, PBRData pbr, float ambientOcclusion,
-    out vec3 probeSpecular) {
+    out vec3 probeDiffuse, out vec3 probeSpecular) {
     vec3 ambientRms = resolveSurfaceRms(pbr);
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR
     if (_PBRMochiePackedMasksEnabled != 0)
@@ -671,14 +671,15 @@ vec3 calculateForwardAmbientLightingWithProbe(ToonMesh mesh, vec3 baseColor,
         ambientRms,
         ambientOcclusion,
         pbr.reflectionMask,
+        probeDiffuse,
         probeSpecular);
 }
 
 vec3 calculateForwardAmbientLighting(ToonMesh mesh, vec3 baseColor,
     vec3 normal, PBRData pbr, float ambientOcclusion) {
-    vec3 probeSpecular;
+    vec3 probeDiffuse, probeSpecular;
     return calculateForwardAmbientLightingWithProbe(mesh, baseColor,
-        normal, pbr, ambientOcclusion, probeSpecular);
+        normal, pbr, ambientOcclusion, probeDiffuse, probeSpecular);
 }
 
 // Sum of all directional light contributions. `skipPrimaryDirectional` lets
@@ -2220,7 +2221,7 @@ void main() {
     surfacePbr.F0 = mix(vec3(0.04), fragData.baseColor, surfacePbr.metallic);
     surfacePbr.diffuseColor = fragData.baseColor * (1.0 - surfacePbr.metallic);
     // Occlusion = screen-space SSAO * material-baked AO.
-    vec3 sourceProbeSpecular = vec3(0.0);
+    vec3 sourceProbeDiffuse = vec3(0.0), sourceProbeSpecular = vec3(0.0);
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_AMBIENT_OCCLUSION
     float screenAmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
@@ -2235,7 +2236,7 @@ void main() {
     float combinedAmbientOcclusion = saturate(screenAmbientOcclusion * materialAmbientOcclusion);
     vec3 ambientLighting = calculateForwardAmbientLightingWithProbe(mesh,
         fragData.baseColor, mesh.worldNormal, surfacePbr,
-        combinedAmbientOcclusion, sourceProbeSpecular);
+        combinedAmbientOcclusion, sourceProbeDiffuse, sourceProbeSpecular);
     ToonLight light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
 #else
     ToonLight light = createToonLight(
@@ -2290,7 +2291,7 @@ void main() {
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_LIGHTING
             ambientLighting = calculateForwardAmbientLightingWithProbe(mesh,
                 fragData.baseColor, mesh.worldNormal, surfacePbr,
-                combinedAmbientOcclusion, sourceProbeSpecular);
+                combinedAmbientOcclusion, sourceProbeDiffuse, sourceProbeSpecular);
             light = calculateLighting(mesh, mesh.worldNormal, ambientLighting);
 #endif
         }
@@ -2364,7 +2365,7 @@ void main() {
 
 #ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     if (_SourceLightMode != 0 && _LightingMode != 6)
-        fragData.finalColor += sourceProbeSpecular;
+        fragData.finalColor += sourceProbeDiffuse + sourceProbeSpecular;
 #endif
 
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_SPECULAR

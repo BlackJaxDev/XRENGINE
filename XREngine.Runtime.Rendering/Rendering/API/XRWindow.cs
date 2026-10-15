@@ -170,6 +170,9 @@ namespace XREngine.Rendering
         /// </summary>
         public AbstractRenderer Renderer => _renderer;
 
+        /// <summary>Gets whether this window's renderer completed initialization.</summary>
+        public bool IsRendererInitialized => Volatile.Read(ref _rendererInitialized);
+
         public IRuntimeRenderWorld? TargetWorldInstance
         {
             get => _targetWorldInstance;
@@ -2520,6 +2523,8 @@ namespace XREngine.Rendering
 
             _renderer.Initialize();
             _rendererInitialized = true;
+            for (int index = 0; index < Viewports.Count; index++)
+                Viewports[index].RefreshRenderPipelineOutputBinding();
             RuntimeRenderingHostServices.Scheduling.SubscribeWindowTickCallbacks(SwapBuffers, RenderFrame);
 
             Debug.Rendering("[XRWindow] Tick callbacks subscribed hash={0}.", GetHashCode());
