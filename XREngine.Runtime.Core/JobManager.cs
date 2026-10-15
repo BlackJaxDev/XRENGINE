@@ -1162,6 +1162,9 @@ namespace XREngine
             return total;
         }
 
+        /// <summary>The number of queued app-thread jobs across all priorities.</summary>
+        public int QueuedAppThreadJobCount => SnapshotQueuedAppThreadJobs();
+
         private int SnapshotQueuedAppThreadJobs()
         {
             int total = 0;

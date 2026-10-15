@@ -670,10 +670,20 @@ namespace XREngine.Rendering.Commands
                 => gate.ExitWriteLock();
         }
 
+        /// <summary>
+        /// Gets the total number of commands in all updating passes.
+        /// The loop uses the struct enumerator of the dictionary value collection, so the call does not allocate.
+        /// Checked adds throw <see cref="OverflowException"/> when the total is larger than <see cref="int.MaxValue"/>.
+        /// </summary>
         public int GetUpdatingCommandCount()
         {
             using (_lock.EnterScope())
-                return _updatingPasses.Values.Sum(static pass => pass.Count);
+            {
+                int count = 0;
+                foreach (ICollection<RenderCommand> pass in _updatingPasses.Values)
+                    count = checked(count + pass.Count);
+                return count;
+            }
         }
 
         public int GetUpdatingPassCount()

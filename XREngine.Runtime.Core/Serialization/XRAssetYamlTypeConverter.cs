@@ -372,12 +372,21 @@ namespace XREngine
                 return true;
             }
 
-            XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(expectedType,
-                XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
-                nameof(XRAssetDeserializer), "Register a cooked asset factory instead of constructing YAML runtime references reflectively.");
+            TextFile? textFile = null;
+            if (expectedType == typeof(TextFile))
+                textFile = new TextFile();
+            else if (RuntimeCookedBinarySerializer.TryCreateRegisteredRuntimeObject(expectedType, out object? registered))
+                textFile = (TextFile)registered!;
+            else
+                XREngine.Data.Runtime.AotParity.AotParityDiagnostics.Report(expectedType,
+                    XREngine.Data.Runtime.AotParity.EAotParityCategory.ReflectiveFactory,
+                    nameof(XRAssetDeserializer),
+                    $"Register a runtime factory with {nameof(RuntimeCookedBinarySerializer)}.{nameof(RuntimeCookedBinarySerializer.RegisterRuntimeFactory)} so YAML text references are constructed without Activator.CreateInstance.");
+
             try
             {
-                if (Activator.CreateInstance(expectedType) is not TextFile textFile)
+                textFile ??= Activator.CreateInstance(expectedType) as TextFile;
+                if (textFile is null)
                     return false;
 
                 textFile.OriginalPath = resolvedPath;

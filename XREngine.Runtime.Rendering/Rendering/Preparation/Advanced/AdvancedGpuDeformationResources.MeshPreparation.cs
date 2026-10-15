@@ -98,6 +98,7 @@ public sealed partial class AdvancedGpuDeformationResources
             _meshSlices.Remove(mesh);
             _meshAliasWitnesses.Remove(mesh);
             _staticGeneration.InputWitnesses.Remove(mesh);
+            _meshSliceRevision++;
         }
         if (_unsupportedMeshPreparationSources.TryGetValue(mesh, out var unsupported) &&
             unsupported.Matches(mesh, topologyGeneration, _meshPreparationPolicy))
@@ -805,6 +806,7 @@ public sealed partial class AdvancedGpuDeformationResources
         // Every published mesh slice has an input witness. Generation adoption
         // copies both maps together.
         _meshSlices[pending.Mesh] = slice;
+        _meshSliceRevision++;
         _staticGeneration.InputWitnesses[pending.Mesh] = pending.InputWitness;
         // A packed preparation of a mesh without skinning skips the skinning
         // stage, so no skinning state was captured. Record the current state.

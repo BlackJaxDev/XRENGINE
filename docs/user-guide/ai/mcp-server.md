@@ -423,6 +423,50 @@ worker preparation and retained ownership separately from queued transfers and
 descriptor publication. These are backend-wide counters, not an atomic frame
 sample. Use repeated observations and completed uploads to establish progress.
 
+## Shadow Caster Census
+
+Under a zero-readback submission strategy, the primary directional shadow views
+collect when another consumer needs the primary shadow map, for example a
+receiver or pending capture work. When no other consumer needs the primary map,
+the primary views still collect while the scene can have shadow-only casters:
+shadow-casting renderables that no main view collects, but that a shadow camera
+can collect. `get_shadow_caster_census` reads this census for each world: the
+GPU dispatch state, the candidate counts and main-view GPU collection counts of
+the previous and current collect pass, the shadow caster membership revision
+against its value at the start of the pass, `may_have_shadow_only_casters`, and
+the last decision of the atlas planning (`planner`).
+
+With `capture_candidates: true` (the default), the tool also records up to
+`max_candidates` (default 32, maximum 256) candidates from the next completed
+main-view GPU collection of each world. It waits up to `timeout_ms` (default
+2000). Each candidate shows its reason (`LayerRejected`, `MirrorRejected`,
+`VolumeRejected`, `AllowRenderRejected`, `CallbackRejected` or
+`ShadowPassOnly`), owner type, scene node name, path and ID, layer, shadow and
+visibility flags, disposal and retirement state, pre-collection callback method
+and command types. The capture also shows the camera of that collection.
+
+The `capture.state` of each world is one of these values:
+
+- `completed`: a main-view GPU collection recorded the candidates.
+- `timed_out`: no main-view GPU collection completed before `timeout_ms`.
+- `not_gpu_dispatch`: the world uses CPU dispatch, so no main-view GPU
+  collection runs. The tool did not request a capture.
+- `no_main_view_collection`: no main-view GPU collection ran in the previous or
+  current collect pass. The tool did not request a capture.
+
+The reason, layer, flags, disposal and retirement state, and callback are the
+values when the collection recorded the candidate. The scene node name, path and
+ID and the command types are the values when the tool formats the result.
+
+A render info that no camera collects is not a candidate: a disposed render
+info, a retiring mesh, or a render info whose camera-independent callback
+rejects every camera. Examples of the last case are an item on a screen-space
+UI canvas and the proxy of an HLOD group that is disabled or not built. The
+main view sees a callback result only when `AllowRender` accepts the render
+info. When `AllowRender` rejects it first, for example by layer, a render info
+with a camera-independent callback is still a candidate. Disposal and
+retirement remove a render info from the candidates in both cases.
+
 ## RenderBench Profiling
 
 For windowless Vulkan component profiling, start a named RenderBench MCP
@@ -436,7 +480,6 @@ commands and the diagnostic recipe choices are in the
 [profiler guide](../../developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench).
 
 ## Safety Notes
-
 
 - Use read-only mode for inspection-only sessions.
 - Require auth when exposing the server beyond trusted local processes.

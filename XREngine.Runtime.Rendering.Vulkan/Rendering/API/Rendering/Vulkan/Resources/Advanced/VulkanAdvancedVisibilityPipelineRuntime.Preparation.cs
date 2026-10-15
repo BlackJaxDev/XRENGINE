@@ -270,11 +270,19 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                 new PreparationSnapshot(
                     VulkanAdvancedVisibilityPipelineReadiness.Pending,
                     "Directional shadow lane preparation is pending."));
-            _preparationTask = Task.Run(
-                () => PrepareRequiredFamilyAsync(identity, cancellationToken),
-                cancellationToken);
+            _preparationTask = StartPreparationTask(identity, cancellationToken);
         }
     }
+
+    /// <summary>
+    /// Starts the background family preparation. The lambda captures only the parameters of this
+    /// method, so the closure is allocated only when a preparation actually starts. Readiness calls
+    /// that return early do not allocate.
+    /// </summary>
+    private Task StartPreparationTask(int identity, CancellationToken cancellationToken)
+        => Task.Run(
+            () => PrepareRequiredFamilyAsync(identity, cancellationToken),
+            cancellationToken);
 
     private async Task PrepareRequiredFamilyAsync(
         int preparationIdentity,

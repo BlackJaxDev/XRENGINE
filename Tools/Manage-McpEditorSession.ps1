@@ -799,10 +799,10 @@ function Start-Session {
             )
 
             if ($AsJson) {
-                & dotnet @buildArguments *> $buildLogPath
+                & (Join-Path $PSScriptRoot 'Invoke-AgentBuild.ps1') -DotnetArguments $buildArguments *> $buildLogPath
             }
             else {
-                & dotnet @buildArguments 2>&1 | Tee-Object -FilePath $buildLogPath
+                & (Join-Path $PSScriptRoot 'Invoke-AgentBuild.ps1') -DotnetArguments $buildArguments 2>&1 | Tee-Object -FilePath $buildLogPath
             }
             $buildExitCode = $LASTEXITCODE
             if ($buildExitCode -ne 0) {

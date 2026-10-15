@@ -704,6 +704,14 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        /// <summary>
+        /// Reads the current renderer-command material publication without the scene lock.
+        /// The value is a change witness: a reader that saw a generation through a locked
+        /// read can reuse what it read while this value is unchanged.
+        /// </summary>
+        internal long RendererCommandMaterialPublicationGeneration
+            => _publishedRendererCommandIndices.PublicationGeneration;
+
         /// <summary>Captures drawn materials and their publication as one scene read.</summary>
         internal bool TryCaptureRendererCommandMaterialSnapshots(XRMeshRenderer renderer,
             List<PhysicsChainDrawMaterialSnapshot> materials, out long generation)

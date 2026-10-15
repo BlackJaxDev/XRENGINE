@@ -95,6 +95,9 @@ namespace XREngine.Components.Lights
 
         public void SetCaptureResolution(uint colorResolution, bool captureDepth = false)
         {
+            if (Resolution == colorResolution && CaptureDepthCubeMap == captureDepth && !_captureResourcesDirty && AreCaptureResourcesInitialized())
+                return;
+
             _deferCaptureResourceRefresh = true;
             try
             {
@@ -294,27 +297,28 @@ namespace XREngine.Components.Lights
 
         private XRViewport GetOrCreateSharedCaptureViewport()
         {
-            XRViewport viewport = s_sharedCaptureViewport ??= CreateSharedCaptureViewport();
+            XRViewport viewport = s_sharedCaptureViewport ??= CreateSharedCaptureViewport(Resolution);
             ConfigureSharedCaptureViewport(viewport);
             return viewport;
         }
 
-        private static XRViewport CreateSharedCaptureViewport()
+        private static XRViewport CreateSharedCaptureViewport(uint initialResolution)
         {
+            uint extent = Math.Max(1u, initialResolution);
             Transform captureTransform = new();
             XRCamera captureCamera = new(captureTransform, new XRPerspectiveCameraParameters(90.0f, 1.0f, 0.1f, 10000.0f));
-            XRViewport viewport = new(null, 1u, 1u)
+            XRViewport viewport = new(null, extent, extent)
             {
                 PipelineRequest = RenderPipelineRequest.OffscreenCapture(),
-                Camera = captureCamera,
-                RenderPipeline =
-                    RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline(),
                 SetRenderPipelineFromCamera = false,
                 AutomaticallyCollectVisible = false,
                 AutomaticallySwapBuffers = false,
                 AllowUIRender = false,
                 AllowAutomaticInternalResolution = false,
                 CullWithFrustum = true,
+                Camera = captureCamera,
+                RenderPipeline =
+                    RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline(),
             };
 
             return viewport;
@@ -344,16 +348,16 @@ namespace XREngine.Components.Lights
             }
 
             if (viewport.Camera is not null)
-                ApplyCaptureCameraSettings(viewport.Camera);
+                ApplyCaptureCameraSettings(viewport.Camera, viewport.RenderPipeline);
         }
 
-        private void ApplyCaptureCameraSettings(XRCamera camera)
+        private void ApplyCaptureCameraSettings(XRCamera camera, RenderPipeline? capturePipeline = null)
         {
             // Exclude gizmos so debug visuals don't end up inside the captured probe data.
             camera.CullingMask = DefaultLayers.EverythingExceptGizmos;
             CaptureRenderPolicy.ApplyCameraOverrides(camera);
 
-            var colorStage = camera.GetPostProcessStageState<ColorGradingSettings>();
+            var colorStage = camera.GetPostProcessStageState<ColorGradingSettings>(capturePipeline);
             if (CaptureRenderPolicy.AllowAutoExposure)
                 return;
 

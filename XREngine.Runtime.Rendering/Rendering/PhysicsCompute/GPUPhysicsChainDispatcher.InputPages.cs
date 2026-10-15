@@ -12,6 +12,7 @@ public sealed partial class GPUPhysicsChainDispatcher
     private readonly List<PhysicsChainInputPage> _retiredInputPages = [];
     private readonly List<PhysicsChainInputPage> _inputPagesUsedThisFrame = new(InputPageCount);
     private readonly List<PhysicsChainAffineInput> _transformInputCatalog = [];
+    private readonly PhysicsChainColliderInputCatalog _colliderCatalog = new();
     private readonly List<PhysicsChainAffineInput> _transformCatalogRollbackValues = [];
     private readonly List<(int Offset, int Count, int SavedOffset)> _transformCatalogRollbackRanges = [];
     private PhysicsChainInputPage? _currentInputPage;
@@ -367,18 +368,31 @@ public sealed partial class GPUPhysicsChainDispatcher
         return true;
     }
 
+    /// <summary>
+    /// Stages changed colliders into the dense catalog, then writes the whole catalog into the
+    /// current input page only when that page holds an older catalog version or another buffer.
+    /// </summary>
     private bool UploadInputPageColliders(IReadOnlyList<GPUPhysicsChainRequest> requests)
     {
+        _colliderCatalog.Resize(_colliderArenaHighWater);
         for (int requestIndex = 0; requestIndex < requests.Count; ++requestIndex)
         {
             GPUPhysicsChainRequest request = requests[requestIndex];
             if (request.Colliders.Count == 0)
                 continue;
-            if (!TryWriteInputPage(_collidersBuffer,
-                    request.AcceptedInput.Colliders.AsSpan(), request.ColliderOffset))
-                return false;
+            if (!_colliderCatalog.TryStage(request.AcceptedInput.Colliders, request.ColliderOffset,
+                    request.ArenaAllocationGeneration, request.ColliderDataSignature,
+                    ref request.ColliderCatalogStamp))
+                return RecordInputPageFailure("InputPageColliderCatalogRange");
             request.UploadedColliderDataVersion = request.ColliderDataSignature;
         }
+
+        PhysicsChainInputPage page = _currentInputPage!;
+        if (!_colliderCatalog.PageNeedsWrite(page, _collidersBuffer))
+            return true;
+        if (!TryWriteInputPage(_collidersBuffer, _colliderCatalog.Rows, 0))
+            return false;
+        _colliderCatalog.MarkPageWritten(page, _collidersBuffer);
         return true;
     }
 
@@ -409,6 +423,8 @@ public sealed partial class GPUPhysicsChainDispatcher
 
     private void RollbackTransformCatalogGroup()
     {
+        // A rolled-back batch can leave new collider rows in this page; rewrite every page.
+        _colliderCatalog.Invalidate();
         Span<PhysicsChainAffineInput> catalog = CollectionsMarshal.AsSpan(_transformInputCatalog);
         Span<PhysicsChainAffineInput> saved = CollectionsMarshal.AsSpan(_transformCatalogRollbackValues);
         for (int rangeIndex = _transformCatalogRollbackRanges.Count - 1; rangeIndex >= 0; --rangeIndex)

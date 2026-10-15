@@ -1489,9 +1489,6 @@ namespace XREngine.Rendering
             RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
                 new FrameOutputWorkTelemetry(VisibilityBuilds: 1));
             var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-            int beforeUpdatingCount = 0;
-            //if (Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugRenderSubmit) == "1")
-                beforeUpdatingCount = commandCollection.GetUpdatingCommandCount();
 
             VisualScene visualScene = world!.VisualScene!;
             bool stereoFamily =
@@ -1556,36 +1553,6 @@ namespace XREngine.Rendering
                     collectMirrors);
             }
 
-            //if (Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DebugRenderSubmit) == "1")
-            {
-                int afterUpdatingCount = commandCollection.GetUpdatingCommandCount();
-                int delta = afterUpdatingCount - beforeUpdatingCount;
-
-                string visualSceneType = world?.VisualScene?.GetType().Name ?? "<null>";
-                int trackedRenderables = world?.VisualScene?.Renderables?.Count ?? -1;
-
-                (uint Draws, uint Instances) gpuVisible = (0, 0);
-                if (world?.VisualScene is VisualScene3D vs3d)
-                    gpuVisible = vs3d.LastGpuVisibility;
-
-                int updatingPasses = commandCollection.GetUpdatingPassCount();
-
-/*
-                Debug.RenderingEvery(
-                    $"XRViewport.CollectVisible.Submit.{GetHashCode()}[{Index}].{RuntimeEngine.PlayMode.State}",
-                    TimeSpan.FromSeconds(1),
-                    "[RenderDiag] CollectVisible submit. PlayMode={0} VP[{1}] CmdsUpdating={2} Delta={3} UpdatingPasses={4} VisualScene={5} TrackedRenderables={6} Camera={7}",
-                    RuntimeEngine.PlayMode.State,
-                    Index,
-                    afterUpdatingCount,
-                    delta,
-                    updatingPasses,
-                    visualSceneType,
-                    trackedRenderables,
-                    camera?.GetHashCode().ToString() ?? "null");
-*/
-            }
-
             WriteDeferredPassCountDiagnostic("CollectVisible", commandCollection, camera, renderingBuffer: false);
 
             if (allowScreenSpaceUICollectVisible)
@@ -1614,6 +1581,7 @@ namespace XREngine.Rendering
             RenderCommandCollection commandCollection,
             bool excludeProjectiveMirrors = false)
         {
+            long packagePathStart = CollectVisibleStageTimings.StartPath();
             RenderResourceGeneration? activeGeneration = _renderPipeline.ActiveGeneration;
             _renderPipeline.PublishStagedImportedResources(activeGeneration);
             RenderResourceRegistry? activeRegistry = activeGeneration?.Registry;
@@ -1665,6 +1633,7 @@ namespace XREngine.Rendering
                 excludeProjectiveMirrors,
                 MeshSubmissionStrategyOverride ??
                     RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy());
+            CollectVisibleStageTimings.EndPath(ECollectVisiblePath.PackagePrepare, packagePathStart, 0);
         }
 
         /// <summary>
@@ -1793,15 +1762,20 @@ namespace XREngine.Rendering
                 return;
             }
 
+            ECollectVisibleViewKind previousView = CollectVisibleStageTimings.EnterView(ECollectVisibleViewKind.MainView);
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
             CollectVisible(frameOutputPacing: pacing);
+            // Keep the original order: the command count, then the end timestamp. The view timer shares that timestamp.
+            int commandCount = GetUpdatingCommandCountForTelemetry();
+            long ended = System.Diagnostics.Stopwatch.GetTimestamp();
             RecordFrameOutput(
                 EFrameOutputPhase.Collect,
                 pacing,
                 rendered: true,
                 sceneRendered: true,
-                commandCount: GetUpdatingCommandCountForTelemetry(),
-                elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - started);
+                commandCount: commandCount,
+                elapsedTicks: ended - started);
+            CollectVisibleStageTimings.EndView(previousView, started, ended);
         }
 
         #endregion
@@ -1994,6 +1968,7 @@ namespace XREngine.Rendering
             using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.SwapBuffersAutomatic");
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
             SwapBuffers();
+            CollectVisibleStageTimings.EndIn(ECollectVisibleSection.Swap, ECollectVisibleStage.MainViewSwap, started);
             _renderingFrameOutputPacing = pacing;
             _renderingFrameOutputSceneDue = true;
             RecordFrameOutput(

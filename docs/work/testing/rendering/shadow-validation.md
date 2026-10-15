@@ -55,6 +55,9 @@ Useful profiler scopes: `ShadowAtlasManager.SolveAllocations`, `Lights3DCollecti
 | Frame rate | Use the same scene with grouped support. | Atlas-on frame rate stays within 10 percent of legacy layered cascades. | Open | none |
 | Fallback reason | Run without grouped support. | Logs state the exact fallback reason and the editor shows the effective mode. | Open | none |
 | Mode cost | Profile sequential, layered, and grouped modes in the same scene. | Costs are recorded. | Open | none |
+| Primary view gate, benchmark | Run the 2,000-chain skinned benchmark (Vulkan atlas, `GpuIndirectZeroReadback`) and read `directionalShadowConsumption` and `get_shadow_caster_census`. | Primary collections 0 per frame, need `None`, no stale declines, census 0 candidates, cascade groups accepted with no new rejection. | Passed | 2026-10-14 desktop: collect 15.6 to 8.1 ms (shared mesh) and 14.1 to 8.0 ms (unique); see the [investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#primary-directional-shadow-collection-gate). |
+| Primary view gate, shadow-only casters | In OpenVR and OpenXR first-person play with zero-readback, check the local avatar (a layer that the main camera excludes) with CPU and vertex skinning, and a material with only the shadow pass. | The census reports the casters, the primary view collects, and their cascade shadows move with them. Capture PNGs from two positions. | Open | none |
+| Primary view gate, consumers | Toggle cascades off and on, start a light-probe capture during atlas startup, and run the Monado path (cascades not renderable). | The primary map renders when a consumer needs it, with at most one fallback frame after a toggle; the probe capture has shadows that match HEAD. | Open | none |
 
 ### Stale Frames And Camera Motion
 | Check | Procedure | Expected | Status | Last evidence |

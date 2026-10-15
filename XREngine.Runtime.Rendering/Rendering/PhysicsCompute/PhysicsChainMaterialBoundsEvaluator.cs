@@ -53,47 +53,51 @@ public static class PhysicsChainMaterialBoundsEvaluator
 
     /// <summary>
     /// Gets the cached contract for a material. A null material has no effects.
-    /// The call allocates only when it first sees a material.
+    /// The call allocates only when it first sees a material or the material changes.
     /// </summary>
+    /// <remarks>
+    /// Many threads evaluate the same shared material in each frame. A current cached contract
+    /// is read from an immutable entry without a lock. Only a recalculation takes the lock.
+    /// </remarks>
     public static PhysicsChainMaterialBoundsContract Evaluate(XRMaterial? material)
     {
         if (material is null)
             return default;
 
         ContractCache cache = Caches.GetValue(material, static _ => new ContractCache());
+        ulong layoutVersion = material.BindingLayoutVersion;
+        ulong valueVersion = material.BindingValueVersion;
+        long uberRevision = material.UberStateRevision;
+        long shaderRevision = material.ShaderStateRevision;
+        if (cache.Current is { } current
+            && current.Matches(layoutVersion, valueVersion, uberRevision, shaderRevision)
+            && current.MatchesShaders(material))
+            return current.Contract;
+
         lock (cache)
         {
-            ulong layoutVersion = material.BindingLayoutVersion;
-            ulong valueVersion = material.BindingValueVersion;
-            long uberRevision = material.UberStateRevision;
-            long shaderRevision = material.ShaderStateRevision;
-            if (!cache.Valid
-                || cache.LayoutVersion != layoutVersion
-                || cache.ValueVersion != valueVersion
-                || cache.UberRevision != uberRevision
-                || cache.ShaderRevision != shaderRevision
-                || !cache.MatchesShaders(material))
-            {
-                cache.CaptureShaders(material);
-                PhysicsChainMaterialBoundsContract contract = Calculate(material);
-                if (!cache.MatchesShaders(material)
-                    || material.BindingLayoutVersion != layoutVersion
-                    || material.BindingValueVersion != valueVersion
-                    || material.UberStateRevision != uberRevision
-                    || material.ShaderStateRevision != shaderRevision)
-                {
-                    cache.Valid = false;
-                    return Reject(StalePublishedMaterialRejection);
-                }
-                cache.Contract = contract;
-                cache.LayoutVersion = layoutVersion;
-                cache.ValueVersion = valueVersion;
-                cache.UberRevision = uberRevision;
-                cache.ShaderRevision = shaderRevision;
-                cache.Valid = true;
-            }
+            layoutVersion = material.BindingLayoutVersion;
+            valueVersion = material.BindingValueVersion;
+            uberRevision = material.UberStateRevision;
+            shaderRevision = material.ShaderStateRevision;
+            current = cache.Current;
+            if (current is not null
+                && current.Matches(layoutVersion, valueVersion, uberRevision, shaderRevision)
+                && current.MatchesShaders(material))
+                return current.Contract;
 
-            return cache.Contract;
+            ContractEntry entry = new(material, layoutVersion, valueVersion, uberRevision, shaderRevision);
+            PhysicsChainMaterialBoundsContract contract = Calculate(material);
+            if (!entry.MatchesShaders(material)
+                || !entry.Matches(material.BindingLayoutVersion, material.BindingValueVersion,
+                    material.UberStateRevision, material.ShaderStateRevision))
+            {
+                cache.Current = null;
+                return Reject(StalePublishedMaterialRejection);
+            }
+            entry.Contract = contract;
+            cache.Current = entry;
+            return contract;
         }
     }
 
@@ -262,27 +266,44 @@ public static class PhysicsChainMaterialBoundsEvaluator
     private static Vector4 GetVector4(XRMaterial material, string name)
         => material.Parameter<ShaderVector4>(name)?.Value ?? Vector4.Zero;
 
+    /// <summary>Holds the latest contract entry of one material. Writers hold the instance lock.</summary>
     private sealed class ContractCache
+    {
+        private ContractEntry? _current;
+
+        /// <summary>The latest valid entry, or null. Readers do not need the lock.</summary>
+        public ContractEntry? Current
+        {
+            get => Volatile.Read(ref _current);
+            set => Volatile.Write(ref _current, value);
+        }
+    }
+
+    /// <summary>
+    /// One calculated contract and the material state that it used. The fields do not change
+    /// after the entry is published, so readers on any thread can use it without a lock.
+    /// </summary>
+    private sealed class ContractEntry
     {
         private readonly record struct ShaderWitness(XRShader? Shader, long SourceRevision,
             bool TrustedUberVertex);
 
-        private ShaderWitness[] _shaders = [];
-        private int _shaderCount;
+        private readonly ShaderWitness[] _shaders;
+        private readonly ulong _layoutVersion;
+        private readonly ulong _valueVersion;
+        private readonly long _uberRevision;
+        private readonly long _shaderRevision;
 
-        public bool Valid;
-        public ulong LayoutVersion;
-        public ulong ValueVersion;
-        public long UberRevision;
-        public long ShaderRevision;
-        public PhysicsChainMaterialBoundsContract Contract;
-
-        public void CaptureShaders(XRMaterial material)
+        /// <summary>Captures the material versions and shader witnesses before a calculation.</summary>
+        public ContractEntry(XRMaterial material, ulong layoutVersion, ulong valueVersion,
+            long uberRevision, long shaderRevision)
         {
+            _layoutVersion = layoutVersion;
+            _valueVersion = valueVersion;
+            _uberRevision = uberRevision;
+            _shaderRevision = shaderRevision;
             int count = material.Shaders.Count;
-            if (_shaders.Length < count)
-                _shaders = new ShaderWitness[count];
-            _shaderCount = count;
+            _shaders = count == 0 ? [] : new ShaderWitness[count];
             for (int index = 0; index < count; ++index)
             {
                 XRShader? shader = material.Shaders[index];
@@ -292,11 +313,20 @@ public static class PhysicsChainMaterialBoundsEvaluator
             }
         }
 
+        /// <summary>The calculated contract. The writer sets it once, before publication.</summary>
+        public PhysicsChainMaterialBoundsContract Contract;
+
+        public bool Matches(ulong layoutVersion, ulong valueVersion, long uberRevision, long shaderRevision)
+            => _layoutVersion == layoutVersion
+                && _valueVersion == valueVersion
+                && _uberRevision == uberRevision
+                && _shaderRevision == shaderRevision;
+
         public bool MatchesShaders(XRMaterial material)
         {
-            if (material.Shaders.Count != _shaderCount)
+            if (material.Shaders.Count != _shaders.Length)
                 return false;
-            for (int index = 0; index < _shaderCount; ++index)
+            for (int index = 0; index < _shaders.Length; ++index)
             {
                 XRShader? shader = material.Shaders[index];
                 ShaderWitness witness = _shaders[index];

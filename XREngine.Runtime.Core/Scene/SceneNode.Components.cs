@@ -14,8 +14,7 @@ namespace XREngine.Scene
         /// </summary>
         public T? AddComponent<T>(string? name = null) where T : XRComponent
         {
-            using var parityScope = World?.IsPlaySessionActive == true
-                ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
+            using var parityScope = EnterComponentPlayerPath();
             using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponent");
 
             var comp = XRComponent.New<T>(this);
@@ -39,8 +38,7 @@ namespace XREngine.Scene
         /// </summary>
         public T? AddComponent<T>(Func<T> factory, string? name = null) where T : XRComponent
         {
-            using var parityScope = World?.IsPlaySessionActive == true
-                ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
+            using var parityScope = EnterComponentPlayerPath();
             using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponentFactory");
 
             T comp = XRComponent.New(this, factory);
@@ -62,8 +60,7 @@ namespace XREngine.Scene
         /// </summary>
         public XRComponent? AddComponent(Type type, string? name = null)
         {
-            using var parityScope = World?.IsPlaySessionActive == true
-                ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
+            using var parityScope = EnterComponentPlayerPath();
             XRComponent? existingComponent = null;
 
             if (XRComponent.New(this, type) is not XRComponent comp)
@@ -79,6 +76,29 @@ namespace XREngine.Scene
             AddComponent(comp);
             comp.Name = name;
             return comp;
+        }
+
+        /// <summary>
+        /// Enters the player path for component creation when the owning root participates in play.
+        /// Does not clear a player scope inherited from the caller.
+        /// </summary>
+        private AotParityPlayerPathScope EnterComponentPlayerPath()
+        {
+            var world = World;
+            if (world?.IsPlaySessionActive != true)
+                return default;
+
+            if (world is RuntimeWorld runtimeWorld && runtimeWorld.ScenePolicy is { } scenePolicy)
+            {
+                SceneNode root = this;
+                while (root.Transform?.Parent?.SceneNode is SceneNode parent)
+                    root = parent;
+
+                if (!scenePolicy.ShouldParticipateInPlay(runtimeWorld, root))
+                    return default;
+            }
+
+            return AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode);
         }
 
         private void AddComponent(XRComponent comp)

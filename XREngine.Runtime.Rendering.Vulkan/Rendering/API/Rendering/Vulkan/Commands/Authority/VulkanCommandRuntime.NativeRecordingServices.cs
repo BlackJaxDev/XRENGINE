@@ -547,7 +547,12 @@ internal sealed partial class VulkanCommandRuntime
             }
         }
 
-        Format[] colorFormats = colorCount == 0 ? [] : new Format[colorCount];
+        // Use stack storage for the supported color count. A larger count uses a heap array, so
+        // the signature constructor still throws its out-of-range exception for that count.
+        Span<Format> colorFormats = colorCount <= DynamicRenderingFormatSignature.MaxColorAttachmentCount
+            ? stackalloc Format[DynamicRenderingFormatSignature.MaxColorAttachmentCount]
+            : new Format[colorCount];
+        colorFormats = colorFormats[..colorCount];
         int colorIndex = 0;
         for (int index = 0; index < signatures.Length; index++)
             if (signatures[index].Role == AttachmentRole.Color)

@@ -50,6 +50,15 @@ public partial class GPUScene
     /// <summary>Gets the number of material resolution attempts in the last preflight.</summary>
     public int AdvancedMaterialResolveAttemptCount => _advancedScenePublisher.MaterialResolveAttemptCount;
 
+    /// <summary>
+    /// Gets the command rows that the last publication reused without the
+    /// whole-scene plan. Zero means that the whole-scene plan ran.
+    /// </summary>
+    public int AdvancedUnchangedRowGateHitCount => _advancedScenePublisher.LastUnchangedRowGateHitCount;
+
+    /// <summary>Gets whether the last publication committed the retained rows without the whole-scene plan.</summary>
+    public bool AdvancedRetainedRowCommit => _advancedScenePublisher.LastPublicationCommittedRetainedRows;
+
     public int AdvancedGeometryCompactionReplacementCount
         => _advancedScenePublisher.LastGeometryCompactionReplacementCount;
 
@@ -102,6 +111,41 @@ public partial class GPUScene
 
     internal void RequestAdvancedAuthoredDecalPublication()
         => System.Threading.Interlocked.Exchange(ref _advancedAuthoredDecalsRequested, 1);
+
+    /// <summary>
+    /// Prepares the unchanged-row verdict of the next canonical publication.
+    /// Call it on the collect thread after visibility collection, while the
+    /// world publication session is open, and only when each mesh command swap
+    /// of the scene updates the GPU scene rows. Without a requested publication
+    /// or with XRE_ADVANCED_PREPARED_GATE=0, it removes any earlier verdict
+    /// and prepares nothing. The prepare reads the scene rows with short
+    /// scene-lock scopes and writes only publisher verdict fields.
+    /// </summary>
+    internal void PrepareAdvancedResidentPublication()
+    {
+        if (_advancedScenePublisherDisposed || _destroyed)
+            return;
+
+        if (!AdvancedPublicationRequested ||
+            !AdvancedGpuScenePublisher.PreparedGateEnabled ||
+            _advancedScenePublisher.PublicationFaulted)
+        {
+            _advancedScenePublisher.DiscardPreparedUnchangedRowGate();
+            return;
+        }
+
+        _advancedScenePublisher.PrepareUnchangedRowGate(this);
+    }
+
+    /// <summary>
+    /// Removes the prepared unchanged-row verdict. The next publication then
+    /// runs the swap-time gate. Call it when a prepare fails.
+    /// </summary>
+    internal void DiscardPreparedAdvancedResidentPublication()
+    {
+        if (!_advancedScenePublisherDisposed)
+            _advancedScenePublisher.DiscardPreparedUnchangedRowGate();
+    }
 
     public void SetAdvancedGlobalResources(in AdvancedGlobalResourceCapture capture)
     {

@@ -157,6 +157,18 @@ including exceptions. Explicit player callbacks nested inside that operation
 reactivate diagnostics; snapshot reference repair and game-mode lifecycle callbacks
 remain checked. This boundary does not exempt packaged content loading.
 
+`SceneNode.AddComponent` enters a player scope only during an active play session.
+For a `RuntimeWorld` with a scene policy, the owning root must also participate
+in play. Hidden editor roots, such as transform gizmos, do not start a player
+scope. This check does not clear a player scope inherited from the caller.
+
+The development YAML loader constructs exact `TextFile` source references
+directly. For derived text types, it first uses a registered
+`RuntimeCookedBinarySerializer.RegisterRuntimeFactory` factory. Only an
+unregistered derived type requires the reflective fallback and its parity
+diagnostic. Source text stays local to the owning asset. Published content still
+uses the cooked asset path.
+
 Each diagnostic names the type, one of five categories (type-resolution scan,
 reflective cooked deserialization, reflective factory, reflective member
 binding, polymorphic YAML scan), the owning call site, and the registration or

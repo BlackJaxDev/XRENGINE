@@ -83,6 +83,8 @@ public static partial class EditorImGuiUI
             DrawPlayModeButtons();
             ImGui.SameLine(0f, ToolbarSectionSpacing);
             DrawOpenXrToggle();
+            ImGui.SameLine(0f, ToolbarSectionSpacing);
+            DrawGraphicsApiSelector();
         }
         ImGui.End();
         
@@ -348,6 +350,31 @@ public static partial class EditorImGuiUI
         }
 
         ImGui.EndCombo();
+    }
+
+    private static void DrawGraphicsApiSelector()
+    {
+        var activeBackend = EditorGraphicsBackendSwitcher.ActiveBackend;
+        bool canSwitch = EditorGraphicsBackendSwitcher.CanSwitch;
+
+        DrawToolbarSectionLabel("API:");
+        ImGui.SetNextItemWidth(92f);
+        ImGui.BeginDisabled(!canSwitch);
+        string comboLabel = EditorGraphicsBackendSwitcher.IsSwitching
+            ? "Switching..."
+            : activeBackend.ToString();
+        if (ImGui.BeginCombo("##EditorGraphicsBackendSelector", comboLabel))
+        {
+            if (ImGui.Selectable("OpenGL", activeBackend == ERenderLibrary.OpenGL))
+                EditorGraphicsBackendSwitcher.TrySwitchBackend(ERenderLibrary.OpenGL);
+            if (ImGui.Selectable("Vulkan", activeBackend == ERenderLibrary.Vulkan))
+                EditorGraphicsBackendSwitcher.TrySwitchBackend(ERenderLibrary.Vulkan);
+            ImGui.EndCombo();
+        }
+        ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(EditorGraphicsBackendSwitcher.Status);
     }
 
     private static void DrawOpenXrRuntimePrompt()

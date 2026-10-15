@@ -178,7 +178,8 @@ public class McpServerHostProtocolTests
     private static async Task<object> InvokeHandleRpcAsync(JsonElement root, EditorPreferences prefs)
     {
         object host = McpServerHost.Instance;
-        object? invocation = HandleRpcMethod.Invoke(host, [root, CancellationToken.None, prefs]);
+        // The last argument is the optional request milestone trace; these tests do not trace.
+        object? invocation = HandleRpcMethod.Invoke(host, [root, CancellationToken.None, prefs, null]);
         invocation.ShouldNotBeNull();
 
         Task<object?> task = invocation as Task<object?>

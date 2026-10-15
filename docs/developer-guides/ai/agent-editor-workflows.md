@@ -4,19 +4,35 @@ Read the relevant sections before editor/MCP/RenderDoc work or changing launch, 
 
 ## Build, Run, Debug
 
-Build:
+Agent build commands:
 
 ```powershell
-dotnet restore
-dotnet build XRENGINE.slnx
-dotnet build .\XREngine.Editor\XREngine.Editor.csproj
+& ./Tools/Invoke-AgentBuild.ps1 -DotnetArguments @('restore')
+& ./Tools/Invoke-AgentBuild.ps1 -DotnetArguments @('build', 'XRENGINE.slnx')
+& ./Tools/Invoke-AgentBuild.ps1 -DotnetArguments @('build', 'XREngine.Editor/XREngine.Editor.csproj')
 ```
+
+Use the narrowest required project. The wrapper accepts `build`, `test`,
+`publish`, `restore`, and `msbuild`, followed by their normal arguments in
+the `-DotnetArguments` string array. Use this array to preserve options such
+as `'-p:Configuration=Release'` without PowerShell parameter conversion. It
+preserves the command exit code. A shared mutex allows one wrapped command
+at a time across checkouts in the same Windows session. Each command uses
+at most two MSBuild workers with low priority, no worker reuse, and no shared
+C# compiler server. The node-reuse environment setting applies only during
+the command. Editor and RenderBench session builds use this wrapper.
+
+Raw `dotnet` commands and other build tools do not acquire this lock. Agents
+must use the wrapper for builds and run applications with `--no-build`.
+Existing agent chats must read the updated instructions before their next
+build. After all builds stop, `dotnet build-server shutdown` releases retained
+MSBuild and compiler servers. Do not use it during another task's build.
 
 Editor CLI:
 
 ```powershell
-dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj
-dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -- --unit-testing
+dotnet run --no-build --project .\XREngine.Editor\XREngine.Editor.csproj
+dotnet run --no-build --project .\XREngine.Editor\XREngine.Editor.csproj -- --unit-testing
 ```
 
 `XRE_WORLD_MODE=UnitTesting` also boots the Unit Testing World.
