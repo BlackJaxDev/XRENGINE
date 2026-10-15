@@ -760,6 +760,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
         builder.UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
             ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(RenderGraphResourceNames.MakeFboStencil(AdvancedVisibilityResourceNames.FrameBuffer),
+            ERenderGraphAccess.Write, ERenderPassLoadOp.Clear, ERenderPassStoreOp.Store);
     }
 
     private static void DescribeMultisampleRasterAttachments(RenderPassBuilder builder, ERenderPassLoadOp load, bool packedSamples)
@@ -768,6 +770,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             builder.UseColorAttachment(RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBufferMultisample, attachment),
                 ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
         builder.UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBufferMultisample),
+            ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(RenderGraphResourceNames.MakeFboStencil(AdvancedVisibilityResourceNames.FrameBufferMultisample),
             ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
     }
 
@@ -994,6 +998,11 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
         builder.UseDepthAttachment(
             RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
+            ERenderGraphAccess.ReadWrite,
+            load,
+            ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(
+            RenderGraphResourceNames.MakeFboStencil(AdvancedVisibilityResourceNames.FrameBuffer),
             ERenderGraphAccess.ReadWrite,
             load,
             ERenderPassStoreOp.Store);

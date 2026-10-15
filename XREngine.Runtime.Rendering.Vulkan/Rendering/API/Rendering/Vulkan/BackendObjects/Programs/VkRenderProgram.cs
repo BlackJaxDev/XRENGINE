@@ -49,12 +49,11 @@ internal unsafe partial class VkRenderProgram(
     private readonly Dictionary<uint, string> _samplerNamesByUnit = new();
     private readonly Dictionary<string, XRTexture> _samplersByName = new(StringComparer.Ordinal);
     private readonly Dictionary<uint, ProgramImageBinding> _imagesByUnit = new();
+    private readonly VulkanTextureArrayBindingUseSet _legacyTextureArrayUses = new();
     private readonly Dictionary<uint, XRDataBuffer> _buffersByBinding = new();
+    private readonly Dictionary<uint, XRDataBuffer> _retainedLegacyBufferSources = new();
     private ReadOnlyStorageBindingSet? _readOnlyStorageBindings;
     private ComputeDispatchSnapshot? _appliedBindingSnapshot;
-    private readonly List<ComputeDispatchSnapshot> _frameBindingSnapshotPool = [];
-    private ulong _frameBindingSnapshotPoolFrame;
-    private int _frameBindingSnapshotPoolCursor;
     private readonly Dictionary<MaterialBindingSnapshotCacheKey, ComputeDispatchSnapshot?> _frameMaterialBindingSnapshots = [];
     private ulong _frameMaterialBindingSnapshotCacheFrame;
     private readonly object _persistentProgramBindingArtifactSync = new();

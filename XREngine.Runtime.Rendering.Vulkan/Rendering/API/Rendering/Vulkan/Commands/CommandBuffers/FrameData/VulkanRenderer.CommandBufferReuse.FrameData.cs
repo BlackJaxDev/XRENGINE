@@ -724,7 +724,8 @@ namespace XREngine.Rendering.Vulkan
                                         plannerRequest,
                                         imageIndex,
                                         request.ComputeSnapshot!,
-                                        request.ComputeDescriptorKey))
+                                        request.ComputeDescriptorKey,
+                                        request.Context.OutputFrameBuffer))
                                 {
                                     _lastReusableFrameDataRefreshFailureReason =
                                         $"compute op={request.SourceOpIndex}/{request.SourceOpCount} program='{computeProgram.Data?.Name ?? "<unnamed program>"}'";

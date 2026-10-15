@@ -1,8 +1,8 @@
 # Jax2031 Unity And Advanced Vulkan Parity
 
 Date: 2026-10-08
-Last updated: 2026-10-13
-Status: Both prefab routes pass the focused Debug Advanced directional SH, local-light, Mochie probe, clearcoat reflection, backface-normal, texture-publication, and live-edit controls. Probe and local-light buffer lifetime checks fail. The saved harness state is preserved. Matched Unity visual parity, Release validation, and frame-time acceptance remain open.
+Last updated: 2026-10-15
+Status: Both prefab routes pass the focused Advanced shading, live-edit, probe diffuse GI, and first local-light checks. Release continuous capture completes on both routes with bounded target memory. Compute output bindings retire after capture, and recording cost recovers after removal. Frame-data reservations still need an owner lifetime contract for long runs. Model bounds draw on both routes, old gizmo stencil is cleared each frame, and the default-on blendshape filter is implemented. SDR screenshot display transfer matches composited output on both routes. The saved harness state is preserved. Matched Unity visual parity and production frame-time acceptance remain open.
 
 Architecture: [Advanced Render Pipeline](../../../architecture/rendering/advanced-render-pipeline.md), [Mesh Submission Strategies](../../../architecture/rendering/mesh-submission-strategies.md), [Uber Shader Varianting](../../../architecture/rendering/uber-shader-varianting.md)
 Code work: [Unity Poiyomi Advanced Parity TODO](../../todo/rendering/unity-poiyomi-advanced-parity-todo.md)
@@ -1845,12 +1845,129 @@ that rendering resumes. This differs from the persistent renderer pause in
 PID 31784. It still fails the probe buffer lifetime check. All owned editor
 and replay sessions are stopped after evidence review.
 
+## Buffer Publication Lifetime — 2026-10-14
+
+The merge is complete before this work. Code review finds an ownership gap in
+both paths: producer disposal precedes the final CPU consumer of a binding. Probe
+unbind is staged, so the current registry can still resolve the old buffer.
+Forward light growth can retire a native generation already captured by a late
+draw. Native GPU retirement alone cannot protect work that has not yet published
+its descriptor references.
+
+The repair uses counted buffer ownership across imported staging, registry
+records, and Vulkan captured snapshots. Fresh capture requires an active buffer;
+copies from an existing counted use can transfer a retiring buffer. Atomic
+registry lookup retains the buffer through descriptor publication. Final release
+uses the existing native generation retirement path. No fixed frame delay or CPU
+fallback is added. Descriptor rejection now identifies the binding, descriptor
+type, array element, resource owner, retirement owner, and generation.
+
+The first diagnostic build exits before prefab import. The initial editor window
+has no target world, so `SetWorld(null)` does not initialize its Vulkan renderer.
+Startup preference application then rejects Required Advanced because compute
+capabilities are not ready. Move window output admission to the initialized
+`BeginTick` boundary and defer only pre-initialization desktop binding checks.
+Required-mode rejection remains active after initialization.
+
+The diagnostic session is
+`00000000-000000-shared/mcp-sessions/20261014-182611-jax-buffer-lifetime`,
+under the validation root. PID 97204 exits at 18:28 before controls run.
+This failed launch gives no prefab or buffer-lifetime acceptance evidence.
+
+Review also found missing capture cleanup. Immediate snapshot pools now belong
+to generation-owned workspaces, which shutdown drains after work stops. Unlinking
+a program is too early because queued frames can still use its snapshots.
+Copied lighting layers and detached program bindings keep counted source uses.
+Unpooled compute captures transfer ownership to operations and release it on
+failure. Mesh materialization requires the active frame and pipeline context
+before it captures bindings. These checks prevent an ownerless mesh capture from
+entering prepared ingress.
+
+The final isolated Debug editor build has zero warnings and errors. Its session
+is `00000000-000000-shared/mcp-sessions/20261014-185038-jax-buffer-lifetime-validated`.
+Runtime checks below use that frozen binary. No test source changed.
+
+### Native FBX Runtime Check
+
+PID 95856 imports the exact prefab with `xrengine.native-fbx`. Texture publication
+settles at 125 tracked textures with zero pending uploads or validation failures.
+The scalar sequence retains all 21 active material identities and GPU indirect
+strategy 2. First point and spot activation, probe publication, removal,
+recreation, three position changes, and final removal complete without a disposed
+buffer, retired-buffer rejection, renderer pause, or Vulkan VUID. Front and
+oblique output remains visible after these operations.
+
+The spot control changes 34,328 Tank pixels. Reflection-only Face clearcoat
+changes 383 Face pixels. The unmasked probe-tint control changes 34,316 Tank
+pixels. Each restores the checked Face and Tank regions exactly. SH direction
+changes 6,473 Face and 33,995 Tank pixels. Metrics are in
+`reports/lifetime-native-controls.json` under the task evidence root.
+
+`renderdoc/lifetime-native-republish-gpu_frame24229.rdc` executes native shading
+at event 249 with groups `(91, 1, 1)`. All 2,073,600 diagnostic pixels equal
+`0xff00`. The replacement probe has identity 2 and texture handles 123 and 124.
+Its buffer has capacity for two 176-byte records; the environment record is
+240 bytes. Irradiance and prefilter exports contain nonzero HDR radiance.
+Front, oblique, native compute color, and the exported probe texture were viewed.
+
+The run still has recoverable no-terminal-write deferrals and BRDF lookup retries
+during startup and probe topology changes. One startup deformation publication
+is retried before controls begin. These messages do not become a renderer pause;
+later changed images and GPU captures confirm recovery. They do not establish
+zero-stall or production performance acceptance.
+
+### Assimp Readiness Repeat
+
+PID 39088 completes import, texture publication, scalar edits, SH controls, and
+point-light controls. The first spot-light check stops at a pending canonical
+deformation preparation state after its fixed three-second wait. It has no buffer
+lifetime error. A later read reports an empty deferral reason, 29 native draws,
+published GPU resources, executed aggregate dispatch, and no terminal fault.
+This attempt does not complete the spot or probe acceptance sequence.
+
+The control harness now polls explicit preparation readiness for up to 30
+attempts, one second apart, before each image. It records each deferral and still
+fails on a timeout. A fresh process repeats the complete sequence with the same
+binary, so first spot-buffer growth is exercised again.
+
+### Assimp Runtime Completion
+
+PID 19300 completes the fresh Assimp repeat through the exact prefab. The run
+settles at 125 tracked textures with zero pending uploads or validation failures.
+It retains 21 active material identities and GPU indirect strategy 2. First spot
+activation, probe publication, removal, recreation, three position changes, and
+final removal complete. There is no disposed-buffer failure, retired-buffer
+rejection, renderer pause, or Vulkan VUID. No extra preparation wait is needed in
+this repeat. Final front and oblique views preserve the avatar meshes.
+
+The spot control changes 34,328 Tank pixels. Reflection-only Face clearcoat changes
+379 Face pixels. The unmasked probe-tint control changes 34,325 Tank pixels.
+Each restores the checked Face and Tank regions exactly. SH direction changes
+6,472 Face and 33,948 Tank pixels. Metrics are in
+`reports/lifetime-assimp-repeat-controls.json` under the task evidence root.
+
+`renderdoc/lifetime-assimp-repeat-republish-gpu_frame18624.rdc` executes native
+shading at event 245 with groups `(91, 1, 1)`. All 2,073,600 diagnostic pixels equal
+`0xff00`. Probe identity 2 uses texture handles 123 and 124, with 176-byte probe
+records and a 240-byte environment record. Irradiance and prefilter exports have
+nonzero HDR radiance. Front, oblique, native compute color, and probe exports were
+viewed. The owned editor and RenderDoc sessions are stopped.
+
+These runs clear the focused buffer regressions. They do not prove long-run
+resource reclamation, all texture lifetime paths, Release frame time, or VR
+acceptance. Recoverable startup and topology preparation deferrals remain visible.
+
+That buffer-only review also found a staged-unbind lifetime gap in the irradiance
+and prefilter texture arrays. The subsequent texture ownership correction and
+live checks are recorded in "Probe Arrays And Diffuse GI" below.
+
 ## Next Decision
 
 Directional SH, local additive composition, and Mochie probe specular are
-implemented and pass the focused controls on both prefab routes. Repair the
-confirmed probe topology buffer lifetime and identify the retired buffer from
-first local-light activation. Compare all lighting against a matched Unity
+implemented and pass the focused controls on both prefab routes. Counted buffer
+ownership passes probe topology replacement and first local-light activation.
+The subsequent array and planner corrections pass the focused live controls.
+Continue with sustained capture and compare all lighting against a matched Unity
 reference. Automatic SH projection and Unity per-renderer probe assignment remain
 unsupported; engine probe convolution and local attenuation remain in use.
 Keep the saved harness state and compare its visible intersection in that view.
@@ -1864,3 +1981,611 @@ own implementation work. The linked validation document owns visual, motion,
 and performance checks.
 
 The full-frame limits are 16.7 ms for 60 Hz, 11.1 ms for 90 Hz, and 8.3 ms for 120 Hz. These are target budgets, not measured results or avatar-only allowances. No numerical FPS claim is supported by this run.
+
+## Probe Arrays And Diffuse GI — 2026-10-14
+
+The next review found separate lifetime and lighting defects.
+
+- Forward probe arrays were destroyed after staged unbind. Current registries,
+  program bindings, and queued snapshots could still refer to them. Counted
+  texture uses now connect those owners. Array-backed snapshots stay out of
+  persistent immutable artifacts. Native per-probe 2D images retain their
+  existing output-generation publication contract.
+- The native source-mode Uber branch computed probe diffuse but discarded it
+  when it selected source indirect lighting. The forward source branch did the
+  same. Both now add the separate weighted diffuse result after source shading.
+  This preserves source SH without applying albedo twice.
+- Convolution outputs normalized irradiance, approximately `E / PI`. Native
+  shading divided it by PI again. Forward shading multiplied it by world ambient.
+  The two consumers now use the same diffuse Fresnel and normalized energy rule.
+- A temporarily unavailable BRDF descriptor was treated as a replacement.
+  Completed contents now survive that wait. A ready changed epoch still resets
+  the lookup. The producer also waits for a current Advanced output reservation.
+- Mesh alias witnesses were shared across static deformation generations. A new
+  generation could overwrite an older generation's witness. Each generation now
+  owns its witnesses and copies them with retained mesh slices.
+
+The first build passed with zero warnings and errors. It was stopped during
+warm-up after review found an exception-path cleanup omission. The final build
+includes best-effort release of arrays, buffers, and read-only storage when one
+release throws. No test source was changed.
+
+The live controls use the exact saved prefab through each explicit import route.
+They require Advanced Vulkan and GPU indirect submission. Diffuse checks disable
+sunlight, world ambient, authored SH, reflection tint, reflection strength, and
+clearcoat for the checked materials. The probe moves outside its influence and
+back for lighting modes 0, 2, and 6. Front and oblique images, probe replacement,
+first local lights, material edits, and GPU captures provide separate evidence.
+
+The final Debug build passed with zero warnings and errors in 1 minute 34 seconds.
+Native PID 31956 completed material edits, SH controls, first point and spot
+activation, and probe reflection controls. Face and Tank control regions restored
+exactly. A viewport resize changed the output from 1920x1080 to 2560x1369. Pixel
+regions therefore use vertical scale and horizontal centering from the original
+reference regions.
+
+The resize created a new logical BRDF target. Cold mesh materialization rejected
+one authored submission. The receipt correctly reported that it was not submitted,
+and BRDF preparation retried before normal output resumed. This was a recovered
+resize retry, not a false descriptor-epoch invalidation or a probe-publication
+failure. Physical image reuse alone cannot preserve completion for a new logical
+target.
+
+Native diffuse mode 0 changed 11,392 Face pixels and 36,012 Tank pixels when the
+probe moved outside its influence. Both regions restored exactly. Capture
+`renderdoc/texturegi-native-final-gi-diffuse_frame13618.rdc` executed native shading
+at event 316 with groups `(118, 1, 1)`. All 3,504,640 diagnostic pixels were
+`0xff00`. The selected probe had valid 176-byte probe and 240-byte environment
+records. Ambient and SH values were zero. Exported irradiance ranged from 0.400
+to 1.484. The native color and irradiance exports were viewed.
+
+This first run did not complete the lifetime sequence. At 19:49:13, a later probe
+move failed to allocate a full-size depth target. Recovery then failed to create
+a swapchain. The old managed pipeline generation had already been disposed.
+Record this failure separately from the successful diffuse controls; the repeated
+publication and final removal checks require another live run.
+
+The allocation review found a second ownership gap. Probe updates change the
+registry instance revision and descriptor signature without changing the managed
+resource generation. Exact planner lookup correctly rejects the older binding
+key, but publication only removed older resource generations. Each same-generation
+revision could therefore keep a full physical target allocator. The scope's
+nominal cache bound did not run on this publication path. Probe arrays are about
+0.677 MiB per pair before overhead; the retained full target sets are the material
+cost. The proposed correction removes obsolete registry revisions only after an
+exact, complete replacement plan exists. Descriptor signatures are hashes and
+must not be ordered as generation counters. Failed preparation must retain the
+last valid plan.
+
+Assimp PID 61912 confirmed this growth without a resize. The planner census
+reported 616.40 MiB before probes, 1,849.19 MiB after the first publication,
+2,465.59 MiB after moving the probe away, and 4,314.78 MiB after restoring it.
+The allocator count grew from 2 to 5, 6, and 9. The two initial allocators include
+one empty editor planner. The viewport stayed at 1920x1080.
+
+The correction now removes older registry instance revisions for the same output,
+size, and pass signature after a complete replacement is published. Every scope
+entry path requires a complete exact-key plan. A preparation wait uses the existing
+pending exception, with recoverable adapters in pipeline authoring and primary
+command recording. The last valid plan survives an incomplete replacement.
+
+The final source build passed with zero warnings and errors in 1 minute 32 seconds.
+Native PID 97292 completed the full control sequence. Every diffuse probe sample
+retained 616.40 MiB of planner target images. Native allocated memory settled at
+2,914.13 MiB after a temporary 3,997.79 MiB capture sample. Repeated moves did not
+increase that settled value. The final full-avatar front and oblique images were
+viewed. All 125 textures were resident, with no pending uploads or terminal fault.
+
+Native diffuse mode 0 changed 7,102 Face pixels and 22,527 Tank pixels. Modes 2
+and 6 changed 7,102 and 22,525 pixels. All three front controls restored those
+regions exactly. The oblique restore had 242 changed pixels at the left edge of
+the nominal Tank region, over the hair, with mean absolute RGB difference 0.010.
+Face restored exactly. The large texture change from the pressured earlier run
+did not recur. Point, spot, SH, reflection tint, and reflection-only clearcoat
+controls also restored the checked regions exactly.
+
+A separate native probe captured the live scene without an environment asset.
+It published capture version 1 with usable IBL output. This first check left
+`UseAdvancedCapturePipeline` at its default false. Required Advanced on the
+viewport does not select the probe's capture pipeline. Its GPU exports were
+nearly black: native irradiance mean 0.0000236, Assimp mean 0.0000233. These
+values do not establish complete scene capture. The follow-up explicitly selects
+Advanced capture and retains the source cubemap for inspection.
+The validation layer was enabled, but RenderDoc suppressed its debug output.
+The absence of VUID messages is not a validation-layer acceptance result.
+
+The cache correction bounds retained full target sets. It does not add compatible
+physical-target reuse across descriptor revisions. Such reuse needs a separate
+ownership review; the existing donor helper does not compare resource generation
+or logical view identity. Do not weaken exact descriptor admission to obtain it.
+Continuous realtime capture and Release frame-time acceptance remain open.
+
+Assimp PID 72228 completed the same sequence with the final binary. It retained
+21 active material identities, GPU indirect strategy 2, and all 125 textures.
+No upload remained pending. Probe replacement, three further moves, removal,
+and scene capture completed without a terminal renderer fault. The final full
+front and oblique images were viewed. The saved harness remained enabled.
+
+Assimp diffuse modes 0, 2, and 6 changed 7,104 Face pixels and respectively
+22,476, 22,474, and 22,474 Tank pixels. All front controls restored both regions
+exactly. The oblique Face region restored exactly. The Tank region had 233
+changed pixels over the hair at its left edge. Point, spot, SH, reflection tint,
+and reflection-only clearcoat controls also restored the checked regions.
+
+Assimp planner target storage stayed at 616.40 MiB. Native allocated memory
+settled at 2,626.22 MiB through repeated diffuse controls. A capture temporarily
+raised it to 4,253.78 MiB, then retirement returned it to the settled value.
+The scene-capture planners include empty contexts; allocator count alone does
+not represent retained target storage. The full-target growth seen before the
+correction did not recur on either route.
+
+Final replacement captures execute native shading at event 249 for native FBX
+and event 245 for Assimp. All 2,073,600 diagnostic pixels equal `0xff00` in each
+capture. The selected replacement probe uses valid 176-byte rows and a 240-byte
+environment record. Static-environment irradiance means are 0.876 and 0.880.
+The native color and probe exports were viewed. This confirms the native
+bindless 2D probe path. The fragment resource audit finds no lit array consumer
+in the saved active outfit; that audit alone does not prove late-array sampling.
+
+The explicit Advanced scene-capture repeat used native PID 63112. Capture
+`advancedprobe-native-scene_frame16613.rdc` has nonzero scene irradiance with
+mean 0.01718 and maximum 0.06293. The prefilter mean is 0.01650 and maximum is
+1.937. Its viewed export contains the avatar. Native shading at event 251 has
+2,073,600 valid diagnostic pixels. This is stronger evidence than the nearly
+black Default-capture result. The later frame does not retain a referenced source
+cubemap in RenderDoc, so it is not a six-face geometry acceptance check.
+
+A temporary lit transparent sphere was then added to exercise packed arrays.
+It exposed a separate replay gate defect. FXAA and disabled motion blur do not
+need velocity output, but transparent participation still scheduled the velocity
+variant. `AdvancedColoredAlphaTemporalVariantFactory.BindTemporalMatrices` then
+required a temporal snapshot that this profile had not started. The renderer
+backed off through 49 failures. Static probe convolution started but could not
+complete during those failures. General timing and preparation summaries did not
+report this render error; the stopped-session logs supplied the decisive evidence.
+The diagnostic sphere and probe were removed. No prefab material was changed.
+
+Assimp repeats explicit Advanced scene capture in
+`advancedprobe-assimp-scene_frame14280.rdc`. Irradiance mean is 0.01714 and maximum
+is 0.06281. Prefilter mean is 0.01647 and maximum is 1.937. Native shading at
+event 245 has 2,073,600 valid diagnostic pixels. Front and oblique full-avatar
+images preserve the meshes after probe removal. These checks confirm static
+environment and one-shot Advanced scene-probe GI on both import routes. They do
+not establish continuous capture, every cube face, or Unity baked-probe parity.
+
+The transparent replay correction requires `ShouldGenerateVelocityBuffer()` as
+well as visible participating transparent commands. It skips unused replay for
+the checked FXAA profile with motion blur disabled. It preserves motion-blur
+eligibility and does not replace missing temporal matrices. Motion-blur-only
+transparent output remains a separate unvalidated matrix-contract case. The
+updated Debug build passed with zero warnings and errors in 1 minute 57 seconds.
+
+The corrected transparent replay completed on native PID 84792 and Assimp
+PID 21416. Both routes added, removed, and recreated a static environment probe
+with the lit transparent sphere present. No render exception recurred, and
+planner target storage stayed at 616.40 MiB. However, the sphere's 150 by 200
+pixel control region did not change when the probe was removed. Native draw 528
+and Assimp draw 522 bound a zero-valued 1 by 1 texture to both fragment array
+bindings 7 and 8. Their physical probe outputs contained valid lighting data.
+Thus native opaque GI passed, but these captures did not validate late-array GI.
+
+Native diagnostic PID 81272 isolated the failed readiness condition. The probe
+arrays, buffers, world, renderer, and resource generation matched. Only the BRDF
+lookup was unavailable after probe publication. Its producer remained complete
+with no pending receipt and stored descriptor epoch 2. The read-only Vulkan
+sampling query rejected the changed planner image. The recovery path prepared
+only the fullscreen mesh, then repeated the same read-only query. It never
+prepared the framebuffer attachment that could publish the replacement image.
+This rules out the shader macro and import route as causes of this control failure.
+
+The correction adds an explicit renderer attachment-preparation boundary. Vulkan
+uses its existing framebuffer attachment preparation without synchronous uploads.
+BRDF recovery then requires a ready, new nonzero epoch before it invalidates the
+old completion and authors the GPU producer again. It does not treat unavailable
+descriptors as proof that prior GPU work can be discarded.
+
+Native PID 5636 validated the attachment correction. The lookup recovered at
+each probe publication or removal. Rejected submissions entered the existing
+retry path and settled; the control did not keep re-authoring in steady state.
+The sphere region changed 29,940 of 30,000 pixels on probe removal, with mean
+absolute RGB difference 112.37. Its removed-probe mean returned to the earlier
+baseline. Both full-avatar views remained intact after control removal. Planner
+target storage stayed at 616.40 MiB. The saved harness remained enabled.
+
+Capture `probefixed-native-late-1_frame14144.rdc` shows the sphere at event 528.
+Its fragment array slots 7 and 8 bind real 32 by 32 irradiance and 256 by 256
+prefilter arrays, with 6 and 9 mips. Irradiance RGB spans approximately 0.40 to
+1.48; prefilter RGB reaches approximately 412. Both bound exports were viewed.
+This directly validates late-array consumption after replacement, unlike the
+earlier native-opaque-only capture. The replay and editor sessions were closed.
+Temporary readiness instrumentation was removed before the final build.
+
+The final build passed with zero warnings and errors in 1 minute 38 seconds.
+Assimp PID 6072 completed the same replacement and removal sequence. Its sphere
+control changed the same 29,940 pixels with the same mean absolute difference
+and removed-probe baseline. All 21 active materials and 125 resident textures
+remained available. No upload remained pending. Preparation used strategy 2
+without CPU readback or fallback and had no final deferral or terminal fault.
+The full-avatar front and oblique images were viewed after control removal.
+Planner target storage remained 616.40 MiB; native allocated bytes were
+2,623.53 MiB at the final sample. Stopped-session logs contain no render
+exception, disposed-resource error, target allocation failure, or renderer
+backoff. Cold preparation and BRDF submissions still have recoverable retries.
+These checks do not establish clean validation-layer output under RenderDoc.
+
+Final capture `probefinal-assimp-late-1_frame10783.rdc` confirms the sphere's
+fragment arrays at event 522. Bindings 7 and 8 contain the nonzero 32 by 32
+irradiance and 256 by 256 prefilter arrays, with 6 and 9 mips. Irradiance RGB
+ranges from 0.399658 to 1.484375; prefilter RGB reaches 412. Both exports were
+viewed. The replay was closed. All owned editor sessions are stopped. Source
+changes remain unstaged, and no test source was changed. Continuous realtime
+capture, Release frame-time acceptance, and matched Unity lighting remain open.
+
+## Continuous Probe Capture And Release — 2026-10-14
+
+The first Release run used Vulkan Required Advanced, GPU indirect submission,
+FXAA, a 1920 by 1080 desktop output, and the ImGui editor. Vulkan validation,
+RenderDoc, and code-profiler instrumentation were disabled for timing. The GPU
+was an NVIDIA GeForce RTX 3090 with driver 617.14. GPU clocks were not locked.
+The native import reached shader readiness and settled at 125 streamed textures
+with no pending uploads or texture validation failures. The build passed with
+zero warnings and errors.
+
+A scene probe used Advanced capture, 128-pixel cube faces, irradiance resolution
+16, and the default 100 ms capture request interval. Transient environment
+release remained enabled. The first run found retained planner states: baseline
+had two allocators and 616.40 MiB of images. At capture version 5, it had 37
+allocators and 714.71 MiB of images. At version 13, it had 83 allocators and
+847.73 MiB of images. Total Vulkan allocation bytes rose from 2.87 GB to
+19.15 GB. The run was stopped. Its final viewed viewport image was black.
+
+Each completed capture destroys its six face framebuffers. Their replacement
+identities prevent the existing same-output generation retirement rule from
+matching the old plans. Each retained plan also contains large visibility
+buffers. The image-only planner counter therefore understates this growth.
+The fixed eight Advanced output banks do not explain the rising planner count.
+Probe mip convolution also creates private materials that quad destruction does
+not own. Those materials need explicit destruction with their mip targets.
+
+The correction removes inactive cached plans only after their exact output
+framebuffer has completed destruction. It runs on cache hits as well as new
+preparation. Allocators use the existing GPU completion retirement path. Image
+groups still owned by remaining active, published, or preparation states stay
+alive. Failed preparation also retires removed states. Exact planner-key
+matching remains unchanged. Mip-target destruction now releases its private
+material. The corrected Release build passed with zero warnings and errors in
+1 minute 44 seconds. Runtime revalidation is in progress.
+
+The first 45-second baseline had eight cold mesh admission retries. Its measured
+render callback P50 was 8.67 ms, but actual presentation P50 was 43.86 ms. The
+render thread waited about 34.93 ms for fresh collection publication. The
+`frame_output_whole_frame_ms` field measures the render callback; it does not
+include this preceding wait. It must not be reported as complete frame cadence.
+The continuous window had 1,002 rejected frames at `FramePlanSeal`: an
+`XRRenderBuffer` attachment had no native backing. It is not valid performance
+evidence. This readiness failure needs a separate check after the memory fix.
+
+The first corrected run bounded the live planner count to five to seven and
+continued through capture version 24. However, native allocation bytes reached
+24.30 GB. The resource-owner census showed 3,065 pending images and 793 pending
+image views. Buffer ownership was no longer the main source of growth. After
+capture stopped, allocation bytes fell to 9.51 GB, but the oldest pending
+retirement was over 109 seconds old. This is delayed destruction, not merely
+unused VMA block capacity.
+
+`VulkanRetirementMeter.ReserveScanLimit` divided 32 image inspections across
+eight registered queues. Normal desktop drainage inspected only four entries
+per slot and frame. High-water admission did not increase that inspection
+limit. The correction grants a pressured queue a bounded emergency scan budget:
+`max(ordinaryCap * 4, highWaterMark * 4)`, less inspections already used in the
+frame. Images can inspect at most 256 entries per queue and frame. The ready
+batch still holds at most 64 bundles. Completion and dependency checks remain
+unchanged. The next Release build passed with zero warnings and errors in
+1 minute 45 seconds.
+
+Further timing checks separate 30-second windows without per-frame profile
+logging from detailed runtime captures. The former use completed desktop
+presentation counters and elapsed wall time. The latter report CPU callback,
+GPU timestamp, and presentation distributions with observer overhead included.
+
+The native repeat completed 193 capture updates over about 207 seconds. The
+measured fixed and moved windows held native allocation bytes between 5.65 and
+6.28 GB. Ten seconds after capture stopped, allocation bytes fell to 3.27 GB;
+the initial value was 2.96 GB. Planner image storage returned to 616.40 MiB.
+No terminal render fault occurred. The exported irradiance and prefilter arrays
+contained finite, nonzero scene lighting. The prefilter image showed the avatar.
+Front and oblique images remained intact after capture and probe removal.
+
+Unprofiled completed-presentation rates were 22.38 FPS before capture, 14.11 FPS
+with the fixed probe, 9.09 FPS after moving it, and 12.73 FPS after removal.
+These results do not meet a 60 Hz desktop budget. A fresh CPU scope dump after
+removal measured `ScenePlan` at 41.983 ms out of 42.043 ms for Advanced
+publication. Global preflight and the final reuse check each took 0.020 ms.
+Textured draws cannot use the committed untextured material-plan path, so the
+full plan repeats source material encoding even when material inputs are stable.
+The correction must retain fresh texture metadata and sampler checks during
+both planning and prepared-plan consumption. Material versions alone cannot
+prove texture residency or imported metadata stability.
+
+The stopped-capture retirement meter retained 36 image bundles with no pending
+buffers. Its third planner entry had no physical images. This small remainder
+is separate from the resolved planner growth and scan-budget backlog. Its
+dependency owners still need inspection. The legacy retirement `pending_count`
+field reports zero here; use `metering.pendingRetirementCount` and its per-class
+backlog for this check.
+
+The material correction adds committed reuse only for `NativeUberV1` with the
+fixed opaque or masked layout, zero companion schemas, and 2D texture sources.
+It shares the role-only source encoder with the full path. Full-plan reuse,
+the unchanged-row gate, and prepared-result consumption compare fresh texture
+records and sampler state against committed bindings. Five material revisions,
+exact headers, coverage, and render state remain required. Arrays, cubes, and
+other textured families keep the full plan. The Release build passed with zero
+warnings and errors in 1 minute 24 seconds. Fresh runs include upload-time
+sampler edits and tank detail strength `2 -> 0 -> 2` before timing.
+
+The repeated native visibility failure text in the detailed profiles was stale:
+its stored frame identifier did not match any measured frame. Current continuous
+windows did contain frame-slot deferrals, which must stay separate from completed
+presentation rates. The baseline detailed profile was removed by the normal
+three-capture retention rule when the fourth capture started. Later checks copy
+each completed profile to the task evidence folder before the next capture.
+
+The next native run completed 219 capture updates over about 207 seconds.
+Native allocation bytes stayed between 6.21 and 6.29 GB during the fixed and
+moved windows. They fell to 3.43 GB after removal and retirement. Planner image
+storage returned to 616.40 MiB. The remaining census contains 18 planner images
+and 18 `AdvancedVisibility.LateDepthPyramid` views, with no pending buffers.
+These are bounded retained descriptor contents, separate from the earlier
+unbounded capture-plan leak. Do not force-release their dependency pins.
+
+The first material reuse change did not remove the main CPU cost. A fresh dump
+still measured `ScenePlan` at 30.484 ms. Sixteen of the seventeen Native Uber
+materials bind a cube map. The initial reuse predicate deliberately rejects
+these sources. A cube content witness must cover each mip and face identity,
+CPU data identity, dimensions, format, invalidation, and concurrent field writes.
+A `Resizable=false` flag alone cannot prove that content is unchanged.
+
+The tank uses `_ColorThemeIndex=1`. Its theme replaces `_Color`; changing the
+latter is not a useful positive control. Changing `_GlobalThemeColor0` produces
+a clear tank color change, then restoring it returns the saved color. The detail
+normal strength control remains useful for identity and readiness checks, but
+its small pixel response must not be treated as a strong color control.
+
+Another editor overlapped the baseline and fixed-probe timing windows of this
+intermediate run. Those timings are excluded from acceptance. The moved and
+removed windows ran alone and measured 9.77 and 14.89 completed presents per
+second. Final timing must repeat both explicit routes after cube reuse changes.
+
+The retained-image owner check found one active Advanced capture bank with a
+retained queue-domain watermark. This watermark alone does not prove pending GPU work.
+The shared capture viewport and its pipeline stay
+cached after probe removal. The 18 images and 18 views fit two retained frame-slot
+descriptor sets in this bank. Planner inactivity alone does not authorize bank
+destruction. Fixed bank and descriptor-slot capacities bound this cache; 36 is
+the observed residue, not a general maximum. This residue remains owned; no
+forced pin release is added.
+
+The cube reuse correction now has a separate `XRTextureCube.CanonicalSource`
+implementation. It checks exact CPU face identity and content epochs without
+steady-frame allocation. GPU-authored cubes without a completed-write contract
+remain on the full plan. A read-only concurrency review accepted the witness and
+its writer checks. Final Release runtime validation follows.
+
+The final cube-witness Release build passed with zero warnings and errors in
+1 minute 7 seconds. The fresh native run settles all 125 tracked textures after
+an upload-time sampler edit. Detail strength `2 -> 0 -> 2` keeps all 21 material
+identities and GPU submission strategy 2. The active theme color also changes
+and restores. Single-image inspection and full-frame pixel counts confirm that
+the face, body, and clothing remain present. The first isolated 30-second
+baseline measures 62.43 completed presents per second. The initial full-plan
+runs measured about 22 to 26 FPS. Continuous capture and the Assimp repeat are
+still in progress at this point.
+
+The final native run completes 242 capture updates. It reports 62.43 FPS before
+capture, 24.99 FPS with the fixed probe, 10.69 FPS after moving the probe, and
+18.67 FPS after removal in separate 30-second windows without capture logging.
+Only the owned editor is present in all four windows. Capture samples hold
+native allocation bytes between 5.19 and 5.95 GB. Ten seconds after capture
+stops, allocation bytes fall to 3.18 GB and planner image storage returns to
+616.40 MiB. Both exported arrays have finite, nonzero lighting, and front and
+oblique images remain intact.
+
+The final collection sample measures `ScenePlan` at 9.253 ms. Two later complete
+render samples measure `RecordCommandBuffer` at 32.394 and 37.132 ms; their
+`MainOpLoop` children take 20.464 and 23.862 ms. This remaining CPU cost prevents
+frame-budget acceptance after the probe is removed. Clearing selection yields
+20.81 FPS, so selection alone does not explain it. The stopped-capture memory
+result is stable. Do not classify this CPU regression as continued native-memory
+growth. The Assimp repeat uses the same binary while this cost is investigated.
+
+The same-binary Assimp run completes 249 capture updates. Its unprofiled windows
+measure 62.00 FPS before capture, 23.68 FPS with the fixed probe, 11.66 FPS after
+moving it, and 20.23 FPS after removal. Only the owned editor is present. Native
+allocation samples during capture stay between 5.67 and 6.15 GB. After stopping
+capture they fall to 2.97 GB, then settle at 3.12 GB after removal. Both exported
+arrays contain finite, nonzero lighting. Front and oblique images retain the
+avatar. The detailed profiles contain 328 fixed-window and 216 moved-window
+preparation deferrals, with no current rejected frames. Desktop completed
+presentations, rather than mixed-output profile samples, define the FPS above.
+
+### Compute Output Ownership And Persistent Recording Cost
+
+The live owner census identifies 6,784 `Compute.DescriptorSet` records and 1,702
+`VkRenderProgram.ComputeUniformBuffer` records after native capture. The direct
+compute binding key includes output identity. Persistent programs kept those
+keys until layout teardown, even after capture framebuffers were destroyed.
+The correction records the exact framebuffer owner for direct-compute keys.
+The pre-record retirement boundary releases destroyed-output buffers and
+matching descriptor pools through the normal ticketed retirement path. It also
+removes source signatures. Content-shared mesh-task keys remain separate.
+Destroyed outputs cannot refresh a reusable direct-compute descriptor binding.
+
+The mesh frame-data reservation count also grows from 32 to 4,829 in native and
+to 5,046 in Assimp. These are retained ranges, not per-frame usage counters.
+Output-family draw slots increase the uniform-array capacity. Each ordinary draw
+then scans every old array entry in `EnsureDescriptorUniformBuffers`, before its
+reuse return. `HasReusableAutoUniformBuffers` repeats the auto-uniform scan.
+A live detail trace after Assimp probe removal measures one mesh preparation at
+6.258 ms and its descriptor bind at 6.500 ms. Most other draws take less than
+0.05 ms in each scope. The correction records array validity when storage is
+published and reuses that exact-array certificate. A changed auto-uniform slice
+updates its certificate. Selected-slice and native lifetime checks remain.
+The correction does not recycle retained dynamic offsets.
+
+### Model Inspector Controls
+
+The user reports that `ModelComponent.RenderBounds` no longer has an effect.
+The live Assimp check confirms that the value reaches `RenderableMesh`, that
+its bounds command is enabled, and that the CPU bounds source is selected.
+The Advanced command chain lacks `VPRC_RenderDebugShapes`. The correction adds
+both depth-tested and overlay debug-shape draws after the late scene passes,
+under the existing debug capture policy. It does not change mesh submission.
+The Release build has zero warnings and errors. The live native viewport now
+shows cyan mesh bounds. Turning Body bounds off removes its box. Face bounds
+remain independent. Front and oblique views show the debug shapes.
+
+The later three-second capture initially shows no bounds. Selecting the mesh
+then shows the box, and subsequent toggles work without selection. A fresh
+native process with no selection and a 30-second first-use wait shows the box.
+The earlier screenshot overlaps a render-command stall that recovers after
+capture. It does not establish a selection dependency. The construction audit
+also finds that new `RenderableMesh` objects do not inherit the component flag.
+`CreateRenderableMesh` now copies `RenderBounds` before publication, so a model
+rebuild preserves the setting. Final repeated checks use a first-use wait.
+The final Release build has zero warnings and errors. Both routes show cyan
+bounds in front and oblique views without selection. Turning the switch off
+removes the cyan box. However, dark line residue remains at its earlier screen
+positions. It persists after a later camera move and is visible in composited
+window output. FXAA is active, so TAA/TSR history is not the cause. This separate
+output defect is under RenderDoc investigation; bounds visual acceptance stays
+open until the residue is resolved.
+
+RenderDoc proves that the first native visibility pass uses color Clear, depth
+Clear, and stencil Load. The exported combined depth/stencil image retains both
+the front and oblique bounds after the switch is off. Debug shapes write bit
+`0x80`; `PostProcess.fs` bypasses tone mapping where that bit is set. This explains
+the dark screen-fixed residue. The defect is not retained CPU line geometry,
+depth writes from debug lines, temporal AA, or the PNG transfer.
+
+`VPRC_AdvancedRenderStage` now declares stencil beside depth for initial and late
+canonical and multisample visibility raster. Initial raster clears it; late
+raster loads it. MSAA resolve clears canonical stencil because that resolve
+writes depth only. This uses the existing zero clear value and preserves
+same-frame selection and gizmo bits. The fix does not clear stencil after
+forward work. The corrected Release build has zero warnings and errors.
+The Assimp repeat shows clean front and oblique bounds and no residue after
+bounds are disabled. RenderDoc now records color Clear and depth/stencil Clear
+for the first visibility pass. The exported stencil channel changes from
+48,824 nonzero pixels with maximum 128 to zero nonzero pixels after the fix.
+Both exported images were viewed. The capture files use `bounds-residue-assimp`
+and `bounds-stencil-fixed-assimp` prefixes in the existing run. Both replay
+sessions are closed. Native validation with the same binary also shows clean
+front and oblique bounds and a clean off-image. These images were viewed. The
+final evidence prefixes are `bounds-stencil-fixed-assimp` and
+`bounds-stencil-fixed-native`. The checks use FXAA and CPU culling bounds;
+MSAA and live GPU bounds remain separate validation cases. All owned editor
+and replay sessions are stopped after the checks.
+
+The requested default-on blendshape display filter checks nonzero position,
+normal, or tangent deltas. The all-LOD list retains a name used by any LOD;
+a submesh list checks its own mesh. The effect snapshot reads the current
+buffer generation under the mesh read scope and verifies its source stamp.
+Strict active-list reads reject invalid ranges and indices. Unreadable data
+keeps controls visible. The filter does not change imported data or weights.
+See the [Model Inspector guide](../../../user-guide/editor/model-inspector.md).
+The live native inspector starts with the filter enabled and shows three Body
+entries, including an effective shape at zero weight. The unfiltered list shows
+the other imported channels. The check changes no source asset. A fresh process
+is used for timing after the interactive inspector check.
+
+### Screenshot Display Transfer
+
+The user supplies a side-by-side image of the editor viewport and its MCP PNG.
+The PNG is darker. The default MCP route reads `LastRenderedTargetFBO`, which
+uses `R16G16B16A16Sfloat` in this setup. Vulkan pixel conversion clamps its RGB
+values directly to bytes. The desktop presentation path blits the same linear
+target to an sRGB swapchain, which applies the display transfer. The exported
+PNG omits that transfer. This is an export defect, not evidence of a material
+lighting difference.
+
+Earlier images still show geometry, missing meshes, and relative control
+responses from the same export path. They do not establish absolute displayed
+brightness or a color match with Unity. Raw irradiance and prefilter statistics
+remain valid. The correction must encode screenshot RGB for SDR display while
+preserving alpha, raw texture reads, and already encoded swapchain output.
+The correction applies only to the exact float target retained by a validated
+submitted SDR presentation. It encodes RGB with the piecewise sRGB transfer
+and preserves alpha. Raw texture reads, offscreen captures, and composited
+swapchain bytes keep their existing behavior. The MCP response records
+`readback.output_transfer` as `LinearToSrgb` or `Unchanged`.
+
+The Release build has zero warnings and errors. Both prefab routes pass the
+front and oblique comparison against composited window output. The viewport
+reports `LinearToSrgb`; the sRGB swapchain reports `Unchanged`. The viewed PNGs
+match the displayed skin, hair, and tank brightness. In a fixed unobstructed
+region, mean absolute RGB error is 0.047 to 0.049 byte levels out of 255.
+The 99th percentile is one byte level in all four pairs. Separate frames can
+still differ at animated or antialiased edges; the maximum difference is 44.
+This validates SDR export in this Vulkan Advanced setup, not HDR capture or
+matched Unity lighting. Evidence uses the `display-transfer-native` and
+`display-transfer-assimp` prefixes and the comparison report in the existing
+validation run. The bounded stopped-log scan finds no device-loss,
+disposed-resource, fatal-renderer, or shader-failure marker in the native and
+Assimp screenshot sessions. Validation layers were disabled; these observations
+do not establish a validation-layer pass.
+
+### Remaining Capture Reservation Lifetime
+
+The mapped frame arena has limits of 131,072 reservations and 32 MiB of range
+storage. The measured native run retains 4,829 reservations and 764,176 bytes;
+Assimp retains 5,046 reservations and 804,224 bytes. There is no active-generation
+recovery after exhaustion. At this owner mix, the record limit is about 6,400
+additional captures away. This estimate is not a completed soak test.
+
+The frame-data manifest currently gives each physical capture target new draw
+slots. Stable component/face `OutputId` can stop that part of the growth, but
+transient IBL material owners also need retirement. Frequency ranges can be
+shared by multiple outputs. Deleting them by destroyed framebuffer is unsafe.
+The active todo records the required owner and GPU completion contract. The
+uniform-array certificate removes repeated scans; it does not reclaim ranges.
+
+### Release Repeat After Compute Ownership And Array Certificates
+
+The final same-binary native run completes 453 captures. Unprofiled 30-second
+windows measure 57.01 FPS before capture, 29.03 with the fixed probe, 28.55 after
+moving it, and 46.56 immediately after removal. The later detailed profile has
+an 18.30 ms median presentation interval, close to the 17.95 ms baseline.
+Fixed and moved profiles each have 536 recoverable deferrals and no rejected
+frames. Native allocation returns to 3.26 GB after stopping capture. Planner
+image storage returns to 616.40 MiB. Direct-compute descriptor sets fall from
+the earlier 6,784 to eight; compute uniform buffers fall from 1,702 to eight.
+This directly validates destroyed-output retirement. The frame-data arena still
+holds 8,875 reservations and 1,394,256 bytes after the longer run.
+
+The same binary completes 463 captures through Assimp. Unprofiled windows
+measure 61.82, 27.53, 27.08, and 52.90 FPS in the same order. Face bounds and
+selection appear in later images, so this is not a controlled importer-cost
+comparison. The separate recovery sequence disables Face and Body bounds,
+clears selection, restores the camera, waits five seconds, and measures 62.14
+FPS. The saved Face=true readback is before the reset commands. There is no
+saved readback after them. Fixed and moved profiles have 568 and 532 deferrals,
+with no rejected frames. Native allocation returns to 3.22 GB, with the same
+planner image storage. Eight compute descriptor sets and six compute uniform
+buffers remain. The arena retains 9,283 reservations and 1,468,624 bytes.
+
+Both routes keep 125 streamed textures and 21 active materials through sampler,
+detail-normal, and theme-color controls. The tank color control changes its
+pixel region and restores it with a small residual pixel difference. Both
+irradiance arrays and prefilter arrays contain finite, nonzero radiance. Front
+and oblique images retain the avatar. The stopped native log scan finds no
+disposed-resource, device-loss, or terminal-renderer marker in the saved logs.
+Vulkan validation is disabled in these performance sessions; zero validation
+counters do not establish a validation-layer pass.
+
+Evidence prefixes are `realtime-owned-clean-native` and
+`realtime-owned-clean-assimp` under the existing validation run. The session is
+`jax-realtime-owned`; native PID 73448 and Assimp PID 12100 use the same Release
+binary. The native CPU dump is incomplete and is not a timing distribution.
+The [validation table](../../testing/rendering/jax2031-advanced-parity-validation.md#release-continuous-capture-result)
+records the workload and remaining acceptance limits.

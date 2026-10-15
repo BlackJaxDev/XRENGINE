@@ -730,8 +730,6 @@ public static partial class EditorImGuiUI
                 using (Engine.Profiler.Start("UI.DrawShaderProgramLinksPanel"))
                     DrawShaderProgramLinksPanel();
             }
-            if (XREngine.Diagnostics.AssetDiagnostics.ConsumePendingDisplayFlag())
-                _showMissingAssets = true;
             if (_showMissingAssets)
                 DrawMissingAssetsPanel();
             if (_showGlobalEditorPreferences)
@@ -1516,8 +1514,13 @@ public static partial class EditorImGuiUI
                 ImGui.EndMenu();
             }
 
-            DrawProjectStatusIndicator();
-            DrawJobProgressIndicator();
+            UpdateNotificationLabels();
+            float notificationX = MathF.Max(ImGui.GetCursorPosX(),
+                ImGui.GetWindowWidth() - ImGui.GetStyle().WindowPadding.X - GetNotificationMenuWidth());
+            float statusRight = notificationX - ImGui.GetStyle().ItemSpacing.X;
+            DrawProjectStatusIndicator(statusRight);
+            DrawJobProgressIndicator(statusRight);
+            DrawNotificationMenu(notificationX);
             ImGui.EndMainMenuBar();
         }
 
@@ -1571,7 +1574,7 @@ public static partial class EditorImGuiUI
         }
 
 
-        private static void DrawProjectStatusIndicator()
+        private static void DrawProjectStatusIndicator(float rightEdge)
         {
             string label;
             bool sandboxMode = Engine.CurrentProject is null;
@@ -1589,11 +1592,11 @@ public static partial class EditorImGuiUI
             var style = ImGui.GetStyle();
             Vector2 textSize = ImGui.CalcTextSize(label);
             float regionMinX = style.WindowPadding.X;
-            float regionMaxX = ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X;
+            float regionMaxX = rightEdge;
             float regionWidth = regionMaxX - regionMinX;
 
             float centeredX = regionMinX + (regionWidth - textSize.X) * 0.5f;
-            float minX = regionMinX + style.WindowPadding.X;
+            float minX = originalCursor.X + style.ItemSpacing.X;
             float maxX = regionMaxX - style.WindowPadding.X - textSize.X;
             if (maxX < minX)
                 return;
@@ -1619,7 +1622,7 @@ public static partial class EditorImGuiUI
         }
 
 
-        private static void DrawJobProgressIndicator()
+        private static void DrawJobProgressIndicator(float rightEdge)
         {
             var snapshots = EditorJobTracker.GetSnapshots();
             if (snapshots.Count == 0)
@@ -1666,7 +1669,11 @@ public static partial class EditorImGuiUI
             float indicatorWidth = Math.Max(160f, Math.Min(320f, windowWidth * 0.35f));
             float cursorY = ImGui.GetCursorPosY();
 
-            float desiredX = windowWidth - indicatorWidth - style.WindowPadding.X - style.ItemInnerSpacing.X;
+            indicatorWidth = MathF.Min(indicatorWidth, rightEdge - ImGui.GetCursorPosX());
+            if (indicatorWidth <= 0f)
+                return;
+
+            float desiredX = rightEdge - indicatorWidth;
             float cursorX = ImGui.GetCursorPosX();
             if (desiredX < cursorX)
                 desiredX = cursorX;

@@ -112,6 +112,24 @@ public static class NativeUberMaterialSourceEncoder
             }
         }
 
+        return TryEncodeTextureRoles(material, resources, out compatibilityReason, out reason);
+    }
+
+    /// <summary>Encodes the current fixed sampler roles without reading scalar values.</summary>
+    internal static bool TryEncodeTextureRoles(
+        XRMaterial material,
+        Span<AdvancedGpuResourceBindingSource> resources,
+        out EAdvancedCanonicalCompatibilityReason compatibilityReason,
+        out string reason)
+    {
+        compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
+        reason = string.Empty;
+        if (resources.Length != NativeUberMaterialSchema.TextureRoleCount)
+        {
+            compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
+            reason = "The native Uber texture destination does not match its fixed schema.";
+            return false;
+        }
         for (int role = 0; role < resources.Length; ++role)
         {
             string name = NativeUberMaterialSchema.TextureRoles[role];

@@ -199,6 +199,17 @@ public sealed class RenderResourceRegistry
     /// <param name="texture">Texture instance whose Name becomes the logical registry key.</param>
     /// <param name="descriptor">Optional descriptor override to register before binding.</param>
     public void BindTexture(XRTexture texture, TextureResourceDescriptor? descriptor = null, bool ownsInstance = true)
+        => BindTextureCore(texture, descriptor, ownsInstance, transferRetiringUse: false);
+
+    /// <summary>Transfers one counted use from staged imported bindings.</summary>
+    internal void BindTransferredTexture(XRTexture texture, TextureResourceDescriptor descriptor)
+        => BindTextureCore(texture, descriptor, ownsInstance: false, transferRetiringUse: true);
+
+    private void BindTextureCore(
+        XRTexture texture,
+        TextureResourceDescriptor? descriptor,
+        bool ownsInstance,
+        bool transferRetiringUse)
     {
         ArgumentNullException.ThrowIfNull(texture);
         string name = texture.Name ?? throw new InvalidOperationException("Texture name must be set before binding to the registry.");
@@ -220,7 +231,10 @@ public sealed class RenderResourceRegistry
 
         if (!ReferenceEquals(record.Instance, texture) || record.OwnsInstance != ownsInstance)
         {
-            record.Bind(texture, ownsInstance);
+            if (transferRetiringUse)
+                record.BindTransferred(texture, ownsInstance);
+            else
+                record.Bind(texture, ownsInstance);
             MarkInstancesChanged();
         }
     }
@@ -259,7 +273,23 @@ public sealed class RenderResourceRegistry
     /// </summary>
     /// <param name="buffer">Buffer instance whose AttributeName becomes the logical registry key.</param>
     /// <param name="descriptor">Optional descriptor override to register before binding.</param>
-    public void BindBuffer(XRDataBuffer buffer, BufferResourceDescriptor? descriptor = null, bool ownsInstance = true)
+    public void BindBuffer(
+        XRDataBuffer buffer,
+        BufferResourceDescriptor? descriptor = null,
+        bool ownsInstance = true)
+        => BindBufferCore(buffer, descriptor, ownsInstance, transferRetiringUse: false);
+
+    /// <summary>Transfers one counted use from staged imported bindings.</summary>
+    internal void BindTransferredBuffer(
+        XRDataBuffer buffer,
+        BufferResourceDescriptor descriptor)
+        => BindBufferCore(buffer, descriptor, ownsInstance: false, transferRetiringUse: true);
+
+    private void BindBufferCore(
+        XRDataBuffer buffer,
+        BufferResourceDescriptor? descriptor,
+        bool ownsInstance,
+        bool transferRetiringUse)
     {
         ArgumentNullException.ThrowIfNull(buffer);
 
@@ -283,7 +313,10 @@ public sealed class RenderResourceRegistry
 
         if (!ReferenceEquals(record.Instance, buffer) || record.OwnsInstance != ownsInstance)
         {
-            record.Bind(buffer, ownsInstance);
+            if (transferRetiringUse)
+                record.BindTransferred(buffer, ownsInstance);
+            else
+                record.Bind(buffer, ownsInstance);
             MarkInstancesChanged();
         }
     }
@@ -355,6 +388,16 @@ public sealed class RenderResourceRegistry
         return false;
     }
 
+    /// <summary>Returns a registry texture with one counted binding use.</summary>
+    public bool TryRetainTextureBinding(string name, [NotNullWhen(true)] out XRTexture? texture)
+    {
+        if (_textures.TryGetValue(name, out RenderTextureResource? record))
+            return record.TryRetainBinding(out texture);
+
+        texture = null;
+        return false;
+    }
+
     /// <summary>
     /// Resolves a live framebuffer by logical resource name.
     /// </summary>
@@ -380,6 +423,16 @@ public sealed class RenderResourceRegistry
             buffer = instance;
             return true;
         }
+
+        buffer = null;
+        return false;
+    }
+
+    /// <summary>Returns a registry buffer with one counted binding use.</summary>
+    public bool TryRetainBufferBinding(string name, [NotNullWhen(true)] out XRDataBuffer? buffer)
+    {
+        if (_buffers.TryGetValue(name, out RenderBufferResource? record))
+            return record.TryRetainBinding(out buffer);
 
         buffer = null;
         return false;

@@ -79,6 +79,7 @@ public partial class AdvancedRenderPipeline
             case EAdvancedRenderStage.LatePasses:
                 AppendAdvancedLatePassCommands(commands);
                 AppendAdvancedPhysicsDebugCommands(commands);
+                AppendAdvancedDebugShapeCommands(commands);
                 break;
             case EAdvancedRenderStage.TemporalAndPostProcessing:
                 AppendAdvancedPostProcessCommands(commands);

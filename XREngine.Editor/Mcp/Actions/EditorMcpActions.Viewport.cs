@@ -187,6 +187,7 @@ namespace XREngine.Editor.Mcp
                         {
                             backend = readback.Backend,
                             source_format = readback.SourceFormat,
+                            output_transfer = readback.OutputTransfer,
                             raw_byte_count = readback.RawByteCount,
                             used_multisample_resolve = readback.UsedMultisampleResolve,
                             queue_slot = readback.QueueSlot,

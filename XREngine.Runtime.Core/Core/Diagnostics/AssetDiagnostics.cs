@@ -85,8 +85,7 @@ public static class AssetDiagnostics
     }
 
     /// <summary>
-    /// Publishes a completed load's missing references atomically before requesting
-    /// the editor panel, so its first snapshot includes the entire batch.
+    /// Records a completed load's missing references as one batch.
     /// </summary>
     public static void RecordMissingAssets(IEnumerable<string> assetPaths, string? category, string? context = null)
     {
@@ -229,11 +228,35 @@ public static class AssetDiagnostics
     }
 
     /// <summary>
-    /// Returns true once when new missing/rebased asset diagnostics have been recorded since the
-    /// last call. The editor uses this to auto-open the Missing Assets panel after a load.
+    /// Returns true once when new missing or rebased asset diagnostics exist since the last call.
+    /// This signal does not request a panel visibility change.
     /// </summary>
     public static bool ConsumePendingDisplayFlag()
         => System.Threading.Interlocked.Exchange(ref _pendingDisplayFlag, 0) != 0;
+
+    /// <summary>
+    /// Gets the number of distinct missing references without allocating a snapshot.
+    /// </summary>
+    public static int TrackedMissingAssetCount
+    {
+        get
+        {
+            lock (_missingAssetLock)
+                return _missingAssets.Count;
+        }
+    }
+
+    /// <summary>
+    /// Gets the number of distinct repaired references without allocating a snapshot.
+    /// </summary>
+    public static int TrackedRebasedAssetCount
+    {
+        get
+        {
+            lock (_rebasedAssetLock)
+                return _rebasedAssets.Count;
+        }
+    }
 
     private static string BuildRebasedKey(
         string category,

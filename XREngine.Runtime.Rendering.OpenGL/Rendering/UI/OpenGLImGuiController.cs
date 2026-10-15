@@ -69,7 +69,7 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
 
     public void MakeCurrent() => ImGui.SetCurrentContext(Context);
 
-    public void Update(float deltaSeconds, Action? queueAdditionalInput = null)
+    public void Update(float deltaSeconds, Action? queueAdditionalInput = null, bool? applicationFocused = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         MakeCurrent();
@@ -89,6 +89,9 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
         bool multipleViewports = (io.ConfigFlags & ImGuiConfigFlags.ViewportsEnable) != 0;
         var origin = _window.DesktopWindowBackend?.ClientScreenPosition ?? default;
         WindowInputSnapshot input = _window.ConsumeUiInputSnapshot(_orderedInputScratch);
+        // One focus state must precede all window input. A false/true pair can
+        // clear a detached click when ImGui splits its press and release across frames.
+        io.AddFocusEvent(applicationFocused ?? input.IsFocused);
         ReplayInput(io, input, CollectionsMarshal.AsSpan(_orderedInputScratch),
             multipleViewports ? origin.X : 0,
             multipleViewports ? origin.Y : 0,
@@ -182,8 +185,6 @@ internal sealed unsafe partial class OpenGLImGuiController : IDisposable
             }
         }
 
-        if (viewportId == 0 || input.IsFocused)
-            io.AddFocusEvent(input.IsFocused);
     }
 
     private void ReplayModifier(ImGuiIOPtr io, EKey key, bool down)

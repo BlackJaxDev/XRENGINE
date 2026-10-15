@@ -355,52 +355,85 @@ internal sealed unsafe partial class VulkanDescriptorManager
                     }
                 }
             }
-            if (poolHandles.Count == 0)
-                return 0;
+            DetachComputeDescriptorPoolsNoLock(caches, poolHandles);
+        }
 
-            for (int cacheIndex = 0; cacheIndex < caches.Length; cacheIndex++)
+        return DrainPendingSupersededComputePoolRetirements();
+    }
+
+    /// <summary>Retire the pool that owns an output-specific compute binding key.</summary>
+    internal int RetireComputeDescriptorPoolsForBindingKey(ulong bindingKey)
+    {
+        if (bindingKey == 0)
+            return 0;
+
+        lock (Compute.Gate)
+        {
+            ComputeDescriptorImageCache[]? caches = Compute.Caches;
+            if (caches is not null)
             {
-                ComputeDescriptorImageCache cache = caches[cacheIndex];
-                List<ComputeDescriptorCacheKey>? keysToRemove = null;
-                foreach ((ComputeDescriptorCacheKey key, DescriptorPool pool) in cache.CachedSetPools)
+                HashSet<ulong> poolHandles = [];
+                for (int cacheIndex = 0; cacheIndex < caches.Length; cacheIndex++)
                 {
-                    if (poolHandles.Contains(pool.Handle))
-                        (keysToRemove ??= []).Add(key);
-                }
-                if (keysToRemove is not null)
-                {
-                    for (int keyIndex = 0; keyIndex < keysToRemove.Count; keyIndex++)
-                    {
-                        ComputeDescriptorCacheKey key = keysToRemove[keyIndex];
-                        cache.CachedSets.Remove(key);
-                        cache.CachedSetPools.Remove(key);
-                    }
+                    foreach ((ComputeDescriptorCacheKey key, DescriptorPool pool) in caches[cacheIndex].CachedSetPools)
+                        if (key.BindingKey == bindingKey && pool.Handle != 0)
+                            poolHandles.Add(pool.Handle);
                 }
 
-                List<ulong>? schemasToRemove = null;
-                foreach ((ulong schema, List<ComputeDescriptorPoolBlock> blocks) in cache.PoolsBySchema)
-                {
-                    for (int blockIndex = blocks.Count - 1; blockIndex >= 0; blockIndex--)
-                    {
-                        DescriptorPool pool = blocks[blockIndex].Pool;
-                        if (!poolHandles.Contains(pool.Handle))
-                            continue;
-
-                        blocks.RemoveAt(blockIndex);
-                        _pendingSupersededComputePoolRetirements[pool.Handle] = pool;
-                    }
-                    if (blocks.Count == 0)
-                        (schemasToRemove ??= []).Add(schema);
-                }
-                if (schemasToRemove is not null)
-                {
-                    for (int schemaIndex = 0; schemaIndex < schemasToRemove.Count; schemaIndex++)
-                        cache.PoolsBySchema.Remove(schemasToRemove[schemaIndex]);
-                }
+                DetachComputeDescriptorPoolsNoLock(caches, poolHandles);
             }
         }
 
         return DrainPendingSupersededComputePoolRetirements();
+    }
+
+    private void DetachComputeDescriptorPoolsNoLock(
+        ComputeDescriptorImageCache[] caches,
+        HashSet<ulong> poolHandles)
+    {
+        if (poolHandles.Count == 0)
+            return;
+
+        for (int cacheIndex = 0; cacheIndex < caches.Length; cacheIndex++)
+        {
+            ComputeDescriptorImageCache cache = caches[cacheIndex];
+            List<ComputeDescriptorCacheKey>? keysToRemove = null;
+            foreach ((ComputeDescriptorCacheKey key, DescriptorPool pool) in cache.CachedSetPools)
+            {
+                if (poolHandles.Contains(pool.Handle))
+                    (keysToRemove ??= []).Add(key);
+            }
+            if (keysToRemove is not null)
+            {
+                for (int keyIndex = 0; keyIndex < keysToRemove.Count; keyIndex++)
+                {
+                    ComputeDescriptorCacheKey key = keysToRemove[keyIndex];
+                    cache.CachedSets.Remove(key);
+                    cache.CachedSetPools.Remove(key);
+                }
+            }
+
+            List<ulong>? schemasToRemove = null;
+            foreach ((ulong schema, List<ComputeDescriptorPoolBlock> blocks) in cache.PoolsBySchema)
+            {
+                for (int blockIndex = blocks.Count - 1; blockIndex >= 0; blockIndex--)
+                {
+                    DescriptorPool pool = blocks[blockIndex].Pool;
+                    if (!poolHandles.Contains(pool.Handle))
+                        continue;
+
+                    blocks.RemoveAt(blockIndex);
+                    _pendingSupersededComputePoolRetirements[pool.Handle] = pool;
+                }
+                if (blocks.Count == 0)
+                    (schemasToRemove ??= []).Add(schema);
+            }
+            if (schemasToRemove is not null)
+            {
+                for (int schemaIndex = 0; schemaIndex < schemasToRemove.Count; schemaIndex++)
+                    cache.PoolsBySchema.Remove(schemasToRemove[schemaIndex]);
+            }
+        }
     }
 
     internal int DrainPendingSupersededComputePoolRetirements()

@@ -14,8 +14,6 @@ public sealed partial class AdvancedGpuDeformationResources
     private PendingGpuDeformationMeshPreparation? _pendingMeshPreparation;
     private readonly ConditionalWeakTable<XRMesh, UnsupportedGpuDeformationMeshPreparationWitness>
         _unsupportedMeshPreparationSources = new();
-    private readonly ConditionalWeakTable<XRMesh, AdvancedGpuDeformationMeshAliasWitness>
-        _meshAliasWitnesses = new();
     private static readonly ConditionalWeakTable<XRMesh, ImportedGpuDeformationMeshPayload>
         ImportedMeshPayloads = new();
     private static readonly object ImportedMeshPayloadsSync = new();
@@ -89,14 +87,14 @@ public sealed partial class AdvancedGpuDeformationResources
             // mesh. The input witness proves that they use the active preparation
             // policy and, for packed inputs, the same canonical morph buffers.
             if (slice.TopologyGeneration == topologyGeneration &&
-                _meshAliasWitnesses.TryGetValue(mesh, out var witness) &&
+                _staticGeneration.MeshAliasWitnesses.TryGetValue(mesh, out var witness) &&
                 witness.Matches(mesh, in slice) &&
                 _staticGeneration.InputWitnesses.TryGetValue(mesh, out var inputWitness) &&
                 inputWitness.Policy == _meshPreparationPolicy &&
                 (!UsesPackedAggregateInputs || inputWitness.Matches(mesh, _meshPreparationPolicy)))
                 return AdvancedGpuDeformationMeshPreparationStatus.Ready;
             _meshSlices.Remove(mesh);
-            _meshAliasWitnesses.Remove(mesh);
+            _staticGeneration.MeshAliasWitnesses.Remove(mesh);
             _staticGeneration.InputWitnesses.Remove(mesh);
             _meshSliceRevision++;
         }
@@ -814,8 +812,7 @@ public sealed partial class AdvancedGpuDeformationResources
         bool capturedSkinning = pending.SkinningState is not null;
         XRMeshSkinningBufferState skinning = pending.SkinningState ??
             pending.Mesh.GetSkinningBufferStateSnapshot();
-        _meshAliasWitnesses.Remove(pending.Mesh);
-        _meshAliasWitnesses.Add(pending.Mesh,
+        _staticGeneration.MeshAliasWitnesses[pending.Mesh] =
             new AdvancedGpuDeformationMeshAliasWitness
             {
                 Slice = slice,
@@ -839,7 +836,7 @@ public sealed partial class AdvancedGpuDeformationResources
                 BlendshapeCountsRevision = pending.BlendshapeCountsRevision,
                 BlendshapeIndicesRevision = pending.BlendshapeIndicesRevision,
                 BlendshapeDeltasRevision = pending.BlendshapeDeltasRevision,
-            });
+            };
     }
 
     private static ulong HashPendingMeshPayload(

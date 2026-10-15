@@ -31,6 +31,7 @@ public sealed partial class XRRenderPipelineInstance
             Lifetime = RenderResourceLifetime.External,
         };
 
+        XRTexture? replacedTexture = null;
         lock (_importedResourceStagingLock)
         {
             bool changed = _stagedImportedTextureRemovals.Remove(name);
@@ -38,7 +39,13 @@ public sealed partial class XRRenderPipelineInstance
                 !ReferenceEquals(staged.Instance, texture) ||
                 !Equals(staged.Descriptor, descriptor))
             {
+                bool replacingTexture = !ReferenceEquals(staged.Instance, texture);
+                if (replacingTexture && !texture.TryRetainActiveBindingUse())
+                    throw new ObjectDisposedException(nameof(XRTexture));
+
                 _stagedImportedTextures[name] = (texture, descriptor);
+                if (replacingTexture)
+                    replacedTexture = staged.Instance;
                 changed = true;
             }
 
@@ -46,6 +53,7 @@ public sealed partial class XRRenderPipelineInstance
                 AdvanceImportedResourceStagingRevisionNoLock();
         }
 
+        replacedTexture?.ReleaseBindingUse();
         return IsImportedTexturePublished(registry, name, texture, descriptor);
     }
 
@@ -69,6 +77,7 @@ public sealed partial class XRRenderPipelineInstance
             Lifetime = RenderResourceLifetime.External,
         };
 
+        XRDataBuffer? replacedBuffer = null;
         lock (_importedResourceStagingLock)
         {
             bool changed = _stagedImportedBufferRemovals.Remove(name);
@@ -76,7 +85,13 @@ public sealed partial class XRRenderPipelineInstance
                 !ReferenceEquals(staged.Instance, buffer) ||
                 !Equals(staged.Descriptor, descriptor))
             {
+                bool replacingBuffer = !ReferenceEquals(staged.Instance, buffer);
+                if (replacingBuffer && !buffer.TryRetainActiveBindingUse())
+                    throw new ObjectDisposedException(nameof(XRDataBuffer));
+
                 _stagedImportedBuffers[name] = (buffer, descriptor);
+                if (replacingBuffer)
+                    replacedBuffer = staged.Instance;
                 changed = true;
             }
 
@@ -84,49 +99,56 @@ public sealed partial class XRRenderPipelineInstance
                 AdvanceImportedResourceStagingRevisionNoLock();
         }
 
+        replacedBuffer?.ReleaseBindingUse();
         return IsImportedBufferPublished(registry, name, buffer, descriptor);
     }
 
     internal bool UnbindImportedTexture(string name)
     {
-        if (!TryGetImportedResourceRegistry(
-                name,
-                ExternalRenderResourceKind.Texture,
-                out RenderResourceRegistry? registry))
-        {
-            return false;
-        }
-
-        bool published = registry.TryGetTexture(name, out _);
+        bool published = TryGetImportedResourceRegistry(
+            name,
+            ExternalRenderResourceKind.Texture,
+            out RenderResourceRegistry? registry) &&
+            registry.TryGetTexture(name, out _);
+        XRTexture? unboundTexture = null;
+        bool result;
         lock (_importedResourceStagingLock)
         {
-            bool changed = _stagedImportedTextures.Remove(name);
+            bool changed = _stagedImportedTextures.Remove(name, out var staged);
+            if (changed)
+                unboundTexture = staged.Instance;
             changed |= _stagedImportedTextureRemovals.Add(name);
             if (changed)
                 AdvanceImportedResourceStagingRevisionNoLock();
-            return published || changed;
+            result = published || changed;
         }
+
+        unboundTexture?.ReleaseBindingUse();
+        return result;
     }
 
     internal bool UnbindImportedBuffer(string name)
     {
-        if (!TryGetImportedResourceRegistry(
-                name,
-                ExternalRenderResourceKind.Buffer,
-                out RenderResourceRegistry? registry))
-        {
-            return false;
-        }
-
-        bool published = registry.TryGetBuffer(name, out _);
+        bool published = TryGetImportedResourceRegistry(
+            name,
+            ExternalRenderResourceKind.Buffer,
+            out RenderResourceRegistry? registry) &&
+            registry.TryGetBuffer(name, out _);
+        XRDataBuffer? unboundBuffer = null;
+        bool result;
         lock (_importedResourceStagingLock)
         {
-            bool changed = _stagedImportedBuffers.Remove(name);
+            bool changed = _stagedImportedBuffers.Remove(name, out var staged);
+            if (changed)
+                unboundBuffer = staged.Instance;
             changed |= _stagedImportedBufferRemovals.Add(name);
             if (changed)
                 AdvanceImportedResourceStagingRevisionNoLock();
-            return published || changed;
+            result = published || changed;
         }
+
+        unboundBuffer?.ReleaseBindingUse();
+        return result;
     }
 
     /// <summary>
@@ -156,7 +178,7 @@ public sealed partial class XRRenderPipelineInstance
                 strongestChange = MaxChangeKind(
                     strongestChange,
                     ClassifyTextureBindingChange(registry, pair.Key, pair.Value.Descriptor, existing));
-                registry.BindTexture(pair.Value.Instance, pair.Value.Descriptor, ownsInstance: false);
+                registry.BindTransferredTexture(pair.Value.Instance, pair.Value.Descriptor);
                 bindingsChanged = true;
             }
 
@@ -172,7 +194,7 @@ public sealed partial class XRRenderPipelineInstance
                 strongestChange = MaxChangeKind(
                     strongestChange,
                     ClassifyBufferBindingChange(registry, pair.Key, pair.Value.Descriptor, existing));
-                registry.BindBuffer(pair.Value.Instance, pair.Value.Descriptor, ownsInstance: false);
+                registry.BindTransferredBuffer(pair.Value.Instance, pair.Value.Descriptor);
                 bindingsChanged = true;
             }
 
@@ -250,5 +272,45 @@ public sealed partial class XRRenderPipelineInstance
     {
         int revision = unchecked(_importedResourceStagingRevision + 1);
         _importedResourceStagingRevision = revision == 0 ? 1 : revision;
+    }
+
+    private void ClearStagedImportedBindings()
+    {
+        Exception? firstFailure = null;
+        lock (_importedResourceStagingLock)
+        {
+            foreach (var staged in _stagedImportedTextures.Values)
+            {
+                try
+                {
+                    staged.Instance.ReleaseBindingUse();
+                }
+                catch (Exception exception)
+                {
+                    firstFailure ??= exception;
+                }
+            }
+
+            foreach (var staged in _stagedImportedBuffers.Values)
+            {
+                try
+                {
+                    staged.Instance.ReleaseBindingUse();
+                }
+                catch (Exception exception)
+                {
+                    firstFailure ??= exception;
+                }
+            }
+
+            _stagedImportedBuffers.Clear();
+            _stagedImportedTextures.Clear();
+            _stagedImportedBufferRemovals.Clear();
+            _stagedImportedTextureRemovals.Clear();
+            AdvanceImportedResourceStagingRevisionNoLock();
+        }
+
+        if (firstFailure is not null)
+            throw new InvalidOperationException("A staged imported binding could not be released.", firstFailure);
     }
 }

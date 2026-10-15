@@ -27,6 +27,7 @@ const int XRENGINE_SHADOW_FALLBACK_STALE_TILE = 3;
 const int XRENGINE_SHADOW_FALLBACK_LEGACY = 5;
 
 uniform vec3 GlobalAmbient;
+uniform bool SuppressProbeDiffuse = false;
 uniform bool SourceSHEnabled;
 uniform vec4 SourceSHAr;
 uniform vec4 SourceSHAg;
@@ -977,8 +978,9 @@ vec3 XRENGINE_SampleForwardRawPrefilter(vec3 normal, vec3 fragPos,
 
 vec3 XRENGINE_CalculateAmbientPbrWithProbe(vec3 normal, vec3 fragPos,
     vec3 albedo, vec3 viewDir, vec3 rms, float ambientOcclusion,
-    float reflectionStrength, out vec3 probeSpecular)
+    float reflectionStrength, out vec3 probeDiffuse, out vec3 probeSpecular)
 {
+    probeDiffuse = vec3(0.0);
     probeSpecular = vec3(0.0);
     float roughness = rms.x;
     float metallic = rms.y;
@@ -987,7 +989,8 @@ vec3 XRENGINE_CalculateAmbientPbrWithProbe(vec3 normal, vec3 fragPos,
     float NoV = max(dot(normal, viewDir), 0.0);
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
     vec3 kS = XRENGINE_SpecF_SchlickRoughnessApprox(NoV, F0, roughness) * specularIntensity;
-    vec3 kD = (1.0 - kS) * (1.0 - metallic);
+    vec3 diffuseFresnel = F0 + (vec3(1.0) - F0) * pow(1.0 - NoV, 5.0);
+    vec3 kD = (vec3(1.0) - diffuseFresnel) * (1.0 - metallic);
     vec3 diffuseAO = AmbientOcclusionMultiBounce
         ? XRENGINE_MultiBounceAO(ambientOcclusion, albedo)
         : vec3(ambientOcclusion);
@@ -1055,19 +1058,22 @@ vec3 XRENGINE_CalculateAmbientPbrWithProbe(vec3 normal, vec3 fragPos,
     prefilteredColor /= totalWeight;
 
     vec2 brdfValue = texture(BRDF, vec2(NoV, roughness)).rg;
-    vec3 diffuse = GlobalAmbient * irradianceColor * albedo;
+    // Convolution stores irradiance divided by PI, independent of world ambient.
+    vec3 diffuse = irradianceColor * albedo;
     vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
     probeSpecular = specular * specularOcclusion * reflectionStrength;
-    return kD * diffuse * diffuseAO + probeSpecular;
+    if (!SuppressProbeDiffuse)
+        probeDiffuse = kD * diffuse * diffuseAO;
+    return probeDiffuse + probeSpecular;
 #endif
 }
 
 vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo,
     vec3 viewDir, vec3 rms, float ambientOcclusion, float reflectionStrength)
 {
-    vec3 probeSpecular;
+    vec3 probeDiffuse, probeSpecular;
     return XRENGINE_CalculateAmbientPbrWithProbe(normal, fragPos, albedo,
-        viewDir, rms, ambientOcclusion, reflectionStrength, probeSpecular);
+        viewDir, rms, ambientOcclusion, reflectionStrength, probeDiffuse, probeSpecular);
 }
 
 vec3 XRENGINE_CalculateAmbientPbr(vec3 normal, vec3 fragPos, vec3 albedo, vec3 viewDir, vec3 rms, float ambientOcclusion)

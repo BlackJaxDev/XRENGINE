@@ -358,7 +358,7 @@ public sealed partial class AdvancedGpuScenePublisher
             !ReferenceEquals(mesh, plan.Mesh) ||
             !ReferenceEquals(material, plan.MaterialSource))
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.CommandChanged);
-        if (!IsUntexturedCanonicalMaterial(material))
+        if (!CanReuseMaterialSources(material))
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.MaterialChanged);
         if (!IsUnchangedRowGeometry(mesh, in plan, ref scratch))
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.GeometryChanged);
@@ -436,13 +436,24 @@ public sealed partial class AdvancedGpuScenePublisher
             scratch.RowHeaderLayout = layout;
             scratch.RowHeaderCoverage = cache.Coverage;
             scratch.RowHeaderState = cache.State;
-            if (!_materialPublisher.HeaderMatches(
+            if (!Database.Materials.Materials.TryGet(registration.Material,
+                    out AdvancedMaterialRecord current) ||
+                !Database.Materials.TryGetTextureBindings(current,
+                    out ReadOnlySpan<AdvancedMaterialTextureBinding> bindings) ||
+                bindings.Length != layout.Textures.Count ||
+                !Database.Materials.TryGetEngineSurface(registration.Material,
+                    out AdvancedEngineSurfaceRecord engineSurface) ||
+                !Database.Materials.TryGetUberBaseSurface(registration.Material,
+                    out AdvancedUberBaseSurfaceRecord uberSurface) ||
+                !CommittedMaterialBindingsMatch(material, layout, bindings,
+                    in engineSurface, in uberSurface) ||
+                !_materialPublisher.HeaderMatches(
                     registration.Material,
                     material,
                     layout,
                     cache.Coverage,
                     cache.State,
-                    ReadOnlySpan<AdvancedMaterialTextureBinding>.Empty))
+                    bindings))
                 return FailRow(ref scratch, EAdvancedPreparedGateOutcome.MaterialChanged);
             scratch.CheckedHeaderMaterial = material;
             scratch.CheckedHeaderHandle = registration.Material;
@@ -509,7 +520,7 @@ public sealed partial class AdvancedGpuScenePublisher
         return true;
     }
 
-    /// <summary>Matches the material rule of the committed-plan reuse path.</summary>
+    /// <summary>Checks whether a material has only fallback texture roles.</summary>
     private static bool IsUntexturedCanonicalMaterial(XRMaterial? material)
         => material is not AdvancedProjectiveMirrorMaterial &&
            (material is null ||

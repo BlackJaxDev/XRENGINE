@@ -49,7 +49,8 @@ public partial class OpenGLRenderer
 
         public void Update(float deltaSeconds)
         {
-            _controller.Update(deltaSeconds, _queueMultiViewportInput);
+            _controller.Update(deltaSeconds, _queueMultiViewportInput,
+                _renderer._imguiMultiViewportController?.IsAnyWindowFocused());
         }
 
         public void Render()

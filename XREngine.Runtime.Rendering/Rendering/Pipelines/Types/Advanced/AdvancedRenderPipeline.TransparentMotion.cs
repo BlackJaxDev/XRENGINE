@@ -12,7 +12,7 @@ public partial class AdvancedRenderPipeline
     {
         var motion = commands.Add<VPRC_IfElse>();
         motion.Label = "AdvancedParticipatingTransparentMotion";
-        motion.ConditionEvaluator = HasAdvancedParticipatingTransparentMotionConsumers;
+        motion.ConditionEvaluator = ShouldRunAdvancedParticipatingTransparentMotion;
         var motionCommands = new ViewportRenderCommandContainer(this);
 
         using (motionCommands.AddUsing<VPRC_BindFBOByName>(x =>
@@ -38,12 +38,13 @@ public partial class AdvancedRenderPipeline
         motion.TrueCommands = motionCommands;
     }
 
-    private static bool HasAdvancedParticipatingTransparentMotionConsumers()
-        => HasRenderPassCommands((int)EDefaultRenderPass.WeightedBlendedOitForward)
-           || HasRenderPassCommands((int)EDefaultRenderPass.TransparentForward)
-           || HasRenderPassCommands((int)EDefaultRenderPass.OnTopForward)
-           || HasRenderPassCommands((int)EDefaultRenderPass.PerPixelLinkedListForward)
-           || HasRenderPassCommands((int)EDefaultRenderPass.DepthPeelingForward);
+    private static bool ShouldRunAdvancedParticipatingTransparentMotion()
+        => ShouldGenerateVelocityBuffer() &&
+           (HasRenderPassCommands((int)EDefaultRenderPass.WeightedBlendedOitForward)
+            || HasRenderPassCommands((int)EDefaultRenderPass.TransparentForward)
+            || HasRenderPassCommands((int)EDefaultRenderPass.OnTopForward)
+            || HasRenderPassCommands((int)EDefaultRenderPass.PerPixelLinkedListForward)
+            || HasRenderPassCommands((int)EDefaultRenderPass.DepthPeelingForward));
 
     private static VPRC_RenderMotionVectorsPass AddParticipatingTransparentMotionReplay(ViewportRenderCommandContainer commands)
     {

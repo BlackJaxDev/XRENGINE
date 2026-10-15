@@ -72,6 +72,20 @@ public readonly struct XRMeshBlendshapeActiveListReader
         count = Math.Clamp(length, 0, entryCount - first);
     }
 
+    /// <summary>Reads a vertex range only if it is inside the active list.</summary>
+    public bool TryGetVertexEntriesStrict(int vertexIndex, out int first, out int count)
+    {
+        first = 0;
+        count = 0;
+        if ((uint)vertexIndex >= (uint)VertexCount ||
+            !TryReadInt(Counts, (uint)vertexIndex, 0u, out first) ||
+            !TryReadInt(Counts, (uint)vertexIndex, 1u, out count))
+            return false;
+
+        return first >= 0 && count >= 0 &&
+               (ulong)(uint)first + (uint)count <= Indices.ElementCount;
+    }
+
     /// <summary>
     /// Reads one entry's shape index and attribute deltas. An attribute without
     /// a delta reads as zero: it points at the shared zero delta (index 0, or its
@@ -91,6 +105,33 @@ public readonly struct XRMeshBlendshapeActiveListReader
         tangent = ReadDelta(ReadInt(Indices, entry, 3u));
     }
 
+    /// <summary>Reads one entry only if its shape and delta indices are valid.</summary>
+    public bool TryReadEntryStrict(
+        int entryIndex,
+        out int shapeIndex,
+        out Vector3 position,
+        out Vector3 normal,
+        out Vector3 tangent)
+    {
+        shapeIndex = 0;
+        position = normal = tangent = Vector3.Zero;
+        if ((uint)entryIndex >= Indices.ElementCount ||
+            !TryReadInt(Indices, (uint)entryIndex, 0u, out shapeIndex) ||
+            !TryReadInt(Indices, (uint)entryIndex, 1u, out int positionIndex) ||
+            !TryReadInt(Indices, (uint)entryIndex, 2u, out int normalIndex) ||
+            !TryReadInt(Indices, (uint)entryIndex, 3u, out int tangentIndex) ||
+            (uint)shapeIndex >= (uint)ShapeCount ||
+            (uint)positionIndex >= Deltas.ElementCount ||
+            (uint)normalIndex >= Deltas.ElementCount ||
+            (uint)tangentIndex >= Deltas.ElementCount)
+            return false;
+
+        position = ReadDelta(positionIndex);
+        normal = ReadDelta(normalIndex);
+        tangent = ReadDelta(tangentIndex);
+        return true;
+    }
+
     /// <summary>
     /// Reads one integral component. Active-list buffers store indices as
     /// integers or as exactly representable floats, depending on whether the
@@ -107,6 +148,33 @@ public readonly struct XRMeshBlendshapeActiveListReader
             _ => throw new InvalidOperationException(
                 $"Unsupported blendshape index component type {buffer.ComponentType}."),
         };
+    }
+
+    private static unsafe bool TryReadInt(XRDataBuffer buffer, uint element, uint component, out int value)
+    {
+        value = 0;
+        byte* address = (byte*)buffer.Address.Pointer + element * buffer.ElementSize;
+        switch (buffer.ComponentType)
+        {
+            case EComponentType.Int:
+                value = ((int*)address)[component];
+                return true;
+            case EComponentType.UInt:
+                uint unsignedValue = ((uint*)address)[component];
+                if (unsignedValue > int.MaxValue)
+                    return false;
+                value = (int)unsignedValue;
+                return true;
+            case EComponentType.Float:
+                float floatValue = ((float*)address)[component];
+                if (!float.IsFinite(floatValue) || floatValue < int.MinValue || floatValue >= 2147483648.0f ||
+                    floatValue != MathF.Truncate(floatValue))
+                    return false;
+                value = (int)floatValue;
+                return true;
+            default:
+                return false;
+        }
     }
 
     private unsafe Vector3 ReadDelta(int index)

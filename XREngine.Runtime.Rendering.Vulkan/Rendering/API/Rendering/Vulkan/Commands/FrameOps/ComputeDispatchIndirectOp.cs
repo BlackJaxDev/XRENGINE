@@ -14,6 +14,14 @@ internal sealed record ComputeDispatchIndirectOp(
     FrameOpContext Context) 
     : FrameOp(PassIndex, null, Context)
 {
+    public ComputeDispatchSnapshot Snapshot { get; private set; } = Snapshot;
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect;
+
+    protected override void OnSealedAuthoringCopyCreated()
+    {
+        ComputeDispatchSnapshot copy = Snapshot.CreateSealedCopy();
+        Snapshot = copy;
+        OwnAuthoringSnapshot(copy);
+    }
 
 }

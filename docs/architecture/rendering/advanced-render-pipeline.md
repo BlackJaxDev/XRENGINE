@@ -103,11 +103,31 @@ The gate passes only when all of these conditions are true:
 - The ordered identities and source groups are valid, and no identity recipient is pending.
 - The frame identifier follows the last published frame.
 - The boundary storage did not grow.
-- Each supported row reused its committed material plan, and its material has no texture.
+- Each supported row reused its committed material plan. Its material is untextured
+  or uses the fixed `NativeUberV1` layout with current 2D or CPU-backed cube bindings.
 - Each active registration belongs to one row.
 
 Any difference runs the full plan with no change in behavior. Thus a rejected
 bounds route rejects in the full plan with its usual reason.
+
+Native Uber reuse keeps the five material revision checks and the committed
+layout, coverage, render-state, and header checks. It encodes the current texture
+roles through the same role-only encoder as the full plan and compares each
+source with its committed logical binding. This includes the imported metadata
+epoch, source-content generation, dimensions, format, and sampler state. The
+check repeats when consuming a prepared verdict. Scalar encoding is skipped
+only while these checks pass. GPU-authored cubes without a content witness, arrays, projective mirrors, and other
+textured material families keep the full plan. Native readiness and descriptor
+ownership checks remain at their existing render boundaries.
+
+CPU-backed cubes retain an exact witness for the mip array, mip and face
+identities, CPU data identity, dimensions, and formats. `Mipmap2D` records active
+field writers and a content epoch. `Invalidate` advances this epoch after direct
+CPU writes. Callers that write through a data pointer must call `Invalidate`.
+A changed witness produces a new cube source generation. Stable reads do not
+allocate. Storage images, framebuffer attachments, and cubes without complete
+CPU face data cannot use this reuse path. This witness does not replace native
+texture preparation or descriptor lifetime checks.
 
 When the gate passes and no global resource changed, the publisher reuses the
 current publication and delivers the identities again, as the full reuse path
@@ -308,6 +328,27 @@ including the cleared entries. Adjacent writes merge into one range.
 `AdvancedMaterialDatabaseContractTests` checks complete slots for addition,
 replacement, and payload shrink. Replacement uses no managed allocation when
 capacity is sufficient.
+
+### General debug shapes
+
+`ModelComponent` copies its `RenderBounds` setting into each new runtime mesh.
+A model rebuild preserves the requested bounds display.
+
+Initial native visibility raster clears both depth and stencil. Late raster
+loads both attachments to preserve values written in the current frame. MSAA
+resolve clears the canonical stencil target because the depth resolve does not
+write stencil. Gizmo bit `0x80` must not survive into the next frame: postprocess
+uses it to bypass tone mapping for current debug shapes.
+
+`AppendAdvancedDebugShapeCommands` draws queued shapes after late scene work
+and physics debug work. It binds the forward color and depth target at internal
+resolution. Depth-tested shapes run first, followed by overlay shapes. Neither
+pass writes depth. The commands then restore depth testing and depth writes.
+
+This step supplies the draw path for `ModelComponent.RenderBounds`. Bounds
+collection alone does not draw a box. `VPRC_RenderDebugShapes` declares each pass
+to the render graph. The `DebugOverlays` capture policy excludes this work from
+shadow and light-probe outputs.
 
 ### Selected GPU chain debug
 
