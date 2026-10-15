@@ -193,13 +193,13 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     public void UniformStorageUsesRendererArenasWithoutHistoricalGenerationCache()
     {
         string uniforms = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.Buffers.cs");
         string renderer = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string arena = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs") +
             ReadWorkspaceFile(
-                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanRenderer.MappedFrameArena.cs");
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.MappedFrameArena.cs");
 
         uniforms.ShouldContain("arena.TryReserve(");
         uniforms.ShouldContain("arena.TryGetSlice(");
@@ -217,9 +217,9 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         string arena = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs") +
             ReadWorkspaceFile(
-                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanRenderer.MappedFrameArena.cs");
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.NativeRecordingServices.cs");
         string uniforms = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.Buffers.cs");
 
         AssertOrdered(
             arena,
@@ -840,8 +840,9 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void EngineUniformResolution_ComputesInverseModelOnlyForTheInverseModelUniform()
     {
-        string uniforms = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+        string uniforms =
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.Values.cs") +
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.EngineUpload.cs");
 
         int resolverStart = uniforms.IndexOf(
             "private bool TryResolveEngineUniformValue(",
@@ -876,8 +877,9 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     {
         string renderState = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderState.cs");
-        string uniforms = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+        string uniforms =
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.Values.cs") +
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.EngineUpload.cs");
 
         int resolverStart = uniforms.IndexOf(
             "private bool TryResolveEngineUniformValue(",

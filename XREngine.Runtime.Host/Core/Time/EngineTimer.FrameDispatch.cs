@@ -30,8 +30,10 @@ public partial class EngineTimer
             return false;
 
         Volatile.Write(ref _collectVisiblePhase, "ProcessCollectVisibleSwapJobs");
+        long swapJobsStartTicks = XREngine.Rendering.CollectVisibleStageTimings.StartIn(XREngine.Rendering.ECollectVisibleSection.Swap);
         using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.ProcessCollectVisibleSwapJobs", ProfilerScopeKind.AlwaysOnHotPathLoop))
             ProcessCollectVisibleSwapJobs();
+        XREngine.Rendering.CollectVisibleStageTimings.End(XREngine.Rendering.ECollectVisibleStage.SwapJobs, swapJobsStartTicks);
         if (!IsRunning || FirstTerminalFault is not null)
             return false;
 

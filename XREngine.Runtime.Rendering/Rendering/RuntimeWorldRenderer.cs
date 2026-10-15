@@ -131,23 +131,66 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
 
             RuntimeEngine.Rendering.Stats.FrameOutputs.RecordSceneSnapshot();
             bool observe = RuntimeWorldTickTelemetry.Enabled;
-            long matrixStart = observe ? Stopwatch.GetTimestamp() : 0L;
+            // The always-on stage timers and the env-gated world telemetry share these timestamps.
+            long matrixStart = Stopwatch.GetTimestamp();
             ApplyRenderMatrixChanges();
-            long meshStart = observe ? Stopwatch.GetTimestamp() : 0L;
+            long meshStart = Stopwatch.GetTimestamp();
             RenderableMesh.ProcessPendingRenderMatrixUpdates();
-            long sceneStart = observe ? Stopwatch.GetTimestamp() : 0L;
+            long sceneStart = Stopwatch.GetTimestamp();
             VisualScene.GlobalCollectVisible();
+            long sceneEnd = Stopwatch.GetTimestamp();
+            CollectVisibleStageTimings.AddPreCollect(matrixStart, meshStart, sceneStart, sceneEnd);
             if (observe)
             {
                 Interlocked.Add(ref s_collectMatrixTicks, meshStart - matrixStart);
                 Interlocked.Add(ref s_collectMeshTicks, sceneStart - meshStart);
-                Interlocked.Add(ref s_collectSceneTicks, Stopwatch.GetTimestamp() - sceneStart);
+                Interlocked.Add(ref s_collectSceneTicks, sceneEnd - sceneStart);
                 Interlocked.Increment(ref s_collectCalls);
             }
         }
     }
 
     public void GlobalCollectVisible() => Lights.CollectVisibleItems();
+
+    /// <summary>
+    /// Prepares swap-time publication work on the collect thread after visibility
+    /// collection. It prepares the unchanged-row verdict of the next Advanced
+    /// resident-scene publication, so that the serial swap can skip its row walk.
+    /// </summary>
+    /// <remarks>
+    /// The work is optional. It does nothing while the publication session is
+    /// closed, or when a mesh command swap can skip the GPU scene. An exception
+    /// removes the verdict, and <see cref="Commands.AdvancedPreparedGateTelemetry"/>
+    /// counts it and keeps its type name, HRESULT, and message in all builds.
+    /// Debug builds also log a rate-limited warning. An exception never stops
+    /// the collect loop, because the swap-time gate then decides.
+    /// </remarks>
+    public void GlobalPrepareSwapPublications()
+    {
+        lock (_collectPublicationLock)
+        {
+            if (!_collectPublicationOpen)
+                return;
+            if (!VisualScene.RoutesCommandSwapsToGpuScene)
+                return;
+
+            Commands.GPUScene scene = VisualScene.GPUCommands;
+            try
+            {
+                scene.PrepareAdvancedResidentPublication();
+            }
+            catch (Exception exception)
+            {
+                scene.DiscardPreparedAdvancedResidentPublication();
+                Commands.AdvancedPreparedGateTelemetry.RecordException(exception);
+                Debug.RenderingWarningEvery(
+                    "RuntimeWorldRenderer.GlobalPrepareSwapPublications",
+                    TimeSpan.FromSeconds(5),
+                    "[CanonicalPublication] The prepare of the unchanged-row verdict failed. The swap-time gate decides. {0}",
+                    exception.Message);
+            }
+        }
+    }
 
     /// <summary>
     /// Publishes world-owned render buffers using the ambient engine frame identity.
@@ -172,14 +215,17 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
     private void GlobalSwapBuffersCore(ulong frameId, bool requireCanonicalFrameId)
     {
         bool observe = RuntimeWorldTickTelemetry.Enabled;
-        long matrixStart = observe ? Stopwatch.GetTimestamp() : 0L;
-        ApplyRenderMatrixChanges();
-        long meshStart = observe ? Stopwatch.GetTimestamp() : 0L;
+        // Shared swap code records stage times only in the world swap section of the serial swap.
+        ECollectVisibleSection previousSection = CollectVisibleStageTimings.EnterWorldSwap();
+        long matrixStart = Stopwatch.GetTimestamp();
+        ApplyRenderMatrixChanges(ETransformHierarchyPassGateSite.PublishSwap);
+        long meshStart = Stopwatch.GetTimestamp();
         RenderableMesh.ProcessPendingRenderMatrixUpdates();
-        long sceneStart = observe ? Stopwatch.GetTimestamp() : 0L;
+        long sceneStart = Stopwatch.GetTimestamp();
         // The Advanced global capture must observe the same published atlas and
         // last-rendered shadow snapshots consumed by the frame package.
         Lights.SwapBuffers();
+        long captureStart = Stopwatch.GetTimestamp();
         if (VisualScene.GPUCommands.AdvancedPublicationRequested)
         {
             AdvancedGlobalResourceCapture globalResources =
@@ -189,11 +235,20 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
             else
                 VisualScene.GPUCommands.SetAdvancedGlobalResources(in globalResources);
         }
+        long visualSceneStart = Stopwatch.GetTimestamp();
         VisualScene.GPUCommands.SetMeshSubmissionFrameId(frameId);
         VisualScene.GlobalSwapBuffers();
+        CollectVisibleStageTimings.AddWorldSwap(
+            matrixStart,
+            meshStart,
+            sceneStart,
+            captureStart,
+            visualSceneStart,
+            Stopwatch.GetTimestamp());
         RuntimeEngine.Rendering.Stats.SkinnedBounds.SwapSkinnedBoundsStats();
         RuntimeEngine.Rendering.Stats.Octree.SwapOctreeStats();
         RuntimeEngine.Rendering.Stats.RenderMatrix.SwapRenderMatrixStats();
+        CollectVisibleStageTimings.ExitWorldSwap(previousSection);
         if (observe)
         {
             Interlocked.Add(ref s_swapMatrixTicks, meshStart - matrixStart);
@@ -274,9 +329,23 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
 
     private WorldSettings? GetSettings() => TargetWorldObject is XRWorld world ? world.Settings : null;
 
+    /// <summary>Publishes pending render matrices before visibility collection.</summary>
     private void ApplyRenderMatrixChanges()
+        => ApplyRenderMatrixChanges(ETransformHierarchyPassGateSite.PublishPreCollect);
+
+    /// <summary>
+    /// Publishes the transform-store matrices for <paramref name="site"/>, then applies the queued matrix changes.
+    /// The stage timers measure the transform-store publication, with its pass-gate wait, in the matching section.
+    /// </summary>
+    private void ApplyRenderMatrixChanges(ETransformHierarchyPassGateSite site)
     {
-        int applied = WorldContext is RuntimeWorld world ? world.TransformHierarchy.PublishRenderMatrices() : 0;
+        bool swapSite = site == ETransformHierarchyPassGateSite.PublishSwap;
+        long publishStart = CollectVisibleStageTimings.StartIn(
+            swapSite ? ECollectVisibleSection.WorldSwap : ECollectVisibleSection.Collect);
+        int applied = WorldContext is RuntimeWorld world ? world.TransformHierarchy.PublishRenderMatrices(site) : 0;
+        CollectVisibleStageTimings.End(
+            swapSite ? ECollectVisibleStage.SwapTransformStorePublish : ECollectVisibleStage.PreCollectTransformStorePublish,
+            publishStart);
         while (_pendingMatrices.TryDequeue(out (TransformBase Transform, Matrix4x4 Matrix) item))
         {
             item.Transform.SetRenderMatrix(item.Matrix, false);

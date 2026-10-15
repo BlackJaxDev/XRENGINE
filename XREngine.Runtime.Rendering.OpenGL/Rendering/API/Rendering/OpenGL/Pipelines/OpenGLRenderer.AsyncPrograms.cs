@@ -73,13 +73,16 @@ public partial class OpenGLRenderer
         _programBinaryUploadQueue = null;
         _programCompileLinkQueue = null;
 
-        _programBinarySharedContext?.DisposeForShutdown();
+        TimeSpan joinTimeout = ShouldOrphanGLHandlesForShutdown
+            ? TimeSpan.Zero
+            : TimeSpan.FromMilliseconds(250);
+        _programBinarySharedContext?.DisposeForShutdown(joinTimeout);
         if (_programCompileLinkSharedContexts is { Length: > 0 } compileLinkContexts)
         {
             for (int i = 0; i < compileLinkContexts.Length; i++)
-                compileLinkContexts[i]?.DisposeForShutdown();
+                compileLinkContexts[i]?.DisposeForShutdown(joinTimeout);
         }
-        _sharedContext?.DisposeForShutdown();
+        _sharedContext?.DisposeForShutdown(joinTimeout);
 
         _programBinarySharedContext = null;
         _programCompileLinkSharedContexts = null;
@@ -102,6 +105,12 @@ public partial class OpenGLRenderer
     private GLSharedContext[]? _programCompileLinkSharedContexts;
     private GLProgramBinaryUploadQueue? _programBinaryUploadQueue;
     private GLProgramCompileLinkQueue? _programCompileLinkQueue;
+    private bool _wantBinaryUploadSharedContext;
+    private bool _wantCompileLinkSharedContext;
+    private bool _wantSparseTextureSharedContext;
+    private bool _binaryUploadSharedContextInitialized;
+    private bool _compileLinkSharedContextInitialized;
+    private bool _sparseTextureSharedContextInitialized;
 
     internal bool HasSharedContext => _sharedContext is { IsRunning: true }
                                    || _programBinarySharedContext is { IsRunning: true }
@@ -139,6 +148,12 @@ public partial class OpenGLRenderer
             : _programBinarySharedContext is { IsRunning: true }
                 ? _programBinarySharedContext
                 : FirstRunningCompileLinkSharedContext();
+
+        if (sharedContext is null)
+        {
+            EnsureSparseTextureSharedContextInitialized();
+            sharedContext = _sharedContext is { IsRunning: true } ? _sharedContext : null;
+        }
 
         if (sharedContext is null)
             return false;
@@ -179,119 +194,135 @@ public partial class OpenGLRenderer
     }
 
     /// <summary>
-    /// Creates a shared GL context and the async queues for program binary upload
-    /// and compile+link. Must be called from the main render thread after the
-    /// primary context is fully initialized.
+    /// Records desired shared GL context capabilities and defers hidden GLFW window
+    /// creation until a shader cache miss, slow binary load, or async upload job
+    /// actually requires a background worker context.
     /// </summary>
     private void InitAsyncProgramBinaryUpload()
     {
-        bool wantBinaryUpload = RuntimeEngine.Rendering.Settings.AsyncProgramBinaryUpload
-                             && RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching;
-        bool wantCompileLink = WantsSharedContextProgramCompileLinkQueue;
-        if (!wantCompileLink)
+        _wantBinaryUploadSharedContext = RuntimeEngine.Rendering.Settings.AsyncProgramBinaryUpload
+                                      && RuntimeEngine.Rendering.Settings.AllowBinaryProgramCaching;
+        _wantCompileLinkSharedContext = WantsSharedContextProgramCompileLinkQueue;
+        if (!_wantCompileLinkSharedContext)
             Debug.OpenGL("[ShaderCache] Shared-context compile/link queue disabled by settings. Shader source cache misses will stay pending; render-thread synchronous source linking is disabled.");
-        bool wantSparseTextureUploads = GetSparseTextureStreamingSupport(ESizedInternalFormat.Rgba8).IsAvailable;
+        _wantSparseTextureSharedContext = GetSparseTextureStreamingSupport(ESizedInternalFormat.Rgba8).IsAvailable;
+    }
 
-        if (!wantBinaryUpload && !wantCompileLink && !wantSparseTextureUploads)
+    internal void EnsureProgramBinaryUploadQueueInitialized()
+    {
+        if (_binaryUploadSharedContextInitialized ||
+            !_wantBinaryUploadSharedContext ||
+            Volatile.Read(ref _asyncShaderProgramShutdownDisposeRequested) != 0 ||
+            Environment.CurrentManagedThreadId != XRWindow.NativeWindowThreadId)
+        {
             return;
+        }
 
-        if (wantBinaryUpload)
+        _binaryUploadSharedContextInitialized = true;
+        var binaryContext = new GLSharedContext("XR Program Binary Upload");
+        if (binaryContext.Initialize(XRWindow))
         {
-            var binaryContext = new GLSharedContext("XR Program Binary Upload");
-            if (binaryContext.Initialize(XRWindow))
+            _programBinarySharedContext = binaryContext;
+            _programBinaryUploadQueue = new GLProgramBinaryUploadQueue(binaryContext);
+            Debug.OpenGL("[ShaderCache] Async program binary upload enabled via shared GL context.");
+        }
+        else
+        {
+            Debug.OpenGLWarning("[ShaderCache] Failed to create binary-upload shared context. Cached program binaries will load on the render thread.");
+            binaryContext.Dispose();
+        }
+    }
+
+    internal void EnsureProgramCompileLinkQueueInitialized()
+    {
+        if (_compileLinkSharedContextInitialized ||
+            !_wantCompileLinkSharedContext ||
+            Volatile.Read(ref _asyncShaderProgramShutdownDisposeRequested) != 0 ||
+            Environment.CurrentManagedThreadId != XRWindow.NativeWindowThreadId)
+        {
+            return;
+        }
+
+        _compileLinkSharedContextInitialized = true;
+
+        // Cold link of large uber shaders (e.g. imported model fragment
+        // programs near 400 KB) can legitimately take 60 - 120 seconds on
+        // the first run before the per-program binary cache is populated.
+        // Use a generous unhealthy threshold so the worker is not flagged
+        // as unhealthy while it is making forward progress on a real
+        // (slow) GL_COMPLETION_STATUS_ARB poll loop. If we let the
+        // default 30 s threshold trip, IsRunning flips false mid-link
+        // and the selector falls back to the synchronous render-thread
+        // path for any new hazardous program, which then stalls the
+        // render thread on glMaxShaderCompilerThreadsARB / glCreateShader
+        // for the remainder of the cold link. See repo memory note
+        // opengl-shared-context-worker-unhealthy-threshold.
+        const double CompileLinkUnhealthySeconds = 600.0;
+
+        int requestedWorkers = ResolveProgramCompileLinkWorkerCount();
+
+        var compileContexts = new List<GLSharedContext>(requestedWorkers);
+        var compileContextNames = new List<string>(requestedWorkers);
+        for (int i = 0; i < requestedWorkers; i++)
+        {
+            string threadName = requestedWorkers == 1
+                ? "XR Program Source Compile"
+                : $"XR Program Source Compile {i + 1}/{requestedWorkers}";
+            var compileContext = new GLSharedContext(threadName, CompileLinkUnhealthySeconds);
+            if (compileContext.Initialize(XRWindow))
             {
-                _programBinarySharedContext = binaryContext;
-                _programBinaryUploadQueue = new GLProgramBinaryUploadQueue(binaryContext);
-                Debug.OpenGL("[ShaderCache] Async program binary upload enabled via shared GL context.");
+                compileContexts.Add(compileContext);
+                compileContextNames.Add(threadName);
             }
             else
             {
-                Debug.OpenGLWarning("[ShaderCache] Failed to create binary-upload shared context. Cached program binaries will load on the render thread.");
-                binaryContext.Dispose();
+                Debug.OpenGLWarning($"[ShaderCache] Failed to create compile/link shared context #{i + 1}/{requestedWorkers}; will continue with {compileContexts.Count} worker(s).");
+                compileContext.Dispose();
             }
         }
 
-        if (wantCompileLink)
+        for (int i = 0; i < compileContexts.Count; i++)
         {
-            // Cold link of large uber shaders (e.g. imported model fragment
-            // programs near 400 KB) can legitimately take 60 - 120 seconds on
-            // the first run before the per-program binary cache is populated.
-            // Use a generous unhealthy threshold so the worker is not flagged
-            // as unhealthy while it is making forward progress on a real
-            // (slow) GL_COMPLETION_STATUS_ARB poll loop. If we let the
-            // default 30 s threshold trip, IsRunning flips false mid-link
-            // and the selector falls back to the synchronous render-thread
-            // path for any new hazardous program, which then stalls the
-            // render thread on glMaxShaderCompilerThreadsARB / glCreateShader
-            // for the remainder of the cold link. See repo memory note
-            // opengl-shared-context-worker-unhealthy-threshold.
-            const double CompileLinkUnhealthySeconds = 600.0;
-
-            int requestedWorkers = ResolveProgramCompileLinkWorkerCount();
-
-            var compileContexts = new List<GLSharedContext>(requestedWorkers);
-            var compileContextNames = new List<string>(requestedWorkers);
-            for (int i = 0; i < requestedWorkers; i++)
-            {
-                string threadName = requestedWorkers == 1
-                    ? "XR Program Source Compile"
-                    : $"XR Program Source Compile {i + 1}/{requestedWorkers}";
-                var compileContext = new GLSharedContext(threadName, CompileLinkUnhealthySeconds);
-                if (compileContext.Initialize(XRWindow))
-                {
-                    compileContexts.Add(compileContext);
-                    compileContextNames.Add(threadName);
-                }
-                else
-                {
-                    Debug.OpenGLWarning($"[ShaderCache] Failed to create compile/link shared context #{i + 1}/{requestedWorkers}; will continue with {compileContexts.Count} worker(s).");
-                    compileContext.Dispose();
-                    // If at least one worker started, keep going with what we have.
-                    // If none have started yet, keep trying — early failures may be
-                    // transient. After the loop, we still create the queue from
-                    // whatever workers we got (or skip queue creation if zero).
-                }
-            }
-
-            for (int i = 0; i < compileContexts.Count; i++)
-            {
-                // KHR_parallel_shader_compile is per-context. Without enabling
-                // it on each worker, the driver falls back to serial compile/
-                // link on the worker context, causing cold links of large
-                // uber fragment shaders to take 60-120+ seconds per program.
-                EnableParallelShaderCompileOnSharedContextWorker(compileContexts[i], compileContextNames[i]);
-            }
-
-            if (compileContexts.Count > 0)
-            {
-                _programCompileLinkSharedContexts = compileContexts.ToArray();
-                _programCompileLinkQueue = new GLProgramCompileLinkQueue(
-                    _programCompileLinkSharedContexts,
-                    completionStatusPollingEnabled: _parallelShaderCompileSupported);
-                Debug.OpenGL(
-                    $"[ShaderCache] Async program compile+link enabled via {_programCompileLinkSharedContexts.Length} shared GL context worker(s); " +
-                    $"completionPolling={_parallelShaderCompileSupported}.");
-            }
-            else
-            {
-                Debug.OpenGLWarning("[ShaderCache] Failed to create any compile/link shared context. Shader source cache misses will remain pending because render-thread synchronous source linking is disabled.");
-            }
+            EnableParallelShaderCompileOnSharedContextWorker(compileContexts[i], compileContextNames[i]);
         }
 
-        if (wantSparseTextureUploads)
+        if (compileContexts.Count > 0)
         {
-            var generalContext = new GLSharedContext("XR GL Shared Uploads");
-            if (generalContext.Initialize(XRWindow))
-            {
-                _sharedContext = generalContext;
-                if (wantSparseTextureUploads)
-                    Debug.OpenGL("Sparse texture streaming shared GL context enabled for async texture uploads.");
-            }
-            else
-            {
-                Debug.OpenGLWarning("Failed to create sparse texture shared context. Sparse texture uploads will fall back to render-thread work.");
-                generalContext.Dispose();
-            }
+            _programCompileLinkSharedContexts = compileContexts.ToArray();
+            _programCompileLinkQueue = new GLProgramCompileLinkQueue(
+                _programCompileLinkSharedContexts,
+                completionStatusPollingEnabled: _parallelShaderCompileSupported);
+            Debug.OpenGL(
+                $"[ShaderCache] Async program compile+link enabled via {_programCompileLinkSharedContexts.Length} shared GL context worker(s); " +
+                $"completionPolling={_parallelShaderCompileSupported}.");
+        }
+        else
+        {
+            Debug.OpenGLWarning("[ShaderCache] Failed to create any compile/link shared context. Shader source cache misses will remain pending because render-thread synchronous source linking is disabled.");
+        }
+    }
+
+    private void EnsureSparseTextureSharedContextInitialized()
+    {
+        if (_sparseTextureSharedContextInitialized ||
+            !_wantSparseTextureSharedContext ||
+            Volatile.Read(ref _asyncShaderProgramShutdownDisposeRequested) != 0 ||
+            Environment.CurrentManagedThreadId != XRWindow.NativeWindowThreadId)
+        {
+            return;
+        }
+
+        _sparseTextureSharedContextInitialized = true;
+        var generalContext = new GLSharedContext("XR GL Shared Uploads");
+        if (generalContext.Initialize(XRWindow))
+        {
+            _sharedContext = generalContext;
+            Debug.OpenGL("Sparse texture streaming shared GL context enabled for async texture uploads.");
+        }
+        else
+        {
+            Debug.OpenGLWarning("Failed to create sparse texture shared context. Sparse texture uploads will fall back to render-thread work.");
+            generalContext.Dispose();
         }
     }
 

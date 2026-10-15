@@ -66,6 +66,7 @@ public sealed partial class AdvancedGpuDeformationResources :
     private uint _releasedStaticGenerationCount;
     private uint _outputCapacityGrowthCount;
     private uint _unsupportedMeshCount;
+    private ulong _meshSliceRevision;
 
     // These aliases keep the packing code focused on deformation payloads
     // while making the selected static generation the only mutable owner.
@@ -199,6 +200,14 @@ public sealed partial class AdvancedGpuDeformationResources :
     public uint ReleasedStaticGenerationCount => _releasedStaticGenerationCount;
     public uint OutputCapacityGrowthCount => _outputCapacityGrowthCount;
     public uint UnsupportedMeshCount => _unsupportedMeshCount;
+
+    /// <summary>
+    /// Advances when a prepared mesh slice can change: a frame opens, the static generation
+    /// changes or resets, or a mesh slice is added or removed. A slice that
+    /// <see cref="TryPrepareMesh"/> returned as ready names the same source rows while this
+    /// value is unchanged and the mesh keeps its geometry revision and topology.
+    /// </summary>
+    internal ulong MeshSliceRevision => _meshSliceRevision;
     public bool PreviousOutputValid => _previousOutputValid;
     public AdvancedDeformationDispatchTelemetry LastTelemetry { get; private set; }
     public AdvancedGpuDeformationPublication Publication { get; private set; }
@@ -346,6 +355,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         _activeBlendshapeCount = 0u;
         _previousOutputValid = false;
         _staticGenerationReplaced = true;
+        _meshSliceRevision++;
         AdvanceResourceGeneration();
         return true;
     }
@@ -448,6 +458,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         }
 
         _frameId = frameId;
+        // The static generation and the preparation policy can change at a frame boundary.
+        _meshSliceRevision++;
         _meshPreparationPolicy = ResolveMeshPreparationPolicy();
         if (UsesPackedAggregateInputs && _controlBuffers.Length == 0)
             InitializeJobControls(_maximumDeformationJobs);
@@ -546,11 +558,33 @@ public sealed partial class AdvancedGpuDeformationResources :
         bool packed = UsesPackedAggregateInputs;
         bool skinning = !packed || mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
         bool blendshapes = mesh.HasBlendshapes && (!packed || RuntimeEngine.Rendering.Settings.AllowBlendshapes);
-        if (!renderer.TryPrepareDeformationInputs(mesh, skinning, blendshapes, publish: false,
-            out XRMeshDeformationInputSnapshot inputs, requireMorphs: packed))
+        // A covered renderer draws the retained physics palette, and the retained envelope
+        // proves the mesh, geometry revision, bind root, and bone layout. Without active
+        // blendshapes it needs no renderer input preparation; only its pose version is read.
+        // The renderer must already record GPU-owned bones: the full path records them, so a
+        // later loss of coverage still resets the CPU palette seed state.
+        bool coveredFastPath = retainedPalette is not null && retainedEnvelope.HasValue &&
+            !blendshapes && renderer.HasGpuOwnedDeformationPose;
+        XRMeshDeformationInputSnapshot inputs = default;
+        ulong poseVersion;
+        if (coveredFastPath)
         {
-            slice = default;
-            return false;
+            if (mesh.IsDestroyed || mesh.IsDestroyQueued)
+            {
+                slice = default;
+                return false;
+            }
+            poseVersion = renderer.SkinnedOutputVersion;
+        }
+        else
+        {
+            if (!renderer.TryPrepareDeformationInputs(mesh, skinning, blendshapes, publish: false,
+                out inputs, requireMorphs: packed))
+            {
+                slice = default;
+                return false;
+            }
+            poseVersion = inputs.PoseVersion;
         }
         // Matches checks the renderer-wide weights version that the physics producer
         // captured. Do not compare it with the per-mesh input version: a submesh can
@@ -618,7 +652,7 @@ public sealed partial class AdvancedGpuDeformationResources :
             paletteCount,
             _activeBlendshapeCount,
             activeCount,
-            inputs.PoseVersion,
+            poseVersion,
             retainedEnvelope?.BlendshapeWeightsVersion ?? inputs.MorphVersion);
         _paletteCount = requiredPalette;
         _activeBlendshapeCount = requiredActive;
@@ -1149,6 +1183,7 @@ AdvancedGpuDeformationStaticBuffers replacement =
         successor.LastUse = ++_staticGenerationUse;
         _staticGenerationReplaced = true;
         _previousOutputValid = false;
+        _meshSliceRevision++;
         AdvanceResourceGeneration();
         return true;
     }

@@ -370,7 +370,9 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     public void VkMeshRenderer_ResolvesGeneratedSkinningAndBlendshapeUniformsLikeOpenGl()
     {
         string vkMainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
-        string vkUniformSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+        string vkUniformSource =
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.Values.cs") +
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.EngineUpload.cs");
         string glRenderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Rendering.cs");
 
         foreach (string uniformName in new[]

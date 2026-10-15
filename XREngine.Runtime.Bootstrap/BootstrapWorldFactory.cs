@@ -218,6 +218,7 @@ public static class BootstrapWorldFactory
 
         try
         {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             settings.VRPawn = false;
             settings.Locomotion = false;
 
@@ -226,9 +227,13 @@ public static class BootstrapWorldFactory
             scene.RootNodes.Add(rootNode);
 
             rootNode.AddComponent<NetworkDiscoveryComponent>("Network Discovery");
+            long afterNetworkDiscoveryMs = stopwatch.ElapsedMilliseconds;
 
             _ = BootstrapPawnFactory.CreatePlayerPawn(setUI, isServer, rootNode);
+            long afterPlayerPawnMs = stopwatch.ElapsedMilliseconds;
+
             BootstrapLightingBuilder.AddDirLight(rootNode);
+            long afterDirLightMs = stopwatch.ElapsedMilliseconds;
 
             Action setupEnvironment = () =>
             {
@@ -237,10 +242,19 @@ public static class BootstrapWorldFactory
             };
 
             setupEnvironment();
+            long afterEnvironmentMs = stopwatch.ElapsedMilliseconds;
 
             AddDefaultGridFloor(rootNode);
+            long afterGridFloorMs = stopwatch.ElapsedMilliseconds;
 
-            return CreateBootstrapWorld("Default World", scene);
+            XRWorld world = CreateBootstrapWorld("Default World", scene);
+            long totalMs = stopwatch.ElapsedMilliseconds;
+            Debug.Rendering(
+                $"[StartupTiming] BootstrapWorldFactory.CreateDefaultEmptyWorld phases: total={totalMs} ms " +
+                $"(networkDiscovery={afterNetworkDiscoveryMs} ms, playerPawn={afterPlayerPawnMs - afterNetworkDiscoveryMs} ms, " +
+                $"dirLight={afterDirLightMs - afterPlayerPawnMs} ms, environment={afterEnvironmentMs - afterDirLightMs} ms, " +
+                $"gridFloor={afterGridFloorMs - afterEnvironmentMs} ms, createWorld={totalMs - afterGridFloorMs} ms).");
+            return world;
         }
         finally
         {
@@ -321,7 +335,7 @@ public static class BootstrapWorldFactory
                 JobPriority.Low);
         }
 
-        if (RuntimeEngine.Windows.Count > 0 && !Engine.StartingUp)
+        if (RuntimeEngine.Windows.Count > 0 || !Engine.StartingUp)
         {
             QueueSkyTextureLoad();
             return;

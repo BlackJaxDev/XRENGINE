@@ -711,7 +711,7 @@ public sealed class OpenXrTimingPipelineContractTests
     {
         string dirtyReasons = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferDirtyReasons.cs");
         string meshRenderer = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
-        string meshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+        string meshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.Buffers.cs");
 
         dirtyReasons.ShouldContain("VulkanPrimaryCommandBufferReuseEnabled || CommandChainsEnabledForCurrentRecording");
         dirtyReasons.ShouldNotContain("t_frameOpCapture is not null");
@@ -729,7 +729,7 @@ public sealed class OpenXrTimingPipelineContractTests
             "internal void EnsureUniformDrawSlotCapacity",
             "private int ResolveUniformBufferIndex");
 
-        ensureUniformSlots.ShouldContain("CPU-side logical reservation only");
+        ensureUniformSlots.ShouldContain("_uniformDrawSlotCapacity = newCapacity;");
         ensureUniformSlots.ShouldNotContain("Renderer.MarkCommandBuffersDirtyForLegacyMeshState();");
         ensureUniformSlots.ShouldNotContain("Renderer.MarkCommandBuffersDirty();");
     }

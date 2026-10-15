@@ -2608,6 +2608,9 @@ public static partial class EditorImGuiUI
             var baseType = typeof(XRComponent);
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
+                if (!XREngine.Core.XRLoadableTypeCatalog.ShouldScanAssemblyForEngineTypes(assembly))
+                    continue;
+
                 foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                 {
                     if (!baseType.IsAssignableFrom(type))

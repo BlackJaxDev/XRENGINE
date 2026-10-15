@@ -207,7 +207,8 @@ internal sealed partial class VulkanCommandRuntime
                     records[header.RecordOffset].VisibilityGeometryClosure;
                 BindVertexBufferTracked(state.CommandBuffer,
                     native.GetVertexBinding(0), native.GetVertexBuffer(0),
-                    geometry.PreparedVertexSource.Offset);
+                    geometry.ResolveVertexSource(
+                        bins.VisibilityGeometrySources.CurrentVertices).Offset);
                 BindIndexBufferTracked(state.CommandBuffer,
                     native.Primitive0.IndexBuffer, geometry.IndexSlice.Offset,
                     native.Primitive0.IndexType);

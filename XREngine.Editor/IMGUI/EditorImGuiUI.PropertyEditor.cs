@@ -2530,6 +2530,9 @@ public static partial class EditorImGuiUI
             // Search all loaded assemblies for derived types
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
+                if (!XREngine.Core.XRLoadableTypeCatalog.ShouldScanAssemblyForEngineTypes(assembly))
+                    continue;
+
                 IReadOnlyList<Type> types = GetLoadableAssemblyTypesSafe(assembly);
 
                 foreach (var type in types)
@@ -3040,7 +3043,8 @@ public static partial class EditorImGuiUI
             var descriptors = new List<CollectionTypeDescriptor>();
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                if (!EditorTypeCatalogGeneration.IsAssemblyDiscoverable(assembly))
+                if (!EditorTypeCatalogGeneration.IsAssemblyDiscoverable(assembly)
+                    || !XREngine.Core.XRLoadableTypeCatalog.ShouldScanAssemblyForEngineTypes(assembly))
                     continue;
 
                 foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))

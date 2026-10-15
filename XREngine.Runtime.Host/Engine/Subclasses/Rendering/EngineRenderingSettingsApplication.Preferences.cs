@@ -715,11 +715,13 @@ namespace XREngine
             {
                 static void Apply()
                 {
-                    bool supported = VendorUpscaleRuntime.IsDlssSupported;
                     bool enableDlss = Engine.EffectiveSettings.EnableNvidiaDlss;
                     bool enableFrameGeneration = Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration;
                     ENvidiaDlssFrameGenerationMode frameGenerationMode = Engine.EffectiveSettings.NvidiaDlssFrameGenerationMode;
                     bool frameGenerationRequested = enableFrameGeneration && frameGenerationMode != ENvidiaDlssFrameGenerationMode.Off;
+                    bool dlaaRequested = Engine.EffectiveSettings.AntiAliasingMode == EAntiAliasingMode.Dlaa;
+                    bool anyDlssRequested = enableDlss || frameGenerationRequested || dlaaRequested;
+                    bool supported = anyDlssRequested && VendorUpscaleRuntime.IsDlssSupported;
                     bool frameGenerationAvailable = false;
                     string? frameGenerationUnavailableReason = null;
                     if (frameGenerationRequested)
@@ -750,7 +752,7 @@ namespace XREngine
                         frameGenerationRequested,
                         frameGenerationAvailable,
                         frameGenerationUnavailableReason ?? "<none>",
-                        VendorUpscaleRuntime.DlssLastError ?? "<none>");
+                        anyDlssRequested ? (VendorUpscaleRuntime.DlssLastError ?? "<none>") : "<idle>");
 
                     if (enableFrameGeneration && frameGenerationMode == ENvidiaDlssFrameGenerationMode.Off)
                     {
@@ -780,7 +782,7 @@ namespace XREngine
                 {
                     foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
                     {
-                        if (!VendorUpscaleRuntime.IsXessSupported || !Engine.EffectiveSettings.EnableIntelXess)
+                        if (!Engine.EffectiveSettings.EnableIntelXess || !VendorUpscaleRuntime.IsXessSupported)
                             VendorUpscaleRuntime.ResetXessViewport(viewport);
                         else
                             VendorUpscaleRuntime.ApplyXessToViewport(viewport, RuntimeEngine.Rendering.Settings);

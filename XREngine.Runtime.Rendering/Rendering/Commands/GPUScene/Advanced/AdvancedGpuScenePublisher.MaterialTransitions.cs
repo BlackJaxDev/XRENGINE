@@ -77,6 +77,7 @@ public sealed partial class AdvancedGpuScenePublisher
             Array.Resize(ref _plannedDeformationSources, required);
         }
         EnsureSourceGroupCapacity(checked(required * 2));
+        EnsurePreparedGateCapacity(required);
         if (_plannedMaterials.Length < required)
         {
             Array.Resize(ref _plannedMaterials, required);
@@ -139,6 +140,7 @@ public sealed partial class AdvancedGpuScenePublisher
         _plannedMaterialReleaseCount = 0;
         _resourceAcquireCount = 0;
         _resourceReleaseCount = 0;
+        _planBoundsEpochCaptured = false;
         BeginStampedPlan(ref _plannedVariantSlotGeneration, _plannedVariantSlotStamps);
         BeginStampedPlan(ref _plannedCommandSlotGeneration, _plannedCommandSlotStamps);
         BeginStampedPlan(ref _plannedReleaseSlotGeneration, _plannedReleaseSlotStamps);
@@ -271,6 +273,7 @@ public sealed partial class AdvancedGpuScenePublisher
             }
 
             plan.Supported = true;
+            plan.ReusedCommittedMaterial = reusedMaterial;
             plan.CompatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
             plan.RegistrationIndex = registrationIndex;
             plan.MaterialPlanIndex = materialPlanIndex;
@@ -684,80 +687,16 @@ public sealed partial class AdvancedGpuScenePublisher
         out string reason)
     {
         materialPlanIndex = -1;
-        compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
         fatal = false;
         reason = string.Empty;
-        if (command.RenderPass > int.MaxValue ||
-            !MaterialBindingLayouts.TryGetDefaultForRenderPass(
-                checked((int)command.RenderPass),
-                out MaterialBindingLayout layout))
-        {
-            compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedRenderPass;
-            return false;
-        }
-        if (material is AdvancedProjectiveMirrorMaterial && command.RenderPass == (uint)EDefaultRenderPass.OpaqueDeferred)
-            layout = MaterialBindingLayouts.ProjectiveMirror;
-        // Deferred alpha-cutout materials intentionally retain OpaqueDeferred as
-        // their legacy pass so the default G-buffer path can write coverage.
-        // Their GPU state is nevertheless AlphaTested, which must select the
-        // canonical masked row and visibility shader instead of being rejected
-        // as an opaque-layout/state mismatch.
-        if (ReferenceEquals(layout, MaterialBindingLayouts.OpaqueDeferred) &&
-            command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested)
-        {
-            layout = MaterialBindingLayouts.MaskedForward;
-        }
-        EGpuMaterialStateClass expectedLegacyState = ReferenceEquals(
-            layout,
-            MaterialBindingLayouts.OpaqueDeferred) || ReferenceEquals(layout, MaterialBindingLayouts.ProjectiveMirror)
-                ? EGpuMaterialStateClass.OpaqueDeferred
-                : ReferenceEquals(layout, MaterialBindingLayouts.ForwardOpaque)
-                    ? EGpuMaterialStateClass.OpaqueForward
-                    : EGpuMaterialStateClass.AlphaTested;
-        if (command.StateClassID != (uint)expectedLegacyState)
-        {
-            compatibilityReason =
-                EAdvancedCanonicalCompatibilityReason.LegacyStateMismatch;
-            return false;
-        }
-
-        bool nativeUber = material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 &&
-            material.TryGetUberMaterialState(out _, out _);
-        if (nativeUber)
-        {
-            bool masked = command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested ||
-                NativeUberMaterialSourceEncoder.RequiresCoverageDiscard(material!);
-            layout = masked ? NativeUberMaterialSchema.Masked : NativeUberMaterialSchema.Opaque;
-        }
-        if (!AdvancedGpuMaterialPublisher.TryTranslateLayout(
-                layout,
+        if (!TrySelectCanonicalMaterialLayout(
+                material,
+                in command,
+                out MaterialBindingLayout layout,
                 out AdvancedMaterialLayoutTranslation translation,
-                out _))
-        {
-            compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedRenderPass;
+                out EAdvancedMaterialRenderStateClass state,
+                out compatibilityReason))
             return false;
-        }
-
-        bool doubleSided =
-            (command.Flags & (uint)GPUIndirectRenderFlags.DoubleSided) != 0u;
-        EAdvancedMaterialRenderStateClass state = translation.RequiredCoverage switch
-        {
-            EAdvancedMaterialCoverageMode.Opaque when doubleSided =>
-                EAdvancedMaterialRenderStateClass.OpaqueDoubleSided,
-            EAdvancedMaterialCoverageMode.Opaque =>
-                EAdvancedMaterialRenderStateClass.OpaqueSingleSided,
-            EAdvancedMaterialCoverageMode.Masked when doubleSided =>
-                EAdvancedMaterialRenderStateClass.MaskedDoubleSided,
-            EAdvancedMaterialCoverageMode.Masked =>
-                EAdvancedMaterialRenderStateClass.MaskedSingleSided,
-            _ => EAdvancedMaterialRenderStateClass.Invalid,
-        };
-        if (state == EAdvancedMaterialRenderStateClass.Invalid)
-        {
-            compatibilityReason =
-                EAdvancedCanonicalCompatibilityReason.UnsupportedRenderPass;
-            return false;
-        }
 
         materialPlanIndex = FindPlannedMaterial(
             material,
@@ -806,7 +745,8 @@ public sealed partial class AdvancedGpuScenePublisher
                 return false;
             }
         }
-        else if (nativeUber)
+        else if (ReferenceEquals(layout, NativeUberMaterialSchema.Opaque) ||
+            ReferenceEquals(layout, NativeUberMaterialSchema.Masked))
         {
             if (!NativeUberMaterialSourceEncoder.TryEncode(material!, constantWords, legacySources,
                     out compatibilityReason, out reason))
@@ -969,6 +909,94 @@ public sealed partial class AdvancedGpuScenePublisher
         InsertPlannedMaterial(materialPlanIndex);
         if (existing)
             InsertPlannedExistingMaterial(materialPlanIndex);
+        return true;
+    }
+
+    /// <summary>
+    /// Selects the canonical layout, coverage, and state class of one command.
+    /// Uses the command row and current material state for both publication
+    /// and unchanged-row validation.
+    /// </summary>
+    private static bool TrySelectCanonicalMaterialLayout(
+        XRMaterial? material,
+        in DrawMetadata command,
+        out MaterialBindingLayout layout,
+        out AdvancedMaterialLayoutTranslation translation,
+        out EAdvancedMaterialRenderStateClass state,
+        out EAdvancedCanonicalCompatibilityReason compatibilityReason)
+    {
+        translation = default;
+        state = EAdvancedMaterialRenderStateClass.Invalid;
+        compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedRenderPass;
+        if (command.RenderPass > int.MaxValue ||
+            !MaterialBindingLayouts.TryGetDefaultForRenderPass(
+                checked((int)command.RenderPass),
+                out layout))
+        {
+            layout = null!;
+            return false;
+        }
+        if (material is AdvancedProjectiveMirrorMaterial && command.RenderPass == (uint)EDefaultRenderPass.OpaqueDeferred)
+            layout = MaterialBindingLayouts.ProjectiveMirror;
+        // Deferred alpha-cutout materials intentionally retain OpaqueDeferred as
+        // their legacy pass so the default G-buffer path can write coverage.
+        // Their GPU state is nevertheless AlphaTested, which must select the
+        // canonical masked row and visibility shader instead of being rejected
+        // as an opaque-layout/state mismatch.
+        if (ReferenceEquals(layout, MaterialBindingLayouts.OpaqueDeferred) &&
+            command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested)
+        {
+            layout = MaterialBindingLayouts.MaskedForward;
+        }
+        EGpuMaterialStateClass expectedLegacyState = ReferenceEquals(
+            layout,
+            MaterialBindingLayouts.OpaqueDeferred) || ReferenceEquals(layout, MaterialBindingLayouts.ProjectiveMirror)
+                ? EGpuMaterialStateClass.OpaqueDeferred
+                : ReferenceEquals(layout, MaterialBindingLayouts.ForwardOpaque)
+                    ? EGpuMaterialStateClass.OpaqueForward
+                    : EGpuMaterialStateClass.AlphaTested;
+        if (command.StateClassID != (uint)expectedLegacyState)
+        {
+            compatibilityReason =
+                EAdvancedCanonicalCompatibilityReason.LegacyStateMismatch;
+            return false;
+        }
+
+        bool nativeUber = material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 &&
+            material.TryGetUberMaterialState(out _, out _);
+        if (nativeUber)
+        {
+            bool masked = command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested ||
+                NativeUberMaterialSourceEncoder.RequiresCoverageDiscard(material!);
+            layout = masked ? NativeUberMaterialSchema.Masked : NativeUberMaterialSchema.Opaque;
+        }
+        if (!AdvancedGpuMaterialPublisher.TryTranslateLayout(
+                layout,
+                out translation,
+                out _))
+        {
+            compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedRenderPass;
+            return false;
+        }
+
+        bool doubleSided =
+            (command.Flags & (uint)GPUIndirectRenderFlags.DoubleSided) != 0u;
+        state = translation.RequiredCoverage switch
+        {
+            EAdvancedMaterialCoverageMode.Opaque when doubleSided =>
+                EAdvancedMaterialRenderStateClass.OpaqueDoubleSided,
+            EAdvancedMaterialCoverageMode.Opaque =>
+                EAdvancedMaterialRenderStateClass.OpaqueSingleSided,
+            EAdvancedMaterialCoverageMode.Masked when doubleSided =>
+                EAdvancedMaterialRenderStateClass.MaskedDoubleSided,
+            EAdvancedMaterialCoverageMode.Masked =>
+                EAdvancedMaterialRenderStateClass.MaskedSingleSided,
+            _ => EAdvancedMaterialRenderStateClass.Invalid,
+        };
+        if (state == EAdvancedMaterialRenderStateClass.Invalid)
+            return false;
+
+        compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
         return true;
     }
 
@@ -1632,6 +1660,8 @@ public sealed partial class AdvancedGpuScenePublisher
         public bool MeshIsSkinned;
         public EAdvancedCanonicalCompatibilityReason CompatibilityReason;
         public bool Supported;
+        /// <summary>True when the plan reused the registration's committed material plan.</summary>
+        public bool ReusedCommittedMaterial;
     }
 
     private struct AdvancedGpuSceneMaterialTransition

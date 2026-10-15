@@ -13,6 +13,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
 using YamlDotNet.Serialization;
 
@@ -171,7 +172,9 @@ namespace XREngine.Scene
             if (IsGpuCulling || commands.RequiresFullResidentAuthoredCollection)
             {
                 using var gpuSample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu", ProfilerScopeKind.AlwaysOnHotPathLoop);
+                long gpuPathStart = CollectVisibleStageTimings.StartPath();
                 visibleRenderables = CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors, modelDiagActive, allowGpuCollection);
+                CollectVisibleStageTimings.EndPath(ECollectVisiblePath.GpuCollection, gpuPathStart, visibleRenderables);
             }
             else
             {
@@ -179,6 +182,7 @@ namespace XREngine.Scene
                 I3DRenderTree<RenderInfo3D> cpuTree = ActiveCpuRenderTree;
                 int cpuCommandsBefore = commands.GetUpdatingCommandCount();
                 long collectStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                long cpuPathStart = CollectVisibleStageTimings.StartPath();
                 using var cpuSample = RuntimeEngine.Profiler.Start(
                     _cpuSceneCullingStructureActive == ECpuSceneCullingStructure.Bvh
                         ? "VisualScene3D.CollectRenderedItems.CpuBvh"
@@ -200,6 +204,7 @@ namespace XREngine.Scene
                 {
                     contextStack.Pop();
                 }
+                CollectVisibleStageTimings.EndPath(ECollectVisiblePath.CpuCollection, cpuPathStart, visibleRenderables);
 
                 long collectTicks = System.Diagnostics.Stopwatch.GetTimestamp() - collectStart;
                 int emittedCommands = Math.Max(0, commands.GetUpdatingCommandCount() - cpuCommandsBefore);
@@ -231,6 +236,16 @@ namespace XREngine.Scene
         private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until PreCollectVisible runs on the collect visible thread
         private long _shadowCasterMembershipRevision;
         private bool IsGpuCulling => _isGpuDispatchActive;
+
+        /// <summary>
+        /// Gets whether each mesh command swap of a tracked renderable updates
+        /// its GPU scene rows. This is true while GPU dispatch or the CPU mirror
+        /// of the GPU scene is active. A swap that skips the GPU scene does not
+        /// advance its row-input version.
+        /// </summary>
+        internal bool RoutesCommandSwapsToGpuScene
+            => _isGpuDispatchActive || _isCpuGpuCommandMirrorActive;
+
         private readonly HashSet<RenderableMesh> _skinnedMeshes = new();
         private readonly HashSet<RenderInfo3D> _committedCpuTreeMembers = new();
         private readonly List<RenderInfo3D> _gpuBoundsEligibleRenderables = [];
@@ -264,11 +279,20 @@ namespace XREngine.Scene
 
         public override void GlobalCollectVisible()
         {
+            long stageMark = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.Collect);
             base.GlobalCollectVisible();
             SyncCpuSceneCullingStructurePreference();
+            BeginShadowOnlyCasterCensusPass();
             ProcessPendingRenderableOperations();
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SceneRenderableOperations);
             RefreshGpuBoundsEligibility();
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SceneGpuBoundsEligibility);
             RefreshCoveredCommandSources();
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SceneCoveredCommandRefresh);
+            CollectVisibleStageTimings.AddSceneRefreshRows(
+                _skinnedMeshes.Count,
+                _gpuBoundsEligibleRenderables.Count,
+                _coveredCommandSources.Count);
 
             if (_isGpuDispatchActive)
                 ActiveCpuRenderTree.Swap();
@@ -279,8 +303,10 @@ namespace XREngine.Scene
                     EvaluateSkinCullRejectDiagnostics(_collectGen);
                 _collectGen++;
                 RefreshSkinnedCpuCullingBounds();
+                CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SceneSkinnedCpuBounds);
                 ActiveCpuRenderTree.Swap();
             }
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.SceneCpuTreeSwap);
         }
 
         // Per-collect generation counter for the SkinCullRejectDiag stage log. Incremented once per
@@ -325,7 +351,9 @@ namespace XREngine.Scene
         public override void GlobalSwapBuffers()
         {
             SyncCpuGpuCommandMirrorState();
+            long coveredSourcesStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
             PublishCoveredCommandSources();
+            CollectVisibleStageTimings.End(ECollectVisibleStage.SwapCoveredSources, coveredSourcesStart);
             base.GlobalSwapBuffers();
             ProcessQueuedRaycasts();
             SwapBuffersHook?.Invoke(this);
@@ -583,7 +611,7 @@ namespace XREngine.Scene
 
         private void OnRenderableSwapBuffers(RenderInfo info, RenderCommand command)
         {
-            if ((_isGpuDispatchActive || _isCpuGpuCommandMirrorActive)
+            if (RoutesCommandSwapsToGpuScene
                 && command is IRenderCommandMesh meshCmd)
             {
                 GpuSceneMeshCommandSnapshot snapshot = command is RenderCommandMesh3D mesh3D
@@ -690,6 +718,16 @@ namespace XREngine.Scene
                 : null;
 
             commands.BeginFullResidentMeshOrderCollection(GPUCommands, camera, allowRenderVolume is null && !modelDiagActive);
+            // A main view counts the shadow casters that it does not collect and that a shadow camera can collect. The
+            // primary directional shadow views read this census to decide whether they must still collect for these
+            // casters. See MayHaveShadowOnlyCasters for the exact rule.
+            bool shadowOnlyCasterCensus = !commands.IsShadowPass;
+            int shadowOnlyCasterCandidates = 0;
+            // A diagnostic capture records the candidates of one main-view collection. Without a pending capture this
+            // costs one volatile read.
+            ShadowOnlyCasterCensusCapture? casterCapture = shadowOnlyCasterCensus
+                ? BeginShadowOnlyCasterCapture(camera, collectMirrors)
+                : null;
             bool orderCollectionCompleted = false;
             try
             {
@@ -704,11 +742,18 @@ namespace XREngine.Scene
                         skippedCanonicalGpuSource = true;
                         continue;
                     }
-                    bool allowed = renderable.AllowRender(
-                        _gpuBoundsEligibleSet.Contains(renderable) ? null : allowRenderVolume,
-                        commands, camera, false, collectMirrors);
+                    IVolume? renderVolume = _gpuBoundsEligibleSet.Contains(renderable) ? null : allowRenderVolume;
+                    bool allowed = renderable.AllowRender(renderVolume, commands, camera, false, collectMirrors);
                     if (!allowed)
                     {
+                        if (shadowOnlyCasterCensus && IsRejectedShadowOnlyCasterCandidate(renderable))
+                        {
+                            shadowOnlyCasterCandidates++;
+                            casterCapture?.Record(
+                                renderable,
+                                ClassifyAllowRenderRejection(renderable, renderVolume, camera, collectMirrors),
+                                Volatile.Read(ref renderable.PreCollectCommandsCallback));
+                        }
                         if (modelDiagActive)
                             ModelRenderDiagnostics.LogRejected(renderable, collectionVolume, commands, camera, containsOnly: false, collectMirrors);
                         continue;
@@ -717,15 +762,36 @@ namespace XREngine.Scene
                     visibleRenderables++;
                     if (modelDiagActive)
                         ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
-                    renderable.CollectCommands(commands, camera);
+                    ERenderInfoCollectResult collectResult = renderable.TryCollectCommands(
+                        commands,
+                        camera,
+                        out RenderInfo.DelAddRenderCommandsCallback? invokedCallback);
+                    // A camera-dependent pre-collection callback can reject this camera and accept a shadow camera, for
+                    // example an HLOD source that a far main camera hides. Such a caster gets no collection from this view.
+                    if (shadowOnlyCasterCensus &&
+                        IsCollectedShadowOnlyCasterCandidate(renderable, collectResult, out EShadowOnlyCasterCandidateReason reason))
+                    {
+                        shadowOnlyCasterCandidates++;
+                        casterCapture?.Record(renderable, reason, invokedCallback);
+                    }
                 }
 
                 // Canonical GPU collection supplies the skipped sources, so this CPU pass cannot prove a complete source order.
                 if (skippedCanonicalGpuSource)
                     commands.InvalidateFullResidentMeshOrderCollection();
+                if (shadowOnlyCasterCensus)
+                {
+                    RecordMainViewShadowOnlyCasterCensus(shadowOnlyCasterCandidates, casterCapture);
+                    casterCapture = null;
+                }
                 orderCollectionCompleted = true;
             }
-            finally { commands.EndFullResidentMeshOrderCollection(orderCollectionCompleted); }
+            finally
+            {
+                // A collection that did not complete releases the capture for the next main-view collection.
+                casterCapture?.Abandon();
+                commands.EndFullResidentMeshOrderCollection(orderCollectionCompleted);
+            }
 
             return visibleRenderables;
         }

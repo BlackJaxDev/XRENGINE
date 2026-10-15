@@ -8,7 +8,7 @@ namespace XREngine.Scene.Transforms;
 /// World-owned matrix arrays with generational identities, contiguous depth-first subtree ranges,
 /// and coherent sequence-locked matrix reads. Hierarchy changes are serialized with traversal.
 /// </summary>
-public sealed class TransformHierarchyStore : IDisposable
+public sealed partial class TransformHierarchyStore : IDisposable
 {
     private readonly object _gate = new();
     private readonly object _passGate = new();
@@ -60,6 +60,13 @@ public sealed class TransformHierarchyStore : IDisposable
         Interlocked.Read(ref s_contendedReads[2]), Interlocked.Read(ref s_oddSequenceRetries[2]),
         Interlocked.Read(ref s_changedSequenceRetries[2]), Interlocked.Read(ref s_retryTicks[2]),
         Volatile.Read(ref s_maxSpinCount[2]));
+
+    /// <summary>
+    /// Gets the cumulative pass-gate wait and hold counters for each measured entry site, summed over all stores.
+    /// The counters are always active.
+    /// </summary>
+    public static TransformHierarchyPassGateTelemetrySnapshot GetPassGateTelemetrySnapshot()
+        => TransformHierarchyPassGateTelemetry.Capture();
 
     private static void RecordReadContention(int space, int oddRetries, int changedRetries, int spinCount, long started)
     {
@@ -380,8 +387,13 @@ public sealed class TransformHierarchyStore : IDisposable
     /// <summary>Rebuilds contiguous subtree ranges after a batch of hierarchy edits.</summary>
     public void FlushHierarchy()
     {
-        lock (_passGate)
-        lock (_gate) Reorder();
+        bool passGateTaken = false, passGateHolder = false;
+        try
+        {
+            passGateHolder = EnterPassGate(ETransformHierarchyPassGateSite.FlushHierarchy, ref passGateTaken);
+            lock (_gate) Reorder();
+        }
+        finally { ExitPassGate(passGateTaken, passGateHolder); }
     }
 
     private void Reorder()
@@ -418,9 +430,16 @@ public sealed class TransformHierarchyStore : IDisposable
     /// <summary>Propagates disjoint dirty subtree ranges, then dispatches matrix notifications.</summary>
     public void Process(ELoopType loopType)
     {
-        lock (_passGate)
+        // The same enter and release pattern as a lock statement, with wait and hold counters.
+        bool passGateTaken = false, passGateHolder = false;
+        try
         {
-            if (_processing || _publishing) return;
+            passGateHolder = EnterPassGate(ETransformHierarchyPassGateSite.ProcessPass, ref passGateTaken);
+            if (_processing || _publishing)
+            {
+                TransformHierarchyPassGateTelemetry.CountReentrantSkip(ETransformHierarchyPassGateSite.ProcessPass);
+                return;
+            }
             _processing = true;
             long workerAllocated = 0;
             long allocated = GC.GetAllocatedBytesForCurrentThread();
@@ -470,15 +489,21 @@ public sealed class TransformHierarchyStore : IDisposable
             finally
             {
                 _evaluating = null;
-                try { DispatchNotifications(); }
+                long notifyStarted = Stopwatch.GetTimestamp();
+                int notified = 0;
+                try { notified = DispatchNotifications(); }
                 finally
                 {
                     _processing = false;
                     _propagationAllocated = GC.GetAllocatedBytesForCurrentThread() - allocated + workerAllocated;
-                    _propagationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                    long ended = Stopwatch.GetTimestamp();
+                    _propagationMs = Stopwatch.GetElapsedTime(started, ended).TotalMilliseconds;
+                    TransformHierarchyPassGateTelemetry.RecordHold(
+                        ETransformHierarchyPassGateSite.ProcessPass, ended - started, ended - notifyStarted, 0, notified);
                 }
             }
         }
+        finally { ExitPassGate(passGateTaken, passGateHolder); }
     }
 
     private void ProcessRange(int rangeIndex)
@@ -493,7 +518,9 @@ public sealed class TransformHierarchyStore : IDisposable
         }
     }
 
-    private void DispatchNotifications()
+    /// <summary>Runs the pending matrix notifications in hierarchy order.</summary>
+    /// <returns>The number of transforms that got notifications.</returns>
+    private int DispatchNotifications()
     {
         // Snapshot identities before callbacks, which may detach, destroy or reparent entries.
         _changed.Clear();
@@ -503,6 +530,7 @@ public sealed class TransformHierarchyStore : IDisposable
             int mask = Interlocked.Exchange(ref _notifications[i], 0);
             if (mask != 0 && _owners[i] is { } owner) _changed.Add((owner, mask));
         }
+        int notified = _changed.Count;
         for (int i = 0; i < _changed.Count; i++)
         {
             var change = _changed[i];
@@ -523,14 +551,39 @@ public sealed class TransformHierarchyStore : IDisposable
             }
         }
         _changed.Clear();
+        return notified;
     }
 
     /// <summary>Publishes pending world matrices as one array transaction before render collection.</summary>
+    /// <remarks>The pass-gate telemetry counts this call as <see cref="ETransformHierarchyPassGateSite.PublishOther"/>.</remarks>
     public int PublishRenderMatrices()
+        => PublishRenderMatrices(ETransformHierarchyPassGateSite.PublishOther);
+
+    /// <summary>
+    /// Publishes pending world matrices as one array transaction, and records the pass-gate wait and hold
+    /// for the publication site of the caller.
+    /// </summary>
+    /// <param name="site">
+    /// <see cref="ETransformHierarchyPassGateSite.PublishPreCollect"/>, <see cref="ETransformHierarchyPassGateSite.PublishSwap"/>,
+    /// or <see cref="ETransformHierarchyPassGateSite.PublishOther"/>.
+    /// </param>
+    /// <returns>The number of published rows, or 0 when a pass or a publication is active on the same thread.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="site"/> is not a publication site.</exception>
+    internal int PublishRenderMatrices(ETransformHierarchyPassGateSite site)
     {
-        lock (_passGate)
+        if (!TransformHierarchyPassGateTelemetry.IsPublicationSite(site))
+            throw new ArgumentOutOfRangeException(nameof(site), site, "The site must be a render-matrix publication site.");
+
+        // The same enter and release pattern as a lock statement, with wait and hold counters.
+        bool passGateTaken = false, passGateHolder = false;
+        try
         {
-            if (_publishing || _processing) return 0;
+            passGateHolder = EnterPassGate(site, ref passGateTaken);
+            if (_publishing || _processing)
+            {
+                TransformHierarchyPassGateTelemetry.CountReentrantSkip(site);
+                return 0;
+            }
             _publishing = true;
             long allocated = GC.GetAllocatedBytesForCurrentThread();
             long started = Stopwatch.GetTimestamp();
@@ -558,10 +611,13 @@ public sealed class TransformHierarchyStore : IDisposable
               }
             }
             catch { _publishing = false; throw; }
+            long notifyStarted = 0;
+            int notified = 0;
             try
             {
                 _publicationSink?.Publish(_publicationSlots.AsSpan(0, published), _render, _generations);
-                DispatchNotifications();
+                notifyStarted = Stopwatch.GetTimestamp();
+                notified = DispatchNotifications();
                 Interlocked.Add(ref _published, published);
                 return published;
             }
@@ -569,9 +625,14 @@ public sealed class TransformHierarchyStore : IDisposable
             {
                 _publishing = false;
                 _publicationAllocated = GC.GetAllocatedBytesForCurrentThread() - allocated;
-                _publicationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                long ended = Stopwatch.GetTimestamp();
+                _publicationMs = Stopwatch.GetElapsedTime(started, ended).TotalMilliseconds;
+                // notifyStarted stays 0 when the sink throws before the notifications start.
+                TransformHierarchyPassGateTelemetry.RecordHold(
+                    site, ended - started, notifyStarted == 0 ? 0 : ended - notifyStarted, published, notified);
             }
         }
+        finally { ExitPassGate(passGateTaken, passGateHolder); }
     }
 
     /// <summary>Installs the rendering owner's record-table writer and schedules initial population.</summary>

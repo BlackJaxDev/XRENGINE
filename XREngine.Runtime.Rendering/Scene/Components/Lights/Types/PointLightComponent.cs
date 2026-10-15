@@ -441,6 +441,8 @@ namespace XREngine.Components.Capture.Lights.Types
 
             PointShadowRenderPlan plan = CreatePointShadowRenderPlan();
             bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedFaceCollection();
+            ECollectVisibleViewKind previousView = CollectVisibleStageTimings.EnterView(ECollectVisibleViewKind.LocalShadow);
+            long viewStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.Collect);
             if (plan.IsLayered || prepareAtlasGroupedCommands)
             {
                 // Layered and grouped-atlas passes render all selected faces from one draw list.
@@ -455,6 +457,7 @@ namespace XREngine.Components.Capture.Lights.Types
                     if ((faceMask & (1 << i)) != 0)
                         _viewports[i].CollectVisible(collectMirrors: false);
             }
+            CollectVisibleStageTimings.EndView(previousView, viewStart);
         }
 
         public override void SwapBuffers(Rendering.Lightmapping.LightmapBakeManager? lightmapBaker = null)

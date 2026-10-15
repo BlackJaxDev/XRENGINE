@@ -135,13 +135,46 @@ contains the exact bound, so CPU culling stays conservative, but it is less
 precise than the exact bound.
 
 The dispatcher keeps a renderer material-route snapshot while the scene and
-renderer-command publication generation stay unchanged. A warm query still
-checks the producer page, source, envelope, bone generation, and current
-material contract. It checks the scene generation and route presence again
-before it returns a bound. The material evaluator checks shader identity and
-source revision on a cache hit. It scans shader declarations only when the
-material layout, values, Uber state, or shader witness changes. A shader that
-does not meet the trust check uses the conservative declaration path.
+renderer-command publication generation stay unchanged. A resolved query checks
+the producer page, source, envelope, bone generation, and current material
+contract. It checks the scene generation and route presence again before it
+returns a bound. The material evaluator checks shader identity and source
+revision on a cache hit, and reads an immutable contract entry without a lock.
+It scans shader declarations only when the material layout, values, Uber
+state, or shader witness changes. A shader that does not meet the trust check
+uses the conservative declaration path.
+
+Collection, culling, scene publication, and render-matrix notifications query
+the committed bound many times for each renderer in one frame. Each renderer
+keeps its last resolved query (`XRMeshRenderer.CommittedSpatialQuery`) and
+reuses it while these witnesses are unchanged: the dispatcher spatial epoch,
+the usability of the published page, coverage, the bone buffer generation,
+the mesh and its envelope, the scene renderer-command material publication
+generation, and the drawn material snapshots and contracts. A reuse takes only
+the renderer's own lock; it reads the page and the scene generation without
+their locks. Only a scene-routed result is reusable. The dispatcher advances
+the epoch under `_outputPageSync` when the committed bounds sources change,
+when a renderer's committed query state differs between pages, and on page
+invalidation, retirement, and bounds reset. A commit with unchanged renderer
+values keeps the epoch. Failure handling stays on the locked resolution path,
+which the render thread also runs in each frame. `TryCaptureGpuBoundsSource`
+answers from a current query first. Lock order: a query resolve holds the
+query lock while it takes `_outputPageSync`, `_cpuSpatialMaterialSync`, and the
+scene lock. Scene publication calls `TryCaptureGpuBoundsSource` while it holds
+the scene lock, so that method only tries the query lock. When another thread
+holds it, the method uses the locked path. Code that holds one of those locks
+must never wait for a query lock. Advanced preparation reads covered renderer
+states without `_outputPageSync`: after it retains the published page, it opens a
+`PhysicsChainGpuRendererStateReader` once (`TryOpenRendererStateReader`, under
+the lock, with the usability check), and then reads each state by bounds slot
+(`TryReadRendererOutputState`). The page keeps the states in a slot-indexed
+array beside `RendererStates`. The array is cleared in place and grows only while
+the page is written, and a retained page is never rewritten, so the reader stays
+valid until the page is released. Each read still checks the exact bounds
+source, the bone-buffer generation, and the mesh envelope. `CommitOutputPage` keeps an unchanged
+bounds-source map and sends renderer notifications after it releases
+`_outputPageSync`. `CaptureCommittedSpatialQueryDiagnostics()` counts misses by
+reason and epoch advances by cause.
 
 Each output page records renderer slice identity, range, and bone generation.
 Compatible ranges copy the prior palette even when the atlas layout changes.

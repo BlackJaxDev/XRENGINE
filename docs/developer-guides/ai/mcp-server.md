@@ -109,6 +109,18 @@ The MCP server settings are located in the **Global Editor Preferences** panel u
 | `McpDispatchMode` | Default thread dispatch mode for MCP tools without explicit affinity | `Direct` |
 
 Changes take effect immediately - the server will start or stop based on the `McpServerEnabled` setting, and will restart on a new port if `McpServerPort` is changed while running.
+The server reads these settings only after the effective preferences are fully composed
+(`Engine.EditorPreferencesChanged`). A composition copies the global values first and then
+applies overrides and session values, such as the `--mcp` switch, so a partial value must not
+stop the server. A session-only `set_editor_preference` call therefore does not restart it.
+
+Tools with `Main` affinity, and unannotated tools in `MainThread` mode, run as app-thread jobs on
+the update thread. The update thread does not start app-thread work while a render frame
+dispatches, but it starts work that render frames have deferred for 50 ms. Under a heavy render
+load, a call can therefore wait about 50 ms plus one update iteration, or longer while another
+long app-thread job runs (for example a benchmark spawn). Call the static
+`Engine.CaptureAppThreadDispatchDiagnostics()` through `invoke_method` to read the deferral counts
+and the longest deferral.
 
 Set `XRE_MCP_REQUEST_TRACE=1` before editor startup to trace single-request
 `invoke_method` calls. The trace records the JSON-RPC ID, tool and target
@@ -686,6 +698,7 @@ the target's type and optional persistent ID.
 | `get_scene_statistics` | Get scene statistics including node and component counts. |
 | `get_selection` | Get the currently selected scene nodes. |
 | `get_shader_command_coverage` | Return opt-in shader command coverage. OpenGL counters are issued commands; Vulkan counters are command-buffer Recorded commands, never GPU-completed work. |
+| `get_shadow_caster_census` | Read the shadow-only caster census that gates the primary directional shadow views under a zero-readback strategy: GPU dispatch state, previous and current candidate counts, previous and current main-view GPU collection counts, the shadow caster membership revision against its pass-start value, MayHaveShadowOnlyCasters, and the last atlas planning decision. With capture_candidates, also capture the candidates that the next completed main-view GPU collection counts, with reason, owner, scene node, layer, flags, pre-collection callback method and command types. A world without GPU dispatch or without a recent main-view GPU collection gets no capture. |
 | `get_texture_streaming_summary` | Return imported texture streaming summary telemetry, including Vulkan freeze and generation state. |
 | `get_time_state` | Get timing, delta, and target frequency information. |
 | `get_transform_decomposed` | Get local/world/render translation, rotation, and scale for a scene node. |

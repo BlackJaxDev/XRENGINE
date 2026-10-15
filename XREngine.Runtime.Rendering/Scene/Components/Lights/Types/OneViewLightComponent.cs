@@ -196,7 +196,10 @@ namespace XREngine.Components.Capture.Lights.Types
             if (!TryGetProcessableShadowViewport(out XRViewport viewport))
                 return;
 
+            ECollectVisibleViewKind previousView = CollectVisibleStageTimings.EnterView(ECollectVisibleViewKind.LocalShadow);
+            long viewStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.Collect);
             viewport.CollectVisible(false);
+            CollectVisibleStageTimings.EndView(previousView, viewStart);
         }
 
         private static bool _loggedShadowRenderOnce = false;
