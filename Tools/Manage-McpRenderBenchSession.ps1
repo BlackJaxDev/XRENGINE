@@ -239,7 +239,7 @@ function Start-Session {
                 '/property:GenerateFullPaths=true',
                 '/consoleloggerparameters:NoSummary'
             )
-            & dotnet @buildArguments *> $buildLog
+            & (Join-Path $PSScriptRoot 'Invoke-AgentBuild.ps1') -DotnetArguments $buildArguments *> $buildLog
             if ($LASTEXITCODE -ne 0) { throw "Isolated RenderBench build failed. See '$buildLog'." }
         }
 

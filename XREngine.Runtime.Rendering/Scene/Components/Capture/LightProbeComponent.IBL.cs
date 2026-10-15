@@ -24,6 +24,7 @@ namespace XREngine.Components.Capture.Lights
         // renderer that authored the previous attempt rather than whichever
         // window happens to be active when the timer callback is dispatched.
         private AbstractRenderer? _iblRetryRenderer;
+        private AbstractRenderer? _activeIblRenderer;
         private Func<bool>? _requiredIblProducer;
         private bool _iblDestroyQueued;
         private bool _staticIblInitializationQueued;
@@ -370,6 +371,7 @@ namespace XREngine.Components.Capture.Lights
             _pendingIblOutput = null;
             _activeIblOutput?.ReleaseProducer();
             _activeIblOutput = null;
+            _activeIblRenderer = null;
             IrradianceTexture = null;
             PrefilterTexture = null;
             IblTexturesValid = false;
@@ -696,6 +698,7 @@ namespace XREngine.Components.Capture.Lights
 
             LightProbeIblOutputGeneration? previous = _activeIblOutput;
             _activeIblOutput = pending;
+            _activeIblRenderer = _iblRetryRenderer ?? AbstractRenderer.Current;
             _pendingIblOutput = null;
             IrradianceTexture = pending.Irradiance;
             PrefilterTexture = pending.PrefilteredRadiance;
@@ -952,7 +955,40 @@ namespace XREngine.Components.Capture.Lights
         /// swap captures this publication into immutable global-resource input.
         /// </summary>
         internal void PublishCompletedIblOutput()
-            => ResolvePendingIblOutputVersion();
+        {
+            if (_activeIblOutput is not null &&
+                _activeIblRenderer is not null &&
+                AbstractRenderer.Current is { } currentRenderer &&
+                !ReferenceEquals(_activeIblRenderer, currentRenderer) &&
+                this is not PublishedRetainedLightProbeComponent)
+            {
+                ReinitializeIblAfterRendererReplacement();
+            }
+
+            ResolvePendingIblOutputVersion();
+        }
+
+        private void ReinitializeIblAfterRendererReplacement()
+        {
+            DiscardPendingIblOutputVersion();
+            ReleaseRetainedIbl();
+            CancelPendingIblGenerationRetry();
+            _iblRenderPipeline?.DestroyCache();
+            _iblRenderPipeline = null;
+
+            if (!IsActiveInHierarchy || IsIblProducerQuarantined)
+                return;
+
+            if (EnvironmentTextureEquirect is not null)
+            {
+                InitializeStatic();
+            }
+            else if (AutoCaptureOnActivate || RealtimeCapture)
+            {
+                InvalidateCaptureResources();
+                FullCapture(Resolution, CaptureDepthCubeMap);
+            }
+        }
 
         /// <summary>Returns one coherent active IBL generation for publication capture.</summary>
         public bool TryGetActiveIblOutput(out LightProbeIblOutputGeneration generation)

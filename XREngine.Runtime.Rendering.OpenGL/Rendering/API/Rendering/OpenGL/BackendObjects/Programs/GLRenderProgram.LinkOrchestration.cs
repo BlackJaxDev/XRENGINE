@@ -537,6 +537,39 @@ namespace XREngine.Rendering.OpenGL
                         }
                         else
                         {
+                            if (_cachedProgram is { Length: > 0 } retryBinProg &&
+                                TryRehydrateSharedContextProgramOnRenderContext(
+                                    pendingId,
+                                    new GLProgramCompileLinkQueue.ProgramBinarySnapshot(retryBinProg.Binary, retryBinProg.Format, retryBinProg.Length),
+                                    out double syncRetryMilliseconds,
+                                    out _))
+                            {
+                                if (!AdoptLinkedBuildProgram(pendingId))
+                                    return IsLinked;
+                                IsLinked = true;
+                                double reflectionMilliseconds = ReflectRuntimeBindingStateAfterBinaryLoad();
+                                RegisterCurrentLinkedProgramForSharing(retryBinProg.CacheKey, retryBinProg.Format, pendingId);
+                                PublishBackendStatus(
+                                    EShaderProgramBackendStage.Ready,
+                                    "BinaryUploadSynchronous",
+                                    "cached binary loaded on render context after async worker upload rejection",
+                                    compileMilliseconds: 0.0,
+                                    linkMilliseconds: 0.0,
+                                    fingerprint: retryBinProg.CacheKey);
+                                LogRenderingProgramBuildEvent(
+                                    "BINARY_UPLOAD_SYNC_READY",
+                                    "BinaryUploadSynchronous",
+                                    "cached binary loaded on render context after async worker upload rejection",
+                                    retryBinProg.CacheKey,
+                                    pendingId,
+                                    binaryBytes: retryBinProg.Length,
+                                    binaryFormat: retryBinProg.Format.ToString());
+                                RuntimeEngine.Rendering.Stats.RecordShaderVariant(linked: true, loadedFromDiskCache: true);
+                                CompleteBuildTelemetry(true, binaryLoadMilliseconds: syncRetryMilliseconds, reflectionMilliseconds: reflectionMilliseconds);
+                                ClearCompletedBuildPendingState();
+                                return true;
+                            }
+
                             string failedCacheKey = _cachedProgram?.CacheKey ?? asyncResult.CacheKey;
                             uint failedBinaryBytes = _cachedProgram?.Length ?? 0u;
                             Debug.OpenGLWarning($"Async program binary upload failed for hash {Hash}: {asyncResult.ErrorLog ?? "unknown error"}. Falling back to source compilation.");
@@ -776,25 +809,6 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                if (isCached && Renderer.ProgramBinaryUploadQueue?.IsDisabledAfterFailures == true)
-                {
-                    GLEnum format = binProg.Format;
-                    PublishBackendStatus(
-                        EShaderProgramBackendStage.CacheMiss,
-                        "BinaryCache",
-                        "cached binary upload disabled for this session",
-                        fingerprint: binProg.CacheKey);
-                    LogRenderingProgramBuildEvent(
-                        "BINARY_CACHE_SKIPPED_ASYNC_UPLOAD_DISABLED",
-                        "BinaryCache",
-                        "cached binary upload disabled for this session",
-                        binProg.CacheKey,
-                        bindingId,
-                        binaryBytes: binProg.Length,
-                        binaryFormat: format.ToString());
-                    isCached = false;
-                }
-
                 if (isCached)
                 {
                     _asyncCompileDuplicateHashWaitPending = false;
@@ -901,6 +915,7 @@ namespace XREngine.Rendering.OpenGL
                             _asyncBinaryUploadQueueWaitPending = false;
                             BeginBuildTelemetry("BinaryUploadAsync", binProg.CacheKey);
                             EProgramPriority priority = Data?.Priority ?? EProgramPriority.Main;
+                            Api.Flush();
                             uploadQueue.EnqueueUpload(bindingId, binProg.Binary, format, binProg.Length, Hash, binProg.CacheKey, priority);
                             _asyncBinaryUploadPending = true;
                             PublishBackendStatus(
@@ -949,6 +964,8 @@ namespace XREngine.Rendering.OpenGL
                             }
                         }
                         double binaryLoadMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - binaryStart);
+                        if (binaryLoadMilliseconds >= 5.0)
+                            Renderer.EnsureProgramBinaryUploadQueueInitialized();
                         GLEnum error = GLEnum.NoError;
                         MeasureRenderingProgramGlCall(
                             "glGetError",
@@ -1109,6 +1126,7 @@ namespace XREngine.Rendering.OpenGL
                             Debug.OpenGL($"[ShaderCache] MISS hash={Hash}, compiling {_shaderCache.Count} shader(s) from source.");
                     }
 
+                    Renderer.EnsureProgramCompileLinkQueueInitialized();
                     var compileQueue = Renderer.ProgramCompileLinkQueue;
                     bool isKnownAsyncLinkHazard = IsKnownAsyncLinkHazard;
                     bool forceSynchronousSourceRetry = Hash != 0 && SynchronousSourceRetryHashes.ContainsKey(Hash);
@@ -1244,6 +1262,7 @@ namespace XREngine.Rendering.OpenGL
                         // observed when a separable program linked in a shared context was used
                         // immediately by the render context.
                         const bool setBinaryRetrievableHint = true;
+                        Api.Flush();
                         if (!compileQueue.TryEnqueueCompileAndLink(
                             bindingId,
                             inputs,

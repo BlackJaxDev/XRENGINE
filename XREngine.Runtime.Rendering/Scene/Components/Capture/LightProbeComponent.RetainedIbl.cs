@@ -7,6 +7,7 @@ public partial class LightProbeComponent
     {
         _activeIblOutput?.ReleaseProducer();
         SetField(ref _activeIblOutput, null, publishNotifications: false);
+        _activeIblRenderer = null;
         IrradianceTexture = null;
         PrefilterTexture = null;
         IblTexturesValid = false;

@@ -569,7 +569,7 @@ public sealed class SecondaryPassShaderContractTests
     [Test]
     public void VulkanUniformWriters_AcceptEngineColorStructsForVectorUniforms()
     {
-        string meshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+        string meshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.ValueWriting.cs");
         string renderProgram = ReadWorkspaceFile(Path.Combine(
             "XREngine.Runtime.Rendering.Vulkan",
             "Rendering",

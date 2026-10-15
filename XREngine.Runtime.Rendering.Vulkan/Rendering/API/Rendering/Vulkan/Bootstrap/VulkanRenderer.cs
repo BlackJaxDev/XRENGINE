@@ -363,10 +363,10 @@ public sealed partial class VulkanRenderer :
     internal VulkanFrameLoop OpenXrFrameLoop => _frameLoop;
 
     public override bool IsRenderingExternalSwapchainTarget
-        => _frameLoop.IsRenderingExternalSwapchainTarget;
+        => AcceptsBackendWork && _frameLoop.IsRenderingExternalSwapchainTarget;
 
     public override bool AllowSynchronousResourceUploads
-        => _frameLoop.AllowSynchronousResourceUploads;
+        => AcceptsBackendWork && _frameLoop.AllowSynchronousResourceUploads;
 
     public override bool TryGetExternalSwapchainTargetRegion(out BoundingRectangle region)
         => _frameLoop.TryGetExternalSwapchainTargetRegion(out region);

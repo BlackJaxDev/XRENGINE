@@ -62,6 +62,7 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
     public RuntimeWindowBackendKind Kind { get; private set; } = RuntimeWindowBackendKind.Unknown;
     public RuntimeWindowBackendOwnershipInfo Ownership => RuntimeWindowBackendOwnershipInfo.ForBackend(Kind);
     public RuntimeGraphicsApiKind GraphicsApi => _options.GraphicsApi;
+    public RuntimeWindowCreateOptions Options => _options;
     public int OwnerThreadId { get; }
     public long LifetimeGeneration { get; }
     internal long SharedParentGeneration => _options.SharedContext?.OwnerGeneration ?? 0;
@@ -76,11 +77,20 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
     public IRuntimeWindowVulkanSurface? VulkanSurface => _vulkanSurface;
     public nint PlatformWindowHandle => _platformWindowHandle;
     public nint OperatingSystemWindowHandle => _operatingSystemWindowHandle;
+    public IVector2 Position => new(_window.Position.X, _window.Position.Y);
     public IVector2 ClientScreenPosition { get { lock (_snapshotSync) return _clientScreenPosition; } }
     public ReadOnlyMemory<RuntimeDesktopMonitor> Monitors { get { lock (_snapshotSync) return _monitors; } }
     public string Title => Volatile.Read(ref _title);
     public bool IsClosing => _closeRequested;
     internal IWindow NativeWindow => _window;
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void GlClearColorDelegate(float red, float green, float blue, float alpha);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void GlClearDelegate(uint mask);
+
+    private const uint GlColorBufferBit = 0x00004000u;
 
     public void Initialize(IRuntimeWindowEventSink sink)
     {
@@ -110,13 +120,19 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
             if (_window.VkSurface is not null)
                 _vulkanSurface = new DesktopSilkVulkanSurface(_window, LifetimeGeneration);
             PublishSurface();
-            PublishEvents(false);
-            PublishInput();
             RefreshMonitors();
             InstallResizeHook();
             Vector2D<int> requestedPosition = new(_options.Position.X, _options.Position.Y);
             if (_window.Position != requestedPosition)
                 _window.Position = requestedPosition;
+            if (_options.Visible && _options.Purpose == RuntimeWindowPurpose.Presentation && !QueryNativeFocusState())
+                _window.Focus();
+            _focused = QueryNativeFocusState();
+            PublishEvents(false);
+            PublishInput();
+            if (_focused)
+                _sink?.FocusChanged(true);
+            PresentInitialBackdrop();
         }
         catch
         {
@@ -128,10 +144,36 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
         }
     }
 
+    private void PresentInitialBackdrop()
+    {
+        if (_glContext is null || !_options.Visible || _options.Purpose != RuntimeWindowPurpose.Presentation)
+            return;
+
+        try
+        {
+            _glContext.MakeCurrent();
+            nint clearColorAddress = _glContext.GetProcAddress("glClearColor");
+            nint clearAddress = _glContext.GetProcAddress("glClear");
+            if (clearColorAddress != 0 && clearAddress != 0)
+            {
+                var glClearColor = Marshal.GetDelegateForFunctionPointer<GlClearColorDelegate>(clearColorAddress);
+                var glClear = Marshal.GetDelegateForFunctionPointer<GlClearDelegate>(clearAddress);
+                glClearColor(0.10f, 0.10f, 0.11f, 1.0f);
+                glClear(GlColorBufferBit);
+            }
+            _glContext.SwapBuffers();
+            _window.DoEvents();
+        }
+        catch
+        {
+        }
+    }
+
     public void PumpEvents()
     {
         AssertOwnerThread();
         _window.DoEvents();
+        SyncNativeFocusState();
         PublishSurface();
         PublishEvents(false);
         PublishInput();
@@ -540,6 +582,36 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool ClientToScreen(nint handle, ref NativePoint point);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern nint GetFocus();
+
+    private bool QueryNativeFocusState()
+    {
+        if (!_options.Visible || _disposed)
+            return false;
+
+        if (OperatingSystem.IsWindows() && _operatingSystemWindowHandle != 0)
+        {
+            return GetForegroundWindow() == _operatingSystemWindowHandle ||
+                   GetFocus() == _operatingSystemWindowHandle;
+        }
+
+        return _options.Purpose == RuntimeWindowPurpose.Presentation;
+    }
+
+    private void SyncNativeFocusState()
+    {
+        if (!OperatingSystem.IsWindows() || _operatingSystemWindowHandle == 0 || _disposed)
+            return;
+
+        bool nativeFocused = QueryNativeFocusState();
+        if (nativeFocused != _focused)
+            OnFocusChanged(nativeFocused);
+    }
 
     private void PublishEvents(bool closeApproved)
     {

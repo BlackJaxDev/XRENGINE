@@ -367,7 +367,7 @@ public sealed class StereoPostProcessContractTests
         string meshSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         string uniformSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.Values.cs");
         meshSource.ShouldContain("viewProjectionMatrixUnjitteredSnapshot = temporalData.CurrViewProjectionUnjittered;");
         meshSource.ShouldContain("rightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyeCurrViewProjectionUnjittered;");
         uniformSource.ShouldContain("draw.ViewProjectionMatrixUnjittered");

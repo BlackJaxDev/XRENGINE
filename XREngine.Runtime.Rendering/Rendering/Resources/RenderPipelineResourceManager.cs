@@ -62,7 +62,13 @@ public sealed class RenderPipelineResourceManager
                     }
 
                     if (!specCompleted)
-                        return true;
+                    {
+                        materializedThisSlice++;
+                        if (ShouldYieldMaterialization(startTimestamp, maxDuration, materializedThisSlice, maxSpecsPerSlice))
+                            return true;
+
+                        continue;
+                    }
 
                     generation.TransferMaterializingResourceOwnership(spec.Name);
                     generation.MaterializedSpecCount++;

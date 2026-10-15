@@ -100,6 +100,9 @@ namespace XREngine.Scene.Transforms
             List<Type> transformTypes = [];
             foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
+                if (!XREngine.Core.XRLoadableTypeCatalog.ShouldScanAssemblyForEngineTypes(assembly))
+                    continue;
+
                 foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetExportedTypes(assembly))
                 {
                     if (type.IsSubclassOf(typeof(TransformBase)))

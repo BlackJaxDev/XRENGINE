@@ -1,10 +1,4 @@
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-// VkMeshRenderer.Drawing.cs  Ã¢â‚¬â€œ partial class: Draw Command Recording
-//
-// Records indexed and non-indexed draw commands into Vulkan command buffers.
-// Handles vertex buffer binding, descriptor set binding, and per-draw uniform
-// notification.
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// Records indexed and non-indexed mesh draws into Vulkan command buffers.
 
 using System;
 using System.Buffers;
@@ -48,7 +42,7 @@ internal unsafe partial class VkMeshRenderer
 	/// <summary>
 	/// Records draw commands into the given Vulkan command buffer for all
 	/// primitive types available on the mesh (triangles, lines, points).
-	/// Falls back to non-indexed drawing if no index buffers are present.
+	/// Falls back to non-indexed drawing if no indexed draw succeeds.
 	/// Handles pipeline binding, vertex buffer binding, skinning/blendshape
 	/// data upload, and descriptor set binding.
 	/// </summary>
@@ -138,15 +132,7 @@ internal unsafe partial class VkMeshRenderer
 		pipelineUnavailable = false;
 		ActivateDrawMaterializationSnapshot(draw);
 		var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
-		string prepareReason;
-		bool preparedForRecord;
-		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.Prepare"))
-		{
-			preparedForRecord = draw.PreparedProgram is { } preparedProgram
-				? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, frameDataImageIndex, out prepareReason)
-				: TryPrepareForRendering(material, out prepareReason);
-		}
-		if (!preparedForRecord)
+		if (!TryPrepareDrawForRecording(draw, material, drawUniformSlot, frameDataImageIndex, out string prepareReason))
 		{
 			failureReason = $"preparation failed: {prepareReason}; {LastPrepareDetail}";
 			ReportSkippedDraw(failureReason, passIndex, targetName);
@@ -155,146 +141,41 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		var drawCopy = draw; // struct copy required for capture in local function closures
-		uint drawInstances = draw.Instances;
 		bool skipLinePointDraws = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
 
-		// Trace swapchain (dynamic rendering) draws only.
-		bool traceSwapchain = useDynamicRendering && renderPass.Handle == 0;
-		bool verboseSwapchainTrace = traceSwapchain && XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw;
-
-		// Trace ALL draws (including FBO-targeted UI batched draws) for debugging.
-		bool verboseAllDrawTrace = XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw;
-		bool verboseTrace = verboseSwapchainTrace || verboseAllDrawTrace;
-
-		// Skinning and blendshape weights must be pushed before draw commands
-		// reference them; static meshes avoid the shared invalidation checks.
-		if (Mesh?.HasSkinning == true)
+		// The recording lock protects mutable program and material bindings.
+		// Pass draw inputs and failure state by reference inside that lock.
+		DrawRecordingState state = new()
 		{
-			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushSkinning"))
-				MeshRenderer.PushBoneMatricesToGPU();
-		}
-		if (Mesh?.HasBlendshapes == true)
-		{
-			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushBlendshapes"))
-				MeshRenderer.PushBlendshapeWeightsToGPU();
-		}
+			CommandBuffer = commandBuffer,
+			Draw = draw,
+			Material = material,
+			RenderPass = renderPass,
+			UseDynamicRendering = useDynamicRendering,
+			DynamicRenderingFormats = dynamicRenderingFormats,
+			PassIndex = passIndex,
+			PassMetadata = passMetadata,
+			DepthStencilReadOnly = depthStencilReadOnly,
+			PipelineName = pipelineName,
+			TargetName = targetName,
+			DrawUniformSlot = drawUniformSlot,
+			FrameDataImageIndex = frameDataImageIndex,
+			VerboseTrace = (useDynamicRendering && renderPass.Handle == 0 && XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw)
+				|| XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw,
+		};
+		UploadDrawDeformationData();
 
-		bool uniformsNotified = false;
-		string? drawFailureReason = null;
-		bool pipelineFailureObserved = false;
-
-		bool DrawIndexed(VkDataBuffer? indexBuffer, IndexSize size, PrimitiveTopology topology)
-		{
-			if (indexBuffer?.BufferHandle is not { } indexHandle)
-			{
-				if (verboseTrace)
-					Debug.MeshesWarning("[DrawTrace] {0}: no indexBuffer for {1}", Mesh?.Name ?? "?", topology);
-				return false;
-			}
-
-			if (size == IndexSize.Byte && !BackendContext.Supports(EVulkanDeviceCapability.IndexTypeUint8))
-			{
-				drawFailureReason = "Vulkan indexTypeUint8 is unavailable";
-				WarnOnce("Skipping indexed draw using byte-sized indices because Vulkan indexTypeUint8 is not enabled.");
-				return false;
-			}
-
-			uint indexCount = indexBuffer.Data.ElementCount;
-			if (indexCount == 0)
-			{
-				if (verboseTrace)
-					Debug.MeshesWarning("[DrawTrace] {0}: indexCount=0 for {1}", Mesh?.Name ?? "?", topology);
-				return false;
-			}
-
-			Pipeline pipeline = default;
-			bool pipelineReady;
-			string pipelineFailure;
-			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.EnsurePipeline"))
-			{
-				pipelineReady = EnsurePipelineCore(material, topology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, foregroundRequired: false, out pipeline, out _, out pipelineFailure);
-			}
-			if (!pipelineReady)
-			{
-				pipelineFailureObserved = true;
-				drawFailureReason = $"indexed pipeline unavailable: {pipelineFailure}";
-				if (verboseTrace)
-					Debug.MeshesWarning("[DrawTrace] {0}: EnsurePipeline FAILED for {1} dynRender={2} colors={3} depthFmt={4}",
-						Mesh?.Name ?? "?", topology, useDynamicRendering, dynamicRenderingFormats.DescribeColorFormats(), dynamicRenderingFormats.DepthAttachmentFormat);
-				return false;
-			}
-
-			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindPipeline"))
-				CommandOperations.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
-
-			bool vertexBuffersBound;
-			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindVertexBuffers"))
-				vertexBuffersBound = BindVertexBuffersForCurrentPipeline(commandBuffer);
-			if (!vertexBuffersBound)
-			{
-				drawFailureReason = "indexed vertex buffers unavailable";
-				if (verboseTrace)
-					Debug.MeshesWarning("[DrawTrace] {0}: BindVertexBuffers FAILED", Mesh?.Name ?? "?");
-				return false;
-			}
-
-			if (!uniformsNotified && _program?.Data is { } programData)
-			{
-				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.NotifyUniforms"))
-					NotifyDrawUniforms(material, programData, drawCopy);
-				uniformsNotified = true;
-			}
-
-			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushConstants"))
-				PushPerDrawConstants(commandBuffer, material, drawCopy);
-
-			bool descriptorsBound;
-			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
-				descriptorsBound = BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot, frameDataImageIndex, passIndex);
-			if (!descriptorsBound)
-			{
-				drawFailureReason = "indexed descriptors unavailable";
-				if (verboseTrace)
-					Debug.MeshesWarning("[DrawTrace] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
-				return false;
-			}
-
-			if (verboseTrace)
-				Debug.MeshesWarning("[DrawTrace] {0}: CmdDrawIndexed({1}) pass={2} target={3} dynRender={4} dsReadOnly={5} pipeline=0x{6:X} topology={7} cull={8} blend={9} blendOps={10}/{11} blendFactors={12},{13},{14},{15} alphaToCoverage={16} depthTest={17} depthWrite={18} depthCmp={19} colorWrite={20} viewport=({21},{22},{23},{24}) scissor=({25},{26},{27},{28}) prog={29}",
-					Mesh?.Name ?? "?", indexCount,
-					passIndex, targetName, useDynamicRendering, depthStencilReadOnly,
-					pipeline.Handle, topology,
-					drawCopy.CullMode, drawCopy.BlendEnabled,
-					drawCopy.ColorBlendOp, drawCopy.AlphaBlendOp,
-					drawCopy.SrcColorBlendFactor, drawCopy.DstColorBlendFactor, drawCopy.SrcAlphaBlendFactor, drawCopy.DstAlphaBlendFactor,
-					drawCopy.AlphaToCoverageEnabled,
-					drawCopy.DepthTestEnabled, drawCopy.DepthWriteEnabled, drawCopy.DepthCompareOp, drawCopy.ColorWriteMask,
-					drawCopy.Viewport.X, drawCopy.Viewport.Y, drawCopy.Viewport.Width, drawCopy.Viewport.Height,
-					drawCopy.Scissor.Offset.X, drawCopy.Scissor.Offset.Y, drawCopy.Scissor.Extent.Width, drawCopy.Scissor.Extent.Height,
-					_program?.Data?.Name ?? "?prog");
-
-			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.CmdDrawIndexed"))
-			{
-				CommandOperations.BindIndexBufferTracked(commandBuffer, indexHandle, 0, ToVkIndexType(size));
-				Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
-				_program?.RecordShaderCommandCoverage(ShaderCommandKind.Graphics, indirect: false, instancingKnown: true, instanced: drawInstances > 1);
-			}
-
-			return true;
-		}
-
-		// Attempt indexed draws for each primitive type in priority order.
-		// The first successful draw sets 'drew = true' so we skip the non-indexed fallback.
+		// Draw each available primitive type. Do not stop after the first success:
+		// one mesh can contain triangles, lines, and points.
 		bool drew = false;
 		if (_triangleIndexBuffer?.BufferHandle is { } triHandle && triHandle.Handle != 0)
-			drew |= DrawIndexed(_triangleIndexBuffer, _triangleIndexSize, PrimitiveTopology.TriangleList);
+			drew |= TryRecordIndexedDraw(ref state, _triangleIndexBuffer, _triangleIndexSize, PrimitiveTopology.TriangleList);
 		if (!skipLinePointDraws)
 		{
 			if (_lineIndexBuffer?.BufferHandle is { } lineHandle && lineHandle.Handle != 0)
-				drew |= DrawIndexed(_lineIndexBuffer, _lineIndexSize, PrimitiveTopology.LineList);
+				drew |= TryRecordIndexedDraw(ref state, _lineIndexBuffer, _lineIndexSize, PrimitiveTopology.LineList);
 			if (_pointIndexBuffer?.BufferHandle is { } pointHandle && pointHandle.Handle != 0)
-				drew |= DrawIndexed(_pointIndexBuffer, _pointIndexSize, PrimitiveTopology.PointList);
+				drew |= TryRecordIndexedDraw(ref state, _pointIndexBuffer, _pointIndexSize, PrimitiveTopology.PointList);
 		}
 		else if ((_lineIndexBuffer?.BufferHandle?.Handle ?? 0UL) != 0UL || (_pointIndexBuffer?.BufferHandle?.Handle ?? 0UL) != 0UL)
 		{
@@ -306,159 +187,318 @@ internal unsafe partial class VkMeshRenderer
 				_geometryLayoutSignature.DebugSummary);
 		}
 
+		// Use the non-indexed fallback if no indexed draw succeeds.
 		if (!drew && Mesh is not null)
-		{
-			uint vertexCount = (uint)Math.Max(Mesh.VertexCount, 0);
-			PrimitiveTopology fallbackTopology = Mesh.Type switch
-			{
-				EPrimitiveType.Points => PrimitiveTopology.PointList,
-				EPrimitiveType.Lines => PrimitiveTopology.LineList,
-				EPrimitiveType.LineStrip => PrimitiveTopology.LineStrip,
-				EPrimitiveType.TriangleStrip => PrimitiveTopology.TriangleStrip,
-				EPrimitiveType.TriangleFan => PrimitiveTopology.TriangleFan,
-				EPrimitiveType.Patches => PrimitiveTopology.PatchList,
-				_ => PrimitiveTopology.TriangleList,
-			};
+			drew = TryRecordNonIndexedDraw(ref state, skipLinePointDraws);
 
-			if (skipLinePointDraws && !IsTriangleClassTopology(fallbackTopology))
-			{
-				Debug.VulkanWarningEvery(
-					$"Vulkan.MeshRenderer.ShadowTriangleOnlyFallback.{Mesh?.Name ?? "UnnamedMesh"}",
-					TimeSpan.FromSeconds(2),
-					"[Vulkan] Suppressed non-indexed {0} fallback for shadow geometry pass. mesh='{1}' layout={2}",
-					fallbackTopology,
-					Mesh?.Name ?? "<unnamed mesh>",
-					_geometryLayoutSignature.DebugSummary);
-				failureReason = drawFailureReason ?? string.Empty;
-				pipelineUnavailable = pipelineFailureObserved;
-				if (failureReason.Length > 0)
-					ReportSkippedDraw(failureReason, passIndex, targetName);
-				return false;
-			}
-			if (vertexCount == 0)
-			{
-				failureReason = drawFailureReason ?? string.Empty;
-				pipelineUnavailable = pipelineFailureObserved;
-				if (failureReason.Length > 0)
-					ReportSkippedDraw(failureReason, passIndex, targetName);
-				return false;
-			}
-
-			Pipeline pipeline = default;
-			bool pipelineReady;
-			string pipelineFailure;
-			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.EnsurePipeline"))
-			{
-				pipelineReady = EnsurePipelineCore(material, fallbackTopology, drawCopy, renderPass, useDynamicRendering, dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly, pipelineName, allowPipelineCreation: false, foregroundRequired: false, out pipeline, out _, out pipelineFailure);
-			}
-			if (!pipelineReady && verboseTrace)
-				Debug.MeshesWarning("[DrawTrace] {0}: non-indexed pipeline unavailable: {1}; pass={2} target={3} dynRender={4} colors={5} depthFmt={6}",
-					Mesh?.Name ?? "?", pipelineFailure, passIndex, targetName, useDynamicRendering, dynamicRenderingFormats.DescribeColorFormats(), dynamicRenderingFormats.DepthAttachmentFormat);
-			if (!pipelineReady)
-			{
-				pipelineFailureObserved = true;
-				drawFailureReason = $"non-indexed pipeline unavailable: {pipelineFailure}";
-			}
-			if (pipelineReady)
-			{
-				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindPipeline"))
-					CommandOperations.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
-
-				bool vertexBuffersBound;
-				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindVertexBuffers"))
-					vertexBuffersBound = BindVertexBuffersForCurrentPipeline(commandBuffer);
-				if (!vertexBuffersBound)
-				{
-					drawFailureReason = "non-indexed vertex buffers unavailable";
-					if (verboseTrace)
-						Debug.MeshesWarning("[DrawTrace] {0}: non-indexed vertex buffers unavailable; pass={1} target={2}", Mesh?.Name ?? "?", passIndex, targetName);
-					failureReason = drawFailureReason;
-					pipelineUnavailable = pipelineFailureObserved;
-					ReportSkippedDraw(failureReason, passIndex, targetName);
-					return false;
-				}
-
-				if (!uniformsNotified && _program?.Data is { } programData)
-				{
-					using (StartMeshDrawDetailScope("Vulkan.MeshDraw.NotifyUniforms"))
-						NotifyDrawUniforms(material, programData, drawCopy);
-					uniformsNotified = true;
-				}
-
-				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushConstants"))
-					PushPerDrawConstants(commandBuffer, material, drawCopy);
-
-				bool descriptorsBound;
-				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
-					descriptorsBound = BindDescriptorsIfAvailable(commandBuffer, material, drawCopy, drawUniformSlot, frameDataImageIndex, passIndex);
-				if (!descriptorsBound)
-				{
-					drawFailureReason = "non-indexed descriptors unavailable";
-					if (verboseTrace)
-						Debug.MeshesWarning("[DrawTrace] {0}: non-indexed descriptors unavailable; pass={1} target={2}", Mesh?.Name ?? "?", passIndex, targetName);
-					failureReason = drawFailureReason;
-					pipelineUnavailable = pipelineFailureObserved;
-					ReportSkippedDraw(failureReason, passIndex, targetName);
-					return false;
-				}
-
-				if (verboseTrace)
-					Debug.MeshesWarning("[DrawTrace] {0}: CmdDraw({1}) pass={2} target={3} dynRender={4} dsReadOnly={5} pipeline=0x{6:X} topology={7} cull={8} blend={9} blendOps={10}/{11} blendFactors={12},{13},{14},{15} alphaToCoverage={16} depthTest={17} depthWrite={18} depthCmp={19} colorWrite={20} viewport=({21},{22},{23},{24}) scissor=({25},{26},{27},{28}) prog={29}",
-						Mesh?.Name ?? "?", vertexCount,
-						passIndex, targetName, useDynamicRendering, depthStencilReadOnly,
-						pipeline.Handle, fallbackTopology,
-						drawCopy.CullMode, drawCopy.BlendEnabled,
-						drawCopy.ColorBlendOp, drawCopy.AlphaBlendOp,
-						drawCopy.SrcColorBlendFactor, drawCopy.DstColorBlendFactor, drawCopy.SrcAlphaBlendFactor, drawCopy.DstAlphaBlendFactor,
-						drawCopy.AlphaToCoverageEnabled,
-						drawCopy.DepthTestEnabled, drawCopy.DepthWriteEnabled, drawCopy.DepthCompareOp, drawCopy.ColorWriteMask,
-						drawCopy.Viewport.X, drawCopy.Viewport.Y, drawCopy.Viewport.Width, drawCopy.Viewport.Height,
-						drawCopy.Scissor.Offset.X, drawCopy.Scissor.Offset.Y, drawCopy.Scissor.Extent.Width, drawCopy.Scissor.Extent.Height,
-						_program?.Data?.Name ?? "?prog");
-
-				if (VulkanMeshRenderingConventions.BloomVulkanDiagnosticsEnabled && vertexCount <= 6u)
-				{
-					Debug.VulkanEvery(
-						$"Vulkan.BloomDiag.CmdDraw.{passIndex}.{MaterializationSnapshot.ActiveFrameOpContext?.OutputFrameBufferName}.{vertexCount}",
-						TimeSpan.FromSeconds(1),
-						"[BloomDiag][Vulkan] CmdDraw fullscreen target='{0}' pass={1} vertices={2} pipeline=0x{3:X} topology={4} blend={5} depthTest={6} depthWrite={7} stencil={8} colorWrite={9} viewport=({10},{11},{12},{13}) scissor=({14},{15},{16},{17}) program='{18}' material='{19}'",
-						MaterializationSnapshot.ActiveFrameOpContext?.OutputFrameBufferName ?? "<none>",
-						passIndex,
-						vertexCount,
-						pipeline.Handle,
-						fallbackTopology,
-						drawCopy.BlendEnabled,
-						drawCopy.DepthTestEnabled,
-						drawCopy.DepthWriteEnabled,
-						drawCopy.StencilTestEnabled,
-						drawCopy.ColorWriteMask,
-						drawCopy.Viewport.X,
-						drawCopy.Viewport.Y,
-						drawCopy.Viewport.Width,
-						drawCopy.Viewport.Height,
-						drawCopy.Scissor.Offset.X,
-						drawCopy.Scissor.Offset.Y,
-						drawCopy.Scissor.Extent.Width,
-						drawCopy.Scissor.Extent.Height,
-						_program?.Data?.Name ?? "<program>",
-						material.Name ?? "<material>");
-				}
-
-				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.CmdDraw"))
-					Api!.CmdDraw(commandBuffer, vertexCount, drawInstances, 0, 0);
-					_program?.RecordShaderCommandCoverage(ShaderCommandKind.Graphics, indirect: false, instancingKnown: true, instanced: drawInstances > 1);
-				drew = true;
-			}
-		}
-
+		// An intentional omission has an empty reason. Any successful path clears
+		// earlier indexed failures from the result of this logical draw.
 		if (!drew)
 		{
-			failureReason = drawFailureReason ?? string.Empty;
-			pipelineUnavailable = pipelineFailureObserved;
+			failureReason = state.FailureReason ?? string.Empty;
+			pipelineUnavailable = state.PipelineFailureObserved;
 			if (failureReason.Length > 0)
 				ReportSkippedDraw(failureReason, passIndex, targetName);
 		}
 		return drew;
+	}
+
+	private bool TryPrepareDrawForRecording(in PendingMeshDraw draw, XRMaterial material, int drawUniformSlot, int frameDataImageIndex, out string reason)
+	{
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.Prepare"))
+		{
+			return draw.PreparedProgram is { } preparedProgram
+				? TryPrepareCapturedProgramForRecording(
+					material, preparedProgram, draw.PreparedProgramIdentity,
+					draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot,
+					drawUniformSlot, frameDataImageIndex, out reason)
+				: TryPrepareForRendering(material, out reason);
+		}
+	}
+
+	private void UploadDrawDeformationData()
+	{
+		// Upload deformation data before recording commands that use it.
+		// Static meshes avoid the shared invalidation checks.
+		if (Mesh?.HasSkinning == true)
+		{
+			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushSkinning"))
+				MeshRenderer.PushBoneMatricesToGPU();
+		}
+		if (Mesh?.HasBlendshapes == true)
+		{
+			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushBlendshapes"))
+				MeshRenderer.PushBlendshapeWeightsToGPU();
+		}
+	}
+
+	/// <summary>
+	/// Records one indexed primitive type. The caller tries all available types.
+	/// A later successful type can leave an earlier failure without failing the draw.
+	/// </summary>
+	private bool TryRecordIndexedDraw(ref DrawRecordingState state, VkDataBuffer? indexBuffer, IndexSize size, PrimitiveTopology topology)
+	{
+		if (indexBuffer?.BufferHandle is not { } indexHandle)
+		{
+			if (state.VerboseTrace)
+				Debug.MeshesWarning("[DrawTrace] {0}: no indexBuffer for {1}", Mesh?.Name ?? "?", topology);
+			return false;
+		}
+
+		if (size == IndexSize.Byte && !BackendContext.Supports(EVulkanDeviceCapability.IndexTypeUint8))
+		{
+			state.FailureReason = "Vulkan indexTypeUint8 is unavailable";
+			WarnOnce("Skipping indexed draw using byte-sized indices because Vulkan indexTypeUint8 is not enabled.");
+			return false;
+		}
+
+		uint indexCount = indexBuffer.Data.ElementCount;
+		if (indexCount == 0)
+		{
+			if (state.VerboseTrace)
+				Debug.MeshesWarning("[DrawTrace] {0}: indexCount=0 for {1}", Mesh?.Name ?? "?", topology);
+			return false;
+		}
+
+		Pipeline pipeline = default;
+		bool pipelineReady;
+		string pipelineFailure;
+		// Pipelines are prepared before command recording. Do not create one here
+		// or wait for foreground work while the command buffer is being built.
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.EnsurePipeline"))
+		{
+			pipelineReady = EnsurePipelineCore(
+				state.Material, topology, state.Draw, state.RenderPass,
+				state.UseDynamicRendering, state.DynamicRenderingFormats,
+				state.PassIndex, state.PassMetadata, state.DepthStencilReadOnly,
+				state.PipelineName, allowPipelineCreation: false, foregroundRequired: false,
+				out pipeline, out _, out pipelineFailure);
+		}
+		if (!pipelineReady)
+		{
+			state.PipelineFailureObserved = true;
+			state.FailureReason = $"indexed pipeline unavailable: {pipelineFailure}";
+			if (state.VerboseTrace)
+				Debug.MeshesWarning("[DrawTrace] {0}: EnsurePipeline FAILED for {1} dynRender={2} colors={3} depthFmt={4}",
+					Mesh?.Name ?? "?", topology, state.UseDynamicRendering, state.DynamicRenderingFormats.DescribeColorFormats(), state.DynamicRenderingFormats.DepthAttachmentFormat);
+			return false;
+		}
+
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindPipeline"))
+			CommandOperations.BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Graphics, pipeline);
+
+		bool vertexBuffersBound;
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindVertexBuffers"))
+			vertexBuffersBound = BindVertexBuffersForCurrentPipeline(state.CommandBuffer);
+		if (!vertexBuffersBound)
+		{
+			state.FailureReason = "indexed vertex buffers unavailable";
+			if (state.VerboseTrace)
+				Debug.MeshesWarning("[DrawTrace] {0}: BindVertexBuffers FAILED", Mesh?.Name ?? "?");
+			return false;
+		}
+
+		// One logical draw can record several primitive types. Notify its uniforms once.
+		if (!state.UniformsNotified && _program?.Data is { } programData)
+		{
+			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.NotifyUniforms"))
+				NotifyDrawUniforms(state.Material, programData, state.Draw);
+			state.UniformsNotified = true;
+		}
+
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushConstants"))
+			PushPerDrawConstants(state.CommandBuffer, state.Material, state.Draw);
+
+		bool descriptorsBound;
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
+			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer, state.Material, state.Draw, state.DrawUniformSlot, state.FrameDataImageIndex, state.PassIndex);
+		if (!descriptorsBound)
+		{
+			state.FailureReason = "indexed descriptors unavailable";
+			if (state.VerboseTrace)
+				Debug.MeshesWarning("[DrawTrace] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
+			return false;
+		}
+
+		if (state.VerboseTrace)
+			TraceIndexedDraw(state, pipeline, topology, indexCount);
+
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.CmdDrawIndexed"))
+		{
+			CommandOperations.BindIndexBufferTracked(state.CommandBuffer, indexHandle, 0, ToVkIndexType(size));
+			Api!.CmdDrawIndexed(state.CommandBuffer, indexCount, state.Draw.Instances, 0, 0, 0);
+			_program?.RecordShaderCommandCoverage(ShaderCommandKind.Graphics, indirect: false, instancingKnown: true, instanced: state.Draw.Instances > 1);
+		}
+
+		return true;
+	}
+
+	private void TraceIndexedDraw(in DrawRecordingState state, Pipeline pipeline, PrimitiveTopology topology, uint indexCount)
+	{
+		var draw = state.Draw;
+		Debug.MeshesWarning("[DrawTrace] {0}: CmdDrawIndexed({1}) pass={2} target={3} dynRender={4} dsReadOnly={5} pipeline=0x{6:X} topology={7} cull={8} blend={9} blendOps={10}/{11} blendFactors={12},{13},{14},{15} alphaToCoverage={16} depthTest={17} depthWrite={18} depthCmp={19} colorWrite={20} viewport=({21},{22},{23},{24}) scissor=({25},{26},{27},{28}) prog={29}",
+			Mesh?.Name ?? "?", indexCount,
+			state.PassIndex, state.TargetName, state.UseDynamicRendering, state.DepthStencilReadOnly,
+			pipeline.Handle, topology,
+			draw.CullMode, draw.BlendEnabled,
+			draw.ColorBlendOp, draw.AlphaBlendOp,
+			draw.SrcColorBlendFactor, draw.DstColorBlendFactor, draw.SrcAlphaBlendFactor, draw.DstAlphaBlendFactor,
+			draw.AlphaToCoverageEnabled,
+			draw.DepthTestEnabled, draw.DepthWriteEnabled, draw.DepthCompareOp, draw.ColorWriteMask,
+			draw.Viewport.X, draw.Viewport.Y, draw.Viewport.Width, draw.Viewport.Height,
+			draw.Scissor.Offset.X, draw.Scissor.Offset.Y, draw.Scissor.Extent.Width, draw.Scissor.Extent.Height,
+			_program?.Data?.Name ?? "?prog");
+	}
+
+	/// <summary>
+	/// Records a non-indexed draw only when no indexed primitive was drawn.
+	/// This path uses the mesh topology because no index buffer selects one.
+	/// </summary>
+	private bool TryRecordNonIndexedDraw(ref DrawRecordingState state, bool skipLinePointDraws)
+	{
+		var mesh = Mesh!;
+		uint vertexCount = (uint)Math.Max(mesh.VertexCount, 0);
+		PrimitiveTopology topology = mesh.Type switch
+		{
+			EPrimitiveType.Points => PrimitiveTopology.PointList,
+			EPrimitiveType.Lines => PrimitiveTopology.LineList,
+			EPrimitiveType.LineStrip => PrimitiveTopology.LineStrip,
+			EPrimitiveType.TriangleStrip => PrimitiveTopology.TriangleStrip,
+			EPrimitiveType.TriangleFan => PrimitiveTopology.TriangleFan,
+			EPrimitiveType.Patches => PrimitiveTopology.PatchList,
+			_ => PrimitiveTopology.TriangleList,
+		};
+
+		if (skipLinePointDraws && !IsTriangleClassTopology(topology))
+		{
+			Debug.VulkanWarningEvery(
+				$"Vulkan.MeshRenderer.ShadowTriangleOnlyFallback.{mesh.Name ?? "UnnamedMesh"}",
+				TimeSpan.FromSeconds(2),
+				"[Vulkan] Suppressed non-indexed {0} fallback for shadow geometry pass. mesh='{1}' layout={2}",
+				topology,
+				mesh.Name ?? "<unnamed mesh>",
+				_geometryLayoutSignature.DebugSummary);
+			return false;
+		}
+		if (vertexCount == 0)
+			return false;
+
+		Pipeline pipeline = default;
+		bool pipelineReady;
+		string pipelineFailure;
+		// Use the pipeline prepared before command recording; do not create or
+		// wait for foreground pipeline work in this path.
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.EnsurePipeline"))
+		{
+			pipelineReady = EnsurePipelineCore(
+				state.Material, topology, state.Draw, state.RenderPass,
+				state.UseDynamicRendering, state.DynamicRenderingFormats,
+				state.PassIndex, state.PassMetadata, state.DepthStencilReadOnly,
+				state.PipelineName, allowPipelineCreation: false, foregroundRequired: false,
+				out pipeline, out _, out pipelineFailure);
+		}
+		if (!pipelineReady && state.VerboseTrace)
+			Debug.MeshesWarning("[DrawTrace] {0}: non-indexed pipeline unavailable: {1}; pass={2} target={3} dynRender={4} colors={5} depthFmt={6}",
+				Mesh?.Name ?? "?", pipelineFailure, state.PassIndex, state.TargetName, state.UseDynamicRendering, state.DynamicRenderingFormats.DescribeColorFormats(), state.DynamicRenderingFormats.DepthAttachmentFormat);
+		if (!pipelineReady)
+		{
+			state.PipelineFailureObserved = true;
+			state.FailureReason = $"non-indexed pipeline unavailable: {pipelineFailure}";
+			return false;
+		}
+
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindPipeline"))
+			CommandOperations.BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Graphics, pipeline);
+
+		bool vertexBuffersBound;
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindVertexBuffers"))
+			vertexBuffersBound = BindVertexBuffersForCurrentPipeline(state.CommandBuffer);
+		if (!vertexBuffersBound)
+		{
+			state.FailureReason = "non-indexed vertex buffers unavailable";
+			if (state.VerboseTrace)
+				Debug.MeshesWarning("[DrawTrace] {0}: non-indexed vertex buffers unavailable; pass={1} target={2}", Mesh?.Name ?? "?", state.PassIndex, state.TargetName);
+			return false;
+		}
+
+		// An indexed attempt may have notified the same logical draw already.
+		if (!state.UniformsNotified && _program?.Data is { } programData)
+		{
+			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.NotifyUniforms"))
+				NotifyDrawUniforms(state.Material, programData, state.Draw);
+			state.UniformsNotified = true;
+		}
+
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushConstants"))
+			PushPerDrawConstants(state.CommandBuffer, state.Material, state.Draw);
+
+		bool descriptorsBound;
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
+			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer, state.Material, state.Draw, state.DrawUniformSlot, state.FrameDataImageIndex, state.PassIndex);
+		if (!descriptorsBound)
+		{
+			state.FailureReason = "non-indexed descriptors unavailable";
+			if (state.VerboseTrace)
+				Debug.MeshesWarning("[DrawTrace] {0}: non-indexed descriptors unavailable; pass={1} target={2}", Mesh?.Name ?? "?", state.PassIndex, state.TargetName);
+			return false;
+		}
+
+		if (state.VerboseTrace)
+			TraceNonIndexedDraw(state, pipeline, topology, vertexCount);
+
+		if (VulkanMeshRenderingConventions.BloomVulkanDiagnosticsEnabled && vertexCount <= 6u)
+			TraceBloomNonIndexedDraw(state, pipeline, topology, vertexCount);
+
+		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.CmdDraw"))
+			Api!.CmdDraw(state.CommandBuffer, vertexCount, state.Draw.Instances, 0, 0);
+		_program?.RecordShaderCommandCoverage(ShaderCommandKind.Graphics, indirect: false, instancingKnown: true, instanced: state.Draw.Instances > 1);
+		return true;
+	}
+
+	private void TraceNonIndexedDraw(in DrawRecordingState state, Pipeline pipeline, PrimitiveTopology topology, uint vertexCount)
+	{
+		var draw = state.Draw;
+		Debug.MeshesWarning("[DrawTrace] {0}: CmdDraw({1}) pass={2} target={3} dynRender={4} dsReadOnly={5} pipeline=0x{6:X} topology={7} cull={8} blend={9} blendOps={10}/{11} blendFactors={12},{13},{14},{15} alphaToCoverage={16} depthTest={17} depthWrite={18} depthCmp={19} colorWrite={20} viewport=({21},{22},{23},{24}) scissor=({25},{26},{27},{28}) prog={29}",
+			Mesh?.Name ?? "?", vertexCount,
+			state.PassIndex, state.TargetName, state.UseDynamicRendering, state.DepthStencilReadOnly,
+			pipeline.Handle, topology,
+			draw.CullMode, draw.BlendEnabled,
+			draw.ColorBlendOp, draw.AlphaBlendOp,
+			draw.SrcColorBlendFactor, draw.DstColorBlendFactor, draw.SrcAlphaBlendFactor, draw.DstAlphaBlendFactor,
+			draw.AlphaToCoverageEnabled,
+			draw.DepthTestEnabled, draw.DepthWriteEnabled, draw.DepthCompareOp, draw.ColorWriteMask,
+			draw.Viewport.X, draw.Viewport.Y, draw.Viewport.Width, draw.Viewport.Height,
+			draw.Scissor.Offset.X, draw.Scissor.Offset.Y, draw.Scissor.Extent.Width, draw.Scissor.Extent.Height,
+			_program?.Data?.Name ?? "?prog");
+	}
+
+	private void TraceBloomNonIndexedDraw(in DrawRecordingState state, Pipeline pipeline, PrimitiveTopology topology, uint vertexCount)
+	{
+		var draw = state.Draw;
+		Debug.VulkanEvery(
+			$"Vulkan.BloomDiag.CmdDraw.{state.PassIndex}.{MaterializationSnapshot.ActiveFrameOpContext?.OutputFrameBufferName}.{vertexCount}",
+			TimeSpan.FromSeconds(1),
+			"[BloomDiag][Vulkan] CmdDraw fullscreen target='{0}' pass={1} vertices={2} pipeline=0x{3:X} topology={4} blend={5} depthTest={6} depthWrite={7} stencil={8} colorWrite={9} viewport=({10},{11},{12},{13}) scissor=({14},{15},{16},{17}) program='{18}' material='{19}'",
+			MaterializationSnapshot.ActiveFrameOpContext?.OutputFrameBufferName ?? "<none>",
+			state.PassIndex,
+			vertexCount,
+			pipeline.Handle,
+			topology,
+			draw.BlendEnabled,
+			draw.DepthTestEnabled,
+			draw.DepthWriteEnabled,
+			draw.StencilTestEnabled,
+			draw.ColorWriteMask,
+			draw.Viewport.X,
+			draw.Viewport.Y,
+			draw.Viewport.Width,
+			draw.Viewport.Height,
+			draw.Scissor.Offset.X,
+			draw.Scissor.Offset.Y,
+			draw.Scissor.Extent.Width,
+			draw.Scissor.Extent.Height,
+			_program?.Data?.Name ?? "<program>",
+			state.Material.Name ?? "<material>");
 	}
 
 	internal bool TryPrepareMeshDrawRecordingState(

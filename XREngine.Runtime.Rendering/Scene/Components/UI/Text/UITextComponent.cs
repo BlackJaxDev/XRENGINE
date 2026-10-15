@@ -63,7 +63,12 @@ namespace XREngine.Rendering.UI
         public UITextComponent()
         {
             RenderPass = (int)EDefaultRenderPass.TransparentForward;
+            RenderCommand3D.Instances = 0;
+            RenderCommand2D.Instances = 0;
         }
+
+        private bool HasAuthoredOrMaterializedText
+            => !string.IsNullOrEmpty(_text) || Mesh is not null || _glyphs.Count > 0;
 
         protected override void OnComponentActivated()
         {
@@ -367,7 +372,7 @@ namespace XREngine.Rendering.UI
             switch (e.PropertyName)
             {
                 case nameof(UIBoundableTransform.ActualSize):
-                    if (BoundsAffectGlyphLayout())
+                    if (HasAuthoredOrMaterializedText && BoundsAffectGlyphLayout())
                         UpdateText(false, false);
                     break;
             }
@@ -413,8 +418,8 @@ namespace XREngine.Rendering.UI
                 if (string.IsNullOrEmpty(Text))
                     return 0.0f;
 
-                Font ??= FontGlyphSet.LoadDefaultUIFont();
-                return MeasureWidth(Text, Font, FontSize ?? 30.0f);
+                _font ??= FontGlyphSet.LoadDefaultUIFont();
+                return MeasureWidth(Text, _font, FontSize ?? 30.0f);
             }
 
             return _glyphs.Max(g => g.transform.X + g.transform.Z);
@@ -442,6 +447,15 @@ namespace XREngine.Rendering.UI
             if (SceneNode is null)
                 return;
 
+            if (propName == nameof(GlyphRelativeTransforms))
+            {
+                MarkGlyphTransformsChanged();
+                return;
+            }
+
+            if (!HasAuthoredOrMaterializedText)
+                return;
+
             switch (propName)
             {
                 case nameof(Font):
@@ -451,9 +465,6 @@ namespace XREngine.Rendering.UI
                     break;
                 case nameof(Text):
                     UpdateText(false);
-                    break;
-                case nameof(GlyphRelativeTransforms):
-                    MarkGlyphTransformsChanged();
                     break;
                 case nameof(RenderPass):
                     {
@@ -531,10 +542,10 @@ namespace XREngine.Rendering.UI
         /// <param name="forceRemake"></param>
         protected virtual void UpdateText(bool forceRemake, bool invalidateLayout = true)
         {
-            Font ??= FontGlyphSet.LoadDefaultUIFont();
+            _font ??= FontGlyphSet.LoadDefaultUIFont();
             //Task.Run(() =>
             //{
-                VerifyCreated(forceRemake, Font.Atlas);
+                VerifyCreated(forceRemake, _font.Atlas);
                 uint count;
                 using (_glyphLock.EnterScope())
                 {
@@ -547,7 +558,7 @@ namespace XREngine.Rendering.UI
                         h = float.MaxValue;
                     float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;
                     float glyphSpacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
-                    Font.GetQuads(Text, _glyphs, FontSize, w, h, WrapMode, glyphSpacing, DefaultLineSpacing + outlineSpacing);
+                    _font.GetQuads(Text, _glyphs, FontSize, w, h, WrapMode, glyphSpacing, DefaultLineSpacing + outlineSpacing);
                     AlignQuads(tfm, w, h);
                     count = (uint)(_glyphs?.Count ?? 0);
                 }
@@ -1041,6 +1052,9 @@ namespace XREngine.Rendering.UI
 
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {
+            if (string.IsNullOrEmpty(Text))
+                return true;
+
             var font = Font;
             if (font is null || font.Atlas is not { } atlas)
                 return UseWebGpuBatchOnly &&
@@ -1049,7 +1063,7 @@ namespace XREngine.Rendering.UI
             using (_glyphLock.EnterScope())
             {
                 if (_glyphs.Count == 0)
-                    return UseWebGpuBatchOnly;
+                    return true;
 
                 var tfm = BoundableTransform;
                 var worldMatrix = GetRenderCanvasMatrix(tfm);
