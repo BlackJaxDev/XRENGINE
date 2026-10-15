@@ -160,6 +160,7 @@ namespace XREngine.Rendering.Commands
             published.DrawID = drawId;
             UpdatingDrawMetadataBuffer.SetDataRawAtIndex(drawId, published);
             _drawMetadataDirtyRange.Mark(drawId);
+            MarkAdvancedRowInputWritten(drawId);
             WriteClassification(drawId, published);
             WriteVisibility(drawId, published.InstanceCount == 0u ? 0u : 1u);
         }
@@ -169,6 +170,7 @@ namespace XREngine.Rendering.Commands
             EnsureDrawIndexedSoACapacity(boundsId + 1u);
             UpdatingBoundsBuffer.SetDataRawAtIndex(boundsId, bounds);
             _boundsDirtyRange.Mark(boundsId);
+            MarkAdvancedRowInputWritten(boundsId);
         }
 
         private void WriteClassification(uint drawId, in DrawMetadata metadata)
@@ -228,6 +230,7 @@ namespace XREngine.Rendering.Commands
                 UpdatingBoundsBuffer.SetDataRawAtIndex(drawId, default(BoundsGpu));
                 _boundsDirtyRange.Mark(drawId);
             }
+            MarkAdvancedRowInputWritten(drawId);
 
             if (drawId < UpdatingClassificationBuffer.ElementCount)
             {

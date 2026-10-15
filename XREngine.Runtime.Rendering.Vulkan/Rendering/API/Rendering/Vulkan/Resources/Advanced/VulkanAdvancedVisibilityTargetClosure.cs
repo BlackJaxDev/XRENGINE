@@ -28,4 +28,30 @@ internal readonly record struct VulkanAdvancedVisibilityTargetClosure(
                : UsesDynamicRendering
                    ? DynamicRenderingFormats.ColorAttachmentCount is 3u or 4u
                    : RenderPass.Handle != 0);
+
+    /// <summary>
+    /// Compares all fields. The managed target uses the default comparer. The render pass handle
+    /// compares by value, so the check does not box it.
+    /// </summary>
+    public bool Equals(VulkanAdvancedVisibilityTargetClosure other)
+        => EqualityComparer<XRFrameBuffer>.Default.Equals(Target, other.Target) &&
+           NativeTarget.Equals(other.NativeTarget) &&
+           UsesDynamicRendering == other.UsesDynamicRendering &&
+           RenderPass.Handle == other.RenderPass.Handle &&
+           DynamicRenderingFormats.Equals(other.DynamicRenderingFormats) &&
+           RasterizationSamples == other.RasterizationSamples &&
+           DepthStencilReadOnly == other.DepthStencilReadOnly &&
+           ClearPolicy == other.ClearPolicy &&
+           Kind == other.Kind;
+
+    /// <summary>Combines a subset of the compared fields without boxing.</summary>
+    public override int GetHashCode()
+        => HashCode.Combine(
+            Target,
+            NativeTarget.FramebufferHandle,
+            NativeTarget.FramebufferGeneration,
+            RenderPass.Handle,
+            DynamicRenderingFormats,
+            (uint)RasterizationSamples,
+            (int)Kind);
 }

@@ -1,6 +1,6 @@
 # Physics Chain Performance
 
-Last updated: 2026-10-07
+Last updated: 2026-10-13
 
 The physics-chain optimization work reduces `PhysicsChainComponent` CPU cost, GPU transfer bandwidth, synchronization stalls, and hot-path allocations across CPU, standalone GPU, and batched GPU modes.
 
@@ -121,7 +121,36 @@ acceptance windows. They use wall time and include waits inside each phase.
 The phases run on different threads and overlap, so do not add them to get the
 frame interval. The render thread normally waits for the swap section to
 publish its generation; only a late-collect reuse policy can render the previous
-visibility during it.
+visibility during it. So `render_wait_for_collect` is mostly the wait for the
+swap, not a wait inside the render phase.
+
+`get_render_profiler_stats` also reports three always-on snapshots next to
+`phase_totals` in `frame_lifecycle`:
+
+- `collect_stages` (`CollectVisibleStageTimings.Capture`): the parts of the
+  collect phase and of the serial swap, each view kind with its collection path
+  and row count, the bytes that the collect thread allocates in each phase, and
+  the frame handoff counters. `render_until_collect_release_ms` is the render
+  time until the backend releases the collect thread; Vulkan releases it just
+  after queue submit. `collect_finished_after_release` counts the frames in
+  which collect finished later than that release.
+- `pass_gate` (`TransformHierarchyStore.GetPassGateTelemetrySnapshot`): for the
+  pre-collect publication, the swap publication, and the update-thread
+  `Process`, the entries, contended entries, wait and hold times, wait-time
+  buckets, the blocking site, and the published rows and notified owners.
+- `directional_shadow_consumption` (`DirectionalShadowConsumptionTelemetry.Capture`):
+  primary and cascade collections, the reason that the primary view is
+  collected, accepted atlas requests, tile renders, legacy renders, and
+  render-thread reads of the primary package.
+
+The harness reads these snapshots and
+`GPUPhysicsChainDispatcher.CaptureStageTimings` before and after every window.
+It writes the differences to `stageDifferences` (`collectStages`, `passGate`,
+`directionalShadowConsumption`, and `dispatcher`), per completed frame and per
+call. Each value is divided by a counter from the same capture.
+`stageDifferences.collectStages.phaseCrossCheck` must be 0: the collect and swap
+totals use the same boundaries as `phase_totals`. The frame interval is about
+the longer of `render_until_collect_release_ms` and collect, plus the swap.
 Scheduled counter samples remain for rate trends only. Benchmark cleanup starts
 gradual teardown and restores the source rig when that teardown ends. For a
 restart check, wait for one source chain and its palette binding before the
@@ -395,7 +424,7 @@ Physics-chain per-tree parameter updates no longer allocate through `ToArray()`,
 
 ### Transfer Bandwidth
 
-The GPU path separates static particle metadata from dynamic state. Stable scenes avoid static-data uploads. The direct upload path skips unchanged colliders by version. The mapped input-page path does not: it writes every collider and the full transform catalog into each page. A per-bank version record is an open [code item](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md#physics-steady-state).
+The GPU path separates static particle metadata from dynamic state. Stable scenes avoid static-data uploads. The direct upload path skips unchanged colliders by version. The mapped input-page path does not: it writes every collider and the full transform catalog into each page. A per-bank version record is an open [code item](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md#physics-inputs-at-the-render-rate).
 
 Batched mode has been reevaluated around resident-buffer copy churn so combined-buffer work can be measured separately from upload and readback bandwidth.
 
@@ -424,6 +453,191 @@ Profiler scopes and bandwidth counters distinguish:
 - readback bytes
 
 Runtime bandwidth/frame metrics are available from `GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot()`.
+
+`GPUPhysicsChainDispatcher.CaptureStageTimings()` returns the cumulative
+render-thread time of each dispatcher stage and the number of
+`ProcessDispatches` calls. Capture it twice inside a timed window, for example
+through the MCP `invoke_method` tool, and divide each stage difference by the
+call difference to get milliseconds per frame. The timers are always on and
+cost a few timestamp reads per frame. Use them in place of sampled CPU traces,
+which over-attribute time to lock entry and large struct copies.
+
+`GPUPhysicsChainDispatcher.CaptureCommittedSpatialQueryDiagnostics()` counts
+committed spatial query misses by reason (epoch, page, renderer, mesh, scene
+route, material) and dispatcher spatial epoch advances by cause. A reuse is not
+counted. In a steady-state window the miss counters should not change.
+
+### Frame-loop profiling method
+
+Use these tools in this order. The 2026-10-12 work in the
+[investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
+used them, and the
+[critical-path mapping](../../work/investigations/physics/physics-chain-critical-path-mapping-2026-10-12.md)
+records the code paths they point to.
+
+1. **Phase timings and stage differences.** Every harness summary has
+   `phaseTimings` and `stageDifferences`. The frame interval is the longer of
+   render until it releases the collect thread and collect, plus the swap. Read
+   the handoff counters in `stageDifferences.collectStages.handoff` to see
+   which thread is late, then read the stage parts of that thread. Decide from
+   these values, not from the frame rate alone. A live session is required; run
+   the harness with `powershell -NoProfile -File` where `pwsh` is not installed.
+2. **Stage timers.** Read a stage capture twice inside a timed window and take
+   the difference:
+
+   ```powershell
+   pwsh Tools/Benchmarks/Invoke-McpStaticMethod.ps1 -Session <name> -TypeName GPUPhysicsChainDispatcher -MethodName CaptureStageTimings
+   ```
+
+   Start the harness window with `-UseExistingSession`, wait for
+   `<label>-window-start.json`, then call the probe, wait about 10 seconds,
+   and call it again. The same method works for
+   `RenderCallbackStageTimings.Capture` (the parts of the window render
+   callback: pre-render, viewports, and the backend frame) and
+   `AdvancedSharedPreparationService.GetCurrentDiagnostics` (Advanced
+   preparation build, extraction, and lock-wait ticks in `SharedTelemetry`).
+   The dispatcher capture nests its bounds, simulation, and commit sub-stages
+   in `Detail`, because `invoke_method` serializes at most 20 properties of one
+   object. The commit parts are the backend batch, the page lock wait, the
+   fence, the page state, notification collection, notification, and the
+   remainder; `CommittedOutputPages` and `CommitNotifications` count pages and
+   notifications. For the parts of each extraction row (mesh pre-pass, route and
+   output state, geometry, mesh preparation, pose, history and arena,
+   schedule and job, payload), set `XRE_ADVANCED_EXTRACTION_SUBSTAGE_TIMERS=1`
+   before session launch and read
+   `AdvancedPreparationExtractor.CaptureExtractionSubStageTimings` the same
+   way. Divide by the `Builds` or `Rows` difference. The timers add about eight
+   timestamp reads to each row, so leave the variable unset for frame-rate
+   windows. To see whether steady-state frames keep their work, read
+   `VisibilityContent` in the `GetCurrentDiagnostics` result (builds whose
+   visibility columns did not change) and
+   `AdvancedVisibilityStreamReuseTelemetry.Capture` (Vulkan visibility streams
+   kept across frames, and the first reason for each reseal). Both are always on.
+3. **Sampled CPU trace.** Run a window with `-CpuTraceSeconds 15`, then
+   summarize the Speedscope export:
+
+   ```powershell
+   python Tools/Benchmarks/Summarize-SpeedscopeTrace.py <label>-cpu.speedscope.json --threads 4
+   python Tools/Benchmarks/Summarize-SpeedscopeTrace.py <label>-cpu.speedscope.json --thread "(<tid>)" --focus XRWindow.RenderCallback --depth 8
+   python Tools/Benchmarks/Summarize-SpeedscopeTrace.py <label>-cpu.speedscope.json --callers Monitor.Enter_Slowpath --caller-depth 3
+   ```
+
+   The sample profiler suspends threads at safe points, so it over-attributes
+   time to `Monitor.Enter_Slowpath` and `BulkMoveWithWriteBarrier`. Use it to
+   find call paths only.
+4. **Contention trace.** Before you act on a lock, record the real blocking
+   waits and their owners during a window:
+
+   ```powershell
+   dotnet-trace collect --process-id <pid> --providers "Microsoft-Windows-DotNETRuntime:0x4000:4,Microsoft-DotNETCore-SampleProfiler:0xF00000000000:4" --duration 00:00:00:10 -o contention.nettrace
+   ```
+
+   `ContentionStart` carries the owner thread ID. A blocking wait appears only
+   after the runtime stops spinning, so short spins are not counted. The repository does
+   not include a parser, because it would add the
+   `Microsoft.Diagnostics.Tracing.TraceEvent` package. To read the trace, create
+   a scratch console project outside the repository, add that package, and use
+   this `Program.cs`. It groups waits by waiter and owner thread, and it reports
+   what the owner thread's samples show while each wait lasts:
+
+   ```csharp
+   using Microsoft.Diagnostics.Tracing;
+   using Microsoft.Diagnostics.Tracing.Etlx;
+   using Microsoft.Diagnostics.Tracing.Parsers.Clr;
+
+   // Usage: ContentionReport <trace.nettrace> [topN]
+   string path = args[0];
+   int topN = args.Length > 1 ? int.Parse(args[1]) : 30;
+   using TraceLog log = new(TraceLog.CreateFromEventPipeDataFile(path));
+   TraceLogEventSource source = log.Events.GetSource();
+   var pending = new Dictionary<int, (double Start, int Owner, string Waiter)>();
+   var waits = new List<(double Start, double End, int Waiter, int Owner, string WaiterKey)>();
+   var samples = new Dictionary<int, List<(double Time, string Key)>>();
+   var roots = new Dictionary<int, Dictionary<string, int>>();
+
+   static string Short(string name)
+   {
+       int bang = name.IndexOf('!');
+       if (bang >= 0) name = name[(bang + 1)..];
+       int paren = name.IndexOf('(');
+       return paren >= 0 ? name[..paren] : name;
+   }
+
+   static List<string> EngineFrames(TraceCallStack? stack)
+   {
+       var frames = new List<string>();
+       for (TraceCallStack? s = stack; s is not null; s = s.Caller)
+       {
+           string n = s.CodeAddress.FullMethodName ?? "";
+           if (n.Contains("XREngine", StringComparison.Ordinal) && !n.Contains("XREvent", StringComparison.Ordinal))
+               frames.Add(Short(n));
+       }
+       return frames; // Leaf first.
+   }
+
+   source.Clr.ContentionStart += (ContentionStartTraceData e) =>
+       pending[e.ThreadID] = (e.TimeStampRelativeMSec, (int)e.LockOwnerThreadID,
+           string.Join(" < ", EngineFrames(e.CallStack()).Take(4)));
+   source.Clr.ContentionStop += (ContentionStopTraceData e) =>
+   {
+       if (pending.Remove(e.ThreadID, out var start))
+           waits.Add((start.Start, e.TimeStampRelativeMSec, e.ThreadID, start.Owner, start.Waiter));
+   };
+   source.Dynamic.All += (TraceEvent e) =>
+   {
+       if (!e.ProviderName.Contains("SampleProfiler", StringComparison.Ordinal)) return;
+       List<string> frames = EngineFrames(e.CallStack());
+       if (!samples.TryGetValue(e.ThreadID, out var list)) samples[e.ThreadID] = list = [];
+       list.Add((e.TimeStampRelativeMSec, string.Join(" < ", frames.Take(3))));
+       if (frames.Count == 0) return;
+       if (!roots.TryGetValue(e.ThreadID, out var counts)) roots[e.ThreadID] = counts = [];
+       counts[frames[^1]] = counts.GetValueOrDefault(frames[^1]) + 1;
+   };
+   source.Process();
+
+   string Role(int tid) => roots.TryGetValue(tid, out var c) && c.Count > 0
+       ? $"T{tid}[{c.OrderByDescending(kv => kv.Value).First().Key}]" : $"T{tid}";
+
+   Console.WriteLine($"contentions={waits.Count} totalWaitMs={waits.Sum(w => w.End - w.Start):F1}");
+   Console.WriteLine("== By waiter and owner thread");
+   foreach (var g in waits.GroupBy(w => (w.Waiter, w.Owner)).OrderByDescending(g => g.Sum(w => w.End - w.Start)).Take(topN))
+       Console.WriteLine($"{g.Sum(w => w.End - w.Start),9:F1} ms n={g.Count(),6} waiter={Role(g.Key.Waiter)} owner={Role(g.Key.Owner)}");
+   Console.WriteLine("== By waiter stack");
+   foreach (var g in waits.GroupBy(w => (w.Waiter, w.WaiterKey)).OrderByDescending(g => g.Sum(w => w.End - w.Start)).Take(topN))
+       Console.WriteLine($"{g.Sum(w => w.End - w.Start),9:F1} ms n={g.Count(),6} T{g.Key.Waiter} {g.Key.WaiterKey}");
+   Console.WriteLine("== Owner activity during waits");
+   var activity = new Dictionary<string, int>();
+   foreach (var w in waits)
+   {
+       if (!samples.TryGetValue(w.Owner, out var list)) continue;
+       foreach (var s in list.Where(s => s.Time >= w.Start && s.Time <= w.End))
+       {
+           string key = $"T{w.Owner} holds while T{w.Waiter} waits: owner in {s.Key}";
+           activity[key] = activity.GetValueOrDefault(key) + 1;
+       }
+   }
+   foreach (var kv in activity.OrderByDescending(kv => kv.Value).Take(topN))
+       Console.WriteLine($"{kv.Value,7} samples {kv.Key}");
+   ```
+
+5. **GC check.** `dotnet-counters collect --process-id <pid> --counters System.Runtime --duration 00:00:20 --format csv`
+   reports collections per generation, pause time, allocation rate, and lock
+   contentions per second.
+6. **GPU floor.** A CPU-limited frame lets the driver lower the GPU clocks, so
+   the GPU time grows and does not show the real floor. Lock the clocks in an
+   elevated shell (`nvidia-smi -lgc <max>,<max>` and, where supported,
+   `nvidia-smi -lmc <max>,<max>`). Then start a harness window, wait for
+   `<label>-window-start.json`, and sample the frame command buffer time:
+
+   ```powershell
+   pwsh Tools/Benchmarks/Sample-GpuFrameTime.ps1 -Session <name> -Seconds 22 -OutputPath <run>/reports/<label>-gpu-samples.json
+   ```
+
+   Reset the clocks afterwards (`nvidia-smi -rgc` and `nvidia-smi -rmc`).
+   Measure at 1, 1,000, and 2,000 chains to split a fixed cost from a cost
+   per chain.
+
+Install `dotnet-trace` and `dotnet-counters` with `dotnet tool install -g`.
 
 `PhysicsChainComponent.GetRuntimeDiagnostics()` is the allocation-free
 per-chain inspection surface. It reports the requested CPU/batched-GPU/

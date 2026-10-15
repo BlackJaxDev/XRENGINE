@@ -84,6 +84,31 @@ These items apply to both mesh scenarios. The first and third rows are implement
 
 Unreal's mesh drawing pipeline is the reference model: draw commands are cached when a primitive is added to the scene, invalidated only when a dependency changes, and fed per-frame data through persistent GPU buffers.
 
+## Structural frame reuse contract
+
+Added 2026-10-13. Each render-thread stage rebuilds its per-row output in every frame, but in steady state most of that output is equal to the output of the previous frame. Only a few values change in each frame, and they are the same for all rows (frame bindings). This contract defines when a stage can keep its derived per-row state.
+
+| Stage | Per-row output that stays stable | Frame bindings (change in each frame) | Witness |
+| --- | --- | --- | --- |
+| Scene publisher | Submission rows, draw, geometry, and instance records | `Sequence`, `FrameGeneration`, global resource rows, and `LookupGeneration` when a global lookup changes | `DatabaseEpoch`, `TopologyGeneration`, and `ContentGeneration` of the publication. A retained-row commit keeps them. |
+| Dispatcher output page | Renderer slot, palette base and count, envelope stamp, and material padding | Page token, palette buffer, producer epoch, and previous-palette validity | None yet. The extractor reads each renderer state. |
+| Advanced extractor | Visibility payloads, producers, indirect ranges, range payload order, and deformed-slice offsets | Deformed-arena frame slots, deformation output buffers, frame upload, job pose generations, palette copy sources, and the bounds page lease | Visibility content generation (below) |
+| Vulkan visibility family | Sealed records, bin headers, manifests, and submission plans | The scene native generation, which advances with each scene publication preparation; the deformation output buffers; the raster pipelines and header native state; and frame-plan template leases | Seal signature and an exact comparison of the visibility columns (`VulkanVisibilitySealSignature`) |
+
+Rules:
+
+1. A consumer keeps derived per-row state only while every witness that it read is unchanged. It applies the frame bindings again in each frame.
+2. A stage that still does its per-row work can give a witness by output comparison: it compares its dense output with a retained copy and keeps its generation when the bytes are equal. This witness is exact and complete, because any changed byte counts as a change. It costs one dense pass, and it lets the downstream consumers skip their work before the stage itself can skip.
+3. Input witnesses replace output comparison when the inputs have dense change versions (the [shared versioning contract](#shared-versioning-contract)). Until then, a stage that reads scattered object state, such as mesh skinning buffers or renderer envelopes, keeps its per-row checks.
+4. Generations come from one process-wide counter, so a consumer never confuses the output of two producer instances.
+5. A retained record must not contain a frame binding. When a record contains one today, such as the deformation output buffer in a Vulkan record's vertex source, move the binding out of the record and apply it at recording time. Until then, the consumer can keep one retained result for each value of that binding.
+
+Steps, in order:
+
+1. The extractor gives a visibility content generation by output comparison, with a change count for each column. Done: at 2,000 chains, every steady-state build kept its content (316 of 316 builds with a shared mesh, 311 of 311 with unique meshes), and the comparison cost was within measurement noise. See the [investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#visibility-content-stability).
+2. The Vulkan visibility family keeps its sealed stream while the seal inputs are unchanged. Done: records and bin keys no longer contain the scene native generation or the deformation output buffer (rule 5), and every steady-state frame kept its stream. Render-thread time fell by about 5 ms. See the [investigation](../../investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#vulkan-visibility-stream-reuse) and the [architecture](../../../architecture/rendering/advanced-render-pipeline.md#vulkan-visibility-stream-reuse).
+3. Input witnesses for the extractor (a dispatcher renderer-layout generation and dense mesh and renderer versions), so that extraction itself visits only changed rows.
+
 ## Serial swap
 
 `EngineTimer` runs the swap after collection and render both finish. Neither can run during the swap, which took 13–17 ms of a 43–47 ms cycle at 2,000 chains.

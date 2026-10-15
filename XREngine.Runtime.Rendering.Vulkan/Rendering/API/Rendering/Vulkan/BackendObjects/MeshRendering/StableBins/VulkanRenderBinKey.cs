@@ -115,13 +115,17 @@ internal readonly record struct VulkanRenderBinKey(
             default);
     }
 
-    /// <summary>Builds an exact canonical packed-geometry visibility key.</summary>
+    /// <summary>
+    /// Builds an exact canonical packed-geometry visibility key. The key holds no
+    /// frame binding: a deformed payload passes an empty vertex source, and the
+    /// scene publication generation is not part of the key, so the key of an
+    /// unchanged payload is the same in each frame.
+    /// </summary>
     internal static VulkanRenderBinKey CreateVisibilityGeometry(
         int passIndex,
         uint viewMask,
         in AdvancedVisibilityPayload payload,
         EAdvancedGeometryProducer producer,
-        ulong sceneNativeGeneration,
         in VulkanVisibilityPreparedVertexSource vertexSource,
         VulkanFrameDataSlice indexSlice,
         in VulkanResidentDrawTemplateNativeState nativeState,
@@ -145,7 +149,6 @@ internal readonly record struct VulkanRenderBinKey(
                 payload.CullMode,
                 payload.PrimitiveTopology,
                 payload.Skinned ? 1u : 0u,
-                sceneNativeGeneration,
                 vertexSource.Buffer.Handle,
                 vertexSource.Generation,
                 vertexSource.Offset,
@@ -170,7 +173,6 @@ internal readonly record struct VulkanRenderBinKey(
                 payload.CullMode,
                 payload.PrimitiveTopology,
                 payload.Skinned,
-                sceneNativeGeneration,
                 indexSlice,
                 vertexSource));
     }

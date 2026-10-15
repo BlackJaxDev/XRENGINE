@@ -208,6 +208,7 @@ namespace XREngine.Rendering.Commands
 
                         indices.Add(index);
                         _commandIndexLookup.Add(index, (meshCmd, subMeshIndex, snapshot));
+                        MarkAdvancedRowInputWritten(index);
                         TrackRegisteredMeshCommand(renderInfo, meshCmd);
 
                         DrawMetadata commandValue = stageNativeRecords.Value.Metadata;
@@ -992,6 +993,7 @@ namespace XREngine.Rendering.Commands
 
             // Remove the lookup entry for the removed command early.
             _commandIndexLookup.Remove(targetIndex);
+            MarkAdvancedRowInputWritten(targetIndex);
             if (targetIndex < lastIndex)
             {
                 DrawMetadata lastCommand = UpdatingDrawMetadataBuffer.GetDataRawAtIndex<DrawMetadata>(lastIndex);
@@ -1012,6 +1014,8 @@ namespace XREngine.Rendering.Commands
                 {
                     _commandIndexLookup.Remove(lastIndex);
                     _commandIndexLookup[targetIndex] = movedCommand;
+                    MarkAdvancedRowInputWritten(lastIndex);
+                    MarkAdvancedRowInputWritten(targetIndex);
 
                     if (_commandIndicesPerMeshCommand.TryGetValue(movedCommand.command, out var movedList))
                     {
@@ -1032,6 +1036,7 @@ namespace XREngine.Rendering.Commands
             else
             {
                 _commandIndexLookup.Remove(lastIndex);
+                MarkAdvancedRowInputWritten(lastIndex);
             }
 
             RemoveUpdatingMeshSubmission(targetIndex, lastIndex);
@@ -1084,7 +1089,10 @@ namespace XREngine.Rendering.Commands
             var blank = default(DrawMetadata);
             uint end = startIndex + count;
             for (uint i = startIndex; i < end; ++i)
+            {
                 UpdatingDrawMetadataBuffer.SetDataRawAtIndex(i, blank);
+                MarkAdvancedRowInputWritten(i);
+            }
 
             uint elementSize = UpdatingDrawMetadataBuffer.ElementSize;
 
@@ -1152,6 +1160,8 @@ namespace XREngine.Rendering.Commands
                 ZeroDrawMetadataRange(currentCapacity, newCapacity - currentCapacity);
                 ZeroTransparencyMetadataRange(currentCapacity, newCapacity - currentCapacity);
             }
+            // The resize replaced the render-side row storage.
+            MarkAllAdvancedRowInputsWritten();
         }
 
         private void ZeroDrawMetadataRange(uint startIndex, uint count)

@@ -18,6 +18,8 @@ public sealed partial class GPUPhysicsChainDispatcher
     private readonly Dictionary<XRMeshRenderer, PhysicsChainGpuBoundsSource> _pendingBoundsSources =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     private readonly List<GPUPhysicsChainRequest> _outputPublicationRequests = [];
+    // Commit notifications that the render thread sends after it releases _outputPageSync.
+    private readonly List<(XRMeshRenderer Renderer, bool BoundsChanged)> _commitNotifications = [];
     private readonly Dictionary<uint, (uint SourceBase, uint Count)> _copiedPreviousPaletteSlices = [];
     private readonly HashSet<uint> _seededPreviousPaletteSlices = [];
     private XRDataBuffer<SkinPaletteMatrix>? _unpagedSkinPaletteBuffer;
@@ -124,8 +126,39 @@ public sealed partial class GPUPhysicsChainDispatcher
     }
 
     /// <summary>Captures one committed renderer slot for a later output page.</summary>
+    /// <remarks>
+    /// Scene publication calls this for each covered renderer. A current committed spatial
+    /// query of the renderer answers without <c>_outputPageSync</c>.
+    /// <para>
+    /// Lock order: scene publication calls this while it holds the scene lock, and a query
+    /// resolve in <see cref="TryGetCommittedSpatialBounds(XRMeshRenderer, out AABB, out ulong)"/>
+    /// holds the query lock while it reads the scene. This method therefore never waits for
+    /// the query lock. When another thread holds it, the locked path below answers.
+    /// </para>
+    /// </remarks>
     public bool TryCaptureGpuBoundsSource(XRMeshRenderer renderer, out PhysicsChainGpuBoundsSource source)
     {
+        PhysicsChainCommittedSpatialQuery query = renderer.CommittedSpatialQuery;
+        bool queryTaken = false;
+        try
+        {
+            Monitor.TryEnter(query, ref queryTaken);
+            if (queryTaken && TryReuseCommittedSpatialQuery(renderer, query))
+            {
+                source = query.BoundsSource;
+                if (query.HasBoundsSource && query.CoverageComplete
+                    && query.BoneBufferGeneration == source.RendererBoneBufferGeneration)
+                    return true;
+                source = default;
+                return false;
+            }
+        }
+        finally
+        {
+            if (queryTaken)
+                Monitor.Exit(query);
+        }
+
         lock (_outputPageSync)
         {
             InvalidateFailedPublishedPages();
@@ -182,30 +215,62 @@ public sealed partial class GPUPhysicsChainDispatcher
         }
     }
 
-    /// <summary>Captures inputs for a covered draw. The caller must retain the page while it uses the span.</summary>
-    public bool TryCaptureRendererOutputState(PhysicsChainGpuOutputPageToken token,
+    /// <summary>
+    /// Opens a lock-free reader of the renderer states on a retained output page. The page lock,
+    /// the page lookup, and the usability check happen here once. The caller must keep the page
+    /// retained while it uses the reader: a retained page is never rewritten.
+    /// </summary>
+    public bool TryOpenRendererStateReader(PhysicsChainGpuOutputPageToken token,
+        out PhysicsChainGpuRendererStateReader reader)
+    {
+        lock (_outputPageSync)
+        {
+            if (!TryGetOutputPageLocked(ToOutputPageIndex(token), token, out PhysicsChainOutputPage? page) ||
+                page!.RetainCount <= 0 ||
+                !IsUsableOutputPage(page))
+            {
+                reader = default;
+                return false;
+            }
+            reader = new PhysicsChainGpuRendererStateReader(this, page.StatesBySlot, page.MorphWeights);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Captures the inputs of a covered draw through an open reader, without a lock. The state
+    /// must still name the exact bounds source, the renderer must keep its bone-buffer
+    /// generation, and the retained envelope must still describe the renderer and mesh.
+    /// </summary>
+    public bool TryReadRendererOutputState(in PhysicsChainGpuRendererStateReader reader,
         scoped in PhysicsChainGpuBoundsSource source, XRMesh mesh,
         out PhysicsChainGpuRendererOutputState state,
         out ReadOnlySpan<PhysicsChainMorphWeight> morphWeights)
     {
         morphWeights = default;
-        lock (_outputPageSync)
+        PhysicsChainGpuRendererOutputState[]? states = reader.StatesBySlot;
+        if (!ReferenceEquals(reader.Dispatcher, this) ||
+            !ReferenceEquals(source.Dispatcher, this) ||
+            states is null ||
+            source.BoundsSlot >= (uint)states.Length)
         {
-            if (!ReferenceEquals(source.Dispatcher, this) ||
-                !TryGetOutputPageLocked(ToOutputPageIndex(token), token, out PhysicsChainOutputPage? page) ||
-                !IsUsableOutputPage(page!) ||
-                !page!.RendererStates.TryGetValue(source.Renderer, out state) ||
-                state.BoundsSource != source ||
-                source.Renderer.BoneBufferGeneration != source.RendererBoneBufferGeneration ||
-                !state.Envelope.Matches(source.Renderer, mesh))
-            {
-                state = default;
-                return false;
-            }
-            morphWeights = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(page!.MorphWeights)
-                .Slice(state.MorphWeightOffset, state.MorphWeightCount);
-            return true;
+            state = default;
+            return false;
         }
+
+        ref readonly PhysicsChainGpuRendererOutputState slotState = ref states[source.BoundsSlot];
+        if (slotState.BoundsSource != source ||
+            source.Renderer.BoneBufferGeneration != source.RendererBoneBufferGeneration ||
+            !slotState.Envelope.Matches(source.Renderer, mesh))
+        {
+            state = default;
+            return false;
+        }
+
+        state = slotState;
+        morphWeights = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(reader.MorphWeights)
+            .Slice(state.MorphWeightOffset, state.MorphWeightCount);
+        return true;
     }
 
     /// <summary>Releases one retained page token.</summary>
@@ -301,6 +366,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             _gpuBoundsSlotMetadataBuffer = null;
             _gpuDrivenSkinPaletteBuffer = null;
             _gpuDrivenPreviousSkinPaletteBuffer = null;
+            AdvanceCommittedSpatialEpoch(SpatialEpochCause.Invalidation);
             if (prior is not null)
                 NotifyCommittedSpatialOutputChanged(prior, published: false, priorPage: null);
         }
@@ -391,7 +457,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 page.FailureRecoveryRequested = false;
                 page.PaletteSlices.Clear();
                 page.PaletteHistoryResetRenderers.Clear();
-                page.RendererStates.Clear();
+                page.ClearRendererStates();
                 page.MorphWeights.Clear();
                 page.SpatialCheckpoints.Clear();
                 page.PreviousPaletteSourceToken = default;
@@ -513,6 +579,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             _committedBoundsSources.Clear();
             _lastPublishedPaletteInputBoundsByRenderer.Clear();
             _paletteOutputRefreshPending = true;
+            AdvanceCommittedSpatialEpoch(SpatialEpochCause.Invalidation);
             NotifyCommittedSpatialOutputChanged(failed, published: false, priorPage: null);
         }
         if (_historyOutputPageIndex >= 0
@@ -520,10 +587,22 @@ public sealed partial class GPUPhysicsChainDispatcher
             _historyOutputPageIndex = -1;
     }
 
-    private bool CommitOutputPage(IPhysicsChainComputeBackend backend)
+    /// <summary>
+    /// Publishes the writing output page behind a producer fence, then notifies each changed
+    /// renderer after it releases <see cref="_outputPageSync"/>.
+    /// </summary>
+    /// <param name="backend">The backend that inserts the producer fence.</param>
+    /// <param name="stageMark">
+    /// The commit stage mark. Each commit part adds the time since this mark to its stage and
+    /// moves the mark to now.
+    /// </param>
+    /// <returns><see langword="true"/> when the page is committed.</returns>
+    private bool CommitOutputPage(IPhysicsChainComputeBackend backend, ref long stageMark)
     {
+        uint producerEpoch;
         lock (_outputPageSync)
         {
+            MarkStageTime(DispatcherStage.CommitPageLockWait, ref stageMark);
             if (_writingOutputPageIndex < 0)
                 return false;
 
@@ -550,6 +629,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 _writingOutputPageIndex = -1;
                 return false;
             }
+            MarkStageTime(DispatcherStage.CommitFence, ref stageMark);
             if (page.ProducerFence is null
                 || page.ProducerFence.SubmissionStatus == EGpuFenceSubmissionStatus.Failed)
             {
@@ -569,19 +649,47 @@ public sealed partial class GPUPhysicsChainDispatcher
             _outputProducerEpoch = page.ProducerEpoch;
             page.RenderFrame = _readbackFrameIndex;
             page.Published = true;
+            PhysicsChainOutputPage? priorPage = _publishedOutputPageIndex >= 0
+                ? _outputPages[_publishedOutputPageIndex] : null;
             _historyOutputPageIndex = _publishedOutputPageIndex;
             _publishedOutputPageIndex = _writingOutputPageIndex;
             _writingOutputPageIndex = -1;
-            _committedBoundsSources.Clear();
-            foreach (KeyValuePair<XRMeshRenderer, PhysicsChainGpuBoundsSource> entry in _pendingBoundsSources)
-                _committedBoundsSources.Add(entry.Key, entry.Value);
-            _lastPublishedPaletteInputBoundsByRenderer.Clear();
-            foreach (KeyValuePair<XRMeshRenderer, (AABB Bounds, long BoneGeneration)> entry in _pendingPaletteInputBoundsByRenderer)
-                _lastPublishedPaletteInputBoundsByRenderer.Add(entry.Key, entry.Value);
-            NotifyCommittedSpatialOutputChanged(page, published: true,
-                _historyOutputPageIndex >= 0 ? _outputPages[_historyOutputPageIndex] : null);
-            return true;
+            bool sourcesChanged = !HaveSameBoundsSources(_committedBoundsSources, _pendingBoundsSources);
+            if (sourcesChanged)
+            {
+                _committedBoundsSources.Clear();
+                foreach (KeyValuePair<XRMeshRenderer, PhysicsChainGpuBoundsSource> entry in _pendingBoundsSources)
+                    _committedBoundsSources.Add(entry.Key, entry.Value);
+            }
+            (_lastPublishedPaletteInputBoundsByRenderer, _pendingPaletteInputBoundsByRenderer) =
+                (_pendingPaletteInputBoundsByRenderer, _lastPublishedPaletteInputBoundsByRenderer);
+            MarkStageTime(DispatcherStage.CommitPageState, ref stageMark);
+            bool rendererStateChanged = CollectCommittedSpatialNotifications(page, priorPage, _commitNotifications);
+            if (sourcesChanged)
+                AdvanceCommittedSpatialEpoch(SpatialEpochCause.Sources);
+            else if (rendererStateChanged)
+                AdvanceCommittedSpatialEpoch(SpatialEpochCause.RendererState);
+            producerEpoch = page.ProducerEpoch;
         }
+        MarkStageTime(DispatcherStage.CommitCollectNotifications, ref stageMark);
+        _commitNotificationCount += _commitNotifications.Count;
+
+        // Renderers react without _outputPageSync, so collection and scene publication can
+        // read committed state while the render thread sends these notifications.
+        try
+        {
+            for (int index = 0; index < _commitNotifications.Count; ++index)
+            {
+                (XRMeshRenderer renderer, bool boundsChanged) = _commitNotifications[index];
+                renderer.NotifyCommittedOutputChanged(producerEpoch, published: true, boundsChanged);
+            }
+        }
+        finally
+        {
+            _commitNotifications.Clear();
+        }
+        MarkStageTime(DispatcherStage.CommitNotify, ref stageMark);
+        return true;
     }
 
     private bool CopyPreviousOutputPalette(IPhysicsChainComputeBackend backend,
@@ -628,7 +736,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 && prior.BoneGeneration == binding.RendererBoneBufferGeneration
                 && prior.Base < sourcePalette.ElementCount
                 && count <= sourcePalette.ElementCount - prior.Base
-                && _outputPublicationRequestByComponent.TryGetValue(binding.Component, out var request)
+                && binding.Request is { } request
                 && source.RendererStates.TryGetValue(binding.Renderer, out var priorState)
                 && priorState.SpatialSource == GetSpatialSourceIdentity(request, in binding)
                 && ReferenceEquals(priorState.Envelope.Mesh, binding.Renderer.Mesh)
@@ -749,7 +857,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             {
                 PhysicsChainOutputPage page = _outputPages[_writingOutputPageIndex];
                 page.PreviousPaletteSourceToken = default;
-                page.RendererStates.Clear();
+                page.ClearRendererStates();
                 page.MorphWeights.Clear();
                 page.SpatialCheckpoints.Clear();
                 if (page.HasQueuedGpuWork)
@@ -865,7 +973,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         page.Published = false;
         page.PaletteSlices.Clear();
         page.PaletteHistoryResetRenderers.Clear();
-        page.RendererStates.Clear();
+        page.ClearRendererStates();
         page.MorphWeights.Clear();
         page.SpatialCheckpoints.Clear();
         page.PreviousPaletteSourceToken = default;
@@ -895,7 +1003,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             page.ProducerFence = null;
             page.HasUnfencedGpuWork = false;
             page.PreviousPaletteSourceToken = default;
-            page.RendererStates.Clear();
+            page.ClearRendererStates();
             page.MorphWeights.Clear();
             page.SpatialCheckpoints.Clear();
             return (page.BoundsAtlas?.IsDestroyed ?? true)
@@ -931,6 +1039,30 @@ public sealed partial class GPUPhysicsChainDispatcher
         public PhysicsChainGpuOutputPageToken PreviousPaletteSourceToken;
         public readonly Dictionary<XRMeshRenderer, PhysicsChainGpuRendererOutputState> RendererStates =
             new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        // The same states, indexed by bounds slot, for lock-free reads of a retained page
+        // (PhysicsChainGpuRendererStateReader). Cleared in place and grown only while the page
+        // is written, so a reader of a retained page always sees this array.
+        public PhysicsChainGpuRendererOutputState[] StatesBySlot = [];
+        private int _usedStateSlots;
+
+        /// <summary>Adds one renderer state to both the renderer map and the slot array.</summary>
+        public void AddRendererState(XRMeshRenderer renderer, in PhysicsChainGpuRendererOutputState state)
+        {
+            RendererStates.Add(renderer, state);
+            int slot = checked((int)state.BoundsSource.BoundsSlot);
+            if (slot >= StatesBySlot.Length)
+                Array.Resize(ref StatesBySlot, Math.Max(slot + 1, StatesBySlot.Length * 2));
+            StatesBySlot[slot] = state;
+            _usedStateSlots = Math.Max(_usedStateSlots, slot + 1);
+        }
+
+        /// <summary>Removes every renderer state from both the renderer map and the slot array.</summary>
+        public void ClearRendererStates()
+        {
+            RendererStates.Clear();
+            Array.Clear(StatesBySlot, 0, _usedStateSlots);
+            _usedStateSlots = 0;
+        }
         public readonly List<PhysicsChainMorphWeight> MorphWeights = [];
         public readonly Dictionary<GPUPhysicsChainRequest, PhysicsChainResidentSpatialCheckpoint> SpatialCheckpoints = [];
         public readonly Dictionary<XRMeshRenderer, (uint Base, uint Count, long BoneGeneration)> PaletteSlices =

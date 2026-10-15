@@ -81,6 +81,33 @@ internal sealed class AdvancedGpuSceneIdentityCacheFixture : IDisposable
         Publisher.Publish(Scene, frameId, AdvancedGlobalResourceCapture.Empty(frameId));
     }
 
+    /// <summary>Publishes after one frame identifier is skipped.</summary>
+    public void PublishAfterFrameGap()
+    {
+        ++_frameId;
+        Publish();
+    }
+
+    /// <summary>Publishes one frame whose global capture holds one light row.</summary>
+    public void PublishWithLight(object source, AdvancedLightRecord light)
+    {
+        foreach (RenderCommandMesh3D command in _commands)
+            command.SwapBuffers();
+        Scene.SwapCommandBuffers();
+        ulong frameId = ++_frameId;
+        AdvancedGlobalResourceCapture capture = new(
+            frameId,
+            new object?[] { source },
+            new[] { light },
+            default,
+            default,
+            default,
+            default,
+            default,
+            default);
+        Publisher.Publish(Scene, frameId, in capture);
+    }
+
     public void PublishWithMissingSource(bool nullEntry)
     {
         foreach (RenderCommandMesh3D command in _commands)

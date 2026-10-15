@@ -71,6 +71,7 @@ namespace XREngine.Rendering.XeSS
 
         private static bool TryIsBridgeCapable(out string? failureReason)
         {
+            RuntimeEngine.Rendering.EnsureVulkanUpscaleBridgeProbeCompleted();
             var snapshot = RuntimeEngine.Rendering.VulkanUpscaleBridgeSnapshot;
             failureReason = null;
 

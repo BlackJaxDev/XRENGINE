@@ -40,6 +40,10 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
     private readonly RenderFrameViewDescriptor[] _visibilityPlanViews;
     private readonly AdvancedDeformedArenaSlice[] _drawDeformationSlices;
     private readonly int[] _drawDeformationCandidateIndices;
+    // The mesh preparation pre-pass result of each command, reused by extraction in the same Build.
+    private readonly AdvancedPreparedDeformationMesh[] _preparedDeformationMeshes;
+    private readonly PhysicsChainMaterialBoundsContractMemo _materialBoundsContracts = new();
+    private readonly AdvancedVisibilityContentWitness _visibilityContent = new();
     private readonly uint[] _depthPyramidGenerations;
     private readonly ulong[] _viewHistoryKeys;
     private readonly ulong[] _viewHistoryLastUsed;
@@ -71,6 +75,13 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
     // retained publication, never by retaining this mutable GPUScene.
     private uint _preparedSceneIdentity;
     internal long LastExtractionTicks { get; private set; }
+
+    /// <summary>
+    /// Captures the cumulative extraction sub-stage times. They are zero unless
+    /// <c>XRE_ADVANCED_EXTRACTION_SUBSTAGE_TIMERS=1</c> was set at startup.
+    /// </summary>
+    public static AdvancedExtractionSubStageTimings CaptureExtractionSubStageTimings()
+        => AdvancedExtractionSubStageTimers.Capture();
     internal long LastIndirectPlanningTicks { get; private set; }
     internal long LastInitialViewPlanningTicks { get; private set; }
 
@@ -130,6 +141,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             new AdvancedDeformedArenaSlice[options.MaximumDraws];
         _drawDeformationCandidateIndices =
             new int[options.MaximumDraws];
+        _preparedDeformationMeshes =
+            new AdvancedPreparedDeformationMesh[options.MaximumDraws];
         _depthPyramidGenerations = new uint[options.MaximumViews];
         _viewHistoryKeys = new ulong[options.MaximumViews];
         _viewHistoryLastUsed = new ulong[options.MaximumViews];
@@ -183,6 +196,15 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
     /// </summary>
     public ulong VisibilityContentGeneration
         => unchecked((ulong)Volatile.Read(ref _visibilityContentGeneration));
+    /// <summary>
+    /// Generation of the visibility content of the last successful build: payloads,
+    /// producers, indirect ranges, range payload order, and deformed-slice offsets.
+    /// Unlike <see cref="VisibilityContentGeneration"/>, it does not change when a
+    /// build gives the same content again.
+    /// </summary>
+    public ulong StableVisibilityContentGeneration => _visibilityContent.Generation;
+    /// <summary>Cumulative counts of the visibility content comparison.</summary>
+    public AdvancedVisibilityContentTelemetry VisibilityContentTelemetry => _visibilityContent.Capture();
     public AdvancedDeformedVertexArenaTelemetry ArenaTelemetry
         => _deformedArena.GetTelemetry();
     public AdvancedFrameUploadTelemetrySnapshot FrameUploadTelemetry
@@ -294,7 +316,10 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
                 "The covered draw bounds output page is unavailable.");
         _gpuDeformation.SetPhysicsOutputSource(_gpuBoundsDispatcher, _gpuBoundsPage.Token);
-        if (!TryPrepareCanonicalDeformationMeshes(publicationSnapshot, _drawCount))
+        long prePassMark = AdvancedExtractionSubStageTimers.Start();
+        bool meshesPrepared = TryPrepareCanonicalDeformationMeshes(publicationSnapshot, _drawCount);
+        AdvancedExtractionSubStageTimers.Mark(ref prePassMark, EAdvancedExtractionSubStage.PrePass);
+        if (!meshesPrepared)
             return CreateDeferredPublication(
                 world,
                 consumers,
@@ -319,6 +344,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         long extractionStarted = Stopwatch.GetTimestamp();
         _meshPreparationPending = false;
         _physicsOutputMismatch = false;
+        _materialBoundsContracts.Clear();
+        AdvancedExtractionSubStageTimers.CountBuild();
         for (int commandIndex = 0;
              commandIndex < _drawCount;
              commandIndex++)
@@ -342,7 +369,9 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
 
         _admission = _deformationJobs.FinalizeJobs(
             _options.DeformationBudget);
+        long verdictMark = AdvancedExtractionSubStageTimers.Start();
         ApplyDeformationAdmissionVerdicts();
+        AdvancedExtractionSubStageTimers.Mark(ref verdictMark, EAdvancedExtractionSubStage.AdmissionVerdicts);
         ReadOnlySpan<AdvancedDeformationJobRecord> finalizedJobs =
             _deformationJobs.Jobs;
         _deformationUpload = default;
@@ -377,6 +406,12 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             countStride: 4u,
             submissionStrategy: submissionStrategy);
         LastIndirectPlanningTicks = Stopwatch.GetTimestamp() - indirectPlanningStarted;
+        _visibilityContent.Update(
+            _visibilityPayloads.AsSpan(0, _drawCount),
+            _indirectPlanner.ProducersByPayload,
+            _indirectPlanner.Ranges,
+            _indirectPlanner.PayloadIndices,
+            _drawDeformationSlices.AsSpan(0, _drawCount));
         _visibilityPlanCount = 0;
         if (viewSet is RenderFrameViewSet initialViews)
         {
@@ -658,12 +693,15 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         int drawCount)
     {
         bool allReady = true;
+        XRMesh? lastReadyMesh = null;
+        AdvancedPreparedDeformationMesh lastReady = default;
         for (int commandIndex = 0; commandIndex < drawCount; commandIndex++)
         {
             AdvancedDrawSubmissionRecord submission =
                 publication.Submission.Records[commandIndex];
             if (!RequiresAggregateDeformation(submission.Flags))
                 continue;
+            _preparedDeformationMeshes[commandIndex] = default;
             AdvancedManagedDeformationSourceRow source =
                 publication.Submission.DeformationSources[commandIndex];
             if (source.Renderer is null || source.Mesh is not { VertexCount: > 0 } mesh)
@@ -677,12 +715,29 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 MeshletOffset = geometry.MeshletFirst,
                 MeshletCount = geometry.MeshletCount,
             };
+            uint topologyGeneration = ComputeTopologyGeneration(mesh, meshletRange);
+            // Consecutive rows that draw one shared mesh use one preparation.
+            if (ReferenceEquals(mesh, lastReadyMesh) &&
+                lastReady.IsReusable(_gpuDeformation.MeshSliceRevision, mesh, topologyGeneration))
+            {
+                _preparedDeformationMeshes[commandIndex] = lastReady;
+                continue;
+            }
             AdvancedGpuDeformationMeshPreparationStatus status =
                 _gpuDeformation.TryPrepareMesh(
                     mesh,
-                    ComputeTopologyGeneration(mesh, meshletRange),
-                    out _);
+                    topologyGeneration,
+                    out AdvancedGpuDeformationMeshSlice slice);
             allReady &= status != AdvancedGpuDeformationMeshPreparationStatus.Pending;
+            if (status != AdvancedGpuDeformationMeshPreparationStatus.Ready)
+                continue;
+            lastReadyMesh = mesh;
+            lastReady = new AdvancedPreparedDeformationMesh(
+                slice,
+                _gpuDeformation.MeshSliceRevision,
+                mesh.GeometryRevision,
+                Ready: true);
+            _preparedDeformationMeshes[commandIndex] = lastReady;
         }
         return allReady;
     }
@@ -693,6 +748,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         ulong frameId,
         ulong publicationFrameGeneration)
     {
+        long timerMark = AdvancedExtractionSubStageTimers.Start();
         _drawDeformationCandidateIndices[commandIndex] = -1;
         _drawDeformationSlices[commandIndex] = default;
         _visibilityCandidates[commandIndex] = default;
@@ -724,18 +780,23 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 ? EAdvancedVisibilityPreparationFlags.NewRecord |
                   EAdvancedVisibilityPreparationFlags.ConservativeVisible
                 : EAdvancedVisibilityPreparationFlags.None;
+        // A covered draw reads its renderer output state once. The bounds route and the
+        // deformation pose use the same capture.
+        PhysicsChainGpuRendererOutputState coveredState = default;
+        ReadOnlySpan<PhysicsChainMorphWeight> coveredMorphWeights = default;
+        bool coveredStateCaptured = false;
         if (deformationSource.GpuBoundsSource is { } boundsSource)
         {
             visibilityFlags |= EAdvancedVisibilityPreparationFlags.GpuOwnedBounds;
             _gpuBoundsRoutes[commandIndex] = AdvancedGpuBoundsPatchRoute.Create(
                 in draw, checked((uint)commandIndex), in boundsSource, _gpuBoundsPage.ProducerEpoch);
-            if (renderer is not null && mesh is not null && _gpuBoundsDispatcher is not null &&
-                _gpuBoundsDispatcher.TryCaptureRendererOutputState(_gpuBoundsPage.Token,
-                    in boundsSource, mesh, out PhysicsChainGpuRendererOutputState certifiedState,
-                    out _) &&
-                !PhysicsChainMaterialBoundsCertificate.Covers(
-                        certifiedState.MaterialPadding, certifiedState.MaterialBoundsSupported,
-                        deformationSource.MaterialSnapshot))
+            coveredStateCaptured = renderer is not null && mesh is not null && _gpuBoundsDispatcher is not null &&
+                _gpuBoundsDispatcher.TryReadRendererOutputState(in _gpuBoundsStates,
+                    in boundsSource, mesh, out coveredState, out coveredMorphWeights);
+            if (coveredStateCaptured &&
+                !_materialBoundsContracts.Covers(
+                    coveredState.MaterialPadding, coveredState.MaterialBoundsSupported,
+                    deformationSource.MaterialSnapshot))
             {
                 // The bounds patch rejects this route and clears its candidate view mask.
                 _gpuBoundsRoutes[commandIndex] = _gpuBoundsRoutes[commandIndex] with
@@ -746,6 +807,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         }
         else
             _gpuBoundsRoutes[commandIndex] = default;
+        AdvancedExtractionSubStageTimers.Mark(ref timerMark, EAdvancedExtractionSubStage.RouteAndCover);
         publication.Geometry.TryGet(geometry, out AdvancedGeometryRecord canonicalGeometry);
         BoundsGpu commandBounds = new()
         {
@@ -796,6 +858,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         AdvancedDeformedArenaSlice deformationSlice = default;
         int deformationCandidateIndex = -1;
         bool aggregateDeformationAvailable = false;
+        AdvancedExtractionSubStageTimers.Mark(ref timerMark, EAdvancedExtractionSubStage.GeometryAndCandidate);
         if (skinned && renderer is not null && mesh is not null)
         {
             aggregateDeformationAvailable = TryAddDeformation(
@@ -809,6 +872,11 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 deformationMeshletRange,
                 frameId,
                 deformationSource.GpuBoundsSource,
+                coveredStateCaptured,
+                in coveredState,
+                coveredMorphWeights,
+                in _preparedDeformationMeshes[commandIndex],
+                ref timerMark,
                 out deformationSlice,
                 out AdvancedGpuDeformationMeshSlice gpuMeshSlice,
                 out AdvancedGpuDeformationPoseSlice gpuPoseSlice,
@@ -877,6 +945,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                     !hasCanonicalGeometry ||
                     (skinned && !aggregateDeformationAvailable),
                 TemporalReason: temporalReason);
+        AdvancedExtractionSubStageTimers.Mark(ref timerMark, EAdvancedExtractionSubStage.Payload);
+        AdvancedExtractionSubStageTimers.CountRow();
     }
 
     private static EAdvancedVelocityValidityReason ResolveTemporalReason(
@@ -912,6 +982,11 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         in GPUScene.GpuMeshletRange meshletRange,
         ulong frameId,
         PhysicsChainGpuBoundsSource? boundsSource,
+        bool coveredStateCaptured,
+        in PhysicsChainGpuRendererOutputState physicsState,
+        ReadOnlySpan<PhysicsChainMorphWeight> retainedMorphWeights,
+        in AdvancedPreparedDeformationMesh preparedMesh,
+        ref long timerMark,
         out AdvancedDeformedArenaSlice slice,
         out AdvancedGpuDeformationMeshSlice gpuMeshSlice,
         out AdvancedGpuDeformationPoseSlice gpuPoseSlice,
@@ -934,23 +1009,30 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         uint topologyGeneration = ComputeTopologyGeneration(
             mesh,
             meshletRange);
-        AdvancedGpuDeformationMeshPreparationStatus meshPreparation =
-            _gpuDeformation.TryPrepareMesh(
+        // The pre-pass of this Build prepared the mesh. Its slice stays valid while
+        // no mesh slice changed and the mesh keeps its geometry.
+        AdvancedGpuDeformationMeshPreparationStatus meshPreparation;
+        if (preparedMesh.IsReusable(_gpuDeformation.MeshSliceRevision, mesh, topologyGeneration))
+        {
+            gpuMeshSlice = preparedMesh.Slice;
+            meshPreparation = AdvancedGpuDeformationMeshPreparationStatus.Ready;
+        }
+        else
+        {
+            meshPreparation = _gpuDeformation.TryPrepareMesh(
                 mesh,
                 topologyGeneration,
                 out gpuMeshSlice);
+        }
+        AdvancedExtractionSubStageTimers.Mark(ref timerMark, EAdvancedExtractionSubStage.MeshPreparation);
         if (meshPreparation == AdvancedGpuDeformationMeshPreparationStatus.Pending)
         {
             _meshPreparationPending = true;
             slice = default;
             return false;
         }
-        PhysicsChainGpuRendererOutputState physicsState = default;
-        ReadOnlySpan<PhysicsChainMorphWeight> retainedMorphWeights = default;
-        if (boundsSource is { } coveredSource &&
-            (_gpuBoundsDispatcher is null || _gpuBoundsPage.CurrentPaletteBuffer is null ||
-                !_gpuBoundsDispatcher.TryCaptureRendererOutputState(_gpuBoundsPage.Token,
-                    in coveredSource, mesh, out physicsState, out retainedMorphWeights)))
+        if (boundsSource.HasValue &&
+            (_gpuBoundsPage.CurrentPaletteBuffer is null || !coveredStateCaptured))
         {
             _physicsOutputMismatch = true;
             slice = default;
@@ -961,6 +1043,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 _gpuBoundsPage.CurrentPaletteBuffer, physicsState.PaletteBase,
                 physicsState.PaletteCount, physicsState.Envelope, retainedMorphWeights)
             : _gpuDeformation.TryGetOrAddPose(renderer, mesh, out gpuPoseSlice);
+        AdvancedExtractionSubStageTimers.Mark(ref timerMark, EAdvancedExtractionSubStage.Pose);
         if (meshPreparation != AdvancedGpuDeformationMeshPreparationStatus.Ready || !poseReady)
         {
             _physicsOutputMismatch |= boundsSource.HasValue && !poseReady;
@@ -983,23 +1066,29 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         {
             return false;
         }
+        AdvancedExtractionSubStageTimers.Mark(ref timerMark, EAdvancedExtractionSubStage.HistoryAndArena);
 
         // The deformation scheduler consumes the draw record independently of
         // culling; its conservative contribution is refined by visibility later.
+        // A covered pose comes from the physics output page, so the CPU animation
+        // scheduler has nothing to schedule for it. Its single bone tier is 0.
         float contribution = 1.0f;
-        _boneTierScratch[0] = new AdvancedBoneLodTier(
-            gpuPoseSlice.BoneCount,
-            EAdvancedAnimationBoneRequirement.RuntimeRequired |
-            EAdvancedAnimationBoneRequirement.IkTarget |
-            EAdvancedAnimationBoneRequirement.Attachment |
-            EAdvancedAnimationBoneRequirement.PhysicsChain);
-        AdvancedAnimationScheduleDecision schedule =
-            GetOrCreateAnimationSchedule(
+        uint boneTier = 0u;
+        if (!boundsSource.HasValue)
+        {
+            _boneTierScratch[0] = new AdvancedBoneLodTier(
+                gpuPoseSlice.BoneCount,
+                EAdvancedAnimationBoneRequirement.RuntimeRequired |
+                EAdvancedAnimationBoneRequirement.IkTarget |
+                EAdvancedAnimationBoneRequirement.Attachment |
+                EAdvancedAnimationBoneRequirement.PhysicsChain);
+            boneTier = GetOrCreateAnimationSchedule(
                 poseHandle,
                 contribution,
                 newlyVisible,
                 gpuPoseSlice.BoneCount,
-                frameId);
+                frameId).BoneTier;
+        }
 
         EAdvancedDeformationFeatureFlags features =
             EAdvancedDeformationFeatureFlags.Velocity |
@@ -1027,7 +1116,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         uint poseGeneration = FoldGeneration(
             gpuPoseSlice.PoseVersion,
             gpuPoseSlice.BlendshapeVersion,
-            schedule.BoneTier);
+            boneTier);
         ulong vertexLayoutId = AdvancedDeformedVertex.CanonicalLayoutId;
         AdvancedDeformationJobRecord job = new()
         {
@@ -1080,6 +1169,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             out canonicalCandidateIndex);
         if (!added)
             _deformedArena.InvalidateOwnerHistory(slice.Owner);
+        AdvancedExtractionSubStageTimers.Mark(ref timerMark, EAdvancedExtractionSubStage.ScheduleAndJob);
         return added;
     }
 

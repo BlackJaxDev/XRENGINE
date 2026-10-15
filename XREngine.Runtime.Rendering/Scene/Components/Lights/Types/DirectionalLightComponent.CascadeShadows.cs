@@ -1985,6 +1985,7 @@ namespace XREngine.Components.Lights
         internal void ApplyDirectionalShadowAtlasMode(bool useDirectionalShadowAtlas)
         {
             ClearDirectionalAtlasSlots();
+            InvalidatePrimaryShadowPublication();
 
             if (!useDirectionalShadowAtlas)
             {
@@ -3642,6 +3643,8 @@ namespace XREngine.Components.Lights
 
         protected override void OnComponentDeactivated()
         {
+            // The base deactivation destroys the primary shadow view. Readers must stop using its package first.
+            InvalidatePrimaryShadowPublication();
             ReleaseCascadeShadowResources();
             base.OnComponentDeactivated();
         }
@@ -3668,27 +3671,70 @@ namespace XREngine.Components.Lights
                     SetField(ref _pendingCookedShadowMaterial, null, publishNotifications: false);
                 }
             }
+            // The primary shadow view has new dimensions, so its published package no longer matches the view.
+            InvalidatePrimaryShadowPublication();
             EnsureCascadeShadowResources();
         }
 
-        private bool ShouldCollectPrimaryShadowViewport()
+        /// <summary>
+        /// Returns whether the primary shadow view collects and swaps for this light in the current collect pass.
+        /// <paramref name="need"/> gets the first term that makes the primary shadow view necessary.
+        /// </summary>
+        private bool ShouldCollectPrimaryShadowViewport(out EDirectionalPrimaryShadowNeed need)
         {
-            IRuntimeRenderWorld? world = World.GetRenderWorld();
-            bool hasAnyCascadeReceiver =
-                SelectCascadeReceiverTexture(_desktopCascadeState) is not null ||
-                SelectCascadeReceiverTexture(_hmdCascadeState) is not null;
-            bool hasAnyPublishedCascades =
-                HasPublishedCascades(ShadowRequestSource.Desktop) ||
-                HasPublishedCascades(ShadowRequestSource.Hmd);
-            bool needsPrimary = !EnableCascadedShadows ||
-                !hasAnyCascadeReceiver ||
-                !hasAnyPublishedCascades ||
-                world is null ||
-                world.Lights.NeedsPrimaryDirectionalShadowMap();
+            need = ResolvePrimaryShadowNeed();
+            bool needsPrimary = need != EDirectionalPrimaryShadowNeed.None;
 
             return needsPrimary &&
                 (ShadowMap is not null ||
                  UsesDirectionalShadowAtlasForCurrentEncoding);
+        }
+
+        /// <summary>
+        /// Returns the first term that makes the primary shadow view necessary. The terms are tested in a fixed order.
+        /// </summary>
+        /// <remarks>
+        /// When the backend cannot render cascades, the primary shadow map is the only directional receiver. On the
+        /// shadow atlas path the atlas planning ran earlier in the same collect pass, so the gate uses its recorded
+        /// decision: the primary view collects in the same pass in which the atlas requests the primary tile, and the
+        /// swap publishes the collection together with the plan. Without a recorded decision, for example when the light
+        /// does not use the atlas, the test keeps the legacy order: receiver textures, published cascades, render world,
+        /// and the viewport test.
+        /// </remarks>
+        private EDirectionalPrimaryShadowNeed ResolvePrimaryShadowNeed()
+        {
+            if (!EnableCascadedShadows)
+                return EDirectionalPrimaryShadowNeed.CascadesDisabled;
+            if (!CanRenderDirectionalCascadesForCurrentBackend())
+                return EDirectionalPrimaryShadowNeed.NoCascadeReceiver;
+            if (_primaryShadowPublication.TryGetPlan(out EDirectionalPrimaryShadowNeed plannedNeed, out bool shadowOnlyCasters))
+            {
+                if (plannedNeed != EDirectionalPrimaryShadowNeed.None)
+                    return plannedNeed;
+
+                return shadowOnlyCasters
+                    ? EDirectionalPrimaryShadowNeed.ShadowOnlyCasters
+                    : EDirectionalPrimaryShadowNeed.None;
+            }
+
+            bool hasAnyCascadeReceiver =
+                SelectCascadeReceiverTexture(_desktopCascadeState) is not null ||
+                SelectCascadeReceiverTexture(_hmdCascadeState) is not null;
+            if (!hasAnyCascadeReceiver)
+                return EDirectionalPrimaryShadowNeed.NoCascadeReceiver;
+            if (!HasPublishedCascades(ShadowRequestSource.Desktop) &&
+                !HasPublishedCascades(ShadowRequestSource.Hmd))
+                return EDirectionalPrimaryShadowNeed.NoPublishedCascades;
+
+            IRuntimeRenderWorld? world = World.GetRenderWorld();
+            if (world is null)
+                return EDirectionalPrimaryShadowNeed.NoRenderWorld;
+            if (!world.Lights.NeedsPrimaryDirectionalShadowMap(this, out bool noRelevantViewport))
+                return EDirectionalPrimaryShadowNeed.None;
+
+            return noRelevantViewport
+                ? EDirectionalPrimaryShadowNeed.NoRelevantViewport
+                : EDirectionalPrimaryShadowNeed.PrimaryViewport;
         }
 
         private DirectionalCascadeShadowRenderPlan CreateCascadeShadowRenderPlan(int cascadeCount)
@@ -3916,15 +3962,34 @@ namespace XREngine.Components.Lights
                 return;
 
             ValidateCookedWebGpuShadowConfiguration();
+            DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.LightCollectCalls);
 
-            if (ShouldCollectPrimaryShadowViewport() &&
+            bool collectPrimary = ShouldCollectPrimaryShadowViewport(out EDirectionalPrimaryShadowNeed primaryNeed);
+            DirectionalShadowConsumptionTelemetry.CountPrimaryNeed(primaryNeed);
+            if (collectPrimary &&
                 TryGetPrimaryShadowViewportForProcessing(out XRViewport primaryViewport))
             {
+                var primaryCommands = primaryViewport.RenderPipelineInstance.MeshRenderCommands;
+                long renderingGeneration = primaryCommands.RenderingBackendReadyPackage.PackageGeneration;
+                ECollectVisibleViewKind previousView = CollectVisibleStageTimings.EnterView(ECollectVisibleViewKind.PrimaryShadow);
+                long viewStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.Collect);
                 primaryViewport.CollectVisible(false);
+                CollectVisibleStageTimings.EndView(previousView, viewStart);
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.PrimaryCollections);
+                // The swap of this pass publishes the collection only when it prepared a frame package and no swap ran
+                // during it. Otherwise the swap swaps the declined collection out and keeps the publication stale.
+                _primaryShadowPublication.Latch(primaryCommands, renderingGeneration);
+            }
+            else
+            {
+                _primaryShadowPublication.ClearLatch();
             }
 
+            ECollectVisibleViewKind previousCascadeView = CollectVisibleStageTimings.EnterView(ECollectVisibleViewKind.Cascade);
+            long cascadeViewStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.Collect);
             CollectCascadeSourceVisibleItems(ShadowRequestSource.Desktop);
             CollectCascadeSourceVisibleItems(ShadowRequestSource.Hmd);
+            CollectVisibleStageTimings.EndView(previousCascadeView, cascadeViewStart);
         }
 
         internal ulong GetShadowCasterCommandSetSignature(
@@ -3934,8 +3999,12 @@ namespace XREngine.Components.Lights
         {
             if (projectionType == EShadowProjectionType.DirectionalPrimary)
             {
+                // A stale publication returns a sentinel that is unique for each stale epoch, so the first primary tile
+                // after skipped collections cannot reuse a resident tile with old casters.
                 return TryGetPrimaryShadowViewportForProcessing(out XRViewport primaryViewport)
-                    ? primaryViewport.RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature
+                    ? _primaryShadowPublication.ResolveSignature(
+                        primaryViewport.RenderPipelineInstance.MeshRenderCommands,
+                        primaryViewport.RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature)
                     : 0u;
             }
 
@@ -3964,8 +4033,10 @@ namespace XREngine.Components.Lights
 
         private void CollectCascadeSourceVisibleItems(ShadowRequestSource source)
         {
+            DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeSourceCollectCalls);
             if (!CanRenderDirectionalCascadesForCurrentBackend())
             {
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeSkipDisabled);
                 PublishVulkanCascadeRenderingDisabledPlan(source);
                 return;
             }
@@ -3974,7 +4045,10 @@ namespace XREngine.Components.Lights
             XRViewport[] cascadeShadowViewports = state.Viewports;
             int cascadeCount = GetPublishedCascadeViewportCount(source, cascadeShadowViewports);
             if (cascadeCount <= 0)
+            {
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeSkipNoCascades);
                 return;
+            }
 
             bool prepareAtlasGroupedCommands = ShouldPrepareAtlasGroupedCascadeCollection(cascadeCount);
             DirectionalCascadeShadowRenderPlan plan = prepareAtlasGroupedCommands
@@ -3987,10 +4061,14 @@ namespace XREngine.Components.Lights
             bool atlasPage = plan.IsAtlasPage;
             bool hasAtlasRenderRequest = !atlasPage || HasDirectionalCascadeAtlasRenderRequest(source, cascadeCount);
             if (atlasPage && !hasAtlasRenderRequest)
+            {
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeSkipNoAtlasRenderRequest);
                 return;
+            }
 
             if (atlasPage && RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
             {
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeGpuPackages);
                 // GPU-driven shadow passes cull the global GPU scene against the
                 // active cascade camera. Skip CPU traversal, not the backend
                 // package contract: even an empty CPU collection needs current
@@ -4015,11 +4093,15 @@ namespace XREngine.Components.Lights
             if (plan.IsLayered || prepareAtlasGroupedCommands)
             {
                 if (atlasPage && !HasDirectionalCascadeAtlasCollectionRequest(source, cascadeCount))
+                {
+                    DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeGroupSkipNoCollectionRequest);
                     return;
+                }
 
                 XRViewport viewport = cascadeShadowViewports[0];
                 using (RuntimeEngine.Profiler.Start("DirectionalCascade.Group.CollectVisible"))
                     viewport.CollectVisible(false, collectionVolumeOverride: GetPublishedCascadeUnionCullVolume(source, cascadeCount));
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeGroupCollections);
                 if (atlasPage)
                     MarkDirectionalCascadeAtlasGroupCollected(source, cascadeCount);
             }
@@ -4033,6 +4115,7 @@ namespace XREngine.Components.Lights
 
                     using (RuntimeEngine.Profiler.Start("DirectionalCascade.Cascade.CollectVisible"))
                         cascadeShadowViewports[i].CollectVisible(false, collectionVolumeOverride: GetPublishedCascadeCullVolume(source, i));
+                    DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeViewportCollections);
                     if (atlasPage)
                         MarkDirectionalCascadeAtlasViewportCollected(source, i);
                 }
@@ -4046,11 +4129,7 @@ namespace XREngine.Components.Lights
 
             ValidateCookedWebGpuShadowConfiguration();
 
-            if (ShouldCollectPrimaryShadowViewport() &&
-                TryGetPrimaryShadowViewportForProcessing(out XRViewport primaryViewport))
-            {
-                primaryViewport.SwapBuffers();
-            }
+            SwapPrimaryShadowViewport();
 
             SwapCascadeSourceBuffers(ShadowRequestSource.Desktop);
             SwapCascadeSourceBuffers(ShadowRequestSource.Hmd);
@@ -4457,8 +4536,8 @@ namespace XREngine.Components.Lights
 
             if (collectVisibleNow)
             {
-                CollectVisibleItems();
-                SwapBuffers();
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeRenderCollectNow);
+                CollectAndSwapCascadeSourcesNow();
             }
 
             bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
@@ -4479,6 +4558,7 @@ namespace XREngine.Components.Lights
             }
 
             LogDirectionalAtlasTileRender(source, "cascade", cascadeIndex, renderRect, collectVisibleNow, viewport);
+            DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeTileRenders);
             declineReason = null;
             return true;
         }
@@ -4530,8 +4610,8 @@ namespace XREngine.Components.Lights
 
             if (collectVisibleNow)
             {
-                CollectVisibleItems();
-                SwapBuffers();
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeRenderCollectNow);
+                CollectAndSwapCascadeSourcesNow();
             }
 
             Span<Matrix4x4> publishedMatrices = stackalloc Matrix4x4[MaxCascadeRenderCount];
@@ -4592,6 +4672,7 @@ namespace XREngine.Components.Lights
             }
 
             LogDirectionalAtlasGroupedRender(group, collectVisibleNow, viewport.Camera);
+            DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.CascadeGroupRenders);
             declineReason = null;
             return true;
         }
@@ -4601,6 +4682,7 @@ namespace XREngine.Components.Lights
         /// </summary>
         internal bool RenderPrimaryShadowAtlasTile(XRFrameBuffer atlasFbo, BoundingRectangle renderRect, bool collectVisibleNow)
         {
+            DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.PrimaryTileRenderAttempts);
             if (!CastsShadows ||
                 World is null ||
                 renderRect.Width <= 0 ||
@@ -4611,10 +4693,28 @@ namespace XREngine.Components.Lights
             if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
                 return false;
 
+            var primaryCommands = viewport.RenderPipelineInstance.MeshRenderCommands;
             if (collectVisibleNow)
             {
-                CollectVisibleItems();
-                SwapBuffers();
+                // The gated collection of the pass that built the rendered plan is exact for that plan, and a gated
+                // collection of a newer pass is newer content. Publish on the render thread only when neither exists.
+                ulong planFrameId = ResolvePublishedShadowAtlasPlanFrameId();
+                if (!_primaryShadowPublication.IsCurrentForPlanOrNewer(primaryCommands, planFrameId))
+                {
+                    DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.PrimaryTileCollectNow);
+                    if (!CollectAndSwapPrimaryShadowViewportNow(viewport, planFrameId))
+                    {
+                        DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.PrimaryTileStaleDeclines);
+                        return false;
+                    }
+                }
+            }
+            else if (!_primaryShadowPublication.IsCurrent(primaryCommands))
+            {
+                // The last swap did not publish a gated collection. Decline without a completion, so the tile stays dirty
+                // and is never drawn from an empty or old caster set.
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.PrimaryTileStaleDeclines);
+                return false;
             }
 
             bool previousPreserveArea = shadowPipeline.PreserveExistingRenderArea;
@@ -4625,6 +4725,7 @@ namespace XREngine.Components.Lights
                 var state = viewport.RenderPipelineInstance.RenderState;
                 using var renderArea = state.PushRenderArea(renderRect);
                 using var cropArea = state.PushCropArea(renderRect);
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.PrimaryPackageRenderReads);
                 if (!viewport.TryRender(atlasFbo, null, null, true, ShadowAtlasMaterial))
                     return false;
             }
@@ -4634,6 +4735,7 @@ namespace XREngine.Components.Lights
             }
 
             LogDirectionalAtlasTileRender(ShadowRequestSource.Default, "primary", 0, renderRect, collectVisibleNow, viewport);
+            DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.PrimaryTileRenders);
             return true;
         }
 
@@ -4648,11 +4750,16 @@ namespace XREngine.Components.Lights
             ValidateCookedWebGpuShadowConfiguration();
 
             Interlocked.Increment(ref _standaloneShadowRenderRequestCount);
+            DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.LegacyRenderCalls);
 
+            bool primaryCollectedNow = false;
             if (collectVisibleNow)
             {
-                CollectVisibleItems();
-                SwapBuffers();
+                // A forced render, such as a lightmap bake, needs the primary map now, independent of the gate.
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.LegacyCollectNow);
+                if (TryGetPrimaryShadowViewportForProcessing(out XRViewport forcedViewport))
+                    primaryCollectedNow = CollectAndSwapPrimaryShadowViewportNow(forcedViewport, _primaryShadowPublication.PlanFrameId);
+                CollectAndSwapCascadeSourcesNow();
             }
 
             var shadowMap = ShadowMap;
@@ -4661,20 +4768,26 @@ namespace XREngine.Components.Lights
 
             LogLegacyDirectionalShadowRender(renderCascades, shadowMap is not null, shadowMaterial is not null, cascadeCount);
 
-            if (ShouldCollectPrimaryShadowViewport() &&
-                shadowMap is not null &&
+            // The primary map renders only from a current publication, or from the collection of the current frame that
+            // the forced path above swapped in. A stale package can hold old casters, so the render skips it.
+            if (shadowMap is not null &&
                 shadowMaterial is not null &&
-                TryGetPrimaryShadowViewportForProcessing(out XRViewport primaryViewport))
+                TryGetPrimaryShadowViewportForProcessing(out XRViewport primaryViewport) &&
+                (primaryCollectedNow ||
+                 _primaryShadowPublication.IsCurrent(primaryViewport.RenderPipelineInstance.MeshRenderCommands)))
             {
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.LegacyPrimaryRenderAttempts);
                 if (primaryViewport.RenderPipeline is ShadowRenderPipeline shadowPipeline)
                     shadowPipeline.ClearColor = GetShadowMapClearColor();
 
                 int casterCount = primaryViewport.RenderPipelineInstance.MeshRenderCommands
                     .GetRenderingMeshCommandCount();
                 Volatile.Write(ref _primaryShadowCasterCount, casterCount);
+                DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.PrimaryPackageRenderReads);
                 if (primaryViewport.TryRender(shadowMap, null, null, true, shadowMaterial))
                 {
                     Interlocked.Increment(ref _standaloneShadowRenderPassCount);
+                    DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.LegacyPrimaryRenders);
                     GenerateMomentShadowMipmapsIfNeeded();
                 }
             }
@@ -4745,6 +4858,7 @@ namespace XREngine.Components.Lights
             if (cascadeCount <= 0)
                 return;
 
+            DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.LegacyCascadeRenderCalls);
             DirectionalCascadeShadowRenderPlan plan = CreateLegacyCascadeShadowRenderPlan(source, cascadeCount);
             PublishCascadeShadowRenderPlan(plan);
             var clearColor = GetShadowMapClearColor();

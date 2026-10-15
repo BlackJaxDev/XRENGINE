@@ -106,7 +106,10 @@ internal sealed class VulkanTemplateResourceManifest
 
     /// <summary>
     /// Creates the exact manifest for one canonical visibility draw backed by
-    /// packed advanced-scene vertex and index arenas.
+    /// packed advanced-scene vertex and index arenas. A deformed draw passes an
+    /// empty vertex source: the deformation output buffer changes with the
+    /// deformed-arena frame slot, so it is a frame binding of the stream and not
+    /// a retained native use of the record.
     /// </summary>
     internal void ResetVisibilityGeometry(
         in AdvancedVisibilityPayload payload,
@@ -123,22 +126,26 @@ internal sealed class VulkanTemplateResourceManifest
         _resources[2] = new(
             EBackendReadyCanonicalOwner.Material,
             payload.Material);
-        _nativeUses[0] = new(
-            ObjectType.Buffer,
-            vertexSource.Buffer.Handle,
-            VulkanTemplateResourceAccess.Read,
-            PipelineStageFlags.VertexInputBit |
-                PipelineStageFlags.VertexShaderBit |
-                PipelineStageFlags.MeshShaderBitExt,
-            AccessFlags.VertexAttributeReadBit |
-                AccessFlags.ShaderReadBit,
-            ImageLayout.Undefined,
-            uint.MaxValue,
-            vertexSource.Offset,
-            vertexSource.Length,
-            vertexSource.Generation,
-            vertexSource.ElementStride);
-        _nativeUses[1] = new(
+        int nativeUseCount = 0;
+        if (vertexSource.IsValid)
+        {
+            _nativeUses[nativeUseCount++] = new(
+                ObjectType.Buffer,
+                vertexSource.Buffer.Handle,
+                VulkanTemplateResourceAccess.Read,
+                PipelineStageFlags.VertexInputBit |
+                    PipelineStageFlags.VertexShaderBit |
+                    PipelineStageFlags.MeshShaderBitExt,
+                AccessFlags.VertexAttributeReadBit |
+                    AccessFlags.ShaderReadBit,
+                ImageLayout.Undefined,
+                uint.MaxValue,
+                vertexSource.Offset,
+                vertexSource.Length,
+                vertexSource.Generation,
+                vertexSource.ElementStride);
+        }
+        _nativeUses[nativeUseCount++] = new(
             ObjectType.Buffer,
             indexSlice.Buffer.Handle,
             VulkanTemplateResourceAccess.Read,
@@ -152,7 +159,7 @@ internal sealed class VulkanTemplateResourceManifest
             indexSlice.Generation,
             sizeof(uint));
         _resourceCount = 3;
-        _nativeUseCount = 2;
+        _nativeUseCount = nativeUseCount;
     }
     internal void CopyFrom(VulkanTemplateResourceManifest source)
     {

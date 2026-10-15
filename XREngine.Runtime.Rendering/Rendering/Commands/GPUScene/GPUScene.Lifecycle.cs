@@ -132,6 +132,8 @@ namespace XREngine.Rendering.Commands
                 _gpuAabbRenderers.Clear();
                 _gpuCopiedAabbRenderers.Clear();
                 _staleGpuAabbRenderers.Clear();
+                // New row storage and zero counts replace every row input.
+                MarkAllAdvancedRowInputsWritten();
             }
         }
 
@@ -322,8 +324,11 @@ namespace XREngine.Rendering.Commands
                 _gpuAabbRenderers.Clear();
                 _gpuCopiedAabbRenderers.Clear();
                 _staleGpuAabbRenderers.Clear();
+                // The lookup reset and the version advance share one lock scope,
+                // so a locked row reader sees both or neither.
+                _commandIndexLookup.Clear();
+                MarkAllAdvancedRowInputsWritten();
             }
-            _commandIndexLookup.Clear();
             _registeredMeshCommandsByRenderInfo.Clear();
             _registeredRenderInfoByMeshCommand.Clear();
             _meshToIndexRemap.Clear();

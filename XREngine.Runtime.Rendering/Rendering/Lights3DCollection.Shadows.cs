@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using XREngine.Components;
 using XREngine.Components.Capture.Lights;
@@ -20,9 +21,14 @@ namespace XREngine.Scene
 
         private const float LocalShadowMovementFreshSeconds = 0.25f;
 
+        // Identity and layer-mask signature of the main cameras at the previous directional atlas planning.
+        private ulong _shadowOnlyCasterCameraSignature;
+
         public void CollectVisibleItems()
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.CollectVisibleItems");
+            long stageMark = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.Collect);
+            DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.ShadowCollectPasses);
             ShadowScratch scratch = CurrentShadowScratch;
 
             //CollectingVisibleShadowMaps = true;
@@ -35,50 +41,25 @@ namespace XREngine.Scene
             // switch over to ShadowMapArray while the cascade buffers are still empty.
             PrepareDirectionalShadowMaps();
             PopulateLocalShadowRelevanceCameras(scratch);
-            PlanShadowAtlasRequests(scratch);
-
-            _shadowLightsCollectedThisTick.Clear();
 
             // In VR the active view frusta can change extremely rapidly (late-latched HMD pose), and can
             // also differ from the desktop/mirror camera. Frustum-based shadow collection culling can
             // therefore cause visible shadow caster popping that looks like lighting/material flicker.
             // Prefer stability over CPU savings while in VR.
             bool cullByCameraFrusta = RuntimeEngine.Rendering.Settings.CullShadowCollectionByCameraFrusta && !RuntimeEngine.VRState.IsInVR;
+            // The atlas planning reads these frusta to find the directional lights that this pass does not collect.
+            PopulateShadowCollectionCameraFrusta(scratch, cullByCameraFrusta);
+            PlanShadowAtlasRequests(scratch);
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.LightsPlanning);
 
-            if (cullByCameraFrusta)
+            _shadowLightsCollectedThisTick.Clear();
+
+            var cameraFrustumScratch = scratch.CameraFrusta;
+            if (cameraFrustumScratch.Count > 0)
             {
-                var cameraFrustumScratch = scratch.CameraFrusta;
-                cameraFrustumScratch.Clear();
-                foreach ((XRWindow window, XRViewport viewport) in RuntimeEngine.EnumerateActiveWindowViewports())
-                {
-                    if (!ViewportTargetsWorld(window, viewport, World))
-                        continue;
-
-                    XRCamera? camera = viewport.ActiveCamera;
-                    if (camera is null)
-                        continue;
-
-                    float maxDist = camera.ShadowCollectMaxDistance;
-                    if (float.IsFinite(maxDist))
-                        maxDist = MathF.Min(maxDist, camera.FarZ);
-                    else
-                        maxDist = camera.FarZ;
-
-                    cameraFrustumScratch.Add((camera.WorldFrustum(), camera.Transform.WorldTranslation, maxDist));
-                }
-
-                if (cameraFrustumScratch.Count > 0)
-                {
-                    CollectRelevantShadowItems(DynamicDirectionalLights, cameraFrustumScratch, scratch);
-                    CollectRelevantShadowItems(DynamicSpotLights, cameraFrustumScratch, scratch);
-                    CollectRelevantShadowItems(DynamicPointLights, cameraFrustumScratch, scratch);
-                }
-                else
-                {
-                    CollectShadowItems(DynamicDirectionalLights, scratch);
-                    CollectShadowItems(DynamicSpotLights, scratch);
-                    CollectShadowItems(DynamicPointLights, scratch);
-                }
+                CollectRelevantShadowItems(DynamicDirectionalLights, cameraFrustumScratch, scratch);
+                CollectRelevantShadowItems(DynamicSpotLights, cameraFrustumScratch, scratch);
+                CollectRelevantShadowItems(DynamicPointLights, cameraFrustumScratch, scratch);
             }
             else
             {
@@ -86,8 +67,39 @@ namespace XREngine.Scene
                 CollectShadowItems(DynamicSpotLights, scratch);
                 CollectShadowItems(DynamicPointLights, scratch);
             }
+            CollectVisibleStageTimings.Mark(ref stageMark, ECollectVisibleStage.LightsShadowCollect);
 
             //CollectingVisibleShadowMaps = false;
+        }
+
+        /// <summary>
+        /// Fills the camera frusta that cull the shadow collection of this pass. The list stays empty when the culling
+        /// is off, and then the pass collects every light.
+        /// </summary>
+        private void PopulateShadowCollectionCameraFrusta(ShadowScratch scratch, bool cullByCameraFrusta)
+        {
+            var cameraFrustumScratch = scratch.CameraFrusta;
+            cameraFrustumScratch.Clear();
+            if (!cullByCameraFrusta)
+                return;
+
+            foreach ((XRWindow window, XRViewport viewport) in RuntimeEngine.EnumerateActiveWindowViewports())
+            {
+                if (!ViewportTargetsWorld(window, viewport, World))
+                    continue;
+
+                XRCamera? camera = viewport.ActiveCamera;
+                if (camera is null)
+                    continue;
+
+                float maxDist = camera.ShadowCollectMaxDistance;
+                if (float.IsFinite(maxDist))
+                    maxDist = MathF.Min(maxDist, camera.FarZ);
+                else
+                    maxDist = camera.FarZ;
+
+                cameraFrustumScratch.Add((camera.WorldFrustum(), camera.Transform.WorldTranslation, maxDist));
+            }
         }
 
         private static bool ShouldCollectShadowItems(LightComponent? light)
@@ -300,6 +312,8 @@ namespace XREngine.Scene
                 if (collectVisibleNow)
                 {
                     PopulateLocalShadowRelevanceCameras(scratch);
+                    // Every light collects again in this path, so the planning must not treat a light as culled.
+                    scratch.CameraFrusta.Clear();
                     PlanShadowAtlasRequests(scratch);
                     PublishShadowAtlasFrame(collectVisibleNow, scratch);
                 }
@@ -651,10 +665,19 @@ namespace XREngine.Scene
 
         private void SubmitDirectionalShadowAtlasRequests()
         {
+            int count = DynamicDirectionalLights.Count;
+            // This is the clear point of each collect pass: no primary plan or collection latch outlives its pass. A
+            // light without a recorded plan uses the legacy primary test.
+            for (int i = 0; i < count; i++)
+                DynamicDirectionalLights[i].ClearPrimaryAtlasPlan();
+
             if (!RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas)
                 return;
 
-            int count = DynamicDirectionalLights.Count;
+            ShadowScratch scratch = CurrentShadowScratch;
+            bool pendingShadowCapture = HasPendingShadowCaptureWork;
+            ulong planFrameId = ShadowAtlas.CurrentFrameId;
+            bool shadowOnlyCasters = ResolveShadowOnlyCasterConsumer(scratch.ShadowAtlasCameras, planFrameId);
             for (int i = 0; i < count; i++)
             {
                 DirectionalLightComponent light = DynamicDirectionalLights[i];
@@ -670,9 +693,26 @@ namespace XREngine.Scene
                 bool hasAnyDirectionalCascades =
                     light.HasPublishedCascades(ShadowRequestSource.Desktop) ||
                     light.HasPublishedCascades(ShadowRequestSource.Hmd);
-                bool submitPrimary = !light.EnableCascadedShadows ||
-                    !hasAnyDirectionalCascades ||
-                    NeedsPrimaryDirectionalShadowMap();
+                // The viewport test enumerates the viewports, so it runs only when the cascades are active.
+                bool cascadesActive = light.EnableCascadedShadows && hasAnyDirectionalCascades;
+                bool noRelevantViewport = false;
+                bool needsPrimaryViewport = cascadesActive && NeedsPrimaryDirectionalShadowMap(light, out noRelevantViewport);
+                // A capture camera does not use cascades, so pending capture work reads the primary shadow map.
+                bool needsPrimaryForCapture = cascadesActive && !needsPrimaryViewport && pendingShadowCapture;
+                DirectionalShadowConsumptionTelemetry.CountAtlasPrimaryDecision(cascadesActive, needsPrimaryViewport, noRelevantViewport);
+                light.RecordPrimaryAtlasPlan(
+                    DirectionalLightComponent.ResolvePlannedPrimaryAtlasNeed(
+                        light.EnableCascadedShadows,
+                        cascadesActive,
+                        needsPrimaryViewport,
+                        noRelevantViewport,
+                        needsPrimaryForCapture),
+                    shadowOnlyCasters,
+                    planFrameId);
+                // The primary view collects in the same pass as this request. A light that this pass does not collect
+                // gets no primary request, so its tile cannot decline in each frame for want of a publication.
+                bool submitPrimary = (!cascadesActive || needsPrimaryViewport || needsPrimaryForCapture) &&
+                    IsDirectionalShadowCollectedThisPass(light, scratch);
                 if (submitPrimary && light.ShadowCamera is XRCamera primaryCamera)
                 {
                     SubmitShadowAtlasRequest(
@@ -685,6 +725,123 @@ namespace XREngine.Scene
                         encoding: encoding);
                 }
             }
+        }
+
+        /// <summary>
+        /// Gets whether scene capture work is pending. A capture camera does not use cascades, so the atlas planning
+        /// counts this work as a consumer of the primary directional shadow map. The test counts all pending capture
+        /// work, because it cannot read the shadow policy of a queued capture without an allocation.
+        /// </summary>
+        private bool HasPendingShadowCaptureWork
+            => PendingCaptureWorkItemCount > 0;
+
+        /// <summary>
+        /// Returns whether this collect pass collects the shadow views of <paramref name="light"/>. The same camera frusta
+        /// cull the collection after the planning.
+        /// </summary>
+        private static bool IsDirectionalShadowCollectedThisPass(DirectionalLightComponent light, ShadowScratch scratch)
+            => scratch.CameraFrusta.Count == 0 ||
+                AnyCameraIntersectsDirectional(light, scratch.CameraFrusta);
+
+        /// <summary>
+        /// Returns whether the primary directional shadow views must still collect, although no consumer reads the
+        /// primary shadow map, because the scene can have shadow-casting renderables that no main view collected.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// With a zero-readback submission strategy the atlas cascades cull the global GPU scene and do no CPU
+        /// collection. A renderable that no main view collects, such as a local VR avatar on a layer that the
+        /// first-person cameras exclude, or a mesh whose material enables only the shadow pass, then gets its
+        /// pre-collection update and its GPU scene row refresh only from a primary shadow view collection and swap.
+        /// Other strategies collect the cascades on the CPU, so the cascades update the casters that they draw.
+        /// </para>
+        /// <para>
+        /// The scene census counts these casters in each main-view collection. The light collection can run before the
+        /// main views of a pass, so the census also reads the previous pass. A change of the main camera set, or of a
+        /// camera layer mask, makes this pass collect as well, because the previous count can be wrong for the new
+        /// cameras. The check costs one identity hash for each camera and no allocation.
+        /// </para>
+        /// </remarks>
+        private bool ResolveShadowOnlyCasterConsumer(List<XRCamera> mainCameras, ulong planFrameId)
+        {
+            ulong cameraSignature = ComputeMainCameraSetSignature(mainCameras);
+            bool cameraSetChanged = cameraSignature != _shadowOnlyCasterCameraSignature;
+            _shadowOnlyCasterCameraSignature = cameraSignature;
+
+            bool zeroReadback = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy();
+            bool sceneMayHaveShadowOnlyCasters = zeroReadback && World.VisualScene.MayHaveShadowOnlyCasters();
+            bool shadowOnlyCasters = zeroReadback && (cameraSetChanged || sceneMayHaveShadowOnlyCasters);
+            RecordShadowOnlyCasterConsumerDecision(
+                planFrameId,
+                shadowOnlyCasters,
+                cameraSetChanged,
+                zeroReadback,
+                sceneMayHaveShadowOnlyCasters);
+            return shadowOnlyCasters;
+        }
+
+        private const long ShadowOnlyCasterDecisionRecorded = 1L << 0;
+        private const long ShadowOnlyCasterDecisionResult = 1L << 1;
+        private const long ShadowOnlyCasterDecisionCameraSetChanged = 1L << 2;
+        private const long ShadowOnlyCasterDecisionZeroReadback = 1L << 3;
+        private const long ShadowOnlyCasterDecisionSceneMayHave = 1L << 4;
+        private const int ShadowOnlyCasterDecisionFrameIdShift = 8;
+
+        // The last shadow-only caster decision of the atlas planning, packed into one value so that a diagnostic read
+        // on another thread cannot tear it: the plan frame ID in the high bits and the decision flags in the low byte.
+        private long _lastShadowOnlyCasterConsumerDecision;
+
+        private void RecordShadowOnlyCasterConsumerDecision(
+            ulong planFrameId,
+            bool shadowOnlyCasters,
+            bool cameraSetChanged,
+            bool zeroReadback,
+            bool sceneMayHaveShadowOnlyCasters)
+        {
+            long packed = unchecked((long)(planFrameId << ShadowOnlyCasterDecisionFrameIdShift)) |
+                ShadowOnlyCasterDecisionRecorded;
+            if (shadowOnlyCasters)
+                packed |= ShadowOnlyCasterDecisionResult;
+            if (cameraSetChanged)
+                packed |= ShadowOnlyCasterDecisionCameraSetChanged;
+            if (zeroReadback)
+                packed |= ShadowOnlyCasterDecisionZeroReadback;
+            if (sceneMayHaveShadowOnlyCasters)
+                packed |= ShadowOnlyCasterDecisionSceneMayHave;
+            Volatile.Write(ref _lastShadowOnlyCasterConsumerDecision, packed);
+        }
+
+        /// <summary>
+        /// Gets the last decision of the directional shadow atlas planning on whether shadow-only casters make the
+        /// primary directional shadow views collect. The read has no side effect on the planning state.
+        /// </summary>
+        public ShadowOnlyCasterConsumerDecision GetLastShadowOnlyCasterConsumerDecision()
+        {
+            long packed = Volatile.Read(ref _lastShadowOnlyCasterConsumerDecision);
+            if ((packed & ShadowOnlyCasterDecisionRecorded) == 0)
+                return default;
+
+            return new ShadowOnlyCasterConsumerDecision(
+                HasDecision: true,
+                PlanFrameId: unchecked((ulong)packed) >> ShadowOnlyCasterDecisionFrameIdShift,
+                ShadowOnlyCasters: (packed & ShadowOnlyCasterDecisionResult) != 0,
+                CameraSetChanged: (packed & ShadowOnlyCasterDecisionCameraSetChanged) != 0,
+                ZeroReadbackStrategy: (packed & ShadowOnlyCasterDecisionZeroReadback) != 0,
+                SceneMayHaveShadowOnlyCasters: (packed & ShadowOnlyCasterDecisionSceneMayHave) != 0);
+        }
+
+        private static ulong ComputeMainCameraSetSignature(List<XRCamera> cameras)
+        {
+            ulong hash = 14695981039346656037UL;
+            Add(ref hash, (uint)cameras.Count);
+            for (int i = 0; i < cameras.Count; i++)
+            {
+                XRCamera camera = cameras[i];
+                Add(ref hash, unchecked((uint)RuntimeHelpers.GetHashCode(camera)));
+                Add(ref hash, camera.CullingLayerMask);
+            }
+
+            return hash;
         }
 
         private void SubmitDirectionalCascadeShadowAtlasRequests(
@@ -907,7 +1064,9 @@ namespace XREngine.Scene
                 InvalidationDomains: ResolveShadowInvalidationDomains(dirtyReason, receiverSamplingChanged));
 
             LogDirectionalAtlasSubmit(light, request, hasPrevious, previous);
-            ShadowAtlas.Submit(request);
+            bool accepted = ShadowAtlas.Submit(request);
+            if (projectionType == EShadowProjectionType.DirectionalPrimary)
+                DirectionalShadowConsumptionTelemetry.CountAtlasPrimarySubmit(accepted, isDirty || !canReusePreviousFrame);
         }
 
         private static bool ShouldSkipDirectionalCascadeRefreshByCadence(

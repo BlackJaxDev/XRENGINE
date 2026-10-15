@@ -71,7 +71,8 @@ internal sealed partial class VulkanCommandRuntime
                             operationIndex,
                             recordingState.CurrentPrimaryOperationRecorded);
                     }
-                    if (recordingState.CommandChainPublicationDeferred)
+                    if (recordingState.CommandChainPublicationDeferred ||
+                        recordingState.FailureKind != EVulkanCommandRecordingFailureKind.None)
                         return false;
                     continue;
                 }
@@ -108,7 +109,8 @@ internal sealed partial class VulkanCommandRuntime
                         operationIndex,
                         recordingState.CurrentPrimaryOperationRecorded);
                 }
-                if (recordingState.CommandChainPublicationDeferred)
+                if (recordingState.CommandChainPublicationDeferred ||
+                    recordingState.FailureKind != EVulkanCommandRecordingFailureKind.None)
                     return false;
             }
             catch (Exception exception)
@@ -1051,27 +1053,35 @@ internal sealed partial class VulkanCommandRuntime
                 records[0].VisibilityGeometryClosure;
             VulkanAdvancedScenePublicationState sealedSceneState =
                 payload.SceneState;
+            VulkanVisibilityPreparedVertexSource deformedVertices =
+                bins.VisibilityGeometrySources.CurrentVertices;
+            VulkanVisibilityPreparedVertexSource boundVertices =
+                geometryClosure.ResolveVertexSource(in deformedVertices);
             using (VulkanCpuStageScope validationStage = new(
                        _frameTelemetry,
                        EVulkanCpuStage.PrimaryAdvancedRasterValidationOperation))
             {
-                for (int recordIndex = 0; recordIndex < records.Length; ++recordIndex)
+                // The records of one bin share the index slice and vertex source of
+                // the bin key, and they are frozen after the seal validated each one.
+                // One check of the bin covers its members: the stream must be bound
+                // to this scene publication, and the bound sources must be live.
+                if (bins.BoundSceneNativeGeneration != sealedSceneState.NativeGeneration)
                 {
-                    VulkanVisibilityGeometryRecordClosure recordClosure =
-                        records[recordIndex].VisibilityGeometryClosure;
-                    string closureReason =
-                        "the geometry range does not share its bin publication";
-                    if (!recordClosure.PreparedVertexSource.Matches(
-                            geometryClosure.PreparedVertexSource) ||
-                        !recordClosure.IndexSlice.Matches(
-                            geometryClosure.IndexSlice) ||
-                        !recordClosure.TryValidate(
-                            ResourceRuntime,
-                            in sealedSceneState,
-                            out closureReason))
-                    {
-                        throw new VulkanPlanPreconditionException(closureReason);
-                    }
+                    throw new VulkanPlanPreconditionException(
+                        "the visibility stream is not bound to the scene publication of this frame");
+                }
+                if (!geometryClosure.TryValidate(
+                        ResourceRuntime,
+                        in sealedSceneState,
+                        in deformedVertices,
+                        out string closureReason))
+                {
+                    throw new VulkanPlanPreconditionException(closureReason);
+                }
+                if (!meshlet && native.GetVertexBuffer(0).Handle != boundVertices.Buffer.Handle)
+                {
+                    throw new VulkanPlanPreconditionException(
+                        "the visibility bin header does not bind the vertex source of its records");
                 }
             }
             if (!meshlet)
@@ -1087,7 +1097,7 @@ internal sealed partial class VulkanCommandRuntime
                         state.CommandBuffer,
                         native.GetVertexBinding(bindingIndex),
                         native.GetVertexBuffer(bindingIndex),
-                        geometryClosure.PreparedVertexSource.Offset);
+                        boundVertices.Offset);
                 }
                 BindIndexBufferTracked(
                     state.CommandBuffer,
@@ -1699,8 +1709,19 @@ internal sealed partial class VulkanCommandRuntime
             BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         }
         int uniformSlot = GetMeshDrawUniformSlot(ref state, info.OperationIndex, payload.Draw.Renderer, state.ActiveContext, payload.Draw);
-        bool recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot);
+        bool recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot, out string failureReason, out bool pipelineUnavailable);
         state.CurrentPrimaryOperationRecorded = recorded;
+        if (!recorded && failureReason.Length > 0)
+        {
+            // Downstream passes must not publish retained intermediate images
+            // as the output of this accepted frame.
+            if (pipelineUnavailable)
+                InvalidatePrimaryGraphicsPipelineAdmission(ref state);
+            state.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+            state.RecordingDeferredReason =
+                $"Mesh draw did not record. pass={info.PassIndex} target='{target?.Name ?? "<swapchain>"}' reason={failureReason}";
+            return info.OperationIndex;
+        }
         int originalIndex = state.Ops.GetHeader(info.OperationIndex).OriginalIndex;
         if (IsTemporalResolveProducer(originalIndex))
         {

@@ -63,7 +63,7 @@ public static class RuntimeWorldObjectServices
 [Serializable]
 public abstract class XRWorldObjectBase : XRObjectBase
 {
-    private static readonly ConcurrentDictionary<Type, ReplicationInfo> ReplicatedTypes = [];
+    private static readonly ConcurrentDictionary<Type, ReplicationInfo?> ReplicatedTypes = [];
 
     public sealed class ReplicationInfo
     {
@@ -155,13 +155,13 @@ public abstract class XRWorldObjectBase : XRObjectBase
     }
 
     public ReplicationInfo? GetReplicationInfo()
-        => ReplicatedTypes.TryGetValue(GetType(), out ReplicationInfo? replication) ? replication : null;
+        => ResolveReplicationInfo(GetType());
 
     public bool IsReplicateOnChangeProperty(string propertyName)
-        => ReplicatedTypes.TryGetValue(GetType(), out ReplicationInfo? replication) && replication.ReplicateOnChangeProperties.ContainsKey(propertyName);
+        => GetReplicationInfo() is { } replication && replication.ReplicateOnChangeProperties.ContainsKey(propertyName);
 
     public bool IsReplicateOnTickProperty(string propertyName)
-        => ReplicatedTypes.TryGetValue(GetType(), out ReplicationInfo? replication) && replication.ReplicateOnTickProperties.ContainsKey(propertyName);
+        => GetReplicationInfo() is { } replication && replication.ReplicateOnTickProperties.ContainsKey(propertyName);
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
@@ -299,7 +299,14 @@ public abstract class XRWorldObjectBase : XRObjectBase
         }
 
         AotRuntimeMetadataStore.NoteBrowserDevelopmentTypeDiscovery(nameof(XRWorldObjectBase));
-        CollectReplicableProperties();
+    }
+
+    private static ReplicationInfo? ResolveReplicationInfo(Type type)
+    {
+        if (XRRuntimeEnvironment.IsPublishedBuild)
+            return ReplicatedTypes.TryGetValue(type, out ReplicationInfo? replication) ? replication : null;
+
+        return ReplicatedTypes.GetOrAdd(type, BuildReplicationInfoForType);
     }
 
     private static void LoadReplicablePropertiesFromAotMetadata()
@@ -342,54 +349,37 @@ public abstract class XRWorldObjectBase : XRObjectBase
         }
     }
 
-    private static void CollectReplicableProperties()
+    private static ReplicationInfo? BuildReplicationInfoForType(Type type)
     {
-        ReplicatedTypes.Clear();
+        if (!type.IsAssignableTo(typeof(RuntimeWorldObjectBase)))
+            return null;
+
         const BindingFlags replicableFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-        Type baseType = typeof(RuntimeWorldObjectBase);
-        IEnumerable<Type> allTypes = AppDomain.CurrentDomain.GetAssemblies()
-            .SelectMany(static assembly => XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly));
+        PropertyInfo[] properties = type.GetProperties(replicableFlags);
+        if (properties.Length == 0)
+            return null;
 
-        void TestType(Type type)
+        ReplicationInfo? replication = null;
+        foreach (PropertyInfo property in properties)
         {
-            if (!type.IsAssignableTo(baseType))
-                return;
-
-            PropertyInfo[] properties = type.GetProperties(replicableFlags);
-            if (properties.Length == 0)
-                return;
-
-            ReplicationInfo? replication = null;
-            foreach (PropertyInfo property in properties)
+            if (property.GetCustomAttribute<ReplicateOnChangeAttribute>(true) is ReplicateOnChangeAttribute changeAttr)
             {
-                if (property.GetCustomAttribute<ReplicateOnChangeAttribute>(true) is ReplicateOnChangeAttribute changeAttr)
-                {
-                    replication ??= new ReplicationInfo();
-                    replication.ReplicateOnChangePropertiesInternal.Add(property.Name, property);
-                    if (changeAttr.Compress)
-                        replication.CompressedPropertyNamesInternal.Add(property.Name);
-                }
-
-                if (property.GetCustomAttribute<ReplicateOnTickAttribute>(true) is ReplicateOnTickAttribute tickAttr)
-                {
-                    replication ??= new ReplicationInfo();
-                    replication.ReplicateOnTickPropertiesInternal.Add(property.Name, property);
-                    if (tickAttr.Compress)
-                        replication.CompressedPropertyNamesInternal.Add(property.Name);
-                }
+                replication ??= new ReplicationInfo();
+                replication.ReplicateOnChangePropertiesInternal.Add(property.Name, property);
+                if (changeAttr.Compress)
+                    replication.CompressedPropertyNamesInternal.Add(property.Name);
             }
 
-            if (replication is not null)
-                ReplicatedTypes.AddOrUpdate(type, replication, (_, _) => replication);
+            if (property.GetCustomAttribute<ReplicateOnTickAttribute>(true) is ReplicateOnTickAttribute tickAttr)
+            {
+                replication ??= new ReplicationInfo();
+                replication.ReplicateOnTickPropertiesInternal.Add(property.Name, property);
+                if (tickAttr.Compress)
+                    replication.CompressedPropertyNamesInternal.Add(property.Name);
+            }
         }
 
-        if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
-        {
-            foreach (Type type in allTypes)
-                TestType(type);
-        }
-        else
-            Parallel.ForEach(allTypes, TestType);
+        return replication;
     }
 
     private bool ALocalClientPlayerOwnsThis()

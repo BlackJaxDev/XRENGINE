@@ -12,6 +12,10 @@ public sealed partial class AdvancedGpuScenePublisher
         if (System.Threading.Volatile.Read(ref _publishInProgress) != 0)
             throw new InvalidOperationException("Cannot dispose the canonical publisher during publication.");
 
+        // The retained plan and submission rows hold source references, and a
+        // prepared verdict holds material and options references.
+        DiscardPreparedUnchangedRowGate();
+        ReleasePlanScratch();
         Array.Clear(_orderedRegistrationIdentities);
         _orderedRegistrationIdentityCount = 0;
         _orderedRegistrationIdentitiesValid = false;

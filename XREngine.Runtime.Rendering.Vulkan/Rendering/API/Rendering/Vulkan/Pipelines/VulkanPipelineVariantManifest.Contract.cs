@@ -12,7 +12,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanPipelineVariantManifest
 {
     private readonly ReadOnlyCollection<VulkanPipelineVariantRequirement> _requirements;
-    private int _warmupCompleted;
+    private long _completedPipelineRetirementGeneration = -1;
 
     private VulkanPipelineVariantManifest(
         ulong compatibilityIdentity,
@@ -24,9 +24,22 @@ internal sealed partial class VulkanPipelineVariantManifest
 
     public ulong CompatibilityIdentity { get; }
     public ReadOnlyCollection<VulkanPipelineVariantRequirement> Requirements => _requirements;
-    public bool WarmupCompleted => Volatile.Read(ref _warmupCompleted) != 0;
+    public bool WarmupCompleted
+        => Volatile.Read(ref _completedPipelineRetirementGeneration) >= 0;
 
-    public void MarkWarmupCompleted() => Volatile.Write(ref _warmupCompleted, 1);
+    public void MarkWarmupCompleted() => MarkWarmupCompleted(0);
+
+    /// <summary>Reports if warmup still covers the active native pipeline generation.</summary>
+    public bool IsWarmForPipelineGeneration(long retirementGeneration)
+        => Volatile.Read(ref _completedPipelineRetirementGeneration) == retirementGeneration;
+
+    /// <summary>Records the native pipeline generation verified by warmup.</summary>
+    public void MarkWarmupCompleted(long retirementGeneration)
+        => Volatile.Write(ref _completedPipelineRetirementGeneration, retirementGeneration);
+
+    /// <summary>Requires a new warmup after an admitted pipeline is missing.</summary>
+    public void InvalidateWarmup()
+        => Volatile.Write(ref _completedPipelineRetirementGeneration, -1);
 
     internal static VulkanPipelineVariantManifest Build(
         VulkanCompiledRenderGraphPlan plan,

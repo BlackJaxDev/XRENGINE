@@ -894,7 +894,7 @@ internal unsafe partial class VkMeshRenderer
 		{
 			_pipelineDirty = true;
 			retryable = true;
-			failureReason = "graphics pipeline was not present in the prepared cache";
+			failureReason = $"graphics pipeline was not present in the prepared cache; key=0x{unchecked((uint)key.GetHashCode()):X8} program='{_program?.Data?.Name ?? "<none>"}' pipeline='{pipelineName}' retirementGeneration={pipelineRetirementGeneration}";
 			return false;
 		}
 

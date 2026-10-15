@@ -945,9 +945,11 @@ namespace XREngine.Rendering.Vulkan
                 EVulkanAdvancedSceneResourceFailure sceneFailure;
                 string sceneReason;
                 bool scenePrepared;
+                bool sceneReused = false;
                 if (familySceneState.IsValid && ReferenceEquals(familyScenePackage, stagePackage))
                 {
                     sceneState = familySceneState;
+                    sceneReused = true;
                     sceneFailure = EVulkanAdvancedSceneResourceFailure.None;
                     sceneReason = "Ready";
                     scenePrepared = true;
@@ -1006,12 +1008,14 @@ namespace XREngine.Rendering.Vulkan
                                     .RendererTerminal;
                     return false;
                 }
+                // A reused state is a copy of the family state, so only a newly
+                // prepared state needs the full record compare.
                 if (!familySceneState.IsValid)
                 {
                     familySceneState = sceneState;
                     familyScenePackage = stagePackage;
                 }
-                else if (familySceneState != sceneState)
+                else if (!sceneReused && familySceneState != sceneState)
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: the family stages resolved different canonical scene publications.";
@@ -1854,40 +1858,6 @@ namespace XREngine.Rendering.Vulkan
                     ? 0b11u
                     : 0b1u;
             }
-            // Visibility raster is canonical-geometry-only. Ordinary resident
-            // ingress may coexist for other passes, but it must never decide
-            // which geometry address space this ABI consumes.
-            bins.ThawForReuse();
-            S13aPublicationTelemetry.StepProbe geometryProbe =
-                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
-            bool geometryBuilt = bins.TryBuildVisibilityGeometryStream(
-                    ResourceRuntime,
-                    input.Payloads,
-                    input.Producers,
-                    input.DeformationSlices,
-                    input.DeformationPublication,
-                    package,
-                    in sceneState,
-                    passIndex,
-                    outputViewMask,
-                    in context,
-                    out reason);
-            geometryProbe.End(S13aAdvancedFamilyStep.BinGeometryStream);
-            if (!geometryBuilt)
-                return false;
-            S13aPublicationTelemetry.StepProbe manifestProbe =
-                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
-            bool manifestsResolved = bins.TryResolveManifests(
-                    ResourceRuntime.ResidentDrawTemplates
-                        .StableBinManifestCache,
-                    package.CanonicalScenePublication.TopologyGeneration,
-                    out VulkanBinResourceManifestFailure manifestFailure);
-            manifestProbe.End(S13aAdvancedFamilyStep.BinManifests);
-            if (!manifestsResolved)
-            {
-                reason = $"canonical visibility atlas manifests could not be sealed: {manifestFailure}";
-                return false;
-            }
             GpuDiagnosticReadbackPlanNode? diagnosticNode = null;
             ReadOnlySpan<GpuDiagnosticReadbackPlan> diagnostics =
                 package.DiagnosticReadbackPlans;
@@ -1937,6 +1907,84 @@ namespace XREngine.Rendering.Vulkan
                 reason = outputPolicy.DescribeCanonicalVisibilityRejection();
                 return false;
             }
+
+            // A stream sealed by an earlier frame of this frame plan is kept when
+            // every seal input is equal; only the frame bindings are applied again.
+            AdvancedGpuDeformationPublication deformationPublication =
+                input.DeformationPublication;
+            bool hasSignature = package.TryGetCanonicalPublicationSnapshot(
+                out AdvancedGpuScenePublicationSnapshot canonicalPublication);
+            VulkanVisibilitySealSignature signature = hasSignature
+                ? new VulkanVisibilitySealSignature(
+                    canonicalPublication.DatabaseEpoch,
+                    canonicalPublication.Draws.Generations,
+                    canonicalPublication.Geometry.Generations,
+                    sceneState.StaticVertices,
+                    sceneState.Indices,
+                    passIndex,
+                    outputViewMask,
+                    VulkanRenderBinContextCompatibility.Create(in context),
+                    resolution.Resolved,
+                    capabilities,
+                    outputPolicy,
+                    diagnosticNode,
+                    deformationPublication.PreviousOutputValid)
+                : default;
+            EAdvancedVisibilityStreamReuseMiss reuseMiss =
+                EAdvancedVisibilityStreamReuseMiss.NoRetainedStream;
+            if (hasSignature &&
+                bins.TryReuseVisibilitySeal(
+                    ResourceRuntime,
+                    in signature,
+                    input.Payloads,
+                    input.Producers,
+                    input.DeformationSlices,
+                    input.IndirectRanges,
+                    input.IndirectPayloadIndices,
+                    in deformationPublication,
+                    in sceneState,
+                    out reuseMiss))
+            {
+                AdvancedVisibilityStreamReuseTelemetry.RecordReuse();
+                reason = "Ready";
+                return true;
+            }
+            AdvancedVisibilityStreamReuseTelemetry.RecordReseal(reuseMiss);
+
+            // Visibility raster is canonical-geometry-only. Ordinary resident
+            // ingress may coexist for other passes, but it must never decide
+            // which geometry address space this ABI consumes.
+            bins.ThawForReuse();
+            S13aPublicationTelemetry.StepProbe geometryProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+            bool geometryBuilt = bins.TryBuildVisibilityGeometryStream(
+                    ResourceRuntime,
+                    input.Payloads,
+                    input.Producers,
+                    input.DeformationSlices,
+                    deformationPublication,
+                    package,
+                    in sceneState,
+                    passIndex,
+                    outputViewMask,
+                    in context,
+                    out reason);
+            geometryProbe.End(S13aAdvancedFamilyStep.BinGeometryStream);
+            if (!geometryBuilt)
+                return false;
+            S13aPublicationTelemetry.StepProbe manifestProbe =
+                S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+            bool manifestsResolved = bins.TryResolveManifests(
+                    ResourceRuntime.ResidentDrawTemplates
+                        .StableBinManifestCache,
+                    package.CanonicalScenePublication.TopologyGeneration,
+                    out VulkanBinResourceManifestFailure manifestFailure);
+            manifestProbe.End(S13aAdvancedFamilyStep.BinManifests);
+            if (!manifestsResolved)
+            {
+                reason = $"canonical visibility atlas manifests could not be sealed: {manifestFailure}";
+                return false;
+            }
             S13aPublicationTelemetry.StepProbe submissionProbe =
                 S13aPublicationTelemetry.BeginAdvancedFamilyStep();
             bool plansSealed = bins.TrySealSubmissionPlans(
@@ -1957,9 +2005,41 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            if (hasSignature)
+            {
+                bins.RetainVisibilitySeal(
+                    in signature,
+                    input.Payloads,
+                    input.Producers,
+                    input.DeformationSlices,
+                    input.IndirectRanges,
+                    input.IndirectPayloadIndices);
+            }
             reason = "Ready";
             return true;
         }
+
+        /// <summary>Expected attachment order of a single-sample advanced visibility target.</summary>
+        private static readonly EFrameBufferAttachment[] VisibilityTargetAttachments =
+        [
+            EFrameBufferAttachment.ColorAttachment0,
+            EFrameBufferAttachment.ColorAttachment1,
+            EFrameBufferAttachment.ColorAttachment2,
+            EFrameBufferAttachment.DepthStencilAttachment,
+        ];
+
+        /// <summary>
+        /// Expected attachment order of a multisample advanced visibility raster target. The fourth
+        /// color attachment holds the sample positions.
+        /// </summary>
+        private static readonly EFrameBufferAttachment[] MultisampleVisibilityTargetAttachments =
+        [
+            EFrameBufferAttachment.ColorAttachment0,
+            EFrameBufferAttachment.ColorAttachment1,
+            EFrameBufferAttachment.ColorAttachment2,
+            EFrameBufferAttachment.ColorAttachment3,
+            EFrameBufferAttachment.DepthStencilAttachment,
+        ];
 
         private static bool TryValidateAdvancedVisibilityTarget(
             in VulkanAdvancedVisibilityStageRequest request,
@@ -1976,44 +2056,20 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            EFrameBufferAttachment[] expected = multisampleRaster
-                ? [
-                    EFrameBufferAttachment.ColorAttachment0,
-                    EFrameBufferAttachment.ColorAttachment1,
-                    EFrameBufferAttachment.ColorAttachment2,
-                    EFrameBufferAttachment.ColorAttachment3,
-                    EFrameBufferAttachment.DepthStencilAttachment,
-                ]
-                : [
-                    EFrameBufferAttachment.ColorAttachment0,
-                    EFrameBufferAttachment.ColorAttachment1,
-                    EFrameBufferAttachment.ColorAttachment2,
-                    EFrameBufferAttachment.DepthStencilAttachment,
-                ];
-            string[] names = multisampleRaster
-                ? [
-                    request.IdentityTargetName,
-                    request.MetadataTargetName,
-                    request.SelectionTargetName,
-                    AdvancedVisibilityResourceNames.SamplePositionMultisample,
-                    request.DepthTargetName,
-                ]
-                : [
-                    request.IdentityTargetName,
-                    request.MetadataTargetName,
-                    request.SelectionTargetName,
-                    request.DepthTargetName,
-                ];
+            ReadOnlySpan<EFrameBufferAttachment> expected = multisampleRaster
+                ? MultisampleVisibilityTargetAttachments
+                : VisibilityTargetAttachments;
             for (int index = 0; index < attachments.Length; ++index)
             {
+                string expectedName = GetExpectedVisibilityAttachmentName(in request, index, multisampleRaster);
                 if (attachments[index].Attachment != expected[index] ||
                     attachments[index].Target is not GenericRenderObject targetObject ||
                     !string.Equals(
                         targetObject.Name,
-                        names[index],
+                        expectedName,
                         StringComparison.Ordinal))
                 {
-                    reason = $"attachment {index} is not the expected '{names[index]}'/{expected[index]} resource";
+                    reason = $"attachment {index} is not the expected '{expectedName}'/{expected[index]} resource";
                     return false;
                 }
             }
@@ -2025,6 +2081,24 @@ namespace XREngine.Rendering.Vulkan
             reason = string.Empty;
             return true;
         }
+
+        /// <summary>
+        /// Gets the expected resource name of one visibility target attachment. The index order
+        /// matches <see cref="VisibilityTargetAttachments"/> or
+        /// <see cref="MultisampleVisibilityTargetAttachments"/>.
+        /// </summary>
+        private static string GetExpectedVisibilityAttachmentName(
+            in VulkanAdvancedVisibilityStageRequest request,
+            int index,
+            bool multisampleRaster)
+            => index switch
+            {
+                0 => request.IdentityTargetName,
+                1 => request.MetadataTargetName,
+                2 => request.SelectionTargetName,
+                3 when multisampleRaster => AdvancedVisibilityResourceNames.SamplePositionMultisample,
+                _ => request.DepthTargetName,
+            };
 
         /// <summary>
         /// Prepares one deferred cascade group for recording: the family's sealed
@@ -2333,13 +2407,19 @@ namespace XREngine.Rendering.Vulkan
             scoped ref PrimaryCommandBufferRecordingState recordingState,
             VulkanPipelineVariantManifest pipelineVariantManifest)
         {
-            if (pipelineVariantManifest.WarmupCompleted)
+            long pipelineRetirementGeneration =
+                ResourceRuntime.PipelineManager.SharedGraphicsPipelineRetirementGeneration;
+            CommandBufferRecordingScratch scratch =
+                recordingState.RecordingScratch;
+            scratch.CurrentPipelineVariantManifest = pipelineVariantManifest;
+            bool pipelineRetired = RefreshPipelineAdmissionForRetirement(
+                scratch, pipelineRetirementGeneration);
+            if (pipelineVariantManifest.IsWarmForPipelineGeneration(
+                    pipelineRetirementGeneration))
                 return TryAssociatePrimaryMeshTaskPipelines(
                     ref recordingState,
                     pipelineVariantManifest);
 
-            CommandBufferRecordingScratch scratch =
-                recordingState.RecordingScratch;
             HashSet<int> pendingRequirements =
                 scratch.PipelineDeferredRequirementIndices;
             HashSet<int> optionalRequirements =
@@ -2349,7 +2429,8 @@ namespace XREngine.Rendering.Vulkan
             ulong previousManifestIdentity =
                 scratch.PipelineDeferredManifestIdentity;
             int cursorBeforeReset = scratch.PipelinePrewarmRequirementCursor;
-            bool manifestReset = previousManifestIdentity != manifestIdentity;
+            bool manifestReset = previousManifestIdentity != manifestIdentity ||
+                pipelineRetired;
             if (manifestReset)
             {
                 scratch.PipelineDeferredManifestIdentity = manifestIdentity;
@@ -2498,9 +2579,43 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (optionalRequirements.Count == 0)
-                pipelineVariantManifest.MarkWarmupCompleted();
+            if (optionalRequirements.Count == 0 &&
+                ResourceRuntime.PipelineManager.SharedGraphicsPipelineRetirementGeneration ==
+                    pipelineRetirementGeneration)
+                pipelineVariantManifest.MarkWarmupCompleted(pipelineRetirementGeneration);
             return true;
+        }
+
+        /// <summary>Removes pipeline admissions that refer to retired native handles.</summary>
+        private static bool RefreshPipelineAdmissionForRetirement(
+            CommandBufferRecordingScratch scratch,
+            long pipelineRetirementGeneration)
+        {
+            if (scratch.PipelineDeferredRetirementGeneration == pipelineRetirementGeneration)
+                return false;
+
+            scratch.PipelineDeferredRetirementGeneration = pipelineRetirementGeneration;
+            scratch.PipelineDeferredManifestIdentity = 0;
+            scratch.PipelinePrewarmRequirementCursor = 0;
+            scratch.PipelinePrewarmInitialScanComplete = false;
+            scratch.PipelineDeferredRequirementIndices.Clear();
+            scratch.PipelineOptionalDeferredRequirementIndices.Clear();
+            scratch.AdmittedPipelinePreparationSignatures.Clear();
+            return true;
+        }
+
+        /// <summary>Requires a fresh pre-recording scan after an admitted pipeline miss.</summary>
+        private static void InvalidatePrimaryGraphicsPipelineAdmission(
+            scoped ref PrimaryCommandBufferRecordingState recordingState)
+        {
+            CommandBufferRecordingScratch scratch = recordingState.RecordingScratch;
+            scratch.CurrentPipelineVariantManifest?.InvalidateWarmup();
+            scratch.PipelineDeferredManifestIdentity = 0;
+            scratch.PipelinePrewarmRequirementCursor = 0;
+            scratch.PipelinePrewarmInitialScanComplete = false;
+            scratch.PipelineDeferredRequirementIndices.Clear();
+            scratch.PipelineOptionalDeferredRequirementIndices.Clear();
+            scratch.AdmittedPipelinePreparationSignatures.Clear();
         }
 
         /// <summary>

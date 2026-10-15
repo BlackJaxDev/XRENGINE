@@ -536,12 +536,15 @@ namespace XREngine.Rendering.Vulkan
                 Result endResult = EndCommandBufferTracked(
                     recordingState.CommandBuffer,
                     cacheVariant: true,
-                    out string trackingFailure);
+                    out string trackingFailure,
+                    out EVulkanCommandBufferTrackingFailureKind trackingFailureKind);
                 if (endResult != Result.Success)
                     throw new Exception("Failed to record command buffer.");
                 if (!string.IsNullOrEmpty(trackingFailure))
                 {
                     recordingState.RecordingDeferredReason = trackingFailure;
+                    if (trackingFailureKind == EVulkanCommandBufferTrackingFailureKind.RetiredDependency)
+                        recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
                     return false;
                 }
             }

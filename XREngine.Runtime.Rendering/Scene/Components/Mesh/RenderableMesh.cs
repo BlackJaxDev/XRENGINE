@@ -650,6 +650,12 @@ namespace XREngine.Components.Scene.Mesh
             get { lock (_lifetimeGate) return _fullyRetired; }
         }
 
+        /// <summary>
+        /// Gets whether retirement was requested. From this point the pre-collection callback of
+        /// <see cref="RenderInfo"/> rejects every camera, until the scene removes the render info. The read takes no lock.
+        /// </summary>
+        internal bool IsRetirementRequested => _retiring;
+
         internal void RequestRetirement()
         {
             lock (_lifetimeGate)

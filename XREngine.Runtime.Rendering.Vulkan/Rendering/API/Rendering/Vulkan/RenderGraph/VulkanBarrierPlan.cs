@@ -45,10 +45,6 @@ internal readonly record struct VulkanFrozenImageBarrier(
     VulkanBarrierPlanner.PlannedImageState Previous, VulkanBarrierPlanner.PlannedImageState Next,
     uint SrcQueueFamilyIndex, uint DstQueueFamilyIndex, Silk.NET.Vulkan.Image NativeImage,
     Silk.NET.Vulkan.Format NativeFormat, ulong NativeGeneration, bool IsBloomDiagnostic);
-internal readonly record struct VulkanFrozenBufferBarrier(
-    int PassIndex, VulkanResourceId ResourceId, string LogicalResourceName, VulkanBarrierPlanner.PlannedBufferState Previous,
-    VulkanBarrierPlanner.PlannedBufferState Next, uint SrcQueueFamilyIndex, uint DstQueueFamilyIndex,
-    Silk.NET.Vulkan.Buffer NativeBuffer, ulong NativeOffset, ulong NativeSize, ulong NativeGeneration);
 internal readonly record struct VulkanFrozenSwapchainBarrier(
     int PassIndex, VulkanResourceId ResourceId, XREngine.Rendering.RenderGraph.ERenderPassResourceType ResourceType,
     VulkanBarrierPlanner.PlannedImageState Previous, VulkanBarrierPlanner.PlannedImageState Next,

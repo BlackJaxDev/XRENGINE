@@ -91,6 +91,12 @@ public partial class XRMeshRenderer
         return inputs;
     }
 
+    /// <summary>
+    /// True when the last deformation input preparation found GPU-owned bones (an external or
+    /// GPU-driven palette source). Read it while the publication lease is held.
+    /// </summary>
+    internal bool HasGpuOwnedDeformationPose => _deformationGpuOwnedPose;
+
     internal bool OwnsDeformationMesh(XRMesh mesh)
     {
         if (ReferenceEquals(mesh, Mesh)) return true;

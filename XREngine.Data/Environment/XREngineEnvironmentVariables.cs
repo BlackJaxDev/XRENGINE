@@ -182,6 +182,8 @@ public static class XREngineEnvironmentVariables
     public const string CpuSoftwareOcclusion = "XRE_CPU_SOC_OCCLUSION";
 
     public const string AdvancedRenderPipelineMode = "XRE_ADVANCED_RENDER_PIPELINE_MODE";
+    /// <summary>Set to 1 to time the parts of Advanced preparation extraction for each row.</summary>
+    public const string AdvancedExtractionSubStageTimers = "XRE_ADVANCED_EXTRACTION_SUBSTAGE_TIMERS";
     public const string HizCullTrace = "XRE_HIZ_CULL_TRACE";
     public const string DiagVendorUpscale = "XRE_DIAG_VENDOR_UPSCALE";
     public const string DiagQuadBlit = "XRE_DIAG_QUAD_BLIT";

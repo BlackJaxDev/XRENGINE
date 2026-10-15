@@ -2360,6 +2360,14 @@ public static partial class EditorImGuiUI
             }
         }
 
+        internal static void PrepareForImGuiContextReplacement()
+        {
+            FlushImGuiLayoutImmediate();
+            _imguiStyledContext = IntPtr.Zero;
+            _dockingIniReloadedContext = IntPtr.Zero;
+            _imguiStyleInitialized = false;
+        }
+
         private static ImGuiPanelVisibilityState CapturePanelVisibilityState()
             => new(
                 Hierarchy: _showHierarchy,
