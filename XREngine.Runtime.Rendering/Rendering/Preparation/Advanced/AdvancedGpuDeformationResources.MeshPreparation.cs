@@ -73,6 +73,17 @@ public sealed partial class AdvancedGpuDeformationResources
         }
     }
 
+    /// <summary>
+    /// Releases cached deformation input before an import changes mesh geometry.
+    /// Source buffers stay owned by the mesh. Rendering can prepare fresh input.
+    /// </summary>
+    public static void DiscardImportedMeshPreparation(XRMesh mesh)
+    {
+        ArgumentNullException.ThrowIfNull(mesh);
+        lock (ImportedMeshPayloadsSync)
+            ImportedMeshPayloads.Remove(mesh);
+    }
+
     /// <summary>Prepares one cold mesh over render frames without publishing partial static inputs.</summary>
     public AdvancedGpuDeformationMeshPreparationStatus TryPrepareMesh(
         XRMesh mesh,

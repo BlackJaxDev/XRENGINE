@@ -1337,3 +1337,643 @@ Evidence is under `reports/startup-shader-baseline`,
 `reports/startup-source-allocation-build-ready` in the existing run. The CPU
 probe and unchanged-limit guards are under `scratch/startup-shader-probe` and
 `scratch/startup-memory-probe`.
+
+### Resumed Shader Checks And Startup Audio Measurement
+
+Work resumed on 16 October 2026. Both CPU shader comparisons passed under the
+unchanged memory guards. Resolved source, optimized source, and interface
+bindings matched the baseline for the Advanced and Fishnet shaders.
+
+| Cold operation | Previous managed allocation | Changed managed allocation |
+|---|---:|---:|
+| Advanced include resolution | 39,120,152 bytes | 38,381,552 bytes |
+| Advanced source optimization | 109,228,624 bytes | 51,044,392 bytes |
+| Fishnet include resolution | 2,657,984 bytes | 1,843,840 bytes |
+| Fishnet source optimization | 12,682,168 bytes | 7,517,112 bytes |
+
+Interface parsing allocation was unchanged. These are cumulative managed
+allocations during CPU source preparation. They do not measure driver linking.
+The changed Advanced probe peaked at 91,787,264 private bytes. Both probes
+completed without a guard stop. Evidence is in `reports/startup-shader-after`
+and `reports/startup-shader-fishnet-after` in the existing validation run.
+
+The next full Aryia startup began at 17:26:22 UTC. All seven companion sources
+became ready, but scene conversion did not complete. The monitor stopped the
+editor after 10.14 seconds when available RAM crossed the 3 GiB reserve.
+Initial available RAM was 4,486,336,512 bytes; the minimum was 3,219,218,432
+bytes. Sampled editor-private memory peaked at 1,167,659,008 bytes. The editor
+and monitor both stopped. Evidence is in `reports/aryia-startup-source-after`
+and `logs/aryia-startup-source-after`.
+
+Host process sampling found a separate startup cost. Windows Audio Device
+Graph Isolation (`audiodg`) working memory grew by about 370 MiB. The desktop
+camera activates an audio listener even when sound, microphone, and video
+streaming audio are disabled in the unit-world settings. The legacy listener
+constructor immediately opens an OpenAL device and context. This call path is
+confirmed in source; the measured host-memory increase is correlated with it.
+A bounded one-listener probe is needed to test causation before changing the
+listener lifetime. No audio endpoint settings or unrelated processes changed.
+
+Complete avatar import and the reported rendering lag remain unverified. All
+launch, memory, and timeout limits remain unchanged.
+
+### Deferred Legacy Audio Device Creation
+
+Legacy `ListenerContext` now keeps listener state without opening a playback
+device. Source or buffer acquisition, effects access, `MakeCurrent`, capture
+access, and native metadata queries initialize the transport. Initialization
+replays the cached state and effective gain. `VerifyError` checks only an
+existing transport. Disposing a dormant listener does not create one. V2
+construction and the OpenAL transport implementation are unchanged.
+
+The initialization gate serializes state changes and first device creation.
+Published transport access and error checks use a volatile fast path to avoid
+an inverse lock order with OpenAL effects. Disposal marks the listener under
+the gate, then releases child resources outside it. Initialization failure
+releases the transport even if effects cleanup fails. Source review also
+corrected the first assignment of the default distance model so it initializes
+attenuation without opening a device.
+
+The baseline audio probe built with zero warnings and errors, before this audio
+source change. Its guarded run did not start: available RAM was below the 4 GiB
+launch requirement. Later available RAM fell to about 2.6 GiB, below the 3 GiB
+stop threshold. The changed audio source has not been built or run. Its memory
+saving is not yet measured. No unit tests changed. `git diff --check` passed.
+
+The prepared scratch probe measures a dormant listener and an optional native
+source/buffer request. It checks cached pose, attenuation, mute, gain replay,
+one device open, disposal, and host audio-process memory. Complete this check
+under the existing guards, then build the isolated editor and retry the full
+package. A first native request can occur before audible playback. Device
+errors now occur at that request; the existing hardware-dependent audio test
+setup will need adjustment after live validation and user clearance for test
+changes. Complete Aryia import and rendering remain unverified.
+
+Final source review found no remaining initialization, replay, disposal, or
+lock-order blocker. It found one new tick-allocation path: pose setters could
+publish property events. The four pose fields now use the existing
+`SetField(..., publishNotifications: false, ...)` overload. This preserves the
+previous notification behavior and avoids new event-argument allocations on
+listener updates. This final correction is also awaiting build and runtime
+validation.
+
+### Audio Validation And Full Package Retry
+
+On 16 October 2026, available RAM recovered above the unchanged launch gate.
+The baseline native audio probe completed in 13.11 seconds. One idle listener
+started `audiodg`, which peaked at 340,869,120 working bytes. The probe process
+peaked at 17,903,616 private bytes. This isolated run supports the startup audio
+cost observed in the editor.
+
+The changed audio project and scratch probe built with zero warnings and
+errors. Two intermediate probe builds failed because the scratch program lacked
+the enum namespace; the production audio build passed in both attempts. The
+corrected probe then passed both checks:
+
+- Dormant pose, gain, attenuation, tick, and disposal operations opened zero
+  native devices. `audiodg` working memory stayed at 250,073,088 bytes throughout;
+  that process remained from the earlier baseline. The probe peaked at
+  11,227,136 private bytes and completed in 11.75 seconds.
+- Native source/buffer acquisition opened exactly one device. Cached pose,
+  Doppler, speed, distance, mute, and restored effective gain matched the native
+  state. Disposal closed the transport and removed the logical listener. The
+  probe peaked at 18,485,248 private bytes and completed in 17.94 seconds.
+
+All audio probes passed the memory and time guards. They did not play audio or
+create a graphics context. Evidence is in `reports/startup-audio-baseline`,
+`reports/startup-audio-dormant`, and `reports/startup-audio-demand`.
+
+The isolated audio/editor build passed with zero warnings and errors. It reused
+existing project references and omitted analyzers and debug symbols, as in the
+previous constrained editor build. It completed in 35.12 seconds, peaked at
+803,823,616 process-tree private bytes, and kept at least 4,204,060,672 bytes of
+available RAM. The audio assembly in the editor output matched the newly built
+assembly. Evidence is in `reports/startup-audio-editor-build`.
+
+The next full Aryia runtime began at 18:45:12 UTC. All seven companion sources
+became ready. Package preparation produced all 26 roots, then six prefab
+conversions started within about 0.17 seconds. The editor rendered its startup
+world and remained accessible through MCP. A viewed viewport capture showed
+only the Main Scene and sky; no imported avatar scene was published.
+
+The watchdog stopped the editor at the 2 GiB private-memory threshold after
+73.08 sampled seconds. Private bytes jumped from 2,081,361,920 to 2,848,354,304
+between two samples about 67 ms apart. The sampled peak therefore exceeded the
+threshold despite termination. Minimum available RAM was 3,864,567,808 bytes.
+`audiodg` working memory stayed near 250 MB rather than growing during startup.
+The editor and watchdog were confirmed stopped. Evidence is in
+`reports/aryia-startup-audio-after`, `logs/aryia-startup-audio-after`, and the
+corresponding `mcp-captures/` directory.
+
+The audio change is now validated through native device use and editor startup.
+Complete Aryia import and avatar rendering remain unverified. The next
+investigation targets concurrent prefab conversion and repeated project setup
+before the first conversion progress message. No memory or timeout limit changed.
+
+### Serialized Package Conversion And Dependency Scan Reuse
+
+The stopped run's final logs refine the earlier index hypothesis. All six
+initial conversions reported 2% at 11:46:23.276 local time, after waiting about
+50.9 seconds. `SourceGuidIndex` is already shared by project root. Its locked
+initial scan reads `.meta` files through the first GUID line. It does not read
+model or texture bytes. When that scan completed, several roots imported
+`GoBone_Coat.fbx` at the same time. Concurrent native model import is a supported
+candidate for the abrupt private-memory rise, but its exact allocation was not
+captured.
+
+Package startup now waits for each root's scene attachment or error before
+starting the next root. Pending completion counts still include every entry.
+Errors release the scheduling gate. Visibility rules are unchanged. Staged
+renderer activation can overlap the next conversion; the synchronous hierarchy
+conversion and scene attachment are serialized.
+
+`SourceDependencyGraphBuilder` also had an independent repeated-work defect.
+It tracked only the active recursion path. A later reference to a shared file
+reopened it and appended its outgoing edges again. A per-build set now scans
+each reached source or metadata file once. Parent reference edges and later
+node-kind upgrades remain intact. Active recursion still detects cycles, and
+cancellation is checked at each visit and streamed line. No unit tests changed.
+
+The guarded editor build passed with zero warnings and errors in 22.16 seconds.
+It used the same narrow compile-only build settings as the earlier editor run.
+Peak process-tree private memory was 771,702,784 bytes; minimum available RAM
+was 4,451,684,352 bytes. Evidence is in `reports/startup-package-serial-build`.
+
+The retry began at 18:50:32 UTC. Its logs confirm sequential scene conversion
+and publication: seven `.prefab` scenes were added with `visible: False`, then
+`DemoHandsInPockets.unity` was added with `visible: True`. The next demo started
+after that attachment. Partial-import material and missing-slot warnings did
+not abort the available scene content. The GUID scan was much shorter on this
+run, but filesystem caching differs, so this does not establish a timing gain
+from the code changes.
+
+The watchdog stopped the editor after 12.07 sampled seconds at the unchanged
+2 GiB private-memory threshold. Sampled private memory peaked at 2,211,270,656
+bytes (2.06 GiB); minimum available RAM was 4,225,634,304 bytes (3.94 GiB).
+The editor and watchdog stopped. The process ended before a viewport capture
+could verify the imported demo visually. Evidence is in
+`reports/aryia-startup-serial-after` and `logs/aryia-startup-serial-after`.
+
+The remaining increase coincides with directional-shadow resource creation.
+The log reports four-layer 2048-square arrays with 12 mip levels, followed by
+four-layer 4096-square arrays with 13 mip levels in R16f and DepthComponent24.
+Shader programs for the first demo loaded from binary cache; those log entries
+do not show a source compile or link. Inspect shadow texture allocation and
+Unity light-resolution mapping before another runtime attempt. This correlation
+does not yet prove the exact cause of the remaining process-memory increase.
+
+### Directional Shadow Mip Allocation
+
+Source inspection confirmed unused mip storage. The directional color-texture
+mip-limit helper returned 1000 when moment mipmaps were disabled. Cascade raster
+depth also kept the default limit of 1000. The OpenGL array allocator uses the
+computed smallest mip level plus one for immutable storage, independently of
+`AutoGenerateMipmaps`. Both arrays therefore allocated full chains while the
+ordinary shadow path used only mip zero.
+
+The helper now returns zero when moment mipmaps are disabled. Cascade raster
+depth explicitly sets both mip limits to zero and disables mip generation.
+Enabled moment mipmaps still allocate the full chain. Base resolution, cascade
+count, and point/spot shadow code are unchanged. For four 4096-square layers in
+R16f plus four-byte depth storage, unused levels account for about 128 MiB.
+The equivalent 2048-square arrays account for about 32 MiB. These are storage
+estimates; driver-private memory must be measured separately.
+
+The 4096 light came from the startup world's explicit OpenGL light setting.
+Imported directional lights use the engine's 2048 default. Unity source shadow
+resolution and source quality settings are not currently mapped. That separate
+import gap needs a defined policy; this change does not alter resolution.
+
+The first narrow renderer build found a stale core reference assembly missing
+`TransformBase.OverriddenMatrixChangeNotifications`, which is present in the
+current source. The next guarded build refreshes Core, Rendering, and Editor
+in dependency order. No unrelated source edit was needed.
+
+Core, Rendering, and Editor then built with zero warnings and errors under the
+same guards. The narrow compile-only build completed in 79.71 seconds, with
+1,060,036,608 peak process-tree private bytes and 3,865,587,712 minimum available
+RAM. The editor output matched the new Rendering assembly. Evidence is in
+`reports/startup-shadow-mip-build-core`.
+
+The next runtime began at 18:56:46 UTC. The OpenGL log confirms `levels=1` for
+both color and raster-depth arrays at 2048 and 4096 resolution, each with four
+layers. Eight imported scenes were attached before the stop. A viewed capture
+from earlier in the run showed the startup sky; it does not validate the
+imported avatar or shadow appearance.
+
+The private-memory guard fired after 14.42 sampled seconds at 2,196,180,992 bytes
+(2.05 GiB). The independent managed probe then observed 2,729,590,784 private
+bytes (2.54 GiB) while session shutdown completed. Minimum available RAM was
+3,954,106,368 bytes (3.68 GiB). Both the editor and watchdog stopped. Evidence
+is in `reports/aryia-startup-mip-after`, `logs/aryia-startup-mip-after`, and its
+`mcp-captures/` folder. Different sky selection and refreshed core binaries mean
+these runs are not a controlled total-memory comparison. The allocation log
+establishes that unused mip storage was removed.
+
+The scratch watchdog now terminates its already verified editor process before
+calling the session manager to reconcile the named session. It verifies the
+executable path and start time again before that direct stop. Parser and
+process-identity preflight checks passed; the changed stop path has not been
+exercised by another editor run. Polling still cannot prevent a large allocation
+from crossing the threshold between samples. Do not treat it as a hard memory
+cap or claim that the sampled stop value was the actual process peak.
+
+Complete Aryia import remains blocked by the 2 GiB runtime budget. Further work
+must distinguish retained import data, renderer target storage, and driver
+commit without another uncontrolled runtime attempt. All configured limits
+remain unchanged. No unit test code was added or changed.
+
+### CPU Import Isolation And Remaining Atlas Storage
+
+The next audit found no duplicate cascade slice allocation. The four legacy
+cascade arrays use about 480 MiB at the current resolutions: 96 MiB for the
+2048-square light and 384 MiB for the 4096-square light, assuming four-byte
+depth storage. Layer framebuffers attach those same arrays. The atlas groups
+were not yet sampleable, so these arrays provided the active shadow fallback.
+Removing them would remove that fallback.
+
+The separate 4096-square, one-layer atlas raster depth array still allocated
+13 mip levels. Atlas page framebuffers attach mip zero, and depth sampling
+uses that level. Atlas depth creation now sets both mip limits to zero and
+disables mip generation. The storage estimate falls by about 21.33 MiB per
+such layer. Color moment filtering, shadow resolution, and point/spot shadow
+behavior remain unchanged. Core, Rendering, and Editor built with no warnings
+or errors. The guarded build took 40.04 seconds, peaked at 1,121,099,776 bytes
+of process-tree private memory, and kept at least 3,832,143,872 bytes of RAM
+available. Evidence: `reports/startup-atlas-depth-build` in the current run.
+
+CPU isolation uses a scratch process guard with an unnamed Windows job. The
+child starts suspended. The guard assigns and verifies the 2 GiB process
+commit limit and kill-on-close flag, checks the unchanged launch conditions,
+then resumes the child. The monitor stays outside the job. It checks available
+system commit with `GetPerformanceInfo`, stops the job before writing a stop
+log, and retains all existing RAM, commit, and timeout checks. A helper passed
+limit readback, small allocation, oversized allocation rejection (Win32 error
+1455), and idle-child termination on job closure. Evidence:
+`reports/startup-guard-denied` and `reports/startup-guard-close`.
+
+The job cap does not cover all GPU, kernel, or other-process allocations. A
+sampled system RAM floor is still not a hard reservation. These checks do not
+establish that another OpenGL run is safe. No editor ran during this isolation.
+
+The CPU probe uses the actual serialized scene importer with partial import,
+Auto FBX selection, model asset services, and retained results. It registers
+OpenGL factories for texture metadata but creates no renderer or graphics
+context. Early probe attempts lacked texture and model service registrations;
+those failed attempts are not complete import measurements.
+
+With the required services installed, the first 25 roots completed at about
+146 MiB private memory. The final `Open Me.unity` root imported the avatar model
+more than once and reached the hard process cap. The run ended with an Assimp
+allocation failure after 80.53 seconds. Sampled private memory peaked at
+2,146,824,192 bytes; minimum available RAM was 3,489,935,360 bytes. At the final
+root failure, managed live memory was 1,435,204,360 bytes and cumulative managed
+allocation was 20,557,447,120 bytes. Evidence:
+`reports/startup-import-all-composed` and
+`Build/Logs/StartupImportProbe_debug/windows_x64/xrengine_2026-10-16_12-16-57_pid20092/`.
+This separates a large CPU import cost from the earlier renderer allocation.
+It does not validate complete import or avatar appearance.
+
+Source review found that geometry coordinate conversion creates two full
+blendshape delta tables and a full vertex/target object graph, then packs the
+same data again. Each table uses about 41 bytes per active record, before
+array overhead. These are allocation totals; the two tables need not remain
+live together. The next change replaces this temporary expansion with a
+streamed packed-data read and preserves the existing buffer publication path.
+
+A direct switch from deep mesh clones to the runtime shared-buffer clone was
+rejected. That clone borrows source buffers; it does not keep an independent
+asset lifetime or copy-on-write contract. Source replacement or disposal could
+invalidate an imported scene. Published root geometry remains independently
+owned.
+
+### Streamed Geometry Validation And Retained Import Data
+
+The geometry change keeps a compact base-attribute snapshot and reads packed
+blendshape entries one vertex at a time. It preserves normal normalization,
+tangent projection, handedness, target bounds, winding, and buffer publication.
+Empty or duplicate shape names and duplicate active entries retain the previous
+materialized path for compatibility.
+
+The guarded Core, Rendering, and Editor build passed with no warnings or
+errors in 63.81 seconds. Peak build-tree private memory was 1,096,839,168 bytes;
+minimum available RAM was 4,417,871,872 bytes. A CPU probe used 12,000 vertices,
+32 sparse shapes, and nonuniform, reflected, and missing-direction cases.
+All populated base and blendshape bytes, names, indices, and bounds matched
+exactly between the baseline and new assemblies. The probe initially included
+unused trailing alignment padding in a uint2 buffer. Those bytes also varied
+between baseline runs. Hashing only `ElementCount * ElementSize` removed that
+measurement error; no production packing change was needed.
+
+Managed allocations during conversion changed as follows:
+
+| Case | Baseline bytes | Streamed bytes | Reduction |
+|---|---:|---:|---:|
+| Nonuniform | 11,233,880 | 6,520,512 | 42.0% |
+| Reflected | 11,679,296 | 6,966,688 | 40.4% |
+| Missing directions | 9,349,360 | 4,636,752 | 50.4% |
+
+Evidence is in `reports/startup-geometry-stream-build`,
+`reports/startup-geometry-logical-baseline`, and
+`reports/startup-geometry-logical-after`. These small probes establish output
+parity and allocation reduction. They do not establish the full import peak.
+
+The next full CPU run still reached the hard cap while importing repeated
+ARYIA model instances. It ended with an Assimp allocation failure after 76.41
+seconds. Sampled private memory peaked at 2,147,479,552 bytes. Available RAM
+stayed above 3,516,547,072 bytes. The final progress sample reported about
+1.31 GB managed live memory and 23.49 GB cumulative allocation. Evidence:
+`reports/startup-import-all-stream`. This is not a successful full import.
+
+The stage samples exposed two further costs:
+
+- Native FBX import calls `PrepareImportedMesh` before Unity coordinate
+  conversion. Its conditional weak table retains managed deformation arrays
+  for as long as each mesh stays alive. Coordinate conversion immediately
+  makes those arrays stale. Their data size is approximately
+  `64 * vertices + 16 * shapes + 16 * records + 16 * deltas` bytes, before
+  headers. Delta entries are not deduplicated in this payload. Unity conversion
+  now discards this optional cached preparation before changing each mesh.
+  It leaves source buffers and pending consumers intact. The renderer retains
+  its existing fresh-preparation path.
+- Required texture validation decoded the same image for repeated references.
+  One root context now caches successful validation by full path, byte length,
+  and last-write time. It retains no image pixels. Failures are not cached.
+  The importer checks the file stamp again after decoding and caches only an
+  unchanged revision. A replacement that preserves both stamp fields remains
+  outside this revision check.
+
+The follow-up build completed Core and Rendering with no warnings or errors,
+then stopped during Editor compilation when available RAM fell below 3 GiB.
+The minimum sample was 3,213,479,936 bytes, and peak build-tree private memory
+was 1,059,229,696 bytes. Evidence: `reports/startup-import-retention-build`.
+After stop, about 3.6 GiB was available, below the unchanged 4 GiB launch
+requirement. The latest editor changes and their full CPU import effect still
+need validation. No editor or GPU run was started. No unit test code changed.
+
+Final source review found no blocking defect in cache removal or validation
+reuse. A later memory check reported 2,933,006,336 bytes available (about
+2.7 GiB), below the stop threshold. No further build or import was started.
+
+The next user-requested memory check reported 2,457,387,008 bytes of available
+RAM (2.289 GiB) and 13.911 GiB of available system commit. RAM was below both
+the 4 GiB launch requirement and the 3 GiB stop threshold. No build, CPU import,
+editor, or GPU context was started. Validation of the latest import fixes
+remains pending; all limits remain unchanged.
+
+Further source candidates, not changed in this work, are prompt release of
+consumed native FBX packed source chunks and avoiding deformation preparation
+that composition will discard. Neither has a measured acceptance result yet.
+
+### CPU Import Retry With Validated Editor Changes
+
+The next requested retry found 4.915 GiB of available RAM and 16.804 GiB of
+available system commit. The pending Editor build passed with zero warnings
+and errors in 22.57 seconds. Peak build-tree private memory was 769,957,888
+bytes; minimum available RAM was 4,314,906,624 bytes. The CPU probe build also
+passed with zero warnings and errors. Evidence:
+`reports/startup-import-retention-editor-retry` and
+`reports/startup-import-retention-probe-retry` in the current run.
+
+The full CPU import started with 5,298,348,032 bytes of available RAM. The
+first 25 roots completed. The guard stopped the process during required-texture
+validation in `Open Me.unity` after 24.73 seconds because available RAM fell
+below 3 GiB. Sampled process private memory peaked at 1,938,538,496 bytes
+(1.81 GiB), below the unchanged 2 GiB hard cap. Minimum available RAM was
+3,189,563,392 bytes (2.97 GiB); minimum available system commit was
+16,035,770,368 bytes. Evidence: `reports/startup-import-all-retention`.
+The guard reports exit code zero for job termination; its nonempty stop reason
+and the missing final root result make this a stopped run, not a successful
+import. The child process was confirmed absent after termination.
+
+Import counters showed 40 cached deformation entries totaling 122,554,560
+bytes (116.9 MiB) during native import. After coordinate conversion, both
+counters were zero. This confirms release of the stale preparation data.
+Texture-validation reuse compiled and ran, but this stopped run does not
+establish its total allocation reduction. Full import, rendering, and the
+reported lag remain unverified. No renderer or graphics context was created.
+All launch, process, RAM, commit, and timeout limits remained unchanged.
+
+### Texture Validation Without Pixel Export
+
+Required texture validation used `Decode(File.ReadAllBytes(path))` but read
+only the returned dimensions. This retained an encoded managed array during
+native decode and exported a complete RGBA buffer that validation discarded.
+SDR export uses 64 MiB for a 4096-square image. Color conversion could also
+create a native image clone.
+
+`IRuntimeImageCodec.Validate(Stream)` now returns dimensions after full decode
+and bounded native pixel-cache reads. The Magick backend applies required SDR
+color conversion in place and preserves the first-image and output-size
+checks. It leaves the caller's stream open and retains no decoded pixels.
+Unity validation uses this path. Actual texture loading, quality, resolution,
+and deferred registration remain unchanged. Native decode still needs its
+pixel cache; this change does not make all image decoding constant-memory.
+
+Core, Imaging.Magick, and Editor built with zero warnings and errors under
+the existing guard. Build-tree private memory peaked at 773,152,768 bytes;
+minimum available RAM was 4,669,149,184 bytes. The CPU import and focused image
+probes also built successfully. No unit test code was added or changed.
+Evidence: `reports/texture-validation-build`,
+`reports/texture-validation-import-probe-build`, and
+`reports/texture-validation-probe-build` in the current run.
+
+The focused CPU probe compared legacy decode and streamed validation. Both
+paths accepted color, transparent, grayscale, CMYK, and HDR fixtures with
+matching dimensions. Both rejected invalid bytes, a truncated PNG, and a PNG
+with a valid header but damaged IDAT pixel data. Streams remained open after
+success and failure. Evidence: `reports/texture-validation-payload-fixtures`.
+
+Separate guarded processes measured the same 4096-square Aryia texture,
+`Top-straps-choker_Normal_OpenGL.png`:
+
+| Measurement | Legacy decode | Streamed validation |
+|---|---:|---:|
+| Sampled peak private bytes | 402,116,608 | 213,241,856 |
+| Managed allocated bytes | 121,341,104 | 69,416 |
+| Measured operation milliseconds | 622.85 | 521.27 |
+
+The sampled private peak fell by about 47%. These are single-run measurements,
+not a throughput benchmark or a full-import peak estimate. Evidence:
+`reports/texture-validation-legacy` and `reports/texture-validation-stream`.
+
+The full CPU retry started with 5,498,925,056 bytes of available RAM and passed
+the texture-validation stage that stopped the previous run. During later
+texture validation, process private memory fell to about 893 MB. The first
+25 roots completed. The guard stopped the final scene during the fourth
+ARYIA model import at 62.63 seconds, when private memory reached exactly the
+2,147,483,648-byte hard cap. Minimum available RAM was 3,315,666,944 bytes;
+minimum available system commit was 15,821,180,928 bytes. Evidence:
+`reports/startup-import-stream-validation`. The owned process was confirmed
+absent after the stop. This was not a successful full import.
+
+The measured texture-validation spike is reduced. Repeated model import is
+the remaining observed blocker. Source and scene inspection confirmed four
+separate instances of the same FBX: FULL FT/GoGo/SPS, GoGo, GoGo/SPS, and
+Default. `ImportPrefabInstance` calls `ImportModelHierarchy` for each external
+model instance; that path creates a new `ModelAssetImporter` and decodes the
+model each time. This is not a GUID lookup failure. Each hierarchy receives
+its own Unity modifications, removals, and additions. Reuse must preserve
+independent hierarchy and mesh ownership; sharing mutable roots is not valid.
+No model-cache change was made in this texture-validation work.
+
+All limits stayed unchanged: 4 GiB available
+RAM before launch, 2 GiB process private memory, 3 GiB available RAM stop,
+4 GiB available system commit stop, and 90 seconds. No renderer, window, or
+graphics context was created. Complete import and rendering remain unverified.
+
+### Independent Avatar Imports Within The Existing CPU Limits
+
+Native FBX import retained packed source chunks after their data had been
+copied into owned `XRMesh` buffers. It also built all control-point weight
+dictionaries before mesh workers started. Both lifetimes increased overlap
+between import scratch and completed geometry. Each chunk now releases its
+source arrays and index storage after successful mesh construction. Each
+active worker builds its own temporary skin-weight dictionary.
+
+Unity composition now sets `ModelImportOptions.PrepareGpuDeformationOnImport`
+to false. Native import otherwise prepared managed deformation input that
+coordinate conversion immediately invalidated. The option defaults to true
+for ordinary native imports. The renderer retains its existing bounded
+preparation path for final geometry. This changes preparation timing, not
+skinning or blendshape support. Source review confirmed that bind matrices
+are stored before workers start and that packed-source copying is synchronous.
+
+The ModelAssetPipeline and Editor build passed with zero warnings and errors
+in 28.03 seconds. Peak build-tree private memory was 772,018,176 bytes;
+minimum available RAM was 4,874,366,976 bytes. Evidence:
+`reports/model-import-lifetime-build` in the current run. The first full CPU
+retry still failed during the fourth avatar import at the hard process cap.
+It ended after 62.14 seconds with an Assimp allocation error. Sampled private
+memory peaked at 2,147,340,288 bytes; minimum available RAM was 3,414,933,504
+bytes. Evidence: `reports/startup-import-model-lifetime`. This run did not
+complete the independence audit.
+
+Packed source construction also allocated a tangent-delta array for every
+blendshape entry, although the native FBX path supplies zero tangent deltas.
+`XRMeshPackedSource` now keeps those zeros implicit until a nonzero tangent
+delta arrives. The packed mesh reader supplies zero for an absent tangent
+span. Final geometry stays owned by each mesh; no cross-avatar storage was
+introduced.
+
+Rendering built with zero warnings and errors in 36.69 seconds under the
+same guard. A small CPU comparison used 12,000 vertices and 14,400 sparse
+blendshape entries per case. All populated mesh-buffer hashes matched the
+previous renderer for all-zero tangents, a first nonzero tangent after entry
+4,097, and mixed zero/nonzero tangents. Source allocations were:
+
+| Case | Previous bytes | New bytes |
+|---|---:|---:|
+| All zero | 3,672,840 | 3,279,552 |
+| Late first nonzero | 3,672,816 | 3,574,488 |
+| Mixed from the start | 3,672,816 | 3,672,816 |
+
+The zero-tangent case reduced temporary source allocation by 10.7% in this
+probe. Evidence: `reports/packed-tangents-build`,
+`reports/packed-source-baseline`, and `reports/packed-source-after`.
+
+The final CPU retry completed all 26 package roots, including `Open Me.unity`,
+with exit code zero and no guard stop. It took 88.01 seconds. Peak sampled
+private memory was 2,114,826,240 bytes (1.970 GiB). Minimum available RAM was
+3,239,968,768 bytes (3.018 GiB), and minimum available system commit was
+15,906,365,440 bytes. The run started with 5,602,181,120 bytes of available
+RAM. Evidence: `reports/startup-import-packed-tangents`.
+
+The CPU probe checked all four named avatar subtrees for cross-instance
+aliases in nodes, transforms, model components, models, submeshes, LODs,
+meshes, data buffers, data-source objects, nonempty topology lists, blendshape
+name arrays, and bone palettes. Every utilized or root bone had to belong to
+its own avatar subtree. All checks passed. Shared Unity material assets were
+allowed; the importer still applies each instance's existing overrides.
+
+| Avatar | Nodes | Meshes | Unique bones | Mesh buffer bytes |
+|---|---:|---:|---:|---:|
+| FULL FT/GoGo/SPS | 542 | 47 | 340 | 243,411,056 |
+| GoGo | 525 | 46 | 340 | 243,320,480 |
+| GoGo/SPS | 532 | 46 | 340 | 243,320,480 |
+| Default | 505 | 46 | 340 | 243,320,480 |
+
+The final root reported 125 models and 35 materials. Private memory after
+completion was 1,830,850,560 bytes. The owned child was confirmed absent after
+exit. Existing partial-import diagnostics remain, including missing material
+slots, unsupported VRChat behavior, and fallback material conversions. CPU
+completion does not establish visual correctness or GPU safety.
+
+All limits remain unchanged: launch requires 4 GiB available RAM and 4 GiB
+available system commit; process private memory is capped at 2 GiB; stop
+thresholds remain 3 GiB available RAM, 4 GiB available system commit, and
+90 seconds. The successful run had only about 31 MiB of process-cap margin
+and 19 MiB of sampled RAM margin. This is a successful bounded CPU run, not
+evidence of broad headroom. No editor, renderer, or graphics context ran.
+No unit test code was added or modified.
+
+Further headroom could come from reusing read-only parsed FBX source documents
+within one root import. The native path, material-slot resolution, and Unity
+animation import currently parse overlapping source data again. Such a cache
+must remain separate from mutable runtime instances and must preserve the
+strict animation parser's distinct validation mode. No source-document cache
+was added in this work.
+
+### Parsed Source Reuse For More Import Headroom
+
+The previous successful run peaked at 61.24 seconds during the fourth native
+avatar import. Native import, Unity coordinate checks, material remap alias
+resolution, material-slot resolution, and animation conversion parsed
+overlapping FBX data repeatedly.
+
+A new `FbxSourceDocumentCache` retains only the most recently used source
+revision and semantic policy. `SourceProjectImportContext` owns the cache
+during one root conversion. `ModelAssetImporter` borrows it through an
+instance property. Native import and the Unity readers reuse parsed source
+documents while constructing fresh runtime instance data. Both root entry
+points clear cached references immediately after hierarchy composition and
+dispose the cache on exit. Structural mappings are not retained.
+
+Review found a revision race in an initial draft with separate document
+getters: a source edit between calls could combine old semantics with new
+geometry. Native import now requests an atomic document group. Material-slot
+and animation conversion request coherent pairs. Each cache miss verifies the
+file stamp after parsing before publishing new entries. Strict Unity animation
+validation has a separate entry and cannot reuse permissive native results.
+Final source review found no remaining blocking defect. Current consumers
+read the cached source arrays and construct their own meshes, bones, weights,
+and animation clips.
+
+Fbx, ModelAssetPipeline, and Editor built with zero warnings and errors in
+27.06 seconds. Build-tree private memory peaked at 770,912,256 bytes; minimum
+available RAM was 4,062,740,480 bytes. The CPU import probe also built.
+Evidence: `reports/fbx-source-cache-build` and
+`reports/fbx-source-cache-import-probe-build` in the current run.
+
+The guarded full CPU retry started with 4,964,012,032 bytes of available RAM.
+It completed the first 25 roots, then stopped after 36.36 seconds during the
+main scene when available RAM fell below 3 GiB. Peak private memory was
+1,659,801,600 bytes (1.55 GiB); minimum available RAM was 3,183,759,360 bytes;
+minimum available system commit was 15,345,582,080 bytes. Evidence:
+`reports/startup-import-fbx-cache`. The nonempty stop reason marks this as an
+incomplete run despite the job-termination exit code zero. It did not reach
+the four-avatar independence audit.
+
+This run started with about 0.59 GiB less available RAM than the previous
+successful run. It cannot establish a complete-import peak reduction. The
+cache also retains source data between model imports, so lower cumulative
+allocation alone does not prove lower peak memory. Keep this effect open
+until a guarded full run completes.
+
+Source review then found that deformer parsing reserved a full index-sized
+normal-delta dictionary even when the shape had no normals. Dictionary
+capacities now use the available index/value pair counts for skin weights,
+position deltas, and normal deltas. Loop bounds and decoded values are
+unchanged. This final capacity change has not yet been built or measured.
+
+A small scratch cache-contract probe is prepared for source revision and
+policy invalidation, eviction, strict-after-permissive validation, coherent
+snapshots, disposal, and retained-document validity. It has not been built or
+run. No unit test code was added or changed.
+
+After the stopped run, available RAM fell to about 3.39 GiB, below the
+unchanged 4 GiB launch requirement. No further build or import was started.
+The remaining validation is the latest Fbx build, the small cache-contract
+probe, and a complete CPU import with the existing four-avatar independence
+audit. All memory and timeout limits remain unchanged. No editor, renderer,
+window, or graphics context ran.

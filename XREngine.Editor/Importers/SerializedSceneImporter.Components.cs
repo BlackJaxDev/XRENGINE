@@ -838,7 +838,7 @@ internal static partial class SerializedSceneImporter
 
         bool isFbx = string.Equals(Path.GetExtension(assetPath), ".fbx", StringComparison.OrdinalIgnoreCase);
         if (isFbx)
-            ResolveFbxMaterialSlots(sourceRoot, assetPath);
+            ResolveFbxMaterialSlots(sourceRoot, assetPath, state);
 
         string targetNodeName = targetNode.Name ?? string.Empty;
         if (targetNodeName.Length == 0)

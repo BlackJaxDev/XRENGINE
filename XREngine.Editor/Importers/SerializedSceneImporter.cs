@@ -26,9 +26,11 @@ internal static partial class SerializedSceneImporter
 
         string normalizedPath = Path.GetFullPath(filePath);
         var context = new SourceProjectImportContext(normalizedPath);
+        using var sourceDocuments = context.FbxSourceDocuments;
         context.DiscoverDependencies();
         var state = new ImportState(context);
         ImportedHierarchy hierarchy = ImportHierarchy(normalizedPath, state);
+        sourceDocuments.Clear();
         context.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Converted);
         ValidateComposedModelAnimations(state);
         return [.. hierarchy.RootEntries.Select(static entry => entry.Node)];
@@ -130,9 +132,11 @@ internal static partial class SerializedSceneImporter
             progress,
             fbxBackend,
             allowPartialImport);
+        using var sourceDocuments = context.FbxSourceDocuments;
         context.DiscoverDependencies();
         var state = new ImportState(context);
         ImportedHierarchy hierarchy = ImportHierarchy(normalizedPath, state);
+        sourceDocuments.Clear();
         hierarchy.SortRoots();
 
         SceneNode rootNode;

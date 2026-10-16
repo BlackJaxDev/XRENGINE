@@ -194,8 +194,8 @@ public static class FbxDeformerParser
         // row-vector convention; TransformLink must not be inverted a second time.
         Matrix4x4 inverseBindMatrix = transformMatrix;
 
-        Dictionary<int, float> controlPointWeights = new(indices.Length);
         int pairCount = Math.Min(indices.Length, weights.Length);
+        Dictionary<int, float> controlPointWeights = new(pairCount);
         for (int index = 0; index < pairCount; index++)
         {
             int controlPointIndex = indices[index];
@@ -267,9 +267,11 @@ public static class FbxDeformerParser
                 indices[index] = index;
         }
 
-        Dictionary<int, Vector3> positionDeltasByControlPoint = new(indices.Length);
-        Dictionary<int, Vector3> normalDeltasByControlPoint = new(indices.Length);
         int positionCount = Math.Min(indices.Length, positionDeltas.Length);
+        int normalCount = Math.Min(indices.Length, normalDeltas.Length);
+        Dictionary<int, Vector3> positionDeltasByControlPoint = new(positionCount);
+        // A shape with no normal deltas must not reserve a full position-sized table.
+        Dictionary<int, Vector3> normalDeltasByControlPoint = new(normalCount);
         for (int index = 0; index < positionCount; index++)
         {
             int controlPointIndex = indices[index];
@@ -278,7 +280,6 @@ public static class FbxDeformerParser
             positionDeltasByControlPoint[controlPointIndex] = positionDeltas[index];
         }
 
-        int normalCount = Math.Min(indices.Length, normalDeltas.Length);
         for (int index = 0; index < normalCount; index++)
         {
             int controlPointIndex = indices[index];

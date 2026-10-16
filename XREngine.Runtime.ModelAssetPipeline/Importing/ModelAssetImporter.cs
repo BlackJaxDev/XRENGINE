@@ -82,6 +82,9 @@ namespace XREngine
         public DelMakeMaterialAction MakeMaterialAction { get; set; } = MakeMaterialDefault;
         public ModelImportOptions? ImportOptions { get; set; }
 
+        /// <summary>Optional caller-owned parsed FBX cache. Runtime instance data is never cached here.</summary>
+        public FbxSourceDocumentCache? FbxSourceDocuments { get; set; }
+
         /// <summary>
         /// Gets the backend candidate snapshot resolved for the most recent import attempt.
         /// </summary>
