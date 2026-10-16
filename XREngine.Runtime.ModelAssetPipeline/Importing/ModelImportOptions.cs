@@ -46,6 +46,13 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool DeferMeshletCookingUntilPostNormalization { get; set; }
 
     /// <summary>
+    /// Prepares optional deformation input during native model import. Disable
+    /// this when later coordinate conversion would invalidate that input.
+    /// Rendering can prepare the final mesh through its normal bounded path.
+    /// </summary>
+    public bool PrepareGpuDeformationOnImport { get; set; } = true;
+
+    /// <summary>
     /// Optional Unity project or Assets folder selected for external .prefab conversion.
     /// Model importers ignore this value.
     /// </summary>

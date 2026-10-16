@@ -37,9 +37,21 @@ internal static class NativeFbxSceneImporter
     /// </summary>
     private sealed class MeshChunkBuilder(int materialSlot, XRMeshPackedSource source, int initialIndexCapacity)
     {
+        private XRMeshPackedSource? _source = source;
         public int MaterialSlot { get; } = materialSlot;
-        public XRMeshPackedSource Source { get; } = source;
-        public List<int> Indices { get; } = new(Math.Max(6, initialIndexCapacity));
+        public XRMeshPackedSource Source => _source
+            ?? throw new InvalidOperationException("The packed mesh source was already consumed.");
+        public List<int> Indices { get; private set; } = new(Math.Max(6, initialIndexCapacity));
+
+        /// <summary>Copies the packed source into an owned mesh and releases temporary storage.</summary>
+        public XRMesh BuildMesh(string[]? blendshapeNames)
+        {
+            Source.BlendshapeNames = blendshapeNames;
+            XRMesh mesh = new(Source, Indices);
+            _source = null;
+            Indices = [];
+            return mesh;
+        }
 
         public bool CanAppendPolygon(int polygonVertexCount)
             => Source.VertexCount + polygonVertexCount <= ushort.MaxValue + 1;
@@ -68,7 +80,7 @@ internal static class NativeFbxSceneImporter
         FbxIntermediateNode IntermediateNode,
         IReadOnlyList<FbxIntermediateMaterial> NodeMaterials,
         Matrix4x4 MeshWorldMatrix,
-        IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? SkinWeightsByControlPoint,
+        FbxSkinBinding? SkinBinding,
         IReadOnlyList<FbxBlendShapeChannelBinding> BlendShapeChannels);
 
     private readonly record struct MeshBuildResult(
@@ -209,8 +221,8 @@ internal static class NativeFbxSceneImporter
             () =>
             {
                 ReportProgress(onProgress, 0.02f);
-                using FbxStructuralDocument structural = FbxStructuralParser.ParseFile(sourceFilePath);
-                ReportProgress(onProgress, 0.08f);
+                using FbxSourceDocumentCache? ownedDocuments = importer.FbxSourceDocuments is null ? new() : null;
+                FbxSourceDocumentCache documents = importer.FbxSourceDocuments ?? ownedDocuments!;
                 FbxSceneSemanticsPolicy policy = new(
                     importOptions?.FbxPivotPolicy ?? FbxSceneSemanticsPolicy.Default.PivotImportPolicy,
                     FbxModelHierarchyPolicy.PreserveAuthoredNodes);
@@ -221,10 +233,8 @@ internal static class NativeFbxSceneImporter
                 FbxAnimationDocument animations;
                 using (IDisposable? parseDocumentsScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.ParseDocuments"))
                 {
-                    semantic = FbxSemanticParser.Parse(structural, policy);
-                    geometry = FbxGeometryParser.Parse(structural, semantic);
-                    deformers = FbxDeformerParser.Parse(structural, semantic);
-                    animations = FbxAnimationParser.Parse(structural, semantic, deformers);
+                    (semantic, geometry, deformers, animations) = documents.GetModelDocuments(sourceFilePath, policy);
+                    ReportProgress(onProgress, 0.08f);
                 }
                 ReportProgress(onProgress, 0.18f);
 
@@ -312,16 +322,6 @@ internal static class NativeFbxSceneImporter
                                 ? resolvedNodeMaterials
                                 : [];
 
-                            IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint =
-                                hasSkinBinding
-                                    ? BuildSkinWeightsByControlPoint(
-                                        skinBinding,
-                                        sceneNode.Transform,
-                                        importWorld,
-                                        nodesByObjectId,
-                                        meshGeometry.ControlPoints.Count)
-                                    : null;
-
                             workItems.Add(new MeshBuildWorkItem(
                                 workItems.Count,
                                 modelObjectId,
@@ -331,7 +331,7 @@ internal static class NativeFbxSceneImporter
                                 intermediateNode,
                                 nodeMaterials,
                                 sceneNode.Transform.WorldMatrix,
-                                skinWeightsByControlPoint,
+                                hasSkinBinding ? skinBinding : null,
                                 blendShapeChannels));
                         }
                     }
@@ -340,6 +340,7 @@ internal static class NativeFbxSceneImporter
 
                 MeshBuildResult?[] buildResults = new MeshBuildResult?[workItems.Count];
                 bool generateMeshRenderersAsync = importOptions?.GenerateMeshRenderersAsync ?? true;
+                bool prepareGpuDeformation = importOptions?.PrepareGpuDeformationOnImport ?? true;
                 bool separateMeshIslands = importOptions?.SeparateMeshIslands ?? false;
                 int spatialPartitionMaxTriangles = importOptions?.SpatialPartitionMaxTriangles ?? 0;
 
@@ -358,6 +359,15 @@ internal static class NativeFbxSceneImporter
                     Parallel.For(0, workItems.Count, parallelOptions, workItemIndex =>
                     {
                         MeshBuildWorkItem workItem = workItems[workItemIndex];
+                        // Keep temporary weight dictionaries local to active mesh workers.
+                        var skinWeightsByControlPoint = workItem.SkinBinding is { } skinBinding
+                            ? BuildSkinWeightsByControlPoint(
+                                skinBinding,
+                                workItem.SceneNode.Transform,
+                                importWorld,
+                                nodesByObjectId,
+                                workItem.MeshGeometry.ControlPoints.Count)
+                            : null;
                         List<SubMesh> subMeshes = BuildSubMeshesForNode(
                             importer,
                             sourceFilePath,
@@ -367,7 +377,7 @@ internal static class NativeFbxSceneImporter
                             workItem.IntermediateNode,
                             workItem.NodeMaterials,
                             workItem.MeshWorldMatrix,
-                            workItem.SkinWeightsByControlPoint,
+                            skinWeightsByControlPoint,
                             workItem.BlendShapeChannels,
                             createdMaterials,
                             createdMeshes,
@@ -378,6 +388,7 @@ internal static class NativeFbxSceneImporter
                             cancellationToken,
                             rootNode.Transform,
                             generateMeshRenderersAsync,
+                            prepareGpuDeformation,
                             separateMeshIslands,
                             spatialPartitionMaxTriangles);
 
@@ -611,6 +622,7 @@ internal static class NativeFbxSceneImporter
         CancellationToken cancellationToken,
         TransformBase rootTransform,
         bool generateMeshRenderersAsync,
+        bool prepareGpuDeformation,
         bool separateMeshIslands,
         int spatialPartitionMaxTriangles)
     {
@@ -697,8 +709,7 @@ internal static class NativeFbxSceneImporter
                     if (chunk.Source.VertexCount == 0 || chunk.Indices.Count == 0)
                         continue;
 
-                    chunk.Source.BlendshapeNames = blendShapeNames;
-                    XRMesh xrMesh = new(chunk.Source, chunk.Indices);
+                    XRMesh xrMesh = chunk.BuildMesh(blendShapeNames);
                     SubMesh subMesh = new(new SubMeshLOD(material, xrMesh, 0.0f)
                     {
                         GenerateAsync = generateMeshRenderersAsync,
@@ -729,7 +740,7 @@ internal static class NativeFbxSceneImporter
                     for (int finalIndex = 0; finalIndex < finalSubMeshes.Count; finalIndex++)
                     {
                         XRMesh? finalMesh = finalSubMeshes[finalIndex].LODs.Min?.Mesh;
-                        if (finalMesh?.HasSkinning == true)
+                        if (prepareGpuDeformation && finalMesh?.HasSkinning == true)
                             AdvancedGpuDeformationResources.PrepareImportedMesh(
                                 finalMesh, cancellationToken);
                     }

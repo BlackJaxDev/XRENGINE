@@ -15,6 +15,37 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
         return DecodePixels(source);
     }
 
+    /// <summary>Checks decoded pixels in bounded chunks without retaining an exported image.</summary>
+    public (uint Width, uint Height) Validate(Stream encodedImage)
+    {
+        ArgumentNullException.ThrowIfNull(encodedImage);
+        using MagickImage source = new(encodedImage);
+        bool highDynamicRange = source.Format is MagickFormat.Exr or MagickFormat.Hdr or MagickFormat.Pfm;
+        if (source.Width == 0 || source.Height == 0)
+            throw new InvalidDataException("Image dimensions must be positive.");
+        // Keep the output-size constraint of Decode without allocating that output.
+        _ = checked((int)((long)source.Width * source.Height * (highDynamicRange ? 16 : 4)));
+        if (!highDynamicRange && RequiresSrgbConversion(source.ColorSpace))
+            source.ColorSpace = ColorSpace.sRGB;
+
+        using IPixelCollection<float> pixels = source.GetPixels()
+            ?? throw new InvalidDataException("ImageMagick returned no decoded pixels.");
+        int channelCount = checked((int)pixels.Channels);
+        if (channelCount == 0)
+            throw new InvalidDataException("ImageMagick returned no pixel channels.");
+        int rowValues = checked((int)source.Width * channelCount);
+        int rowsPerChunk = Math.Max(1, 1024 * 1024 / checked(rowValues * sizeof(float)));
+        for (int y = 0; y < source.Height; y += rowsPerChunk)
+        {
+            uint rows = (uint)Math.Min(rowsPerChunk, (int)source.Height - y);
+            // Read the complete pixel cache. A header-only probe can accept damaged data.
+            ReadOnlySpan<float> chunk = pixels.GetReadOnlyArea(0, y, source.Width, rows);
+            if (chunk.Length != checked(rowValues * (int)rows))
+                throw new InvalidDataException("ImageMagick returned an incomplete image.");
+        }
+        return (source.Width, source.Height);
+    }
+
     public IReadOnlyList<RuntimeImage> DecodeFrames(ReadOnlyMemory<byte> encodedImage)
     {
         using MagickImageCollection collection = new(encodedImage.Span);

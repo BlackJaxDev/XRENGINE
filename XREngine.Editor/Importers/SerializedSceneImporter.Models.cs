@@ -30,7 +30,7 @@ internal static partial class SerializedSceneImporter
                 "Only deterministic generation 2 correspondence is supported.");
         }
 
-        bool? nativeHasContentBasis = ValidateSourceModelCoordinates(modelPath, metadata);
+        bool? nativeHasContentBasis = ValidateSourceModelCoordinates(modelPath, metadata, state);
         Dictionary<string, XRMaterial> externalMaterials = ImportExternalMaterialRemaps(metadata, state);
         if (string.Equals(Path.GetExtension(modelPath), ".fbx", StringComparison.OrdinalIgnoreCase))
             AddConnectedFbxMaterialRemapAliases(modelPath, externalMaterials, state);
@@ -39,6 +39,7 @@ internal static partial class SerializedSceneImporter
         using var importer = new ModelAssetImporter(modelPath, onCompleted: null, materialFactory: null)
         {
             ImportOptions = options,
+            FbxSourceDocuments = state.Context.FbxSourceDocuments,
         };
         Func<string, XRTexture2D> defaultTextureFactory = importer.MakeTextureAction;
         importer.MakeTextureAction = path => ResolveModelTexture(path, defaultTextureFactory, state);
@@ -84,7 +85,7 @@ internal static partial class SerializedSceneImporter
             backendEvidence,
             modelPath);
         if (string.Equals(Path.GetExtension(modelPath), ".fbx", StringComparison.OrdinalIgnoreCase))
-            ResolveFbxMaterialSlots(root, modelPath);
+            ResolveFbxMaterialSlots(root, modelPath, state);
         if (nativeHasContentBasis is { } hasContentBasis)
             root = ConvertImportedModelCoordinates(root, actualBackend, hasContentBasis);
         root = CollapseAssimpSyntheticRoot(root, modelPath, metadata, options, state);
@@ -153,6 +154,7 @@ internal static partial class SerializedSceneImporter
             OptimizeGraph = false,
             OptimizeMeshes = false,
             DeferMeshletCookingUntilPostNormalization = true,
+            PrepareGpuDeformationOnImport = false,
             ProcessMeshesAsynchronously = false,
             GenerateMeshRenderersAsync = false,
             MaterialRemap = externalMaterials.ToDictionary(

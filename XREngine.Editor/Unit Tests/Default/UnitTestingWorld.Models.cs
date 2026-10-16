@@ -408,7 +408,8 @@ public static partial class EditorUnitTests
             void ScheduleModelImport(
                 Settings.ModelImportSettings model,
                 string? sourcePath = null,
-                string? sourceProjectRoot = null)
+                string? sourceProjectRoot = null,
+                Action? onSerializedImportCompleted = null)
             {
                 string resolvedPath = sourcePath ?? ResolveModelPath(desktopDir, model.Path);
                 if (!File.Exists(resolvedPath))
@@ -417,6 +418,7 @@ public static partial class EditorUnitTests
                     if (model.Kind is UnitTestModelImportKind.Static)
                         CompleteStaticImportSlot();
                     CompleteAllModelImportSlot();
+                    onSerializedImportCompleted?.Invoke();
                     return;
                 }
 
@@ -437,12 +439,19 @@ public static partial class EditorUnitTests
                                     Interlocked.Add(ref pendingStaticImports, entries.Count);
 
                                 int nextEntryIndex = 0;
+                                int entryInFlight = 0;
+                                void ReleaseEntry() => Volatile.Write(ref entryInFlight, 0);
                                 Engine.AddAppThreadCoroutine(() =>
                                 {
                                     if (nextEntryIndex >= entries.Count)
                                         return true;
+                                    if (Volatile.Read(ref entryInFlight) != 0)
+                                        return false;
 
-                                    ScheduleModelImport(model, entries[nextEntryIndex++], projectRoot);
+                                    // Keep native model decoders and temporary hierarchy data from
+                                    // different package roots out of memory at the same time.
+                                    Volatile.Write(ref entryInFlight, 1);
+                                    ScheduleModelImport(model, entries[nextEntryIndex++], projectRoot, ReleaseEntry);
                                     return nextEntryIndex >= entries.Count;
                                 });
                                 if (model.Kind is UnitTestModelImportKind.Static)
@@ -532,17 +541,22 @@ public static partial class EditorUnitTests
                                     }
                                     finally
                                     {
-                                        CompleteAllModelImportSlot();
+                                        try { CompleteAllModelImportSlot(); }
+                                        finally { onSerializedImportCompleted?.Invoke(); }
                                     }
                                 }
                             }, $"UnitTestingWorld: Finish Unity prefab import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
                         },
                         onError: ex =>
                         {
-                            Debug.MeshesException(ex, $"[UnityPrefab] Failed to import prefab: {resolvedPath}");
-                            if (model.Kind is UnitTestModelImportKind.Static)
-                                CompleteStaticImportSlot();
-                            CompleteAllModelImportSlot();
+                            try
+                            {
+                                Debug.MeshesException(ex, $"[UnityPrefab] Failed to import prefab: {resolvedPath}");
+                                if (model.Kind is UnitTestModelImportKind.Static)
+                                    CompleteStaticImportSlot();
+                                CompleteAllModelImportSlot();
+                            }
+                            finally { onSerializedImportCompleted?.Invoke(); }
                         },
                         sourceProjectRoot);
                     return;

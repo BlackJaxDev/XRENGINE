@@ -577,7 +577,7 @@ namespace XREngine.Components.Lights
         private static int ResolveShadowMomentSmallestAllowedMipmapLevel(bool momentEncoding, bool useMipmaps, uint width, uint height)
             => momentEncoding && useMipmaps
                 ? XRTexture.GetSmallestMipmapLevel(width, height)
-                : 1000;
+                : 0;
 
         /// <summary>
         /// Resolves the appropriate shadow map format for directional sampling based on the current settings.

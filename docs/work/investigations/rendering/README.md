@@ -31,8 +31,43 @@ sections describe the historical point-in-time state, not the current backlog.
   0.92 GiB sampled editor-private peak. Complete avatar import, rendering, and
   the reported lag remain unverified.
   A later CPU probe measured 109 MB of cold source-optimizer allocation for one
-  Advanced shader. Span-based line and identifier scans now compile, but their
-  output-hash comparison was held below the 4 GiB launch threshold.
+  Advanced shader. Span-based line and identifier scans passed exact source
+  and interface comparisons. Advanced cold optimization allocation fell to
+  51 MB. A guarded startup reached all seven companion sources before the RAM
+  reserve stopped it. Host sampling found about 370 MiB of audio-process growth;
+  legacy listeners now defer device creation until native audio demand. The
+  native audio checks and editor startup passed. Package roots now convert
+  one at a time, and dependency graphs scan each reached file once. A guarded
+  retry imported seven hidden prefab scenes and one visible demo scene before
+  reaching the 2 GiB editor-private stop. Directional-shadow arrays now omit
+  unused mip levels; runtime logs confirm one level at full resolution. Import
+  still reaches the private-memory guard. The latest run observed a 2.54 GiB
+  peak during shutdown, so the scratch monitor now requests direct termination
+  before session bookkeeping. Full Aryia import remains unverified.
+  CPU isolation now uses a verified 2 GiB Windows job cap before child startup.
+  It separates the main scene's large CPU import cost from shadow storage.
+  Streamed geometry conversion passed exact populated-data comparisons with
+  40–50% fewer managed allocations. Stale imported deformation payloads and
+  repeated texture validation have further fixes. Their builds passed. The CPU
+  retry confirmed release of 116.9 MiB of stale deformation data, then stopped
+  at the unchanged 3 GiB RAM reserve during main-scene texture validation.
+  Sampled process private memory peaked at 1.81 GiB. Full import remains open.
+  Full-decode texture validation now omits unused RGBA export. A focused 4096²
+  texture check reduced the sampled process peak from 383 MiB to 203 MiB and
+  passed damaged-pixel rejection checks. The full CPU retry passed texture
+  validation, then hit the 2 GiB cap during repeated avatar-model import.
+  Native import now releases consumed packed chunks, builds weight dictionaries
+  per active worker, and skips premature deformation preparation for Unity.
+  Packed source tangents stay implicit while zero. Exact CPU mesh comparisons
+  passed. The full CPU import then completed all 26 roots in 88.01 seconds,
+  with all four avatar hierarchies, mesh buffers, and bones independent. Peak
+  private memory was 1.970 GiB and minimum available RAM was 3.018 GiB. Limits
+  stayed unchanged. The margin is small; GPU rendering remains unverified.
+  The next change reuses one parsed FBX source revision per root import while
+  keeping runtime instances separate. Builds passed, but its full CPU retry
+  stopped at the 3 GiB RAM reserve before the independence audit. A final
+  dictionary-capacity reduction and cache-contract probe still need validation;
+  available RAM fell below the unchanged 4 GiB launch requirement.
 - [Math selection AOT exception and frozen view](2026-10-13-math-selection-aot-and-blank-view.md)
   records the gizmo asset fixes, Vulkan review, and live checks of a view that
   showed one new frame per resize.

@@ -4,6 +4,19 @@ This document records bugs that were found and fixed in `DefaultRenderPipeline` 
 
 ---
 
+## Directional Shadow Mip Storage
+
+Directional cascade raster depth arrays use only mip zero. Set both mip limits
+to zero when creating them. Color arrays also use one level unless moment
+encoding and moment mipmaps are both enabled. `AutoGenerateMipmaps = false`
+alone does not limit immutable texture storage: the OpenGL array allocator
+uses `SmallestMipmapLevel + 1`. A default limit of 1000 allocates a full chain,
+including levels that the shadow passes never write or sample.
+
+Shadow atlas raster depth arrays also use only mip zero. Set both mip limits
+to zero for every atlas kind. This keeps depth storage consistent with the
+atlas memory budget. Keep moment color filtering and mip policy separate.
+
 ## Explicit Output Failure Policy
 
 `XRRenderPipelineInstance.PropagateCommandExceptions` lets an explicit frame
@@ -80,6 +93,20 @@ Required mode still rejects an unsupported initialized renderer.
 ## Resource Generation Lifecycle
 
 ### Imported And Forward Buffer Ownership
+
+An importer that changes geometry after `PrepareImportedMesh` must call
+`DiscardImportedMeshPreparation` before the change. The imported deformation
+cache contains managed arrays for the old geometry. Removing that entry does
+not dispose mesh buffers or arrays already held by a pending consumer. Existing
+source witnesses reject stale pending work; a cache miss uses the normal
+budgeted renderer preparation path.
+
+Import geometry conversion reads packed blendshape entries one vertex at a
+time. A compact base-attribute snapshot preserves the original targets while
+base writes occur before the blendshape publication ticket is captured. The
+existing remap, sparse, quantized, swap, and rollback paths stay in use. Empty
+or duplicate names and duplicate active entries keep the materialized path
+to preserve its name lookup behavior.
 
 Replaceable CPU buffer owners call `XRDataBuffer.RetireBindingStorage()`.
 Retirement stops new binding admission and defers `Dispose()` until counted

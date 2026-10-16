@@ -11,6 +11,7 @@ public sealed class SourceProjectImportContext
 {
     private readonly Dictionary<string, XRMaterial> _materialCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, XRTexture2D> _textureCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (long Length, long LastWriteTicks)> _validatedTextures = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<SerializedAnimatorRecord, SceneNode> _animatorOwners = [];
     private readonly Dictionary<SerializedAvatarAnimationGraphRecord, SceneNode> _avatarAnimationGraphOwners = [];
     private readonly HashSet<string> _reportedIndexDiagnostics = new(StringComparer.Ordinal);
@@ -53,6 +54,8 @@ public sealed class SourceProjectImportContext
     public List<UnsupportedSourceBehaviourMetadata> UnsupportedBehaviours { get; } = [];
     public HashSet<string> ActiveImports { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<SourceAssetIdentity, object> ImportCache { get; } = [];
+    /// <summary>Parsed source data for the active root import. Returned documents are read-only.</summary>
+    internal XREngine.Fbx.FbxSourceDocumentCache FbxSourceDocuments { get; } = new();
     public CancellationToken CancellationToken { get; }
     public Action<float, string>? Progress { get; }
     /// <summary>Selects the backend for FBX model bases resolved during Unity prefab composition.</summary>
@@ -63,6 +66,15 @@ public sealed class SourceProjectImportContext
     public bool HasPartialContent => _recoveredPartialContent ||
         DependencyGraph?.UnresolvedEdges.Any(static edge => edge.Kind == SourceImportDependencyKind.RequiredVisual) == true;
     public DateTime ImportStartedAtUtc { get; }
+
+    /// <summary>Checks whether this import already decoded the same texture revision.</summary>
+    internal bool IsTextureValidated(string sourcePath, long length, long lastWriteTicks)
+        => _validatedTextures.TryGetValue(sourcePath, out var revision) &&
+           revision == (length, lastWriteTicks);
+
+    /// <summary>Records successful decoding without retaining image pixels.</summary>
+    internal void RecordValidatedTexture(string sourcePath, long length, long lastWriteTicks)
+        => _validatedTextures[sourcePath] = (length, lastWriteTicks);
 
     public SourceDependencyGraph DiscoverDependencies()
     {
