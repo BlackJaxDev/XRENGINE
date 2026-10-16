@@ -14,6 +14,7 @@ public sealed class SourceProjectImportContext
     private readonly Dictionary<SerializedAnimatorRecord, SceneNode> _animatorOwners = [];
     private readonly Dictionary<SerializedAvatarAnimationGraphRecord, SceneNode> _avatarAnimationGraphOwners = [];
     private readonly HashSet<string> _reportedIndexDiagnostics = new(StringComparer.Ordinal);
+    private bool _recoveredPartialContent;
 
     public SourceProjectImportContext(
         string entrySourcePath,
@@ -21,7 +22,8 @@ public sealed class SourceProjectImportContext
         string? explicitProjectOrAssetsRoot = null,
         CancellationToken cancellationToken = default,
         Action<float, string>? progress = null,
-        FbxImportBackend fbxBackend = FbxImportBackend.Assimp)
+        FbxImportBackend fbxBackend = FbxImportBackend.Assimp,
+        bool allowPartialImport = false)
     {
         EntrySourcePath = Path.GetFullPath(entrySourcePath);
         OutputDestination = string.IsNullOrWhiteSpace(outputDestination)
@@ -30,6 +32,7 @@ public sealed class SourceProjectImportContext
         ProjectLocation = SourceProjectLocator.Locate(EntrySourcePath, explicitProjectOrAssetsRoot);
         GuidIndex = SourceGuidIndex.GetOrCreate(ProjectLocation.ProjectRoot);
         FbxBackend = fbxBackend;
+        AllowPartialImport = allowPartialImport;
         Resolver = new SourceAssetResolver(ProjectLocation.ProjectRoot, this);
         CancellationToken = cancellationToken;
         Progress = progress;
@@ -54,6 +57,11 @@ public sealed class SourceProjectImportContext
     public Action<float, string>? Progress { get; }
     /// <summary>Selects the backend for FBX model bases resolved during Unity prefab composition.</summary>
     public FbxImportBackend FbxBackend { get; }
+    /// <summary>Allows available content to import when visual dependencies are missing.</summary>
+    public bool AllowPartialImport { get; }
+    /// <summary>Indicates that source content was omitted or replaced during conversion.</summary>
+    public bool HasPartialContent => _recoveredPartialContent ||
+        DependencyGraph?.UnresolvedEdges.Any(static edge => edge.Kind == SourceImportDependencyKind.RequiredVisual) == true;
     public DateTime ImportStartedAtUtc { get; }
 
     public SourceDependencyGraph DiscoverDependencies()
@@ -66,7 +74,7 @@ public sealed class SourceProjectImportContext
         [
             .. graph.UnresolvedEdges.Where(static edge => edge.Kind == SourceImportDependencyKind.RequiredVisual),
         ];
-        if (requiredMissing.Length > 0)
+        if (requiredMissing.Length > 0 && !AllowPartialImport)
         {
             string summary = string.Join(
                 "; ",
@@ -76,6 +84,16 @@ public sealed class SourceProjectImportContext
         }
 
         return graph;
+    }
+
+    /// <summary>Records omitted or replaced source content without claiming complete conversion.</summary>
+    public void ReportPartialImport(string code, string message, string? sourcePath = null,
+        string? propertyPath = null, SourceAssetIdentity? identity = null)
+    {
+        _recoveredPartialContent = true;
+        AddDiagnostic(code, SourceImportDiagnosticSeverity.Warning,
+            SourceImportDiagnosticCategory.MaterialDowngrade, message, sourcePath, propertyPath, identity);
+        Debug.MeshesWarning(message);
     }
 
     public T GetOrAddCached<T>(string sourcePath, Func<T> factory) where T : class

@@ -7,6 +7,32 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Current focus
 
+- [Unity import shader compiler pressure](2026-10-15-unity-import-shader-compiler-pressure.md)
+  records delayed OpenGL compile stalls, compiler allocation failures, timeout
+  retries, the correlated Codex resource failure, and bounded Fishnet CPU
+  compiler measurements after static lighting-path removal and shared local-light
+  evaluation, including the dynamic lighting variant. The later single-material
+  runtime retry still reached the 2 GiB stop limit during driver linking. The
+  later CPU-only checks reduced repeated Vogel paths and four-slot depth-filter
+  copies. Stage measurements attribute the dynamic 1.79 GiB peak to native
+  optimization; pass isolation identifies redundancy elimination. Shared local
+  lighting, point metadata indexing, and shared receivers reduced the CPU peak
+  to 1.14 GiB after contact-loop and atlas-filter sharing. The dynamic compile
+  passed with the unchanged 3 GiB RAM
+  reserve, 2 GiB child-private limit, and 120-second limit. Driver-link memory
+  after these changes remains unverified. A full Aryia package attempt with the
+  authorized 4 GiB launch check stopped after 8.5 seconds at the unchanged
+  3 GiB available-RAM threshold. Editor-private memory peaked at 1.33 GiB.
+  Package preparation now completes in a CPU process with 54% fewer managed
+  allocated bytes. HDR decoding removes temporary float arrays and releases
+  owned output on disposal; the controlled image check reduced peak process
+  memory by about 128 MiB with identical pixels. The next full-package runtime
+  attempt still reached the 3 GiB RAM stop threshold during startup, with a
+  0.92 GiB sampled editor-private peak. Complete avatar import, rendering, and
+  the reported lag remain unverified.
+  A later CPU probe measured 109 MB of cold source-optimizer allocation for one
+  Advanced shader. Span-based line and identifier scans now compile, but their
+  output-hash comparison was held below the 4 GiB launch threshold.
 - [Math selection AOT exception and frozen view](2026-10-13-math-selection-aot-and-blank-view.md)
   records the gizmo asset fixes, Vulkan review, and live checks of a view that
   showed one new frame per resize.

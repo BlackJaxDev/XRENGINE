@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Core;
+using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Caching;
 using XREngine.Scene.Prefabs;
@@ -89,7 +90,8 @@ internal static partial class SerializedSceneImporter
         string? explicitProjectOrAssetsRoot,
         CancellationToken cancellationToken,
         Action<float, string>? progress,
-        FbxImportBackend fbxBackend = FbxImportBackend.Assimp)
+        FbxImportBackend fbxBackend = FbxImportBackend.Assimp,
+        bool allowPartialImport = false)
         => ImportPrefabWithManifest(
             filePath,
             outputDestination,
@@ -98,7 +100,8 @@ internal static partial class SerializedSceneImporter
             progress,
             new ModelCookSettings(),
             ModelCookOverrideSnapshot.Empty,
-            fbxBackend);
+            fbxBackend,
+            allowPartialImport);
 
     private static SerializedPrefabConversionResult ImportPrefabWithManifest(
         string filePath,
@@ -108,7 +111,8 @@ internal static partial class SerializedSceneImporter
         Action<float, string>? progress,
         ModelCookSettings cookSettings,
         ModelCookOverrideSnapshot cookOverrides,
-        FbxImportBackend fbxBackend)
+        FbxImportBackend fbxBackend,
+        bool allowPartialImport = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         ArgumentNullException.ThrowIfNull(cookSettings);
@@ -124,7 +128,8 @@ internal static partial class SerializedSceneImporter
             explicitProjectOrAssetsRoot,
             cancellationToken,
             progress,
-            fbxBackend);
+            fbxBackend,
+            allowPartialImport);
         context.DiscoverDependencies();
         var state = new ImportState(context);
         ImportedHierarchy hierarchy = ImportHierarchy(normalizedPath, state);
@@ -159,7 +164,9 @@ internal static partial class SerializedSceneImporter
             diagnostic.Category == SourceImportDiagnosticCategory.AvatarComponent &&
             diagnostic.Severity == SourceImportDiagnosticSeverity.Error);
         SerializedPrefabImportManifest manifest = context.CreateManifest(
-            behaviorErrors
+            context.HasPartialContent
+                ? SourceImportCompletionTier.PartialVisual
+                : behaviorErrors
                 ? SourceImportCompletionTier.VisualPrefab
                 : SourceImportCompletionTier.VisualAndAvatarBehavior);
         SerializedPrefabDependencyMonitor.Register(manifest);
@@ -344,6 +351,15 @@ internal static partial class SerializedSceneImporter
                 ?? (!string.IsNullOrWhiteSpace(prefabPath)
                     ? Path.GetFileNameWithoutExtension(prefabPath)
                     : $"Missing Prefab {prefabInstance.SourcePrefab.Guid ?? prefabInstance.FileId.ToString(CultureInfo.InvariantCulture)}");
+
+            if (state.Context.AllowPartialImport)
+            {
+                state.Context.ReportPartialImport("UNITYPARTIAL0001",
+                    $"Skipped missing prefab '{placeholderName}' ({prefabInstance.SourcePrefab.Guid}). Available sibling objects are retained.",
+                    ownerHierarchy.SourcePath, "m_SourcePrefab",
+                    ToIdentity(prefabInstance.SourcePrefab, SourceAssetObjectKind.Asset));
+                return new ImportedHierarchy(ownerHierarchy.SourcePath);
+            }
 
             throw new SourceVisualImportException(
                 $"Required Unity prefab source '{prefabInstance.SourcePrefab.Guid ?? "<missing-guid>"}' could not be resolved while importing '{state.EntryFilePath}' (suggested name '{placeholderName}').");
@@ -1365,6 +1381,7 @@ internal static partial class SerializedSceneImporter
         public string EntryFilePath => Context.EntrySourcePath;
         public string ProjectRoot => Context.ProjectRoot;
         public HashSet<string> ActiveImports => Context.ActiveImports;
+        public Dictionary<string, XRMaterial> MissingMaterials { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<(string Path, SceneNode Owner, SceneNode Target, SceneNode? Parent)> ModelAnimationTargets { get; } = [];
         public List<(string Path, SceneNode Owner, SceneNode Target, string Channel)> ModelAnimationMorphTargets { get; } = [];
     }

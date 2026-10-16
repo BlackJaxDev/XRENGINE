@@ -175,17 +175,20 @@ internal static partial class SerializedSceneImporter
             string? materialPath = ResolveAssetPath(state, remap.TargetMaterial.Guid);
             if (string.IsNullOrWhiteSpace(materialPath) || !File.Exists(materialPath))
             {
+                if (state.Context.AllowPartialImport)
+                {
+                    materials[remap.SourceMaterialName] = GetMissingMaterial(
+                        new SourceReference(remap.TargetMaterial.FileId, remap.TargetMaterial.Guid, remap.TargetMaterial.Type), state);
+                    continue;
+                }
                 throw new SourceVisualImportException(
                     $"Required FBX material remap '{remap.SourceMaterialName}' ({remap.TargetMaterial.Guid}) " +
                     $"from '{metadata.SourceMetaPath}' could not be resolved.");
             }
 
-            XRMaterial material = state.Context.GetOrAddCached(
-                materialPath,
-                () => SerializedMaterialImporter.ImportWithReport(materialPath, state.Context).Material
-                    ?? throw new SourceVisualImportException($"Unity material importer returned no material for '{materialPath}'."));
+            XRMaterial material = LoadSerializedMaterial(materialPath, state)
+                ?? throw new SourceVisualImportException($"Unity material importer returned no material for '{materialPath}'.");
             materials[remap.SourceMaterialName] = material;
-            state.Context.MarkOutcome(materialPath, GetMaterialOutcome(material));
         }
         state.Context.Progress?.Invoke(0.22f, "FBX external material remaps converted");
 
@@ -204,14 +207,6 @@ internal static partial class SerializedSceneImporter
             state.Context.MarkOutcome(normalized, SourceImportConversionOutcome.Converted);
             return texture;
         });
-    }
-
-    private static SourceImportConversionOutcome GetMaterialOutcome(XRMaterial material)
-    {
-        return MaterialConversionReportRegistry.Instance.TryGet(material, out MaterialConversionReport? report) &&
-               report.Outcome == EMaterialConversionOutcome.ConvertedToSourceToon
-            ? SourceImportConversionOutcome.Downgraded
-            : SourceImportConversionOutcome.Converted;
     }
 
     private static void IndexModelHierarchy(

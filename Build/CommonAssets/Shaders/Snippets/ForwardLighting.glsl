@@ -1104,6 +1104,50 @@ float XRENGINE_GetDirectionalScreenSpaceContactBias(float contactDistance)
     return max(contactDistance * 0.001, 0.0001);
 }
 
+#if !defined(XRENGINE_UBER_DISABLE_FORWARD_SHADOWS) && !defined(XRENGINE_UBER_DISABLE_FORWARD_CONTACT_SHADOWS)
+// Share the ray march. Keep the texture type branch at each implicit read.
+vec4 XRENGINE_FetchContactShadowDepth(int sourceMode, vec2 uv, float layer)
+{
+    if (sourceMode == 1)
+        return texture(ForwardContactDepthViewArray, vec3(uv, layer));
+    return texture(ForwardContactDepthView, uv);
+}
+
+vec4 XRENGINE_FetchContactShadowNormal(int sourceMode, vec2 uv, float layer)
+{
+    if (sourceMode == 1)
+        return texture(ForwardContactNormalViewArray, vec3(uv, layer));
+    return texture(ForwardContactNormalView, uv);
+}
+
+float XRENGINE_SampleContactShadowScreenSpace(
+    int sceneDepth,
+    int sceneNormal,
+    float layer,
+    vec2 screenSize,
+    mat4 viewMatrix,
+    mat4 inverseProjMatrix,
+    mat4 inverseViewMatrix,
+    mat4 viewProjectionMatrix,
+    int depthMode,
+    vec3 fragPosWS,
+    vec3 normalWS,
+    vec3 lightDirWS,
+    float receiverOffset,
+    float compareBias,
+    float contactDistance,
+    int contactSamples,
+    float contactThickness,
+    float contactFadeStart,
+    float contactFadeEnd,
+    float contactNormalOffset,
+    float jitterStrength,
+    float viewDepth)
+{
+    XRENGINE_SHADOW_BODY_SampleContactShadowScreenSpaceWithNormal
+}
+#endif
+
 float XRENGINE_SampleForwardContactShadowScreenSpace(
     vec3 fragPosWS,
     vec3 normalWS,
@@ -1122,36 +1166,13 @@ float XRENGINE_SampleForwardContactShadowScreenSpace(
 #ifdef XRENGINE_UBER_DISABLE_FORWARD_CONTACT_SHADOWS
     return 1.0;
 #else
-    if (ForwardContactShadowsArrayEnabled)
-    {
-        return XRENGINE_SampleContactShadowScreenSpace(
-            ForwardContactDepthViewArray,
-            ForwardContactNormalViewArray,
-            float(XRENGINE_GetForwardResolvedViewIndex()),
-            vec2(ScreenWidth, ScreenHeight),
-            XRENGINE_GetForwardResolvedViewMatrix(),
-            XRENGINE_GetForwardResolvedInverseProjMatrix(),
-            XRENGINE_GetForwardResolvedInverseViewMatrix(),
-            XRENGINE_GetForwardResolvedViewProjectionMatrix(),
-            DepthMode,
-            fragPosWS,
-            normalWS,
-            lightDirWS,
-            receiverOffset,
-            compareBias,
-            contactDistance,
-            contactSamples,
-            contactThickness,
-            contactFadeStart,
-            contactFadeEnd,
-            contactNormalOffset,
-            jitterStrength,
-            viewDepth);
-    }
-
+    int sourceMode = ForwardContactShadowsArrayEnabled ? 1 : 0;
+    float layer = ForwardContactShadowsArrayEnabled
+        ? float(XRENGINE_GetForwardResolvedViewIndex()) : 0.0;
     return XRENGINE_SampleContactShadowScreenSpace(
-        ForwardContactDepthView,
-        ForwardContactNormalView,
+        sourceMode,
+        sourceMode,
+        layer,
         vec2(ScreenWidth, ScreenHeight),
         XRENGINE_GetForwardResolvedViewMatrix(),
         XRENGINE_GetForwardResolvedInverseProjMatrix(),
@@ -1794,6 +1815,7 @@ vec3 XRENGINE_CalcDirLight(int lightIndex, DirLight light, vec3 normal, vec3 fra
 }
 
 #ifndef XRENGINE_UBER_DISABLE_FORWARD_SHADOWS
+#pragma snippet "ForwardShadowSampling"
 // Forward+ light lists vary per fragment. OpenGL sampler arrays require
 // dynamically uniform indices, so point shadow cubemaps dispatch through
 // fixed-slot branches instead of indexing the sampler array by runtime slot.
@@ -1860,19 +1882,11 @@ float XRENGINE_SamplePointContactShadowCubeSlot(
     float jitterStrength,
     float viewDepth)
 {
-    switch (shadowSlot)
-    {
-    case 0:
-        return XRENGINE_SampleContactShadowCube(PointLightShadowMaps[0], fragPosWS, normalWS, lightPosWS, receiverOffset, compareBias, farPlaneDist, contactDistance, contactSamples, contactThickness, contactFadeStart, contactFadeEnd, contactNormalOffset, jitterStrength, viewDepth);
-    case 1:
-        return XRENGINE_SampleContactShadowCube(PointLightShadowMaps[1], fragPosWS, normalWS, lightPosWS, receiverOffset, compareBias, farPlaneDist, contactDistance, contactSamples, contactThickness, contactFadeStart, contactFadeEnd, contactNormalOffset, jitterStrength, viewDepth);
-    case 2:
-        return XRENGINE_SampleContactShadowCube(PointLightShadowMaps[2], fragPosWS, normalWS, lightPosWS, receiverOffset, compareBias, farPlaneDist, contactDistance, contactSamples, contactThickness, contactFadeStart, contactFadeEnd, contactNormalOffset, jitterStrength, viewDepth);
-    case 3:
-        return XRENGINE_SampleContactShadowCube(PointLightShadowMaps[3], fragPosWS, normalWS, lightPosWS, receiverOffset, compareBias, farPlaneDist, contactDistance, contactSamples, contactThickness, contactFadeStart, contactFadeEnd, contactNormalOffset, jitterStrength, viewDepth);
-    default:
+    if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS)
         return 1.0;
-    }
+
+    // Share the contact loop; select the literal sampler only at each fetch.
+    return XRENGINE_SampleContactShadowCube(shadowSlot, fragPosWS, normalWS, lightPosWS, receiverOffset, compareBias, farPlaneDist, contactDistance, contactSamples, contactThickness, contactFadeStart, contactFadeEnd, contactNormalOffset, jitterStrength, viewDepth);
 }
 
 float XRENGINE_SamplePointShadowCubeSlot(
@@ -2017,8 +2031,10 @@ float XRENGINE_GetPointAtlasSampleRadius(float authoredTexelSize, float filterRa
     return 2.0 * max(authoredTexelSize, 1e-7) * max(1.0, requestedScale);
 }
 
+// Pass the validated record index so each tap loads only its selected face.
+// Do not copy the arrays for all six faces into function-local storage.
 float XRENGINE_ReadPointAtlasDepthForDirection(
-    ForwardPointShadowData shadowData,
+    int shadowRecordIndex,
     vec3 sampleDirection,
     out bool sampleable)
 {
@@ -2030,7 +2046,7 @@ float XRENGINE_ReadPointAtlasDepthForDirection(
         return 1.0;
     }
 
-    ivec4 atlasI0 = shadowData.AtlasPacked0[faceIndex];
+    ivec4 atlasI0 = PointLightShadows[shadowRecordIndex].AtlasPacked0[faceIndex];
     sampleable = atlasI0.x != 0 &&
         atlasI0.y >= 0 &&
         atlasI0.y < XRENGINE_GetPointShadowAtlasLayerCount();
@@ -2041,17 +2057,17 @@ float XRENGINE_ReadPointAtlasDepthForDirection(
         PointLightShadowAtlas,
         localUv,
         float(atlasI0.y),
-        shadowData.AtlasParams0[faceIndex]);
+        PointLightShadows[shadowRecordIndex].AtlasParams0[faceIndex]);
 }
 
 float XRENGINE_SamplePointAtlasDirection(
-    ForwardPointShadowData shadowData,
+    int shadowRecordIndex,
     vec3 sampleDirection,
     float receiverDepth,
     float bias)
 {
     bool sampleable;
-    float sampleDepth = XRENGINE_ReadPointAtlasDepthForDirection(shadowData, sampleDirection, sampleable);
+    float sampleDepth = XRENGINE_ReadPointAtlasDepthForDirection(shadowRecordIndex, sampleDirection, sampleable);
     if (!sampleable)
         return 1.0;
 
@@ -2059,16 +2075,16 @@ float XRENGINE_SamplePointAtlasDirection(
 }
 
 float XRENGINE_SamplePointAtlasCubeSimple(
-    ForwardPointShadowData shadowData,
+    int shadowRecordIndex,
     vec3 shadowDir,
     float receiverDepth,
     float bias)
 {
-    return XRENGINE_SamplePointAtlasDirection(shadowData, normalize(shadowDir), receiverDepth, bias);
+    return XRENGINE_SamplePointAtlasDirection(shadowRecordIndex, normalize(shadowDir), receiverDepth, bias);
 }
 
 float XRENGINE_SamplePointAtlasCubePCF(
-    ForwardPointShadowData shadowData,
+    int shadowRecordIndex,
     vec3 shadowDir,
     float receiverDepth,
     float bias,
@@ -2081,14 +2097,14 @@ float XRENGINE_SamplePointAtlasCubePCF(
     for (int i = 0; i < 20; ++i)
     {
         vec3 sampleDir = normalize(baseDir + XRENGINE_GetShadowCubeKernelTap(i) * radius);
-        lit += XRENGINE_SamplePointAtlasDirection(shadowData, sampleDir, receiverDepth, bias);
+        lit += XRENGINE_SamplePointAtlasDirection(shadowRecordIndex, sampleDir, receiverDepth, bias);
     }
 
     return lit / 20.0;
 }
 
 float XRENGINE_SamplePointAtlasCubeVogel(
-    ForwardPointShadowData shadowData,
+    int shadowRecordIndex,
     vec3 shadowDir,
     float receiverDepth,
     float bias,
@@ -2097,7 +2113,7 @@ float XRENGINE_SamplePointAtlasCubeVogel(
 {
     int clampedTaps = clamp(tapCount, 1, XRENGINE_MaxVogelShadowTaps);
     if (clampedTaps <= 1)
-        return XRENGINE_SamplePointAtlasCubeSimple(shadowData, shadowDir, receiverDepth, bias);
+        return XRENGINE_SamplePointAtlasCubeSimple(shadowRecordIndex, shadowDir, receiverDepth, bias);
 
     vec3 baseDir = normalize(shadowDir);
     vec3 tangent;
@@ -2114,14 +2130,14 @@ float XRENGINE_SamplePointAtlasCubeVogel(
 
         vec2 diskTap = XRENGINE_GetVogelDiskTapRotated(i, clampedTaps, rotation) * radius;
         vec3 sampleDir = normalize(baseDir + tangent * diskTap.x + bitangent * diskTap.y);
-        lit += XRENGINE_SamplePointAtlasDirection(shadowData, sampleDir, receiverDepth, bias);
+        lit += XRENGINE_SamplePointAtlasDirection(shadowRecordIndex, sampleDir, receiverDepth, bias);
     }
 
     return lit / float(clampedTaps);
 }
 
 float XRENGINE_BlockerSearchPointAtlasCube(
-    ForwardPointShadowData shadowData,
+    int shadowRecordIndex,
     vec3 shadowDir,
     float receiverDepth,
     float sampleRadius,
@@ -2145,7 +2161,7 @@ float XRENGINE_BlockerSearchPointAtlasCube(
         vec2 diskTap = XRENGINE_GetVogelDiskTapRotated(i, clampedSamples, rotation) * radius;
         vec3 sampleDir = normalize(baseDir + tangent * diskTap.x + bitangent * diskTap.y);
         bool sampleable;
-        float sampleDepth = XRENGINE_ReadPointAtlasDepthForDirection(shadowData, sampleDir, sampleable);
+        float sampleDepth = XRENGINE_ReadPointAtlasDepthForDirection(shadowRecordIndex, sampleDir, sampleable);
         if (sampleable && sampleDepth < receiverDepth)
         {
             blockerSum += sampleDepth;
@@ -2156,41 +2172,39 @@ float XRENGINE_BlockerSearchPointAtlasCube(
     return blockerCount > 0 ? blockerSum / float(blockerCount) : -1.0;
 }
 
-float XRENGINE_SamplePointAtlasCubeCHSS(
-    ForwardPointShadowData shadowData,
+// Return a negative radius when the blocker search finds no blocker.
+float XRENGINE_ResolvePointAtlasCubePenumbra(
+    int shadowRecordIndex,
     vec3 shadowDir,
     float receiverDepth,
     float bias,
     float farPlaneDist,
     float blockerSearchRadius,
     int blockerSamples,
-    int filterSamples,
     float lightSourceRadius,
     float minPenumbra,
     float maxPenumbra)
 {
     float biasedReceiverDepth = receiverDepth - bias;
     float avgBlockerDepth = XRENGINE_BlockerSearchPointAtlasCube(
-        shadowData,
+        shadowRecordIndex,
         shadowDir,
         biasedReceiverDepth,
         blockerSearchRadius,
         blockerSamples);
 
     if (avgBlockerDepth < 0.0)
-        return 1.0;
+        return -1.0;
 
     float receiverWorldDepth = biasedReceiverDepth * farPlaneDist;
     float blockerWorldDepth = avgBlockerDepth * farPlaneDist;
     float angularSourceRadius = max(lightSourceRadius, 0.0) / max(blockerWorldDepth, 0.0001);
     float rawPenumbra = (receiverWorldDepth - blockerWorldDepth) / max(blockerWorldDepth, 0.0001) * angularSourceRadius;
-    float penumbra = XRENGINE_ClampPenumbra(rawPenumbra, max(minPenumbra, 0.000001), max(maxPenumbra, minPenumbra));
-
-    return XRENGINE_SamplePointAtlasCubeVogel(shadowData, shadowDir, receiverDepth, bias, penumbra, filterSamples);
+    return XRENGINE_ClampPenumbra(rawPenumbra, max(minPenumbra, 0.000001), max(maxPenumbra, minPenumbra));
 }
 
 float XRENGINE_SamplePointAtlasCubeFiltered(
-    ForwardPointShadowData shadowData,
+    int shadowRecordIndex,
     vec3 shadowDir,
     float receiverDepth,
     float bias,
@@ -2205,31 +2219,29 @@ float XRENGINE_SamplePointAtlasCubeFiltered(
     float maxPenumbra,
     int vogelTapCount)
 {
-    if (softShadowMode == 3)
-        return XRENGINE_SamplePointAtlasCubeVogel(shadowData, shadowDir, receiverDepth, bias, sampleRadius, vogelTapCount);
+    int tapCount = vogelTapCount;
+    float radius = sampleRadius;
+    if (softShadowMode != 3)
+    {
+        tapCount = clamp(filterSamples, 1, XRENGINE_MaxVogelShadowTaps);
+        if (tapCount <= 1)
+            return XRENGINE_SamplePointAtlasCubeSimple(shadowRecordIndex, shadowDir, receiverDepth, bias);
 
-    int clampedFilterSamples = clamp(filterSamples, 1, XRENGINE_MaxVogelShadowTaps);
-    if (clampedFilterSamples <= 1)
-        return XRENGINE_SamplePointAtlasCubeSimple(shadowData, shadowDir, receiverDepth, bias);
+        if (softShadowMode == 2)
+        {
+            radius = XRENGINE_ResolvePointAtlasCubePenumbra(
+                shadowRecordIndex, shadowDir, receiverDepth, bias, farPlaneDist,
+                blockerSearchRadius, blockerSamples, lightSourceRadius, minPenumbra, maxPenumbra);
+            if (radius < 0.0)
+                return 1.0;
+        }
+        else if (softShadowMode != 1 && tapCount > 4)
+        {
+            return XRENGINE_SamplePointAtlasCubePCF(shadowRecordIndex, shadowDir, receiverDepth, bias, sampleRadius);
+        }
+    }
 
-    if (softShadowMode == 2)
-        return XRENGINE_SamplePointAtlasCubeCHSS(
-            shadowData,
-            shadowDir,
-            receiverDepth,
-            bias,
-            farPlaneDist,
-            blockerSearchRadius,
-            blockerSamples,
-            clampedFilterSamples,
-            lightSourceRadius,
-            minPenumbra,
-            maxPenumbra);
-
-    if (softShadowMode == 1 || clampedFilterSamples <= 4)
-        return XRENGINE_SamplePointAtlasCubeVogel(shadowData, shadowDir, receiverDepth, bias, sampleRadius, clampedFilterSamples);
-
-    return XRENGINE_SamplePointAtlasCubePCF(shadowData, shadowDir, receiverDepth, bias, sampleRadius);
+    return XRENGINE_SamplePointAtlasCubeVogel(shadowRecordIndex, shadowDir, receiverDepth, bias, radius, tapCount);
 }
 
 float XRENGINE_SampleSpotContactShadow2DSlot(
@@ -2249,19 +2261,11 @@ float XRENGINE_SampleSpotContactShadow2DSlot(
     float jitterStrength,
     float viewDepth)
 {
-    switch (shadowSlot)
-    {
-    case 0:
-        return XRENGINE_SampleContactShadow2D(SpotLightShadowMaps[0], worldToLightSpaceProjMatrix, fragPosWS, normalWS, lightDirWS, receiverOffset, compareBias, contactDistance, contactSamples, contactThickness, contactFadeStart, contactFadeEnd, contactNormalOffset, jitterStrength, viewDepth);
-    case 1:
-        return XRENGINE_SampleContactShadow2D(SpotLightShadowMaps[1], worldToLightSpaceProjMatrix, fragPosWS, normalWS, lightDirWS, receiverOffset, compareBias, contactDistance, contactSamples, contactThickness, contactFadeStart, contactFadeEnd, contactNormalOffset, jitterStrength, viewDepth);
-    case 2:
-        return XRENGINE_SampleContactShadow2D(SpotLightShadowMaps[2], worldToLightSpaceProjMatrix, fragPosWS, normalWS, lightDirWS, receiverOffset, compareBias, contactDistance, contactSamples, contactThickness, contactFadeStart, contactFadeEnd, contactNormalOffset, jitterStrength, viewDepth);
-    case 3:
-        return XRENGINE_SampleContactShadow2D(SpotLightShadowMaps[3], worldToLightSpaceProjMatrix, fragPosWS, normalWS, lightDirWS, receiverOffset, compareBias, contactDistance, contactSamples, contactThickness, contactFadeStart, contactFadeEnd, contactNormalOffset, jitterStrength, viewDepth);
-    default:
+    if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS)
         return 1.0;
-    }
+
+    // Share the contact loop; select the literal sampler only at each fetch.
+    return XRENGINE_SampleContactShadow2D(shadowSlot, worldToLightSpaceProjMatrix, fragPosWS, normalWS, lightDirWS, receiverOffset, compareBias, contactDistance, contactSamples, contactThickness, contactFadeStart, contactFadeEnd, contactNormalOffset, jitterStrength, viewDepth);
 }
 
 float XRENGINE_SampleSpotShadowMoment2DSlot(
@@ -2396,17 +2400,17 @@ float XRENGINE_ReadPointContactShadowOnly(int lightIndex, PointLight light, vec3
     if (!ForwardContactShadowsEnabled || lightIndex < 0 || lightIndex >= PointLightCount || lightIndex >= PointLightShadows.length())
         return 1.0;
 
-    ForwardPointShadowData shadowData = PointLightShadows[lightIndex];
-    ivec4 shadowI1 = shadowData.Packed1;
+    int shadowRecordIndex = lightIndex;
+    ivec4 shadowI1 = PointLightShadows[shadowRecordIndex].Packed1;
     if (shadowI1.z == 0)
         return 1.0;
 
-    vec4 shadowF2 = shadowData.Params2;
-    vec4 shadowF3 = shadowData.Params3;
-    vec4 shadowF4 = shadowData.Params4;
-    vec4 shadowF5 = shadowData.Params5;
-    ivec4 shadowI2 = shadowData.Packed2;
-    vec4 shadowF6 = shadowData.Params6;
+    vec4 shadowF2 = PointLightShadows[shadowRecordIndex].Params2;
+    vec4 shadowF3 = PointLightShadows[shadowRecordIndex].Params3;
+    vec4 shadowF4 = PointLightShadows[shadowRecordIndex].Params4;
+    vec4 shadowF5 = PointLightShadows[shadowRecordIndex].Params5;
+    ivec4 shadowI2 = PointLightShadows[shadowRecordIndex].Packed2;
+    vec4 shadowF6 = PointLightShadows[shadowRecordIndex].Params6;
     float contactDistance = shadowF2.w;
     float viewDepth = XRENGINE_GetForwardResolvedViewDepth(fragPos);
     int contactSampleCount = XRENGINE_ResolveContactShadowSampleCount(
@@ -2430,17 +2434,17 @@ float XRENGINE_ReadPointContactShadowOnly(int lightIndex, PointLight light, vec3
         viewDepth);
 }
 
-float XRENGINE_ReadPointAtlasShadowMap(ForwardPointShadowData shadowData, PointLight light, vec3 normal, vec3 fragPos)
+float XRENGINE_ReadPointAtlasShadowMap(int shadowRecordIndex, PointLight light, vec3 normal, vec3 fragPos)
 {
-    ivec4 shadowI0 = shadowData.Packed0;
-    ivec4 shadowI1 = shadowData.Packed1;
-    vec4 shadowF1 = shadowData.Params1;
-    vec4 shadowF2 = shadowData.Params2;
-    vec4 shadowF3 = shadowData.Params3;
-    vec4 shadowF4 = shadowData.Params4;
-    vec4 shadowF5 = shadowData.Params5;
-    ivec4 shadowI2 = shadowData.Packed2;
-    vec4 shadowF6 = shadowData.Params6;
+    ivec4 shadowI0 = PointLightShadows[shadowRecordIndex].Packed0;
+    ivec4 shadowI1 = PointLightShadows[shadowRecordIndex].Packed1;
+    vec4 shadowF1 = PointLightShadows[shadowRecordIndex].Params1;
+    vec4 shadowF2 = PointLightShadows[shadowRecordIndex].Params2;
+    vec4 shadowF3 = PointLightShadows[shadowRecordIndex].Params3;
+    vec4 shadowF4 = PointLightShadows[shadowRecordIndex].Params4;
+    vec4 shadowF5 = PointLightShadows[shadowRecordIndex].Params5;
+    ivec4 shadowI2 = PointLightShadows[shadowRecordIndex].Packed2;
+    vec4 shadowF6 = PointLightShadows[shadowRecordIndex].Params6;
 
     int debugMode = shadowI1.y;
     vec3 lightToFragBase = fragPos - light.Position;
@@ -2449,9 +2453,9 @@ float XRENGINE_ReadPointAtlasShadowMap(ForwardPointShadowData shadowData, PointL
     vec3 lightDirN = receiverDist > 1e-6 ? -lightToFragBase / receiverDist : vec3(0.0, 0.0, 1.0);
     vec2 faceUv;
     int faceIndex = XRENGINE_SelectPointShadowAtlasFace(lightToFragBase, faceUv);
-    ivec4 atlasI0 = shadowData.AtlasPacked0[faceIndex];
-    vec4 atlasUvScaleBias = shadowData.AtlasParams0[faceIndex];
-    vec4 atlasDepthParams = shadowData.AtlasParams1[faceIndex];
+    ivec4 atlasI0 = PointLightShadows[shadowRecordIndex].AtlasPacked0[faceIndex];
+    vec4 atlasUvScaleBias = PointLightShadows[shadowRecordIndex].AtlasParams0[faceIndex];
+    vec4 atlasDepthParams = PointLightShadows[shadowRecordIndex].AtlasParams1[faceIndex];
 
     float nearPlaneDist = max(atlasDepthParams.x, 0.0);
     float farPlaneDist = max(atlasDepthParams.y, nearPlaneDist + 0.001);
@@ -2530,7 +2534,7 @@ float XRENGINE_ReadPointAtlasShadowMap(ForwardPointShadowData shadowData, PointL
     if (encoding != XRENGINE_SHADOW_ENCODING_DEPTH)
     {
         int sampleFaceIndex = XRENGINE_SelectPointShadowAtlasFace(fragToLight, sampledFaceUv);
-        ivec4 sampleAtlasI0 = shadowData.AtlasPacked0[sampleFaceIndex];
+        ivec4 sampleAtlasI0 = PointLightShadows[shadowRecordIndex].AtlasPacked0[sampleFaceIndex];
         if (sampleAtlasI0.x == 0)
         {
             float fallbackLit = sampleAtlasI0.z == XRENGINE_SHADOW_FALLBACK_CONTACT_ONLY ? contact : 1.0;
@@ -2539,7 +2543,7 @@ float XRENGINE_ReadPointAtlasShadowMap(ForwardPointShadowData shadowData, PointL
             return fallbackLit;
         }
 
-        vec2 atlasUv = XRENGINE_ShadowAtlasUvFromLocal(sampledFaceUv, shadowData.AtlasParams0[sampleFaceIndex]);
+        vec2 atlasUv = XRENGINE_ShadowAtlasUvFromLocal(sampledFaceUv, PointLightShadows[shadowRecordIndex].AtlasParams0[sampleFaceIndex]);
         float momentReceiverDepth = clamp(receiverDepth - min(normalizedBias, 0.01), 0.0, 1.0);
         float litMoment = XRENGINE_SampleShadowMoment2DArray(
             PointLightShadowAtlas,
@@ -2573,7 +2577,7 @@ float XRENGINE_ReadPointAtlasShadowMap(ForwardPointShadowData shadowData, PointL
     }
 
     float lit = XRENGINE_SamplePointAtlasCubeFiltered(
-        shadowData,
+        shadowRecordIndex,
         fragToLight,
         receiverDepth,
         normalizedBias,
@@ -2598,23 +2602,37 @@ float XRENGINE_ReadPointAtlasShadowMap(ForwardPointShadowData shadowData, PointL
     return lit;
 }
 
-float XRENGINE_ReadShadowMapPointLegacySampler(
-    samplerCube shadowMap,
-    ForwardPointShadowData shadowData,
+struct XRENGINE_PointLegacyShadowReceiver
+{
+    vec3 FragToLight;
+    float BiasedLightDist;
+    float FarPlaneDist;
+    float SampleRadiusScale;
+    float BlockerSearchRadius;
+    float MinPenumbra;
+    float MaxPenumbra;
+    float Contact;
+};
+
+bool XRENGINE_PreparePointLegacyShadowReceiver(
+    int shadowSlot,
+    int shadowRecordIndex,
     PointLight light,
     vec3 normal,
-    vec3 fragPos)
+    vec3 fragPos,
+    out XRENGINE_PointLegacyShadowReceiver receiver,
+    out float completedVisibility)
 {
-    ivec4 shadowI0 = shadowData.Packed0;
-    ivec4 shadowI1 = shadowData.Packed1;
-    vec4 shadowF0 = shadowData.Params0;
-    vec4 shadowF1 = shadowData.Params1;
-    vec4 shadowF2 = shadowData.Params2;
-    vec4 shadowF3 = shadowData.Params3;
-    vec4 shadowF4 = shadowData.Params4;
-    vec4 shadowF5 = shadowData.Params5;
-    ivec4 shadowI2 = shadowData.Packed2;
-    vec4 shadowF6 = shadowData.Params6;
+    ivec4 shadowI1 = PointLightShadows[shadowRecordIndex].Packed1;
+    ivec4 shadowI2 = PointLightShadows[shadowRecordIndex].Packed2;
+    vec4 shadowF0 = PointLightShadows[shadowRecordIndex].Params0;
+    vec4 shadowF1 = PointLightShadows[shadowRecordIndex].Params1;
+    vec4 shadowF2 = PointLightShadows[shadowRecordIndex].Params2;
+    vec4 shadowF3 = PointLightShadows[shadowRecordIndex].Params3;
+    vec4 shadowF4 = PointLightShadows[shadowRecordIndex].Params4;
+    vec4 shadowF5 = PointLightShadows[shadowRecordIndex].Params5;
+    vec4 shadowF6 = PointLightShadows[shadowRecordIndex].Params6;
+    completedVisibility = 1.0;
 
     int debugMode = shadowI1.y;
     vec3 lightToFragBase = fragPos - light.Position;
@@ -2623,17 +2641,17 @@ float XRENGINE_ReadShadowMapPointLegacySampler(
     float nearPlaneDist = max(shadowF0.x, 0.0);
     float farPlaneDist = shadowF0.y;
     if (receiverDist >= farPlaneDist)
-        return 1.0;
+        return false;
 
     float NoL = max(dot(normal, lightDirN), 0.0);
-    float faceSize = max(float(textureSize(shadowMap, 0).x), 1.0);
+    float faceSize = XRENGINE_GetPointShadowFaceSizeForSlot(shadowSlot);
     float texelDirectionSpan = 2.0 / faceSize;
     float normalOffset = receiverDist * texelDirectionSpan * XRENGINE_GetBiasParamNormalTexels(shadowF5);
     vec3 offsetPosWS = fragPos + normal * normalOffset;
     vec3 fragToLight = offsetPosWS - light.Position;
     float lightDist = length(fragToLight);
     if (lightDist >= farPlaneDist)
-        return 1.0;
+        return false;
 
     // The cubemap shadow cameras clip everything inside the near plane.
     // Geometry crossing that plane can create a synthetic blocker shell near the light,
@@ -2642,7 +2660,7 @@ float XRENGINE_ReadShadowMapPointLegacySampler(
     {
         if (debugMode != 0)
             XRENGINE_TrySetForwardShadowDebug(debugMode, 1.0, nearPlaneDist / max(farPlaneDist, 0.001));
-        return 1.0;
+        return false;
     }
 
     float NoLSafe = max(NoL, 0.05);
@@ -2682,8 +2700,8 @@ float XRENGINE_ReadShadowMapPointLegacySampler(
                 shadowF3.w,
                 shadowF4.x,
                 viewDepth)
-            : XRENGINE_SampleContactShadowCube(
-                shadowMap,
+            : XRENGINE_SamplePointContactShadowCubeSlot(
+                shadowSlot,
                 fragPos,
                 normal,
                 light.Position,
@@ -2701,7 +2719,6 @@ float XRENGINE_ReadShadowMapPointLegacySampler(
     }
 
     int encoding = shadowI2.x;
-    float shadow = 1.0;
     if (encoding != XRENGINE_SHADOW_ENCODING_DEPTH)
     {
         float receiverDepth = clamp(lightDist / max(farPlaneDist, 0.001), 0.0, 1.0);
@@ -2709,8 +2726,8 @@ float XRENGINE_ReadShadowMapPointLegacySampler(
         float momentReceiverDepth = clamp(receiverDepth - min(normalizedBias, 0.01), 0.0, 1.0);
         bool useMomentMipmaps = shadowI2.y != 0;
         float momentMipLevel = XRENGINE_ResolveShadowMomentMipLevel(0.0, float(shadowI2.z), useMomentMipmaps);
-        shadow = XRENGINE_SampleShadowMomentCube(
-            shadowMap,
+        completedVisibility = XRENGINE_SampleShadowMomentCube(
+            shadowSlot,
             normalize(fragToLight),
             momentReceiverDepth,
             encoding,
@@ -2720,44 +2737,69 @@ float XRENGINE_ReadShadowMapPointLegacySampler(
             shadowF6.w,
             momentMipLevel,
             useMomentMipmaps) * contact;
-    }
-    else
-    {
-        // The cubemap supplies large-scale visibility; contact shadows add only the
-        // short-range receiver/detail term so cubemap debugging can still isolate
-        // the filtered shadow value before this multiplier.
-        shadow = XRENGINE_SampleShadowCubeFiltered(
-            shadowMap,
-            fragToLight,
-            biasedLightDist,
-            0.0,
-            farPlaneDist,
-            sampleRadiusScale,
-            blockerSearchRadius,
-            shadowI0.z,
-            shadowI0.y,
-            shadowI1.x,
-            shadowF2.z,
-            minPenumbra,
-            maxPenumbra,
-            shadowI0.w) * contact;
-    }
 
-    if (debugMode != 0)
-    {
-        float receiverDepth = clamp(lightDist / max(farPlaneDist, 0.001), 0.0, 1.0);
-        float normalizedBias = compareBias / max(farPlaneDist, 0.001);
-        float margin = encoding != XRENGINE_SHADOW_ENCODING_DEPTH
-            ? XRENGINE_EstimateShadowMomentMargin(
-                shadowMap,
+        if (debugMode != 0)
+        {
+            receiverDepth = clamp(lightDist / max(farPlaneDist, 0.001), 0.0, 1.0);
+            normalizedBias = compareBias / max(farPlaneDist, 0.001);
+            float margin = XRENGINE_EstimateShadowMomentMargin(
+                shadowSlot,
                 normalize(fragToLight),
                 clamp(receiverDepth - min(normalizedBias, 0.01), 0.0, 1.0),
                 encoding,
                 shadowF6.z,
                 shadowF6.w,
                 XRENGINE_ResolveShadowMomentMipLevel(0.0, float(shadowI2.z), shadowI2.y != 0),
-                shadowI2.y != 0)
-            : (texture(shadowMap, normalize(fragToLight)).r * farPlaneDist - biasedLightDist) / max(farPlaneDist, 0.001);
+                shadowI2.y != 0);
+            XRENGINE_TrySetForwardShadowDebug(debugMode, completedVisibility, margin);
+        }
+
+        return false;
+    }
+
+    receiver.FragToLight = fragToLight;
+    receiver.BiasedLightDist = biasedLightDist;
+    receiver.FarPlaneDist = farPlaneDist;
+    receiver.SampleRadiusScale = sampleRadiusScale;
+    receiver.BlockerSearchRadius = blockerSearchRadius;
+    receiver.MinPenumbra = minPenumbra;
+    receiver.MaxPenumbra = maxPenumbra;
+    receiver.Contact = contact;
+    return true;
+}
+
+float XRENGINE_EvaluatePointLegacyDepthSlot(
+    int shadowSlot,
+    int shadowRecordIndex,
+    XRENGINE_PointLegacyShadowReceiver receiver)
+{
+    ivec4 shadowI0 = PointLightShadows[shadowRecordIndex].Packed0;
+    ivec4 shadowI1 = PointLightShadows[shadowRecordIndex].Packed1;
+    vec4 shadowF2 = PointLightShadows[shadowRecordIndex].Params2;
+    int debugMode = shadowI1.y;
+
+    // The cubemap supplies large-scale visibility; contact shadows add only the
+    // short-range receiver/detail term so cubemap debugging can still isolate
+    // the filtered shadow value before this multiplier.
+    float shadow = XRENGINE_SampleShadowCubeFiltered(
+        shadowSlot,
+        receiver.FragToLight,
+        receiver.BiasedLightDist,
+        0.0,
+        receiver.FarPlaneDist,
+        receiver.SampleRadiusScale,
+        receiver.BlockerSearchRadius,
+        shadowI0.z,
+        shadowI0.y,
+        shadowI1.x,
+        shadowF2.z,
+        receiver.MinPenumbra,
+        receiver.MaxPenumbra,
+        shadowI0.w) * receiver.Contact;
+
+    if (debugMode != 0)
+    {
+        float margin = (XRENGINE_FetchShadowCubeDepth(shadowSlot, normalize(receiver.FragToLight)) * receiver.FarPlaneDist - receiver.BiasedLightDist) / max(receiver.FarPlaneDist, 0.001);
         XRENGINE_TrySetForwardShadowDebug(debugMode, shadow, margin);
     }
 
@@ -2766,24 +2808,20 @@ float XRENGINE_ReadShadowMapPointLegacySampler(
 
 float XRENGINE_ReadShadowMapPointLegacySlot(
     int shadowSlot,
-    ForwardPointShadowData shadowData,
+    int shadowRecordIndex,
     PointLight light,
     vec3 normal,
     vec3 fragPos)
 {
-    switch (shadowSlot)
-    {
-    case 0:
-        return XRENGINE_ReadShadowMapPointLegacySampler(PointLightShadowMaps[0], shadowData, light, normal, fragPos);
-    case 1:
-        return XRENGINE_ReadShadowMapPointLegacySampler(PointLightShadowMaps[1], shadowData, light, normal, fragPos);
-    case 2:
-        return XRENGINE_ReadShadowMapPointLegacySampler(PointLightShadowMaps[2], shadowData, light, normal, fragPos);
-    case 3:
-        return XRENGINE_ReadShadowMapPointLegacySampler(PointLightShadowMaps[3], shadowData, light, normal, fragPos);
-    default:
+    XRENGINE_PointLegacyShadowReceiver receiver;
+    float completedVisibility;
+    if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS)
         return 1.0;
-    }
+
+    bool prepared = XRENGINE_PreparePointLegacyShadowReceiver(
+        shadowSlot, shadowRecordIndex, light, normal, fragPos, receiver, completedVisibility);
+
+    return prepared ? XRENGINE_EvaluatePointLegacyDepthSlot(shadowSlot, shadowRecordIndex, receiver) : completedVisibility;
 }
 
 float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal, vec3 fragPos)
@@ -2791,20 +2829,20 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
     if (lightIndex < 0 || lightIndex >= PointLightCount || lightIndex >= PointLightShadows.length())
         return 1.0;
 
-    ForwardPointShadowData shadowData = PointLightShadows[lightIndex];
-    ivec4 shadowI0 = shadowData.Packed0;
-    ivec4 shadowI1 = shadowData.Packed1;
+    int shadowRecordIndex = lightIndex;
+    ivec4 shadowI0 = PointLightShadows[shadowRecordIndex].Packed0;
+    ivec4 shadowI1 = PointLightShadows[shadowRecordIndex].Packed1;
 
     int shadowSlot = shadowI0.x;
     int debugMode = shadowI1.y;
     vec2 atlasFaceUv;
     int atlasFaceIndex = XRENGINE_SelectPointShadowAtlasFace(fragPos - light.Position, atlasFaceUv);
-    ivec4 atlasI0 = shadowData.AtlasPacked0[atlasFaceIndex];
+    ivec4 atlasI0 = PointLightShadows[shadowRecordIndex].AtlasPacked0[atlasFaceIndex];
     bool atlasPath = (atlasI0.z > 0 && atlasI0.z != XRENGINE_SHADOW_FALLBACK_LEGACY) ||
         atlasI0.w >= 0 ||
         atlasI0.x != 0;
     if (atlasPath)
-        return XRENGINE_ReadPointAtlasShadowMap(shadowData, light, normal, fragPos);
+        return XRENGINE_ReadPointAtlasShadowMap(shadowRecordIndex, light, normal, fragPos);
 
     if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_POINT_SHADOW_SLOTS)
     {
@@ -2812,7 +2850,7 @@ float XRENGINE_ReadShadowMapPoint(int lightIndex, PointLight light, vec3 normal,
         return 1.0;
     }
 
-    return XRENGINE_ReadShadowMapPointLegacySlot(shadowSlot, shadowData, light, normal, fragPos);
+    return XRENGINE_ReadShadowMapPointLegacySlot(shadowSlot, shadowRecordIndex, light, normal, fragPos);
 }
 
 float XRENGINE_LinearizeSpotShadowDepth01(float depth, float nearZ, float farZ)
@@ -2982,32 +3020,41 @@ float XRENGINE_ReadSpotFallbackContactShadow(
         viewDepth);
 }
 
-float XRENGINE_ReadShadowMapSpotLegacySampler(
-    sampler2D shadowMap,
+struct XRENGINE_SpotLegacyShadowReceiver
+{
+    vec3 FragCoord;
+    float Bias;
+    float Contact;
+};
+
+bool XRENGINE_PrepareSpotLegacyShadowReceiver(
+    int shadowSlot,
     ForwardSpotShadowData shadowData,
     SpotLight light,
     vec3 normal,
     vec3 fragPos,
-    vec3 lightDir)
+    vec3 lightDir,
+    out XRENGINE_SpotLegacyShadowReceiver receiver,
+    out float completedVisibility)
 {
-    ivec4 shadowI0 = shadowData.Packed0;
     ivec4 shadowI1 = shadowData.Packed1;
+    ivec4 shadowI2 = shadowData.Packed2;
     vec4 shadowF1 = shadowData.Params1;
     vec4 shadowF2 = shadowData.Params2;
     vec4 shadowF3 = shadowData.Params3;
-    ivec4 shadowI2 = shadowData.Packed2;
     vec4 shadowF4 = shadowData.Params4;
     vec4 shadowF5 = shadowData.Params5;
     vec4 shadowF6 = shadowData.Params6;
+    completedVisibility = 1.0;
 
     int debugMode = shadowI1.y;
     float nearZ = shadowF5.x;
     float farZ = shadowF5.y;
     float axisDistance = XRENGINE_GetSpotDistanceAlongAxis(light, fragPos);
     if (axisDistance >= farZ)
-        return 1.0;
+        return false;
 
-    float localTexelSize = 1.0 / max(float(textureSize(shadowMap, 0).x), 1.0);
+    float localTexelSize = XRENGINE_GetSpotShadowTexelSizeForSlot(shadowSlot);
     float cosOuter = clamp(light.OuterCutoff, 0.001, 0.999999);
     float tanOuter = sqrt(max(1.0 - cosOuter * cosOuter, 0.0)) / cosOuter;
     float worldTexelSize = 2.0 * axisDistance * tanOuter * max(localTexelSize, 1e-7);
@@ -3020,10 +3067,10 @@ float XRENGINE_ReadShadowMapSpotLegacySampler(
     vec3 offsetPosWS = fragPos + normal * receiverOffset;
     vec3 fragCoord = XRENGINE_ProjectShadowCoord(light.Base.Base.WorldToLightSpaceProjMatrix, offsetPosWS);
     if (!XRENGINE_ShadowCoordInBounds(fragCoord))
-        return 1.0;
+        return false;
 
-    float bias = XRENGINE_ComputeShadowDepthBias(
-        fragCoord,
+    float bias = XRENGINE_ComputeSpotShadowDepthBiasSlot(
+        shadowSlot, fragCoord,
         vec2(localTexelSize),
         shadowF1.x,
         constantBias,
@@ -3055,8 +3102,8 @@ float XRENGINE_ReadShadowMapSpotLegacySampler(
         }
         else
         {
-            contact = XRENGINE_SampleContactShadow2D(
-                shadowMap,
+            contact = XRENGINE_SampleSpotContactShadow2DSlot(
+                shadowSlot,
                 light.Base.Base.WorldToLightSpaceProjMatrix,
                 fragPos,
                 normal,
@@ -3075,7 +3122,6 @@ float XRENGINE_ReadShadowMapSpotLegacySampler(
     }
 
     int encoding = shadowI2.x;
-    float shadow = 1.0;
     if (encoding != XRENGINE_SHADOW_ENCODING_DEPTH)
     {
         float receiverDepth = XRENGINE_LinearizeShadowDepth01(fragCoord.z, shadowF5.x, shadowF5.y);
@@ -3085,8 +3131,8 @@ float XRENGINE_ReadShadowMapSpotLegacySampler(
             shadowF5.z,
             float(shadowI2.z),
             useMomentMipmaps);
-        shadow = XRENGINE_SampleShadowMoment2D(
-            shadowMap,
+        completedVisibility = XRENGINE_SampleShadowMoment2D(
+            shadowSlot,
             fragCoord.xy,
             momentReceiverDepth,
             encoding,
@@ -3096,37 +3142,58 @@ float XRENGINE_ReadShadowMapSpotLegacySampler(
             shadowF4.w,
             momentMipLevel,
             useMomentMipmaps) * contact;
-    }
-    else
-    {
-        shadow = XRENGINE_SampleShadowMapFiltered(
-            shadowMap,
-            fragCoord,
-            bias,
-            shadowI0.z,
-            shadowI0.y,
-            shadowF1.x,
-            shadowF1.y,
-            shadowI1.x,
-            shadowF2.x,
-            shadowF1.z,
-            shadowF1.w,
-            shadowI0.w) * contact;
-    }
 
-    if (debugMode != 0)
-    {
-        float margin = encoding != XRENGINE_SHADOW_ENCODING_DEPTH
-            ? XRENGINE_EstimateShadowMomentMargin(
-                shadowMap,
+        if (debugMode != 0)
+        {
+            float margin = XRENGINE_EstimateShadowMomentMargin(
+                shadowSlot,
                 fragCoord.xy,
                 clamp(XRENGINE_LinearizeShadowDepth01(fragCoord.z, shadowF5.x, shadowF5.y) - min(bias, 0.01), 0.0, 1.0),
                 encoding,
                 shadowF4.z,
                 shadowF4.w,
                 XRENGINE_ResolveShadowMomentMipLevel(shadowF5.z, float(shadowI2.z), shadowI2.y != 0),
-                shadowI2.y != 0)
-            : texture(shadowMap, fragCoord.xy).r - (fragCoord.z - bias);
+                shadowI2.y != 0);
+            XRENGINE_TrySetForwardShadowDebug(debugMode, completedVisibility, margin);
+        }
+
+        return false;
+    }
+
+    receiver.FragCoord = fragCoord;
+    receiver.Bias = bias;
+    receiver.Contact = contact;
+    return true;
+}
+
+float XRENGINE_EvaluateSpotLegacyDepthSlot(
+    int shadowSlot,
+    ForwardSpotShadowData shadowData,
+    XRENGINE_SpotLegacyShadowReceiver receiver)
+{
+    ivec4 shadowI0 = shadowData.Packed0;
+    ivec4 shadowI1 = shadowData.Packed1;
+    vec4 shadowF1 = shadowData.Params1;
+    vec4 shadowF2 = shadowData.Params2;
+    int debugMode = shadowI1.y;
+
+    float shadow = XRENGINE_SampleShadowMapFiltered(
+        shadowSlot,
+        receiver.FragCoord,
+        receiver.Bias,
+        shadowI0.z,
+        shadowI0.y,
+        shadowF1.x,
+        shadowF1.y,
+        shadowI1.x,
+        shadowF2.x,
+        shadowF1.z,
+        shadowF1.w,
+        shadowI0.w) * receiver.Contact;
+
+    if (debugMode != 0)
+    {
+        float margin = XRENGINE_FetchShadowMapDepth(shadowSlot, receiver.FragCoord.xy) - (receiver.FragCoord.z - receiver.Bias);
         XRENGINE_TrySetForwardShadowDebug(debugMode, shadow, margin);
     }
 
@@ -3141,19 +3208,15 @@ float XRENGINE_ReadShadowMapSpotLegacySlot(
     vec3 fragPos,
     vec3 lightDir)
 {
-    switch (shadowSlot)
-    {
-    case 0:
-        return XRENGINE_ReadShadowMapSpotLegacySampler(SpotLightShadowMaps[0], shadowData, light, normal, fragPos, lightDir);
-    case 1:
-        return XRENGINE_ReadShadowMapSpotLegacySampler(SpotLightShadowMaps[1], shadowData, light, normal, fragPos, lightDir);
-    case 2:
-        return XRENGINE_ReadShadowMapSpotLegacySampler(SpotLightShadowMaps[2], shadowData, light, normal, fragPos, lightDir);
-    case 3:
-        return XRENGINE_ReadShadowMapSpotLegacySampler(SpotLightShadowMaps[3], shadowData, light, normal, fragPos, lightDir);
-    default:
+    XRENGINE_SpotLegacyShadowReceiver receiver;
+    float completedVisibility;
+    if (shadowSlot < 0 || shadowSlot >= XRENGINE_MAX_FORWARD_SPOT_SHADOW_SLOTS)
         return 1.0;
-    }
+
+    bool prepared = XRENGINE_PrepareSpotLegacyShadowReceiver(
+        shadowSlot, shadowData, light, normal, fragPos, lightDir, receiver, completedVisibility);
+
+    return prepared ? XRENGINE_EvaluateSpotLegacyDepthSlot(shadowSlot, shadowData, receiver) : completedVisibility;
 }
 
 float XRENGINE_ReadShadowMapSpot(int lightIndex, SpotLight light, vec3 normal, vec3 fragPos, vec3 lightDir)

@@ -26,8 +26,45 @@ public static partial class EditorUnitTests
             int SourceToonDowngradeCount,
             string SourceContentSha256);
 
+        /// <summary>
+        /// Adds one source file as an independent scene in the startup world.
+        /// </summary>
+        private static void PublishSerializedImportScene(SceneNode startupRoot, XRScene scene)
+        {
+            if (startupRoot.IsDestroyed || startupRoot.World is not RuntimeWorld world ||
+                world.IsDisposing || world.TargetWorld is not XRWorld targetWorld)
+            {
+                throw new InvalidOperationException("The startup world is no longer available for Unity scene import.");
+            }
+
+            string baseName = scene.Name ?? "Unity Import";
+            int suffix = 2;
+            while (targetWorld.Scenes.Any(existing =>
+                string.Equals(existing.Name, scene.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                scene.Name = $"{baseName} ({suffix++})";
+            }
+
+            targetWorld.Scenes.Add(scene);
+            try
+            {
+                world.LoadScene(scene);
+            }
+            catch
+            {
+                // A failed rollback keeps the scene registered for a later cleanup attempt.
+                if (!world.IsSceneLoaded(scene))
+                    targetWorld.Scenes.Remove(scene);
+                throw;
+            }
+        }
+
         private static bool IsSerializedPrefabPath(string path)
             => string.Equals(Path.GetExtension(path), ".prefab", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsSerializedHierarchyPath(string path)
+            => IsSerializedPrefabPath(path) ||
+                string.Equals(Path.GetExtension(path), ".unity", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// Schedules the synchronous Unity project converter on an engine worker. The converter owns
@@ -38,7 +75,8 @@ public static partial class EditorUnitTests
             string prefabPath,
             Settings.ModelImportSettings settings,
             Action<SerializedPrefabStartupImportResult> onFinished,
-            Action<Exception> onError)
+            Action<Exception> onError,
+            string? sourceProjectRoot = null)
         {
             SerializedPrefabStartupImportResult? result = null;
             long lastProgressLogTimestamp = 0;
@@ -70,7 +108,7 @@ public static partial class EditorUnitTests
 
             IEnumerable ImportRoutine()
             {
-                string? projectRoot = ResolveSourceProjectRoot(settings.SourceProjectRoot);
+                string? projectRoot = sourceProjectRoot ?? ResolveSourceProjectRoot(settings.SourceProjectRoot);
                 Debug.Meshes(
                     $"[UnityPrefab] Converting '{prefabPath}' with the Unity project importer. " +
                     "Recognized Poiyomi materials will use the XRENGINE Uber shader.");
@@ -87,7 +125,8 @@ public static partial class EditorUnitTests
                     explicitProjectOrAssetsRoot: projectRoot,
                     cancellationToken: default,
                     progress: ReportProgress,
-                    fbxBackend: ResolveFbxBackend(settings));
+                    fbxBackend: ResolveFbxBackend(settings),
+                    allowPartialImport: settings.AllowPartialImport);
 
                 SceneNode convertedRoot = conversion.RootNode
                     ?? throw new SourceVisualImportException(
@@ -95,10 +134,13 @@ public static partial class EditorUnitTests
                 SerializedPrefabImportManifest manifest = conversion.Manifest
                     ?? throw new SourceVisualImportException(
                         $"Unity prefab conversion returned no manifest for '{prefabPath}'.");
-                ValidateSerializedPrefabCompletion(manifest, settings, prefabPath);
+                if (IsSerializedPrefabPath(prefabPath))
+                    ValidateSerializedPrefabCompletion(manifest, settings, prefabPath);
 
                 (int modelCount, int materialCount, int sourceToonCount, int downgradeCount) =
-                    ValidateSerializedPrefabMaterials(convertedRoot, prefabPath);
+                    ValidateSerializedPrefabMaterials(convertedRoot, prefabPath, settings.AllowPartialImport);
+                if (manifest.CompletionTier == SourceImportCompletionTier.PartialVisual)
+                    Debug.MeshesWarning($"[UnityPrefab] Partial import '{prefabPath}': {manifest.Diagnostics.Count} diagnostic(s). Available content is retained.");
                 SceneNode importRoot = ApplySerializedPrefabImportTransform(convertedRoot, settings);
                 int layer = settings.Kind is UnitTestModelImportKind.Static
                     ? DefaultLayers.StaticIndex
@@ -200,7 +242,7 @@ public static partial class EditorUnitTests
             Settings.ModelImportSettings settings,
             string prefabPath)
         {
-            if (settings.Kind is not UnitTestModelImportKind.Animated ||
+            if (settings.AllowPartialImport || settings.Kind is not UnitTestModelImportKind.Animated ||
                 manifest.CompletionTier == SourceImportCompletionTier.VisualAndAvatarBehavior)
             {
                 return;
@@ -270,7 +312,7 @@ public static partial class EditorUnitTests
         /// instead of silently displaying a materially different avatar.
         /// </summary>
         private static (int ModelCount, int MaterialCount, int PoiyomiCount, int DowngradeCount)
-            ValidateSerializedPrefabMaterials(SceneNode rootNode, string prefabPath)
+            ValidateSerializedPrefabMaterials(SceneNode rootNode, string prefabPath, bool allowPartialImport = false)
         {
             var models = new HashSet<Model>();
             var materials = new HashSet<XRMaterial>();
@@ -295,10 +337,15 @@ public static partial class EditorUnitTests
                     continue;
                 }
 
-                sourceToonCount++;
                 bool unsupportedVersion = report.DiagnosticGroups
                     .SelectMany(static group => group.Diagnostics)
                     .Any(static diagnostic => diagnostic.Code == MaterialConversionDiagnosticCodes.UnknownVersion);
+                if (allowPartialImport && (unsupportedVersion ||
+                    report.Outcome is EMaterialConversionOutcome.GenericFallback or EMaterialConversionOutcome.Failed))
+                {
+                    Debug.MeshesWarning($"[UnityPrefab] Material '{report.MaterialName}' uses a fallback after Poiyomi conversion (outcome: {report.Outcome}).");
+                    continue;
+                }
                 if (unsupportedVersion)
                 {
                     throw new SourceVisualImportException(
@@ -323,6 +370,7 @@ public static partial class EditorUnitTests
 
                 if (report.Outcome == EMaterialConversionOutcome.ConvertedToSourceToon)
                     downgradeCount++;
+                sourceToonCount++;
             }
 
             return (models.Count, materials.Count, sourceToonCount, downgradeCount);

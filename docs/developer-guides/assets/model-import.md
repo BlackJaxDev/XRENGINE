@@ -34,6 +34,7 @@ Current limitations:
 - `.gltf` and `.glb` files route through the native fastgltf-backed path by default.
 - `.anim` files route to `AnimationClip` through the Unity YAML animation importer.
 - `.unity`, `.prefab`, and `.mat` files route through the Unity YAML scene, prefab, and material importers.
+- Unit Testing World startup also accepts `.unitypackage` in `ModelsToImport[].Path`. It extracts the package to the asset cache and imports each scene and prefab into a separate `XRScene`. Loose `.unity` and `.prefab` startup targets also get separate scenes. See [Unity package startup](unity-conversion-integrations.md#unit-testing-world-startup).
 - Other third-party model formats still import through Assimp.
 
 The default Assimp material factory preserves the authored diffuse RGB factor
@@ -268,6 +269,16 @@ pixels or prove that a native shader implements the material's authored effects.
 On the first successful model import, these dictionaries are automatically seeded with any discovered texture-path and material-name keys from the source model. New entries are written with null values so reimport settings can be filled in later without manually copying keys out of the model.
 
 Older cached import-option files that still store path-based remaps continue to load as legacy fallbacks, but resaving import settings writes the asset-based remap form.
+
+## Texture decode memory
+
+The ImageMagick decoder accepts spans over encoded image storage without making
+a full managed copy. HDR decoding reads bounded native pixel views and returns owned
+RGBA float storage. Large decoded buffers are released when `RuntimeImage` is
+disposed; they do not wait for a managed heap collection. `Mipmap2D` keeps its
+own copy, so disposing the decoded image does not invalidate the texture.
+The conversion preserves source dimensions, channel mapping, alpha, and HDR
+range.
 
 ## On-disk externalization layout
 

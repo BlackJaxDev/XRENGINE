@@ -262,8 +262,8 @@
       "items": {
         "$ref": "#/definitions/ModelImportSettings"
       },
-      "description": "Startup model imports processed when the Unit Testing World boots. Each array item is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend, Path, optional UnityProjectRoot, ImportFlags, Scale, ZUp, InstanceCount, GenerateMeshletLods, MeshletAdditionalLodCount, PostImportFlags, and optional YawPitchRoll/Translation objects. Unity prefab entries use the Unity converter; recognized Poiyomi materials are converted to the forward-plus Uber shader. Paths are relative to the process working directory unless absolute.",
-      "markdownDescription": "Startup model imports are an array of objects. Each item uses this shape:\n\n```json\n{\n  \"Enabled\": true,\n  \"Kind\": \"Static\",\n  \"MaterialMode\": \"Deferred\",\n  \"UseForwardForTransparent\": false,\n  \"ImporterBackend\": \"PreferNativeThenAssimp\",\n  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",\n  \"UnityProjectRoot\": null,\n  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",\n  \"Scale\": 1.0,\n  \"ZUp\": false,\n  \"PostImportFlags\": \"None\",\n  \"YawPitchRoll\": null,\n  \"Translation\": null\n}\n```\n\n`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; `ImporterBackend` is `PreferNativeThenAssimp`, `AssimpOnly`, or `NativeOnly`. `NativeOnly` does not fall back to Assimp. A `.prefab` path uses the Unity project converter; use `Kind: Animated` for avatar setup. The Unity converter ignores the generic material factory and converts recognized Poiyomi materials to the native Uber shader. `UnityProjectRoot` optionally identifies the Unity project root or Assets directory when it cannot be inferred from the prefab path. `ImportFlags` is a comma-separated list of Assimp `PostProcessSteps` flag names. `PostImportFlags` is a comma-separated list of model post-import flag names. `YawPitchRoll` uses `{ \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }`; `Translation` uses `{ \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }`.",
+      "description": "Startup model imports processed when the Unit Testing World boots. Each array item is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend, Path, optional SourceProjectRoot, ImportFlags, Scale, ZUp, InstanceCount, GenerateMeshletLods, MeshletAdditionalLodCount, PostImportFlags, and optional YawPitchRoll/Translation objects. Unity scenes and prefabs use the Unity converter; recognized Poiyomi materials are converted to the forward-plus Uber shader. Relative paths are checked in the working directory, Desktop, and engine assets. Unity packages extract to the asset cache and import each scene and prefab as a separate root.",
+      "markdownDescription": "Startup model imports are an array of objects. Each item uses this shape:\n\n```json\n{\n  \"Enabled\": true,\n  \"Kind\": \"Static\",\n  \"MaterialMode\": \"Deferred\",\n  \"UseForwardForTransparent\": false,\n  \"ImporterBackend\": \"PreferNativeThenAssimp\",\n  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",\n  \"SourceProjectRoot\": null,\n  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",\n  \"Scale\": 1.0,\n  \"ZUp\": false,\n  \"PostImportFlags\": \"None\",\n  \"YawPitchRoll\": null,\n  \"Translation\": null\n}\n```\n\n`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; `ImporterBackend` is `PreferNativeThenAssimp`, `AssimpOnly`, or `NativeOnly`. `NativeOnly` does not fall back to Assimp. A `.prefab` or `.unity` path uses the Unity project converter. A `.unitypackage` path extracts to the asset cache and imports every scene and prefab into a separate scene. Loose `.prefab` and `.unity` targets also get separate scenes. Use `Kind: Animated` for prefab avatar setup. `AllowPartialImport: true` keeps available content, uses fallback materials, and reports missing visual assets. The default is strict. The Unity converter ignores the generic material factory and converts recognized Poiyomi materials to the native Uber shader. `SourceProjectRoot` optionally identifies the Unity project root or Assets directory when it cannot be inferred from a loose source path. Package imports use the extracted project. `Dependencies` supplies companion sources for a `.unitypackage`: local archives/folders, HTTPS archives, or VCC/VPM repository URLs. Each item has `Source`, optional `PackageId`, and optional exact `Version`. Only the primary package supplies startup roots. `ImportFlags` is a comma-separated list of Assimp `PostProcessSteps` flag names. `PostImportFlags` is a comma-separated list of model post-import flag names. `YawPitchRoll` uses `{ \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }`; `Translation` uses `{ \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }`.",
       "examples": [
         [
           {
@@ -273,7 +273,7 @@
             "UseForwardForTransparent": false,
             "ImporterBackend": "PreferNativeThenAssimp",
             "Path": "XREngine.UnitTests\\TestData\\Gltf\\external-static-scene.gltf",
-            "UnityProjectRoot": null,
+            "SourceProjectRoot": null,
             "ImportFlags": "Triangulate, FlipUVs, GenerateNormals",
             "Scale": 1.0,
             "ZUp": false,
@@ -290,13 +290,38 @@
             "UseForwardForTransparent": false,
             "ImporterBackend": "PreferNativeThenAssimp",
             "Path": "C:\\UnityProjects\\AvatarProject\\Assets\\Avatars\\Avatar.prefab",
-            "UnityProjectRoot": "C:\\UnityProjects\\AvatarProject",
+            "SourceProjectRoot": "C:\\UnityProjects\\AvatarProject",
             "ImportFlags": "None",
             "Scale": 1.0,
             "ZUp": false,
             "PostImportFlags": "None",
             "YawPitchRoll": null,
             "Translation": null
+          }
+        ],
+        [
+          {
+            "Enabled": true,
+            "Kind": "Static",
+            "MaterialMode": "Uber",
+            "UseForwardForTransparent": false,
+            "ImporterBackend": "PreferNativeThenAssimp",
+            "Path": "misc/Aryia_By_Mimiiu_V1.3.unitypackage",
+            "SourceProjectRoot": null,
+            "ImportFlags": "None",
+            "Scale": 1.0,
+            "ZUp": false,
+            "PostImportFlags": "None",
+            "YawPitchRoll": null,
+            "Translation": null,
+            "AllowPartialImport": true,
+            "Dependencies": [
+              {
+                "Source": "https://poiyomi.github.io/vpm/index.json",
+                "PackageId": "com.poiyomi.toon",
+                "Version": "9.3.64"
+              }
+            ]
           }
         ]
       ],
@@ -312,7 +337,7 @@
               "UseForwardForTransparent": false,
               "ImporterBackend": "PreferNativeThenAssimp",
               "Path": "XREngine.UnitTests\\TestData\\Gltf\\external-static-scene.gltf",
-              "UnityProjectRoot": null,
+              "SourceProjectRoot": null,
               "ImportFlags": "Triangulate, FlipUVs, GenerateNormals",
               "Scale": 1.0,
               "ZUp": false,
@@ -333,13 +358,42 @@
               "UseForwardForTransparent": false,
               "ImporterBackend": "PreferNativeThenAssimp",
               "Path": "C:\\UnityProjects\\AvatarProject\\Assets\\Avatars\\Avatar.prefab",
-              "UnityProjectRoot": "C:\\UnityProjects\\AvatarProject",
+              "SourceProjectRoot": "C:\\UnityProjects\\AvatarProject",
               "ImportFlags": "None",
               "Scale": 1.0,
               "ZUp": false,
               "PostImportFlags": "None",
               "YawPitchRoll": null,
               "Translation": null
+            }
+          ]
+        },
+        {
+          "label": "Unity package import",
+          "description": "Extract a Unity package and convert each scene and prefab into a separate scene.",
+          "body": [
+            {
+              "Enabled": true,
+              "Kind": "Static",
+              "MaterialMode": "Uber",
+              "UseForwardForTransparent": false,
+              "ImporterBackend": "PreferNativeThenAssimp",
+              "Path": "misc/Aryia_By_Mimiiu_V1.3.unitypackage",
+              "SourceProjectRoot": null,
+              "ImportFlags": "None",
+              "Scale": 1.0,
+              "ZUp": false,
+              "PostImportFlags": "None",
+              "YawPitchRoll": null,
+              "Translation": null,
+              "AllowPartialImport": true,
+              "Dependencies": [
+                {
+                  "Source": "https://poiyomi.github.io/vpm/index.json",
+                  "PackageId": "com.poiyomi.toon",
+                  "Version": "9.3.64"
+                }
+              ]
             }
           ]
         }
@@ -353,7 +407,7 @@
         "  \"UseForwardForTransparent\": false,",
         "  \"ImporterBackend\": \"PreferNativeThenAssimp\",",
         "  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",",
-        "  \"UnityProjectRoot\": null,",
+        "  \"SourceProjectRoot\": null,",
         "  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",",
         "  \"Scale\": 1.0,",
         "  \"ZUp\": false,",
@@ -363,8 +417,9 @@
         "}",
         "Use comma-separated Assimp PostProcessSteps names for ImportFlags.",
         "Use comma-separated ModelPostImportFlags names for PostImportFlags.",
-        "A .prefab path uses the Unity converter. Kind Animated enables avatar setup; recognized Poiyomi materials convert to the native Uber shader.",
-        "UnityProjectRoot may name the Unity project root or Assets directory when it cannot be inferred from Path.",
+        "A .prefab or .unity path uses the Unity converter. A .unitypackage imports every scene and prefab into a separate scene. Loose `.prefab` and `.unity` targets also get separate scenes. Kind Animated enables prefab avatar setup; recognized Poiyomi materials convert to the native Uber shader.",
+        "SourceProjectRoot may name the Unity project root or Assets directory when it cannot be inferred from a loose Path. Package imports use the extracted project.",
+        "Dependencies supplies companion sources for a .unitypackage. Each item has Source (local path or HTTPS/VCC URL), optional PackageId, and optional exact Version. Only the primary package supplies startup roots.",
         "YawPitchRoll is { \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }; Translation is { \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }."
       ]
     },
@@ -393,7 +448,7 @@
     },
     "AudioTransport": {
       "$ref": "#/definitions/EAudioTransport",
-      "markdownDescription": "Supported values: `OpenAL`, `NAudio`.",
+      "markdownDescription": "Supported values: `OpenAL`, `NAudio`, `WebAudio`.",
       "description": "Selects the AudioTransport enum value."
     },
     "AudioEffects": {
@@ -1122,7 +1177,7 @@
         },
         "MaterialMode": {
           "$ref": "#/definitions/ModelImportMaterialMode",
-          "description": "Selects the generic model material factory. Unity prefabs use their source-aware material converter instead; recognized Poiyomi materials are always converted to XRENGINE's forward-plus Uber shader.",
+          "description": "Selects the generic model material factory. Unity scenes and prefabs use their source-aware material converter instead; recognized Poiyomi materials are always converted to XRENGINE's forward-plus Uber shader.",
           "markdownDescription": "Supported values: `Deferred`, `Forward`, `Uber`."
         },
         "UseForwardForTransparent": {
@@ -1140,14 +1195,25 @@
         },
         "Path": {
           "type": "string",
-          "description": "Generated from Path on ModelImportSettings."
+          "description": "Model, .prefab, .unity, or .unitypackage path. Packages import each scene and prefab as a separate root."
         },
         "SourceProjectRoot": {
           "type": [
             "string",
             "null"
           ],
-          "description": "Optional Unity project root (or its Assets directory) for .prefab imports. When omitted, the importer locates the owning project from the prefab path. Relative paths are resolved from the process working directory."
+          "description": "Optional Unity project root (or its Assets directory) for loose scenes and prefabs. When omitted, the importer locates the owning project from the source path. Relative paths are resolved from the process working directory. Package imports always use their extracted project and ignore this setting."
+        },
+        "Dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UnityPackageDependencySettings"
+          },
+          "description": "Companion sources for a Unity package import. Each source is a local package, package folder, HTTPS archive, or VCC repository URL. Repository entries can select a package ID and exact version. Only the main package creates startup roots."
+        },
+        "AllowPartialImport": {
+          "type": "boolean",
+          "description": "Imports available Unity content when dependencies are missing. Missing materials use a visible fallback, missing prefab instances are skipped, and diagnostics report the loss."
         },
         "ImportFlags": {
           "type": "string",
@@ -1255,6 +1321,30 @@
       ],
       "markdownDescription": "Supported values: `PreferNativeThenAssimp`, `AssimpOnly`, `NativeOnly`."
     },
+    "UnityPackageDependencySettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Source": {
+          "type": "string",
+          "description": "Gets or sets the local path or HTTPS source URL."
+        },
+        "PackageId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Gets or sets the package ID in a VPM repository."
+        },
+        "Version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Gets or sets an exact VPM package version. Leave this empty to pin the greatest stable version."
+        }
+      }
+    },
     "YawPitchRollDegrees": {
       "type": "object",
       "additionalProperties": false,
@@ -1277,9 +1367,10 @@
       "type": "string",
       "enum": [
         "OpenAL",
-        "NAudio"
+        "NAudio",
+        "WebAudio"
       ],
-      "markdownDescription": "Supported values: `OpenAL`, `NAudio`."
+      "markdownDescription": "Supported values: `OpenAL`, `NAudio`, `WebAudio`."
     },
     "EAudioEffects": {
       "type": "string",

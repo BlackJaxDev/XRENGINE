@@ -70,6 +70,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Local Agent Broker Validation](work/testing/ai/local-agent-broker.md)
 - [Animation API](developer-guides/animation/animation-api.md)
 - [Model Import](developer-guides/assets/model-import.md): import backends, warning logs, and missing-texture reporting after import.
+- [Unity Conversion](developer-guides/assets/unity-conversion-integrations.md): package startup imports, scene and prefab roots, source dependencies, and Poiyomi materials.
 - [Editor Notifications](user-guide/editor/notifications.md): asset alerts and panel close controls in the ImGui editor.
 - [Native FBX Import And Export](developer-guides/assets/native-fbx-import-export.md)
 - [OpenAL Streaming Audio](developer-guides/audio/openal-streaming-audio.md)

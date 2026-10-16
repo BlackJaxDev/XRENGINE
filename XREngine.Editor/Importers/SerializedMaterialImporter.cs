@@ -158,7 +158,7 @@ public static partial class SerializedMaterialImporter
                 ConversionReport = conversionReport,
             };
         }
-        catch (Exception ex) when (isSourceToonConversion || isLilToon)
+        catch (Exception ex) when ((isSourceToonConversion || isLilToon) && ex is not OperationCanceledException)
         {
             string shaderFamily = isLilToon
                 ? "lilToon"
@@ -180,6 +180,11 @@ public static partial class SerializedMaterialImporter
                     sourceToonMatch);
                 MaterialConversionReportRegistry.Instance.Set(material, conversionReport);
                 context?.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Failed);
+                if (context is { AllowPartialImport: true })
+                    context.ReportPartialImport(
+                        "UNITYMAT0003",
+                        $"Unity material '{document.Name}' used generic fallback after {shaderFamily} conversion failed: {ex.Message}",
+                        normalizedPath);
                 CopyDiagnosticsToContext(context, normalizedPath, diagnostics);
                 return new SerializedMaterialImportResult
                 {
@@ -1332,9 +1337,9 @@ public static partial class SerializedMaterialImporter
         if (string.IsNullOrWhiteSpace(texturePath) || !File.Exists(texturePath))
         {
             string message = $"Could not resolve Unity texture '{sourceProperty}' ({textureProperty.TextureReference.Guid}) for material '{document.Name}'.";
-            if (resolver.ImportContext is not null)
+            if (resolver.ImportContext is { AllowPartialImport: false })
                 throw new SourceVisualImportException(message);
-            warnings.Add(message);
+            ReportMissingTexture(resolver, document, sourceProperty, message, warnings);
             return null;
         }
 
@@ -1383,9 +1388,9 @@ public static partial class SerializedMaterialImporter
             if (string.IsNullOrWhiteSpace(texturePath) || !File.Exists(texturePath))
             {
                 string message = $"Could not resolve Unity texture '{sourceProperty}' ({textureProperty.TextureReference.Guid}) for material '{document.Name}'.";
-                if (resolver.ImportContext is not null)
+                if (resolver.ImportContext is { AllowPartialImport: false })
                     throw new SourceVisualImportException(message);
-                warnings.Add(message);
+                ReportMissingTexture(resolver, document, sourceProperty, message, warnings);
                 continue;
             }
 
@@ -1420,6 +1425,30 @@ public static partial class SerializedMaterialImporter
         }
 
         return null;
+    }
+
+    private static void ReportMissingTexture(
+        SourceAssetResolver resolver,
+        SerializedMaterialDocument document,
+        string sourceProperty,
+        string message,
+        List<string> warnings)
+    {
+        warnings.Add(message);
+        if (resolver.ImportContext is { AllowPartialImport: true } context)
+        {
+            context.ReportPartialImport("UNITYTEX0002", message, document.SourcePath, sourceProperty);
+        }
+        else
+        {
+            resolver.ImportContext?.AddDiagnostic(
+                "UNITYTEX0002",
+                SourceImportDiagnosticSeverity.Warning,
+                SourceImportDiagnosticCategory.TextureImport,
+                message,
+                document.SourcePath,
+                sourceProperty);
+        }
     }
 
     private static void ValidateRequiredSerializedTexture(
@@ -1605,14 +1634,92 @@ public static partial class SerializedMaterialImporter
             }
         }
 
+        IReadOnlyDictionary<string, string> overrideTags = document.OverrideTags;
+        if (resolver.ImportContext is { AllowPartialImport: true, DependencyGraph: not null } context &&
+            !string.IsNullOrWhiteSpace(document.SourcePath) &&
+            string.IsNullOrWhiteSpace(shaderPath) &&
+            !document.OverrideTags.ContainsKey("OriginalShader") &&
+            resolver.TryFindOriginalShaderName(document.Shader.Guid, out string projectOriginalShaderName,
+                out string evidencePath) &&
+            RegisterProjectShaderEvidence(context, document.SourcePath, evidencePath))
+        {
+            Dictionary<string, string> projectTags = new(document.OverrideTags, StringComparer.Ordinal)
+            {
+                ["OriginalShader"] = projectOriginalShaderName,
+            };
+            overrideTags = projectTags;
+        }
+
         return SourceToonShaderMatcher.Match(new SourceToonShaderMatchInput
         {
             ShaderPath = shaderPath,
             ShaderGuid = document.Shader.Guid,
             ShaderSource = shaderSource,
             PropertyNames = document.GetPropertyNames(),
-            OverrideTags = document.OverrideTags,
+            OverrideTags = overrideTags,
         });
+    }
+
+    private static bool RegisterProjectShaderEvidence(
+        SourceProjectImportContext context,
+        string materialPath,
+        string evidencePath)
+    {
+        SourceDependencyGraph graph = context.DependencyGraph!;
+        string sourcePath = Path.GetFullPath(materialPath);
+        string targetPath = Path.GetFullPath(evidencePath);
+        if (!graph.Nodes.TryGetValue(sourcePath, out SourceDependencyNode? sourceNode) ||
+            !File.Exists(targetPath))
+            return false;
+
+        string? guid = context.GuidIndex.TryGetGuid(targetPath, out string? sourceGuid)
+            ? sourceGuid
+            : null;
+        graph.GetOrAdd(targetPath,
+            () => new SourceDependencyNode
+            {
+                SourcePath = targetPath,
+                SourceGuid = guid,
+                PortablePath = context.GuidIndex.NormalizePortablePath(targetPath),
+                Kind = SourceImportDependencyKind.OptionalVisual,
+            },
+            SourceImportDependencyKind.OptionalVisual);
+        string metaPath = targetPath + ".meta";
+        if (File.Exists(metaPath))
+        {
+            graph.GetOrAdd(metaPath,
+                () => new SourceDependencyNode
+                {
+                    SourcePath = metaPath,
+                    SourceGuid = guid,
+                    PortablePath = context.GuidIndex.NormalizePortablePath(targetPath) + ".meta",
+                    Kind = SourceImportDependencyKind.OptionalVisual,
+                },
+                SourceImportDependencyKind.OptionalVisual);
+        }
+
+        if (!sourceNode.OutgoingEdges.Any(edge =>
+            string.Equals(edge.TargetPath, targetPath, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(edge.ReferringProperty, "m_Shader.OriginalShaderEvidence", StringComparison.Ordinal)))
+        {
+            sourceNode.OutgoingEdges.Add(new SourceDependencyEdge
+            {
+                SourcePath = sourcePath,
+                TargetGuid = guid ?? string.Empty,
+                TargetPath = targetPath,
+                ReferringProperty = "m_Shader.OriginalShaderEvidence",
+                Kind = SourceImportDependencyKind.OptionalVisual,
+            });
+        }
+
+        context.AddDiagnostic(
+            "UNITYMAT0004",
+            SourceImportDiagnosticSeverity.Info,
+            SourceImportDiagnosticCategory.MaterialDowngrade,
+            $"Poiyomi shader family for '{Path.GetFileName(sourcePath)}' was inferred from '{context.GuidIndex.NormalizePortablePath(targetPath)}'.",
+            sourcePath,
+            "m_Shader");
+        return true;
     }
 
     private static bool IsLilToonMaterial(SerializedMaterialDocument document, SourceAssetResolver resolver, out string? shaderPath)
