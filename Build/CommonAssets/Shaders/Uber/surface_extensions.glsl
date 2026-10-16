@@ -509,16 +509,42 @@ void uberBlendMatcapSlot(inout vec3 finalColor, vec4 slot, vec4 blend, float mix
 void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3 lightAdd, ToonMesh mesh, ToonLight light)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
-#define UBER_MATCAP_SLOT(i) \
-    if (_MatcapSlotParams ## i.x > 0.0) { \
-        vec4 value = uberMatcapSlot(_Matcap ## i ## Tex, _Matcap ## i ## Mask, _MatcapSlotColor ## i, _MatcapSlotTheme ## i, _MatcapSlotParams ## i, _MatcapSlotExtra ## i, _MatcapSlotSource ## i, _MatcapSlotMask ## i, _Matcap ## i ## Tex_ST, _Matcap ## i ## TexPan, _Matcap ## i ## Mask_ST, _Matcap ## i ## MaskPan, mesh, light, finalColor, emission, lightAdd); \
-        uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend ## i, _MatcapSlotExtra ## i.x); \
+    if (_MatcapSlotParams0.x > 0.0)
+    {
+        vec4 value = uberMatcapSlot(
+            _Matcap0Tex, _Matcap0Mask, _MatcapSlotColor0, _MatcapSlotTheme0,
+            _MatcapSlotParams0, _MatcapSlotExtra0, _MatcapSlotSource0, _MatcapSlotMask0,
+            _Matcap0Tex_ST, _Matcap0TexPan, _Matcap0Mask_ST, _Matcap0MaskPan,
+            mesh, light, finalColor, emission, lightAdd);
+        uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend0, _MatcapSlotExtra0.x);
     }
-    UBER_MATCAP_SLOT(0)
-    UBER_MATCAP_SLOT(1)
-    UBER_MATCAP_SLOT(2)
-    UBER_MATCAP_SLOT(3)
-#undef UBER_MATCAP_SLOT
+    if (_MatcapSlotParams1.x > 0.0)
+    {
+        vec4 value = uberMatcapSlot(
+            _Matcap1Tex, _Matcap1Mask, _MatcapSlotColor1, _MatcapSlotTheme1,
+            _MatcapSlotParams1, _MatcapSlotExtra1, _MatcapSlotSource1, _MatcapSlotMask1,
+            _Matcap1Tex_ST, _Matcap1TexPan, _Matcap1Mask_ST, _Matcap1MaskPan,
+            mesh, light, finalColor, emission, lightAdd);
+        uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend1, _MatcapSlotExtra1.x);
+    }
+    if (_MatcapSlotParams2.x > 0.0)
+    {
+        vec4 value = uberMatcapSlot(
+            _Matcap2Tex, _Matcap2Mask, _MatcapSlotColor2, _MatcapSlotTheme2,
+            _MatcapSlotParams2, _MatcapSlotExtra2, _MatcapSlotSource2, _MatcapSlotMask2,
+            _Matcap2Tex_ST, _Matcap2TexPan, _Matcap2Mask_ST, _Matcap2MaskPan,
+            mesh, light, finalColor, emission, lightAdd);
+        uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend2, _MatcapSlotExtra2.x);
+    }
+    if (_MatcapSlotParams3.x > 0.0)
+    {
+        vec4 value = uberMatcapSlot(
+            _Matcap3Tex, _Matcap3Mask, _MatcapSlotColor3, _MatcapSlotTheme3,
+            _MatcapSlotParams3, _MatcapSlotExtra3, _MatcapSlotSource3, _MatcapSlotMask3,
+            _Matcap3Tex_ST, _Matcap3TexPan, _Matcap3Mask_ST, _Matcap3MaskPan,
+            mesh, light, finalColor, emission, lightAdd);
+        uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend3, _MatcapSlotExtra3.x);
+    }
 #endif
 }
 

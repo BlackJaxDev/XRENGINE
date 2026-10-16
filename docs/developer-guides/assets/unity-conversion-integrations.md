@@ -34,6 +34,149 @@ After conversion, the result is an ordinary `XRPrefabSource`. Drag it from the
 Asset Explorer or instantiate it through the normal prefab workflow; there is
 no Unity-specific spawn path.
 
+## Unit Testing World Startup
+
+Set `ModelsToImport[].Path` in `Assets/UnitTestingWorldSettings.jsonc` to a
+`.unitypackage`, `.unity`, or `.prefab` file. Relative paths are checked in the
+working directory, Desktop, and engine assets. For example:
+
+```json
+{
+  "Enabled": true,
+  "Kind": "Static",
+  "Path": "misc/Aryia_By_Mimiiu_V1.3.unitypackage",
+  "SourceProjectRoot": null,
+  "MaterialMode": "Uber",
+  "AllowPartialImport": true,
+  "Scale": 1.0,
+  "Dependencies": [
+    {
+      "Source": "https://poiyomi.github.io/vpm/index.json",
+      "PackageId": "com.poiyomi.toon",
+      "Version": "9.3.64"
+    },
+    {
+      "Source": "https://vcc.vrcfury.com",
+      "PackageId": "com.vrcfury.vrcfury",
+      "Version": "1.1434.0"
+    },
+    {
+      "Source": "https://vrchat-community.github.io/vpm-listing-curated/index.json",
+      "PackageId": "com.llealloo.audiolink",
+      "Version": "3.1.2"
+    },
+    {
+      "Source": "https://Adjerry91.github.io/VRCFaceTracking-Templates/index.json",
+      "PackageId": "adjerry91.vrcft.templates",
+      "Version": "7.0.5"
+    },
+    {
+      "Source": "https://vrchat-community.github.io/vpm-listing-curated/index.json",
+      "PackageId": "vrchat.blackstartx.gesture-manager",
+      "Version": "3.9.9"
+    },
+    {
+      "Source": "https://vrchat.github.io/packages/index.json",
+      "PackageId": "com.vrchat.base",
+      "Version": "3.10.5"
+    },
+    {
+      "Source": "https://vrchat.github.io/packages/index.json",
+      "PackageId": "com.vrchat.avatars",
+      "Version": "3.10.5"
+    }
+  ]
+}
+```
+
+Package extraction runs on an engine worker. The complete source project is
+stored under `<asset-cache>/UnityPackages/<content-hash>`. The cache key includes
+the package SHA-256 hash and extraction format version. Extraction keeps
+asset paths and `.meta` files. A completed cache entry can be reused. A changed
+package gets a new entry. Extraction does not change the source package or
+copy its files into the game assets directory.
+
+Each `.unity` and `.prefab` file becomes a separate `XRScene` in the startup
+world. This also applies to loose scene and prefab targets. The scene name uses
+the source filename, with a numeric suffix for duplicate names. Imported roots
+are not children of Main Scene. A source scene with several roots gets one
+parent root in its own scene. Static instances stay in that scene. Each scene
+can be shown or hidden independently in the hierarchy panel. `.unity` scenes
+start checked. Separate `.prefab` scenes start unchecked, so they do not render
+alongside the scenes that contain their instances. This also applies to loose
+prefab targets. Hidden prefab scenes do not contribute startup light-probe bounds.
+Nested prefabs still resolve
+in their source hierarchy and also get their own scene when present in the
+package. Startup completion and static light-probe bounds wait for all entries.
+An empty package or failed entry reports an error; it does not block completion
+of the other entries.
+
+Use `Kind: Static` to retain each converted hierarchy without the unit-world
+avatar setup. `Kind: Animated` adds that setup to prefab roots. Scene files do
+not receive avatar setup on their scene parent. Independent prefab scenes do
+not bind to the Main Scene pawn or its locomotion setup. Scale, rotation, translation,
+static instance count, and static collider options apply to each entry.
+
+Loose scenes and prefabs can use `SourceProjectRoot` to select their Unity
+project or `Assets` directory. Package imports always use the extracted
+project and ignore that setting. Required dependencies must be present in the
+package or its companion sources. Missing models, materials, textures, or required shader evidence are
+reported by the same converter used for loose prefabs.
+
+Set `AllowPartialImport: true` to keep available content when visual dependencies
+are missing. Missing material references use a lit magenta fallback in the same
+renderer slot. Missing prefab instances are skipped. Material overrides without a drawable
+FBX slot are reported and omitted; supported slots remain intact. Missing textures use the
+material converter's default input. Diagnostics keep the source GUID and
+property, and the manifest reports `PartialVisual` instead of complete visual
+conversion. The default is `false` for strict imports.
+
+Poiyomi Pro materials use the existing lossy Uber conversion when source shader
+or serialized `OriginalShader` evidence identifies Pro. Partial imports can also
+use consistent GUID/name evidence from other materials in the same project.
+The evidence files are included in the import manifest. This preserves common
+Toon features and reports unsupported Pro features. It does not reconstruct
+missing material files or run Unity editor scripts.
+
+`Dependencies` applies to a `.unitypackage` target. Each `Source` can be a local
+`.unitypackage`, a VPM `.zip`, an extracted package folder with `package.json`,
+a Unity project or its `Assets` folder, a direct HTTPS archive URL, or a VCC/VPM
+repository URL. VCC `vcc://vpm/addRepo?url=...` links also work. For a repository
+with several packages, set `PackageId`. Set `Version` to select an exact release.
+An empty version selects the highest stable numeric semantic version on the
+first download and retains that selection in the cache. Prereleases require an
+exact version. Version constraints and automatic transitive package downloads
+are not supported. Declared VPM dependencies are reported; add their sources
+explicitly when required by the import.
+
+Downloads and repository indexes remain in `<asset-cache>/UnityDownloads`.
+Startup checks cached SHA-256 values and the repository's `zipSHA256`, when
+present. The archive manifest must match the selected package ID and version.
+Downloads use public HTTPS, bounded sizes, and checked redirects. To refresh an
+index or an unpinned selection, stop the editor and clear `UnityDownloads`.
+An exact version is recommended for repeatable imports.
+
+Companion assets join the primary assets in a staged project under
+`<asset-cache>/UnityProjects/<content-hash>`. VPM packages use
+`Packages/<package-name>`. Folder sources keep their metadata. Project sources
+copy `Assets` and embedded `Packages`; they do not copy `Library/PackageCache`.
+Project manifests are excluded so their `file:` references cannot escape the
+source snapshot. Archive extraction limits each archive to 100,000 entries,
+ 2 GiB per entry, and 8 GiB of expanded data.
+Conflicting files or duplicate GUIDs fail with source diagnostics. Only the
+primary package supplies startup roots. Companion prefabs are available for
+nested references but do not create extra startup entries.
+
+VRCFury and VRCFT package assets use the same supported component conversion as
+other source assets. Unity editor build scripts do not run. AudioLink package
+availability does not provide its Unity runtime or guarantee audio-reactive
+shader parity. Unsupported behavior remains visible in import diagnostics.
+
+All these source formats use the Unity material converter. Recognized Poiyomi
+materials use the native Uber shader regardless of `MaterialMode`. Existing
+version limits, Poiyomi Pro downgrade diagnostics, and unsupported behavior
+reports still apply. Package scripts and assemblies are not executed.
+
 ## Project And Dependency Resolution
 
 One `SourceProjectImportContext` is shared by the entry prefab, nested prefabs,

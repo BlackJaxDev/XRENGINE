@@ -12,4 +12,6 @@ public enum SourceImportCompletionTier
     /// This does not imply source-platform runtime parity.
     /// </summary>
     VisualAndAvatarBehavior,
+    /// <summary>Available content was imported with omitted objects or fallback visual assets.</summary>
+    PartialVisual,
 }

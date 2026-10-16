@@ -205,6 +205,12 @@ namespace XREngine.Rendering.OpenGL
                 if (!TryGetBuildBindingId(out uint bindingId))
                     return ReturnPendingBuildResult();
 
+                if (GLProgramCompileLinkQueue.SourceCompilationFaulted)
+                {
+                    AbandonStuckAsyncLink(bindingId);
+                    return IsLinked;
+                }
+
                 switch (_asyncLinkPhase)
                 {
                     case EAsyncLinkPhase.Compiling:
@@ -228,8 +234,16 @@ namespace XREngine.Rendering.OpenGL
                             }
                         }
 
-                        if (anyPending && !anyFailed)
+                        if (GLProgramCompileLinkQueue.SourceCompilationFaulted)
                         {
+                            AbandonStuckAsyncLink(bindingId);
+                            return IsLinked;
+                        }
+
+                        if (anyPending)
+                        {
+                            if (TryAbandonStuckAsyncLink(bindingId))
+                                return IsLinked;
                             PublishBackendStatus(
                                 EShaderProgramBackendStage.DriverParallelPending,
                                 "DriverParallelSource",
@@ -257,6 +271,12 @@ namespace XREngine.Rendering.OpenGL
                             InFlightCompilations.TryRemove(Hash, out _);
                             CleanupAsyncLink();
                             MarkBuildFailed();
+                            return IsLinked;
+                        }
+
+                        if (GLProgramCompileLinkQueue.SourceCompilationFaulted)
+                        {
+                            AbandonStuckAsyncLink(bindingId);
                             return IsLinked;
                         }
 
@@ -442,8 +462,8 @@ namespace XREngine.Rendering.OpenGL
             /// threaded path) can leave a parallel-link worker waiting on a fence
             /// from another context; flushing forces the command stream out.</item>
             /// <item>After <see cref="AsyncShaderHardAbandonSeconds"/>, abandon the
-            /// wedged GL handles and keep the fallback visible. A synchronous source
-            /// retry is only scheduled when explicitly enabled for driver experiments.
+            /// unfinished GL handles and keep the fallback visible. Further source
+            /// compilation requires a process restart.
             /// We deliberately do NOT call <c>glGetProgramiv(GL_LINK_STATUS)</c> on a
             /// still-pending program because that call implicitly waits for completion
             /// and is known to hang indefinitely when the driver's link worker is stuck.</item>
@@ -499,28 +519,19 @@ namespace XREngine.Rendering.OpenGL
                     $"Abandoning async link for program '{GetProgramDebugName()}' hash={Hash}: programId={linkedProgramId} " +
                     $"and {(_asyncAttachedShaderIds?.Length ?? 0)} shader(s) leaked to avoid blocking GL calls.");
 
-                if (Hash != 0)
-                {
-                    DriverParallelSourceTimeouts.TryAdd(Hash, 0);
-                    if (AllowSynchronousSourceRetryAfterAsyncTimeout)
-                        SynchronousSourceRetryHashes.TryAdd(Hash, 0);
-                    else
-                        MarkHashFailed("Driver-parallel source link timed out.");
-                }
+                GLProgramCompileLinkQueue.StopSourceCompilation();
+                MarkHashFailed("Driver source compilation did not complete. Restart required.");
+                SynchronousSourceRetryHashes.TryRemove(Hash, out _);
                 CompleteUberBackendTracking(false, "Async link timed out (driver never reported completion).");
                 PublishBackendStatus(
-                    AllowSynchronousSourceRetryAfterAsyncTimeout
-                        ? EShaderProgramBackendStage.SynchronousFallback
-                        : EShaderProgramBackendStage.Abandoned,
+                    EShaderProgramBackendStage.Abandoned,
                     _activeBuildBackend ?? "DriverParallelSource",
-                    AllowSynchronousSourceRetryAfterAsyncTimeout
-                        ? "driver never reported completion; retrying with synchronous source link"
-                        : "driver never reported completion; leaving source build pending with fallback material",
+                    "native compilation did not complete; source compilation stopped until process restart",
                     "Async link timed out.");
                 RuntimeEngine.Rendering.Stats.RecordShaderVariant(failed: true);
                 CompleteBuildTelemetry(false, failureReason: "Async link timed out.");
 
-                InFlightCompilations.TryRemove(Hash, out _);
+                ReleaseCompletedCompilationClaim(Hash, linkedProgramId);
                 _asyncCompileDuplicateHashWaitPending = false;
                 _asyncCompileLinkQueueWaitPending = false;
                 _asyncCompileLinkPending = false;
@@ -539,18 +550,6 @@ namespace XREngine.Rendering.OpenGL
                         _activeBuildBackend ?? "DriverParallelSource",
                         "replacement program leaked after stuck async link",
                         "Async link timed out.");
-
-                    uint retryReplacementProgramId = CreateConfiguredProgramHandle();
-                    if (retryReplacementProgramId != 0)
-                    {
-                        _replacementProgramId = retryReplacementProgramId;
-                        _replacementProgramPending = true;
-                        _replacementSourceRevisionKey = CalculateSourceRevisionKey();
-                        PublishBackendStatus(
-                            EShaderProgramBackendStage.SynchronousFallback,
-                            "SynchronousSource",
-                            "replacement retry program allocated after async link timeout");
-                    }
                 }
                 else if (TryGetBindingId(out _))
                 {
@@ -565,10 +564,6 @@ namespace XREngine.Rendering.OpenGL
                 _asyncLinkedProgramId = 0;
                 _asyncLinkPhase = EAsyncLinkPhase.Idle;
                 UnregisterPendingAsyncProgram();
-                _hashComputed = false;
-                InvalidatePreparedLinkData();
-                BeginPrepareLinkData();
-                RegisterPendingAsyncProgram();
             }
 
             private bool CompleteAsyncLink(
@@ -590,6 +585,12 @@ namespace XREngine.Rendering.OpenGL
                             "phase=async-link-failure-log");
                     }
 
+                    if (GLProgramCompileLinkQueue.IsNativeCompilerResourceFailure(linkError))
+                    {
+                        AbandonStuckAsyncLink(linkedProgramId);
+                        return IsLinked;
+                    }
+
                     PrintLinkDebug(linkedProgramId, linkError, failureKind);
                     PublishBackendStatus(
                         EShaderProgramBackendStage.Failed,
@@ -607,7 +608,6 @@ namespace XREngine.Rendering.OpenGL
                 if (linked)
                 {
                     SynchronousSourceRetryHashes.TryRemove(Hash, out _);
-                    DriverParallelSourceTimeouts.TryRemove(Hash, out _);
                 }
                 InFlightCompilations.TryRemove(Hash, out _);
 
@@ -690,7 +690,8 @@ namespace XREngine.Rendering.OpenGL
                 // Orphan the handle now and let the normal deferred cleanup pump
                 // delete it after the driver reports completion.
                 OrphanForDeferredDelete();
-                DeferredAsyncLinkCleanups.Enqueue(new DeferredAsyncLinkCleanup(Renderer, programId, []));
+                DeferredAsyncLinkCleanups.Enqueue(new DeferredAsyncLinkCleanup(Renderer, programId, [],
+                    _asyncCompileLinkPending ? Renderer.ProgramCompileLinkQueue : null));
                 if (_asyncBinaryUploadPending)
                     Renderer.ProgramBinaryUploadQueue?.CancelUpload(programId);
                 if (_asyncCompileLinkPending)

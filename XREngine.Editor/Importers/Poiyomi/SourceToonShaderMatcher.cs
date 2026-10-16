@@ -8,6 +8,7 @@ namespace XREngine.Scene.Importers.SourceToon;
 public static partial class SourceToonShaderMatcher
 {
     private const string OriginalShaderGuidTag = "OriginalShaderGUID";
+    private const string OriginalShaderTag = "OriginalShader";
 
     private static readonly string[] RequiredSignature =
     [
@@ -59,6 +60,9 @@ public static partial class SourceToonShaderMatcher
             source.Contains("Poiyomi Pro", StringComparison.OrdinalIgnoreCase) ||
             normalizedPath.Contains("Poiyomi Pro", StringComparison.OrdinalIgnoreCase) ||
             normalizedPath.Contains("/Pro/", StringComparison.OrdinalIgnoreCase);
+        bool hasOriginalProName =
+            input.OverrideTags.TryGetValue(OriginalShaderTag, out string? originalShaderName) &&
+            originalShaderName.Contains("Poiyomi Pro", StringComparison.OrdinalIgnoreCase);
         bool hasProProperties = input.PropertyNames.Any(name =>
             ProPropertyEvidence.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)));
         bool hasNonToonOriginalGuid =
@@ -66,7 +70,7 @@ public static partial class SourceToonShaderMatcher
             !string.IsNullOrWhiteSpace(originalShaderGuid) &&
             !string.Equals(originalShaderGuid, SourceToon93Catalog.ShaderGuid, StringComparison.OrdinalIgnoreCase);
         bool isProDowngradeSource =
-            hasProName ||
+            hasProName || hasOriginalProName ||
             (hasProProperties && (hasSourceToonPath || hasSignature || isLockedName)) ||
             (hasNonToonOriginalGuid && hasProProperties && hasOptimizerMarker);
 

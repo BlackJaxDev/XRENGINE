@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Buffers.Binary;
 using ImageMagick;
+using XREngine.Core.Files;
 using XREngine.Imaging;
 
 namespace XREngine.Runtime.Imaging.Magick;
@@ -10,25 +11,13 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
 {
     public RuntimeImage Decode(ReadOnlyMemory<byte> encodedImage)
     {
-        using MagickImage source = new(GetWholeArray(encodedImage));
+        using MagickImage source = new(encodedImage.Span);
         return DecodePixels(source);
     }
 
-    /// <summary>
-    /// The array behind <paramref name="encodedImage"/> when it spans the whole
-    /// array, so decoding a file read into one array does not copy it again.
-    /// </summary>
-    private static byte[] GetWholeArray(ReadOnlyMemory<byte> encodedImage)
-        => MemoryMarshal.TryGetArray(encodedImage, out ArraySegment<byte> segment) &&
-           segment.Array is { } array &&
-           segment.Offset == 0 &&
-           segment.Count == array.Length
-            ? array
-            : encodedImage.ToArray();
-
     public IReadOnlyList<RuntimeImage> DecodeFrames(ReadOnlyMemory<byte> encodedImage)
     {
-        using MagickImageCollection collection = new(GetWholeArray(encodedImage));
+        using MagickImageCollection collection = new(encodedImage.Span);
         RuntimeImage[] frames = new RuntimeImage[collection.Count];
         int completed = 0;
         try
@@ -390,16 +379,20 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
         uint? alphaChannel = pixels.GetChannelIndex(PixelChannel.Alpha);
         int alphaIndex = alphaChannel.HasValue ? checked((int)alphaChannel.Value) : -1;
         int pixelCount = checked((int)((long)image.Width * image.Height));
-        byte[] destination = new byte[checked(pixelCount * 4 * sizeof(float))];
-        Span<float> rgba = MemoryMarshal.Cast<byte, float>(destination.AsSpan());
+        // Large decoded images must release their temporary pixels when the
+        // caller disposes the image, without waiting for a full collection.
+        using CookedPayloadLease destination = CookedPayloadBufferPool.Rent(
+            checked(pixelCount * 4 * sizeof(float)), out Span<byte> destinationBytes);
+        Span<float> rgba = MemoryMarshal.Cast<byte, float>(destinationBytes);
         float inverseQuantum = 1.0f / Quantum.Max;
         int rowValues = checked((int)image.Width * channelCount);
         int rowsPerChunk = Math.Max(1, 1024 * 1024 / Math.Max(1, rowValues * sizeof(float)));
         for (int y = 0; y < image.Height; y += rowsPerChunk)
         {
             uint chunkHeight = (uint)Math.Min(rowsPerChunk, (int)image.Height - y);
-            float[] chunk = pixels.GetArea(0, y, image.Width, chunkHeight)
-                ?? throw new InvalidDataException("ImageMagick returned no HDR channel values.");
+            // Consume the native pixel view before the next request. Copying each
+            // chunk to a managed array doubles the decoded image allocation.
+            ReadOnlySpan<float> chunk = pixels.GetReadOnlyArea(0, y, image.Width, chunkHeight);
             int chunkPixels = checked((int)image.Width * (int)chunkHeight);
             if (chunk.Length != checked(chunkPixels * channelCount))
                 throw new InvalidDataException("ImageMagick returned an incomplete HDR image.");
@@ -413,7 +406,16 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
                 rgba[output + 3] = alphaIndex >= 0 ? chunk[input + alphaIndex] * inverseQuantum : 1.0f;
             }
         }
-        return new RuntimeImage(image.Width, image.Height, RuntimePixelFormat.RgbaFloat32, destination);
+        CookedPayloadOwner owner = destination.TransferToOwner();
+        try
+        {
+            return new RuntimeImage(image.Width, image.Height, RuntimePixelFormat.RgbaFloat32, owner);
+        }
+        catch
+        {
+            ((IDisposable)owner).Dispose();
+            throw;
+        }
     }
 
     private static bool RequiresSrgbConversion(ColorSpace colorSpace)

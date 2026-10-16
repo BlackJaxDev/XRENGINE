@@ -386,7 +386,6 @@ public static class XREngineEnvironmentVariables
     public const string SharedContextHazardDisableParallel = "XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL";
     public const string SharedContextDisableLinkSerialization = "XRE_SHARED_CONTEXT_DISABLE_LINK_SERIALIZATION";
     public const string SharedContextLinkTimeoutMs = "XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS";
-    public const string AllowSyncSourceRetryAfterAsyncTimeout = "XRE_ALLOW_SYNC_SOURCE_RETRY_AFTER_ASYNC_TIMEOUT";
     public const string SyncSrcHazardDisableParallel = "XRE_SYNCSRC_HAZARD_DISABLE_PARALLEL";
     public const string DumpSlowShaderSource = "XRE_DUMP_SLOW_SHADER_SOURCE";
     public const string AllowRenderThreadDriverParallelSource = "XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE";
