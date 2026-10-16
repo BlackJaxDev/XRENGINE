@@ -27,6 +27,42 @@ This document describes CPU-side ownership for renderer memory that can dominate
 - `XREngine.Runtime.Rendering/Buffers/XRDataBuffer.ClientCopyPolicy.cs`
 - `XREngine.Runtime.Rendering/Buffers/XRBufferSpilledDataSource.cs`
 
+Native FBX construction consumes each packed mesh chunk synchronously. After
+`XRMesh` copies its attributes, indices, skinning, and blendshapes, the chunk
+releases its source arrays and index list before later preparation work.
+Skin-weight dictionaries belong to active mesh workers instead of all queued
+meshes. Imported avatar instances still own separate hierarchies and mesh
+buffers; these reductions change temporary-data lifetime only.
+
+Packed blendshape construction keeps tangent deltas implicit while all values
+are zero. It allocates tangent storage on the first nonzero delta and grows
+that storage with the other delta arrays. The mesh reader treats an absent
+tangent span as zero. Final mesh buffer contents and instance ownership do
+not depend on whether temporary tangent storage was allocated.
+
+`ModelImportOptions.PrepareGpuDeformationOnImport` defaults to true. Unity
+composition sets it to false because its coordinate conversion would make
+the producer's prepared data stale. Rendering prepares the final geometry
+through its existing bounded preparation path. This option does not disable
+skinning or blendshapes and does not change the ordinary native import default.
+
+`ModelAssetImporter.FbxSourceDocuments` can borrow a caller-owned
+`FbxSourceDocumentCache`. It stores decoded source documents only, never
+runtime instances. Unity composition owns one cache per root import and
+clears it before final cooking. Native callers without a supplied cache use
+an import-local cache. Structural file mappings are closed after parsing.
+The cache holds one normalized path, length, modification time, and semantic
+policy. Batch and paired getters keep related documents from one revision.
+Strict and permissive animation snapshots remain separate. File replacement
+that preserves both length and modification time is outside this revision
+check. The cache has one synchronous owner and its returned collections must
+be treated as read-only.
+
+FBX skin and blendshape dictionaries reserve capacity for the available
+index/value pairs. An absent normal-delta stream leaves its dictionary empty
+without reserving space for every position delta. This changes storage
+capacity only, not parsed values or instance ownership.
+
 `XRDataBuffer.ClientCopyPolicy` decides what happens to CPU storage after the GPU copy is current. Mesh-owned static buffers can use `ReleaseAfterUpload`. Large static copies spill to a session mapping. A spill keeps bytes available through `XRBufferSpilledDataSource`, but those pages still count as commit when the mapping is writable. Read-only spill views remain a separate decision because a missed writer would fault.
 
 The rendering assembly owns the spill queue, settle delay, write lease, and `DataSource` adapter. The application host must register `XRBufferSpillStorageServices.Current` before it uses spill mapping. The desktop bootstrap and browser renderer composition register their providers before sessions start. A standalone rendering host must register its own provider. A missing provider reports a named spill failure and retains the CPU copy. A direct `XRBufferSpilledDataSource.Map` call reports the missing provider.

@@ -18,7 +18,7 @@ internal static partial class SerializedSceneImporter
     /// Unsupported source settings must not produce an approximate hierarchy.
     /// </summary>
     private static bool? ValidateSourceModelCoordinates(
-        string modelPath, SerializedModelImporterDocument metadata)
+        string modelPath, SerializedModelImporterDocument metadata, ImportState state)
     {
         if (!string.Equals(Path.GetExtension(modelPath), ".fbx", StringComparison.OrdinalIgnoreCase))
             return null;
@@ -27,7 +27,7 @@ internal static partial class SerializedSceneImporter
                 "Unity FBX composition currently requires bakeAxisConversion=false and globalScale=1.");
 
         // Check source semantics before either geometry producer runs.
-        FbxSemanticDocument source = FbxSemanticParser.ParseFile(modelPath);
+        FbxSemanticDocument source = state.Context.FbxSourceDocuments.GetSemantic(modelPath);
         FbxAxisSystem? axes = source.GlobalSettings?.AxisSystem;
         if (axes is null || axes.UnitScaleFactor != 100.0d ||
             axes.CoordAxis.AxisIndex != 0 || axes.CoordAxis.Sign != 1 ||
@@ -84,6 +84,8 @@ internal static partial class SerializedSceneImporter
                     {
                         if (lod.Mesh is not { } mesh || !meshes.Add(mesh))
                             continue;
+                        // Coordinate conversion makes the producer's deformation input stale.
+                        AdvancedGpuDeformationResources.DiscardImportedMeshPreparation(mesh);
                         mesh.TransformImportGeometry(conversion);
                         if (mesh.BindRootMatrix is { } bindRoot)
                             mesh.BindRootMatrix = inverse * bindRoot * conversion;

@@ -19,12 +19,11 @@ internal static partial class SerializedSceneImporter
             return;
         try
         {
-            using FbxStructuralDocument structural = FbxStructuralParser.ParseFile(path);
-            FbxSemanticDocument source = FbxSemanticParser.Parse(structural);
+            FbxSemanticDocument source = state.Context.FbxSourceDocuments.GetSemantic(path);
             if (source.IntermediateScene.AnimationStacks.Count == 0)
                 return;
-            FbxDeformerDocument deformers = FbxDeformerParser.Parse(structural, source);
-            FbxAnimationDocument animations = FbxAnimationParser.Parse(structural, source, deformers,
+            FbxAnimationDocument animations;
+            (source, animations) = state.Context.FbxSourceDocuments.GetAnimationSnapshot(path,
                 requireLosslessLinearAnimation: true);
             var converter = new UnityFbxAnimationConverter(source, root, metadata.PreserveHierarchy,
                 state.Context.CancellationToken);

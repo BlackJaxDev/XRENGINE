@@ -111,6 +111,40 @@ package. Startup completion and static light-probe bounds wait for all entries.
 An empty package or failed entry reports an error; it does not block completion
 of the other entries.
 
+Startup converts one root from each package at a time. The next root starts
+after the previous root is attached to its scene or reports an error. This
+limits concurrent native model decoding and temporary hierarchy allocations.
+Staged renderer activation can continue while the next root converts. The
+dependency graph scans each reached file once and retains each source reference,
+including cycle and missing-reference diagnostics.
+
+Within one root conversion, successful texture decoding is recorded by full
+path, byte length, and last-write time. Repeated references to that revision
+reuse the validation result without retaining decoded pixels. A new root, a
+changed revision, or a failed decode requires validation again.
+
+Required texture validation uses `IRuntimeImageCodec.Validate(Stream)`. It
+checks the full decoded image without exporting RGBA pixels that import would
+immediately discard. The stream and native decode state are released after
+each image. Deferred texture registration still loads pixels when rendering
+needs them; validation does not change texture quality or resolution.
+
+Coordinate conversion streams packed blendshape targets and keeps only a
+compact array of base attributes. Unity model import disables early native
+deformation preparation through `PrepareGpuDeformationOnImport`; conversion
+also releases any existing cached input before changing geometry. The renderer prepares current
+input when needed; source mesh buffers remain owned by their meshes.
+
+One root import owns a `FbxSourceDocumentCache` for parsed FBX data. The cache
+holds at most one source path, file revision, and semantic policy. Coordinate
+checks, material-slot resolution, native mesh construction, and animation
+conversion reuse those source documents. Related documents are returned as
+one coherent snapshot. Strict Unity animation parsing has a separate entry
+from permissive native parsing. Consumers must not modify cached collections.
+The importer clears the cache before final mesh cooking and disposes it on
+exit, including failure. Runtime hierarchies, mesh buffers, bone bindings,
+and animation clips remain independent for each avatar instance.
+
 Use `Kind: Static` to retain each converted hierarchy without the unit-world
 avatar setup. `Kind: Animated` adds that setup to prefab roots. Scene files do
 not receive avatar setup on their scene parent. Independent prefab scenes do

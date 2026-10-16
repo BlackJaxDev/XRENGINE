@@ -2,6 +2,15 @@
 
 Runtime image pixels use `RuntimeImage`: width, height, mip level, pixel format, row stride, and tightly packed pixel memory. A caller may lend memory or pass an `IMemoryOwner<byte>` that the image releases on disposal. Cooked texture data can be read without starting an image decoder. Source image decoding and PNG encoding use the installed `IRuntimeImageCodec`; the desktop composition installs the ImageMagick implementation. A missing codec reports its registration requirement.
 
+`IRuntimeImageCodec.Validate(Stream)` fully decodes the first image and returns
+its dimensions without exporting a runtime pixel buffer. The caller owns the
+stream, which remains open. The ImageMagick implementation checks the same
+output-size limits as `Decode`, applies required SDR color conversion in place,
+and reads the complete native pixel cache in bounded chunks. It retains no
+pixels after return. This avoids an encoded-file managed copy and an unused
+RGBA export during source validation. Native decoding still needs a pixel
+cache; this method is not a header-only check or a constant-memory decoder.
+
 Streamed media playback uses `HlsReferenceRuntime` as a renderer-facing entry point. The desktop composition installs the FFmpeg backend, which owns decoder/session implementation, native binary loading, and the existing HLS reference binary supply. The renderer's video component keeps the GPU upload and presentation logic. A missing media backend reports its registration requirement.
 
 Source font import asks the installed FreeType character enumerator for supported Unicode codepoints. Bitmap atlas creation asks the installed Skia rasterizer for a cooked PNG and glyph metrics. `FontGlyphSet` stores the resulting glyphs and texture without a SharpFont or Skia object in those public service contracts. The desktop authoring composition installs both services. Existing serialized `FontGlyphSet` names and fields remain unchanged.

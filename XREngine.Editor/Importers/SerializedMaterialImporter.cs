@@ -1460,13 +1460,23 @@ public static partial class SerializedMaterialImporter
 
         try
         {
+            FileInfo source = new(texturePath);
+            long length = source.Length;
+            long lastWriteTicks = source.LastWriteTimeUtc.Ticks;
+            if (context.IsTextureValidated(source.FullName, length, lastWriteTicks))
+                return;
+
             context.Progress?.Invoke(
                 0.12f,
                 $"Validating required texture {Path.GetFileName(texturePath)}");
-            using RuntimeImage imageInfo = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(texturePath));
+            using FileStream encodedImage = File.OpenRead(texturePath);
+            (uint width, uint height) = RuntimeImageCodecs.Require().Validate(encodedImage);
+            source.Refresh();
+            if (source.Exists && source.Length == length && source.LastWriteTimeUtc.Ticks == lastWriteTicks)
+                context.RecordValidatedTexture(source.FullName, length, lastWriteTicks);
             context.Progress?.Invoke(
                 0.12f,
-                $"Validated required texture {Path.GetFileName(texturePath)} ({imageInfo.Width}x{imageInfo.Height})");
+                $"Validated required texture {Path.GetFileName(texturePath)} ({width}x{height})");
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or NotSupportedException)
         {

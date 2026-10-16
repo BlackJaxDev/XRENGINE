@@ -37,6 +37,7 @@ public partial class XRMesh
             throw new InvalidOperationException($"Mesh '{Name}' has no vertices to convert.");
 
         ValidateImportAttributeBuffers();
+        XRMeshBlendshapeActiveListReader blendshapeReader = default;
         if (HasBlendshapes)
         {
             const BlendshapeShaderVariant supported =
@@ -45,7 +46,8 @@ public partial class XRMesh
                 BlendshapeShaderVariant.QuantizedDeltas;
             if ((BlendshapeShaderVariant & ~supported) != 0 ||
                 BlendshapeDeltaEncoding != BlendshapeDeltaEncoding.Snorm16Vector3 ||
-                !XRMeshBlendshapeDeltaTable.TryCreate(this, out _))
+                !XRMeshBlendshapeActiveListReader.TryCreate(this, out blendshapeReader) ||
+                !HasValidImportBlendshapeIndices(blendshapeReader))
                 throw new NotSupportedException(
                     $"Mesh '{Name}' has blendshape data that import geometry conversion cannot rebuild.");
         }
@@ -58,14 +60,41 @@ public partial class XRMesh
                 nameof(conversion));
         float handedness = determinant < 0.0f ? -1.0f : 1.0f;
 
+        Vector3 min, max;
+        if (HasBlendshapes && !CanStreamImportBlendshapes(blendshapeReader))
+            TransformImportGeometryMaterialized(conversion, normalConversion, handedness, out min, out max);
+        else
+            TransformImportGeometryStreaming(conversion, normalConversion, handedness, blendshapeReader, out min, out max);
+
+        if (handedness < 0.0f && _triangles is { Count: > 0 } triangles)
+        {
+            for (int triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
+            {
+                IndexTriangle triangle = triangles[triangleIndex];
+                triangles[triangleIndex] = new IndexTriangle(
+                    triangle.Point0, triangle.Point2, triangle.Point1);
+            }
+        }
+
+        Bounds = new AABB(min, max);
+        MarkGeometryChanged();
+    }
+
+    private void TransformImportGeometryMaterialized(
+        in Matrix4x4 conversion,
+        in Matrix4x4 normalConversion,
+        float handedness,
+        out Vector3 min,
+        out Vector3 max)
+    {
         EXRMeshVertexViewContent content = EXRMeshVertexViewContent.Positions |
             EXRMeshVertexViewContent.Normals |
             EXRMeshVertexViewContent.Tangents |
             (HasBlendshapes ? EXRMeshVertexViewContent.Blendshapes : 0);
         using XRMeshVertexView view = XRMeshVertexView.Open(this, content);
         Vertex[] vertices = view.Vertices;
-        Vector3 min = new(float.PositiveInfinity);
-        Vector3 max = new(float.NegativeInfinity);
+        min = new(float.PositiveInfinity);
+        max = new(float.NegativeInfinity);
         for (int vertexIndex = 0; vertexIndex < vertices.Length; vertexIndex++)
         {
             Vertex vertex = vertices[vertexIndex];
@@ -94,19 +123,202 @@ public partial class XRMesh
 
         if (HasBlendshapes)
             RebuildBlendshapeBuffersFromVertices(vertices);
+    }
 
-        if (handedness < 0.0f && _triangles is { Count: > 0 } triangles)
+    private bool HasValidImportBlendshapeIndices(XRMeshBlendshapeActiveListReader reader)
+    {
+        for (int vertex = 0; vertex < VertexCount; vertex++)
         {
-            for (int triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
+            reader.GetVertexEntries(vertex, out int first, out int count);
+            for (int entry = first; entry < first + count; entry++)
             {
-                IndexTriangle triangle = triangles[triangleIndex];
-                triangles[triangleIndex] = new IndexTriangle(
-                    triangle.Point0, triangle.Point2, triangle.Point1);
+                reader.ReadEntry(entry, out int shape, out _, out _, out _);
+                if ((uint)shape >= (uint)reader.ShapeCount)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    private bool CanStreamImportBlendshapes(XRMeshBlendshapeActiveListReader reader)
+    {
+        if (!reader.IsValid)
+            return true;
+
+        HashSet<string> names = new(StringComparer.Ordinal);
+        foreach (string name in BlendshapeNames)
+            if (string.IsNullOrEmpty(name) || !names.Add(name))
+                return false;
+
+        HashSet<int> vertexShapes = [];
+        for (int vertex = 0; vertex < VertexCount; vertex++)
+        {
+            vertexShapes.Clear();
+            reader.GetVertexEntries(vertex, out int first, out int count);
+            for (int entry = first; entry < first + count; entry++)
+            {
+                reader.ReadEntry(entry, out int shape, out Vector3 position, out Vector3 normal, out Vector3 tangent);
+                if (!HasImportDelta(position, normal, tangent))
+                    continue;
+                if (!vertexShapes.Add(shape))
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool HasImportDelta(Vector3 position, Vector3 normal, Vector3 tangent)
+        => position.LengthSquared() > 0.0f || normal.LengthSquared() > 0.0f || tangent.LengthSquared() > 0.0f;
+
+    private readonly record struct ImportBaseAttributes(
+        Vector3 Position,
+        Vector3? Normal,
+        Vector3? Tangent,
+        float BitangentSign);
+
+    private void TransformImportGeometryStreaming(
+        in Matrix4x4 conversion,
+        in Matrix4x4 normalConversion,
+        float handedness,
+        XRMeshBlendshapeActiveListReader reader,
+        out Vector3 min,
+        out Vector3 max)
+    {
+        // Keep only base attributes so source targets stay available after base writes.
+        VertexData baseData = new();
+        VertexData targetData = new();
+        Matrix4x4 conversionMatrix = conversion;
+        Matrix4x4 normalMatrix = normalConversion;
+        min = new(float.PositiveInfinity);
+        max = new(float.NegativeInfinity);
+        if (!reader.IsValid)
+        {
+            for (int vertex = 0; vertex < VertexCount; vertex++)
+            {
+                ReadImportBaseData(vertex, baseData);
+                TransformImportVertexData(baseData, conversion, normalConversion, handedness);
+                IncludeImportPoint(baseData.Position, ref min, ref max);
+            }
+            for (int vertex = 0; vertex < VertexCount; vertex++)
+            {
+                ReadImportBaseData(vertex, baseData);
+                TransformImportVertexData(baseData, conversion, normalConversion, handedness);
+                WriteImportBaseData(vertex, baseData);
+            }
+            return;
+        }
+
+        ImportBaseAttributes[] oldBases = new ImportBaseAttributes[VertexCount];
+        for (int vertex = 0; vertex < VertexCount; vertex++)
+        {
+            ReadImportBaseData(vertex, baseData);
+            Vector3 oldPosition = baseData.Position;
+            Vector3? oldNormal = baseData.Normal;
+            Vector3? oldTangent = baseData.Tangent;
+            float oldSign = baseData.BitangentSign;
+            oldBases[vertex] = new ImportBaseAttributes(oldPosition, oldNormal, oldTangent, oldSign);
+            TransformImportVertexData(baseData, conversion, normalConversion, handedness);
+            IncludeImportPoint(baseData.Position, ref min, ref max);
+            reader.GetVertexEntries(vertex, out int first, out int count);
+            for (int entry = first; entry < first + count; entry++)
+            {
+                reader.ReadEntry(entry, out _, out Vector3 position, out Vector3 normal, out Vector3 tangent);
+                if (!HasImportDelta(position, normal, tangent))
+                    continue;
+                SetImportTargetData(targetData, oldPosition, oldNormal, oldTangent, oldSign, position, normal, tangent);
+                TransformImportVertexData(targetData, conversion, normalConversion, handedness);
+                IncludeImportPoint(targetData.Position, ref min, ref max);
             }
         }
 
-        Bounds = new AABB(min, max);
-        MarkGeometryChanged();
+        // Set bases before the blendshape rebuild captures its geometry ticket.
+        for (int vertex = 0; vertex < oldBases.Length; vertex++)
+        {
+            ReadImportBaseData(oldBases[vertex], baseData);
+            TransformImportVertexData(baseData, conversion, normalConversion, handedness);
+            WriteImportBaseData(vertex, baseData);
+        }
+
+        RebuildBlendshapeBuffers((vertex, destination) =>
+            {
+                ReadImportBaseData(oldBases[vertex], baseData);
+                Vector3 oldPosition = baseData.Position;
+                Vector3? oldNormal = baseData.Normal;
+                Vector3? oldTangent = baseData.Tangent;
+                float oldSign = baseData.BitangentSign;
+                TransformImportVertexData(baseData, conversionMatrix, normalMatrix, handedness);
+
+                reader.GetVertexEntries(vertex, out int first, out int count);
+                int start = destination.Count;
+                for (int entry = first; entry < first + count; entry++)
+                {
+                    reader.ReadEntry(entry, out int shape, out Vector3 position, out Vector3 normal, out Vector3 tangent);
+                    if (!HasImportDelta(position, normal, tangent))
+                        continue;
+                    SetImportTargetData(targetData, oldPosition, oldNormal, oldTangent, oldSign, position, normal, tangent);
+                    TransformImportVertexData(targetData, conversionMatrix, normalMatrix, handedness);
+                    destination.Add(new BlendshapeVertexDelta(
+                        shape,
+                        targetData.Position - baseData.Position,
+                        (targetData.Normal ?? Vector3.Zero) - (baseData.Normal ?? Vector3.Zero),
+                        (targetData.Tangent ?? Vector3.Zero) - (baseData.Tangent ?? Vector3.Zero)));
+                }
+                destination.Sort(start, destination.Count - start, BlendshapeVertexDeltaShapeComparer.Instance);
+            });
+    }
+
+    private void WriteImportBaseData(int vertex, VertexData source)
+    {
+        uint index = (uint)vertex;
+        SetPosition(index, source.Position);
+        if (source.Normal is { } normal)
+            SetNormal(index, normal);
+        if (source.Tangent is { } tangent)
+            SetTangent(index, tangent, source.BitangentSign);
+    }
+
+    private static void ReadImportBaseData(ImportBaseAttributes source, VertexData destination)
+    {
+        destination.Position = source.Position;
+        destination.Normal = source.Normal;
+        destination.Tangent = source.Tangent;
+        destination.BitangentSign = source.BitangentSign;
+    }
+
+    private void ReadImportBaseData(int vertex, VertexData destination)
+    {
+        uint index = (uint)vertex;
+        destination.Position = GetPosition(index);
+        destination.Normal = HasNormals ? GetNormal(index) : null;
+        if (HasTangents)
+        {
+            Vector4 tangent = GetTangentWithSign(index);
+            destination.Tangent = new Vector3(tangent.X, tangent.Y, tangent.Z);
+            destination.BitangentSign = tangent.W;
+        }
+        else
+        {
+            destination.Tangent = null;
+            destination.BitangentSign = 1.0f;
+        }
+    }
+
+    private static void SetImportTargetData(
+        VertexData destination,
+        Vector3 basePosition,
+        Vector3? baseNormal,
+        Vector3? baseTangent,
+        float baseSign,
+        Vector3 positionDelta,
+        Vector3 normalDelta,
+        Vector3 tangentDelta)
+    {
+        destination.Position = basePosition + positionDelta;
+        destination.Normal = baseNormal.HasValue || normalDelta.LengthSquared() > 0.0f
+            ? (baseNormal ?? Vector3.Zero) + normalDelta : null;
+        destination.Tangent = baseTangent.HasValue || tangentDelta.LengthSquared() > 0.0f
+            ? (baseTangent ?? Vector3.Zero) + tangentDelta : null;
+        destination.BitangentSign = baseSign;
     }
 
     private void ValidateImportAttributeBuffers()

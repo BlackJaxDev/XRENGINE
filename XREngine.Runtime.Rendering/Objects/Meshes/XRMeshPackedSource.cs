@@ -154,12 +154,17 @@ public sealed class XRMeshPackedSource
             Array.Resize(ref _blendshapeShapes, capacity);
             Array.Resize(ref _blendshapePositionDeltas, capacity);
             Array.Resize(ref _blendshapeNormalDeltas, capacity);
-            Array.Resize(ref _blendshapeTangentDeltas, capacity);
+            if (_blendshapeTangentDeltas.Length != 0)
+                Array.Resize(ref _blendshapeTangentDeltas, capacity);
         }
+        // Native FBX supplies no tangent deltas. Keep implicit zeros until needed.
+        if (_blendshapeTangentDeltas.Length == 0 && tangentDelta != Vector3.Zero)
+            _blendshapeTangentDeltas = new Vector3[_blendshapeShapes.Length];
         _blendshapeShapes[_blendshapeEntryCount] = shapeIndex;
         _blendshapePositionDeltas[_blendshapeEntryCount] = positionDelta;
         _blendshapeNormalDeltas[_blendshapeEntryCount] = normalDelta;
-        _blendshapeTangentDeltas[_blendshapeEntryCount] = tangentDelta;
+        if (_blendshapeTangentDeltas.Length != 0)
+            _blendshapeTangentDeltas[_blendshapeEntryCount] = tangentDelta;
         _blendshapeEntryCount++;
         _blendshapeStarts[VertexCount] = _blendshapeEntryCount;
     }
@@ -179,7 +184,7 @@ public sealed class XRMeshPackedSource
         weights = _influenceWeights.AsSpan(start, count);
     }
 
-    /// <summary>The vertex's blendshape entries: shape indices and their deltas.</summary>
+    /// <summary>The vertex's blendshape entries. An empty tangent span represents zero deltas.</summary>
     internal void GetBlendshapeEntries(
         int vertex,
         out ReadOnlySpan<int> shapes,
@@ -192,7 +197,7 @@ public sealed class XRMeshPackedSource
         shapes = _blendshapeShapes.AsSpan(start, count);
         positionDeltas = _blendshapePositionDeltas.AsSpan(start, count);
         normalDeltas = _blendshapeNormalDeltas.AsSpan(start, count);
-        tangentDeltas = _blendshapeTangentDeltas.AsSpan(start, count);
+        tangentDeltas = _blendshapeTangentDeltas.Length == 0 ? [] : _blendshapeTangentDeltas.AsSpan(start, count);
     }
 
     private void EnsureVertexCapacity(int count)

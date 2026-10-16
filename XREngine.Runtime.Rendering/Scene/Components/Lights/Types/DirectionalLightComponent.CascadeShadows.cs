@@ -2945,6 +2945,10 @@ namespace XREngine.Components.Lights
                     EFrameBufferAttachment.DepthAttachment);
                 state.RasterDepthTexture.Name = GetCascadeShadowResourceName(source, "RasterDepthArray");
                 state.RasterDepthTexture.SamplerName = "ShadowRasterDepthArray";
+                // Raster depth is attached and sampled only at mip zero.
+                state.RasterDepthTexture.LargestMipmapLevel = 0;
+                state.RasterDepthTexture.SmallestAllowedMipmapLevel = 0;
+                state.RasterDepthTexture.AutoGenerateMipmaps = false;
             }
 
             if (recreateTexture || state.LayeredFrameBuffer is null)

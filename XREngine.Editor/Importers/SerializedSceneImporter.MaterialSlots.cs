@@ -17,8 +17,7 @@ internal static partial class SerializedSceneImporter
         if (externalMaterials.Count == 0)
             return;
 
-        using FbxStructuralDocument structural = FbxStructuralParser.ParseFile(modelPath);
-        FbxSemanticDocument semantic = FbxSemanticParser.Parse(structural);
+        FbxSemanticDocument semantic = state.Context.FbxSourceDocuments.GetSemantic(modelPath);
         HashSet<string> connectedNames = new(StringComparer.Ordinal);
         foreach (FbxConnection connection in semantic.Connections)
         {
@@ -66,16 +65,15 @@ internal static partial class SerializedSceneImporter
         }
     }
 
-    private static void ResolveFbxMaterialSlots(SceneNode root, string modelPath)
+    private static void ResolveFbxMaterialSlots(SceneNode root, string modelPath, ImportState state)
     {
         List<(SceneNode Node, SubMesh SubMesh)> imported = [];
         CollectImportedMaterialSlots(root, imported);
         if (imported.Count == 0)
             return;
 
-        using FbxStructuralDocument structural = FbxStructuralParser.ParseFile(modelPath);
-        FbxSemanticDocument semantic = FbxSemanticParser.Parse(structural);
-        FbxGeometryDocument geometry = FbxGeometryParser.Parse(structural, semantic);
+        (FbxSemanticDocument semantic, FbxGeometryDocument geometry) =
+            state.Context.FbxSourceDocuments.GetGeometrySnapshot(modelPath);
         Dictionary<string, Dictionary<string, int>> slotsByModelName = new(StringComparer.Ordinal);
         Dictionary<string, long> modelIdsByName = new(StringComparer.Ordinal);
         Dictionary<long, List<long>> geometryIdsByModelId = [];
